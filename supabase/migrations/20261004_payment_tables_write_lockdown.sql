@@ -216,10 +216,16 @@
 -- by exact name and sweeps the rest by shape, and an unexpected one means the
 -- live schema has drifted since 2026-09-21.
 --
--- POST-CHECK (read-only): re-run queries 1-3. Expect
+-- POST-CHECK (read-only): re-run queries 1-4 above, plus the column-privileges
+-- query at the end of this block - five queries in all. The apply guide has the
+-- same five as a numbered, copy-pasteable list with an expected result for each
+-- (workplan section 5.2); the 2026-09-21 production output is in section 5.3.
+-- Expect
 --   * `rls_enabled = true` still on all twelve;
 --   * the eight ALL policies replaced by "<same name> (read-only)", cmd SELECT,
---     same `qual`, still PERMISSIVE;
+--     same `qual`, still PERMISSIVE - with the `saved_payment_methods` twin
+--     showing the 63-byte TRUNCATED name "... saved payment methods (read-onl".
+--     That is expected, not drift: see IDENTIFIER TRUNCATION below;
 --   * no PERMISSIVE policy left with cmd ALL/INSERT/UPDATE/DELETE and roles
 --     public/anon/authenticated, except the service-role ones on
 --     `credit_transactions`;
@@ -238,6 +244,64 @@
 --     AND table_name LIKE ANY (ARRAY['payment%','credit_transactions','saved_payment_methods']);
 -- Expect zero rows.
 --
+-- ---------------------------------------------------------------------------
+-- IDENTIFIER TRUNCATION (63 bytes) - READ BEFORE USING THE ROLLBACK
+--
+-- Postgres caps an identifier at NAMEDATALEN-1 = 63 bytes and silently truncates
+-- anything longer (it emits `NOTICE: identifier "..." will be truncated to
+-- "..."`, which the Supabase SQL editor does not surface). A policy name is an
+-- identifier, so a twin name is truncated too.
+--
+-- ONE of the eight twins crosses the line. On `saved_payment_methods`:
+--
+--   'Users can manage their contacts saved payment methods' || ' (read-only)'
+--     = 65 characters, STORED as
+--   'Users can manage their contacts saved payment methods (read-onl'   (63)
+--
+-- Confirmed in the production post-check on 2026-09-21. The other seven twins
+-- are 51-58 characters and are stored verbatim.
+--
+-- What it does and does not affect:
+--
+--   * The POLICY ITSELF is fine. CREATE POLICY truncated the name and created a
+--     correct, enforcing `FOR SELECT` policy carrying the original USING
+--     expression and roles. Nothing about the lock-down is weakened, and a
+--     post-check that reads the name back out of `pg_policies` sees the 63-byte
+--     form - that is the expected output, not schema drift.
+--   * The ROLLBACK block below WAS broken by it, and is FIXED below. As
+--     originally shipped it looked the twin up by the untruncated 65-character
+--     string, which can never equal a stored name, so it raised
+--     `no read-only twin for ... on saved_payment_methods` and restored nothing
+--     for that table - the one table the scripted rollback could not restore.
+--     The lookup now compares against `left(<name> || ' (read-only)', 63)`.
+--   * The FORWARD block (step 1) still compares against the untruncated
+--     `newname`, and its executable body CANNOT be changed here: this file is
+--     already applied to production, so only this comment block is editable.
+--     The consequence is bounded and FAILS CLOSED. Re-running the file against
+--     an environment where it has already been applied finds, for
+--     `saved_payment_methods`, neither the original (dropped) nor the twin
+--     (stored truncated), and aborts the whole transaction with
+--     `policy "..." not found on public.saved_payment_methods and no "..." twin
+--     exists - live schema has drifted`. The other seven take the
+--     `already converted` path and CONTINUE, and the abort rolls those NOTICEs
+--     back with everything else, so the re-run stays the no-op it is supposed to
+--     be - only the message is wrong about the cause. Nothing is dropped twice
+--     and nothing is left half-applied. If a re-run is ever genuinely needed,
+--     read the abort as "saved_payment_methods is ALREADY converted, there is
+--     nothing to do for it" and ship a follow-up migration for the remaining
+--     work; do NOT hand-drop either policy.
+--
+-- THE GENERAL HAZARD, for any future conversion of this shape: the suffix
+-- ' (read-only)' is 12 bytes, so ANY base name longer than 51 bytes yields a
+-- truncated twin. Either keep the base name at or under 51 bytes, or - better -
+-- compute the twin name ONCE as `left(<name> || <suffix>, 63)` and use that one
+-- value for the CREATE, the idempotency lookup, the DROP and the rollback, so
+-- all four agree with what Postgres actually stored. `left()` counts characters,
+-- not bytes; every name here is ASCII, so the two coincide - a non-ASCII name
+-- would need a byte-aware truncation (Postgres truncates on a character
+-- boundary, never mid-character).
+--
+-- ---------------------------------------------------------------------------
 -- ROLLBACK
 --
 -- Half of this file is self-inverting and half is not, so READ BOTH PARTS.
@@ -251,10 +315,13 @@
 --       `qual`, this block restores a *different* policy than was live. The
 --       original `with_check` is in the PRE-CHECK query-2 export — read it from
 --       there and add `WITH CHECK (...)` to the CREATE below when it differs.
+--       The twin lookup below is TRUNCATION-AWARE (see the section above); the
+--       version first shipped was not, and could not restore
+--       `saved_payment_methods`.
 --
 --   BEGIN;
 --   DO $rb$
---   DECLARE r record; orig text; orig_roles name[]; rolelist text;
+--   DECLARE r record; twin text; orig text; orig_roles name[]; rolelist text;
 --   BEGIN
 --     FOR r IN SELECT * FROM (VALUES
 --       ('payment_automation_executions','Users can view their own automation executions'),
@@ -266,12 +333,24 @@
 --       ('payment_reminders','Users can manage their own payment reminders'),
 --       ('saved_payment_methods','Users can manage their contacts saved payment methods')
 --     ) AS t(tbl, pol) LOOP
+--       -- 63-byte truncation: the twin name STORED in pg_policies is
+--       -- `left(pol || ' (read-only)', 63)`. That differs from the plain
+--       -- concatenation for saved_payment_methods and is IDENTICAL to it for
+--       -- the other seven, so matching on the truncated value is exact for all
+--       -- eight. A prefix match (`policyname LIKE r.pol || '%'`) would find it
+--       -- too, but is NOT unambiguous: if a forward run was interrupted between
+--       -- the CREATE and the DROP, the writable ORIGINAL is still present and
+--       -- matches the same prefix, and this block would read its qual and then
+--       -- DROP it. Exact-match-on-truncated cannot pick the wrong row.
+--       twin := left(r.pol || ' (read-only)', 63);
 --       SELECT p.qual, p.roles INTO orig, orig_roles FROM pg_policies p
---        WHERE p.schemaname='public' AND p.tablename=r.tbl AND p.policyname = r.pol || ' (read-only)';
---       IF orig IS NULL THEN RAISE EXCEPTION 'no read-only twin for % on %', r.pol, r.tbl; END IF;
+--        WHERE p.schemaname='public' AND p.tablename=r.tbl AND p.policyname = twin;
+--       IF orig IS NULL THEN RAISE EXCEPTION 'no read-only twin "%" for % on %', twin, r.pol, r.tbl; END IF;
 --       SELECT string_agg(quote_ident(x), ', ') INTO rolelist FROM unnest(orig_roles) AS x;
+--       -- The eight RESTORED names are all <= 53 characters, so nothing is
+--       -- truncated on the way back.
 --       EXECUTE format('CREATE POLICY %I ON public.%I FOR ALL TO %s USING (%s)', r.pol, r.tbl, rolelist, orig);
---       EXECUTE format('DROP POLICY %I ON public.%I', r.pol || ' (read-only)', r.tbl);
+--       EXECUTE format('DROP POLICY %I ON public.%I', twin, r.tbl);
 --     END LOOP;
 --   END $rb$;
 --   GRANT INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON

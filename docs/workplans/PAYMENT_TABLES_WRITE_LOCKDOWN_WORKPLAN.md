@@ -3,8 +3,8 @@
 > **Last Updated**: 2026-09-21
 
 **Developer:** Dev
-**Branch:** `fix/payment-tables-write-lockdown`
-**Status:** Code Complete — SA RC-1...RC-7 applied; QA passed (33/33) and QA-2 (function revoke, user-approved in scope), QA-3...QA-7 applied; awaiting re-review
+**Branch:** `fix/payment-tables-write-lockdown` (merged as PR #83, `8e502f1b`). Docs/rollback follow-up: `docs/payment-lockdown-applied`
+**Status:** ✅ **APPLIED TO PRODUCTION 2026-09-21** — SA approved, QA passed (34/34), merged, applied by hand in the Supabase SQL editor and post-check verified (§5.3). One defect found by the post-check (63-byte identifier truncation, §5.3) is fixed in the migration's ROLLBACK block. One P1 follow-up queued in §10 — not part of this change
 **Precedent:** `supabase/migrations/20261001_user_subscriptions_write_lockdown.sql` and [ALLOCATE_FREE_TIER_S6_FIX_WORKPLAN.md](/docs/workplans/ALLOCATE_FREE_TIER_S6_FIX_WORKPLAN.md) §9
 
 ## Overview
@@ -13,7 +13,7 @@ Twelve Business OS payment tables (plus the `credit_transactions` credit ledger)
 
 ## Table of Contents
 
-1. [Scope](#1-scope) | 2. [Approach and decisions](#2-approach-and-decisions) | 3. [Blast radius](#3-blast-radius-swept-2026-09-21) | 4. [Risks](#4-risks) | 5. [Apply guide](#5-apply-guide-for-the-user) | 6. [Test plan](#6-test-plan) | 7. [SA Review Notes](#7-sa-review-notes) | 8. [QA Testing Report](#8-qa-testing-report) | 9. [Commit Info](#9-commit-info)
+1. [Scope](#1-scope) | 2. [Approach and decisions](#2-approach-and-decisions) | 3. [Blast radius](#3-blast-radius-swept-2026-09-21) | 4. [Risks](#4-risks) | 5. [Apply guide](#5-apply-guide-for-the-user) | 6. [Test plan](#6-test-plan) | 7. [SA Review Notes](#7-sa-review-notes) | 8. [QA Testing Report](#8-qa-testing-report) | 9. [Commit Info](#9-commit-info) | 10. [SECURITY DEFINER follow-up](#10-follow-up-security-definer-functions-executable-by-anon--queued-p1)
 
 ## 1. Scope
 
@@ -129,7 +129,7 @@ File: `supabase/migrations/20261004_payment_tables_write_lockdown.sql`. Applied 
    | `<role> still holds <priv> on public.<t>` | The privilege came from a grant to `PUBLIC`. **Do not run the `FROM PUBLIC` remedy blind (SA RC-4).** `bypassrls` does *not* bypass table privileges, so if `service_role`'s writes on that table also come via PUBLIC, revoking from PUBLIC breaks the Stripe webhook - a money path - and no post-condition here would notice. First run `SELECT table_name, grantee, privilege_type FROM information_schema.role_table_grants WHERE table_schema='public' AND grantee='service_role' AND table_name = '<t>';` and confirm `service_role` holds INSERT/UPDATE/DELETE **explicitly**. Only then re-run the REVOKE with `FROM PUBLIC`, re-run that query to confirm `service_role` is unchanged, and re-run the file |
 
    If your client shows `NOTICE` output, keep it (it lists every policy converted, every policy dropped and each original `WITH CHECK`) - but the Supabase SQL editor does not, which is why step 2's export is the backup and this is not.
-4. **Post-check (read-only):** re-run pre-check queries 1-4 **and the column-privileges query in the migration header's POST-CHECK block (QA-3)** - that one is not optional: `has_table_privilege(..., 'INSERT')` returns false for a *column-level* grant and `REVOKE ... ON <table>` does not remove one, so post-condition (c) can pass with a column-level write path still open. Expect: RLS still enabled; the eight ALL policies replaced by `"<name> (read-only)"` with cmd `SELECT` and the same `qual`; at least one PERMISSIVE SELECT policy per table; `anon` / `authenticated` holding `SELECT` and nothing else; query 4 returning **false / false** (QA-2); and zero rows from the column-privileges query. On write policies, the precise claim (QA-7): no PERMISSIVE write-capable policy remains **whose roles include `public`, `anon` or `authenticated`** - one granted only to some other role would survive all of this, but is unreachable from a Supabase JWT, which maps only to those two roles.
+4. **Post-check (read-only):** run the five queries in [§5.2](#52-post-check-queries-copy-paste-with-expected-results) — they are the pre-check's queries 1-4 plus the column-privileges query from the migration header's POST-CHECK block, written out with an expected result for each. The column one is **not optional** (QA-3): `has_table_privilege(..., 'INSERT')` returns false for a *column-level* grant and `REVOKE ... ON <table>` does not remove one, so post-condition (c) can pass with a column-level write path still open. On write policies, the precise claim (QA-7): no PERMISSIVE write-capable policy remains **whose roles include `public`, `anon` or `authenticated`** - one granted only to some other role would survive all of this, but is unreachable from a Supabase JWT, which maps only to those two roles. The 2026-09-21 production output of all five is recorded in [§5.3](#53-applied-to-production--2026-09-21).
 5. **Verify from the browser** — the check that actually proves the hole is closed, using the anon key the way an attacker would. In a logged-in tab, devtools → Network, open the payments page, find a request to `…/rest/v1/payment_invoices?select=…`, right-click → *Copy as fetch*.
    - **(a) read** — run it as copied. Must still return your rows.
    - **(b) write** — paste it again, change `method` to `'PATCH'`, replace the `?select=…` part of the URL with `?id=eq.<one of your invoice ids>`, add `body: JSON.stringify({ status: 'paid' })`, and add both headers `'Content-Type': 'application/json'` and `'Prefer': 'return=representation'` (without `Content-Type` PostgREST answers **415** and proves nothing; without `Prefer` a successful PATCH answers a bodiless **204** and you cannot tell success from "0 rows").
@@ -145,13 +145,179 @@ File: `supabase/migrations/20261004_payment_tables_write_lockdown.sql`. Applied 
 7. **Rollback:** the block in the file header. Part (a) restores the eight converted policies including their original **roles** - it reads both `qual` and `roles` back out of the twin rather than assuming `TO public` (QA-5) - but **not** their `WITH CHECK`, which a SELECT twin cannot carry (RC-5); take that from the query-2 export. Its `GRANT` should be **trimmed to what pre-check query 3 actually showed** before you run it: as written it hands all six privileges to both roles on all twelve tables. Part (a2) re-grants EXECUTE on `update_overdue_installments()` - only if something legitimately calls it as a non-service role, because it re-opens a platform-wide write path. Part (b) needs the query-2 export to recreate the dropped write-only policies. Rolling back re-opens the hole - prefer fixing forward.
 8. **Tell RM/QA** it has been applied, with the post-check and step 5 output.
 
-### 5.1 Pre-check query-2 export (paste before applying)
+### 5.1 Pre-check query-2 export (captured 2026-09-21, before the apply)
 
-> ⬜ **Not yet captured.** The apply must not start until the full output of pre-check query 2 (every policy on the twelve tables, with `qual` and `with_check`) is pasted here. It is the only backup of the policies this migration drops.
+✅ **Captured.** Read on production by the user in the Supabase SQL editor, read-only, immediately before the apply. **This is the only backup of the policies the migration dropped** (SA RC-2 — the SQL editor does not surface a script's `RAISE NOTICE` output, so the apply transcript is not a second copy). Part (b) of the rollback cannot be written without it.
 
-```text
-(paste here)
+24 rows, complete — under the editor's 100-row cap, so nothing is missing. It matches §1's table exactly: eight `FOR ALL` policies, ten write-only INSERT/UPDATE/DELETE policies for the shape sweep to drop, five SELECT policies, and the one service-role policy on `credit_transactions` (8 + 10 + 5 + 1 = 24). No drift, and no write-capable policy outside §1 — so both RC-3 pre-apply decisions cleared. On the read path: four tables (`credit_transactions`, `payment_invoices`, `payment_methods`, `payment_transactions`) already carried a standalone PERMISSIVE SELECT policy, and the other eight carried the `FOR ALL` policy that the conversion turns into one, so post-condition (a) could not abort on any of the twelve.
+
+```json
+[
+  {"tablename":"credit_transactions","policyname":"Service role can manage all transactions","permissive":"PERMISSIVE","cmd":"ALL","roles":"{public}","qual":"((auth.jwt() ->> 'role'::text) = 'service_role'::text)","with_check":null},
+  {"tablename":"credit_transactions","policyname":"Users can insert their own transactions","permissive":"PERMISSIVE","cmd":"INSERT","roles":"{public}","qual":null,"with_check":"(auth.uid() = user_id)"},
+  {"tablename":"credit_transactions","policyname":"Users can view own transactions","permissive":"PERMISSIVE","cmd":"SELECT","roles":"{public}","qual":"(auth.uid() = user_id)","with_check":null},
+  {"tablename":"credit_transactions","policyname":"Users can view their own transactions","permissive":"PERMISSIVE","cmd":"SELECT","roles":"{public}","qual":"(auth.uid() = user_id)","with_check":null},
+  {"tablename":"payment_automation_executions","policyname":"Users can view their own automation executions","permissive":"PERMISSIVE","cmd":"ALL","roles":"{public}","qual":"(auth.uid() = user_id)","with_check":null},
+  {"tablename":"payment_automation_rules","policyname":"Users can manage their own automation rules","permissive":"PERMISSIVE","cmd":"ALL","roles":"{public}","qual":"(auth.uid() = user_id)","with_check":null},
+  {"tablename":"payment_events","policyname":"Users can view their own payment events","permissive":"PERMISSIVE","cmd":"ALL","roles":"{public}","qual":"(auth.uid() = user_id)","with_check":null},
+  {"tablename":"payment_invoices","policyname":"Users can delete their own invoices","permissive":"PERMISSIVE","cmd":"DELETE","roles":"{public}","qual":"(auth.uid() = user_id)","with_check":null},
+  {"tablename":"payment_invoices","policyname":"Users can insert their own invoices","permissive":"PERMISSIVE","cmd":"INSERT","roles":"{public}","qual":null,"with_check":"(auth.uid() = user_id)"},
+  {"tablename":"payment_invoices","policyname":"Users can view their own invoices","permissive":"PERMISSIVE","cmd":"SELECT","roles":"{public}","qual":"(auth.uid() = user_id)","with_check":null},
+  {"tablename":"payment_invoices","policyname":"Users can update their own invoices","permissive":"PERMISSIVE","cmd":"UPDATE","roles":"{public}","qual":"(auth.uid() = user_id)","with_check":null},
+  {"tablename":"payment_methods","policyname":"Users can delete their own payment methods","permissive":"PERMISSIVE","cmd":"DELETE","roles":"{public}","qual":"(auth.uid() = user_id)","with_check":null},
+  {"tablename":"payment_methods","policyname":"Users can insert their own payment methods","permissive":"PERMISSIVE","cmd":"INSERT","roles":"{public}","qual":null,"with_check":"(auth.uid() = user_id)"},
+  {"tablename":"payment_methods","policyname":"Users can view their own payment methods","permissive":"PERMISSIVE","cmd":"SELECT","roles":"{public}","qual":"(auth.uid() = user_id)","with_check":null},
+  {"tablename":"payment_methods","policyname":"Users can update their own payment methods","permissive":"PERMISSIVE","cmd":"UPDATE","roles":"{public}","qual":"(auth.uid() = user_id)","with_check":null},
+  {"tablename":"payment_plan_installments","policyname":"Users can manage their own installments","permissive":"PERMISSIVE","cmd":"ALL","roles":"{public}","qual":"(auth.uid() = user_id)","with_check":null},
+  {"tablename":"payment_plans","policyname":"Users can manage their own payment plans","permissive":"PERMISSIVE","cmd":"ALL","roles":"{public}","qual":"(auth.uid() = user_id)","with_check":null},
+  {"tablename":"payment_processors","policyname":"Users can manage their own payment processors","permissive":"PERMISSIVE","cmd":"ALL","roles":"{public}","qual":"(auth.uid() = user_id)","with_check":null},
+  {"tablename":"payment_reminders","policyname":"Users can manage their own payment reminders","permissive":"PERMISSIVE","cmd":"ALL","roles":"{public}","qual":"(auth.uid() = user_id)","with_check":null},
+  {"tablename":"payment_transactions","policyname":"Users can delete their own transactions","permissive":"PERMISSIVE","cmd":"DELETE","roles":"{public}","qual":"(auth.uid() = user_id)","with_check":null},
+  {"tablename":"payment_transactions","policyname":"Users can insert their own transactions","permissive":"PERMISSIVE","cmd":"INSERT","roles":"{public}","qual":null,"with_check":"(auth.uid() = user_id)"},
+  {"tablename":"payment_transactions","policyname":"Users can view their own transactions","permissive":"PERMISSIVE","cmd":"SELECT","roles":"{public}","qual":"(auth.uid() = user_id)","with_check":null},
+  {"tablename":"payment_transactions","policyname":"Users can update their own transactions","permissive":"PERMISSIVE","cmd":"UPDATE","roles":"{public}","qual":"(auth.uid() = user_id)","with_check":null},
+  {"tablename":"saved_payment_methods","policyname":"Users can manage their contacts saved payment methods","permissive":"PERMISSIVE","cmd":"ALL","roles":"{public}","qual":"(auth.uid() = user_id)","with_check":null}
+]
 ```
+
+**Every dropped policy's `with_check` is `(auth.uid() = user_id)` on the INSERT policies and `null` on the UPDATE/DELETE ones**, and every `qual` is `(auth.uid() = user_id)`. That is what rollback part (b) would have to recreate by hand, and it also settles SA RC-5: none of the eight converted `FOR ALL` policies carried a `with_check` distinct from its `qual` (all eight are `null`), so rollback part (a) restores exactly what was live.
+
+### 5.2 Post-check queries (copy-paste, with expected results)
+
+Run all five, read-only, after the apply. They are pre-check queries 1-4 plus the column-privileges query from the migration header's POST-CHECK block. The 2026-09-21 production output of each is in §5.3.
+
+**P1 — RLS is still on and still not FORCEd**
+
+```sql
+SELECT c.relname, c.relrowsecurity AS rls_enabled, c.relforcerowsecurity AS rls_forced
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public' AND c.relname IN (
+  'credit_transactions','payment_automation_executions','payment_automation_rules',
+  'payment_events','payment_invoices','payment_methods','payment_plan_installments',
+  'payment_plans','payment_processors','payment_reminders','payment_transactions',
+  'saved_payment_methods')
+ORDER BY c.relname;
+```
+
+> **Expect:** twelve rows, every one `rls_enabled = true`, `rls_forced = false`. Unchanged by the migration — this query is here to prove it did *not* touch RLS.
+
+**P2 — no write-capable user policy left, and every table still readable**
+
+```sql
+SELECT tablename, policyname, cmd, roles
+FROM pg_policies
+WHERE schemaname = 'public' AND tablename IN (
+  'credit_transactions','payment_automation_executions','payment_automation_rules',
+  'payment_events','payment_invoices','payment_methods','payment_plan_installments',
+  'payment_plans','payment_processors','payment_reminders','payment_transactions',
+  'saved_payment_methods')
+ORDER BY tablename, cmd, policyname;
+```
+
+> **Expect:** every row `cmd = SELECT`, with the single exception of `credit_transactions` / "Service role can manage all transactions" (`ALL`), which is deliberately out of scope. The eight converted policies appear as `"<original name> (read-only)"`. At least one PERMISSIVE SELECT row per table. **`saved_payment_methods` shows its twin as the 63-character `Users can manage their contacts saved payment methods (read-onl` — truncated, and that is correct, not drift** (see §5.3 and the migration header's IDENTIFIER TRUNCATION section). Precise claim (QA-7): what is proven absent is a write-capable policy whose `roles` include `public` / `anon` / `authenticated` — one granted only to some other role would survive, but is unreachable from a Supabase JWT.
+
+**P3 — `anon` and `authenticated` hold SELECT and nothing else**
+
+```sql
+SELECT table_name, grantee, privilege_type
+FROM information_schema.role_table_grants
+WHERE table_schema = 'public' AND grantee IN ('anon','authenticated')
+  AND table_name IN (
+  'credit_transactions','payment_automation_executions','payment_automation_rules',
+  'payment_events','payment_invoices','payment_methods','payment_plan_installments',
+  'payment_plans','payment_processors','payment_reminders','payment_transactions',
+  'saved_payment_methods')
+ORDER BY table_name, grantee, privilege_type;
+```
+
+> **Expect:** exactly 24 rows (12 tables × 2 roles), every `privilege_type = SELECT`. Any INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER row means the REVOKE did not land — escalate. This is the query that actually proves the hole is closed; 24 rows also fits under the editor's 100-row cap, unlike the pre-check version.
+
+**P4 — the SECURITY DEFINER overdue helper is no longer publicly executable (QA-2)**
+
+```sql
+SELECT has_function_privilege('anon',          'public.update_overdue_installments()', 'EXECUTE') AS anon_exec,
+       has_function_privilege('authenticated', 'public.update_overdue_installments()', 'EXECUTE') AS auth_exec;
+```
+
+> **Expect:** `false` / `false` (both were `true` before). `has_function_privilege` counts a privilege inherited from `PUBLIC`, which is exactly how this one was held, so a `false` here means the `FROM PUBLIC` revoke worked. If the function does not exist in this environment the query errors with `undefined_function` — that is fine; the migration skips the revoke in that case.
+
+**P5 — no column-level write grant survives (QA-3, not optional)**
+
+```sql
+SELECT table_name, grantee, column_name, privilege_type
+FROM information_schema.column_privileges
+WHERE table_schema = 'public' AND grantee IN ('anon','authenticated')
+  AND privilege_type <> 'SELECT'
+  AND table_name LIKE ANY (ARRAY['payment%','credit_transactions','saved_payment_methods']);
+```
+
+> **Expect:** **zero rows.** P3 cannot see this: `has_table_privilege(…, 'INSERT')` returns false for a column-level grant and `REVOKE … ON <table>` does not remove one, so post-condition (c) inside the migration can pass with a column-level write path still open.
+
+### 5.3 Applied to production — 2026-09-21
+
+Applied by hand in the Supabase SQL editor on production by the user, after the §5.1 export was saved. The transaction committed; **no abort, no `NOTICE`-visible drift, no rollback**.
+
+| Apply-guide step | Status |
+|---|---|
+| 1. Deploy order (no code first; `20261001` must be live) | ✅ Pre-check query 0 returned no write policy on `user_subscriptions` → `20261001` was already applied, so the in-transaction RC-1 guard passed |
+| 2. Pre-check, with the query-2 export as a hard gate | ✅ Queries 0/1/2/3/4 run; the export is in §5.1; both RC-3 decisions cleared (every table would end with a PERMISSIVE SELECT policy — four already had one, the other eight get one from the conversion — and no write-capable policy outside §1) |
+| 3. Apply | ✅ Committed on the first run |
+| 4. Post-check (all five of §5.2) | ✅ Output below |
+| 5. Browser read + PATCH proof | ⚪ Not run — and not needed, see the note below |
+| 6. One-day watch | ⏳ **In progress** — the apply is same-day, so the window is not over. Nothing reported so far: no `42501` / `permission denied for table payment_…`, and the payments screens still list rows. The one expected breakage remains the agent-share reward path (D-6), unchanged. This needs no action from the user, only the absence of reports |
+| 7. Rollback | n/a — not needed. But the post-check *did* surface a defect in the rollback block itself; see the truncation finding below |
+| 8. Tell RM/QA | ✅ This section |
+
+**Pre-check output (before the apply).**
+
+- **Query 0 — `user_subscriptions` policies:** `Service role can manage all credits` (ALL), `Users can view own credits` (SELECT), `Users can view own subscription` (SELECT), `Users can view their own credits` (SELECT). No write policy left → `20261001` is live, R-1 / D-7 satisfied.
+- **Query 1 — RLS state:** all twelve `rls_enabled = true`, `rls_forced = false`.
+- **Query 2 — every policy:** §5.1, 24 rows, complete.
+- **Query 3 — grants:** the Supabase SQL editor **truncated this output at its 100-row cap**, after `payment_plans` / `anon` / `INSERT`. Five tables were not displayed (`payment_plans` partially, plus `payment_processors`, `payment_reminders`, `payment_transactions`, `saved_payment_methods`). **Why that is acceptable and was not re-run:** the pattern is uniform on every table that *was* displayed — `anon` and `authenticated` each hold `DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE`, i.e. the Supabase default set, which is exactly the set the migration revokes and exactly the set the rollback's `GRANT` re-grants. Nothing downstream depends on the missing rows: the migration's `REVOKE` is unconditional and a REVOKE of a privilege not held is a no-op; post-condition (c) verifies the *end* state directly for all twelve tables and both roles with `has_table_privilege`; and the post-check P3 below (24 rows, all SELECT) measures the same twelve tables under the cap. So the rollback's `GRANT` needs no trimming (QA-5's "trim it to what query 3 showed" is satisfied by the uniform default set), and the only thing lost is a cosmetic before-picture of five tables.
+- **Query 4 — `update_overdue_installments()`:** `anon_exec = true`, `auth_exec = true` — the QA-2 hole, confirmed open.
+
+**Post-check output (after the apply).**
+
+- **P1:** twelve rows, `rls_enabled = true`, `rls_forced = false`. Unchanged. ✅
+- **P2:** 14 rows. Every one `cmd = SELECT` except `credit_transactions` / "Service role can manage all transactions" (`ALL`), which is out of scope by design. All eight twins present. ✅
+
+  ```json
+  [
+    {"tablename":"credit_transactions","policyname":"Service role can manage all transactions","cmd":"ALL","roles":"{public}"},
+    {"tablename":"credit_transactions","policyname":"Users can view own transactions","cmd":"SELECT","roles":"{public}"},
+    {"tablename":"credit_transactions","policyname":"Users can view their own transactions","cmd":"SELECT","roles":"{public}"},
+    {"tablename":"payment_automation_executions","policyname":"Users can view their own automation executions (read-only)","cmd":"SELECT","roles":"{public}"},
+    {"tablename":"payment_automation_rules","policyname":"Users can manage their own automation rules (read-only)","cmd":"SELECT","roles":"{public}"},
+    {"tablename":"payment_events","policyname":"Users can view their own payment events (read-only)","cmd":"SELECT","roles":"{public}"},
+    {"tablename":"payment_invoices","policyname":"Users can view their own invoices","cmd":"SELECT","roles":"{public}"},
+    {"tablename":"payment_methods","policyname":"Users can view their own payment methods","cmd":"SELECT","roles":"{public}"},
+    {"tablename":"payment_plan_installments","policyname":"Users can manage their own installments (read-only)","cmd":"SELECT","roles":"{public}"},
+    {"tablename":"payment_plans","policyname":"Users can manage their own payment plans (read-only)","cmd":"SELECT","roles":"{public}"},
+    {"tablename":"payment_processors","policyname":"Users can manage their own payment processors (read-only)","cmd":"SELECT","roles":"{public}"},
+    {"tablename":"payment_reminders","policyname":"Users can manage their own payment reminders (read-only)","cmd":"SELECT","roles":"{public}"},
+    {"tablename":"payment_transactions","policyname":"Users can view their own transactions","cmd":"SELECT","roles":"{public}"},
+    {"tablename":"saved_payment_methods","policyname":"Users can manage their contacts saved payment methods (read-onl","cmd":"SELECT","roles":"{public}"}
+  ]
+  ```
+
+  **24 rows before → 14 after**, and the arithmetic is exact: ten write-only policies dropped (the DELETE/INSERT/UPDATE triplets on `payment_invoices`, `payment_methods` and `payment_transactions`, plus the INSERT on `credit_transactions`), and the eight `FOR ALL` policies converted 1-for-1, which does not change the count. 24 − 10 = 14. Table by table the delta matches §1 exactly.
+- **P3:** 24 rows, every one `SELECT`. **No write privilege remains on any of the twelve tables for either role.** ✅ This is the measurement that proves the hole is closed.
+- **P4:** `anon_exec = false`, `auth_exec = false`. ✅ The QA-2 function is no longer callable from the browser.
+- **P5:** zero rows. ✅ No column-level write grant.
+
+**On §5 step 5 (the browser PATCH proof) — why nothing more is owed.** The proof it was designed to produce is "a write from a signed-in session gets `42501 permission denied`". P3 measures the *cause* of that 42501 directly and exhaustively: neither `anon` nor `authenticated` holds INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES or TRIGGER on any of the twelve tables, P5 confirms no column-level grant slipped through, and P2 confirms no write-capable policy survives either. With no grant *and* no policy, PostgREST has nothing left to permit. The browser check remains the better first move on a *future* apply in a fresh environment (it catches a mistake end-to-end), but re-running it here would only re-derive what P2/P3/P5 already state. **No further live verification is required for this change.**
+
+**The truncation finding (defect in the ROLLBACK, fixed in this branch).** Look at P2's last row: the `saved_payment_methods` twin is `Users can manage their contacts saved payment methods (read-onl` — **63 characters, not the 65 the migration concatenates**. Postgres caps identifiers at `NAMEDATALEN-1 = 63` bytes and truncates silently.
+
+| | |
+|---|---|
+| **Is the lock-down affected?** | **No.** The policy was created, is `FOR SELECT`, carries the original `USING (auth.uid() = user_id)` and the original roles, and is enforcing. Only its *name* is shorter. |
+| **What was broken** | The header's ROLLBACK block part (a). It looked the twin up with `p.policyname = r.pol \|\| ' (read-only)'` — a 65-character string that can never equal a stored 63-character name — so for `saved_payment_methods` it would have raised `no read-only twin for … on saved_payment_methods` and restored nothing. **That one table could not be rolled back by the scripted path.** |
+| **The fix (this branch)** | The lookup and the subsequent `DROP` both use `twin := left(r.pol \|\| ' (read-only)', 63)`, which reproduces exactly what Postgres stored — and is a no-op for the other seven twins (51–58 characters), so one expression is correct for all eight. **Why not a prefix match** (`policyname LIKE r.pol \|\| '%'`): it is not unambiguous. If a forward run were ever interrupted between the `CREATE` and the `DROP`, the writable **original** is still present and matches the same prefix, and the rollback would read *its* `qual` and then drop it. Exact-match-on-truncated cannot pick the wrong row. |
+| **The forward block** | Still compares against the untruncated `newname` — and **cannot be changed**: this migration is applied to production, so only its comment block is editable (this branch touches nothing between `BEGIN;` and `COMMIT;`; verified with a diff). The consequence is bounded and **fails closed**: re-running the file on an environment where it is already applied finds neither the original (dropped) nor the twin (stored truncated) for `saved_payment_methods` and aborts the whole transaction with `policy "…" not found … live schema has drifted`. The other seven take the `already converted` path, and the abort discards everything, so the re-run stays the no-op it is meant to be — only the message is wrong about the cause. Documented in the migration header's new `IDENTIFIER TRUNCATION` section and in the abort table interpretation below. |
+| **The general hazard** | The suffix `' (read-only)'` is 12 bytes, so **any base name longer than 51 bytes** produces a truncated twin. The pattern to use next time: compute the twin name **once** as `left(<name> \|\| <suffix>, 63)` and use that single value for the `CREATE`, the idempotency lookup, the `DROP` **and** the rollback, so all four agree with what Postgres actually stores. (`left()` counts characters; all names here are ASCII so characters = bytes. A non-ASCII name would need a byte-aware truncation — Postgres truncates on a character boundary, never mid-character.) Pinned by test T-20. |
+
+> **Reading the §5 step-3 abort table after this finding:** the row `policy "…" not found … live schema has drifted` has a second, benign cause on a **re-run of an already-applied environment** — `saved_payment_methods` and its truncated twin. That is not drift and needs no action; it means the table is already converted. Every other table named by that message still means real drift.
 
 ## 6. Test plan
 
@@ -178,8 +344,11 @@ File: `supabase/migrations/20261004_payment_tables_write_lockdown.sql`. Applied 
 | T-17 | Source guard: `new CreditService(` has exactly one construction site and it passes `supabaseServer` (SA RC-6) | ✅ |
 | T-18 | The function revoke is present with `FROM PUBLIC`, guarded by `to_regprocedure`, never touches the function body, and has its own in-transaction post-condition (QA-2) | ✅ |
 | T-19 | The RC-1 ordering guard covers INSERT as well as UPDATE (QA-4) | ✅ |
+| T-20 | The ROLLBACK's twin lookup uses `left(<name> || ' (read-only)', 63)` for both the SELECT and the DROP, the untruncated forms are gone, and the 63-byte hazard is documented — plus the data itself: exactly one of the eight twins exceeds 63 characters (added 2026-09-21 after the production post-check) | ✅ |
 
-Not covered by static tests, by design: the live effect (post-check query + browser check, §5.4–5.5).
+34/34 pass (`npx jest lib/repositories/__tests__/paymentTablesWriteLockdownMigration.test.ts`).
+
+Not covered by static tests, by design: the live effect (§5 steps 4–5 — the post-check queries and the browser check). Both are now recorded in §5.3.
 
 ## 7. SA Review Notes
 
@@ -285,7 +454,7 @@ QA-2's mechanic almost certainly repeats. Six sibling definer functions revoke w
 - `claim_due_daily_briefings` / `reap_stale_daily_briefings` (`20260911_daily_briefing.sql:192-193`)
 - `claim_due_lead_responses` / `reap_stale_lead_responses` (`20260914_lead_responses.sql:183-184`)
 
-(`20260915a_purge_schema_introspect.sql:181` gets it right — `FROM PUBLIC` first.) These claim queue rows platform-wide, so browser-callable would be the same class of bug. **Recommend:** one read-only measurement by the user — `has_function_privilege('anon', '<fn signature>', 'EXECUTE')` across those eight — and if true, a separate P1 migration. Raise it as its own item; keep this file scoped.
+(`20260915a_purge_schema_introspect.sql:181` gets it right — `FROM PUBLIC` first.) These claim queue rows platform-wide, so browser-callable would be the same class of bug. **MEASURED 2026-09-21 and confirmed, and far wider than eight: 59 of the 60 SECURITY DEFINER functions in `public` are executable by `anon`, 50 of them callable through PostgREST. Triage, both measurement queries and the fix shape are in [§10](#10-follow-up-security-definer-functions-executable-by-anon--queued-p1) — that is the single source for this item; everything below here is the original recommendation, kept for the record.** **Recommend:** one read-only measurement by the user — `has_function_privilege('anon', '<fn signature>', 'EXECUTE')` across those eight — and if true, a separate P1 migration. Raise it as its own item; keep this file scoped.
 
 ## 8. QA Testing Report
 
@@ -444,11 +613,64 @@ M4 ninth-conversion     -> eight=false (want false)
 ### Final Status
 
 - [x] All acceptance criteria that can be verified without a database pass — **ready for commit**, subject to SA's call on QA-2 and the three Medium doc/rollback fixes (QA-2, QA-3, QA-5), none of which change the SQL's end state.
-- [ ] Live verification still owed by the user after apply: §5 step 4 post-check (queries 1–3 **plus** the column-privileges query, QA-3), §5 step 5 browser read + PATCH proof, and §5 step 6's one-day watch. The §5.1 query-2 export remains ⬜ and is a hard gate on the apply, not on the commit.
+- [x] Live verification **complete**, 2026-09-21: the §5.1 query-2 export was captured before the apply (it is the only backup of the dropped policies), all five post-check queries were run after it, and their output is recorded in §5.3. Nothing further is owed by the user for this change — see §5.3 for why the §5 step 5 browser PATCH proof adds nothing on top of a directly measured "no write grant, no write policy" state.
+- [ ] Queued, **not** part of this change: §10, the 50 PostgREST-callable SECURITY DEFINER functions (P1).
 
 ## 9. Commit Info
 
 _(RM to populate. Nothing committed by Dev.)_
+
+## 10. Follow-up: SECURITY DEFINER functions executable by `anon` — queued P1
+
+> **Status: QUEUED, not work for this change.** It needs its own requirement, SA review and migration. It is recorded here because this cycle is what found it: QA-2 closed exactly one instance (`update_overdue_installments()`), and SA's re-review flagged that the same shape almost certainly repeats across the schema. It does — measured below.
+
+**The shape.** A `SECURITY DEFINER` function runs as its owner, so it ignores RLS *and* every table grant. Supabase exposes any non-trigger function in `public` at `POST /rest/v1/rpc/<name>` to whatever role the caller's key maps to. So a `SECURITY DEFINER` function that `anon` can execute is a hole that no amount of table lock-down can close — the whole point of QA-2.
+
+**Measured on production, 2026-09-21 (by the user, read-only).** Of **60** `SECURITY DEFINER` functions in `public`, **59 are executable by `anon`**. The only one that is not is `purge_schema_introspect`. Excluding trigger-returning functions (not reachable over `/rest/v1/rpc/`), **50 are callable through PostgREST with the public anon key**.
+
+Re-measure with these two queries before doing anything — the numbers below are a snapshot:
+
+```sql
+-- (1) every SECURITY DEFINER function in public, and who can execute it
+SELECT p.proname,
+       pg_get_function_identity_arguments(p.oid) AS args,
+       has_function_privilege('anon',          p.oid, 'EXECUTE') AS anon_exec,
+       has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth_exec
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public' AND p.prosecdef
+ORDER BY anon_exec DESC, p.proname;
+-- 2026-09-21 on prod: 60 rows, 59 with anon_exec = true
+-- (only `purge_schema_introspect` is false).
+```
+
+```sql
+-- (2) of those, the ones actually reachable over PostgREST: a trigger-returning
+--     function cannot be called through /rest/v1/rpc/, so it is not in scope.
+SELECT p.proname,
+       pg_get_function_identity_arguments(p.oid) AS args
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public' AND p.prosecdef
+  AND p.prorettype <> 'trigger'::regtype
+  AND has_function_privilege('anon', p.oid, 'EXECUTE')
+ORDER BY p.proname;
+-- 2026-09-21 on prod: 50 rows.
+```
+
+**Root cause (identified by SA).** The sibling revokes are written `REVOKE ... FROM anon, authenticated` and never `FROM PUBLIC`. PostgreSQL grants `EXECUTE` on a new function to `PUBLIC` by default, and revoking from two roles does **not** remove a grant held by `PUBLIC` — so those revokes are no-ops and the functions stayed open. The only place in the repo that gets it right is `supabase/migrations/20260915a_purge_schema_introspect.sql:181`, which is precisely why `purge_schema_introspect` is the one function that measures closed. `20261004`'s own function revoke names `FROM PUBLIC, anon, authenticated` for the same reason (QA-2), and P4 in §5.2 is what proves it landed.
+
+**Triage of the 50.** Three buckets, worst first:
+
+| Bucket | Functions | Why it matters |
+|---|---|---|
+| **A. No arguments at all** | the ten `claim_due_*` / `reap_stale_*` queue functions, `pg_try_advisory_lock` / `pg_advisory_unlock`, `auto_disable_ineffective_behavior_rules` | An anonymous caller needs **nothing but the URL** — no id to guess, no session. The queue claim/reap pair is the §8.1 durable-drain machinery for every module; calling it from outside a cron can claim, stall or reap other tenants' work, and the advisory-lock wrappers let an anonymous caller hold or release the lock the drains serialise on |
+| **B. Reads another tenant's data from a caller-supplied id** | `get_user_credit_balance`, `get_user_subscription_info`, `get_user_usage_summary`, `get_user_workflow_stats`, `has_sufficient_credits`, `is_reward_eligible` | Pass any `user_id` and read that user's balance, plan, usage and eligibility. Cross-tenant **read** |
+| **C. Writes another tenant's data from a caller-supplied id** | `increment_executions_used`, `advance_contact_stage`, `dismiss_setup_step`, `get_or_create_user_organization`, the `upsert_*` family | Cross-tenant **write**, definer-owned, bypassing RLS entirely. `increment_executions_used` is a money-adjacent counter (see the S-6 free-tier cycle, where it is already an open P1) |
+
+**This is the same class as the identity-hardening work** (`x-user-id` / body-`userId` IDOR): a privileged path that takes the tenant id from the caller instead of deriving it from the session. The difference is that here the privileged path is the database function itself, so a route-level fix cannot reach it — the function has to stop being callable by `anon`, and the ones that stay callable have to derive the tenant from `auth.uid()` rather than trust an argument.
+
+**Fix shape (for the requirement, not decided here).** Per function: `REVOKE ALL ON FUNCTION … FROM PUBLIC` first — that is the load-bearing clause — then `GRANT EXECUTE` back only to the roles that genuinely call it (`service_role` for anything a cron or server route invokes; nothing at all for bucket A). Bucket B/C functions that a browser legitimately calls need their id argument replaced by `auth.uid()` before the grant is handed back. Needs a caller sweep per function (same method as §3), an ordering decision against the crons that use the claim/reap RPCs, and a CI guard so a new `SECURITY DEFINER` function cannot land with the default PUBLIC grant. **Do not batch-revoke blind**: the queue drains run as `service_role`, and a revoke that catches `service_role` would stop every §8.1 drain.
 
 ## Change History
 
@@ -460,3 +682,4 @@ _(RM to populate. Nothing committed by Dev.)_
 | 2026-09-21 | QA review | PASS, no High-severity defect. Migration traced statement by statement; RC-1 guard, the dynamic ALL→SELECT conversion, the shape-based sweep and the post-conditions each re-derived independently; blast radius re-swept from scratch (SA's two claims confirmed). Five test cases added (sweep scope, exactly-eight conversions, post-conditions-before-COMMIT, exact REVOKE table count, user-cookie writer guard), each mutation-checked; 32/32 pass. Three Mediums recorded: QA-2 `update_overdue_installments()` is a surviving publicly-executable SECURITY DEFINER write path, QA-3 the column-privilege post-check is missing from §5 step 4, QA-5 rollback part (a) does not restore roles |
 | 2026-09-21 | SA code review | Fix Required - RC-1..RC-7 in section 7. D-1 / D-2 / D-6 and the rollback story approved; blast radius independently re-swept and confirmed |
 | 2026-09-21 | SA re-review | Approved to ship. QA-2 function revoke, QA-4 and QA-5 spot-checked and correct; 33/33 tests pass. Two non-blockers: measure service_role EXECUTE in pre/post-check query 4, and a separate P1 for eight sibling claim/reap functions revoked FROM anon, authenticated but never FROM PUBLIC |
+| 2026-09-21 | **Applied to production** + rollback fix | Applied by hand in the Supabase SQL editor; all five post-check queries pass (§5.3). The post-check surfaced a 63-byte identifier-truncation defect: the `saved_payment_methods` twin was stored as `... (read-onl`, so the ROLLBACK's twin lookup (which matched on the untruncated 65-character name) could never have restored that table. Fixed in the migration's ROLLBACK block — comment block only; the executable body between `BEGIN;` and `COMMIT;` is byte-identical to what is live. New `IDENTIFIER TRUNCATION` header section, T-20 test, §5.2 copy-pasteable post-check list, §5.3 applied-state record, and §10 queuing the SECURITY DEFINER P1 |
