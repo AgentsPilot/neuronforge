@@ -40,6 +40,31 @@ jest.mock('@/lib/supabaseServer', () => ({
 const mockMedia = { findBySourceRef: jest.fn(), countGeneratedSince: jest.fn(), record: jest.fn() };
 jest.mock('@/lib/repositories/UserMediaRepository', () => ({ userMediaRepository: mockMedia }));
 
+/*
+ * The Layer 2 resolver, pinned to the code defaults (D-38 shape). Since Step 3
+ * the image MODEL and the on/off switch come from the `images` area row, so
+ * without this every case here would make a real settings read. The default
+ * model is `IMAGE_GENERATION_CONFIG_DEFAULTS.model`, which is what these
+ * assertions already expect.
+ */
+/**
+ * What the `images` area row resolves the model to, for the tests that need a
+ * model the price table does not know. Reset to `null` — "use the code
+ * default" — before every test.
+ */
+const resolvedImageModel: { value: string | null } = { value: null };
+
+jest.mock('@/lib/business-os/llm/modelSettings', () => {
+  const actual = jest.requireActual('@/lib/business-os/llm/modelSettings');
+  return {
+    ...actual,
+    resolveBosLlmSettings: async (area: string, callName: string) => {
+      const defaults = actual.bosLlmCodeDefaults(area, callName);
+      return resolvedImageModel.value === null ? defaults : { ...defaults, model: resolvedImageModel.value };
+    },
+  };
+});
+
 const mockGetImageConfig = jest.fn();
 jest.mock('@/lib/repositories/SystemConfigRepository', () => {
   const actual = jest.requireActual('@/lib/repositories/SystemConfigRepository');
@@ -89,6 +114,7 @@ const ORIGINAL_KEY = process.env.OPENAI_API_KEY;
 
 beforeEach(() => {
   logged.length = 0;
+  resolvedImageModel.value = null;
   mockGenerate.mockReset();
   mockUpload.mockReset();
   trackAICall.mockReset();
@@ -277,9 +303,10 @@ describe('price resolution (AC-8, FR-13)', () => {
   });
 
   it('then 0, with an error log naming model, size and quality only — and the row is still written', async () => {
-    const config = defaults();
-    config.model = 'unpriced-model';
-    mockGetImageConfig.mockResolvedValue(config);
+    // Step 3: the model is the RESOLVED one, so that is what has to be unpriced
+    // — and what both the ledger row and the price error must name (RC-W4).
+    resolvedImageModel.value = 'unpriced-model';
+    mockGetImageConfig.mockResolvedValue(defaults());
 
     await expect(generateImage(OWNER, PROMPT, 'square', 'hero')).resolves.toMatchObject({ ok: true });
 
@@ -387,9 +414,8 @@ describe('pricing by the reported quality (CR-1 option C, CR-5)', () => {
   });
 
   it('an unknown size (configured model with no fallback prices) → $0 with the same error', async () => {
-    const config = defaults();
-    config.model = 'unpriced-model';
-    mockGetImageConfig.mockResolvedValue(config);
+    resolvedImageModel.value = 'unpriced-model';
+    mockGetImageConfig.mockResolvedValue(defaults());
     respondWith('medium');
 
     await generateImage(OWNER, PROMPT, 'portrait', 'hero');

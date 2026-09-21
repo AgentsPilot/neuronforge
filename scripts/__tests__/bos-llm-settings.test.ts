@@ -213,34 +213,28 @@ describe('set --enabled false must really switch the area off (T1-13, RC-W8c)', 
     );
   });
 
-  // S1-7: a kill switch that only covers five of eight calls must say so.
-  it('warns which website calls keep running, because their off paths ship in Step 3', async () => {
-    store.set('bos_llm_area_website', SEEDED_ROWS.website);
+  /*
+   * S1-7, closed. Between Steps 2 and 3 the website switch covered five of
+   * eight calls and the script said so, by name, every time. Step 3 shipped
+   * the three missing off paths, so there is nothing left to warn about — and
+   * the test that used to demand the warning now demands its ABSENCE, for
+   * every area. If a future change re-creates a call that keeps spending after
+   * `--enabled false`, `modelSettingsPolicy.test.ts` fails first.
+   */
+  it.each(['website', 'insights'])(
+    'says nothing about partial coverage when switching %s off — no area is partial any more',
+    async (area) => {
+      store.set(`bos_llm_area_${area}`, SEEDED_ROWS[area as 'website' | 'insights']);
 
-    const code = await runBosLlmSettingsCommand(['set', 'website', '--enabled', 'false']);
+      const code = await runBosLlmSettingsCommand(['set', area, '--enabled', 'false']);
 
-    expect(code).toBe(0);
-    const warning = logged.find(
-      (line) => line.level === 'warn' && Array.isArray(line.fields.callsStillRunning)
-    );
-    expect(warning?.fields.callsStillRunning).toEqual([
-      'full_site',
-      'field_regenerate',
-      'testimonial_enhance',
-    ]);
-    expect(warning?.msg).toContain('PARTIAL SWITCH');
-  });
-
-  it('says nothing about partial coverage for an area whose calls can all be switched off', async () => {
-    store.set('bos_llm_area_insights', SEEDED_ROWS.insights);
-
-    const code = await runBosLlmSettingsCommand(['set', 'insights', '--enabled', 'false']);
-
-    expect(code).toBe(0);
-    expect(logged.some((line) => typeof line.msg === 'string' && line.msg.includes('PARTIAL SWITCH'))).toBe(
-      false
-    );
-  });
+      expect(code).toBe(0);
+      expect(logged.some((line) => typeof line.msg === 'string' && line.msg.includes('PARTIAL SWITCH'))).toBe(
+        false
+      );
+      expect(logged.some((line) => Array.isArray(line.fields.callsStillRunning))).toBe(false);
+    }
+  );
 
   it('names the database it is talking to, before anything else (S1-11)', async () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://example-project.supabase.co';

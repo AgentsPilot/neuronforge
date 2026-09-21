@@ -54,6 +54,24 @@ jest.mock('@/lib/supabaseServer', () => {
   return { supabaseServer: { from: () => builder, rpc: () => builder } };
 });
 
+/*
+ * The Layer 2 resolver, pinned to the code defaults (D-38 shape).
+ *
+ * Without it the planner and the analysis service would each make a REAL
+ * `getByKeys` call against the configured Supabase project during a unit run.
+ * They would still pass — the resolver degrades to the code defaults after its
+ * 3-second budget — but slowly, and with a live network attempt inside a unit
+ * suite. The defaults are exactly what these assertions are written against.
+ */
+jest.mock('@/lib/business-os/llm/modelSettings', () => {
+  const actual = jest.requireActual('@/lib/business-os/llm/modelSettings');
+  return {
+    ...actual,
+    resolveBosLlmSettings: async (area: string, callName: string) => actual.bosLlmCodeDefaults(area, callName),
+    isBosLlmAreaEnabled: async () => true,
+  };
+});
+
 jest.mock('@/lib/business-os/bizql/planner/catalogPrompt', () => ({
   ...jest.requireActual('@/lib/business-os/bizql/planner/catalogPrompt'),
   renderUserVocabulary: jest.fn(async () => ''),

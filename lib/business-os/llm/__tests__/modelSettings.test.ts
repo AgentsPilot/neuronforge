@@ -65,7 +65,7 @@ import {
   isBosLlmAreaEnabled,
   resolveBosLlmSettings,
 } from '../modelSettings';
-import { BOS_LLM_AREA_KEYS, bosLlmAreaKey } from '../modelSettingsPolicy';
+import { BOS_LLM_AREA_KEYS, bosLlmAreaKey, bosLlmSettingsCallNames } from '../modelSettingsPolicy';
 import { IMAGE_GENERATION_CONFIG_DEFAULTS } from '@/lib/repositories/SystemConfigRepository';
 
 const PRICED = { input: 0.0025, output: 0.01 };
@@ -453,17 +453,35 @@ describe('locks are applied after resolution (T1-8, AC-6, FR-8, DEC-5)', () => {
 
   it('keeps a locked call truthful: it reports enabled even when its area is off (§3.1)', async () => {
     // The chat area switch is enforced at route entry by isBosLlmAreaEnabled,
-    // not through the planner's own flag; and the three website calls whose off
-    // paths ship in Step 3 must not report themselves off before then.
-    mockGetByKeys.mockResolvedValue(rows({ chat: { enabled: false }, website: { enabled: false } }));
+    // not through the planner's own flag — so the planner still reports itself
+    // ON while the AREA reports itself off, and that is the D-27 contract.
+    mockGetByKeys.mockResolvedValue(rows({ chat: { enabled: false } }));
 
     expect((await resolveBosLlmSettings('chat', 'planner')).enabled).toBe(true);
     expect((await resolveBosLlmSettings('chat', 'analysis')).enabled).toBe(false);
     expect(await isBosLlmAreaEnabled('chat')).toBe(false);
+  });
 
-    expect((await resolveBosLlmSettings('website', 'full_site')).enabled).toBe(true);
-    expect((await resolveBosLlmSettings('website', 'field_regenerate')).enabled).toBe(true);
-    expect((await resolveBosLlmSettings('website', 'landing_page')).enabled).toBe(false);
+  /*
+   * The other half of D-27, and the reason S1-7 is closed (Step 3).
+   *
+   * Between Steps 2 and 3 `full_site`, `field_regenerate` and
+   * `testimonial_enhance` reported themselves ON while the website area was
+   * off, because their "AI writing is unavailable" paths did not exist yet and
+   * a call with no off path must not claim to have one. Step 3 shipped those
+   * paths, so switching the website area off must now switch off ALL EIGHT of
+   * its calls — that is what makes the kill switch whole.
+   */
+  it('switches off every website call when the area is off (S1-7 closed)', async () => {
+    mockGetByKeys.mockResolvedValue(rows({ website: { enabled: false } }));
+
+    for (const callName of bosLlmSettingsCallNames('website')) {
+      expect({
+        callName,
+        enabled: (await resolveBosLlmSettings('website', callName as 'full_site')).enabled,
+      }).toEqual({ callName, enabled: false });
+    }
+    expect(await isBosLlmAreaEnabled('website')).toBe(false);
   });
 });
 

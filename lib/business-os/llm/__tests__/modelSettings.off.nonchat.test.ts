@@ -116,6 +116,7 @@ import { BOS_LLM_AREAS, type BosLlmArea } from '../callCatalog';
 import { __resetBosLlmSettingsForTests, resolveBosLlmSettings } from '../modelSettings';
 import { BOS_LLM_CALL_POLICY, bosLlmAreaKey } from '../modelSettingsPolicy';
 import { SEEDED_ROWS } from '../__fixtures__/seededRows';
+import { AI_UNAVAILABLE_WEBSITE_WRITING } from '../aiUnavailableMessages';
 import { __resetModelFallbackForTests } from '../modelFallback';
 
 import { InsightRepository } from '@/lib/business-os/insight/repository/InsightRepository';
@@ -391,45 +392,43 @@ describe('T2-O: website off', () => {
   });
 
   /*
-   * D-27 / RC-W8b: these three have no "AI writing is unavailable" path until
-   * Step 3, so the area switch must NOT reach them. If this test ever fails
-   * because the resolver started reporting them off, Step 2 would be shipping a
-   * half-built off path.
+   * S1-7 / D-27, INVERTED BY STEP 3.
+   *
+   * Between Steps 2 and 3 these three kept running with the area off, because
+   * their "AI writing is unavailable" paths did not exist and a call with no
+   * off path must not claim one. Step 3 shipped those paths and flipped the
+   * policy, so the assertion is now the opposite: with the website area off,
+   * ALL EIGHT website calls are off. If this fails, the kill switch has gone
+   * partial again.
    */
-  it.each(['full_site', 'field_regenerate', 'testimonial_enhance'] as const)(
-    '%s stays ON even with the website area off (locked until Step 3)',
-    async (callName) => {
-      const settings = await resolveBosLlmSettings('website', callName);
-      expect(settings.enabled).toBe(true);
-    }
-  );
-
-  it('the three locked calls still reach the provider with the website area off', async () => {
-    await new WebsiteAIContentService().regenerateField(
-      { blockType: 'hero', targetLanguage: 'en', businessProfile: profile, fieldToRegenerate: 'headline' },
-      owner
-    );
-    await new WebsiteAIContentService().enhanceTestimonial('Great coach', 'en', owner);
-
-    expect(chatCompletion).toHaveBeenCalledTimes(2);
-  });
-
-  it('the switchable website calls DO go off', async () => {
-    for (const callName of ['landing_page', 'hero_content', 'about_content', 'faq_content', 'features_content'] as const) {
+  it('every website call goes off with the area, with none left running', async () => {
+    for (const callName of ['full_site', 'landing_page', 'field_regenerate', 'testimonial_enhance',
+      'hero_content', 'about_content', 'faq_content', 'features_content'] as const) {
       // eslint-disable-next-line no-await-in-loop
       const settings = await resolveBosLlmSettings('website', callName);
       expect({ callName, enabled: settings.enabled }).toEqual({ callName, enabled: false });
     }
   });
+
+  it('the two editor buttons refuse, make no provider call, and change nothing', async () => {
+    const regenerated = await new WebsiteAIContentService().regenerateField(
+      { blockType: 'hero', targetLanguage: 'en', businessProfile: profile, fieldToRegenerate: 'headline' },
+      owner
+    );
+    const enhanced = await new WebsiteAIContentService().enhanceTestimonial('Great coach', 'en', owner);
+
+    expect(regenerated).toEqual({ ok: false, code: 'ai_unavailable' });
+    expect(enhanced).toEqual({ ok: false, code: 'ai_unavailable' });
+    expect(chatCompletion).not.toHaveBeenCalled();
+  });
 });
 
 /**
- * `full_site` off, with the Step 2 lock lifted in the row itself (a call-level
- * `enabled: false` is still ignored while the policy says the call is locked,
- * so this drives the branch through the service's own flag instead).
+ * `full_site` off — switchable since Step 3, so nothing needs lifting.
  *
  * Both callers are exercised: the onboarding build asks for starter copy, and
- * a 'fail' caller (Step 3's shape) gets `ai_unavailable` with nothing written.
+ * a 'fail' caller (generate-from-profile, the chat mutate path) gets
+ * `ai_unavailable` with nothing written.
  */
 describe('T2-O: website full_site — the onAiDisabled branches', () => {
   const callLLM = () =>
@@ -442,26 +441,25 @@ describe('T2-O: website full_site — the onAiDisabled branches', () => {
       ): Promise<{ source: string; reason?: string; disabled?: true }>;
     };
 
-  /** Lift the Step 2 lock for the duration of one test, then put it back. */
+  /**
+   * Step 3 no longer lifts a lock — `full_site` is switchable — so this only
+   * points the resolver at a row with the website area off.
+   */
   async function withFullSiteSwitchable(run: () => Promise<void>): Promise<void> {
-    const entry = BOS_LLM_CALL_POLICY.website.full_site as { switchable: boolean };
-    const original = entry.switchable;
-    entry.switchable = true;
     mockGetByKeys.mockResolvedValue(rowsWithOff('website'));
     __resetBosLlmSettingsForTests();
     try {
       await run();
     } finally {
-      entry.switchable = original;
       __resetBosLlmSettingsForTests();
     }
   }
 
-  it('the Step 2 policy really does lock it (so the lift above is meaningful)', () => {
-    expect(BOS_LLM_CALL_POLICY.website.full_site.switchable).toBe(false);
+  it('the Step 3 policy really does let it be switched off', () => {
+    expect(BOS_LLM_CALL_POLICY.website.full_site.switchable).toBe(true);
   });
 
-  it('with the lock lifted, callLLM reports `disabled` and returns the starter copy', async () => {
+  it('callLLM reports `disabled` and returns the starter copy', async () => {
     await withFullSiteSwitchable(async () => {
       const generated = await callLLM().callLLM(owner, profile, [], false);
 
@@ -493,6 +491,9 @@ describe('T2-O: website full_site — the onAiDisabled branches', () => {
 
       expect(chatCompletion).not.toHaveBeenCalled();
       expect(result).toMatchObject({ success: false, code: 'ai_unavailable' });
+      // F-11 (SA, Step 2): the refusal carries a sentence as well as a code, so
+      // a caller that shows `result.error` no longer shows `undefined`.
+      expect(result.error).toBe(AI_UNAVAILABLE_WEBSITE_WRITING.en);
     });
   });
 });

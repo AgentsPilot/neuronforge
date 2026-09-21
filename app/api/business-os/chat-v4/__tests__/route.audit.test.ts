@@ -28,6 +28,16 @@ jest.mock('@/lib/logger', () => {
 
 jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: {} }));
 jest.mock('@/lib/business-os/userCurrency', () => ({ resolveUserCurrency: async () => 'USD' }));
+/*
+ * Layer 2: the chat area switch is read at route entry (Step 3). Mocked ON so
+ * these audit cases keep testing what they were written to test, and so the
+ * suite makes no real settings read. The off path has its own suite,
+ * `lib/business-os/llm/__tests__/modelSettings.off.chat.test.ts`.
+ */
+jest.mock('@/lib/business-os/llm/modelSettings', () => {
+  const actual = jest.requireActual('@/lib/business-os/llm/modelSettings');
+  return { ...actual, isBosLlmAreaEnabled: async () => true };
+});
 jest.mock('@/lib/business-os/bizql/telemetry/ChatBudget', () => ({
   checkBudget: async () => ({ allowed: true, turnsUsed: 1, turnsLimit: 100, turnsRemaining: 99, warn: false, resetsAt: null }),
 }));
