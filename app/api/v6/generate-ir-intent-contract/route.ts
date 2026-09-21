@@ -15,9 +15,25 @@
  * Returns the same response envelope as Pipeline B (`/api/v6/generate-ir-semantic`)
  * so the V2 UI's existing `mapV6ResponseToAgent` consumer works unchanged.
  * See `docs/v6/V6_PIPELINE_A_MIGRATION.md` for the full contract.
+ *
+ * ── Identity comes from the session; the x-user-id header is ignored ──────
+ * Until 2026-09-21 this route took `userId` from the `x-user-id` request header and
+ * enforced nothing — the comment here said "trust pass-through, no auth enforcement".
+ * That id then drove, all through the service-role `supabaseServer` client: plugin
+ * vocabulary extraction, the user's memory context, their extracted failure patterns and
+ * their stored intent examples — so an anonymous caller who named a victim could read
+ * that user's learned history back out of the response, and spend an LLM call doing it.
+ *
+ * Identity is now `getUser()` only. The header is not read, and clients may keep sending
+ * it (it is inert) — the same decision PR #80 and #82 made for their routes.
+ *
+ * Middleware does not authenticate `/api/*` (middleware.ts:83).
+ *
+ * See docs/workplans/IDENTITY_SWEEP_WORKPLAN.md § Slice 0.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { getUser } from '@/lib/auth'
 import { createLogger } from '@/lib/logger'
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2'
 import { PluginVocabularyExtractor } from '@/lib/agentkit/v6/vocabulary/PluginVocabularyExtractor'
@@ -38,15 +54,25 @@ export async function POST(request: NextRequest) {
   const requestLogger = logger.child({ correlationId })
   const startedAt = Date.now()
 
-  // Mirror Pipeline B's header handling: trust pass-through, no auth enforcement.
-  // The V2 UI sends x-user-id from authenticated client state.
-  const userId = request.headers.get('x-user-id') || ''
+  // `sessionId` / `agentId` are correlation labels, not identity — a caller who lies
+  // about them mislabels their own trace and reaches nothing.
   const sessionId = request.headers.get('x-session-id') || undefined
   const agentId = request.headers.get('x-agent-id') || undefined
 
-  requestLogger.info({ userId, sessionId, agentId }, '[API] /api/v6/generate-ir-intent-contract - POST')
-
   try {
+    // Gate before the body is parsed and before any LLM call. `x-user-id` is NOT read:
+    // it was the vulnerability.
+    const user = await getUser()
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+    const userId = user.id
+
+    requestLogger.info({ userId, sessionId, agentId }, '[API] /api/v6/generate-ir-intent-contract - POST')
+
     const body = await request.json().catch(() => ({}))
     const enhancedPrompt = body?.enhanced_prompt
     const config = body?.config || {}
@@ -54,12 +80,6 @@ export async function POST(request: NextRequest) {
     if (!enhancedPrompt || typeof enhancedPrompt !== 'object') {
       return NextResponse.json(
         { success: false, error: 'enhanced_prompt required in request body' },
-        { status: 400 }
-      )
-    }
-    if (!userId) {
-      return NextResponse.json(
-        { success: false, error: 'x-user-id header required' },
         { status: 400 }
       )
     }
