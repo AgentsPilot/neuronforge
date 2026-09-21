@@ -15,13 +15,28 @@
 //   for the same reason as `AdminUserRepository` (see its header): an admin-only,
 //   cross-tenant surface with no tenant dimension to filter on.
 //
-//   Because scoping cannot protect this table, AUTHORISATION IS THE CALLER'S JOB.
-//   Every caller must already be behind the admin gate `requireAdmin`
-//   (`lib/admin/requireAdminRoute.ts` → AdminAccessService → the `admin_users`
-//   table; never `profiles.role`). Current callers, both gated:
-//     - `app/api/admin/system-config/pricing/route.ts`      (GET/PUT/POST/DELETE)
-//     - `app/api/admin/system-config/pricing/sync/route.ts` (POST)
-//   Do not add a caller that is not behind that gate.
+//   Because scoping cannot protect this table, AUTHORISATION IS THE CALLER'S JOB,
+//   and there are exactly TWO classes of permitted caller (S1-6):
+//
+//   1. THE ADMIN SURFACE — anything that reads the whole table or writes it must
+//      already be behind the admin gate `requireAdmin`
+//      (`lib/admin/requireAdminRoute.ts` → AdminAccessService → the `admin_users`
+//      table; never `profiles.role`):
+//        - `app/api/admin/system-config/pricing/route.ts`      (GET/PUT/POST/DELETE)
+//        - `app/api/admin/system-config/pricing/sync/route.ts` (POST)
+//        - `scripts/**` operator scripts, run by hand with `.env.local`.
+//
+//   2. THE BILLING READER — exactly one, ungated by design:
+//        - `lib/ai/pricing.ts` (`listActive()` only), on the hot path of every
+//          billed LLM call, so it runs inside any user's request. That is safe
+//          and deliberate: the rows are platform-wide price labels with no
+//          tenant dimension and nothing secret, it is READ-only, it takes no
+//          caller-supplied filter, and the prices it returns are never returned
+//          to the browser — only the resulting cost is stored on the caller's
+//          own ledger row. It also caches, so it is not a per-request query.
+//
+//   Do not add a caller outside those two classes. A new bulk read for a screen
+//   belongs in class 1, behind `requireAdmin`.
 //
 //   The `tenant-isolation-guard` ownership pre-check does not apply (there is no
 //   owner column to pre-check). No method here accepts a caller-supplied filter,
@@ -83,6 +98,61 @@ export class AiModelPricingRepository {
     } catch (error) {
       const duration = Date.now() - startTime;
       methodLogger.error({ err: error, duration }, 'Failed to fetch pricing rows');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * The rows the billing reader prices with: not retired, newest first.
+   *
+   * ORDERING IS LOAD-BEARING. The unique constraint is
+   * `(provider, model_name, effective_date)`, so one model may have several
+   * rows; `effective_date DESC` puts the current price first and the caller
+   * keeps the FIRST row it sees per `provider:model`
+   * (`lib/ai/pricing.ts`). Reverse this order and every such model is
+   * silently priced at its oldest rate.
+   *
+   * "Active" means not retired AND already in effect: rows dated in the future
+   * are excluded until their date arrives (S1-5). `created_at DESC` is a
+   * secondary sort, so two rows sharing an `effective_date` still resolve the
+   * same way on every instance.
+   *
+   * An EMPTY result is `{ data: [], error: null }` and means the query
+   * succeeded and matched nothing. Since 2026-09-20 this table is
+   * admin-SELECT-only under RLS, so a non-service-role caller would also get
+   * `[]` — not an error (D-17). Every caller here is service-role and bypasses
+   * RLS; anything reading this from a browser or a user session must go through
+   * an admin-gated API route instead, or it will read "no prices configured"
+   * when the truth is "not allowed".
+   */
+  async listActive(): Promise<RepositoryResult<AiModelPricing[]>> {
+    const methodLogger = this.logger.child({ method: 'listActive' });
+    const startTime = Date.now();
+
+    try {
+      // Today in UTC. A row dated in the future is a price that has been
+      // ENTERED but has not started (S1-5); without this filter, "newest wins"
+      // would begin charging it the moment it was saved.
+      const today = new Date().toISOString().slice(0, 10);
+
+      const { data, error } = await this.supabase
+        .from(TABLE)
+        .select('*')
+        .is('retired_date', null)
+        .lte('effective_date', today)
+        .order('effective_date', { ascending: false })
+        // Secondary sort so the result stays deterministic if the
+        // (provider, model_name, effective_date) uniqueness ever lapses.
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      const duration = Date.now() - startTime;
+      methodLogger.debug({ count: data?.length || 0, duration }, 'Active pricing rows fetched');
+      return { data: (data as AiModelPricing[]) || [], error: null };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      methodLogger.error({ err: error, duration }, 'Failed to fetch active pricing rows');
       return { data: null, error: error as Error };
     }
   }

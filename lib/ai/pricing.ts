@@ -1,31 +1,18 @@
 // lib/ai/pricing.ts
-// Centralized AI model pricing service
-// Fetches pricing from Supabase ai_model_pricing table with in-memory caching
+// Centralized AI model pricing service.
+//
+// Reads the `ai_model_pricing` table through `AiModelPricingRepository`
+// (CLAUDE.md mandatory rule 1 — all DB access goes through the repository
+// layer) and caches it in this module for an hour. Every credit charge in the
+// product is computed from these numbers, so the cache is on the hot path of
+// every billed LLM call: `calculateCostSync` is called from inside the
+// providers' tracking.
 
-import { createClient } from '@supabase/supabase-js';
+import { createLogger } from '@/lib/logger';
+import { aiModelPricingRepository } from '@/lib/repositories/AiModelPricingRepository';
+import type { AiModelPricing } from '@/lib/repositories/types';
 
-/**
- * Database schema for ai_model_pricing table:
- * - id: UUID
- * - provider: string (openai, anthropic, google, kimi)
- * - model_name: string (gpt-4o, claude-3-sonnet, kimi-k2-0905-preview, etc.)
- * - input_cost_per_token: decimal (cost per single token, not per 1000)
- * - output_cost_per_token: decimal (cost per single token, not per 1000)
- * - effective_date: date
- * - retired_date: date (nullable)
- * - created_at: timestamp
- */
-
-interface ModelPricingRow {
-  id: string;
-  provider: string;
-  model_name: string;
-  input_cost_per_token: string; // decimal as string from DB
-  output_cost_per_token: string; // decimal as string from DB
-  effective_date: string;
-  retired_date: string | null;
-  created_at: string;
-}
+const logger = createLogger({ module: 'AiPricing' });
 
 interface PricingInfo {
   input: number;
@@ -114,49 +101,80 @@ const FALLBACK_PRICING = {
 } as const;
 
 /**
- * Load pricing data from Supabase and populate cache
+ * Models that are legitimately priced on INPUT ONLY, so an `output` cost of 0
+ * is correct rather than a mistake (see the embedding rows above: there is no
+ * completion side to charge for).
+ *
+ * Used only to stop the admin screen's zero-price alert from crying wolf on
+ * such a row (D-14, QA D-Q9). It deliberately does NOT change what anything is
+ * charged: `calculateCost`, `calculateCostSync` and `hasPricing` are untouched,
+ * and Business OS Layer 2 keeps its own stricter "> 0 on both sides" rule,
+ * which embeddings never reach because they are excluded from those settings.
+ */
+export function isInputOnlyPricedModel(provider: string, modelName: string): boolean {
+  return provider === 'openai' && modelName.startsWith('text-embedding-');
+}
+
+/**
+ * Load pricing data from the database and populate the cache.
+ *
+ * Never throws: a failure leaves the previous cache in place (or empty, which
+ * makes every lookup fall back to FALLBACK_PRICING below), because a pricing
+ * read must never break a call that is already running.
  */
 async function loadPricingFromDatabase(): Promise<void> {
   try {
-    // Use service role client to query ai_model_pricing table
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const { data, error } = await aiModelPricingRepository.listActive();
 
-    const { data, error } = await supabase
-      .from('ai_model_pricing')
-      .select('*')
-      .is('retired_date', null) // Only get active pricing
-      .order('effective_date', { ascending: false });
-
-    if (error) {
-      console.error('❌ Failed to load pricing from database:', error);
+    if (error || !data) {
+      logger.error({ err: error }, 'Failed to load pricing from the database; keeping the current cache');
       return;
     }
 
-    if (!data || data.length === 0) {
-      console.warn('⚠️ No pricing data found in ai_model_pricing table');
+    if (data.length === 0) {
+      // The query SUCCEEDED and matched nothing. Since 2026-09-20
+      // `ai_model_pricing` is admin-SELECT-only under RLS, so a non-service-role
+      // reader would also land here rather than on an error (D-17). Every reader
+      // today is service-role, so this really does mean "no active rows".
+      logger.warn(
+        { activeRows: 0 },
+        'No active rows in ai_model_pricing; falling back to the in-code price table'
+      );
       return;
     }
 
-    // Clear and repopulate cache
-    pricingCache.clear();
+    // Rows arrive newest-first (`listActive` orders by effective_date DESC).
+    // The unique constraint allows several effective_date rows per model, so
+    // the FIRST row per provider:model is the current price and every later
+    // row is history. The previous implementation overwrote on every row, which
+    // left the OLDEST price in the cache for any model with more than one row —
+    // exactly the duplicates the admin pricing sync used to create.
+    const next = new Map<string, PricingInfo>();
+    let superseded = 0;
 
-    (data as ModelPricingRow[]).forEach((row) => {
+    for (const row of data as AiModelPricing[]) {
       const key = `${row.provider}:${row.model_name}`;
-      // Convert per-token costs from DB (stored as cost per single token)
-      // to per-1000-tokens format for consistency with existing code
-      pricingCache.set(key, {
-        input: parseFloat(row.input_cost_per_token) * 1000,
-        output: parseFloat(row.output_cost_per_token) * 1000,
+      if (next.has(key)) {
+        superseded += 1;
+        continue;
+      }
+      // Stored as cost per single token; the cache holds cost per 1000 tokens.
+      // `numeric` columns come back as strings on some PostgREST paths and as
+      // numbers on others, so both are normalised through Number().
+      next.set(key, {
+        input: Number(row.input_cost_per_token) * 1000,
+        output: Number(row.output_cost_per_token) * 1000,
       });
-    });
+    }
 
+    pricingCache = next;
     cacheLastUpdated = Date.now();
-    console.log(`✅ Loaded ${pricingCache.size} model pricing entries from database`);
+    logger.info(
+      { entries: pricingCache.size, rows: data.length, superseded },
+      'Loaded model pricing from the database'
+    );
   } catch (error) {
-    console.error('❌ Error loading pricing from database:', error);
+    logger.error({ err: error }, 'Error loading pricing from the database');
   }
 }
 
@@ -182,7 +200,7 @@ async function getPricingInternal(provider: string, modelName: string): Promise<
   if (providerFallback) {
     const modelFallback = providerFallback[modelName as keyof typeof providerFallback] as PricingInfo | undefined;
     if (modelFallback) {
-      console.log(`ℹ️ Using fallback pricing for ${provider}/${modelName}`);
+      logger.debug({ provider, model: modelName }, 'Using the in-code fallback price');
       return modelFallback;
     }
   }
@@ -205,12 +223,10 @@ export async function calculateCost(
   inputTokens: number,
   outputTokens: number
 ): Promise<number> {
-  console.log('💰 Calculating cost for:', { provider, modelName, inputTokens, outputTokens });
-
   const pricing = await getPricingInternal(provider, modelName);
 
   if (!pricing) {
-    console.warn(`❌ No pricing found for ${provider}/${modelName}`);
+    logger.warn({ provider, model: modelName }, 'No pricing found; recording $0 for this call');
     return 0;
   }
 
@@ -219,11 +235,10 @@ export async function calculateCost(
   const outputCost = (outputTokens / 1000) * pricing.output;
   const totalCost = inputCost + outputCost;
 
-  console.log('💰 Cost breakdown:', {
-    inputCost: inputCost.toFixed(6),
-    outputCost: outputCost.toFixed(6),
-    totalCost: totalCost.toFixed(6)
-  });
+  logger.debug(
+    { provider, model: modelName, inputTokens, outputTokens, inputCost, outputCost, totalCost },
+    'Calculated call cost'
+  );
 
   return totalCost;
 }
@@ -250,7 +265,7 @@ export function calculateCostSync(
   }
 
   if (!pricing) {
-    console.warn(`❌ No pricing found for ${provider}/${modelName}`);
+    logger.warn({ provider, model: modelName }, 'No pricing found; recording $0 for this call');
     return 0;
   }
 
