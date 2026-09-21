@@ -110,11 +110,20 @@ export async function POST(request: NextRequest) {
       activeEntity
     });
 
-    // 5. Audit log (non-blocking)
-    // Note: Using 'details' instead of 'changes' because 'changes' expects ChangeSet format
+    /*
+     * 5. Audit log (non-blocking)
+     *
+     * `details` rather than `changes`, because `changes` expects a ChangeSet.
+     *
+     * `entityType: 'system'`, not `'chat'`: `'chat'` is not a member of
+     * `EntityType` and never was, so this call had always been a type error —
+     * invisible until Step 3 brought this route into the `typecheck:bos-llm`
+     * scope. `'system'` is what chat-v4 already writes for its own turn and
+     * write entries, so the two chat versions now agree.
+     */
     auditTrail.log({
       action: 'BUSINESS_OS_CHAT_V2',
-      entityType: 'chat',
+      entityType: 'system',
       userId: user.id,
       resourceName: 'business-os-chat-v2',
       details: {
