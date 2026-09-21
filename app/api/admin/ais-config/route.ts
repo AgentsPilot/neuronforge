@@ -30,7 +30,16 @@ export const dynamic = 'force-dynamic';
 
 // GET - Fetch current AIS configuration
 export async function GET() {
+  // No request object on this handler, so the correlation id is generated
+  // rather than propagated.
+  const requestLogger = logger.child({ correlationId: crypto.randomUUID() })
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger)
+    if (gate instanceof NextResponse) return gate
+
     // TODO: Add admin role check here
     // For now, using service role to fetch data (same as reward-config)
 

@@ -357,7 +357,10 @@ export default function V2AgentDetailPage() {
         agentApi.getById(agentId, user.id),
         agentApi.getExecutions(agentId, user.id, { includeTokens: false }),
         systemConfigApi.getByKeys(['tokens_per_pilot_credit', 'agent_sharing_reward_amount']),
-        fetch('/api/admin/reward-config').then(r => r.json()).catch(() => ({ success: false })),
+        // Customer-facing projection, not `/api/admin/reward-config`: that
+        // admin route is gated and returns the full reward ruleset (amounts,
+        // thresholds, anti-abuse caps). This returns a single boolean.
+        fetch('/api/rewards/agent-sharing').then(r => r.json()).catch(() => ({ success: false })),
         fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`).then(r => r.json()).catch(() => ({ success: false, data: [] })),
         fetch(`/api/v2/agents/${agentId}/form-metadata`).then(r => r.json()).catch(() => ({ metadata: [] })),
         fetch('/api/plugins/schema-metadata').then(r => r.json()).catch(() => ({ data: { metadata: {} } })),
@@ -396,13 +399,9 @@ export default function V2AgentDetailPage() {
         }
       }
 
-      // Process reward status
-      if (rewardStatus.success && rewardStatus.rewards) {
-        const shareReward = rewardStatus.rewards.find((r: any) => r.reward_key === 'agent_sharing')
-        setShareRewardActive(shareReward?.is_active ?? false)
-      } else {
-        setShareRewardActive(false)
-      }
+      // Process reward status. Same fallback as before: anything other than an
+      // explicit `true` hides the prompt.
+      setShareRewardActive(rewardStatus?.data?.isActive === true)
 
       // Process insights
       console.log('[AgentPage] Insights result:', insightsResult)

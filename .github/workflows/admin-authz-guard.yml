@@ -86,8 +86,13 @@
 # ── What a green run does and does not mean ────────────────────────────────
 # GREEN means: no NEW ungated admin surface was added, and no exemption was
 # added without someone raising a cap and signing for it in the PR body.
-# GREEN does NOT mean the admin surface is secure. As of 2026-09-20, 27 of 72
-# admin handlers are knowingly open and exempted — see the guard's header.
+#
+# GREEN does NOT mean the admin surface is HARDENED. As of 2026-09-21 all 72
+# admin handlers require an admin and all 21 /admin pages are guarded — but 7
+# handlers still hand-roll their own check instead of calling requireAdmin
+# (slice 4, parked), and most admin routes still use a service-role client
+# directly, bypassing RLS and the repository layer. Gated, not isolated.
+# See docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md § What is NOT true.
 #
 # See docs/workplans/admin-authz-unification.md (slices 1 and 6).
 

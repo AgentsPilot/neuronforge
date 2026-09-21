@@ -402,24 +402,15 @@ export default function AgentPage() {
   }
 
   const fetchShareRewardStatus = async () => {
+    // Reads the customer-facing projection, not `/api/admin/reward-config`.
+    // That admin route is now gated, and it returns the whole reward ruleset —
+    // amounts, eligibility thresholds, anti-abuse caps — which a customer page
+    // has no business receiving. This one returns a single boolean.
     try {
-      const response = await fetch('/api/admin/reward-config')
+      const response = await fetch('/api/rewards/agent-sharing')
       const result = await response.json()
 
-      if (!result.success || !result.rewards) {
-        setShareRewardActive(false)
-        return
-      }
-
-      const shareReward = result.rewards.find((r: any) => r.reward_key === 'agent_sharing')
-
-      if (!shareReward) {
-        setShareRewardActive(false)
-        return
-      }
-
-      const isActive = shareReward.is_active ?? false
-      setShareRewardActive(isActive)
+      setShareRewardActive(result?.data?.isActive === true)
     } catch (error) {
       console.error('Error fetching share reward config:', error)
       setShareRewardActive(false)

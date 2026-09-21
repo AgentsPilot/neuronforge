@@ -1,5 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAdmin } from '@/lib/admin/requireAdminRoute';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'OnboardingUsersAdminAPI' });
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +17,15 @@ const supabase = createClient(
  * Fetch all users with their onboarding status and quotas
  */
 export async function GET(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
     // Get filter from query params
     const { searchParams } = new URL(request.url);
     const filter = searchParams.get('filter') || 'all';

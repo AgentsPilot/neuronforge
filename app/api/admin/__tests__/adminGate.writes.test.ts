@@ -176,9 +176,23 @@ import * as systemLimits from '../system-limits/route';
 import * as uiConfig from '../ui-config/route';
 import * as userEmails from '../user-emails/route';
 
+// ── Slices 2 + 3 (2026-09-21) — the reads ─────────────────────────────────
+import * as adminUsersList from '../users/route';
+import * as userStats from '../users/[id]/stats/route';
+import * as onboardingUsers from '../onboarding-users/route';
+import * as platformUsers from '../settings/platform-users/route';
+import * as tokenUsage from '../token-usage/route';
+import * as tokenUsageDrill from '../token-usage/drill-down/route';
+import * as tokenUsageStats from '../token-usage/stats/route';
+import * as dashboard from '../dashboard/route';
+import * as executionStats from '../execution-stats/route';
+import * as storageStats from '../storage-stats/route';
+import * as adminMessages from '../messages/route';
+
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };
 const CUSTOMER = { id: '22222222-2222-4222-8222-222222222222', email: 'customer@example.com' };
 const MSG_CTX = { params: { id: '99999999-9999-4999-8999-999999999999' } };
+const TARGET_USER = '99999999-9999-4999-8999-999999999999';
 
 const req = (url: string, method: string, body?: unknown) =>
   new NextRequest(`http://localhost${url}`, {
@@ -240,6 +254,50 @@ const CASES: Array<{ name: string; call: () => Promise<Response> }> = [
   // service role. It is a gated handler now, so it is proven here like any
   // other: four denial cases, each asserting nothing was touched.
   { name: 'POST /api/admin/user-emails', call: () => userEmails.POST(req('/api/admin/user-emails', 'POST', { userIds: ['11111111-1111-4111-8111-111111111111'] })) },
+
+  // ── SLICE 2 (2026-09-21) — cross-tenant reads ───────────────────────────
+  // The sensitive set. Until these gates, an ANONYMOUS caller could read every
+  // platform user, any named user's usage, per-user LLM spend, platform-wide
+  // operating metrics and the message log. The "touched nothing" assertion
+  // matters more here than on the writes: the whole harm IS the query running.
+  { name: 'GET /api/admin/users', call: () => adminUsersList.GET(req('/api/admin/users?page=1', 'GET')) },
+  { name: 'HEAD /api/admin/users', call: () => adminUsersList.HEAD() },
+  { name: 'GET /api/admin/users/[id]/stats', call: () => userStats.GET(req(`/api/admin/users/${TARGET_USER}/stats`, 'GET'), { params: Promise.resolve({ id: TARGET_USER }) }) },
+  { name: 'GET /api/admin/onboarding-users', call: () => onboardingUsers.GET(req('/api/admin/onboarding-users?filter=all', 'GET')) },
+  { name: 'GET /api/admin/settings/platform-users', call: () => platformUsers.GET(req('/api/admin/settings/platform-users?search=', 'GET')) },
+  { name: 'GET /api/admin/token-usage', call: () => tokenUsage.GET(req('/api/admin/token-usage', 'GET')) },
+  { name: 'HEAD /api/admin/token-usage', call: () => tokenUsage.HEAD() },
+  { name: 'GET /api/admin/token-usage/drill-down', call: () => tokenUsageDrill.GET(req('/api/admin/token-usage/drill-down?period=30d', 'GET')) },
+  { name: 'GET /api/admin/token-usage/stats', call: () => tokenUsageStats.GET(req('/api/admin/token-usage/stats', 'GET')) },
+  { name: 'GET /api/admin/dashboard', call: () => dashboard.GET(req('/api/admin/dashboard?period=7d', 'GET')) },
+  { name: 'HEAD /api/admin/dashboard', call: () => dashboard.HEAD() },
+  { name: 'GET /api/admin/execution-stats', call: () => executionStats.GET() },
+  { name: 'GET /api/admin/storage-stats', call: () => storageStats.GET() },
+  { name: 'GET /api/admin/messages', call: () => adminMessages.GET(req('/api/admin/messages?page=1', 'GET')) },
+
+  // ── SLICE 2 (2026-09-21) — internal-config reads ────────────────────────
+  // Lower blast radius than the cross-tenant set — internal tuning, not
+  // customer data — but anonymous all the same. Their write verbs were gated
+  // in slice 1; this closes the read side of the SAME files.
+  { name: 'GET /api/admin/agent-generation-config', call: () => agentGenerationConfig.GET() },
+  { name: 'GET /api/admin/ais-config', call: () => aisConfig.GET() },
+  { name: 'GET /api/admin/backfill-embeddings', call: () => backfillEmbeddings.GET() },
+  { name: 'GET /api/admin/helpbot-config', call: () => helpbotConfig.GET() },
+  { name: 'GET /api/admin/memory-config', call: () => memoryConfig.GET() },
+  { name: 'GET /api/admin/memory-consolidation', call: () => memoryConsolidation.GET() },
+  { name: 'GET /api/admin/onboarding-config', call: () => onboardingConfig.GET() },
+  { name: 'GET /api/admin/orchestration-config', call: () => orchestrationConfig.GET() },
+  { name: 'GET /api/admin/ui-config', call: () => uiConfig.GET() },
+
+  // ── SLICE 3 (2026-09-21) — catalogue reads ──────────────────────────────
+  // `reward-config` GET is the one that had LIVE CUSTOMER CALLERS. Its gate
+  // and the replacement projection (`GET /api/rewards/agent-sharing`) ship in
+  // the same commit, so no customer screen is stranded. The other three were
+  // confirmed to have only admin-page callers.
+  { name: 'GET /api/admin/reward-config', call: () => rewardConfig.GET(req('/api/admin/reward-config', 'GET')) },
+  { name: 'GET /api/admin/boost-packs', call: () => boostPacks.GET(req('/api/admin/boost-packs', 'GET')) },
+  { name: 'GET /api/admin/execution-tiers', call: () => executionTiers.GET() },
+  { name: 'GET /api/admin/storage-tiers', call: () => storageTiers.GET() },
 ];
 
 beforeEach(() => {
@@ -254,10 +312,14 @@ describe('slice 1 — anonymous writes and destructive actions are refused', () 
     // A route quietly dropped from this list is a route nobody proved. The
     // count is asserted so deleting a case is a visible, deliberate act.
     //
-    // 30 from slice 1, + 1 for `user-emails#POST`, gated ahead of slice 2 on
-    // fix/admin-user-emails-gate because slice 2 is parked and the route
-    // handed platform email addresses to anonymous callers.
-    expect(CASES).toHaveLength(31);
+    // 30 from slice 1
+    //  + 1  `user-emails#POST`, gated ahead of slice 2 on its own branch
+    //  + 23 slice 2 (14 cross-tenant reads incl. 3 HEAD probes, 9 internal-config GETs)
+    //  + 4  slice 3 catalogue GETs
+    //  = 58, which is every admin handler now on the canonical gate EXCEPT the
+    // 3 category-A system-config routes (covered by their own suites) and the 7
+    // correct-but-inline copies (slice 4, still parked).
+    expect(CASES).toHaveLength(58);
   });
 
   describe.each(CASES)('$name', ({ call }) => {

@@ -100,6 +100,35 @@ export class ConfigRepository {
   }
 
   /**
+   * Is a reward currently active? Returns the boolean and NOTHING else.
+   *
+   * Deliberately narrower than `getRewardConfig`, which also returns
+   * `credits_amount`. This backs the customer-facing read at
+   * `GET /api/rewards/agent-sharing`, and the point is that the eligibility
+   * ruleset — amounts, thresholds, anti-abuse caps — never enters the route's
+   * memory at all, rather than entering it and being trimmed on the way out.
+   * A projection you have to remember to apply is one you can forget.
+   *
+   * Fails CLOSED: any error is `false`, so a database problem hides the reward
+   * rather than advertising one that may not exist.
+   */
+  async isRewardActive(rewardKey: string): Promise<boolean> {
+    try {
+      const { data, error } = await this.supabase
+        .from('reward_config')
+        .select('is_active')
+        .eq('reward_key', rewardKey)
+        .maybeSingle();
+
+      if (error) throw error;
+      return data?.is_active === true;
+    } catch (error) {
+      this.logger.error({ err: error, rewardKey }, 'Reward active-check failed; treating as inactive');
+      return false;
+    }
+  }
+
+  /**
    * Get reward credits amount for a specific reward type
    */
   async getRewardAmount(rewardKey: string, defaultAmount: number = 0): Promise<number> {
