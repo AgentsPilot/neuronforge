@@ -21,6 +21,8 @@ import {
   type BosLlmCallName,
   type BosLlmOwner,
 } from '@/lib/business-os/llm/callCatalog';
+import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
+import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
 import {
   OnboardingConfigurationService,
   onboardingConfigurationService,
@@ -1060,16 +1062,24 @@ export class OnboardingConversationManager {
   private async extractBusinessStory(message: string, owner: BosLlmOwner): Promise<BusinessStoryExtraction> {
     const factory = getProviderFactory();
     const context = this.callContext(owner, 'business_story_extraction');
+    /*
+     * Onboarding cannot be switched off (DEC-5, user BQ-1), so `enabled` is
+     * always true here; only the model comes from configuration (FR-12). The
+     * temperature is sent ONLY if one is resolved — these four have always sent
+     * none, and the area row seeds `null` to keep it that way (FR-4).
+     */
+    const settings = await resolveBosLlmSettings('onboarding', 'business_story_extraction');
 
     try {
-      const response = await factory.complete({
-        model: 'gpt-4o',
+      const { result: response } = await withModelFallback(settings, (model) => factory.complete({
+        model,
         messages: [
           { role: 'system', content: BUSINESS_STORY_SYSTEM_PROMPT },
           { role: 'user', content: message },
         ],
         response_format: { type: 'json_object' },
-      }, context);
+        ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+      }, context));
 
       const extracted = JSON.parse(response.content);
       logger.debug({ extracted }, 'Extracted business story'); // derived owner text: debug only (OI-8)
@@ -1106,16 +1116,24 @@ export class OnboardingConversationManager {
   private async extractClientWorkflow(message: string, owner: BosLlmOwner): Promise<ClientWorkflowExtraction> {
     const factory = getProviderFactory();
     const context = this.callContext(owner, 'client_workflow_extraction');
+    /*
+     * Onboarding cannot be switched off (DEC-5, user BQ-1), so `enabled` is
+     * always true here; only the model comes from configuration (FR-12). The
+     * temperature is sent ONLY if one is resolved — these four have always sent
+     * none, and the area row seeds `null` to keep it that way (FR-4).
+     */
+    const settings = await resolveBosLlmSettings('onboarding', 'client_workflow_extraction');
 
     try {
-      const response = await factory.complete({
-        model: 'gpt-4o',
+      const { result: response } = await withModelFallback(settings, (model) => factory.complete({
+        model,
         messages: [
           { role: 'system', content: CLIENT_WORKFLOW_SYSTEM_PROMPT },
           { role: 'user', content: message },
         ],
         response_format: { type: 'json_object' },
-      }, context);
+        ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+      }, context));
 
       const extracted = JSON.parse(response.content);
       logger.debug({ extracted }, 'Extracted client workflow'); // derived owner text: debug only (OI-8)
@@ -1214,16 +1232,24 @@ export class OnboardingConversationManager {
   private async extractClientTracking(message: string, owner: BosLlmOwner): Promise<ClientTrackingExtraction> {
     const factory = getProviderFactory();
     const context = this.callContext(owner, 'client_tracking_extraction');
+    /*
+     * Onboarding cannot be switched off (DEC-5, user BQ-1), so `enabled` is
+     * always true here; only the model comes from configuration (FR-12). The
+     * temperature is sent ONLY if one is resolved — these four have always sent
+     * none, and the area row seeds `null` to keep it that way (FR-4).
+     */
+    const settings = await resolveBosLlmSettings('onboarding', 'client_tracking_extraction');
 
     try {
-      const response = await factory.complete({
-        model: 'gpt-4o',
+      const { result: response } = await withModelFallback(settings, (model) => factory.complete({
+        model,
         messages: [
           { role: 'system', content: CLIENT_TRACKING_SYSTEM_PROMPT },
           { role: 'user', content: message },
         ],
         response_format: { type: 'json_object' },
-      }, context);
+        ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+      }, context));
 
       const extracted = JSON.parse(response.content);
       logger.debug({ extracted }, 'Extracted client tracking'); // derived owner text: debug only (OI-8)
@@ -1531,16 +1557,24 @@ export class OnboardingConversationManager {
   ): Promise<{ intent: string; details: string }> {
     const factory = getProviderFactory();
     const context = this.callContext(owner, 'adjustment_intent_extraction');
+    /*
+     * Onboarding cannot be switched off (DEC-5, user BQ-1), so `enabled` is
+     * always true here; only the model comes from configuration (FR-12). The
+     * temperature is sent ONLY if one is resolved — these four have always sent
+     * none, and the area row seeds `null` to keep it that way (FR-4).
+     */
+    const settings = await resolveBosLlmSettings('onboarding', 'adjustment_intent_extraction');
 
     try {
-      const response = await factory.complete({
-        model: 'gpt-4o',
+      const { result: response } = await withModelFallback(settings, (model) => factory.complete({
+        model,
         messages: [
           { role: 'system', content: PREVIEW_ADJUSTMENT_PROMPT },
           { role: 'user', content: message },
         ],
         response_format: { type: 'json_object' },
-      }, context);
+        ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+      }, context));
 
       const extracted = JSON.parse(response.content);
       return extracted;

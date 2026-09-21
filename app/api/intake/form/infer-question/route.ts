@@ -30,6 +30,8 @@ import { createLogger } from '@/lib/logger';
 import { getProviderFactory } from '@/lib/ai/providerFactory';
 import { buildBosCallContext, newBosGroupId, type BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
 import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
+import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
+import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { INTAKE_QUESTION_TYPES, isIntakeQuestionType } from '@/lib/business-os/intake/types';
 import { stripForbiddenQuestions } from '@/lib/business-os/intake/verticalKnowledge';
@@ -130,9 +132,19 @@ async function infer(
     required: false,
   };
 
+  // Model, temperature and the on/off switch come from the intake area row
+  // (Layer 2 FR-12). Off gives the owner their own note as a free-text
+  // question — a usable question, which is what a model failure already does.
+  const settings = await resolveBosLlmSettings('intake', 'question_inference');
+  if (!settings.enabled) {
+    logger.info({ reason: 'disabled' }, 'Question inference AI is switched off; using the note as written');
+    return fallback;
+  }
+
   try {
-    const response = await getProviderFactory().complete({
-      model: 'gpt-4o-mini',
+    // Built inside the attempt, so a retry carries the model that ran (FR-11).
+    const { result: response } = await withModelFallback(settings, (model) => getProviderFactory().complete({
+      model,
       messages: [
         {
           role: 'system',
@@ -161,13 +173,13 @@ Only mark it required if the business plainly cannot proceed without it.
         },
       ],
       response_format: { type: 'json_object' },
-      temperature: 0.2,
+      ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
     }, buildBosCallContext({
       userId: owner.userId,
       area: 'intake',
       callName: 'question_inference',
       groupId: owner.groupId,
-    }));
+    })));
 
     const parsed = InferredSchema.safeParse(JSON.parse(response.content));
     if (!parsed.success) return fallback;

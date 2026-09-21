@@ -25,6 +25,8 @@ import { createLogger } from '@/lib/logger';
  */
 import { getProviderFactory } from '@/lib/ai/providerFactory';
 import { buildBosCallContext, type BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
+import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
+import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
 
 const logger = createLogger({ service: 'WebsiteAIContentService' });
 
@@ -312,20 +314,29 @@ export class WebsiteAIContentService {
       languageNames[targetLanguage]
     );
 
-    const response = await provider.complete({
-      model: 'gpt-4o-mini',
+    /*
+     * Model and temperature come from the website area row (Layer 2 FR-12).
+     * `field_regenerate` is `switchable: false` in the Step 2 policy, so
+     * `enabled` is always true here: its "AI writing is unavailable" path ships
+     * in Step 3, and a call with no off path must not resolve to off (RC-W8b,
+     * D-27). Built inside the attempt so a retry carries the model that ran.
+     */
+    const settings = await resolveBosLlmSettings('website', 'field_regenerate');
+
+    const { result: response } = await withModelFallback(settings, (model) => provider.complete({
+      model,
       messages: [
         { role: 'system', content: 'You are a professional website copywriter. Generate concise, engaging content.' },
         { role: 'user', content: prompt }
       ],
-      temperature: 0.7,
+      ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
       max_tokens: 300
     }, buildBosCallContext({
       userId: owner.userId,
       area: 'website',
       callName: 'field_regenerate',
       groupId: owner.groupId,
-    }));
+    })));
 
     return response.content.trim();
   }
@@ -357,20 +368,24 @@ Original testimonial:
 
 Enhanced testimonial (just the text, no quotes):`;
 
-    const response = await provider.complete({
-      model: 'gpt-4o-mini',
+    // Also `switchable: false` until Step 3 (RC-W8b, D-27): model and
+    // temperature only.
+    const settings = await resolveBosLlmSettings('website', 'testimonial_enhance');
+
+    const { result: response } = await withModelFallback(settings, (model) => provider.complete({
+      model,
       messages: [
         { role: 'system', content: 'You are a professional editor who polishes customer testimonials.' },
         { role: 'user', content: prompt }
       ],
-      temperature: 0.5,
+      ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
       max_tokens: 200
     }, buildBosCallContext({
       userId: owner.userId,
       area: 'website',
       callName: 'testimonial_enhance',
       groupId: owner.groupId,
-    }));
+    })));
 
     return response.content.trim();
   }
@@ -396,18 +411,27 @@ Generate a JSON object with:
 
 Return ONLY valid JSON, no markdown.`;
 
+    // Model, temperature and the on/off switch come from the website area row
+    // (Layer 2 FR-12). Off is the per-block template below, which is what a
+    // model failure already produces.
+    const settings = await resolveBosLlmSettings('website', 'hero_content');
+    if (!settings.enabled) {
+      logger.info({ block: 'hero', reason: 'disabled' }, 'Block content AI is switched off; using the template');
+      return this.heroFallback(profile, language);
+    }
+
     try {
-      const response = await provider.complete({
-        model: 'gpt-4o-mini',
+      const { result: response } = await withModelFallback(settings, (model) => provider.complete({
+        model,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.7,
+        ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
         max_tokens: 200
       }, buildBosCallContext({
         userId: owner.userId,
         area: 'website',
         callName: 'hero_content',
         groupId: owner.groupId,
-      }));
+      })));
 
       const parsed = JSON.parse(response.content.trim());
       return {
@@ -417,14 +441,18 @@ Return ONLY valid JSON, no markdown.`;
         cta_link: '#contact'
       };
     } catch {
-      // Fallback content
-      const fallbacks: Record<WebsiteLanguage, Record<string, string>> = {
-        en: { headline: `Welcome to ${profile.company_name || 'Our Services'}`, subheadline: 'Professional services tailored to your needs', cta_text: 'Get Started' },
-        es: { headline: `Bienvenido a ${profile.company_name || 'Nuestros Servicios'}`, subheadline: 'Servicios profesionales adaptados a tus necesidades', cta_text: 'Comenzar' },
-        he: { headline: `ברוכים הבאים ל${profile.company_name || 'השירותים שלנו'}`, subheadline: 'שירותים מקצועיים המותאמים לצרכים שלך', cta_text: 'להתחיל' }
-      };
-      return { ...fallbacks[language], cta_link: '#contact' };
+      return this.heroFallback(profile, language);
     }
+  }
+
+  /** The hero template. One copy, used by the off path and by a model failure. */
+  private heroFallback(profile: BusinessProfileData, language: WebsiteLanguage): Record<string, unknown> {
+    const fallbacks: Record<WebsiteLanguage, Record<string, string>> = {
+      en: { headline: `Welcome to ${profile.company_name || 'Our Services'}`, subheadline: 'Professional services tailored to your needs', cta_text: 'Get Started' },
+      es: { headline: `Bienvenido a ${profile.company_name || 'Nuestros Servicios'}`, subheadline: 'Servicios profesionales adaptados a tus necesidades', cta_text: 'Comenzar' },
+      he: { headline: `ברוכים הבאים ל${profile.company_name || 'השירותים שלנו'}`, subheadline: 'שירותים מקצועיים המותאמים לצרכים שלך', cta_text: 'להתחיל' }
+    };
+    return { ...fallbacks[language], cta_link: '#contact' };
   }
 
   private async generateAboutContent(
@@ -445,28 +473,39 @@ Generate a JSON object with:
 
 Return ONLY valid JSON, no markdown.`;
 
+    const settings = await resolveBosLlmSettings('website', 'about_content');
+    if (!settings.enabled) {
+      logger.info({ block: 'about', reason: 'disabled' }, 'Block content AI is switched off; using the template');
+      return this.aboutFallback(profile, language);
+    }
+
     try {
-      const response = await provider.complete({
-        model: 'gpt-4o-mini',
+      const { result: response } = await withModelFallback(settings, (model) => provider.complete({
+        model,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.7,
+        ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
         max_tokens: 300
       }, buildBosCallContext({
         userId: owner.userId,
         area: 'website',
         callName: 'about_content',
         groupId: owner.groupId,
-      }));
+      })));
 
       return JSON.parse(response.content.trim());
     } catch {
-      const fallbacks: Record<WebsiteLanguage, Record<string, string>> = {
-        en: { title: `About ${profile.company_name || 'Us'}`, about_text: 'We are dedicated to providing excellent service and helping our clients achieve their goals.' },
-        es: { title: `Sobre ${profile.company_name || 'Nosotros'}`, about_text: 'Nos dedicamos a brindar un servicio excelente y ayudar a nuestros clientes a alcanzar sus metas.' },
-        he: { title: `אודות ${profile.company_name || 'אותנו'}`, about_text: 'אנו מחויבים לספק שירות מעולה ולעזור ללקוחותינו להשיג את המטרות שלהם.' }
-      };
-      return fallbacks[language];
+      return this.aboutFallback(profile, language);
     }
+  }
+
+  /** The about template. One copy, used by the off path and by a model failure. */
+  private aboutFallback(profile: BusinessProfileData, language: WebsiteLanguage): Record<string, unknown> {
+    const fallbacks: Record<WebsiteLanguage, Record<string, string>> = {
+      en: { title: `About ${profile.company_name || 'Us'}`, about_text: 'We are dedicated to providing excellent service and helping our clients achieve their goals.' },
+      es: { title: `Sobre ${profile.company_name || 'Nosotros'}`, about_text: 'Nos dedicamos a brindar un servicio excelente y ayudar a nuestros clientes a alcanzar sus metas.' },
+      he: { title: `אודות ${profile.company_name || 'אותנו'}`, about_text: 'אנו מחויבים לספק שירות מעולה ולעזור ללקוחותינו להשיג את המטרות שלהם.' }
+    };
+    return fallbacks[language];
   }
 
   private generateServicesContent(
@@ -583,22 +622,34 @@ Generate a JSON object with:
 
 Return ONLY valid JSON, no markdown.`;
 
+    const settings = await resolveBosLlmSettings('website', 'faq_content');
+    if (!settings.enabled) {
+      logger.info({ block: 'faq', reason: 'disabled' }, 'Block content AI is switched off; using the template');
+      return this.faqFallback(language);
+    }
+
     try {
-      const response = await provider.complete({
-        model: 'gpt-4o-mini',
+      const { result: response } = await withModelFallback(settings, (model) => provider.complete({
+        model,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.7,
+        ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
         max_tokens: 600
       }, buildBosCallContext({
         userId: owner.userId,
         area: 'website',
         callName: 'faq_content',
         groupId: owner.groupId,
-      }));
+      })));
 
       return JSON.parse(response.content.trim());
     } catch {
-      const fallbacks: Record<WebsiteLanguage, { title: string; items: Array<{ question: string; answer: string }> }> = {
+      return this.faqFallback(language);
+    }
+  }
+
+  /** The FAQ template. One copy, used by the off path and by a model failure. */
+  private faqFallback(language: WebsiteLanguage): Record<string, unknown> {
+    const fallbacks: Record<WebsiteLanguage, { title: string; items: Array<{ question: string; answer: string }> }> = {
         en: {
           title: 'Frequently Asked Questions',
           items: [
@@ -618,11 +669,10 @@ Return ONLY valid JSON, no markdown.`;
           items: [
             { question: 'איך אני קובע פגישה?', answer: 'פשוט לחץ על כפתור ההזמנה ובחר זמן שנוח לך.' },
             { question: 'מהן אפשרויות התשלום?', answer: 'אנו מקבלים את כל כרטיסי האשראי הגדולים ומציעים תוכניות תשלום.' }
-          ]
-        }
-      };
-      return fallbacks[language];
-    }
+        ]
+      }
+    };
+    return fallbacks[language];
   }
 
   private async generateFeaturesContent(
@@ -645,22 +695,34 @@ Generate a JSON object with:
 
 Return ONLY valid JSON, no markdown.`;
 
+    const settings = await resolveBosLlmSettings('website', 'features_content');
+    if (!settings.enabled) {
+      logger.info({ block: 'features', reason: 'disabled' }, 'Block content AI is switched off; using the template');
+      return this.featuresFallback(language);
+    }
+
     try {
-      const response = await provider.complete({
-        model: 'gpt-4o-mini',
+      const { result: response } = await withModelFallback(settings, (model) => provider.complete({
+        model,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.7,
+        ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
         max_tokens: 500
       }, buildBosCallContext({
         userId: owner.userId,
         area: 'website',
         callName: 'features_content',
         groupId: owner.groupId,
-      }));
+      })));
 
       return JSON.parse(response.content.trim());
     } catch {
-      const fallbacks: Record<WebsiteLanguage, Record<string, unknown>> = {
+      return this.featuresFallback(language);
+    }
+  }
+
+  /** The features template. One copy, used by the off path and by a model failure. */
+  private featuresFallback(language: WebsiteLanguage): Record<string, unknown> {
+    const fallbacks: Record<WebsiteLanguage, Record<string, unknown>> = {
         en: {
           title: 'Why Choose Us',
           subtitle: 'What sets us apart',
@@ -689,8 +751,7 @@ Return ONLY valid JSON, no markdown.`;
           ]
         }
       };
-      return fallbacks[language];
-    }
+    return fallbacks[language];
   }
 
   private generateStatsContent(language: WebsiteLanguage): Record<string, unknown> {

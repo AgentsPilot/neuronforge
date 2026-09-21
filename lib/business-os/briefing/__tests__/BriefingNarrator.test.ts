@@ -1,6 +1,20 @@
 import { findUnsupportedFigures, findUntranslatedWords, composeFallback } from '../BriefingNarrator';
 import type { BriefingFacts } from '../BriefingFactsService';
 
+/*
+ * Layer 2 (Step 2): the call sites take their model, temperature and on/off
+ * switch from `resolveBosLlmSettings`. Pinned to the CODE DEFAULTS — today's
+ * values — so this file keeps asserting exactly what it asserted before, with
+ * no configuration read and no I/O.
+ */
+jest.mock('@/lib/business-os/llm/modelSettings', () => {
+  const actual = jest.requireActual('@/lib/business-os/llm/modelSettings');
+  return {
+    ...actual,
+    resolveBosLlmSettings: async (area: string, callName: string) => actual.bosLlmCodeDefaults(area, callName),
+  };
+});
+
 jest.mock('@/lib/logger', () => ({
   createLogger: () => ({ warn: jest.fn(), info: jest.fn(), error: jest.fn(), debug: jest.fn() }),
 }));

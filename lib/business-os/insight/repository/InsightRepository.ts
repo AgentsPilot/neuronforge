@@ -17,6 +17,8 @@ import type { BusinessEventCategory } from '../events/types';
 import type { CorrelatedInsight, CorrelationSummary } from '../correlation/types';
 import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
 import { buildBosCallContext } from '@/lib/business-os/llm/callCatalog';
+import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
+import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
 import { getVerticalConfig, buildTerminologyInstruction, getVerticalDescriptor } from '../vertical-config';
 
 const logger = createLogger({ service: 'InsightRepository' });
@@ -616,6 +618,22 @@ export class InsightRepository {
     runId: string
   ): Promise<{ title: string; description: string; recommendation: string }> {
     try {
+      // Model, temperature and the on/off switch come from the insights area
+      // row (Layer 2 FR-12). Off means the translated templates below, which
+      // is what an LLM failure has always fallen back to.
+      const settings = await resolveBosLlmSettings('insights', 'insight_content');
+      if (!settings.enabled) {
+        logger.info(
+          { detectorId: detection.detectorId, language: businessContext.language, reason: 'disabled' },
+          'Insight content AI is switched off; using the templates'
+        );
+        return {
+          title: this.generateTitle(detection, businessContext.language, businessContext.currency),
+          description: this.generateDescription(detection, businessContext.language, businessContext.currency),
+          recommendation: this.generateRecommendation(detection, businessContext.language, businessContext.currency),
+        };
+      }
+
       const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
 
       const languageNames: Record<string, string> = {
@@ -721,20 +739,24 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
   "recommendation": "1 clear, actionable sentence that a busy solo owner can act on today"
 }`;
 
-      const response = await provider.chatCompletion(
-        {
-          messages: [{ role: 'user' as const, content: prompt }],
-          model: 'gpt-4o-mini',
-          temperature: 0.3,
-          max_tokens: 300,
-        },
-        // Recorded against the business analysed, grouped by the detection run.
-        buildBosCallContext({
-          userId,
-          area: 'insights',
-          callName: 'insight_content',
-          groupId: runId,
-        })
+      // The request is built INSIDE the attempt, so a retry on the code
+      // default carries the model that actually ran (FR-11, RC-W4).
+      const { result: response } = await withModelFallback(settings, (model) =>
+        provider.chatCompletion(
+          {
+            messages: [{ role: 'user' as const, content: prompt }],
+            model,
+            ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+            max_tokens: 300,
+          },
+          // Recorded against the business analysed, grouped by the detection run.
+          buildBosCallContext({
+            userId,
+            area: 'insights',
+            callName: 'insight_content',
+            groupId: runId,
+          })
+        )
       );
 
       const content = response.choices[0]?.message?.content?.trim() || '';
@@ -1671,6 +1693,16 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     runId: string
   ): Promise<{ story: string; title: string; recommendation: string }> {
     try {
+      const settings = await resolveBosLlmSettings('insights', 'correlated_insight');
+      if (!settings.enabled) {
+        logger.info({ reason: 'disabled' }, 'Correlated insight AI is switched off; using the templates');
+        return this.generateCorrelatedContentFallback(
+          correlatedInsight,
+          businessContext.language,
+          businessContext.currency
+        );
+      }
+
       const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
 
       const languageNames: Record<string, string> = {
@@ -1736,19 +1768,21 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
   "recommendation": "1-2 clear, actionable sentences with prioritized steps"
 }`;
 
-      const response = await provider.chatCompletion(
-        {
-          messages: [{ role: 'user' as const, content: prompt }],
-          model: 'gpt-4o-mini',
-          temperature: 0.4,
-          max_tokens: 400,
-        },
-        buildBosCallContext({
-          userId,
-          area: 'insights',
-          callName: 'correlated_insight',
-          groupId: runId,
-        })
+      const { result: response } = await withModelFallback(settings, (model) =>
+        provider.chatCompletion(
+          {
+            messages: [{ role: 'user' as const, content: prompt }],
+            model,
+            ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+            max_tokens: 400,
+          },
+          buildBosCallContext({
+            userId,
+            area: 'insights',
+            callName: 'correlated_insight',
+            groupId: runId,
+          })
+        )
       );
 
       const content = response.choices[0]?.message?.content?.trim() || '';
@@ -2054,6 +2088,18 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     priorities: Array<{ rank: number; category: string; title: string; insight_id?: string }>;
   }> {
     try {
+      const settings = await resolveBosLlmSettings('insights', 'health_summary');
+      if (!settings.enabled) {
+        logger.info({ reason: 'disabled' }, 'Health summary AI is switched off; using the templates');
+        return this.generateHealthNarrativeFallback(
+          healthScore,
+          scoreChange,
+          categoryScores,
+          correlationSummary,
+          language
+        );
+      }
+
       const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
 
       const langName = language === 'he' ? 'Hebrew' : 'English';
@@ -2124,19 +2170,21 @@ Generate in ${langName}. Respond with ONLY a JSON object:
   ]
 }`;
 
-      const response = await provider.chatCompletion(
-        {
-          messages: [{ role: 'user' as const, content: prompt }],
-          model: 'gpt-4o-mini',
-          temperature: 0.5,
-          max_tokens: 800,
-        },
-        buildBosCallContext({
-          userId,
-          area: 'insights',
-          callName: 'health_summary',
-          groupId: runId,
-        })
+      const { result: response } = await withModelFallback(settings, (model) =>
+        provider.chatCompletion(
+          {
+            messages: [{ role: 'user' as const, content: prompt }],
+            model,
+            ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+            max_tokens: 800,
+          },
+          buildBosCallContext({
+            userId,
+            area: 'insights',
+            callName: 'health_summary',
+            groupId: runId,
+          })
+        )
       );
 
       const content = response.choices[0]?.message?.content?.trim() || '';

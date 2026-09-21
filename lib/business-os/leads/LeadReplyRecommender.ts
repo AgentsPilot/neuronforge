@@ -28,7 +28,8 @@ import { z } from 'zod';
 import { createLogger } from '@/lib/logger';
 import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
 import { buildBosCallContext } from '@/lib/business-os/llm/callCatalog';
-import { systemConfigRepository } from '@/lib/repositories/SystemConfigRepository';
+import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
+import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
 import {
   candidatesForPrompt,
   pickFallbackCandidate,
@@ -37,9 +38,12 @@ import {
 
 const logger = createLogger({ service: 'LeadReplyRecommender' });
 
-/** Config keys. A kill switch and a model, neither hardcoded. */
-const ENABLED_KEY = 'lead_reply_recommender_enabled';
-const MODEL_KEY = 'lead_reply_recommender_model';
+/*
+ * The kill switch and the model now live in the `leads` area row, read through
+ * `resolveBosLlmSettings` (Layer 2 FR-12). The old single-purpose keys
+ * `lead_reply_recommender_enabled` / `_model` were copied into that row by the
+ * seed migration and are marked superseded; nothing reads them any more.
+ */
 
 export interface LeadReplyRecommendation {
   candidate: LeadReplyCandidate;
@@ -92,24 +96,25 @@ export async function recommendLeadReply(
   }
 
   try {
-    const enabled = await systemConfigRepository.getBoolean(ENABLED_KEY, true);
-    if (!enabled) return fallback('disabled');
+    const settings = await resolveBosLlmSettings('leads', 'reply_recommendation');
+    if (!settings.enabled) return fallback('disabled');
 
-    const model = await systemConfigRepository.getString(MODEL_KEY, 'gpt-4o-mini');
     const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
 
-    const response = await provider.chatCompletion(
-      {
-        model,
-        temperature: 0.2,
-        max_tokens: 200,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: systemPrompt(input.language) },
-          { role: 'user', content: userPrompt(candidates, input) },
-        ],
-      },
-      buildBosCallContext({ userId, area: 'leads', callName: 'reply_recommendation', groupId })
+    const { result: response } = await withModelFallback(settings, (model) =>
+      provider.chatCompletion(
+        {
+          model,
+          ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+          max_tokens: 200,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: systemPrompt(input.language) },
+            { role: 'user', content: userPrompt(candidates, input) },
+          ],
+        },
+        buildBosCallContext({ userId, area: 'leads', callName: 'reply_recommendation', groupId })
+      )
     );
 
     const raw = response?.content;

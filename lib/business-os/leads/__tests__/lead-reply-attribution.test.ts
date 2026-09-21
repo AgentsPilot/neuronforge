@@ -60,12 +60,33 @@ jest.mock('@/lib/business-os/leads/leadReplyCandidates', () => ({
 jest.mock('@/lib/business-os/insight/events/BusinessEventService', () => ({
   businessEventService: { emit: jest.fn(async () => undefined), record: jest.fn(async () => undefined) },
 }));
-jest.mock('@/lib/repositories/SystemConfigRepository', () => ({
-  systemConfigRepository: {
-    getBoolean: jest.fn(async (_key: string, fallback: boolean) => fallback),
-    getString: jest.fn(async (_key: string, fallback: string) => fallback),
-  },
-}));
+// Spread the real module: the Layer 2 policy reads
+// `IMAGE_GENERATION_CONFIG_DEFAULTS` from it at import time.
+jest.mock('@/lib/repositories/SystemConfigRepository', () => {
+  const actual = jest.requireActual('@/lib/repositories/SystemConfigRepository');
+  return {
+    ...actual,
+    systemConfigRepository: {
+      ...actual.systemConfigRepository,
+      getBoolean: jest.fn(async (_key: string, fallback: boolean) => fallback),
+      getString: jest.fn(async (_key: string, fallback: string) => fallback),
+      getByKeys: jest.fn(async () => ({ data: [], error: null })),
+    },
+  };
+});
+
+/*
+ * Layer 2: the recommender takes its model, temperature and switch from the
+ * resolver. Pinned to the CODE DEFAULTS here — today's values — so this file
+ * goes on asserting attribution and nothing else, with no configuration read.
+ */
+jest.mock('@/lib/business-os/llm/modelSettings', () => {
+  const actual = jest.requireActual('@/lib/business-os/llm/modelSettings');
+  return {
+    ...actual,
+    resolveBosLlmSettings: async (area: string, callName: string) => actual.bosLlmCodeDefaults(area, callName),
+  };
+});
 jest.mock('@/lib/business-os/leads/LeadReplyRecommender', () => ({
   recommendLeadReply: jest.fn(async () => null),
 }));

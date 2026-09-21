@@ -10,6 +10,8 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
 import { buildBosCallContext, newBosGroupId } from '@/lib/business-os/llm/callCatalog';
 import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
+import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
+import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'LandingPageGenerateAPI' });
@@ -111,9 +113,25 @@ export async function POST(request: NextRequest) {
     const generatedContent = await runAiAction(
       { area: 'website', actionType: 'website_landing_page', groupId, trigger: 'user', accountId: user.id, correlationId },
       async (h): Promise<Record<string, unknown>> => {
-        const response = await provider.chatCompletion(
+        /*
+         * Model, temperature and the on/off switch come from the website area
+         * row (Layer 2 FR-12). Off returns the same default content a parse
+         * failure already returns — and because no LLM call is made, the action
+         * writes no audit entry (Layer 3 FR-7), which is correct: nothing ran.
+         */
+        const settings = await resolveBosLlmSettings('website', 'landing_page');
+        if (!settings.enabled) {
+          requestLogger.info(
+            { userId: user.id, reason: 'disabled' },
+            'Landing page AI is switched off; using the default content'
+          );
+          return getDefaultContent(validated);
+        }
+
+        // Built inside the attempt so a retry carries the model that ran (FR-11).
+        const { result: response } = await withModelFallback(settings, (model) => provider.chatCompletion(
           {
-            model: 'gpt-4o',
+            model,
             messages: [
               {
                 role: 'system',
@@ -124,7 +142,7 @@ export async function POST(request: NextRequest) {
                 content: prompt
               }
             ],
-            temperature: 0.7,
+            ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
             response_format: { type: 'json_object' }
           },
           buildBosCallContext({
@@ -134,7 +152,7 @@ export async function POST(request: NextRequest) {
             groupId,
             correlationId,
           })
-        );
+        ));
 
         // Parse the generated content
         try {
