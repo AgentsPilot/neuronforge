@@ -98,6 +98,21 @@ describe('GET /api/llm/context', () => {
     expect(res.headers.get('Cache-Control')).toBe('private, no-store');
   });
 
+  it('marks the error responses private too', async () => {
+    // A cached 401 replayed to the next caller is as wrong as a cached 200.
+    getUser.mockResolvedValue(null);
+    const unauthorised = await GET(req());
+    expect(unauthorised.status).toBe(401);
+    expect(unauthorised.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(unauthorised.headers.get('Vary')).toBe('Cookie');
+
+    getUser.mockResolvedValue(SESSION_USER);
+    const badRequest = await GET(req('?userId='));
+    expect(badRequest.status).toBe(400);
+    expect(badRequest.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(badRequest.headers.get('Vary')).toBe('Cookie');
+  });
+
   it('does not leak internals in a production 500 body', async () => {
     const original = process.env.NODE_ENV;
     (process.env as Record<string, string>).NODE_ENV = 'production';

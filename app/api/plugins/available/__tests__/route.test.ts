@@ -184,6 +184,21 @@ describe('GET /api/plugins/available', () => {
     expect(res.headers.get('Vary')).toBe('Cookie');
   });
 
+  it('marks the error responses private too', async () => {
+    // A cached 401 replayed to the next caller is as wrong as a cached 200.
+    getUser.mockResolvedValue(null);
+    const unauthorised = await GET(req());
+    expect(unauthorised.status).toBe(401);
+    expect(unauthorised.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(unauthorised.headers.get('Vary')).toBe('Cookie');
+
+    getUser.mockResolvedValue(USER);
+    const badRequest = await GET(req('?includeBusinessOs=maybe'));
+    expect(badRequest.status).toBe(400);
+    expect(badRequest.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(badRequest.headers.get('Vary')).toBe('Cookie');
+  });
+
   it('does not leak internals in a production 500 body', async () => {
     const original = process.env.NODE_ENV;
     // NODE_ENV is readonly in the Next types; the route reads it at call time.

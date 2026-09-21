@@ -7,6 +7,8 @@ import { EnhancedPromptRequestPayload } from '@/components/agent-creation/types'
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics'
 import { AnthropicProvider, ANTHROPIC_MODELS } from '@/lib/ai/providers/anthropicProvider'
 
+import { getUser } from '@/lib/auth'
+
 // Import PluginManagerV2 for enhanced plugin management
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2'
 import { IPluginContext, PluginDefinitionContext } from '@/lib/types/plugin-definition-context'
@@ -31,9 +33,15 @@ const aiAnalytics = new AIAnalyticsService(supabase, {
 
 export async function POST(req: NextRequest) {
   try {
-    const { 
-      prompt, 
-      userId, 
+    // Authenticate. Identity is server-derived only — any client-supplied userId /
+    // x-user-id is ignored, so a caller can't enumerate another user's plugins.
+    const user = await getUser();
+    if (!user) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const {
+      prompt,
       clarificationAnswers,
       connectedPlugins,
       connectedPluginsData,      
@@ -54,8 +62,7 @@ export async function POST(req: NextRequest) {
     const extractIdFromRequest = (id: string | undefined, headerName: string, def?: string | ''): string => {
       return id || req.headers.get(headerName) || (def !== undefined ? def : uuidv4());
     }
-    // Get user ID from request headers if not in body (fallback method)
-    const userIdToUse = extractIdFromRequest(userId,'x-user-id','anonymous');
+    const userIdToUse = user.id;
 
     // Use provided IDs instead of generating new ones - with proper UUID format
     const sessionId = extractIdFromRequest(providedSessionId,'x-session-id');
@@ -94,7 +101,7 @@ export async function POST(req: NextRequest) {
       connectedPluginsMetaData = connectedPluginsData || [];      
     } else {            
       const pluginManager = await PluginManagerV2.getInstance();
-      const userConnectedPlugins = await pluginManager.getUserActionablePlugins(userId);
+      const userConnectedPlugins = await pluginManager.getUserActionablePlugins(userIdToUse);
       connectedPluginKeys = Object.keys(userConnectedPlugins);
       connectedPluginsMetaData = pluginManager.getPluginsDefinitionContext(connectedPluginKeys).map(p => p.toShortLLMContext());      
     }     

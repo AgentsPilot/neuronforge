@@ -1,8 +1,12 @@
 /**
- * GET /api/plugins/action-schema — read-only, unauthenticated, metadata-only endpoint
- * (SA decision Q1). Covers: happy path (plugin + single action, and all-actions),
- * invalid query (400 Zod), unknown plugin (404), unknown action (404).
+ * GET /api/plugins/action-schema — read-only, metadata-only endpoint (SA decision Q1),
+ * gated to signed-in callers by F12. Covers: 401 when signed out, happy path (plugin +
+ * single action, and all-actions), invalid query (400 Zod), unknown plugin (404),
+ * unknown action (404).
  */
+
+const getUser = jest.fn();
+jest.mock('@/lib/auth', () => ({ getUser: () => getUser() }));
 
 const getPluginDefinition = jest.fn();
 const getActionDefinition = jest.fn();
@@ -43,7 +47,25 @@ function makeRequest(qs = '') {
 }
 
 describe('GET /api/plugins/action-schema', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    getUser.mockResolvedValue({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'op@example.com' });
+  });
+
+  // F12 — this route exposes a superset of the registry that GET /api/plugins/execute
+  // does, so leaving it anonymous kept the enumeration path open.
+  it('returns 401 when signed out, and never reads the registry', async () => {
+    getUser.mockResolvedValue(null);
+    const res = await GET(makeRequest('?plugin=google-drive'));
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ success: false, error: 'Unauthorized' });
+    expect(getPluginDefinition).not.toHaveBeenCalled();
+    expect(getActionDefinition).not.toHaveBeenCalled();
+    // QA-2 — the denial is session-dependent, so no shared cache may replay it.
+    expect(res.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(res.headers.get('Vary')).toBe('Cookie');
+  });
 
   it('returns 400 when plugin is missing (Zod)', async () => {
     const res = await GET(makeRequest());

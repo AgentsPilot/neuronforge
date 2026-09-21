@@ -201,7 +201,7 @@ describe('no plugin route serialises a secret', () => {
     assertNoSecrets(await (await userStatusGET(get('/api/plugins/user-status'))).json());
   });
 
-  it('GET /api/plugins/action-schema (intentionally unauthenticated, metadata only)', async () => {
+  it('GET /api/plugins/action-schema (metadata only)', async () => {
     assertNoSecrets(await (await actionSchemaGET(get('/api/plugins/action-schema?plugin=google-mail'))).json());
   });
 
