@@ -20,6 +20,7 @@
     "lint:hooks": "eslint app lib components hooks --no-config-lookup --no-inline-config --config eslint.hooks.config.mjs --max-warnings 0",
     "schema:check": "tsx scripts/schema-check.ts",
     "typecheck:bos-llm": "tsx scripts/typecheck-bos-llm.ts",
+    "check:bos-llm-literals": "tsx scripts/check-bos-llm-literals.ts",
     "bos:llm-settings": "tsx --import ./scripts/env-preload.ts scripts/bos-llm-settings.ts",
     "backfill:intensity": "tsx scripts/backfill-agent-intensity.ts",
     "backfill:intensity:history": "tsx scripts/backfill-intensity-from-history.ts",
