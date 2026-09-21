@@ -21,6 +21,12 @@ const QuerySchema = z.object({
 });
 
 /**
+ * Every response here is per-session, the failures included: a shared cache that stored
+ * a 401 (or a 400 keyed without the cookie) would replay it to the next caller.
+ */
+const NO_STORE_HEADERS = { 'Cache-Control': 'private, no-store', Vary: 'Cookie' };
+
+/**
  * GET /api/llm/context
  *
  * Returns the caller's plugin context (connected + available) for LLM prompting.
@@ -37,7 +43,10 @@ export async function GET(request: NextRequest) {
     // 1. Authenticate
     const user = await getUser();
     if (!user) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401, headers: NO_STORE_HEADERS }
+      );
     }
 
     // 2. Validate input
@@ -51,7 +60,7 @@ export async function GET(request: NextRequest) {
           error: 'Invalid query parameters',
           details: process.env.NODE_ENV === 'development' ? parsed.error.flatten() : undefined,
         },
-        { status: 400 }
+        { status: 400, headers: NO_STORE_HEADERS }
       );
     }
 
@@ -93,7 +102,7 @@ export async function GET(request: NextRequest) {
         },
         generated_at: new Date().toISOString(),
       },
-      { headers: { 'Cache-Control': 'private, no-store', Vary: 'Cookie' } }
+      { headers: NO_STORE_HEADERS }
     );
   } catch (error) {
     requestLogger.error({ err: error }, 'Error generating LLM context');

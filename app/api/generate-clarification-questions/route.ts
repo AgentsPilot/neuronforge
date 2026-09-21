@@ -5,6 +5,8 @@ import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics'
 import { AnthropicProvider, ANTHROPIC_MODELS } from '@/lib/ai/providers/anthropicProvider'
 import { PromptRequestPayload, PromptResponsePayload, ClarificationQuestionRequestPayload, ClarificationQuestion } from '@/components/agent-creation/types'
 
+import { getUser } from '@/lib/auth'
+
 // Import PluginManagerV2 for enhanced plugin management
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2'
 import { PluginDefinitionContext } from '@/lib/types/plugin-definition-context'
@@ -112,14 +114,21 @@ export async function POST(request: NextRequest) {
   const isDevEnv = process.env.NODE_ENV === 'development';
   
   try {
+    // Authenticate. Identity is server-derived only — any client-supplied userId /
+    // x-user-id is ignored, so a caller can't enumerate another user's plugins.
+    const user = await getUser();
+    if (!user) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+    const userIdToUse = user.id;
+
     const body = await request.json() as ClarificationQuestionRequestPayload;
-    const { 
-      prompt, 
-      agentName, 
-      description, 
+    const {
+      prompt,
+      agentName,
+      description,
       connectedPlugins,
       connectedPluginsData,
-      userId,
       sessionId: providedSessionId,
       agentId: providedAgentId,
       analysis
@@ -155,9 +164,9 @@ export async function POST(request: NextRequest) {
     } else if (connectedPlugins && typeof connectedPlugins === 'object' && connectedPlugins.length > 0) {
       connectedPluginKeys = connectedPlugins;
       if (isDevEnv) console.log('🆔 CLARIFICATION API - Load plugins from connectedPlugins:', connectedPluginKeys);
-    } else if (userId) {      
+    } else {
       const pluginManager = await PluginManagerV2.getInstance();
-      const userConnectedPlugins = await pluginManager.getUserActionablePlugins(userId);
+      const userConnectedPlugins = await pluginManager.getUserActionablePlugins(userIdToUse);
       connectedPluginKeys = Object.keys(userConnectedPlugins);  
       if (isDevEnv) console.log('🆔 CLARIFICATION API - Load plugins from User Actionable Plugins:', connectedPluginKeys);    
     }     
@@ -193,7 +202,7 @@ export async function POST(request: NextRequest) {
         max_tokens: 1500
       },
       {
-        userId: userId,
+        userId: userIdToUse,
         sessionId: sessionId,
         feature: 'clarification_questions',
         component: 'clarification-api',
@@ -236,7 +245,7 @@ export async function POST(request: NextRequest) {
     // Log analytics
     try {
       await supabase.from('clarification_analytics').insert([{
-        userId,
+        userId: userIdToUse,
         prompt: promptAnalyzer.getPrompt(),
         agentName,
         description,
@@ -257,7 +266,7 @@ export async function POST(request: NextRequest) {
     // Build response payload
     const response: PromptResponsePayload = {
       prompt: promptAnalyzer.getPrompt(),
-      userId: userId,
+      userId: userIdToUse,
       sessionId: sessionId,
       agentId: agentId,
       connectedPlugins: connectedPluginKeys,

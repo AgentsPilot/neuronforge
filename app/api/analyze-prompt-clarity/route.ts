@@ -8,6 +8,7 @@ import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2'
 import { PluginDefinitionContext, IPluginContext } from '@/lib/types/plugin-definition-context'
 
 // Import PromptAnalyzer and PromptLoader for prompt analysis
+import { getUser } from '@/lib/auth'
 import { PromptAnalyzer, PromptAnalyzerSchedulingQuestion } from '@/app/api/types/PromptAnalyzer'
 import { PromptLoader, } from '@/app/api/types/PromptLoader'
 //const aiAgentPromptTemplate = "analyze-prompt-clarity.txt";
@@ -271,20 +272,29 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    // Step 0: Authenticate. Identity is server-derived only — any client-supplied
+    // userId / x-user-id is ignored so a caller can't read another user's plugins.
+    const user = await getUser();
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
     // Step 1: Parse request body with enhanced error handling
     const requestBody = await getRequestBody(request);    
 
     // FIXED: Extract agent ID from request body or headers
     const { 
       prompt, 
-      userId, 
       connectedPlugins = [], 
       sessionId: providedSessionId, 
       agentId: providedAgentId, // FIXED: Extract agent ID from request body
       bypassPluginValidation = false 
     } = requestBody as PromptRequestPayload;
     
-    const userIdToUse = userId || request.headers.get('x-user-id') || 'anonymous'
+    const userIdToUse = user.id
 
     // FIXED: Use provided agent ID instead of generating new one
     const sessionId = providedSessionId && isValidUUID(providedSessionId) 
@@ -439,7 +449,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           error: 'Claude API connection failed',
-          details: fetchError.message,
+          details: isDevEnv ? fetchError.message : undefined,
           ...fallbackWithAnalysis,
           connectedPlugins : connectedPluginsKeys,
           // SECURITY: project, never serialise the raw context — it aliases the
@@ -578,7 +588,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       { 
         error: 'Unexpected server error',
-        details: error.message,
+        details: isDevEnv ? error.message : undefined,
         stack: isDevEnv ? error.stack : undefined,
         ...createFallbackResponse(new PromptAnalyzer('')),
         connectedPluginData: []
