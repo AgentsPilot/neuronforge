@@ -1,6 +1,6 @@
 # Workplan: Business OS Subscription & Entitlements Module
 
-> **Last Updated**: 2026-09-21
+> **Last Updated**: 2026-09-22
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md), committed on this branch (`df5cc116`), including B-13 to B-15, FR-43 to FR-45, AC-36/AC-37, the pending items P-1/P-2, and §21 SA Review with WC-1 to WC-22.
@@ -921,7 +921,7 @@ Component boundaries are §4.0. Each component is one PR, reviewed by SA → QA 
 - [ ] **S1-T3** `config/tierMatrix.ts` (**empty**), `config/cohorts.ts` (`{ all: true }`, histories, explicit values, `clockStartsAt`), `config/lifecycle.ts` (overlay, send-policy defaults, **the seeded intake-request send id per R2-4**, empty overrides, subscription grace history), `config/launch.ts`. Fixture `exampleTierMatrix.ts` + `fixtureSource.ts`.
 - [ ] **S1-T4** `config/chatActionMap.ts` + `readRule` + `capabilitiesForPlan` (item counts).
 - [ ] **S1-T5** `source.ts`: lazy `CodeTierMatrixSource`, injectable source.
-- [ ] **S1-T14** CI: `SCOPED_DIRS` + header comments (no renames), `test:bos-entitlements` script, `bos-entitlements.yml`. **F-1 (binding):** the script's path list **must include `supabase/migrations/__tests__`**. That suite is the only CI check on M-1 and M-2 (the backfill staying out of the DDL transaction, and the reset never deleting an override row), and no other workflow runs it — component 1 shipped it, but nothing runs it until this task lands.
+- [ ] **S1-T14** CI: `SCOPED_DIRS` + header comments (no renames), `test:bos-entitlements` script, `bos-entitlements.yml`. **F-1 (binding, confirmed by QA as Q-12):** the script's path list **must include `supabase/migrations/__tests__` *and* `lib/repositories/__tests__`**. That suite is the only CI check on M-1 and M-2 (the backfill staying out of the DDL transaction, and the reset never deleting an override row), and no other workflow runs it — component 1 shipped it, but nothing runs it until this task lands.
 
 **Component 3 — resolver and the three-step contract**
 - [ ] **S1-T6** `lifecycle.ts` (RC-11 + **A-1 expired-tier fallback**), `resolver.ts` (`{ all: true }`, S-7 histories), `decide.ts` (**A-2 three-step contract**), `balance.ts` (**A-2 seam + `ALWAYS_SUFFICIENT`**), all pure with an injected clock.
@@ -934,6 +934,11 @@ Component boundaries are §4.0. Each component is one PR, reviewed by SA → QA 
 
 **Component 5 — admin ops + docs**
 - [ ] **S1-T12** `accounts/[accountId]` GET + POST union (`ensure_plan_row` with explicit cohort per R2-2, `set_cohort`, `set_expiry` incl. `tier_expires_at`, `assign_tier` with the required `expiresAt` key per A-1, `add_override`, `end_override`, **`reset_plan_state`** per A-3, `would_leave_no_basis` per R2-3) and the **`launch` route with `dryRun`** (R2-1). **`requireAdmin` first, and no `AdminAccessService` import** (guard R1/R2). Audit events in `lib/audit/events.ts`.
+- [ ] **S1-T12a** *(binding, from QA's component 1 review)* Route-level obligations the repository layer cannot own:
+  - **Q-13:** the Zod schema for every op that names a cohort or tier uses `z.enum` built from config — the repository now rejects a blank cohort as a backstop, but the route is where an *unknown* value must be refused.
+  - **Q-6:** `set_expiry` returns **409** when the matching assignment is absent (`tier_expires_at` with no tier, `cohort_expires_at` with no cohort), so the CHECK constraint is never how an admin hears about it. `updatePlan` now clears a paired expiry automatically, so `assign_tier { tier: null }` is safe, but the route still tests the pairing.
+  - **Q-15:** the pre-check for `plan_row_missing` (409) must run before any write, because `updatePlan` returns `{ data: null, error: null }` for "no row matched" — indistinguishable from success at the call site. A route test covers it.
+  - **Q-10:** add each new admin route to the `ALLOWED` list in `lib/repositories/__tests__/businessOsEntitlements.imports.guard.test.ts`. That edit is the reviewable moment where someone states who may write entitlement state.
 - [ ] **S1-T16** `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md`. A CLAUDE.md Key Documentation row needs TL/user approval.
 
 **Across components**
@@ -962,8 +967,8 @@ Component boundaries are §4.0. Each component is one PR, reviewed by SA → QA 
 
 | File | Action |
 |---|---|
-| `supabase/migrations/20260921_business_os_entitlements.sql` | create — schema, RLS, revokes, 4 functions, 2 triggers |
-| `supabase/migrations/20260921b_business_os_entitlements_backfill.sql` | create — the backfill, separate transaction (M-1) |
+| `supabase/migrations/20261005_business_os_entitlements.sql` | create — schema, RLS, revokes + service_role grants, 4 functions, 2 triggers. **Renamed from `20260921` (QA Q-9)** so it sorts after `20261004`, the highest migration already applied. |
+| `supabase/migrations/20261005b_business_os_entitlements_backfill.sql` | create — the backfill + fact heal, separate transaction (M-1, Q-5) |
 | `scripts/verify-bos-entitlements-migration.sql` | create — 20 database-side checks (M-6) |
 | `supabase/migrations/__tests__/business-os-entitlements.migration.test.ts` | create — file-level guard, runs in CI |
 | `lib/repositories/BusinessOsAccountPlanRepository.ts` | create |
@@ -992,9 +997,59 @@ Component boundaries are §4.0. Each component is one PR, reviewed by SA → QA 
 |---|---|
 | `jest` over the four new suites + `descriptors.invariant` + `businessOwnedTables`, **after the F-2/F-3/F-4 fixes** | **6 suites, 97 tests, all passing** (was 56 + 58 before; F-4 added one) |
 | `jest` over `admin-authz-surface.guard` | **74 passed**, no new exemption |
-| `tsc --noEmit` over the whole project, filtered to the new/changed files | **0 diagnostics** |
+| ~~`tsc --noEmit` over the whole project, filtered to the new/changed files~~ | ❌ **This claim was wrong — see §4.18 (QA Q-7).** The command aborted with two `TS2688` errors and produced no file diagnostics at all. Superseded by the numbers in §4.18. |
 | `eslint --config eslint.hooks.config.mjs` over the new/changed files | **clean** |
 | **The migration against a database** | ❌ **not run — no database available to this environment.** There is no local Postgres, no Supabase CLI and no Docker here, and the only credentials present are production, which is out of bounds. The SQL has been reviewed statement by statement and its file-level properties are asserted by the guard test, but **`scripts/verify-bos-entitlements-migration.sql` has never been executed**. It must be run on a Supabase branch database before this migration is applied anywhere. |
+
+### 4.18 QA findings fixed (2026-09-22) — component 1, still uncommitted
+
+Against the QA report in §14 (`3544622f`). Everything below is in the working tree; the migrations were **renamed**, so QA's §14.6 commands need `20261005` / `20261005b` in place of `20260921` / `20260921b`.
+
+| # | What changed |
+|---|---|
+| **Q-1** (High) | The shadow RPC now **aggregates before inserting** — `GROUP BY … , 6` with `SUM`/`MAX` and a `FILTER`ed `array_agg` for the sample id — so a payload carrying the same key twice is folded instead of raising `21000` and losing the batch. The `ON CONFLICT` arithmetic is unchanged, so a *second call* still sums onto the stored row. B8 now proves three things: duplicate keys folded within one call (5 / 6 / 9), a second call summing onto them (9 / 8 / 9, with a NULL sample not overwriting a stored one), and two different surfaces staying two rows. The repository comment claiming a caller-side de-duplication that does not exist is replaced by what is actually true: the RPC folds duplicates, so a caller may send them. A guard test asserts the `GROUP BY` cannot be removed. |
+| **Q-2** (Medium) | The reset's **repair branch now recovers the facts** with the `COALESCE` sub-selects from §4.3, so a repaired account has a derivable trial clock. The root cause was mine: the M-1 guard regex was file-wide, so it forbade a parent-table read inside a *function body* — which never runs under the migration's trigger locks. The guard now strips `$$ … $$` bodies before the M-1 assertions (`stripFunctionBodies`), keeps a targeted assertion that a backfill-shaped `INSERT … SELECT` cannot return to the top level, and adds a **meta-assertion** that the stripping is not hiding everything (the un-stripped text must still contain the reads). B7 asserts the recovered fact equals the first message and that no profile fact is invented. **For SA at re-review: this narrows a guard that SA approved as written.** |
+| **Q-3** (Medium) | The verification script no longer proves the backfill against an empty set. A new **C0** makes a synthetic pre-existing tenant (history written, plan row deleted), runs a copy of the backfill statement over it, and asserts an open-ended champion with facts taken from history — then re-runs it to show it is inert. **C3** fails if no backfilled row exists at all. C1 now **excludes the probe accounts**, which removes the hidden dependency on B7 having repaired tenant2. The C0 statement is a copy of the migration's, marked "keep in step". |
+| **Q-4** (Medium) | The migration now **states the grant** (`GRANT SELECT, INSERT, UPDATE … TO service_role`) instead of inheriting it from whichever role applies the DDL, and a new **A10** asserts `service_role` can read/write all three tables and execute both callable functions. DELETE is deliberately not granted: nothing in this module deletes a plan row or an override. |
+| **Q-5** (Medium) | Fixed as well as documented. The backfill now **heals NULL facts** for rows it skipped, filling each from the tenant's own history, guarded by `EXISTS` clauses so it touches nothing when the fact is legitimately absent — which keeps a re-run inert (the property the runbook fingerprints). It heals facts only: never a cohort, tier or pin, so it cannot restart a trial. §8 step 1 now carries the **RM ordering requirement** (apply both back to back) and points at the window query. The cohort of a gap row is still the launch operation's job at switch-on. |
+| **Q-8** (Low) | A9 now matches on `tgrelid`, `tgtype` (AFTER / INSERT / ROW) and `tgfoid`, so a trigger of the right name on the wrong table fails. The CHECK assertions compare `pg_get_constraintdef` against the expression each constraint claims to enforce, so `CHECK (true)` under the same name fails. The guard test asserts the full `CREATE TRIGGER … ON … EXECUTE FUNCTION` binding. The `expect(builder.delete).toBeUndefined()` stub assertion is replaced: the stub now **defines** `delete`, and the test asserts it was never called. |
+| **Q-7** (Note) | Fixed (`as unknown as`), and — more importantly — **my typecheck method was wrong**. See "How the typecheck is run" below. |
+| **Q-9** (Note) | Both migrations renamed to `20261005` / `20261005b`. Every in-repo reference updated. |
+| **Q-10** (Note) | Added `lib/repositories/__tests__/businessOsEntitlements.imports.guard.test.ts`: a **symbol-level** scan of `app/`, `lib/`, `components/`, `hooks/`, `scripts/` with an **empty** allowed-referrer set beyond the repositories, the barrel and their tests. Symbol-level rather than path-level because a barrel import names no file. Component 5 adds its routes to `ALLOWED` (S1-T12a). |
+| **Q-11** (Note) | Both repository headers now say what is true: per-account paths are `user_id`-scoped, and the two account-wide reads (`findEntitlementInputsBatch`, `pagePlans`, `findWindow`) are deliberate report/cron reads whose ids come from server context. |
+| **Q-13 / Q-6 / Q-15** | Repository-level hardening now, route contract recorded as **S1-T12a** (binding on component 5). `ensurePlanRow` refuses a blank cohort before touching the database; `updatePlan` clears a paired expiry when its assignment is cleared, so the CHECK cannot surface as a 500; `updatePlan` logs a `warn` when no row matched, so "no such account" is at least observable. |
+| **Q-12 / F-1** | Restated in S1-T14: the component 2 CI job must run **both** `supabase/migrations/__tests__` and `lib/repositories/__tests__`. |
+| **Q-14** (Note) | No change: function ownership is a deployment property, not a file property. The runbook already records `proowner` (§14.6 step 3b). |
+
+**How the typecheck is run (correcting §4.17)**
+
+QA was right, and the reason matters for anyone else working in a worktree. `node_modules` lives in the **main checkout**, not in the worktree, so `tsc -p tsconfig.json` from here fails to resolve `types: ["jest","node"]`, emits two `TS2688` errors and **stops before producing any file diagnostics** — which is why I reported "0 diagnostics" over a check that had examined nothing. The working command is:
+
+```bash
+NODE_OPTIONS="--max-old-space-size=8192" \
+  node ../../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json \
+  --typeRoots "<repo-root>/node_modules/@types"
+```
+
+(The heap flag is needed: the default limit aborts the run with exit 134 on this project.)
+
+| Measurement | Value |
+|---|---|
+| `TS2688` errors (the degradation QA identified) | **0** — the program now type-checks for real |
+| Total project diagnostics | **2,030** — the known pre-existing baseline (`next.config.js` ignores build errors) |
+| Diagnostics in the component 1 files | **0** |
+| Proof the check covers my files | The same run reports errors in three other `lib/repositories/*.ts` files and six under `supabase/`, so the directories are in the program and would have reported mine. |
+
+**Tests after the fixes**
+
+| Run | Result |
+|---|---|
+| `jest lib/repositories/__tests__ supabase/migrations/__tests__ lib/business-os/purge/__tests__ lib/business-os/__tests__/businessOwnedTables lib/admin/__tests__` | **35 suites, 462 tests, all passing** |
+| Component 1's own five suites within that | **74 tests** (was 97 across six suites before the entitlement tests were split out from the purge/ownership ones; the component now adds 8 tests for Q-6/Q-8/Q-13/Q-15 and the import guard) |
+| `admin-authz-surface.guard` | passing, **no new exemption** |
+| Hooks ESLint over the touch set | clean; **0 `console.*`** |
+
+**Still needs a database** (unchanged, and now with more to prove): everything in §14.5's BLOCKED list, plus the four checks these fixes added — B8's three-part arithmetic, B7's recovered facts, A10's `service_role` privileges, and C0/C3's non-vacuous backfill proof. **`scripts/verify-bos-entitlements-migration.sql` has still never been executed.**
 
 ---
 
@@ -1046,7 +1101,7 @@ Component boundaries are §4.0. Each component is one PR, reviewed by SA → QA 
 
 | Step | Env | `BOS_ENTITLEMENTS_MODE` | Gate / action |
 |---|---|---|---|
-| 1. Slice 1 merged, **component by component** | all | `off` (default) | Per component (§4.0): Dev → SA ✅ → QA ✅ → **user reviews the code** → RM commits (§1.4). After component 1 lands, RM/user applies the migration, which **backfills all existing tenants as open-ended champions**. |
+| 1. Slice 1 merged, **component by component** | all | `off` (default) | Per component (§4.0): Dev → SA ✅ → QA ✅ → **user reviews the code** → RM commits (§1.4). After component 1 lands, RM/user applies the migrations, which **backfill all existing tenants as open-ended champions**. **Apply `20261005` and `20261005b` back to back, in that order (QA Q-5)** — the triggers are live from the first COMMIT, so a pre-existing tenant who writes in the gap gets a `trial` row the backfill then skips. The gap is minutes if they are applied together. Afterwards run the window query (§14.6 step 5b) and record the count; the backfill's heal step fills any missing fact, and the launch operation fixes the cohort at switch-on. |
 | 2. Verify provisioning | prod | `off` | Report: missing plan rows = 0. Open-ended champion count = pre-existing tenant count. DB logs show 0 trigger WARNINGs. |
 | 3. Shadow on | preview → prod | `shadow` | Env change + redeploy. `shadow.ts` error rate 0. No chat-v4 latency change. |
 | 4. Usage review | prod | `shadow` | About one week or more. The user designs tiers from observed usage (`allowed` included) and `readRule` comparisons. S1-T15 sizes the trial allowance. |
@@ -1880,3 +1935,4 @@ _RM to populate._
 | 2026-09-21 | SA code review of component 1: APPROVED, cleared for QA (SA) | Added §13.3. Final approval of the migration SQL deferred from §13.2. Verified M-1 to M-6 in the files (no parent-table scan under the trigger locks, backfill in its own transaction, reset with no DELETE that ends overrides and rewrites in place keeping created_at and the facts, both expiry CHECKs, blank-cohort refusal, `updated_at` written by every writer, verification script extended). Ran the suites: 96 tests across the migration guard, both repositories, `getFirstMessageAt`, the purge invariants and `businessOwnedTables`, plus `test:authz-guard` (74) and `lint:hooks` — all green; purge baseline 121 → 124. Standards, tenant isolation, RLS/revokes and DEFINER hardening all pass. Four non-blocking fixes: F-1 add `supabase/migrations/__tests__` to the component 2 CI script (binding, or the guard never runs in CI), F-2 comment/behaviour mismatch on the batch limit, F-3 reason comments on the `any` test stubs, F-4 optional upsert for `ensurePlanRow`. The migration has NOT been run against any database; §13.3 lists the seven steps QA must run on a branch database. |
 | 2026-09-21 | Component 1: SA review fixes applied (Dev) | F-2 corrected the batch-method comment (the code was right). F-3 gave each test builder stub the rule 6 reason for its `any`. F-4 made `ensurePlanRow` race-safe with `upsert(..., { ignoreDuplicates: true })` plus a read-back, so a racing provisioning trigger reports `created: false` instead of a 500 — contract unchanged, one new test. F-1 recorded as a binding component 2 task (the migration guard must be in the `test:bos-entitlements` path list, or nothing runs it in CI). Added S1-T11a: the report's no-end-date list must flag accounts with no business profile, so the pre-enforcement trim of onboarding-only champions is deliberate. Code remains uncommitted for QA. |
 | 2026-09-21 | QA of component 1: PASS WITH FINDINGS, database phase BLOCKED (QA) | Added §14. Ran independently: the six component-1 suites (97 tests), the whole `lib/repositories/__tests__` folder (263) as a regression on the barrel change, the admin-authz guard + purge suites (132), `lint:hooks` and a scoped typecheck built from the changed files. M-1 to M-5 verified in the SQL text; RLS/revokes, DEFINER hardening, field allow-list, both-key override scoping and the F-4 race path all pass. **Q-1 (High): the shadow RPC raises `ON CONFLICT DO UPDATE command cannot affect row a second time` on two rows with the same key in one call, and the verification script's B8 sends exactly that — so §13.3 step 2 cannot complete, and component 4 can silently lose a batch; fix is to aggregate in the RPC.** Q-2: the reset's repair branch creates a row with NULL facts (against §4.3), and the M-1 guard regex is broad enough to forbid the fix. Q-3: C1/C2 pass vacuously on the clean branch database SA prescribes. Q-4: nothing asserts `service_role` still has access. Q-5: the gap between the two migrations can leave a pre-existing tenant as a trial with a missing fact. Plus Q-6..Q-15 (notes, weak assertions, TS2352 in a new test, F-1 confirmed, migration filename sorts ~40 files early). §14.6 is the exact runnable database script for SA's seven steps plus the four checks they do not cover. |
+| 2026-09-22 | Component 1: QA findings fixed (Dev) | Q-1 the shadow RPC folds duplicate keys (`GROUP BY`) instead of raising 21000 and losing the batch; the repository comment now matches the code. Q-2 the reset's repair branch recovers the facts again, and the M-1 guard was narrowed to top-level DDL (it had been forbidding a read inside a function body) with a meta-assertion that the narrowing hides nothing — **SA to confirm at re-review**. Q-3 the verification script proves the backfill non-vacuously (new C0/C3) and no longer depends on B7's ordering. Q-4 explicit `service_role` grants plus an A10 assertion. Q-5 the backfill heals facts the trigger could not fill, and §8 carries the RM ordering requirement. Q-9 migrations renamed to 20261005/20261005b. Q-8 trigger and constraint checks assert binding and definition, and the stub assertion is real. Q-7 fixed, and the typecheck method corrected: the worktree run had been aborting on TS2688 and checking nothing (2,030 baseline diagnostics, 0 in these files). Q-10 RC-15 import guard added. Q-11 scoping comments corrected. Q-13/Q-6/Q-15 hardened in the repository and recorded as binding route work in S1-T12a. F-1/Q-12 restated for component 2. Code still uncommitted. |
