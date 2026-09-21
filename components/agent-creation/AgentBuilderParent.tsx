@@ -13,7 +13,7 @@ import ConversationalAgentBuilder from './ConversationalAgentBuilder';
 import { ConversationalAgentBuilderV2 } from './conversational';
 import SmartAgentBuilder from './SmartAgentBuilder/SmartAgentBuilder';
 import { Agent } from './SmartAgentBuilder/types/agent';
-import { useNewAgentCreationUI } from '@/lib/utils/featureFlags';
+import { isNewAgentCreationUIEnabled } from '@/lib/utils/featureFlags';
 
 // Enhanced state interfaces with proper completion tracking
 interface ConversationalState {
@@ -512,7 +512,7 @@ export default function AgentBuilderParent({
   }
 
   // Show conversational builder
-  const useNewUI = useNewAgentCreationUI();
+  const useNewUI = isNewAgentCreationUIEnabled();
 
   return useNewUI ? (
     <ConversationalAgentBuilderV2

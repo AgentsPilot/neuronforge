@@ -15,7 +15,7 @@ import { parseBooleanFlag } from '@/lib/utils/parseBooleanFlag';
  *
  * @returns {boolean} True if thread-based flow should be used, false to use legacy flow
  */
-export function useThreadBasedAgentCreation(): boolean {
+export function isThreadBasedAgentCreationEnabled(): boolean {
   const flag = process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION;
   clientLogger.debug({ flag: 'NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION', value: flag ?? null }, 'Feature flag evaluated');
   return parseBooleanFlag(flag);
@@ -35,7 +35,7 @@ export function useThreadBasedAgentCreation(): boolean {
  *
  * @returns {boolean} True if new UI should be used, false to use legacy UI
  */
-export function useNewAgentCreationUI(): boolean {
+export function isNewAgentCreationUIEnabled(): boolean {
   const flag = process.env.NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI;
   clientLogger.debug({ flag: 'NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI', value: flag ?? null }, 'Feature flag evaluated');
   return parseBooleanFlag(flag);
@@ -50,7 +50,7 @@ export function useNewAgentCreationUI(): boolean {
  *
  * @returns {boolean} True if V6 generation is enabled, false otherwise
  */
-export function useV6AgentGeneration(): boolean {
+export function isV6AgentGenerationEnabled(): boolean {
   const flag = process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION;
   clientLogger.debug({ flag: 'NEXT_PUBLIC_USE_V6_AGENT_GENERATION', value: flag ?? null }, 'Feature flag evaluated');
   return parseBooleanFlag(flag);
@@ -71,7 +71,7 @@ export function useV6AgentGeneration(): boolean {
  *
  * @returns {boolean} True if review mode enabled, false for direct generation
  */
-export function useV6ReviewMode(): boolean {
+export function isV6ReviewModeEnabled(): boolean {
   const flag = process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE;
   clientLogger.debug({ flag: 'NEXT_PUBLIC_USE_V6_REVIEW_MODE', value: flag ?? null, default: true }, 'Feature flag evaluated');
   // Default to TRUE - review mode is enabled by default
@@ -88,7 +88,7 @@ export function useV6ReviewMode(): boolean {
  *
  * @returns {boolean} True if the post-creation calibration prompt should show
  */
-export function useMoveToCalibrationAfterCreation(): boolean {
+export function isMoveToCalibrationAfterCreationEnabled(): boolean {
   const flag = process.env.NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION;
   clientLogger.debug({ flag: 'NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION', value: flag ?? null, default: false }, 'Feature flag evaluated');
   return parseBooleanFlag(flag, false);
@@ -113,22 +113,26 @@ export function useMoveToCalibrationAfterCreation(): boolean {
  *
  * @returns {boolean} True if AI Data Layer is enabled, false for legacy system
  */
-export function useAIDataLayer(): boolean {
+export function isAIDataLayerEnabled(): boolean {
   const flag = process.env.NEXT_PUBLIC_USE_AI_DATA_LAYER;
   clientLogger.debug({ flag: 'NEXT_PUBLIC_USE_AI_DATA_LAYER', value: flag ?? null, default: false }, 'Feature flag evaluated');
   return parseBooleanFlag(flag, false);
 }
 
 /**
- * Get all feature flags status
- * Useful for debugging and admin dashboards
- *
- * @returns {object} Object with all feature flags and their status
- */
-/**
  * Whether the customer-facing "delete my business" surface should be RENDERED.
  *
  * ⚠️ **THIS IS A RENDERING HINT. IT IS NOT AN AUTHORIZATION BOUNDARY.**
+ *
+ * Named `…Visible`, not `…Enabled`, on purpose. Its server-side counterpart
+ * `isBusinessDeleteSurfaceEnabled()` in `lib/business-os/purge/purgeAuthz.ts`
+ * reads the SAME env var and decides what is *permitted*; this one decides only
+ * what is *drawn*. The two must never be merged, and the split is enforced by
+ * dependencies in both directions: `purgeAuthz` imports `AdminAccessService`,
+ * so importing it from here would drag an admin lookup into the client bundle,
+ * and importing this module from there would put a rendering hint in charge of
+ * an authorization decision. Two identically-named functions would be one
+ * autocomplete-assisted import away from exactly that mistake.
  *
  * A `NEXT_PUBLIC_*` value is compiled into the client bundle, and the purge
  * routes are callable directly regardless of what the UI chooses to draw. The
@@ -136,7 +140,7 @@ export function useAIDataLayer(): boolean {
  * which performs its own server-side read (C-22) and, while this flag is off,
  * restricts the customer-surface Purge to platform admins.
  *
- * **Do not "simplify" `authorizePurge` to call this hook.** Doing so would move
+ * **Do not "simplify" `authorizePurge` to call this function.** Doing so would move
  * a destructive-capability check into the client bundle and reopen on the
  * customer surface exactly the hole T30 closed on the internal one. That is not
  * a hypothetical tidy-up: it is the shape this codebase has already shipped
@@ -148,19 +152,33 @@ export function useAIDataLayer(): boolean {
  *
  * @returns {boolean} True if the customer-facing delete surface should render
  */
-export function useBusinessDeleteSurface(): boolean {
+export function isBusinessDeleteSurfaceVisible(): boolean {
   const flag = process.env.NEXT_PUBLIC_ENABLE_BUSINESS_DELETE;
   return parseBooleanFlag(flag);
 }
 
+/**
+ * Get all feature flags status.
+ *
+ * ⚠️ **Debug helper only — it has NO production consumer**, by design. Nothing
+ * outside this module and its test suite reads it, and nothing should start:
+ * the returned object's type is inferred from this literal, so a key rename is
+ * a compile error (TS2339) at every reader — but `next.config.js` sets
+ * `typescript.ignoreBuildErrors: true`, so that error would never reach the
+ * build. Wiring this into a real feature gate therefore converts a loud failure
+ * into a silent "feature is quietly off". Call the individual `is…Enabled`
+ * readers instead; they are the supported surface.
+ *
+ * @returns {object} Object with all feature flags and their status
+ */
 export function getFeatureFlags() {
   return {
-    useThreadBasedAgentCreation: useThreadBasedAgentCreation(),
-    useNewAgentCreationUI: useNewAgentCreationUI(),
-    useV6AgentGeneration: useV6AgentGeneration(),
-    useV6ReviewMode: useV6ReviewMode(),
-    useMoveToCalibrationAfterCreation: useMoveToCalibrationAfterCreation(),
-    useAIDataLayer: useAIDataLayer(),
-    useBusinessDeleteSurface: useBusinessDeleteSurface(),
+    isThreadBasedAgentCreationEnabled: isThreadBasedAgentCreationEnabled(),
+    isNewAgentCreationUIEnabled: isNewAgentCreationUIEnabled(),
+    isV6AgentGenerationEnabled: isV6AgentGenerationEnabled(),
+    isV6ReviewModeEnabled: isV6ReviewModeEnabled(),
+    isMoveToCalibrationAfterCreationEnabled: isMoveToCalibrationAfterCreationEnabled(),
+    isAIDataLayerEnabled: isAIDataLayerEnabled(),
+    isBusinessDeleteSurfaceVisible: isBusinessDeleteSurfaceVisible(),
   };
 }

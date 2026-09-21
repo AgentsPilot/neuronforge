@@ -23,91 +23,91 @@ describe('Feature Flags', () => {
     process.env = originalEnv;
   });
 
-  describe('useThreadBasedAgentCreation', () => {
+  describe('isThreadBasedAgentCreationEnabled', () => {
     it('should return false when flag is not set', () => {
       // Import after setting env to ensure fresh module
-      const { useThreadBasedAgentCreation } = require('../featureFlags');
+      const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
       delete process.env.USE_THREAD_BASED_AGENT_CREATION;
-      expect(useThreadBasedAgentCreation()).toBe(false);
+      expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
 
     it('should return false when flag is "false"', () => {
       process.env.USE_THREAD_BASED_AGENT_CREATION = 'false';
-      const { useThreadBasedAgentCreation } = require('../featureFlags');
-      expect(useThreadBasedAgentCreation()).toBe(false);
+      const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
+      expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
 
     it('should return false when flag is "0"', () => {
       process.env.USE_THREAD_BASED_AGENT_CREATION = '0';
-      const { useThreadBasedAgentCreation } = require('../featureFlags');
-      expect(useThreadBasedAgentCreation()).toBe(false);
+      const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
+      expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
 
     it('should return true when flag is "true"', () => {
       process.env.USE_THREAD_BASED_AGENT_CREATION = 'true';
-      const { useThreadBasedAgentCreation } = require('../featureFlags');
-      expect(useThreadBasedAgentCreation()).toBe(true);
+      const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
+      expect(isThreadBasedAgentCreationEnabled()).toBe(true);
     });
 
     it('should return true when flag is "1"', () => {
       process.env.USE_THREAD_BASED_AGENT_CREATION = '1';
-      const { useThreadBasedAgentCreation } = require('../featureFlags');
-      expect(useThreadBasedAgentCreation()).toBe(true);
+      const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
+      expect(isThreadBasedAgentCreationEnabled()).toBe(true);
     });
 
     it('should return false for invalid values', () => {
       process.env.USE_THREAD_BASED_AGENT_CREATION = 'invalid';
-      const { useThreadBasedAgentCreation } = require('../featureFlags');
-      expect(useThreadBasedAgentCreation()).toBe(false);
+      const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
+      expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
 
     it('should be case-insensitive for "true"', () => {
       process.env.USE_THREAD_BASED_AGENT_CREATION = 'TRUE';
-      const { useThreadBasedAgentCreation } = require('../featureFlags');
-      expect(useThreadBasedAgentCreation()).toBe(true);
+      const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
+      expect(isThreadBasedAgentCreationEnabled()).toBe(true);
     });
 
     it('should be case-insensitive for "false"', () => {
       process.env.USE_THREAD_BASED_AGENT_CREATION = 'FALSE';
-      const { useThreadBasedAgentCreation } = require('../featureFlags');
-      expect(useThreadBasedAgentCreation()).toBe(false);
+      const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
+      expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
 
     // Additional edge case tests
     it('should return false for empty string', () => {
       process.env.USE_THREAD_BASED_AGENT_CREATION = '';
-      const { useThreadBasedAgentCreation } = require('../featureFlags');
-      expect(useThreadBasedAgentCreation()).toBe(false);
+      const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
+      expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
 
     it('should return false for whitespace', () => {
       process.env.USE_THREAD_BASED_AGENT_CREATION = '   ';
-      const { useThreadBasedAgentCreation } = require('../featureFlags');
-      expect(useThreadBasedAgentCreation()).toBe(false);
+      const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
+      expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
 
     it('should handle mixed case correctly', () => {
       process.env.USE_THREAD_BASED_AGENT_CREATION = 'TrUe';
-      const { useThreadBasedAgentCreation } = require('../featureFlags');
-      expect(useThreadBasedAgentCreation()).toBe(true);
+      const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
+      expect(isThreadBasedAgentCreationEnabled()).toBe(true);
     });
 
     it('should return false for numeric values other than 1', () => {
       process.env.USE_THREAD_BASED_AGENT_CREATION = '2';
-      const { useThreadBasedAgentCreation } = require('../featureFlags');
-      expect(useThreadBasedAgentCreation()).toBe(false);
+      const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
+      expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
 
     it('should return false for "yes"', () => {
       process.env.USE_THREAD_BASED_AGENT_CREATION = 'yes';
-      const { useThreadBasedAgentCreation } = require('../featureFlags');
-      expect(useThreadBasedAgentCreation()).toBe(false);
+      const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
+      expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
 
     it('should return false for "on"', () => {
       process.env.USE_THREAD_BASED_AGENT_CREATION = 'on';
-      const { useThreadBasedAgentCreation } = require('../featureFlags');
-      expect(useThreadBasedAgentCreation()).toBe(false);
+      const { isThreadBasedAgentCreationEnabled } = require('../featureFlags');
+      expect(isThreadBasedAgentCreationEnabled()).toBe(false);
     });
   });
 
@@ -117,8 +117,8 @@ describe('Feature Flags', () => {
       const { getFeatureFlags } = require('../featureFlags');
       const flags = getFeatureFlags();
 
-      expect(flags).toHaveProperty('useThreadBasedAgentCreation');
-      expect(flags.useThreadBasedAgentCreation).toBe(true);
+      expect(flags).toHaveProperty('isThreadBasedAgentCreationEnabled');
+      expect(flags.isThreadBasedAgentCreationEnabled).toBe(true);
     });
 
     it('should return all feature flags with thread flag disabled', () => {
@@ -126,7 +126,7 @@ describe('Feature Flags', () => {
       const { getFeatureFlags } = require('../featureFlags');
       const flags = getFeatureFlags();
 
-      expect(flags.useThreadBasedAgentCreation).toBe(false);
+      expect(flags.isThreadBasedAgentCreationEnabled).toBe(false);
     });
 
     it('should reflect current environment state', () => {
@@ -134,14 +134,14 @@ describe('Feature Flags', () => {
       process.env.USE_THREAD_BASED_AGENT_CREATION = 'false';
       const { getFeatureFlags: getFlags1 } = require('../featureFlags');
       const flags1 = getFlags1();
-      expect(flags1.useThreadBasedAgentCreation).toBe(false);
+      expect(flags1.isThreadBasedAgentCreationEnabled).toBe(false);
 
       // Reset modules and change env
       jest.resetModules();
       process.env.USE_THREAD_BASED_AGENT_CREATION = 'true';
       const { getFeatureFlags: getFlags2 } = require('../featureFlags');
       const flags2 = getFlags2();
-      expect(flags2.useThreadBasedAgentCreation).toBe(true);
+      expect(flags2.isThreadBasedAgentCreationEnabled).toBe(true);
     });
 
     it('should return an object with all expected properties', () => {
@@ -150,85 +150,85 @@ describe('Feature Flags', () => {
 
       expect(typeof flags).toBe('object');
       expect(flags).not.toBeNull();
-      expect('useThreadBasedAgentCreation' in flags).toBe(true);
-      expect('useV6AgentGeneration' in flags).toBe(true);
+      expect('isThreadBasedAgentCreationEnabled' in flags).toBe(true);
+      expect('isV6AgentGenerationEnabled' in flags).toBe(true);
     });
   });
 
-  describe('useV6AgentGeneration', () => {
+  describe('isV6AgentGenerationEnabled', () => {
     beforeEach(() => {
       jest.resetModules();
       delete process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION;
     });
 
     it('should return false when flag is not set', () => {
-      const { useV6AgentGeneration } = require('../featureFlags');
+      const { isV6AgentGenerationEnabled } = require('../featureFlags');
       delete process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION;
-      expect(useV6AgentGeneration()).toBe(false);
+      expect(isV6AgentGenerationEnabled()).toBe(false);
     });
 
     it('should return false when flag is "false"', () => {
       process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = 'false';
-      const { useV6AgentGeneration } = require('../featureFlags');
-      expect(useV6AgentGeneration()).toBe(false);
+      const { isV6AgentGenerationEnabled } = require('../featureFlags');
+      expect(isV6AgentGenerationEnabled()).toBe(false);
     });
 
     it('should return false when flag is "0"', () => {
       process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = '0';
-      const { useV6AgentGeneration } = require('../featureFlags');
-      expect(useV6AgentGeneration()).toBe(false);
+      const { isV6AgentGenerationEnabled } = require('../featureFlags');
+      expect(isV6AgentGenerationEnabled()).toBe(false);
     });
 
     it('should return true when flag is "true"', () => {
       process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = 'true';
-      const { useV6AgentGeneration } = require('../featureFlags');
-      expect(useV6AgentGeneration()).toBe(true);
+      const { isV6AgentGenerationEnabled } = require('../featureFlags');
+      expect(isV6AgentGenerationEnabled()).toBe(true);
     });
 
     it('should return true when flag is "1"', () => {
       process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = '1';
-      const { useV6AgentGeneration } = require('../featureFlags');
-      expect(useV6AgentGeneration()).toBe(true);
+      const { isV6AgentGenerationEnabled } = require('../featureFlags');
+      expect(isV6AgentGenerationEnabled()).toBe(true);
     });
 
     it('should return false for invalid values', () => {
       process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = 'invalid';
-      const { useV6AgentGeneration } = require('../featureFlags');
-      expect(useV6AgentGeneration()).toBe(false);
+      const { isV6AgentGenerationEnabled } = require('../featureFlags');
+      expect(isV6AgentGenerationEnabled()).toBe(false);
     });
 
     it('should be case-insensitive for "true"', () => {
       process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = 'TRUE';
-      const { useV6AgentGeneration } = require('../featureFlags');
-      expect(useV6AgentGeneration()).toBe(true);
+      const { isV6AgentGenerationEnabled } = require('../featureFlags');
+      expect(isV6AgentGenerationEnabled()).toBe(true);
     });
 
     it('should be case-insensitive for "false"', () => {
       process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = 'FALSE';
-      const { useV6AgentGeneration } = require('../featureFlags');
-      expect(useV6AgentGeneration()).toBe(false);
+      const { isV6AgentGenerationEnabled } = require('../featureFlags');
+      expect(isV6AgentGenerationEnabled()).toBe(false);
     });
 
     it('should return false for empty string', () => {
       process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = '';
-      const { useV6AgentGeneration } = require('../featureFlags');
-      expect(useV6AgentGeneration()).toBe(false);
+      const { isV6AgentGenerationEnabled } = require('../featureFlags');
+      expect(isV6AgentGenerationEnabled()).toBe(false);
     });
 
     it('should return false for whitespace', () => {
       process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = '   ';
-      const { useV6AgentGeneration } = require('../featureFlags');
-      expect(useV6AgentGeneration()).toBe(false);
+      const { isV6AgentGenerationEnabled } = require('../featureFlags');
+      expect(isV6AgentGenerationEnabled()).toBe(false);
     });
 
     it('should handle mixed case correctly', () => {
       process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION = 'TrUe';
-      const { useV6AgentGeneration } = require('../featureFlags');
-      expect(useV6AgentGeneration()).toBe(true);
+      const { isV6AgentGenerationEnabled } = require('../featureFlags');
+      expect(isV6AgentGenerationEnabled()).toBe(true);
     });
   });
 
-  describe('useV6ReviewMode', () => {
+  describe('isV6ReviewModeEnabled', () => {
     beforeEach(() => {
       jest.resetModules();
       delete process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE;
@@ -236,107 +236,107 @@ describe('Feature Flags', () => {
 
     // NOTE: This flag defaults to TRUE (unlike other flags that default to false)
     it('should return true when flag is not set (default behavior)', () => {
-      const { useV6ReviewMode } = require('../featureFlags');
+      const { isV6ReviewModeEnabled } = require('../featureFlags');
       delete process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE;
-      expect(useV6ReviewMode()).toBe(true);
+      expect(isV6ReviewModeEnabled()).toBe(true);
     });
 
     it('should return false when flag is "false"', () => {
       process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = 'false';
-      const { useV6ReviewMode } = require('../featureFlags');
-      expect(useV6ReviewMode()).toBe(false);
+      const { isV6ReviewModeEnabled } = require('../featureFlags');
+      expect(isV6ReviewModeEnabled()).toBe(false);
     });
 
     it('should return false when flag is "0"', () => {
       process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = '0';
-      const { useV6ReviewMode } = require('../featureFlags');
-      expect(useV6ReviewMode()).toBe(false);
+      const { isV6ReviewModeEnabled } = require('../featureFlags');
+      expect(isV6ReviewModeEnabled()).toBe(false);
     });
 
     it('should return true when flag is "true"', () => {
       process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = 'true';
-      const { useV6ReviewMode } = require('../featureFlags');
-      expect(useV6ReviewMode()).toBe(true);
+      const { isV6ReviewModeEnabled } = require('../featureFlags');
+      expect(isV6ReviewModeEnabled()).toBe(true);
     });
 
     it('should return true when flag is "1"', () => {
       process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = '1';
-      const { useV6ReviewMode } = require('../featureFlags');
-      expect(useV6ReviewMode()).toBe(true);
+      const { isV6ReviewModeEnabled } = require('../featureFlags');
+      expect(isV6ReviewModeEnabled()).toBe(true);
     });
 
     // NOTE: Invalid values default to TRUE for this flag
     it('should return true for invalid values (defaults to true)', () => {
       process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = 'invalid';
-      const { useV6ReviewMode } = require('../featureFlags');
-      expect(useV6ReviewMode()).toBe(true);
+      const { isV6ReviewModeEnabled } = require('../featureFlags');
+      expect(isV6ReviewModeEnabled()).toBe(true);
     });
 
     it('should be case-insensitive for "true"', () => {
       process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = 'TRUE';
-      const { useV6ReviewMode } = require('../featureFlags');
-      expect(useV6ReviewMode()).toBe(true);
+      const { isV6ReviewModeEnabled } = require('../featureFlags');
+      expect(isV6ReviewModeEnabled()).toBe(true);
     });
 
     it('should be case-insensitive for "false"', () => {
       process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = 'FALSE';
-      const { useV6ReviewMode } = require('../featureFlags');
-      expect(useV6ReviewMode()).toBe(false);
+      const { isV6ReviewModeEnabled } = require('../featureFlags');
+      expect(isV6ReviewModeEnabled()).toBe(false);
     });
 
     // NOTE: Empty string defaults to TRUE for this flag
     it('should return true for empty string (defaults to true)', () => {
       process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = '';
-      const { useV6ReviewMode } = require('../featureFlags');
-      expect(useV6ReviewMode()).toBe(true);
+      const { isV6ReviewModeEnabled } = require('../featureFlags');
+      expect(isV6ReviewModeEnabled()).toBe(true);
     });
 
     // NOTE: Whitespace defaults to TRUE for this flag
     it('should return true for whitespace (defaults to true)', () => {
       process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = '   ';
-      const { useV6ReviewMode } = require('../featureFlags');
-      expect(useV6ReviewMode()).toBe(true);
+      const { isV6ReviewModeEnabled } = require('../featureFlags');
+      expect(isV6ReviewModeEnabled()).toBe(true);
     });
 
     it('should handle mixed case correctly', () => {
       process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = 'TrUe';
-      const { useV6ReviewMode } = require('../featureFlags');
-      expect(useV6ReviewMode()).toBe(true);
+      const { isV6ReviewModeEnabled } = require('../featureFlags');
+      expect(isV6ReviewModeEnabled()).toBe(true);
     });
 
     it('should handle mixed case for false correctly', () => {
       process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = 'FaLsE';
-      const { useV6ReviewMode } = require('../featureFlags');
-      expect(useV6ReviewMode()).toBe(false);
+      const { isV6ReviewModeEnabled } = require('../featureFlags');
+      expect(isV6ReviewModeEnabled()).toBe(false);
     });
   });
 
-  describe('getFeatureFlags includes useV6ReviewMode', () => {
+  describe('getFeatureFlags includes isV6ReviewModeEnabled', () => {
     beforeEach(() => {
       jest.resetModules();
       delete process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE;
     });
 
-    it('should include useV6ReviewMode property', () => {
+    it('should include isV6ReviewModeEnabled property', () => {
       const { getFeatureFlags } = require('../featureFlags');
       const flags = getFeatureFlags();
 
-      expect('useV6ReviewMode' in flags).toBe(true);
+      expect('isV6ReviewModeEnabled' in flags).toBe(true);
     });
 
-    it('should return useV6ReviewMode as true by default', () => {
+    it('should return isV6ReviewModeEnabled as true by default', () => {
       const { getFeatureFlags } = require('../featureFlags');
       const flags = getFeatureFlags();
 
-      expect(flags.useV6ReviewMode).toBe(true);
+      expect(flags.isV6ReviewModeEnabled).toBe(true);
     });
 
-    it('should return useV6ReviewMode as false when explicitly disabled', () => {
+    it('should return isV6ReviewModeEnabled as false when explicitly disabled', () => {
       process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE = 'false';
       const { getFeatureFlags } = require('../featureFlags');
       const flags = getFeatureFlags();
 
-      expect(flags.useV6ReviewMode).toBe(false);
+      expect(flags.isV6ReviewModeEnabled).toBe(false);
     });
   });
 });
