@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
 
     const aiService = new WebsiteAIContentService();
     // One AI action, one audit entry (Layer 3, FR-12).
-    const enhancedQuote = await runAiAction(
+    const enhanced = await runAiAction(
       { area: 'website', actionType: 'website_testimonial_enhance', groupId, trigger: 'user', accountId: user.id },
       () =>
         aiService.enhanceTestimonial(validated.quote, validated.language, {
@@ -46,11 +46,25 @@ export async function POST(request: NextRequest) {
         })
     );
 
+    // Switched off (Layer 2 FR-14): HTTP 200 with a code, not a 5xx — see the
+    // regenerate route for why. The owner's quote is returned untouched.
+    if (!enhanced.ok) {
+      requestLogger.info(
+        { userId: user.id, reason: 'disabled' },
+        'Testimonial enhancement refused: website AI writing is switched off'
+      );
+      return NextResponse.json({
+        success: false,
+        code: enhanced.code,
+        originalQuote: validated.quote
+      });
+    }
+
     requestLogger.info({ userId: user.id }, 'Testimonial enhanced successfully');
 
     return NextResponse.json({
       success: true,
-      enhancedQuote,
+      enhancedQuote: enhanced.text,
       originalQuote: validated.quote
     });
   } catch (error) {

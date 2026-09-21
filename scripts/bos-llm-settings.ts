@@ -58,7 +58,6 @@ import {
   BOS_LLM_SETTINGS_CATEGORY,
   bosLlmAreaKey,
   bosLlmSettingsCallNames,
-  isSwitchableBosLlmCall,
 } from '@/lib/business-os/llm/modelSettingsPolicy';
 import { asRowObject } from '@/lib/business-os/llm/modelSettingsSchema';
 import { createLogger } from '@/lib/logger';
@@ -303,20 +302,26 @@ async function commandSet(area: BosLlmArea, options: SetOptions): Promise<number
         candidate.calls = nextCalls;
       }
 
-      // S1-7: a call that cannot be switched off keeps running, and the
-      // operator must be told which ones — a partial kill switch that says
-      // nothing is worse than no kill switch. A warning, not a refusal:
-      // refusing would make the switch useless for the calls it DOES cover.
-      const stillRunning = bosLlmSettingsCallNames(area).filter(
-        (callName) => !isSwitchableBosLlmCall(area, callName)
-      );
-      if (stillRunning.length > 0) {
-        logger.warn(
-          { area, callsStillRunning: stillRunning },
-          'PARTIAL SWITCH: these calls cannot be switched off yet and will keep spending. ' +
-            'Their "AI unavailable" paths ship in Step 3 of this layer'
-        );
-      }
+      /*
+       * The S1-7 "PARTIAL SWITCH" warning used to stand here, and Step 3
+       * deleted it rather than letting it self-clear into a lie.
+       *
+       * It listed the calls of this area that `isSwitchableBosLlmCall` says
+       * cannot be switched off, because between Steps 2 and 3 three website
+       * calls had no "AI unavailable" path and kept spending after
+       * `--enabled false`. Step 3 shipped those paths and made all three
+       * switchable, so for `website` the list is now empty — but the predicate
+       * would still have named `chat/planner`, which is NOT a call that keeps
+       * spending: the planner has no switch of its own precisely because the
+       * chat area switch stops it at route entry (D-27). Warning about it would
+       * tell an operator their kill switch is partial when it is complete.
+       *
+       * What guards the underlying risk now is a test rather than a runtime
+       * line nobody may read: `modelSettingsPolicy.test.ts` asserts that every
+       * non-switchable call is either in an area that cannot be switched off at
+       * all or is one of the calls a route-entry gate stops. A future call
+       * added with `switchable: false` and no off path fails the suite.
+       */
     }
   }
 

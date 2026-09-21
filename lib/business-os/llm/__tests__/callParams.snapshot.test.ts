@@ -19,16 +19,25 @@
  *
  * The committed snapshot is the record itself.
  *
- * LEG (A) IS A DRIFT ALARM, NOT A SOUNDNESS PROOF (SA ruling, 2026-09-21).
+ * LEG (A) IS GONE, AND THAT IS THE END STATE (SA ruling, 2026-09-21).
  * Eleven false negatives were found in it, all of one class: the recorded text
- * is still there but is not what reaches the provider. It gets no further
- * hardening, and each call's entry is DELETED as its site is wired, because the
+ * is still there but is not what reaches the provider. It got no further
+ * hardening; each call's entry was DELETED as its site was wired, because the
  * guarantee then lives at the provider boundary instead:
  *
- *   - Step 2 (wired): `callParams.boundary.step2.test.ts` — spies at
- *     `chatCompletion` / `complete` and asserts the whole request object plus
- *     the call count for all nineteen non-chat call sites.
- *   - Step 3 (still listed below): chat planner, chat analysis and images.
+ *   - Step 2: `callParams.boundary.step2.test.ts` — the nineteen non-chat call
+ *     sites.
+ *   - Step 3: `callParams.boundary.step3.test.ts` — chat planner, chat
+ *     analysis and images.
+ *
+ * Both spy at `chatCompletion` / `complete` / `generateImage` and assert the
+ * whole request object plus the call count, and both additionally record WHICH
+ * provider was asked for and WHICH `(area, call)` key each site resolved —
+ * the two things leg (A) could never see.
+ *
+ * **`UNWIRED_CALLS` is now empty, and the assertion below says so.** All 22
+ * calls are wired. A new call arriving with an `evidence` block would fail that
+ * assertion, which is deliberate: leg (A) is not a place to add anything.
  *
  * Legs (B) and (C) still cover ALL twenty-two calls: they are about the
  * resolver reproducing the table, not about reading source.
@@ -121,24 +130,6 @@ interface CallRecord {
   storedKey?: string;
 }
 
-const PLANNER = 'lib/business-os/bizql/planner/Planner.ts';
-const ANALYSIS = 'lib/business-os/bizql/analyse/AnalysisService.ts';
-const IMAGES = 'lib/services/GeneratedImageService.ts';
-
-/**
- * The three calls whose model is READ FROM CONFIGURATION and passed as a
- * variable (D-Q1a).
- *
- * Their evidence used to anchor on the config read's fallback literal, which
- * says nothing about what the request actually carries: `model,` could become
- * `model: 'gpt-4o',` and every test stayed green. So each of them also asserts
- * that the request object passes the resolved variable, unadorned, exactly
- * once.
- */
-function passesResolvedVariable(file: string, near: string, window = 45): Evidence {
-  return { file, near, matches: /^\s*model,\s*$/m, window, singleModel: true };
-}
-
 /** The inventory, as code. One entry per configurable call. */
 /** A call whose site now takes its parameters from the resolver (leg A retired). */
 function wired(model: string, temperature: number | null): CallRecord {
@@ -147,24 +138,10 @@ function wired(model: string, temperature: number | null): CallRecord {
 
 const TODAY: { [A in BosLlmArea]: Record<string, CallRecord> } = {
   chat: {
-    planner: {
-      params: { provider: 'openai', model: 'gpt-4o-mini', temperature: 0 },
-      storedKey: 'bizchat_planner_model',
-      evidence: [
-        { file: PLANNER, near: "'bizchat_planner_model'", contains: "'gpt-4o-mini'", window: 4 },
-        { file: PLANNER, near: "tool_choice: 'required',", contains: 'temperature: 0,', window: 4 },
-        passesResolvedVariable(PLANNER, "tool_choice: 'required',", 4),
-      ],
-    },
-    analysis: {
-      params: { provider: 'openai', model: 'gpt-4o-mini', temperature: 0 },
-      storedKey: 'bizchat_analysis_model',
-      evidence: [
-        { file: ANALYSIS, near: "'bizchat_analysis_model'", contains: "'gpt-4o-mini'", window: 4 },
-        { file: ANALYSIS, near: "callName: 'analysis'", contains: 'temperature: 0,', window: 45 },
-        passesResolvedVariable(ANALYSIS, "callName: 'analysis'"),
-      ],
-    },
+    // Wired in Step 3. Neither file reads `bizchat_*` any more; the planner's
+    // locked 0 is sent from the resolved value, so no literal is left.
+    planner: wired('gpt-4o-mini', 0),
+    analysis: wired('gpt-4o-mini', 0),
   },
   // Wired in Step 2. Their requests are proved at the provider boundary by
   // `callParams.boundary.step2.test.ts`; the literals have left their files.
@@ -202,16 +179,9 @@ const TODAY: { [A in BosLlmArea]: Record<string, CallRecord> } = {
     adjustment_intent_extraction: wired('gpt-4o', null),
   },
   images: {
-    image_generation: {
-      params: { provider: 'openai', model: IMAGE_GENERATION_CONFIG_DEFAULTS.model, temperature: null },
-      storedKey: 'image_generation_model',
-      evidence: [
-        // The service already takes its model from configuration, and sends no
-        // temperature — images do not have one.
-        { file: IMAGES, near: 'model: config.model,', contains: 'model: config.model,', window: 0, singleModel: true },
-        { file: IMAGES, near: 'model: config.model,', absent: 'temperature', window: 3 },
-      ],
-    },
+    // Wired in Step 3: the model comes from the `images` area row, and the
+    // price key follows the model that RAN (RC-W4).
+    image_generation: wired(IMAGE_GENERATION_CONFIG_DEFAULTS.model, null),
   },
 };
 
@@ -317,15 +287,29 @@ const UNWIRED_CALLS: Array<[BosLlmArea, string]> = ALL_CALLS.filter(
 );
 
 describe('A: every recorded value is still written at its call site', () => {
-  it('covers exactly the calls Step 2 has not wired yet', () => {
-    expect(UNWIRED_CALLS.map(([area, call]) => `${area}/${call}`).sort()).toEqual([
-      'chat/analysis',
-      'chat/planner',
-      'images/image_generation',
-    ]);
+  /*
+   * Empty, and it stays empty (Step 3).
+   *
+   * Every one of the 22 calls now takes its parameters from the resolver, so
+   * there is no literal left at any call site for leg (A) to read — and the
+   * `it.each` below runs zero cases. This assertion is what makes that a
+   * STATEMENT rather than an accident: leg (A) is unsound (it proves text, not
+   * dataflow), so a call re-acquiring an `evidence` block is a regression, not
+   * added coverage. The `it.each` is kept, with a placeholder entry, only so a
+   * future reader can see what it used to do.
+   */
+  it('is empty: every call is wired to the resolver', () => {
+    expect(UNWIRED_CALLS.map(([area, call]) => `${area}/${call}`)).toEqual([]);
   });
 
-  it.each(UNWIRED_CALLS)('%s/%s', (area, callName) => {
+  /*
+   * A plain `it` with a loop, not `it.each`: `it.each([])` throws rather than
+   * reporting zero cases, and the set is empty now. The body is kept intact so
+   * that if a call is ever legitimately wired BACK — it would have to be
+   * justified against the assertion above — the check still exists.
+   */
+  it('checks the evidence of any call that still has some', () => {
+    for (const [area, callName] of UNWIRED_CALLS) {
     const record = TODAY[area][callName];
     expect(record).toBeDefined();
 
@@ -361,6 +345,7 @@ describe('A: every recorded value is still written at its call site', () => {
           assignments: [expect.any(String)],
         });
       }
+    }
     }
   });
 
@@ -413,14 +398,19 @@ describe('A: every recorded value is still written at its call site', () => {
     });
   });
 
-  it('names a stored key for exactly the calls the inventory says read one (F-3)', () => {
+  it('names no stored key at all: nothing reads a legacy key any more (F-3)', () => {
     const withStoredKey = ALL_CALLS.filter(([area, call]) => TODAY[area][call].storedKey).map(
       ([area, call]) => `${area}/${call}`
     );
-    // `leads/reply_recommendation` left this list in Step 2: its two keys were
-    // copied into the leads area row by the seed and the call resolves from
-    // there. The remaining three are wired in Step 3.
-    expect(withStoredKey.sort()).toEqual(['chat/analysis', 'chat/planner', 'images/image_generation']);
+    /*
+     * The list emptied in two steps: `leads/reply_recommendation` in Step 2,
+     * then `chat/planner`, `chat/analysis` and `images/image_generation` here.
+     * All six legacy keys — `bizchat_planner_model`, `bizchat_analysis_model`,
+     * `bizchat_analysis_enabled`, `lead_reply_recommender_model`,
+     * `lead_reply_recommender_enabled`, `image_generation_model` — were copied
+     * into the area rows by the seed and are now read by nothing.
+     */
+    expect(withStoredKey).toEqual([]);
   });
 });
 

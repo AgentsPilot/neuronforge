@@ -40,6 +40,7 @@ import * as path from 'path';
 import { BOS_LLM_AREAS, BOS_LLM_CALLS, type BosLlmArea } from '../callCatalog';
 import { checkModelAcceptable, resolveBosLlmSettings, validateAreaRow } from '../modelSettings';
 import {
+  ALLOWED_PROVIDERS_LAYER2,
   BOS_LLM_AREA_KEY_PREFIX,
   BOS_LLM_AREA_KEYS,
   BOS_LLM_AREA_LOCKS,
@@ -149,15 +150,78 @@ describe('policy coverage (T1-3, FR-3)', () => {
       expect(policy.default.temperature).toBeNull();
     }
 
-    // Deferred to Step 3 with their ★ off paths (RC-W8b).
-    for (const callName of ['full_site', 'field_regenerate', 'testimonial_enhance'] as const) {
-      expect(BOS_LLM_CALL_POLICY.website[callName].switchable).toBe(false);
+    // Switchable since Step 3, which shipped their ★ off paths (RC-W8b).
+    // EVERY website call can now be switched off — the kill switch is whole.
+    for (const callName of bosLlmSettingsCallNames('website')) {
+      expect({ callName, switchable: getBosLlmCallPolicy('website', callName)!.switchable }).toEqual({
+        callName,
+        switchable: true,
+      });
     }
-    expect(BOS_LLM_CALL_POLICY.website.landing_page.switchable).toBe(true);
 
     // Images take no temperature.
     expect(BOS_LLM_CALL_POLICY.images.image_generation.temperature).toBe('not_applicable');
     expect(BOS_LLM_CALL_POLICY.images.image_generation.kind).toBe('image');
+  });
+
+  /**
+   * The guard that replaced the change script's "PARTIAL SWITCH" warning
+   * (S1-7, closed in Step 3).
+   *
+   * A call with `switchable: false` inside an area that CAN be switched off is
+   * a call that keeps spending after `set <area> --enabled false` — unless
+   * something else stops it. Between Steps 2 and 3 three website calls were
+   * exactly that, and the script warned about them at runtime.
+   *
+   * Step 3 removed the last of them, so the honest statement is now an
+   * allow-list of two: the four onboarding extractors (in an area that can
+   * never be switched off at all) and the chat planner (stopped by the chat
+   * area gate at the entry of all three chat routes). Anything else added to
+   * this set is a half-built kill switch, and it fails here rather than being
+   * discovered by an operator whose costs did not fall.
+   */
+  it('leaves no call that keeps spending when its area is switched off (S1-7)', () => {
+    const unswitchable: string[] = [];
+    for (const area of BOS_LLM_AREAS) {
+      // An area that cannot be switched off has no "area off" state to leak.
+      if (!BOS_LLM_AREA_LOCKS[area].switchable) continue;
+      for (const callName of bosLlmSettingsCallNames(area)) {
+        if (!getBosLlmCallPolicy(area, callName)!.switchable) unswitchable.push(`${area}/${callName}`);
+      }
+    }
+
+    // Exactly one, and it is stopped at route entry instead (D-27).
+    expect(unswitchable.sort()).toEqual(['chat/planner']);
+  });
+
+  /**
+   * D-54, SA's ruling: the site-level `'openai'` is DELIBERATE, not an
+   * oversight, and this is what keeps it safe.
+   *
+   * Nineteen call sites pass the literal `'openai'` / `PROVIDERS.OPENAI` to the
+   * factory; two (the chat planner and the analysis service) pass
+   * `settings.provider`; one (images) goes through `getOpenAI()` and cannot
+   * take a provider at all. SA ruled: do not retrofit — the divergence is
+   * inert, because `allowedProviders` is `['openai']` for every call, so the
+   * resolver can never produce anything else for the two sites that do read it.
+   *
+   * The boundary suites' `getProviderArgs` assertion cannot guard this: it sees
+   * `'openai'` either way and cannot tell a literal from a resolved value. So
+   * the guard has to be here, on the thing the ruling actually depends on —
+   * the moment ANY call is allowed a second provider, the nineteen literal
+   * sites would silently keep using OpenAI while the row said otherwise, and
+   * this test fails first.
+   */
+  it('keeps every call OpenAI-only, which is what makes the literal sites safe (D-54)', () => {
+    expect(ALLOWED_PROVIDERS_LAYER2).toEqual(['openai']);
+    for (const area of BOS_LLM_AREAS) {
+      for (const callName of bosLlmSettingsCallNames(area)) {
+        expect({ call: `${area}/${callName}`, allowed: getBosLlmCallPolicy(area, callName)!.allowedProviders }).toEqual({
+          call: `${area}/${callName}`,
+          allowed: ['openai'],
+        });
+      }
+    }
   });
 
   it('flags the two calls that send a sampling penalty (N-1, Q-3)', () => {

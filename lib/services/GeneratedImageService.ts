@@ -46,6 +46,8 @@ import type {
   ReportedImageQuality,
 } from '@/lib/ai/providers/openaiProvider';
 import { buildBosCallContext, type BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
+import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
+import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
 import type { ImageAspect } from '@/lib/services/StockImageService';
 
 const logger = createLogger({ service: 'GeneratedImageService' });
@@ -53,11 +55,15 @@ const logger = createLogger({ service: 'GeneratedImageService' });
 const BUCKET = 'website-images';
 
 /*
- * The model, the aspect → size map and the quality come from configuration
+ * The aspect → size map and the quality come from configuration
  * (`SystemConfigRepository.getImageGenerationConfig`), with documented
- * defaults there. OpenAI is the only image provider today; a second one would
- * need a capability interface and config-driven selection (F-15), not a
- * provider key that accepts exactly one value.
+ * defaults there. Since Layer 2 the MODEL and the on/off switch come from the
+ * `images` area row instead, through `resolveBosLlmSettings` (FR-12) — the
+ * seed copied `image_generation_model` into it, and the policy's default is
+ * still `IMAGE_GENERATION_CONFIG_DEFAULTS.model`, referenced rather than
+ * copied. OpenAI is the only image provider today; a second one would need a
+ * capability interface and config-driven selection (F-15), not a provider key
+ * that accepts exactly one value.
  */
 
 /** Sizes the image model accepts. A configured size outside these falls back to the default. */
@@ -310,6 +316,28 @@ export async function generateImage(
   if (existing) return { ok: true, url: existing.public_url, description: existing.description ?? prompt };
 
   /*
+   * Image generation switched off (Layer 2 FR-14).
+   *
+   * AFTER the reuse check and before the daily count, for the same reason the
+   * count is (RC-W4, N-4): handing back a picture this business already has
+   * costs nothing and is not an AI call, so switching the area off must not
+   * take their own library away from them.
+   *
+   * The outcome is the EXISTING `unavailable` reason — the one a missing
+   * provider already returns — which the picker already renders as
+   * "Image generation is not available right now" in all three languages
+   * (Q-6). No new wording, and no new branch anywhere downstream.
+   */
+  const settings = await resolveBosLlmSettings('images', 'image_generation');
+  if (!settings.enabled) {
+    logger.info(
+      { userId, area: 'images', call: 'image_generation', reason: 'disabled' },
+      'Image generation is switched off'
+    );
+    return { ok: false, reason: 'unavailable' };
+  }
+
+  /*
    * Only now, with a real generation about to be billed, is the day counted.
    *
    * A count that cannot be read refuses rather than allows. The alternative —
@@ -340,8 +368,6 @@ export async function generateImage(
       return { ok: false, reason: 'failed' };
     }
     const { size, quality } = request;
-    // Priced after the call, from the quality the provider reports (CR-1 option C).
-    const pricing = imagePriceResolver(config.pricesUsd, config.model, size, quality);
 
     const context = buildBosCallContext({
       userId,
@@ -350,14 +376,37 @@ export async function generateImage(
       groupId: owner.groupId,
     });
 
-    // The provider records the ledger row, success or failure, before this
-    // returns or throws. n is always 1: one row per image (WC-3).
-    const response = await ProviderFactory.getOpenAI().generateImage(
-      { model: config.model, prompt: `${prompt}. ${STYLE}`, size, quality, n: 1 },
-      context,
-      pricing.priceFor
-    );
-    const priced = pricing.last();
+    /*
+     * The model comes from the `images` area row (Layer 2 FR-12). The seed
+     * copied `image_generation_model` into it; `config` still supplies the
+     * sizes, the quality and the prices, which are not model settings.
+     *
+     * RC-W4 — the price resolver is built INSIDE the attempt, from the SAME
+     * `model` the request carries. Both halves matter:
+     *
+     *  - built outside, a retry onto the code default would price the image as
+     *    the model that was refused;
+     *  - keyed on `config.model` instead of the resolved one, an operator who
+     *    switches the image model would have every image priced as the old
+     *    model — or, since the price table is keyed by model name, at $0, with
+     *    the spend silently vanishing from the ledger.
+     *
+     * The price is still resolved AFTER the call, at the quality the provider
+     * reports (Layer 1.5 D-7); only the key follows the model that ran.
+     */
+    const { result: { response, priced } } = await withModelFallback(settings, async (model) => {
+      const pricing = imagePriceResolver(config.pricesUsd, model, size, quality);
+
+      // The provider records the ledger row, success or failure, before this
+      // returns or throws. n is always 1: one row per image (WC-3).
+      const generated = await ProviderFactory.getOpenAI().generateImage(
+        { model, prompt: `${prompt}. ${STYLE}`, size, quality, n: 1 },
+        context,
+        pricing.priceFor
+      );
+
+      return { response: generated, priced: pricing.last() };
+    });
 
     const b64 = response.data?.[0]?.b64_json;
     if (!b64) {

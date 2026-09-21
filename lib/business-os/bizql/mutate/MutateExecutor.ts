@@ -25,6 +25,7 @@ import { randomUUID } from 'crypto';
 import { createLogger } from '@/lib/logger';
 import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
 import { runAiAction, markGenerationResult } from '@/lib/business-os/llm/aiActionAudit';
+import { websiteWritingUnavailableMessage } from '@/lib/business-os/llm/aiUnavailableMessages';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { crmTaskRepository } from '@/lib/repositories/CRMTaskRepository';
 import { settleInvoicePaid } from '@/lib/payments/invoiceSettlement';
@@ -826,13 +827,29 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
                 title,
                 ...(data.description ? { description: String(data.description) } : {}),
               },
+              /*
+               * `'fail'` (RC-W3, Q-7 reversed): the page is still CREATED above
+               * — the owner confirmed that write and it must not be undone by a
+               * setting — but nothing is written into it. Filling a page the
+               * owner asked to have written for them with generic starter copy
+               * would look like the model's work and they would never know.
+               * They get the page, the preview link, and the sentence.
+               */
+              onAiDisabled: 'fail',
             });
             markGenerationResult(h, result);
             return result;
           }
         );
 
-        if (!generated.success) {
+        const aiUnavailable = !generated.success && generated.code === 'ai_unavailable';
+
+        if (aiUnavailable) {
+          logger.info(
+            { userId: ctx.userId, pageId: created.data.id, reason: 'disabled' },
+            'Landing page created; its content was not generated because website AI is switched off'
+          );
+        } else if (!generated.success) {
           logger.warn(
             { userId: ctx.userId, pageId: created.data.id, error: generated.error },
             'Landing page created but its content could not be generated'
@@ -845,6 +862,16 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
             title,
             slug,
             blocks: generated.blocksCreated ?? 0,
+            /*
+             * Said out loud, in the owner's language, on the line they read.
+             *
+             * `notice` follows the same convention as `url` below: a handler
+             * that has something to add to the confirmation line returns it and
+             * `executeMutate` appends it. Without this the turn would say "I
+             * created the page" and stop — and the owner would open an empty
+             * page and conclude the write half-failed.
+             */
+            ...(aiUnavailable ? { notice: websiteWritingUnavailableMessage(language) } : {}),
             /*
              * The link, which is the point of the whole turn.
              *
@@ -2116,8 +2143,15 @@ export async function executeMutate(
    * A convention rather than a grammar change: no other write returns one, and
    * the ones that do are saying "here is the thing you just made".
    */
-  const produced = result.data as { url?: unknown } | null;
+  const produced = result.data as { url?: unknown; notice?: unknown } | null;
   const url = typeof produced?.url === 'string' ? produced.url : undefined;
+  /*
+   * And something the handler needs the owner to KNOW, by the same convention
+   * (Layer 2 FR-14): the write succeeded, and part of what they expected to
+   * happen did not. Today only the landing-page handler sets one, when website
+   * AI is switched off and the page was created empty.
+   */
+  const notice = typeof produced?.notice === 'string' ? produced.notice : undefined;
 
   return {
     op: 'mutate',
@@ -2125,7 +2159,7 @@ export async function executeMutate(
     action: query.action,
     applied: true,
     row: (result.data as QueryRow) ?? undefined,
-    preview: url ? `${preview} — ${url}` : preview,
+    preview: [preview, url, notice].filter(Boolean).join(' — '),
   };
 }
 

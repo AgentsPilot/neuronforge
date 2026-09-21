@@ -29,6 +29,7 @@ import { getProviderFactory } from '@/lib/ai/providerFactory';
 import { buildBosCallContext, type BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
 import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
 import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
+import { AI_UNAVAILABLE_WEBSITE_WRITING } from '@/lib/business-os/llm/aiUnavailableMessages';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsiteContentRepository } from '@/lib/repositories/WebsiteContentRepository';
 import { z } from 'zod';
@@ -206,12 +207,11 @@ export class WebsiteGenerationService {
      *                an LLM failure already does. The onboarding build, where
      *                a site with plain words beats no site at all.
      *   'fail'     — write nothing and report `ai_unavailable`, for the
-     *                surfaces that can tell the owner and let them retry.
-     *                Its callers (generate-from-profile, the chat mutate path)
-     *                arrive in Step 3, together with the owner-facing message.
+     *                surfaces that can tell the owner and let them retry:
+     *                generate-from-profile and the chat mutate path, both
+     *                wired in Step 3 with the owner-facing message.
      *
-     * In Step 2 `full_site` is locked on in the policy, so the 'fail' branch is
-     * reachable only in tests.
+     * Since Step 3 `full_site` is switchable, so both branches are live.
      */
     onAiDisabled?: 'fallback' | 'fail';
   }): Promise<{
@@ -285,7 +285,21 @@ export class WebsiteGenerationService {
        */
       if (generated.disabled && options.onAiDisabled === 'fail') {
         logger.info({ userId, reason: 'disabled' }, 'Website generation refused: the website area AI is switched off');
-        return { success: false, code: 'ai_unavailable', contentSource: 'fallback' };
+        /*
+         * F-11: the refusal carries an `error` as well as a `code`.
+         *
+         * Every other unsuccessful return from this method sets `error`, so a
+         * caller that logs or shows `result.error` — and several do — printed
+         * `undefined` for this one and turned a clear refusal into a blank.
+         * The sentence is the English one; a surface with its own translations
+         * switches on `code` and ignores this.
+         */
+        return {
+          success: false,
+          code: 'ai_unavailable',
+          error: AI_UNAVAILABLE_WEBSITE_WRITING.en,
+          contentSource: 'fallback',
+        };
       }
 
       const websiteContent = generated.content;

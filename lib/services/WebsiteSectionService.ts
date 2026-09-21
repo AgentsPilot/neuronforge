@@ -34,6 +34,7 @@ import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
 import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
+import { websiteWritingUnavailableMessage } from '@/lib/business-os/llm/aiUnavailableMessages';
 
 const logger = createLogger({ service: 'WebsiteSectionService' });
 const auditTrail = AuditTrailService.getInstance();
@@ -541,11 +542,21 @@ export async function regenerateSectionField(params: {
         } as Parameters<typeof service.regenerateField>[0], { userId, groupId })
     );
 
-    if (typeof generated !== 'string' || !generated.trim()) {
+    // The website area's AI is switched off (Layer 2 FR-14). Reported in the
+    // owner's own language, and nothing is written — the same promise the two
+    // editor buttons make.
+    if (!generated.ok) {
+      return {
+        data: null,
+        error: new Error(websiteWritingUnavailableMessage(params.language)),
+      };
+    }
+
+    if (!generated.text.trim()) {
       return { data: null, error: new Error('The rewrite came back empty; nothing was changed.') };
     }
 
-    content[field] = generated.trim();
+    content[field] = generated.text.trim();
 
     const { error: writeError } = await supabaseServer
       .from('website_blocks')
@@ -572,7 +583,7 @@ export async function regenerateSectionField(params: {
       data: {
         blockId,
         blockType: String(block.block_type),
-        changed: { [field]: generated.trim() },
+        changed: { [field]: generated.text.trim() },
       },
       error: null,
     };

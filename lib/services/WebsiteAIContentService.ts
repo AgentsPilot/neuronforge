@@ -33,6 +33,22 @@ const logger = createLogger({ service: 'WebsiteAIContentService' });
 // Types
 export type WebsiteLanguage = 'en' | 'es' | 'he';
 
+/**
+ * What an owner-facing AI writing call returns.
+ *
+ * A union rather than `string | null`, because the two failures are not the
+ * same thing and the owner must not be told the same sentence for both: a
+ * model that failed is "try again", a switched-off area is "this is not
+ * available right now" and trying again will not help (Layer 2 FR-14).
+ *
+ * `code` is what the callers map to `{ success: false, code: 'ai_unavailable' }`
+ * — an HTTP **200**, because a feature an operator turned off is not a server
+ * fault (Q-9).
+ */
+export type AiTextOutcome =
+  | { ok: true; text: string }
+  | { ok: false; code: 'ai_unavailable' };
+
 export interface BusinessProfileData {
   company_name: string | null;
   vertical: string;
@@ -290,8 +306,14 @@ export class WebsiteAIContentService {
    * @param owner A separate argument, not a request field: one caller casts its
    *   request object, which would hide a missing field but cannot hide a
    *   missing argument.
+   *
+   * Returns a typed outcome rather than a string: with the website area's AI
+   * switched off there is no sentence to return, and there is no sensible
+   * fallback either — a canned headline written into the owner's page would be
+   * an edit they did not ask for (requirement: "their text is unchanged").
+   * The callers turn `ai_unavailable` into an HTTP 200 the page reads.
    */
-  async regenerateField(request: ContentGenerationRequest, owner: BosLlmOwner): Promise<string> {
+  async regenerateField(request: ContentGenerationRequest, owner: BosLlmOwner): Promise<AiTextOutcome> {
     const { blockType, fieldToRegenerate, targetLanguage, businessProfile } = request;
 
     if (!fieldToRegenerate) {
@@ -315,13 +337,19 @@ export class WebsiteAIContentService {
     );
 
     /*
-     * Model and temperature come from the website area row (Layer 2 FR-12).
-     * `field_regenerate` is `switchable: false` in the Step 2 policy, so
-     * `enabled` is always true here: its "AI writing is unavailable" path ships
-     * in Step 3, and a call with no off path must not resolve to off (RC-W8b,
-     * D-27). Built inside the attempt so a retry carries the model that ran.
+     * Model, temperature and the on/off switch come from the website area row
+     * (Layer 2 FR-12/FR-14). Switchable since Step 3: off means the owner is
+     * told, and their text is left exactly as it was. Built inside the attempt
+     * so a retry carries the model that ran.
      */
     const settings = await resolveBosLlmSettings('website', 'field_regenerate');
+    if (!settings.enabled) {
+      logger.info(
+        { area: 'website', call: 'field_regenerate', blockType, reason: 'disabled' },
+        'Website AI writing is switched off; nothing was regenerated'
+      );
+      return { ok: false, code: 'ai_unavailable' };
+    }
 
     const { result: response } = await withModelFallback(settings, (model) => provider.complete({
       model,
@@ -338,17 +366,20 @@ export class WebsiteAIContentService {
       groupId: owner.groupId,
     })));
 
-    return response.content.trim();
+    return { ok: true, text: response.content.trim() };
   }
 
   /**
-   * Enhance a testimonial with AI
+   * Enhance a testimonial with AI.
+   *
+   * Same typed outcome as `regenerateField`, for the same reason: with the area
+   * off, the owner's own testimonial must come back untouched.
    */
   async enhanceTestimonial(
     text: string,
     language: WebsiteLanguage,
     owner: BosLlmOwner
-  ): Promise<string> {
+  ): Promise<AiTextOutcome> {
     logger.info({ language, textLength: text.length }, 'Enhancing testimonial');
 
     const provider = getProviderFactory();
@@ -368,9 +399,15 @@ Original testimonial:
 
 Enhanced testimonial (just the text, no quotes):`;
 
-    // Also `switchable: false` until Step 3 (RC-W8b, D-27): model and
-    // temperature only.
+    // Switchable since Step 3, like `field_regenerate` above.
     const settings = await resolveBosLlmSettings('website', 'testimonial_enhance');
+    if (!settings.enabled) {
+      logger.info(
+        { area: 'website', call: 'testimonial_enhance', reason: 'disabled' },
+        'Website AI writing is switched off; the testimonial was left unchanged'
+      );
+      return { ok: false, code: 'ai_unavailable' };
+    }
 
     const { result: response } = await withModelFallback(settings, (model) => provider.complete({
       model,
@@ -387,7 +424,7 @@ Enhanced testimonial (just the text, no quotes):`;
       groupId: owner.groupId,
     })));
 
-    return response.content.trim();
+    return { ok: true, text: response.content.trim() };
   }
 
   // ==================== PRIVATE GENERATION METHODS ====================

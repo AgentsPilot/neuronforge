@@ -232,7 +232,8 @@ describe('field regeneration and testimonial enhancement', () => {
   it('regeneration: one entry, website_field_regenerate', async () => {
     mockRegenerateField.mockImplementation(async (_req: unknown, owner: BosLlmOwner) => {
       await ownerCall(owner, 'website', 'field_regenerate');
-      return MODEL_TEXT;
+      // Step 3: a typed outcome, so an off area can be told from a rewrite.
+      return { ok: true, text: MODEL_TEXT };
     });
     const res = await regeneratePOST(
       post('http://localhost/api/website/blocks/b1/regenerate', { field: 'title', blockType: 'hero' }),
@@ -245,7 +246,7 @@ describe('field regeneration and testimonial enhancement', () => {
   it('testimonial: one entry, website_testimonial_enhance, and neither the quote nor the output is recorded', async () => {
     mockEnhance.mockImplementation(async (_quote: string, _lang: string, owner: BosLlmOwner) => {
       await ownerCall(owner, 'website', 'testimonial_enhance');
-      return MODEL_TEXT;
+      return { ok: true, text: MODEL_TEXT };
     });
     const res = await testimonialPOST(post('http://localhost/api/website/enhance-testimonial', { quote: OWNER_TEXT }));
     expect(res.status).toBe(200);

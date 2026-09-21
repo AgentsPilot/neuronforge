@@ -33,6 +33,30 @@
  *
  * As each call site was wired, its leg-(A) entry was deleted from
  * `callParams.snapshot.test.ts`, per the same ruling.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE FOUR BLIND SPOTS, CLOSED IN STEP 3
+ *
+ * SA and QA between them found four things the snapshot above cannot see, and
+ * mutation-proved every one of them against real call sites:
+ *
+ *   SA F-1 / D2-4  the `getProvider` spy ignored its own argument, so a site
+ *                  switched to `'anthropic'` stayed green.
+ *   QA D2-1        the snapshot records resolved VALUES, never the `(area,
+ *                  call)` KEY a site asked for — so `hero_content`'s site could
+ *                  resolve `'faq_content'` with 123/123 suites green. Eight of
+ *                  nineteen sites were mis-keyable invisibly.
+ *   QA D2-2        nothing proved a site uses the resolved model at all: the
+ *                  snapshot was captured UNWIRED, so "unwired" is its passing
+ *                  state, and re-hardcoding a model stayed green.
+ *   QA D2-3        the FR-11 / RC-W4 "build the request inside the attempt"
+ *                  invariant was tested at 2 of 19 sites.
+ *
+ * The three `describe`s at the end of this file close all four, for all
+ * nineteen sites. They deliberately do NOT touch `boundaryCalls()` or the
+ * committed snapshot: that snapshot's value is that it was captured against the
+ * unwired sources and has not moved since, and adding a field to it would throw
+ * that evidence away.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -131,14 +155,35 @@ jest.mock('@/lib/services/AuditTrailService', () => ({
   AuditTrailService: { getInstance: () => ({ log: async () => undefined }) },
 }));
 
+/**
+ * Which `(area, call)` key each site asked the resolver for (QA D2-1).
+ *
+ * A wrapper around the REAL resolver, not a stub — every value still comes from
+ * the fixture rows through the real guardrails, so the snapshot cannot move.
+ * All that is added is a record of what was asked for.
+ *
+ * `mock`-prefixed so the hoisted factory may close over it.
+ */
+const mockResolveArgs: Array<[string, string]> = [];
+jest.mock('@/lib/business-os/llm/modelSettings', () => {
+  const actual = jest.requireActual('@/lib/business-os/llm/modelSettings');
+  return {
+    ...actual,
+    resolveBosLlmSettings: async (area: string, callName: string) => {
+      mockResolveArgs.push([area, callName]);
+      return actual.resolveBosLlmSettings(area, callName);
+    },
+  };
+});
+
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { NextRequest } from 'next/server';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
 import type { BaseAIProvider } from '@/lib/ai/providers/baseProvider';
 import { bosBriefingGroupId } from '@/lib/business-os/llm/callCatalog';
-import { __resetBosLlmSettingsForTests } from '../modelSettings';
+import { __resetBosLlmSettingsForTests, bosLlmCodeDefaults } from '../modelSettings';
 import { bosLlmAreaKey } from '../modelSettingsPolicy';
-import { BOS_LLM_AREAS } from '../callCatalog';
+import { BOS_LLM_AREAS, type BosLlmArea } from '../callCatalog';
 import { SEEDED_ROWS } from '../__fixtures__/seededRows';
 import { __resetModelFallbackForTests } from '../modelFallback';
 
@@ -164,6 +209,9 @@ const R1 = '66666666-6666-4666-8666-666666666666';
 const owner: BosLlmOwner = { userId: U1, groupId: G1 };
 
 const chatCompletion = jest.fn();
+
+/** Which provider name each `getProvider` call asked for (SA F-1). */
+const getProviderArgs: unknown[] = [];
 
 /* ------------------------------------------------------------- normalisation */
 
@@ -481,7 +529,19 @@ beforeEach(() => {
     choices: [{ message: { content: RESPONSE_JSON } }],
     content: RESPONSE_JSON,
   });
-  jest.spyOn(ProviderFactory, 'getProvider').mockReturnValue({ chatCompletion } as unknown as BaseAIProvider);
+  mockResolveArgs.length = 0;
+  getProviderArgs.length = 0;
+  /*
+   * SA F-1: the spy RECORDS the provider it was asked for. It used to ignore
+   * its argument, and SA mutation-proved the consequence on `BriefingNarrator`
+   * (switched to `'anthropic'`, 20/20 boundary tests green); QA reproduced it
+   * on leads. `settings.provider` is resolved at every site and — until this —
+   * checked by nothing.
+   */
+  jest.spyOn(ProviderFactory, 'getProvider').mockImplementation(((name: unknown) => {
+    getProviderArgs.push(name);
+    return { chatCompletion } as unknown as BaseAIProvider;
+  }) as never);
 });
 
 afterAll(() => {
@@ -496,6 +556,27 @@ describe('T2-S: the request each Step 2 call site puts on the wire (AC-2)', () =
     // second site for the same call, changes it.
     expect(chatCompletion).toHaveBeenCalledTimes(1);
     expect(boundaryCalls()).toMatchSnapshot();
+  });
+
+  /*
+   * SA F-1 and QA D2-1, for every site, in one pass over the same driving.
+   *
+   * Two assertions that the snapshot structurally cannot make:
+   *
+   *   - the provider asked for is `'openai'`, and only `'openai'`. §10.1's
+   *     first column ("Provider before → after") was asserted by nothing.
+   *   - the settings key resolved is the site's OWN, asked for exactly once.
+   *     This is the one that matters most: eight of these nineteen sites
+   *     resolve values identical to a sibling's, so a mis-keyed site is
+   *     invisible everywhere else — and a per-call override landing on the
+   *     wrong call, or nowhere, is the exact failure Layer 2 exists to prevent.
+   */
+  it.each(SITES)('%s resolves its own key, from openai', async (name, drive) => {
+    await drive();
+
+    const [area, callName] = name.split('/');
+    expect(mockResolveArgs).toEqual([[area, callName]]);
+    expect([...new Set(getProviderArgs)]).toEqual(['openai']);
   });
 
   it('every Step 2 call site is driven exactly once by this file', () => {
@@ -520,5 +601,106 @@ describe('T2-S: the request each Step 2 call site puts on the wire (AC-2)', () =
       'website/landing_page',
       'website/testimonial_enhance',
     ]);
+  });
+});
+
+/* ------------------------------------------------- QA D2-2 and D2-3 */
+
+/**
+ * The settings rows with ONE call's model overridden.
+ *
+ * Every site's default is `gpt-4o` or `gpt-4o-mini`, so the override has to be
+ * neither: a site that ignores its setting and hardcodes a model would still
+ * match a default-valued expectation.
+ */
+const OVERRIDE_MODEL = 'gpt-4o-2026-override';
+
+function rowsWithModelOverride(area: string, callName: string) {
+  const copy = JSON.parse(JSON.stringify(SEEDED_ROWS)) as Record<string, Record<string, unknown>>;
+  const row = copy[area];
+  const calls = (row.calls ?? {}) as Record<string, Record<string, unknown>>;
+  calls[callName] = { ...(calls[callName] ?? {}), model: OVERRIDE_MODEL };
+  row.calls = calls;
+  return {
+    data: BOS_LLM_AREAS.map((a) => ({
+      key: bosLlmAreaKey(a),
+      value: copy[a],
+      category: 'business_os_llm',
+      updated_at: '2026-10-03T00:00:00.000Z',
+    })),
+    error: null,
+  };
+}
+
+/** A provider refusal the FR-11 fallback is allowed to retry (and only that). */
+function modelNotFound(): Error & { status: number; code: string } {
+  return Object.assign(new Error('The model does not exist'), { status: 404, code: 'model_not_found' });
+}
+
+describe('D2-2: every site actually uses the model its own row resolves', () => {
+  it.each(SITES)('%s sends the overridden model', async (name, drive) => {
+    const [area, callName] = name.split('/');
+    mockGetByKeys.mockResolvedValue(rowsWithModelOverride(area, callName));
+    __resetBosLlmSettingsForTests();
+
+    await drive();
+
+    /*
+     * Mutation-proved by QA on `hero_content` (M1: the site re-hardcoded
+     * `gpt-4o-mini` inside the attempt and 123/123 suites stayed green). The
+     * boundary snapshot cannot catch that by construction — it was captured on
+     * the unwired sources, so "ignores the setting" IS its passing state.
+     */
+    expect(chatCompletion.mock.calls.map((call) => call[0].model)).toEqual([OVERRIDE_MODEL]);
+  });
+});
+
+describe('D2-3: every site builds its request inside the attempt, so a retry carries the model that ran', () => {
+  it.each(SITES)('%s retries on the code default', async (name, drive) => {
+    const [area, callName] = name.split('/');
+    mockGetByKeys.mockResolvedValue(rowsWithModelOverride(area, callName));
+    __resetBosLlmSettingsForTests();
+
+    chatCompletion.mockReset();
+    chatCompletion
+      .mockRejectedValueOnce(modelNotFound())
+      .mockResolvedValue({
+        choices: [{ message: { content: RESPONSE_JSON } }],
+        content: RESPONSE_JSON,
+      });
+
+    await drive();
+
+    /*
+     * The pair is the assertion. QA mutation-proved the failure on briefing
+     * (M8: pinning `settings.model` inside the attempt, so the retry re-sends
+     * the model that was just refused and the whole action fails) — with the
+     * suite green, because T2-R covered one site per mechanism, not per site.
+     */
+    const defaultModel = bosLlmCodeDefaults(area as BosLlmArea, callName).model;
+    expect(chatCompletion.mock.calls.map((call) => call[0].model)).toEqual([OVERRIDE_MODEL, defaultModel]);
+  });
+});
+
+/**
+ * SA-2, partially: a site that its PUBLIC caller stops calling.
+ *
+ * Seventeen of the nineteen entries above drive a private method, so the call
+ * count is counted inside the inner function: a public entry that short-cuts
+ * before it — which is exactly what `generateWebsite`'s `onAiDisabled` check
+ * now does — is invisible to them. Closing that in general means driving
+ * nineteen public entry points, which is a bigger piece of work than this step.
+ *
+ * What is closed here is the case SA actually named, at the site SA named it
+ * at: the full-site generator, driven from its PUBLIC entry, must still reach
+ * the provider exactly once. The rest remains an instrument limit, now written
+ * down rather than assumed away (see §7.6 D-47).
+ */
+describe('SA-2: the public entry still reaches the call site', () => {
+  it('generateWebsite reaches website/full_site exactly once', async () => {
+    await new WebsiteGenerationService().generateWebsite(U1, { groupId: G1 });
+
+    expect(chatCompletion).toHaveBeenCalledTimes(1);
+    expect(mockResolveArgs).toContainEqual(['website', 'full_site']);
   });
 });

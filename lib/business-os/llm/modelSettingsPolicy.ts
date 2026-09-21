@@ -184,13 +184,15 @@ export const BOS_LLM_CALL_POLICY: BosLlmCallPolicyMap = {
     daily_narration: tokenCall('gpt-4o-mini', 0.3, { switchable: true }),
   },
   website: {
-    // switchable: false until Step 3 ships the ★ "AI writing is unavailable"
-    // paths for these three (RC-W8b). Step 3 flips them to true; there is no
-    // second mechanism, and until then the resolver truthfully reports them on.
-    full_site: tokenCall('gpt-4o', 0.7, { switchable: false }),
+    // Switchable since Step 3, which shipped their ★ "AI writing is
+    // unavailable" paths (RC-W8b): `full_site` refuses from the website page
+    // and the chat mutate path while the onboarding build still finishes on
+    // starter copy, and the two editor buttons answer `ai_unavailable`. The
+    // website kill switch now covers all eight website calls.
+    full_site: tokenCall('gpt-4o', 0.7, { switchable: true }),
     landing_page: tokenCall('gpt-4o', 0.7, { switchable: true }),
-    field_regenerate: tokenCall('gpt-4o-mini', 0.7, { switchable: false }),
-    testimonial_enhance: tokenCall('gpt-4o-mini', 0.5, { switchable: false }),
+    field_regenerate: tokenCall('gpt-4o-mini', 0.7, { switchable: true }),
+    testimonial_enhance: tokenCall('gpt-4o-mini', 0.5, { switchable: true }),
     hero_content: tokenCall('gpt-4o-mini', 0.7, { switchable: true }),
     about_content: tokenCall('gpt-4o-mini', 0.7, { switchable: true }),
     faq_content: tokenCall('gpt-4o-mini', 0.7, { switchable: true }),
@@ -267,11 +269,16 @@ export function getBosLlmCallPolicy(area: BosLlmArea, callName: string): BosLlmC
  * Can a row switch this call off on its own?
  *
  * False for a call whose "off" path does not exist, or must not exist: the four
- * onboarding extractors (DEC-5), the chat planner (the chat area switch at
- * route entry is its only off switch), and — until Step 3 ships their ★
- * "AI writing is unavailable" paths — `full_site`, `field_regenerate` and
- * `testimonial_enhance`. The change script warns about exactly these when an
- * area is switched off, so a partial kill switch is never silent (S1-7).
+ * onboarding extractors (DEC-5) and the chat planner, whose only off switch is
+ * the chat area switch enforced at route entry (D-27).
+ *
+ * The three website calls that were false between Steps 2 and 3 are now true,
+ * so **no area's switch is partial any more** — every catalogued call is
+ * either switchable on its own or stopped by an entry gate when its area is.
+ * `modelSettingsPolicy.test.ts` asserts exactly that, so a future call added
+ * with `switchable: false` in a switchable area fails the suite instead of
+ * quietly re-creating the S1-7 half-kill-switch the change script used to warn
+ * about.
  */
 export function isSwitchableBosLlmCall(area: BosLlmArea, callName: string): boolean {
   if (!BOS_LLM_AREA_LOCKS[area].switchable) return false;

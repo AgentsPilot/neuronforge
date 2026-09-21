@@ -10,6 +10,23 @@
  *     bad field, or a database outage each degrade to the code default — which
  *     is today's behaviour (FR-6). A configuration fault can never fail an
  *     owner action.
+ *
+ *     **Seven call sites DEPEND on this promise rather than re-proving it, and
+ *     they are named here so nobody weakens it by accident (SA F-9).** These
+ *     sites call `resolveBosLlmSettings` OUTSIDE the `try` that owns their
+ *     fallback, so a throw here would not land on a template — it would
+ *     propagate to the owner:
+ *
+ *       lib/business-os/briefing/BriefingNarrator.ts          (daily_narration)
+ *       lib/services/WebsiteAIContentService.ts  ×4           (the dormant blocks)
+ *       lib/services/IntakeGenerationService.ts               (form_generation)
+ *       app/api/intake/form/infer-question/route.ts           (question_inference)
+ *
+ *     `__tests__/modelSettings.test.ts` (T1-5) is what keeps the promise true:
+ *     it drives a missing row, a non-object row, a bad field and a repository
+ *     error. **If you ever add a throwing path to this module, move those seven
+ *     resolves inside their `try` first.** The insights sites already resolve
+ *     inside the `try` and are the shape to copy.
  *  2. **A warm call does no I/O.** All eight rows are read, validated and
  *     resolved on one refill, at most once every 60 seconds per instance
  *     (DEC-8). A failed refill — rejected, or hung past a three-second budget

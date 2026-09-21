@@ -5,7 +5,7 @@ import { intakeReachesClient } from '@/lib/business-os/intakeReach';
 import { wantsWebsite } from '@/lib/business-os/onlinePresence';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Globe, Layout, Settings, Eye, EyeOff, Palette, ExternalLink, Copy, Check, Loader2, Rocket, PenLine, LayoutTemplate, RefreshCw, Plus, FileText, Trash2, X, Target, List, Megaphone, MessageCircle, Mail, DollarSign, HelpCircle, User, Sparkles, Calendar, CreditCard, Users, RotateCcw, Image as ImageIcon, Newspaper, Video, BarChart3, Package, ChevronDown, ChevronUp, Save, Wand2, Link2, Brain, Dumbbell, Hand, Flower2, Camera, Scale, Code, BookOpen, Music, Scissors, Heart, Briefcase, GraduationCap, Stethoscope, Calculator, PenTool, Mic, Utensils, Wrench, Car, Home, ShieldCheck, Plane, Dog, Baby, Leaf, Clock, TrendingUp, ShoppingCart, Apple, Star, Building, GripVertical, ArrowRight, type LucideIcon } from 'lucide-react';
+import { AlertCircle, Globe, Layout, Settings, Eye, EyeOff, Palette, ExternalLink, Copy, Check, Loader2, Rocket, PenLine, LayoutTemplate, RefreshCw, Plus, FileText, Trash2, X, Target, List, Megaphone, MessageCircle, Mail, DollarSign, HelpCircle, User, Sparkles, Calendar, CreditCard, Users, RotateCcw, Image as ImageIcon, Newspaper, Video, BarChart3, Package, ChevronDown, ChevronUp, Save, Wand2, Link2, Brain, Dumbbell, Hand, Flower2, Camera, Scale, Code, BookOpen, Music, Scissors, Heart, Briefcase, GraduationCap, Stethoscope, Calculator, PenTool, Mic, Utensils, Wrench, Car, Home, ShieldCheck, Plane, Dog, Baby, Leaf, Clock, TrendingUp, ShoppingCart, Apple, Star, Building, GripVertical, ArrowRight, type LucideIcon } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
@@ -293,6 +293,14 @@ const LABELS = {
     template_in_use: 'This template is in use. Delete the website and landing pages built from it before unselecting.',
     generation_failed: 'We could not write your site just now. The sections below are placeholders you can edit, or try again.',
     generation_degraded: 'Your site was built, but some of the writing fell back to standard text. Worth a read before publishing.',
+    /*
+     * The website area's AI is switched off by the platform operator
+     * (Layer 2 FR-14). Not an error: nothing failed and nothing was
+     * overwritten, and trying again will not help until it is switched back
+     * on. The same sentence serves all three AI-writing surfaces on this
+     * page, and matches AI_UNAVAILABLE_WEBSITE_WRITING on the server.
+     */
+    ai_unavailable: 'AI writing is unavailable right now.',
     tab_journey: 'Client Journey',
     tab_sections: 'Sections',
     tab_design: 'Design',
@@ -471,6 +479,7 @@ const LABELS = {
     template_in_use: 'Esta plantilla está en uso. Elimina el sitio y las páginas de destino creadas con ella antes de deseleccionarla.',
     generation_failed: 'No pudimos redactar tu sitio ahora. Las secciones de abajo son textos de ejemplo que puedes editar, o inténtalo de nuevo.',
     generation_degraded: 'Tu sitio se creó, pero parte del texto es genérico. Conviene revisarlo antes de publicar.',
+    ai_unavailable: 'La redacción con IA no está disponible en este momento.',
     tab_journey: 'Recorrido del Cliente',
     tab_sections: 'Secciones',
     tab_design: 'Diseño',
@@ -649,6 +658,7 @@ const LABELS = {
     template_in_use: 'התבנית בשימוש. מחקו את האתר ואת דפי הנחיתה שנבנו ממנה לפני ביטול הבחירה.',
     generation_failed: 'לא הצלחנו לכתוב את האתר כרגע. הסעיפים למטה הם טקסט זמני שאפשר לערוך, או נסו שוב.',
     generation_degraded: 'האתר נבנה, אבל חלק מהטקסט הוא כללי. כדאי לעבור עליו לפני הפרסום.',
+    ai_unavailable: 'כתיבה עם AI אינה זמינה כרגע.',
     tab_journey: 'מסע הלקוח',
     tab_sections: 'חלקים',
     tab_design: 'עיצוב',
@@ -1110,6 +1120,13 @@ export default function WebsiteManagementPage() {
 
   // AI generation state
   const [generatingAI, setGeneratingAI] = useState<string | null>(null);
+  /**
+   * The block whose AI writing was just refused because the platform operator
+   * switched website AI off (Layer 2 FR-14). Null the rest of the time, which
+   * is almost always. Holds a block id rather than a boolean so the sentence
+   * appears in the section the owner is actually editing.
+   */
+  const [aiWritingUnavailable, setAiWritingUnavailable] = useState<string | null>(null);
 
   // Settings form state
   const [subdomain, setSubdomain] = useState('');
@@ -1812,7 +1829,16 @@ export default function WebsiteManagementPage() {
           });
           const generatedData = await generated.json();
 
-          if (!generatedData.success) {
+          if (generatedData.code === 'ai_unavailable') {
+            /*
+             * Switched off, not broken (Layer 2 FR-14). Shown as a warning
+             * rather than an error, and in the reader's language rather than
+             * the route's English sentence: nothing failed, nothing was
+             * overwritten, and the page they had is still the page they have.
+             */
+            logger.info({ pageId: target.id }, 'Website generation unavailable: AI writing is switched off');
+            setGenerationNotice({ kind: 'warning', message: labels.ai_unavailable });
+          } else if (!generatedData.success) {
             // Said out loud rather than logged and swallowed, which is how a
             // failed generation used to look exactly like a finished site.
             logger.error({ error: generatedData.error, pageId: target.id }, 'Website generation failed');
@@ -2632,7 +2658,7 @@ export default function WebsiteManagementPage() {
             }
           }
         } catch (error) {
-          console.error('Failed to fetch services:', error);
+          logger.error({ err: error }, 'Failed to fetch services for the section editor');
         }
       }
 
@@ -2664,7 +2690,7 @@ export default function WebsiteManagementPage() {
         }
       }
     } catch (error) {
-      console.error('Failed to refresh services:', error);
+      logger.error({ err: error }, 'Failed to refresh services');
     } finally {
       setRefreshingServices(false);
     }
@@ -2895,6 +2921,7 @@ export default function WebsiteManagementPage() {
     try {
       setEnhancingTestimonial(true);
       setEnhancingTestimonialIndex(index);
+      setAiWritingUnavailable(null);
 
       const response = await fetch('/api/website/enhance-testimonial', {
         method: 'POST',
@@ -2916,6 +2943,10 @@ export default function WebsiteManagementPage() {
           ...editingBlockContent,
           testimonials: updatedTestimonials
         });
+      } else if (data.code === 'ai_unavailable') {
+        // Switched off (Layer 2 FR-14). The owner's own wording stands.
+        logger.info({ index }, 'Testimonial enhancement is switched off');
+        setAiWritingUnavailable(expandedBlockId);
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to enhance testimonial');
@@ -3341,6 +3372,9 @@ export default function WebsiteManagementPage() {
   // Generate content with AI for a specific field
   const handleGenerateWithAI = async (blockId: string, field: string, _prompt: string) => {
     setGeneratingAI(`${blockId}-${field}`);
+    // Cleared on every attempt: a stale "unavailable" beside a button that has
+    // just worked would be worse than no message at all.
+    setAiWritingUnavailable(null);
     try {
       const block = blocks.find(b => b.id === blockId);
       if (!block) {
@@ -3367,6 +3401,10 @@ export default function WebsiteManagementPage() {
       const data = await response.json();
       if (data.success && data.value) {
         updateBlockField(field, data.value);
+      } else if (data.code === 'ai_unavailable') {
+        // Switched off, not broken (Layer 2 FR-14). Their field is untouched.
+        logger.info({ blockId, field }, 'AI writing is switched off');
+        setAiWritingUnavailable(blockId);
       } else if (data.error) {
         logger.error({ error: data.error, blockId, field }, 'AI generation failed');
       }
@@ -5410,6 +5448,28 @@ export default function WebsiteManagementPage() {
                           {isExpanded && editingBlockContent && (
                             <div className="px-4 pb-4 pt-2 border-t border-[var(--v2-border)]">
                               <div className="space-y-4">
+                                {/*
+                                  * Website AI writing is switched off (Layer 2 FR-14).
+                                  *
+                                  * One notice at the top of the block being edited rather
+                                  * than one per button: every "write this for me" control in
+                                  * this panel — the field buttons and the testimonial
+                                  * enhancer — is off for the same reason, at the same moment,
+                                  * and eleven copies of one sentence would be noise. Scoped
+                                  * to the block so it appears where the owner just pressed.
+                                  *
+                                  * Amber, not red: nothing failed and nothing was
+                                  * overwritten — their text is exactly as they left it.
+                                  */}
+                                {aiWritingUnavailable === block.id && (
+                                  <div
+                                    role="status"
+                                    className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200"
+                                  >
+                                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                                    <span>{labels.ai_unavailable}</span>
+                                  </div>
+                                )}
                                 {/* Hero Block Fields */}
                                 {block.block_type === 'hero' && (
                                   <>
