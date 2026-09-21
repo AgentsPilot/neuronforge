@@ -74,7 +74,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // Read before the callback: TypeScript does not carry the null check into it.
     const existingContent = validated.context?.existingContent || blockResult.data.content;
     // One AI action, one audit entry (Layer 3, FR-12).
-    const regeneratedValue = await runAiAction(
+    const regenerated = await runAiAction(
       { area: 'website', actionType: 'website_field_regenerate', groupId, trigger: 'user', accountId: user.id },
       () =>
         aiService.regenerateField({
@@ -86,6 +86,21 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         }, { userId: user.id, groupId })
     );
 
+    /*
+     * The website area's AI is switched off (Layer 2 FR-14). HTTP **200**, not
+     * 5xx: nothing failed, an operator turned the feature off, and a 500 would
+     * put it in the error logs and the client's catch branch as though the
+     * platform were broken (Q-9). No field was written, so the owner's text is
+     * exactly as they left it; the page shows its `ai_unavailable` label.
+     */
+    if (!regenerated.ok) {
+      requestLogger.info(
+        { userId: user.id, blockId, field: validated.field, reason: 'disabled' },
+        'Field regeneration refused: website AI writing is switched off'
+      );
+      return NextResponse.json({ success: false, code: regenerated.code, field: validated.field });
+    }
+
     requestLogger.info(
       { userId: user.id, blockId, field: validated.field },
       'Field regenerated successfully'
@@ -94,7 +109,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({
       success: true,
       field: validated.field,
-      value: regeneratedValue
+      value: regenerated.text
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
