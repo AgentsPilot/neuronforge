@@ -13,9 +13,10 @@
  */
 
 import { ProviderFactory } from '@/lib/ai/providerFactory';
-import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider';
 import { createLogger } from '@/lib/logger';
 import { bosBriefingGroupId, buildBosCallContext } from '@/lib/business-os/llm/callCatalog';
+import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
+import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
 import type { BriefingFacts } from './BriefingFactsService';
 
 const logger = createLogger({ service: 'BriefingNarrator' });
@@ -96,6 +97,18 @@ export async function narrateBriefing(
   // same day (after the facts change) share one group.
   const groupId = bosBriefingGroupId(userId, facts.day.date);
 
+  // Model, temperature and the on/off switch come from the briefing area row
+  // (Layer 2 FR-12). Off is the same deterministic composer an outage uses:
+  // the card still reads, in plainer prose.
+  const settings = await resolveBosLlmSettings('briefing', 'daily_narration');
+  if (!settings.enabled) {
+    logger.info(
+      { date: facts.day.date, reason: 'disabled' },
+      'Briefing narration AI is switched off; using the deterministic composer'
+    );
+    return { narrative: composeFallback(facts, language), source: 'fallback' };
+  }
+
   try {
     const provider = ProviderFactory.getProvider('openai');
 
@@ -109,18 +122,21 @@ export async function narrateBriefing(
      * throws every time and the route has been serving its hardcoded fallback
      * copy since it was written.
      */
-    const completion = await provider.chatCompletion(
-      {
-        model: OPENAI_MODELS.GPT_4O_MINI,
-        messages: [{ role: 'user', content: buildPrompt(facts, language, businessType) }],
-        // Low, deliberately. This is reporting, not writing — the same facts
-        // should read the same way twice.
-        temperature: 0.3,
-        max_tokens: 320,
-      },
-      buildBosCallContext(
-        { userId, area: 'briefing', callName: 'daily_narration', groupId },
-        { activity_type: 'narration' }
+    // Built inside the attempt so a retry carries the model that ran (FR-11).
+    const { result: completion } = await withModelFallback(settings, (model) =>
+      provider.chatCompletion(
+        {
+          model,
+          messages: [{ role: 'user', content: buildPrompt(facts, language, businessType) }],
+          // Low, deliberately. This is reporting, not writing — the same facts
+          // should read the same way twice.
+          ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+          max_tokens: 320,
+        },
+        buildBosCallContext(
+          { userId, area: 'briefing', callName: 'daily_narration', groupId },
+          { activity_type: 'narration' }
+        )
       )
     );
 
