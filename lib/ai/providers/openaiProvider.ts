@@ -80,6 +80,50 @@ export type ReportedImageQuality = OpenAI.Images.ImagesResponse['quality'];
  */
 export type ImagePriceResolver = (reportedQuality: ReportedImageQuality) => number;
 
+/**
+ * Does this model take `max_completion_tokens` instead of `max_tokens`?
+ *
+ * The provider renames the parameter for these families before sending the
+ * request. Exported at module scope (the private method below delegates to it,
+ * unchanged) because callers outside the provider need the same answer without
+ * constructing one: Business OS Layer 2 refuses to configure a model that
+ * rejects sampling parameters but is NOT in this list, because such a model
+ * would be sent `max_tokens` and fail with a 400 on every call (RC-W5).
+ *
+ * @see rejectsSamplingParameters — a different, overlapping family test
+ */
+export function usesMaxCompletionTokens(model: string): boolean {
+  return (
+    model.startsWith('gpt-5') ||
+    model.startsWith('gpt-4.1') ||
+    model.startsWith('o3') ||
+    model.startsWith('o4')
+  );
+}
+
+/**
+ * Does this model reject sampling parameters (`temperature`,
+ * `frequency_penalty`, …) with a 400?
+ *
+ * The reasoning families accept only their default sampling settings. The
+ * refusal is a plain 400, NOT a model-not-found error, so the Layer 2 retry
+ * (`withModelFallback`) would not catch it — which is why a call that sends a
+ * sampling parameter refuses such a model outright instead (FR-7, RC-11).
+ *
+ * Deliberately NOT the same family as `usesMaxCompletionTokens`: `gpt-4.1` is
+ * fine with `temperature`, and `o1` predates `max_completion_tokens`. Keep both
+ * lists code-owned and tested; a wrong answer here is a rare 400, never silent
+ * mispricing.
+ */
+export function rejectsSamplingParameters(model: string): boolean {
+  return (
+    model.startsWith('gpt-5') ||
+    model.startsWith('o1') ||
+    model.startsWith('o3') ||
+    model.startsWith('o4')
+  );
+}
+
 export class OpenAIProvider extends BaseAIProvider {
   private openai: OpenAI;
 
@@ -129,15 +173,14 @@ export class OpenAIProvider extends BaseAIProvider {
 
   /**
    * Check if a model uses max_completion_tokens instead of max_tokens.
-   * Newer models (GPT-5.x, GPT-4.1, o-series) use the new parameter name.
+   *
+   * Delegates to the module-level function of the same name, so the request
+   * building here and the Business OS Layer 2 model guardrail can never give
+   * different answers (RC-W5). Behaviour is byte-identical to the previous
+   * inline implementation.
    */
   private usesMaxCompletionTokens(model: string): boolean {
-    return (
-      model.startsWith('gpt-5') ||
-      model.startsWith('gpt-4.1') ||
-      model.startsWith('o3') ||
-      model.startsWith('o4')
-    );
+    return usesMaxCompletionTokens(model);
   }
 
   async chatCompletion(

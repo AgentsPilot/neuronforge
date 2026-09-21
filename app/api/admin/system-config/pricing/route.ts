@@ -18,7 +18,9 @@
  * admin's id (it used to be `null`, RC-W10) and never let an audit failure turn a
  * write that already succeeded into a 500. Saving a $0 cost additionally logs at
  * error level and writes an `AI_PRICING_ZERO_SET` entry — a zero price is allowed
- * (user decision, 2026-09-20) but it means that model is billed at nothing.
+ * (user decision, 2026-09-20) but it means that model is billed at nothing. The
+ * one exception is an input-only model (`text-embedding-*`), whose $0 output
+ * cost is correct (D-14, QA D-Q9).
  *
  * Response shapes are unchanged from the pre-Step-0 route, so
  * `app/admin/system-config/page.tsx` needs no change.
@@ -35,6 +37,7 @@ import {
   logAIPricingDeleted,
   logAIPricingZeroCost
 } from '@/lib/audit/admin-helpers';
+import { isInputOnlyPricedModel } from '@/lib/ai/pricing';
 import { createLogger, type Logger } from '@/lib/logger';
 import { aiModelPricingRepository } from '@/lib/repositories/AiModelPricingRepository';
 import type { AiModelPricing } from '@/lib/repositories/types';
@@ -122,7 +125,15 @@ async function reportZeroPrice(
 ): Promise<void> {
   const input = toNumber(row.input_cost_per_token);
   const output = toNumber(row.output_cost_per_token);
-  if (input !== 0 && output !== 0) return;
+
+  // Narrowed in Step 1 (D-14, QA D-Q9): a zero INPUT cost is always wrong, but a
+  // zero OUTPUT cost is correct for an input-only model (`text-embedding-*`),
+  // where the first rule raised a critical-severity false positive every time
+  // such a row was saved — including when only its input cost was edited, since
+  // this reads the post-update row.
+  const zeroInput = input === 0;
+  const zeroOutputUnexpected = output === 0 && !isInputOnlyPricedModel(row.provider, row.model_name);
+  if (!zeroInput && !zeroOutputUnexpected) return;
 
   requestLogger.error(
     {

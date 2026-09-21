@@ -1,0 +1,116 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`C: with the seeded rows, the resolver returns the same (FR-16, AC-2) is the committed AC-2 "before" snapshot 1`] = `
+{
+  "briefing/daily_narration": {
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "temperature": 0.3,
+  },
+  "chat/analysis": {
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "temperature": 0,
+  },
+  "chat/planner": {
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "temperature": 0,
+  },
+  "images/image_generation": {
+    "model": "gpt-image-1",
+    "provider": "openai",
+    "temperature": null,
+  },
+  "insights/correlated_insight": {
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "temperature": 0.4,
+  },
+  "insights/health_summary": {
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "temperature": 0.5,
+  },
+  "insights/insight_content": {
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "temperature": 0.3,
+  },
+  "intake/form_generation": {
+    "model": "gpt-4o",
+    "provider": "openai",
+    "temperature": 0.3,
+  },
+  "intake/question_inference": {
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "temperature": 0.2,
+  },
+  "leads/reply_recommendation": {
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "temperature": 0.2,
+  },
+  "onboarding/adjustment_intent_extraction": {
+    "model": "gpt-4o",
+    "provider": "openai",
+    "temperature": null,
+  },
+  "onboarding/business_story_extraction": {
+    "model": "gpt-4o",
+    "provider": "openai",
+    "temperature": null,
+  },
+  "onboarding/client_tracking_extraction": {
+    "model": "gpt-4o",
+    "provider": "openai",
+    "temperature": null,
+  },
+  "onboarding/client_workflow_extraction": {
+    "model": "gpt-4o",
+    "provider": "openai",
+    "temperature": null,
+  },
+  "website/about_content": {
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "temperature": 0.7,
+  },
+  "website/faq_content": {
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "temperature": 0.7,
+  },
+  "website/features_content": {
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "temperature": 0.7,
+  },
+  "website/field_regenerate": {
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "temperature": 0.7,
+  },
+  "website/full_site": {
+    "model": "gpt-4o",
+    "provider": "openai",
+    "temperature": 0.7,
+  },
+  "website/hero_content": {
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "temperature": 0.7,
+  },
+  "website/landing_page": {
+    "model": "gpt-4o",
+    "provider": "openai",
+    "temperature": 0.7,
+  },
+  "website/testimonial_enhance": {
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "temperature": 0.5,
+  },
+}
+`;

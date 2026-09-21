@@ -46,6 +46,9 @@ function makeClient(recorder: Recorder): SupabaseClient {
     'upsert',
     'delete',
     'eq',
+    // `is` and `lte` are how `listActive` filters out retired and not-yet-effective rows.
+    'is',
+    'lte',
     'order',
     'limit',
     'maybeSingle',
@@ -134,6 +137,59 @@ describe('listAll', () => {
     await repo.listAll();
 
     expect(allMethods(recorder)).not.toContain('is');
+  });
+});
+
+describe('listActive (the billing reader, Step 1)', () => {
+  it('returns only rows that are not retired, newest effective_date first', async () => {
+    recorder.results.push({ data: [ROW], error: null });
+
+    const { data, error } = await repo.listActive();
+
+    expect(error).toBeNull();
+    expect(data).toEqual([ROW]);
+    expect(recorder.queries[0].table).toBe('ai_model_pricing');
+    expect(recorder.queries[0].calls.filter((c) => c.method === 'is').map((c) => c.args)).toEqual([
+      ['retired_date', null],
+    ]);
+    // ORDERING IS LOAD-BEARING: the caller keeps the FIRST row per
+    // provider:model, so DESC is what makes the current price win. The
+    // secondary sort keeps that deterministic if two rows ever share a date.
+    expect(recorder.queries[0].calls.filter((c) => c.method === 'order').map((c) => c.args)).toEqual([
+      ['effective_date', { ascending: false }],
+      ['created_at', { ascending: false }],
+    ]);
+  });
+
+  // S1-5: a price entered ahead of time must not start charging when it is
+  // saved — only when its date arrives.
+  it('excludes rows whose effective_date is in the future', async () => {
+    recorder.results.push({ data: [ROW], error: null });
+
+    await repo.listActive();
+
+    const lte = recorder.queries[0].calls.filter((c) => c.method === 'lte');
+    expect(lte).toHaveLength(1);
+    expect(lte[0].args[0]).toBe('effective_date');
+    expect(lte[0].args[1]).toBe(new Date().toISOString().slice(0, 10));
+  });
+
+  it('returns [] — never null — when nothing matches', async () => {
+    recorder.results.push({ data: null, error: null });
+
+    const { data, error } = await repo.listActive();
+
+    expect(data).toEqual([]);
+    expect(error).toBeNull();
+  });
+
+  it('returns the error instead of throwing', async () => {
+    recorder.results.push({ data: null, error: new Error('boom') });
+
+    const { data, error } = await repo.listActive();
+
+    expect(data).toBeNull();
+    expect(error).toBeInstanceOf(Error);
   });
 });
 
