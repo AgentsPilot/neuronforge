@@ -14,9 +14,10 @@
  * suggesting. The owner knows the question; the type is our problem.
  *
  * Nothing here is trusted blindly: the answer is a SUGGESTION the review screen
- * shows, and the owner can change the type before it is added. `gpt-4o-mini`,
- * following the codebase's convention of the small model for single-field
- * inference and the large one for whole artefacts.
+ * shows, and the owner can change the type before it is added. The model is the
+ * intake area row's (Layer 2), which today configures a small model for this
+ * single-field inference and a larger one for whole artefacts — a settings
+ * choice now, not a convention this file follows.
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * @module app/api/intake/form/infer-question
