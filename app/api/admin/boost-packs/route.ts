@@ -15,7 +15,15 @@ const supabaseAdmin = createClient(
 
 // GET - Fetch all boost packs
 export async function GET(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
     const { data, error } = await supabaseAdmin
       .from('boost_packs')
       .select('*')

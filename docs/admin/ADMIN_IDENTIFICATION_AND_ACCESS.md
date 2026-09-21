@@ -1,6 +1,6 @@
 # Admin Identification & Access
 
-> **Last Updated**: 2026-09-20
+> **Last Updated**: 2026-09-21
 
 ## Overview
 
@@ -30,10 +30,18 @@ It exists because, before this work, the system had **no trustworthy admin signa
 
 ## As-Built State — read this first
 
-> **The admin surface is PARTIALLY unified.** This section exists because every
-> earlier draft of it described the *intended* end state, and a reader would
-> have concluded the system was protected. It is not, yet. Measured
-> 2026-09-20. The 72/38/7/27 split was re-derived against `7959b0dd`, `9cac7afa` and `e08091da` and is identical in all three, so it is not tied to one commit — but re-run the census rather than trusting these figures if much time has passed.
+> **The admin surface is now unified for enforcement, and still duplicated in
+> implementation.** Every `/api/admin/*` handler is behind an admin check and
+> every `/admin` page is guarded on the server. What is NOT finished: 7 handlers
+> reach the same answer through their own hand-rolled check instead of the
+> canonical gate.
+>
+> This section is kept deliberately blunt about the gap, because the previous
+> version of it described an *intended* end state and a reader would have
+> concluded the system was protected when it was not.
+
+Re-derived 2026-09-21. The 72/65/7/0 split is measured, not asserted — re-run
+the census rather than trusting these figures if much time has passed.
 
 ### What is true
 
@@ -43,99 +51,108 @@ It exists because, before this work, the system had **no trustworthy admin signa
 | It derives admin identity **only** from `admin_users`, via `AdminAccessService` | ✅ True |
 | It fails closed, answers **401** signed-out / **403** non-admin, and never 500s on an authorization outcome | ✅ True |
 | No app-code access decision reads `profiles.role` — a repo-wide sweep returns **zero** hits | ✅ True, and CI rule R4 keeps it that way |
-| A **new** admin route cannot ship ungated | 🟡 **Not yet.** The guard detects it, but a red check blocks nothing until the repo owner makes **`Admin authz surface guard`** a required status check on `main`. **Until that manual step is done, an ungated admin route can still be merged with a red tick beside it.** See [CI enforcement](#ci-enforcement). |
-
-> ⚠️ The row above is the one conditional in this table, and it is deliberately **not** a ✅. It is the difference between *"CI noticed"* and *"CI stopped it"*, and only the second one is a gate.
+| **Every one of the 72 `/api/admin/*` handlers requires an admin.** 65 via `requireAdmin`, 7 via their own equivalent check. **Zero open.** | ✅ **True as of 2026-09-21** (slices 2 + 3) |
+| **All 21 `/admin` pages are protected on the server**, by inheritance from `app/admin/layout.tsx` | ✅ **True as of 2026-09-21** (slice 5). None of the 21 files was edited — that is the point |
+| A **new** admin route cannot ship ungated | ✅ **True.** `Admin authz surface guard` is a **required status check** on `main` with `enforce_admins` and `strict` — a red guard blocks the merge |
+| A **new** `/admin` page is protected before its author writes a line of it | ✅ True — it renders as `children` of the guarded layout; there is no per-page opt-out |
 
 ### What is NOT true, stated plainly
 
+The point of this table is to stay as rigorous about not over-claiming *now*, with
+the work mostly done, as it was when the work had barely started.
+
 | Tempting claim | Reality |
 |---|---|
-| ~~"All 44 `/api/admin/*` route files sit behind the gate"~~ | **False.** Files are the wrong unit — the gate is per **handler**. Of **72 handlers**: **38 gated**, **7 correct-but-inline**, **27 knowingly open**. |
-| ~~"This class of gap cannot recur"~~ | True **for new surfaces only**. The 27 open handlers are not a recurrence — they are the unfinished part. |
-| ~~"All 21 `/admin` pages are protected on the server"~~ | **False.** Slice 5 is parked. `app/admin/layout.tsx` is a `'use client'` component and **there is no server-side page guard at all**. Every admin page renders for anyone who types the URL; what they then see depends entirely on the API routes behind it — which is what the 27 are. |
-| ~~"One way to validate a caller is an admin"~~ | One way **exists** and is **enforced for new code**. It is not the only way **in use**: 7 handlers still hand-roll their own `AdminAccessService` check. Correct behaviour, duplicated logic. |
-| ~~"The admin Settings screen has been retired"~~ | **False.** Slice 7 is parked. `app/admin/settings/page.tsx` and `app/api/admin/settings/admin-users/route.ts` **still exist**. They are **non-functional and gated**: an operator who "adds an admin" there writes to `system_settings_config.admin_users`, a store that **grants nothing**. Never describe this as retired. |
-| ~~"The reward-config mirror could drift"~~ | Moot — no mirror was ever built. The live fact is worse and simpler: **the full reward ruleset, including eligibility thresholds and anti-abuse caps, is anonymously readable today** via `GET /api/admin/reward-config`. |
+| ~~"There is one way to validate that a caller is a platform admin"~~ | **Still not literally true in use.** One way exists, is canonical and is CI-enforced for new code — but **7 handlers still hand-roll their own `AdminAccessService` check**. They are *correct*; they are not *the one way*. Slice 4 (de-duplication) is **PARKED**. Until it lands, "one way" describes the standard, not the codebase. |
+| ~~"The admin surface is fully hardened"~~ | Every handler is gated, but most still construct a **service-role client inline**, bypassing RLS and the repository layer. **Gated, not isolated** — see Open Item 9. And **26 of 44 files** still return a raw error `.message` to the client with no `NODE_ENV` guard (Open Item 7). |
+| ~~"The admin Settings screen has been retired"~~ | **False.** Slice 7 is **PARKED**. `app/admin/settings/page.tsx` and `app/api/admin/settings/admin-users/route.ts` still exist. They are **non-functional and gated**: an operator who "adds an admin" there writes to `system_settings_config.admin_users`, a store that **grants nothing**. Never describe this as retired. |
+| ~~"The page guard makes the admin pages secure"~~ | The page guard is **defence-in-depth**; the **API gate is the security boundary**. Three escapes remain, by construction rather than oversight: **E1** a `route.ts` under `app/admin/` is not wrapped by layouts (zero exist; CI rule R3 keeps it so); **E2** layouts do not re-render on client-side soft navigation, so the guard runs on entry to the subtree and on full loads; **E3** admin content served from a URL outside `/admin` is outside the boundary. |
+| ~~"The guard proves every gate actually runs"~~ | R1 proves a gate is **present**, not that it runs **first** or runs at all. All 65 are correct today — measured, not enforced. See [Known gaps in the guard itself](#known-gaps-in-the-guard-itself) and Open Item 8. |
+| ~~"The published counts cannot drift"~~ | The equality caps stop the exemption lists getting **longer**. Nothing forces an entry to be deleted when its handler is gated, so the figures can still drift **conservatively** — understating how much is gated (OI-22). |
 
 ### Every admin handler and its state (72)
 
-The unit is the **handler**, not the file: slice 1 gated write verbs and left read verbs open in the *same* file, so a file-level table would be misleading.
+The unit is the **handler**, not the file: slice 1 gated write verbs and left read
+verbs open in the *same* files, so a file-level table would have been misleading.
+That asymmetry is gone now — every row below is gated — but the handler remains
+the right unit for the register.
+
+**65 `requireAdmin` · 7 correct-but-inline · 0 open.**
 
 | # | Route | Verb | State | Note |
 |---|---|---|---|---|
-| 1 | `agent-generation-config` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 2 | `ais-config` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 3 | `backfill-embeddings` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 4 | `boost-packs` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 5 | `dashboard` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 6 | `dashboard` | `HEAD` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 7 | `execution-stats` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 8 | `execution-tiers` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 9 | `helpbot-config` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 10 | `memory-config` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 11 | `memory-consolidation` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 12 | `messages` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 13 | `onboarding-config` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 14 | `onboarding-users` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 15 | `orchestration-config` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 16 | `reward-config` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 17 | `settings/platform-users` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 18 | `storage-stats` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 19 | `storage-tiers` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 20 | `token-usage` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 21 | `token-usage` | `HEAD` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 22 | `token-usage/drill-down` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 23 | `token-usage/stats` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 24 | `ui-config` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 25 | `users` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 26 | `users` | `HEAD` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 27 | `users/[id]/stats` | `GET` | 🔴 **OPEN** | No admin check. Anonymous callers reach it. |
-| 28 | `agents` | `GET` | 🟡 inline | Correct behaviour, hand-rolled `AdminAccessService` check (was slice 4). |
-| 29 | `audit-trail` | `GET` | 🟡 inline | Correct behaviour, hand-rolled `AdminAccessService` check (was slice 4). |
-| 30 | `business-os/llm-usage` | `GET` | 🟡 inline | Correct behaviour, hand-rolled `AdminAccessService` check (was slice 4). |
-| 31 | `business-os/llm-usage/businesses` | `GET` | 🟡 inline | Correct behaviour, hand-rolled `AdminAccessService` check (was slice 4). |
-| 32 | `chat-usage` | `GET` | 🟡 inline | Correct behaviour, hand-rolled `AdminAccessService` check (was slice 4). |
-| 33 | `users/[id]/audit-logs` | `GET` | 🟡 inline | Correct behaviour, hand-rolled `AdminAccessService` check (was slice 4). |
-| 34 | `users/[id]/login-stats` | `GET` | 🟡 inline | Correct behaviour, hand-rolled `AdminAccessService` check (was slice 4). |
-| 35 | `agent-generation-config` | `PUT` | ✅ gated | `requireAdmin` |
-| 36 | `ais-config` | `POST` | ✅ gated | `requireAdmin` |
-| 37 | `ais-weights` | `PUT` | ✅ gated | `requireAdmin` |
-| 38 | `ais-weights/combined` | `PUT` | ✅ gated | `requireAdmin` |
-| 39 | `ais-weights/creation` | `PUT` | ✅ gated | `requireAdmin` |
-| 40 | `backfill-embeddings` | `POST` | ✅ gated | `requireAdmin` |
-| 41 | `boost-packs` | `DELETE` | ✅ gated | `requireAdmin` |
-| 42 | `boost-packs` | `POST` | ✅ gated | `requireAdmin` |
-| 43 | `boost-packs` | `PUT` | ✅ gated | `requireAdmin` |
-| 44 | `calculator-config` | `PUT` | ✅ gated | `requireAdmin` |
-| 45 | `execution-tiers` | `DELETE` | ✅ gated | `requireAdmin` |
-| 46 | `execution-tiers` | `POST` | ✅ gated | `requireAdmin` |
-| 47 | `execution-tiers` | `PUT` | ✅ gated | `requireAdmin` |
-| 48 | `helpbot-config` | `PUT` | ✅ gated | `requireAdmin` |
-| 49 | `memory-config` | `PUT` | ✅ gated | `requireAdmin` |
-| 50 | `memory-consolidation` | `POST` | ✅ gated | `requireAdmin` |
-| 51 | `messages/[id]` | `DELETE` | ✅ gated | `requireAdmin` |
-| 52 | `messages/[id]` | `PATCH` | ✅ gated | `requireAdmin` |
-| 53 | `messages/[id]/replay` | `POST` | ✅ gated | `requireAdmin` |
-| 54 | `migrate-labels` | `POST` | ✅ gated | `requireAdmin` |
-| 55 | `onboarding-config` | `PUT` | ✅ gated | `requireAdmin` |
-| 56 | `orchestration-config` | `PUT` | ✅ gated | `requireAdmin` |
-| 57 | `reward-config` | `POST` | ✅ gated | `requireAdmin` |
-| 58 | `settings/admin-users` | `GET` | ✅ gated | `requireAdmin` |
-| 59 | `settings/admin-users` | `POST` | ✅ gated | `requireAdmin` |
-| 60 | `storage-tiers` | `DELETE` | ✅ gated | `requireAdmin` |
-| 61 | `storage-tiers` | `POST` | ✅ gated | `requireAdmin` |
-| 62 | `storage-tiers` | `PUT` | ✅ gated | `requireAdmin` |
-| 63 | `system-config` | `GET` | ✅ gated | `requireAdmin` |
-| 64 | `system-config` | `PUT` | ✅ gated | `requireAdmin` |
-| 65 | `system-config/pricing` | `DELETE` | ✅ gated | `requireAdmin` |
-| 66 | `system-config/pricing` | `GET` | ✅ gated | `requireAdmin` |
-| 67 | `system-config/pricing` | `POST` | ✅ gated | `requireAdmin` |
-| 68 | `system-config/pricing` | `PUT` | ✅ gated | `requireAdmin` |
-| 69 | `system-config/pricing/sync` | `POST` | ✅ gated | `requireAdmin` |
-| 70 | `system-limits` | `PUT` | ✅ gated | `requireAdmin` |
-| 71 | `ui-config` | `POST` | ✅ gated | `requireAdmin` |
-| 72 | `user-emails` | `POST` | ✅ gated | `requireAdmin` |
+| 1 | `agents` | `GET` | 🟡 inline | Correct behaviour, hand-rolled `AdminAccessService` check (was slice 4). |
+| 2 | `audit-trail` | `GET` | 🟡 inline | Correct behaviour, hand-rolled `AdminAccessService` check (was slice 4). |
+| 3 | `business-os/llm-usage` | `GET` | 🟡 inline | Correct behaviour, hand-rolled `AdminAccessService` check (was slice 4). |
+| 4 | `business-os/llm-usage/businesses` | `GET` | 🟡 inline | Correct behaviour, hand-rolled `AdminAccessService` check (was slice 4). |
+| 5 | `chat-usage` | `GET` | 🟡 inline | Correct behaviour, hand-rolled `AdminAccessService` check (was slice 4). |
+| 6 | `users/[id]/audit-logs` | `GET` | 🟡 inline | Correct behaviour, hand-rolled `AdminAccessService` check (was slice 4). |
+| 7 | `users/[id]/login-stats` | `GET` | 🟡 inline | Correct behaviour, hand-rolled `AdminAccessService` check (was slice 4). |
+| 8 | `agent-generation-config` | `GET` | ✅ gated | `requireAdmin` |
+| 9 | `agent-generation-config` | `PUT` | ✅ gated | `requireAdmin` |
+| 10 | `ais-config` | `GET` | ✅ gated | `requireAdmin` |
+| 11 | `ais-config` | `POST` | ✅ gated | `requireAdmin` |
+| 12 | `ais-weights` | `PUT` | ✅ gated | `requireAdmin` |
+| 13 | `ais-weights/combined` | `PUT` | ✅ gated | `requireAdmin` |
+| 14 | `ais-weights/creation` | `PUT` | ✅ gated | `requireAdmin` |
+| 15 | `backfill-embeddings` | `GET` | ✅ gated | `requireAdmin` |
+| 16 | `backfill-embeddings` | `POST` | ✅ gated | `requireAdmin` |
+| 17 | `boost-packs` | `DELETE` | ✅ gated | `requireAdmin` |
+| 18 | `boost-packs` | `GET` | ✅ gated | `requireAdmin` |
+| 19 | `boost-packs` | `POST` | ✅ gated | `requireAdmin` |
+| 20 | `boost-packs` | `PUT` | ✅ gated | `requireAdmin` |
+| 21 | `calculator-config` | `PUT` | ✅ gated | `requireAdmin` |
+| 22 | `dashboard` | `GET` | ✅ gated | `requireAdmin` |
+| 23 | `dashboard` | `HEAD` | ✅ gated | `requireAdmin` |
+| 24 | `execution-stats` | `GET` | ✅ gated | `requireAdmin` |
+| 25 | `execution-tiers` | `DELETE` | ✅ gated | `requireAdmin` |
+| 26 | `execution-tiers` | `GET` | ✅ gated | `requireAdmin` |
+| 27 | `execution-tiers` | `POST` | ✅ gated | `requireAdmin` |
+| 28 | `execution-tiers` | `PUT` | ✅ gated | `requireAdmin` |
+| 29 | `helpbot-config` | `GET` | ✅ gated | `requireAdmin` |
+| 30 | `helpbot-config` | `PUT` | ✅ gated | `requireAdmin` |
+| 31 | `memory-config` | `GET` | ✅ gated | `requireAdmin` |
+| 32 | `memory-config` | `PUT` | ✅ gated | `requireAdmin` |
+| 33 | `memory-consolidation` | `GET` | ✅ gated | `requireAdmin` |
+| 34 | `memory-consolidation` | `POST` | ✅ gated | `requireAdmin` |
+| 35 | `messages` | `GET` | ✅ gated | `requireAdmin` |
+| 36 | `messages/[id]` | `DELETE` | ✅ gated | `requireAdmin` |
+| 37 | `messages/[id]` | `PATCH` | ✅ gated | `requireAdmin` |
+| 38 | `messages/[id]/replay` | `POST` | ✅ gated | `requireAdmin` |
+| 39 | `migrate-labels` | `POST` | ✅ gated | `requireAdmin` |
+| 40 | `onboarding-config` | `GET` | ✅ gated | `requireAdmin` |
+| 41 | `onboarding-config` | `PUT` | ✅ gated | `requireAdmin` |
+| 42 | `onboarding-users` | `GET` | ✅ gated | `requireAdmin` |
+| 43 | `orchestration-config` | `GET` | ✅ gated | `requireAdmin` |
+| 44 | `orchestration-config` | `PUT` | ✅ gated | `requireAdmin` |
+| 45 | `reward-config` | `GET` | ✅ gated | `requireAdmin` |
+| 46 | `reward-config` | `POST` | ✅ gated | `requireAdmin` |
+| 47 | `settings/admin-users` | `GET` | ✅ gated | `requireAdmin` |
+| 48 | `settings/admin-users` | `POST` | ✅ gated | `requireAdmin` |
+| 49 | `settings/platform-users` | `GET` | ✅ gated | `requireAdmin` |
+| 50 | `storage-stats` | `GET` | ✅ gated | `requireAdmin` |
+| 51 | `storage-tiers` | `DELETE` | ✅ gated | `requireAdmin` |
+| 52 | `storage-tiers` | `GET` | ✅ gated | `requireAdmin` |
+| 53 | `storage-tiers` | `POST` | ✅ gated | `requireAdmin` |
+| 54 | `storage-tiers` | `PUT` | ✅ gated | `requireAdmin` |
+| 55 | `system-config` | `GET` | ✅ gated | `requireAdmin` |
+| 56 | `system-config` | `PUT` | ✅ gated | `requireAdmin` |
+| 57 | `system-config/pricing` | `DELETE` | ✅ gated | `requireAdmin` |
+| 58 | `system-config/pricing` | `GET` | ✅ gated | `requireAdmin` |
+| 59 | `system-config/pricing` | `POST` | ✅ gated | `requireAdmin` |
+| 60 | `system-config/pricing` | `PUT` | ✅ gated | `requireAdmin` |
+| 61 | `system-config/pricing/sync` | `POST` | ✅ gated | `requireAdmin` |
+| 62 | `system-limits` | `PUT` | ✅ gated | `requireAdmin` |
+| 63 | `token-usage` | `GET` | ✅ gated | `requireAdmin` |
+| 64 | `token-usage` | `HEAD` | ✅ gated | `requireAdmin` |
+| 65 | `token-usage/drill-down` | `GET` | ✅ gated | `requireAdmin` |
+| 66 | `token-usage/stats` | `GET` | ✅ gated | `requireAdmin` |
+| 67 | `ui-config` | `GET` | ✅ gated | `requireAdmin` |
+| 68 | `ui-config` | `POST` | ✅ gated | `requireAdmin` |
+| 69 | `user-emails` | `POST` | ✅ gated | `requireAdmin` |
+| 70 | `users` | `GET` | ✅ gated | `requireAdmin` |
+| 71 | `users` | `HEAD` | ✅ gated | `requireAdmin` |
+| 72 | `users/[id]/stats` | `GET` | ✅ gated | `requireAdmin` |
 
 ### CI enforcement
 
@@ -145,13 +162,32 @@ Six rules: **R1** admin handler without `requireAdmin` · **R2** any `route.ts` 
 
 Exemptions live in two separate lists per rule — **PARKED** (an open hole someone decided not to close yet) and **PERMANENT** (an architectural exception). Each list has an **asserted cap**, and **the ratchet rule** applies: *any commit that removes an exemption must lower that list's cap by the same number, in the same commit.* Adding an exemption therefore requires raising a cap, which is a visible act in a diff.
 
-> ⚠️ **A green run means no NEW ungated admin surface was added.** It does **not** mean the admin surface is secure. And the workflow is only a true gate once the repo owner has made **`Admin authz surface guard`** (the *job* name) a required status check on `main`.
+Current caps, after slices 2, 3 and 5:
+
+| Rule | PARKED | PERMANENT | Note |
+|---|---|---|---|
+| **R1** | **7** (was 34) | 0 | The 7 correct-but-inline handlers. Slice 4 takes this to 0. |
+| **R2** | 7 | **1** | Same 7 files; the permanent entry is `calibrate/batch`, a capability flag rather than a gate. |
+| **R3** | 0 | 0 | Genuinely zero — no `route.ts` under `app/admin/**`, which is what keeps the page guard airtight. |
+| **R4** | 2 | 0 | Both in files slice 7 would delete; neither reads `profiles`. |
+| **R5** | 0 | 0 | Genuinely zero. |
+| **R6** | **0** (was 1) | 0 | The `/admin` layout now carries its server guard. |
+
+> **The ratchet in action.** Slices 2, 3 and 5 gated 27 handlers and guarded the
+> pages, so R1 dropped **34 → 7** and R6 **1 → 0** *in the same commit*. The caps
+> are asserted by equality, so leaving them stale would have failed the build —
+> the mechanism working as designed, not an obstacle to route around.
+
+> ⚠️ **A green run means no NEW ungated admin surface was added.** It does **not**
+> mean the admin surface is *hardened* — see "What is NOT true" above. The check
+> **is** now a required status check on `main` (with `enforce_admins` and
+> `strict`), so a red guard genuinely blocks a merge.
 
 ### Known gaps in the guard itself
 
 | Gap | Detail |
 |---|---|
-| **Precedence, not presence** | R1 checks that a handler *contains* `requireAdmin(`. It does not prove the gate runs **first**, nor that it runs at all (a gate inside a never-invoked closure satisfies it). All 38 gated handlers are correct today — verified by hand and by the oracle — but that is a measurement, not an invariant. **Closing it also requires extending the oracle's instrumentation to cover the body parse**, since `mockTablesTouched` records DB/RPC/auth-API calls and not `request.json()`.<br><br>📌 **SA condition (2026-09-20): this is the FIRST thing built when the parked slices resume.** The reasoning is that the guard's authority *grows* once it becomes a required status check — and precedence is the one place where a green run does not mean what a reader will assume it means. The longer it is green-but-shallow, the more weight it carries unearned. Tracked as **OI-20**. |
+| **Precedence, not presence** | R1 checks that a handler *contains* `requireAdmin(`. It does not prove the gate runs **first**, nor that it runs at all (a gate inside a never-invoked closure satisfies it). All 65 gated handlers are correct today — verified by hand and by the oracle — but that is a measurement, not an invariant. **Closing it also requires extending the oracle's instrumentation to cover the body parse**, since `mockTablesTouched` records DB/RPC/auth-API calls and not `request.json()`.<br><br>📌 **SA condition (2026-09-20): this is the FIRST thing built when the parked slices resume.** The reasoning is that the guard's authority *grows* once it becomes a required status check — and precedence is the one place where a green run does not mean what a reader will assume it means. The longer it is green-but-shallow, the more weight it carries unearned. Tracked as **OI-20**. |
 | **Path-scoped** | R1 only looks under `app/api/admin/**`. An admin capability elsewhere is caught only if it imports `AdminAccessService` (R2). The inverted rule that would close this ("is anything that *behaves* like an admin route gated, wherever it lives?") is **parked deliberately**: R2 already catches the realistic recurrence, and a false positive on a *required* check is the single thing most likely to get the check switched off. |
 
 
@@ -355,15 +391,15 @@ Either path is idempotent (keyed on `email`) and re-activates a soft-revoked row
 | # | Item | Status | Notes |
 |---|------|--------|-------|
 | 1 | **Close the self-promotion hole** in `app/api/user/profile/route.ts` (stop accepting `role='admin'` from the body; drop "Administrator" from `ProfileTabV2` options). | 🟡 **Partly closed 2026-09-20** | The **app-code** side is done and enforced: a repo-wide sweep for an access decision on `profiles.role` returns **zero** hits, and CI rule **R4** fails the build on a new one. What remains: **(a)** the write itself still exists on the customer profile route, so a user can still set the column even though nothing reads it for access; **(b)** whether a policy living **only in the live database** still trusts the column is a `pg_policies` read nobody has run. Tracked as its own P0. |
-| 2 | **Wire the gate into `/api/admin/*` routes.** | 🟡 **38 of 72 handlers done; 27 knowingly open** | Slice 1 gated every write/action verb (2026-09-20, PR #67); PR #69 gated `user-emails`. The remaining 27 are reads and internal-config GETs, plus 7 handlers that are correct but hand-roll the check. **See [As-Built State](#as-built-state--read-this-first) for the per-handler table.** Slices 2/3/4 are PARKED. |
-| 2a | **Server-side guard for the 21 `/admin` pages.** | 🔴 **Not started — PARKED** | `app/admin/layout.tsx` is a `'use client'` component with **no guard of any kind**. Every admin page renders for anyone who types the URL. Guard rule **R6** holds the position with a dated PARKED exemption. |
+| 2 | **Wire the gate into `/api/admin/*` routes.** | ✅ **Done 2026-09-21 — 0 open** | 65 of 72 handlers use `requireAdmin`; the other 7 perform a correct but hand-rolled check. Slice 1 gated the writes (PR #67), PR #69 gated `user-emails`, and slices 2 + 3 gated the remaining 27 reads. **See [As-Built State](#as-built-state--read-this-first).** Slice 4 (de-duplicate the 7) is PARKED — it is hygiene, not risk. |
+| 2a | **Server-side guard for the 21 `/admin` pages.** | ✅ **Done 2026-09-21 (slice 5)** | `app/admin/layout.tsx` is an async Server Component awaiting `requireAdminPage()`, rendering the chrome (moved verbatim to `app/admin/components/AdminChrome.tsx`) only for an admin. **None of the 21 `page.tsx` files was edited** — protection is inherited, so page 22 is guarded before it is written. A non-admin is silently redirected to `/business-os`, and anonymous vs signed-in-non-admin are asserted **indistinguishable** (BQ-3). CI rule R6 holds it. |
 | 2b | **Retire the non-functional admin Settings screen.** | 🔴 **Not done — PARKED** | `app/admin/settings/page.tsx` + `app/api/admin/settings/admin-users/route.ts` still exist. They are **gated but non-functional**: they manage `system_settings_config.admin_users`, a store that grants no access. Do not describe this as retired. |
 | 3 | **`GET /api/admin/admins` route** to list admins over HTTP (gated by `AdminAccessService.isAdmin`), backed by `listAdmins()` / `listAdminEmails()`. | ⬜ Recommended | No HTTP endpoint exposes the admin list today — service/repo are server-side only. Needed for any UI that shows or manages admins. |
 | 4 | **Admin management UI/API** (grant/revoke) instead of env/SQL only. | ⬜ Future | `AdminUserRepository` already supports `upsertByEmail` / `deactivateByEmail`. |
 | 5 | **Audit-log admin grants/revocations** via `AuditTrailService`. | ⬜ Future | — |
 | 6 | Decide whether to **retire `admin`/`viewer` from the `profiles.role` constraint** once nothing reads them for access. | ⬜ Future | Keep persona values; drop access-level values. Blocked on item 1's remaining halves. |
 | 7 | **Error-response conformance across the admin surface.** | ⬜ Todo | **26 of 44** admin route files put a raw error `.message` into a response body with **no `NODE_ENV` guard** — two shapes: `details: <err>.message` (4 files) and `message: error instanceof Error ? … ` (16 files). Only 4 use the guarded form. Contradicts the Security Rule *"never expose internal error details to client in production"*. Severity is reduced on gated routes (admin-only now) but not closed. |
-| 8 | **Guard precedence gap.** | ⬜ Todo | R1 proves a gate is **present**, not that it runs **first** or runs at all. Applies to all 38 gated handlers. Closing it needs the oracle's instrumentation extended to cover the **body parse** — `mockTablesTouched` records DB/RPC/auth-API calls, not `request.json()` — otherwise a precedence check is only half a check. |
+| 8 | **Guard precedence gap.** | ⬜ Todo | R1 proves a gate is **present**, not that it runs **first** or runs at all. Applies to all 65 gated handlers. Closing it needs the oracle's instrumentation extended to cover the **body parse** — `mockTablesTouched` records DB/RPC/auth-API calls, not `request.json()` — otherwise a precedence check is only half a check. |
 | 9 | **Admin routes repository-pattern migration.** | ⬜ Todo | **38 of 44** admin route files do direct DB access (25 construct their own service-role client at module scope), violating CLAUDE.md mandatory rule 1. They are **gated, not isolated**. 14 tables already have an owning repository to reuse; 6 table groups would need a new one. ⚠️ Blocked on a design decision: these are cross-user admin reads **by design**, so they need methods that are *not* the `.eq('user_id', userId)` shape the repository layer exists to enforce. Full write-up in [admin-authz-unification.md](/docs/workplans/admin-authz-unification.md). |
 | 10 | **`app/admin/learning-system/page.tsx:233` still uses `console.error`.** | ⬜ Todo | Rule-3 cleanup around the `user-emails` feature is incomplete. |
 
@@ -384,5 +420,6 @@ Either path is idempotent (keyed on `email`) and re-activates a soft-revoked row
 | 2026-07-01 | Initial | Documented the `admin_users` source of truth, `AdminUserRepository` + `AdminAccessService`, env/SQL bootstrap, and open follow-ups. Prerequisite for the Admin Agent Health Dashboard (Q1). |
 | 2026-07-01 | Added runtime flows | Added Architecture diagram, Runtime Flows (3-step `isAdmin` resolution, `listAdminEmails` union, caching), and Lifecycle Scenarios sections. |
 | 2026-07-01 | Added unit tests | 21 passing tests for `AdminUserRepository` + `AdminAccessService` (query shape, self-heal, fail-closed, union, caching). |
+| 2026-09-21 | **Slices 2, 3 and 5 — the admin surface closed** | **27 open handlers gated and all 21 `/admin` pages guarded.** Slice 2: 14 cross-tenant reads (every platform user, any named user’s usage, per-user LLM spend, platform metrics, the message log, and the 3 `HEAD` probes that confirmed route existence to anonymous callers) + 9 internal-config GETs. Slice 3: the 4 catalogue GETs — `reward-config` was the one with **live customer callers**, so its gate and the replacement projection `GET /api/rewards/agent-sharing` (a new `ConfigRepository.isRewardActive`, `{ isActive }` only, no migration, no second store) ship in the **same commit**; both agent-detail pages repointed. Slice 5: `app/admin/layout.tsx` became an async Server Component awaiting `requireAdminPage()`, with the chrome moved verbatim to `AdminChrome.tsx` — **none of the 21 pages edited**, protection is inherited. **The ratchet fired as designed: R1 34 → 7 and R6 1 → 0 in the same commit**, and the published figures moved with it (**72 = 65 gated + 7 inline + 0 open**). Truth tables re-flipped in BOTH directions: "all 21 pages protected on the server" and "every handler requires an admin" are now ✅ — while **"one way to validate" is still NOT literally true in use**, because the 7 correct-but-inline copies remain (slice 4 parked), and the surface is **gated, not isolated** (service-role clients, error-message leakage). Tests: guard 74/74, oracle 293/293, admin surface 508/508. |
 | 2026-09-20 | **Corrected to the as-built state (slice 8)** | Added [As-Built State](#as-built-state--read-this-first) with the **72-row per-handler table** (38 gated / 7 inline / **27 knowingly open**) — the handler, not the file, is the unit, because slice 1 gated write verbs and left read verbs open in the *same* files. Replaced six claims that would have been **false** if written as originally planned: "all 44 route files are behind the gate", "this class of gap cannot recur" (true for **new** surfaces only), "all 21 `/admin` pages are protected on the server" (**there is no server page guard at all**), "one way to validate" (one way exists and is enforced for new code; 7 inline copies remain in use), "the Settings screen is retired" (it is **non-functional and gated**, never retired), and the reward-config mirror drift (moot — the live fact is that the full reward ruleset including abuse caps is **anonymously readable**). Documented CI enforcement, the PARKED/PERMANENT split, the ratchet rule, and the guard's own two known gaps. Open items reworked: 1 is **partly** closed (app-code side enforced; the write and the live `pg_policies` read remain), 2 is **38/72**, and new items 7–10 record error-response conformance (**26 of 44** files), the precedence gap, the repository-pattern migration, and a stray `console.error`. |
 | 2026-09-20 | `profiles.role` self-promotion closed | Recorded the database guard (`20261002_profiles_role_privilege_guard.sql`), the route and UI changes, and the cleanup of the three live `admin` rows. Corrected the "nothing reads `profiles.role` for access" claim, which was true of the code but not of history — a dropped `system_settings_config` policy and the profile PUT both trusted it. Added the inherited-normaliser rule for any future reader, and the two knowingly-unclamped spelling classes. |

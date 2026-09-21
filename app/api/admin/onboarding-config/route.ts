@@ -15,7 +15,16 @@ const supabase = createClient(
  * Fetch onboarding/free tier configuration
  */
 export async function GET() {
+  // No request object on this handler, so the correlation id is generated
+  // rather than propagated.
+  const requestLogger = logger.child({ correlationId: crypto.randomUUID() });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
     const { data, error } = await supabase
       .from('system_settings_config')
       .select('key, value')

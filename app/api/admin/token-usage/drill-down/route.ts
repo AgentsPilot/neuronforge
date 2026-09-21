@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
+import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 
 const logger = createLogger({ module: 'TokenUsageDrillDownAPI' });
 
@@ -92,7 +93,15 @@ interface DrillDownResponse {
  * - dateFrom, dateTo: explicit date range
  */
 export async function GET(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
     const { searchParams } = new URL(request.url);
 
     const breakdownBy = searchParams.get('breakdownBy') || 'provider';
