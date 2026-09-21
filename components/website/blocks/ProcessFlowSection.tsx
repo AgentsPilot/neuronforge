@@ -1528,6 +1528,15 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
 // ============================================================================
 
 interface IntakeStepProps {
+  /**
+   * Non-empty by contract. The only render site guards on
+   * `intake_fields.length > 0`, so this component never has to handle the empty
+   * case — and must not grow a hook-bearing branch for it again.
+   *
+   * A caller that relaxes that guard gets an empty form with a working submit,
+   * not an auto-submit. That is the deliberate failure mode: rendering `null`
+   * instead would strand the visitor on a step with no way forward.
+   */
   fields: FormField[];
   answers: Record<string, string>;
   onAnswerChange: (fieldName: string, value: string) => void;
@@ -1559,13 +1568,12 @@ function IntakeStep({
     onSubmit();
   };
 
-  if (fields.length === 0) {
-    // No intake fields configured - auto-proceed
-    useEffect(() => {
-      onSubmit();
-    }, []);
-    return null;
-  }
+  // A `fields.length === 0` branch used to live here and call `useEffect` inside
+  // an `if` before an early return — a rules-of-hooks violation. It was also
+  // unreachable: the sole render site guards on `intake_fields.length > 0`, so
+  // the effect never ran. Removed rather than hoisted, because hoisting would
+  // have ACTIVATED a never-executed auto-submit on a customer-facing booking
+  // flow. See the contract on `IntakeStepProps.fields` above.
 
   return (
     <div className="space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
@@ -2724,7 +2732,11 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
                   />
                 )}
 
-                {/* Legacy intake step - for backwards compatibility with intake_fields */}
+                {/* Legacy intake step - for backwards compatibility with intake_fields.
+                    The `intake_fields.length > 0` guard is load-bearing, not
+                    defensive: it is what lets `IntakeStep` assume a non-empty
+                    `fields` (see `IntakeStepProps.fields`). Relaxing it renders
+                    an empty form rather than skipping the step. */}
                 {currentStep === 'intake' && !intakeTemplate && intake_fields.length > 0 && (
                   <IntakeStep
                     fields={intake_fields}
