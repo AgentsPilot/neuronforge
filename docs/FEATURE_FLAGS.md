@@ -1,7 +1,7 @@
 # Feature Flags
 
-> **Last Updated**: February 8, 2026
-> **Version**: 1.2.0
+> **Last Updated**: 2026-09-21
+> **Version**: 1.3.0
 
 This document describes the feature flag system used in NeuronForge for gradual rollouts, A/B testing, and feature toggling.
 
@@ -11,8 +11,9 @@ This document describes the feature flag system used in NeuronForge for gradual 
 
 | Date | Version | Author | Changes |
 |------|---------|--------|---------|
-| 2026-02-08 | 1.2.0 | - | Added `useV6ReviewMode` flag for controlling V6 split API vs single API flow. |
-| 2026-02-08 | 1.1.0 | - | Added `useV6AgentGeneration` flag. Clarified that Thread-Based and New UI flags are for legacy route only. Expanded database-based flags documentation with detailed sections for each orchestration flag. |
+| 2026-09-21 | 1.3.0 | Dev | **Renamed all seven flag readers from `use…` to `is…Enabled`** (`isBusinessDeleteSurfaceVisible` for the delete surface, to keep it distinct from the server-side `isBusinessDeleteSurfaceEnabled()` authz reader in `purgeAuthz.ts`). The `use` prefix made `react-hooks/rules-of-hooks` treat these plain env readers as React hooks, producing 11 of 14 lint errors. **Also fixed the flag-authoring template**, which had been generating both halves of the defect: it instructed a `use…` name *and* hand-rolled the boolean parsing instead of importing `parseBooleanFlag`. Added `npm run lint:hooks` + its CI workflow. See [REACT_HOOKS_RULES_VIOLATIONS_WORKPLAN.md](/docs/workplans/REACT_HOOKS_RULES_VIOLATIONS_WORKPLAN.md). |
+| 2026-02-08 | 1.2.0 | - | Added `isV6ReviewModeEnabled` flag for controlling V6 split API vs single API flow. |
+| 2026-02-08 | 1.1.0 | - | Added `isV6AgentGenerationEnabled` flag. Clarified that Thread-Based and New UI flags are for legacy route only. Expanded database-based flags documentation with detailed sections for each orchestration flag. |
 | 2026-01-17 | 1.0.0 | - | Initial documentation created. Documented 3 environment-based flags and 4 database-based orchestration flags. |
 
 ---
@@ -56,7 +57,7 @@ Feature flag functions are defined in:
 
 **Purpose**: Enables the V6 5-phase agent generation pipeline (semantic plan → grounding → formalization → compilation → validation) instead of the V4 direct generation approach.
 
-**Function**: `useV6AgentGeneration()`
+**Function**: `isV6AgentGenerationEnabled()`
 
 **Used In**:
 - [v2/agents/new/page.tsx](app/v2/agents/new/page.tsx) - Main agent creation page
@@ -67,9 +68,9 @@ Feature flag functions are defined in:
 - `false`, `0`, or omit - Use V4 direct generation
 
 ```typescript
-import { useV6AgentGeneration } from '@/lib/utils/featureFlags';
+import { isV6AgentGenerationEnabled } from '@/lib/utils/featureFlags';
 
-const useV6 = useV6AgentGeneration();
+const useV6 = isV6AgentGenerationEnabled();
 
 if (useV6) {
   // Call /api/v6/generate-ir-semantic
@@ -86,7 +87,7 @@ if (useV6) {
 
 **Purpose**: Controls whether V6 agent generation uses the split API flow with user review UI or the single API flow for direct generation.
 
-**Function**: `useV6ReviewMode()`
+**Function**: `isV6ReviewModeEnabled()`
 
 **Used In**:
 - [v2/agents/new/page.tsx](app/v2/agents/new/page.tsx) - Main agent creation page
@@ -106,10 +107,10 @@ if (useV6) {
 | Disabled | 1. `/api/v6/generate-ir-semantic` (all 5 phases) | No |
 
 ```typescript
-import { useV6AgentGeneration, useV6ReviewMode } from '@/lib/utils/featureFlags';
+import { isV6AgentGenerationEnabled, isV6ReviewModeEnabled } from '@/lib/utils/featureFlags';
 
-const useV6 = useV6AgentGeneration();
-const useReviewMode = useV6ReviewMode();
+const useV6 = isV6AgentGenerationEnabled();
+const useReviewMode = isV6ReviewModeEnabled();
 
 if (useV6) {
   if (useReviewMode) {
@@ -130,7 +131,7 @@ if (useV6) {
 
 **Environment Variable**: `NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION`
 
-**Helper**: `useMoveToCalibrationAfterCreation()`
+**Helper**: `isMoveToCalibrationAfterCreationEnabled()`
 
 **Default**: `false` (auto-redirect to the agent page after creation, as before).
 
@@ -183,7 +184,7 @@ Business OS Data Purge requirement). **Default: off.**
 > this variable, via `isBusinessDeleteSurfaceEnabled()`, and while the flag is
 > off it restricts the customer-surface Purge to **platform admins**.
 >
-> `useBusinessDeleteSurface()` in `lib/utils/featureFlags.ts` decides only what
+> `isBusinessDeleteSurfaceVisible()` in `lib/utils/featureFlags.ts` decides only what
 > is **rendered**. A `NEXT_PUBLIC_*` value is compiled into the client bundle and
 > the purge routes are callable directly regardless of what the UI draws.
 >
@@ -197,7 +198,7 @@ Business OS Data Purge requirement). **Default: off.**
 
 | Caller | Question it answers | Consequence if wrong |
 |---|---|---|
-| `useBusinessDeleteSurface()` (client) | Should the section render? | A button appears that the server will refuse — cosmetic |
+| `isBusinessDeleteSurfaceVisible()` (client) | Should the section render? | A button appears that the server will refuse — cosmetic |
 | `isBusinessDeleteSurfaceEnabled()` (server) | Is the operation permitted? | **A non-admin can purge a business while the feature is "off"** |
 
 **Implementation notes**
@@ -252,7 +253,7 @@ If you set `USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW` in
 
 **Purpose**: Enables OpenAI Threads API for the agent creation flow (phases 1-3: analyze, clarify, enhance). Provides approximately 36% token savings via prompt caching.
 
-**Function**: `useThreadBasedAgentCreation()`
+**Function**: `isThreadBasedAgentCreationEnabled()`
 
 **Used In** (legacy route only):
 - [useConversationalBuilder.ts](components/agent-creation/useConversationalBuilder.ts)
@@ -263,9 +264,9 @@ If you set `USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW` in
 - `false`, `0`, or omit - Use legacy sequential API calls
 
 ```typescript
-import { useThreadBasedAgentCreation } from '@/lib/utils/featureFlags';
+import { isThreadBasedAgentCreationEnabled } from '@/lib/utils/featureFlags';
 
-const useThreadFlow = useThreadBasedAgentCreation();
+const useThreadFlow = isThreadBasedAgentCreationEnabled();
 
 if (useThreadFlow) {
   // Use thread-based flow with caching
@@ -282,7 +283,7 @@ if (useThreadFlow) {
 
 **Purpose**: Toggles between `ConversationalAgentBuilderV2` and legacy `ConversationalAgentBuilder` in the old `/agents/new/chat` route.
 
-**Function**: `useNewAgentCreationUI()`
+**Function**: `isNewAgentCreationUIEnabled()`
 
 **Used In** (legacy route only):
 - [AgentBuilderParent.tsx](components/agent-creation/AgentBuilderParent.tsx)
@@ -292,9 +293,9 @@ if (useThreadFlow) {
 - `false`, `0`, or omit - Show legacy `ConversationalAgentBuilder`
 
 ```typescript
-import { useNewAgentCreationUI } from '@/lib/utils/featureFlags';
+import { isNewAgentCreationUIEnabled } from '@/lib/utils/featureFlags';
 
-const useNewUI = useNewAgentCreationUI();
+const useNewUI = isNewAgentCreationUIEnabled();
 
 return useNewUI ? (
   <ConversationalAgentBuilderV2 {...props} />
@@ -360,10 +361,10 @@ import { getFeatureFlags } from '@/lib/utils/featureFlags';
 const flags = getFeatureFlags();
 // Returns:
 // {
-//   useV6AgentGeneration: boolean,
-//   useV6ReviewMode: boolean,              // Defaults to true
-//   useThreadBasedAgentCreation: boolean,  // Legacy
-//   useNewAgentCreationUI: boolean,        // Legacy
+//   isV6AgentGenerationEnabled: boolean,
+//   isV6ReviewModeEnabled: boolean,              // Defaults to true
+//   isThreadBasedAgentCreationEnabled: boolean,  // Legacy
+//   isNewAgentCreationUIEnabled: boolean,        // Legacy
 // }
 
 console.log('Current feature flags:', flags);
@@ -537,27 +538,25 @@ All environment-based flags follow the same parsing pattern:
 4. Return `true` for `'true'` or `'1'`
 5. Return `false` for any other value
 
+That logic lives in exactly one place — `parseBooleanFlag()` in
+[parseBooleanFlag.ts](lib/utils/parseBooleanFlag.ts). **Import it; never
+re-implement it.**
+
 ```typescript
-export function useFeatureFlag(): boolean {
-  const flag = process.env.FEATURE_FLAG_NAME;
+import { parseBooleanFlag } from '@/lib/utils/parseBooleanFlag';
 
-  if (!flag || flag.trim() === '') {
-    return false;
-  }
-
-  const normalizedFlag = flag.trim().toLowerCase();
-
-  if (normalizedFlag === 'false' || normalizedFlag === '0') {
-    return false;
-  }
-
-  if (normalizedFlag === 'true' || normalizedFlag === '1') {
-    return true;
-  }
-
-  return false;
+export function isFeatureFlagEnabled(): boolean {
+  return parseBooleanFlag(process.env.FEATURE_FLAG_NAME);
 }
 ```
+
+> ⚠️ **Why not hand-roll `=== 'true'`?** Because it silently disagrees with
+> every other flag in the codebase. `parseBooleanFlag` accepts `1`/`0` and is
+> case-insensitive, so `=1` and `=TRUE` work — a strict `=== 'true'` treats
+> both as *off* while giving the operator no signal why the flag they just set
+> did nothing. This is not hypothetical: `app/api/business-os/chat-v2/route.ts`
+> reads `NEXT_PUBLIC_USE_AI_DATA_LAYER === 'true'` directly and behaves
+> differently from every other reader as a result.
 
 ### Client vs Server Flags
 
@@ -571,35 +570,51 @@ export function useFeatureFlag(): boolean {
 1. **Add the function** to [featureFlags.ts](lib/utils/featureFlags.ts):
 
 ```typescript
+import { parseBooleanFlag } from '@/lib/utils/parseBooleanFlag';
+
 /**
  * Check if [feature name] is enabled
  *
  * @returns {boolean} True if enabled, false otherwise
  */
-export function useMyNewFeature(): boolean {
-  const flag = process.env.NEXT_PUBLIC_MY_NEW_FEATURE; // or without NEXT_PUBLIC_ for server-only
-
-  if (!flag || flag.trim() === '') {
-    return false;
-  }
-
-  const normalizedFlag = flag.trim().toLowerCase();
-  return normalizedFlag === 'true' || normalizedFlag === '1';
+export function isMyNewFeatureEnabled(): boolean {
+  // or without NEXT_PUBLIC_ for server-only
+  const flag = process.env.NEXT_PUBLIC_MY_NEW_FEATURE;
+  return parseBooleanFlag(flag);
 }
 ```
+
+> ⚠️ **Name it `is…Enabled`, never `use…`.**
+>
+> These are plain functions that read an environment variable. They are **not**
+> React hooks: `lib/utils/featureFlags.ts` does not import React and holds no
+> state. But `react-hooks/rules-of-hooks` is a *lexical* rule — it decides
+> "is this a hook?" from the identifier alone. A `use`-prefixed flag reader
+> therefore turns every call site into a lint error the moment it is called
+> anywhere a hook is not allowed: inside an event handler, conditionally in
+> JSX, or from another plain function.
+>
+> This template previously said `useMyNewFeature()`, and seven flags copied
+> from it. That produced **11 of the 14** `rules-of-hooks` violations fixed in
+> [REACT_HOOKS_RULES_VIOLATIONS_WORKPLAN.md](/docs/workplans/REACT_HOOKS_RULES_VIOLATIONS_WORKPLAN.md).
+> `npm run lint:hooks` now fails the build on a recurrence.
 
 2. **Add to `getFeatureFlags()`**:
 
 ```typescript
 export function getFeatureFlags() {
   return {
-    useV6AgentGeneration: useV6AgentGeneration(),
-    useThreadBasedAgentCreation: useThreadBasedAgentCreation(),
-    useNewAgentCreationUI: useNewAgentCreationUI(),
-    useMyNewFeature: useMyNewFeature(), // Add here
+    isV6AgentGenerationEnabled: isV6AgentGenerationEnabled(),
+    isThreadBasedAgentCreationEnabled: isThreadBasedAgentCreationEnabled(),
+    isNewAgentCreationUIEnabled: isNewAgentCreationUIEnabled(),
+    isMyNewFeatureEnabled: isMyNewFeatureEnabled(), // Add here
   };
 }
 ```
+
+> `getFeatureFlags()` is a **debug helper with no production consumer**. Do not
+> wire it into a feature gate — read the individual `is…Enabled` functions
+> instead. See the note on the function itself for why.
 
 3. **Add to `.env.example`**:
 

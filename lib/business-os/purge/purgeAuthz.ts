@@ -58,6 +58,19 @@ export type PurgeAuthzDecision =
 /** The documented name of the flag. Kept as a constant for docs and tests to reference. */
 export const BUSINESS_DELETE_FLAG = 'NEXT_PUBLIC_ENABLE_BUSINESS_DELETE';
 
+/**
+ * Whether the customer-surface Purge is PERMITTED. This is the authorization
+ * reader, and it is server-side.
+ *
+ * Its client-side counterpart is `isBusinessDeleteSurfaceVisible()` in
+ * `lib/utils/featureFlags.ts`. Same env var, different question: that one
+ * decides what the UI *draws*, this one decides what the server *allows*. They
+ * are deliberately duplicated rather than shared — this module imports
+ * `AdminAccessService`, so a client module importing it would pull an admin
+ * lookup into the browser bundle, and calling the client one from here would
+ * hand a destructive-capability decision to a value compiled into that bundle
+ * (the hole T30 closed). Do not consolidate them.
+ */
 export function isBusinessDeleteSurfaceEnabled(): boolean {
   // Read the LITERAL `process.env.NEXT_PUBLIC_...`, never `process.env[CONST]`.
   //

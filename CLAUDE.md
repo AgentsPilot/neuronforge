@@ -486,30 +486,38 @@ Feature flags control experimental features and gradual rollouts. See `/docs/fea
 ### Usage
 
 ```typescript
-import { useV6AgentGeneration, useV6ReviewMode, useThreadBasedAgentCreation } from '@/lib/utils/featureFlags';
+import { isV6AgentGenerationEnabled, isV6ReviewModeEnabled, isThreadBasedAgentCreationEnabled } from '@/lib/utils/featureFlags';
 
 // Client-side checks
-if (useV6AgentGeneration()) {
+if (isV6AgentGenerationEnabled()) {
   // Use V6 5-phase pipeline
 }
 
-if (useV6ReviewMode()) {
+if (isV6ReviewModeEnabled()) {
   // Use split API flow with review UI (default: true)
 }
 
-if (useThreadBasedAgentCreation()) {
+if (isThreadBasedAgentCreationEnabled()) {
   // Use thread-based agent creation
 }
 ```
+
+> ⚠️ **Never name a flag reader `use…`.** These are plain functions that read
+> `process.env`, not React hooks. `react-hooks/rules-of-hooks` keys off the
+> *identifier*, so a `use`-prefixed plain function makes every call site a lint
+> error and — worse — tells the next reader that hook rules apply when they do
+> not. Seven of these were misnamed and produced 11 of the 14 violations fixed
+> in `docs/workplans/REACT_HOOKS_RULES_VIOLATIONS_WORKPLAN.md`. Use
+> `is…Enabled`. `npm run lint:hooks` enforces this.
 
 ### Key Flags
 
 | Flag | Function | Purpose |
 |------|----------|---------|
-| `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` | `useV6AgentGeneration()` | Enable V6 semantic pipeline |
-| `NEXT_PUBLIC_USE_V6_REVIEW_MODE` | `useV6ReviewMode()` | Enable 2-step API flow with user review (default: true) |
-| `NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION` | `useThreadBasedAgentCreation()` | Enable thread-based creation |
-| `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` | `useNewAgentCreationUI()` | Enable new conversational UI |
+| `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` | `isV6AgentGenerationEnabled()` | Enable V6 semantic pipeline |
+| `NEXT_PUBLIC_USE_V6_REVIEW_MODE` | `isV6ReviewModeEnabled()` | Enable 2-step API flow with user review (default: true) |
+| `NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION` | `isThreadBasedAgentCreationEnabled()` | Enable thread-based creation |
+| `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` | `isNewAgentCreationUIEnabled()` | Enable new conversational UI |
 
 **Note:** `NEXT_PUBLIC_` prefix required for client-side access. Database-based flags for orchestration are managed via `/api/admin/orchestration-config`.
 

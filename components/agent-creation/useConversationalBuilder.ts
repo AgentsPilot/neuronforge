@@ -11,7 +11,7 @@ import { useAuth } from '@/components/UserProvider';
 import { Message, ProjectState, ClarificationQuestion, ClarityAnalysis, RequirementItem, PromptRequestPayload, PromptResponsePayload, ClarificationQuestionRequestPayload, EnhancedPromptRequestPayload } from './types';
 import { useProjectState } from './useProjectState';
 import { useMessageHandlers } from './useMessageHandlers';
-import { useThreadBasedAgentCreation } from '@/lib/utils/featureFlags';
+import { isThreadBasedAgentCreationEnabled } from '@/lib/utils/featureFlags';
 import type { ProcessMessageRequest, ProcessMessageResponse } from '@/components/agent-creation/types/agent-prompt-threads';
 
 /**
@@ -54,7 +54,7 @@ export function useConversationalBuilder(params: {
   });
 
   // Feature flag: Check if thread-based agent creation is enabled
-  const useThreadFlow = useThreadBasedAgentCreation();
+  const useThreadFlow = isThreadBasedAgentCreationEnabled();
   const threadId = useRef<string | null>(null);
 
   console.log('🎛️ Feature flag - useThreadFlow:', useThreadFlow);
