@@ -1,9 +1,10 @@
 /**
- * Regression guard: the two dead plugin endpoints stay removed.
+ * Regression guard: dead / deleted API endpoints stay removed.
  *
- * Both were deleted during the auth_config exposure fix
- * (docs/workplans/plugin-auth-config-exposure-workplan.md) rather than hardened,
- * because neither had a live caller:
+ * ── The original two (auth_config exposure fix, PR #73) ────────────────────
+ * Both were deleted rather than hardened
+ * (docs/workplans/plugin-auth-config-exposure-workplan.md), because neither had a live
+ * caller:
  *
  *   - `/api/user/plugins` — returned `_meta.connectedPluginData`, i.e. raw
  *     PluginDefinitionContext instances. Those alias the env-substituted definition, so
@@ -17,9 +18,37 @@
  * (the wizard chain hangs off the disabled `app/(protected)/agents/new/page.tsxold`), so
  * it was deleted with them.
  *
- * Restoring any of the three must fail here: the secret egress and the anonymous LLM
- * spend both come back with the file. Modelled on
- * lib/__tests__/system-initializer-removed.guard.test.ts.
+ * ── Added by the identity sweep, Slice 0 (2026-09-21) ──────────────────────
+ * Three more, deleted for the same reason: an anonymously-reachable hole with no in-repo
+ * caller, where deleting is strictly safer than gating because a deleted route cannot
+ * regress. See docs/workplans/IDENTITY_SWEEP_WORKPLAN.md § Slice 0.
+ *
+ *   - `/api/v6/fetch-plugin-data` — read `userId` from the request body and passed it
+ *     straight to `PluginExecuterV2.execute()`. No `getUser()`, no Zod, and middleware
+ *     does not authenticate `/api/*` (middleware.ts:83), so an anonymous POST executed
+ *     any plugin action against any named account **using that account's stored OAuth
+ *     tokens** — reading their mail, writing their Drive, sending as them.
+ *   - `/api/oauth/token` — rode the deprecated V1 plugin-strategy layer, built a
+ *     service-role client inline, and parsed an identity out of an **unsigned** `state`
+ *     parameter. Zero callers: every live V1 strategy redirects to
+ *     `/oauth/callback/<plugin>` (gmailPluginStrategy.ts:39,174 and siblings), never
+ *     here. NOTE: the unsigned-`state` class is NOT closed by this deletion — the
+ *     sibling callback routes still parse it. That is tracked as R4 in
+ *     docs/workplans/BUSINESS_OS_PLUGIN_ROUTE_IDENTITY_HARDENING_WORKPLAN.md §3.
+ *   - `/api/check-user-status` — anonymous POST `{ email }` → service-role
+ *     `auth.admin.listUsers()` → `{ exists, onboardingCompleted }`. A purpose-built
+ *     account-existence oracle for arbitrary email addresses, with zero callers — and
+ *     wrong anyway, since `listUsers()` was unpaginated and only ever saw the first 50
+ *     accounts.
+ *
+ * Restoring any of these must fail here: the secret egress, the anonymous LLM spend, the
+ * anonymous plugin execution and the enumeration oracle all come back with the file.
+ * Modelled on lib/__tests__/system-initializer-removed.guard.test.ts.
+ *
+ * ── What this guard does NOT claim ─────────────────────────────────────────
+ * It proves these files are absent and unreferenced. It does not prove the *behaviour*
+ * cannot reappear under a different path — a new route doing the same thing is invisible
+ * here. That is the identity-surface guard's job (Slice A), not this one's.
  */
 
 import fs from 'fs';
@@ -39,9 +68,35 @@ const REMOVED_FILES = [
   'app/api/user/plugins/route.ts',
   'app/api/plugins/suggest/route.ts',
   'components/wizard/Step3Plugins.tsx',
+  // Identity sweep, Slice 0 — 2026-09-21
+  'app/api/v6/fetch-plugin-data/route.ts',
+  'app/api/oauth/token/route.ts',
+  'app/api/check-user-status/route.ts',
 ];
 
-const FORBIDDEN_LITERALS = ['/api/user/plugins', '/api/plugins/suggest', 'Step3Plugins'];
+/**
+ * Route directories that must not come back either. A directory surviving its
+ * `route.ts` is how a "deleted" endpoint gets quietly re-added by someone who sees an
+ * empty folder and assumes something belongs in it.
+ */
+const REMOVED_DIRS = [
+  'app/api/user/plugins',
+  'app/api/plugins/suggest',
+  // Identity sweep, Slice 0 — 2026-09-21
+  'app/api/v6/fetch-plugin-data',
+  'app/api/oauth/token',
+  'app/api/check-user-status',
+];
+
+const FORBIDDEN_LITERALS = [
+  '/api/user/plugins',
+  '/api/plugins/suggest',
+  'Step3Plugins',
+  // Identity sweep, Slice 0 — 2026-09-21
+  '/api/v6/fetch-plugin-data',
+  '/api/oauth/token',
+  '/api/check-user-status',
+];
 
 function walk(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
@@ -74,8 +129,19 @@ describe('guard: dead plugin routes stay removed', () => {
   });
 
   it('the parent route directories are gone too', () => {
-    expect(fs.existsSync(path.join(REPO_ROOT, 'app/api/user/plugins'))).toBe(false);
-    expect(fs.existsSync(path.join(REPO_ROOT, 'app/api/plugins/suggest'))).toBe(false);
+    const present = REMOVED_DIRS.filter((d) => fs.existsSync(path.join(REPO_ROOT, d)));
+    expect(present).toEqual([]);
+  });
+
+  it('the sibling routes that were NOT deleted are still present', () => {
+    // Deleting `app/api/oauth/token` must not be read as "the OAuth surface is gone".
+    // `app/oauth/token` and `app/oauth/callback/[plugin]` still exist and still parse an
+    // unsigned `state` — tracked as R4, deliberately not closed by Slice 0. If either
+    // disappears, someone has widened this deletion without saying so.
+    expect(fs.existsSync(path.join(REPO_ROOT, 'app/oauth/token/route.ts'))).toBe(true);
+    expect(
+      fs.existsSync(path.join(REPO_ROOT, 'app/oauth/callback/[plugin]/route.ts'))
+    ).toBe(true);
   });
 
   it('no source file references the removed routes or component', () => {
@@ -97,5 +163,21 @@ describe('guard: dead plugin routes stay removed', () => {
   it('can actually fail: the literal check detects a synthetic hit', () => {
     const fixture = "const res = await fetch('/api/user/plugins')";
     expect(FORBIDDEN_LITERALS.some((l) => fixture.includes(l))).toBe(true);
+  });
+
+  it('can actually fail: each Slice 0 literal detects its own synthetic hit', () => {
+    // One fixture per added literal. A single fixture would leave a typo'd entry
+    // (the realistic failure mode when appending to a list) silently inert.
+    const fixtures: Record<string, string> = {
+      '/api/v6/fetch-plugin-data':
+        "await fetch('/api/v6/fetch-plugin-data', { method: 'POST' })",
+      '/api/oauth/token': "await fetch('/api/oauth/token?plugin=google-mail')",
+      '/api/check-user-status':
+        "await fetch('/api/check-user-status', { body: JSON.stringify({ email }) })",
+    };
+    for (const [literal, fixture] of Object.entries(fixtures)) {
+      expect(FORBIDDEN_LITERALS).toContain(literal);
+      expect(fixture.includes(literal)).toBe(true);
+    }
   });
 });
