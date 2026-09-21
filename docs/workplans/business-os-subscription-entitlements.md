@@ -909,10 +909,11 @@ Component boundaries are §4.0. Each component is one PR, reviewed by SA → QA 
 **Before anything:**
 - [ ] **S1-T0** SA re-check of the rev 3 sections listed in §0.1. SA approves the **final** migration SQL (the A-1 rename and the A-3 RPC are new since the §13.1 approval) before the file is written.
 
-**Component 1 — plan records + migration**
-- [ ] **S1-T7** Migration (§4.3): tables incl. `tier_expires_at` (A-1), RLS + named revokes, shadow RPC, **A-3 `business_os_reset_plan_state`**, fact triggers, champion backfill, all in one transaction. Plus `scripts/verify-bos-entitlements-migration.sql`. Applied to a branch or local DB only; production apply is RM/user-gated.
-- [ ] **S1-T8** Purge descriptors (three `never` rows with notes), `classification-baseline.json`, `USER_OWNED_TABLES` entries with reasons. **Same PR as S1-T7.**
-- [ ] **S1-T9** `BusinessOsAccountPlanRepository` (reads, admin writes, `resetPlanState`, paging, 100-id cap), `BusinessOsEntitlementShadowRepository`, `OnboardingConversationRepository.getFirstMessageAt`, `types.ts`/`index.ts` exports, unit tests, `supabaseServer` rationale comments.
+**Component 1 — plan records + migration** — ✅ **built 2026-09-21, uncommitted, awaiting SA code review** (§4.17 records how M-1 to M-6 were applied)
+- [x] **S1-T7** Migration (§4.3) ✅ — **split in two per M-1**: `20260921_business_os_entitlements.sql` (tables incl. `tier_expires_at`, the M-3 CHECKs, RLS + named revokes, shadow RPC, **A-3 `business_os_reset_plan_state`** with M-2/M-4/M-5 applied, fact triggers) and `20260921b_business_os_entitlements_backfill.sql` (champion backfill, own transaction). Plus `scripts/verify-bos-entitlements-migration.sql` (M-6). **Not applied to any database** — see §4.17.
+- [x] **S1-T8** Purge descriptors (three `never` rows with notes), `classification-baseline.json` (121 → 124), `USER_OWNED_TABLES` entries with reasons ✅. Same change as S1-T7; both existing guard suites pass.
+- [x] **S1-T9** `BusinessOsAccountPlanRepository` (reads, admin writes, `resetPlanState`, keyset paging, 100-id cap), `BusinessOsEntitlementShadowRepository`, `OnboardingConversationRepository.getFirstMessageAt`, `index.ts` exports, unit tests, `supabaseServer` rationale comments ✅.
+- [x] **S1-T7a** Migration guard test (`supabase/migrations/__tests__/business-os-entitlements.migration.test.ts`) ✅ — the file-level half of M-1 to M-5, which SQL cannot check and CI can.
 
 **Component 2 — catalog + config + validation + CI gate**
 - [ ] **S1-T1** `types.ts` (zero-tier safe) + `schema.ts` (catalog-derived builders, histories, zero-tier enums).
@@ -951,6 +952,47 @@ Component boundaries are §4.0. Each component is one PR, reviewed by SA → QA 
 8. After the migration on production: missing-plan-row count = 0, every pre-existing tenant is an open-ended champion, and the report lists them.
 9. With `shadow` on for about a week: the observed-usage report is populated (including `allowed`), and the setup-AI-cost section returns data for sizing the trial allowance.
 10. Every CI job is green on each component PR, including the required `Admin authz surface guard` with **no new exemption**.
+
+### 4.17 Component 1 as built (2026-09-21) — for SA code review
+
+**Status:** implemented, **uncommitted** (per the delivery flow in §1.4, RM commits after the user approves). Nothing is wired to a call site: no route, service or cron imports any of it yet.
+
+**Files**
+
+| File | Action |
+|---|---|
+| `supabase/migrations/20260921_business_os_entitlements.sql` | create — schema, RLS, revokes, 4 functions, 2 triggers |
+| `supabase/migrations/20260921b_business_os_entitlements_backfill.sql` | create — the backfill, separate transaction (M-1) |
+| `scripts/verify-bos-entitlements-migration.sql` | create — 20 database-side checks (M-6) |
+| `supabase/migrations/__tests__/business-os-entitlements.migration.test.ts` | create — file-level guard, runs in CI |
+| `lib/repositories/BusinessOsAccountPlanRepository.ts` | create |
+| `lib/repositories/BusinessOsEntitlementShadowRepository.ts` | create |
+| `lib/repositories/OnboardingConversationRepository.ts` | modify — `getFirstMessageAt` |
+| `lib/repositories/index.ts` | modify — exports |
+| `lib/repositories/__tests__/BusinessOsAccountPlanRepository.test.ts`, `…ShadowRepository.test.ts`, `OnboardingConversationRepository.getFirstMessageAt.test.ts` | create |
+| `lib/business-os/purge/descriptors.ts`, `purge/__tests__/classification-baseline.json`, `lib/business-os/businessOwnedTables.ts` | modify — never-purged / person-owned |
+
+**How each SA change was applied**
+
+| # | As built |
+|---|---|
+| **M-1** | Two migrations. The DDL one opens with `SET LOCAL lock_timeout = '5s'` and contains no scan of either parent table (the guard test asserts there is no `FROM public.business_profiles` / `onboarding_conversations` in it). The backfill is its own transaction, also lock-bounded, and creates no schema. |
+| **M-2** | `business_os_reset_plan_state` **ends** active overrides (`ended_at`, `ended_by_admin_id`, `ended_reason = 'plan_state_reset: <reason>'`) and **upserts the plan row in place**, clearing `tier`, `tier_expires_at`, `trial_ends_at`, `grace_ends_at` and resetting `plan_version`/`period_anchor`/`origin`. `created_at` and both recorded facts are untouched. The function contains no `DELETE`, which the guard test asserts. |
+| **M-3** | `CHECK (tier IS NOT NULL OR tier_expires_at IS NULL)` and `CHECK (cohort IS NOT NULL OR cohort_expires_at IS NULL)`, both named. The 409 that keeps a user from ever seeing them is component 5's `set_expiry`; the constraint is the backstop, not the message. |
+| **M-4** | `v_cohort := btrim(COALESCE(p_cohort, ''))` then `IF v_cohort = '' THEN RAISE EXCEPTION … ERRCODE 22023`. The same treatment for a missing admin id and a blank reason. |
+| **M-5** | `updated_at` is written by every writer: `updatePlan` and `ensurePlanRow` in the repository, the reset RPC, and the fact triggers' conflict branch. No `BEFORE UPDATE` trigger was added — one more trigger on this table is one more thing that can fail inside someone else's transaction. |
+| **M-6** | The verification script now covers: RLS on / zero policies / no client privileges / function EXECUTE revoked / `search_path` and `lock_timeout` in `proconfig` / both triggers present / the three CHECKs by name (A-section); then, on a throwaway tenant, the trigger path, "a trial cannot restart", the `tmp_fail` never-raise proof, the M-3 and S-4 constraints behaviourally, the full M-2/M-4/M-5 reset semantics, the reset as a repair for a missing row, and the shadow RPC's arithmetic; then the backfill checks against real data. |
+| **Guard R1–R6** | No route is added in this component. The migration creates no policy, so R5 holds; nothing keys on a `role` value, so R4 holds. `npm run test:authz-guard` passes with **no new exemption**. When the routes land in component 5, each exported handler will contain its own `requireAdmin(` call — the guard reads handler bodies, so a shared helper would fail it. |
+
+**Verification performed**
+
+| Check | Result |
+|---|---|
+| `jest` over the four new suites | **56 passed** |
+| `jest` over `descriptors.invariant`, `businessOwnedTables`, `admin-authz-surface.guard` | **114 passed** |
+| `tsc --noEmit` over the whole project, filtered to the new/changed files | **0 diagnostics** |
+| `eslint --config eslint.hooks.config.mjs` over the new/changed files | **clean** |
+| **The migration against a database** | ❌ **not run — no database available to this environment.** There is no local Postgres, no Supabase CLI and no Docker here, and the only credentials present are production, which is out of bounds. The SQL has been reviewed statement by statement and its file-level properties are asserted by the guard test, but **`scripts/verify-bos-entitlements-migration.sql` has never been executed**. It must be run on a Supabase branch database before this migration is applied anywhere. |
 
 ---
 
@@ -1414,3 +1456,4 @@ _RM to populate._
 | 2026-09-19 | SA re-check of rev 2: CLEARED FOR SLICE 1 IMPLEMENTATION (SA) | Added §13.1. Migration SQL approved (S1-T0). Re-checked §4.3, §4.6 to §4.12, the §5 B-3 row and §8. Re-confirmed that the §21.3 trial-reset step applies to no existing account under P-2. Confirmed trial beta is the single value `COHORTS.trial.includeLifecycle`. Four implementation-time conditions: R2-1 build the `launch_champion_existing` dry run in Slice 1 (AC-26), with a non-dry run refused while no tier exists; R2-2 `ensure_plan_row` requires an explicit cohort; R2-3 no admin op may leave an account with no tier and no cohort; R2-4 seed the intake-request send id so AC-37 is provable on production config. |
 | 2026-09-21 | Rev 3: merge of `main`, component breakdown, three user additions (Dev) | Re-verified §2 against the merged tree (`92580639`): `requireAdmin` is now the canonical admin gate with a repo-wide CI guard (R1–R6) that is a **required status check** on `main`; five workflows exist; `boost-packs` and the `new-api-route` skill are fixed (**S-12 closed**); chat-v4's plan call moved to ~L860; the `is…Enabled` flag-naming rule and the named-privilege revoke convention apply. Added **§4.0**, the user-approved five-component PR sequence, and **§1.4**, the per-component flow (Dev → SA → QA → user code review → RM commits; Dev does not commit implementation). Folded in **A-1** `tier_expires_at` with explicit expired-tier fallback semantics and one "no end date" report list covering champions and tier assignments; **A-2** the three-step decision contract (`not_entitled` → `read_only` → `limit_reached`) with a stubbed balance seam so Slice 3 changes no call site, `entitlement_unavailable` kept distinct; **A-3** the `reset_plan_state` admin op with a single-transaction RPC, an explicitly chosen cohort, confirmation guards and a full before-state audit. Folded SA's R2-1 to R2-4 into the tasks. Rewrote §4.14 to reuse the existing workflows and add only the entitlement Jest job, and rewrote G-2 against the live branch protection. |
 | 2026-09-21 | SA re-check of rev 3: CLEARED TO IMPLEMENT COMPONENT 1 (SA) | Added §13.2. Independently verified the new-main facts (`requireAdmin`, the guard's R1–R6 with equality-asserted caps, the single required check on `main`). Confirmed our three admin routes and the policy-free migration pass R1–R6 with zero new exemptions, provided each exported handler contains its own literal `requireAdmin(` call. Approved §4.0, §4.8 (A-1 fallback, A-2 three-step contract), §4.9 (`check()` + balance seam), §4.12, §4.14/G-2. Migration approved with M-1 to M-6: split the backfill out of the DDL transaction and bound its lock wait (CREATE TRIGGER holds ACCESS EXCLUSIVE on both parent tables); the A-3 reset ends overrides and updates the plan row in place instead of deleting and recreating, so the durable admin record survives (WC-7); two CHECKs pairing each expiry with its assignment, plus a 409 on `set_expiry`; blank-cohort refusal; `updated_at` maintained; verification script extended. Final SQL is approved at component 1 code review. |
+| 2026-09-21 | Component 1 built (Dev) | Implemented plan records + migration against SA's §13.2 clearance and M-1 to M-6: the backfill moved into its own migration with bounded lock waits (M-1); the reset RPC now ends overrides and rewrites the plan row in place (M-2); paired end-date CHECK constraints added (M-3); the reset refuses a blank cohort, a missing admin and a blank reason (M-4); `updated_at` maintained by every writer (M-5); the verification script extended to cover all of it (M-6). Added two repositories, `getFirstMessageAt`, the purge/ownership registrations, three unit suites and a migration guard test. §4.15 ticked, §4.17 records the as-built detail, the verification performed, and the fact that the SQL has not been run against any database. Implementation left uncommitted for review per §1.4. |
