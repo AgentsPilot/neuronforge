@@ -17,6 +17,9 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { createAIDataLayerService } from '@/lib/business-os/ai-data-layer/AIDataLayerService';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { isBosLlmAreaEnabled } from '@/lib/business-os/llm/modelSettings';
+import { chatUnavailableMessage } from '@/lib/business-os/llm/aiUnavailableMessages';
 import type { ChatMessage } from '@/lib/business-os/ai-data-layer/types';
 
 const logger = createLogger({ module: 'BusinessOSChatV2API' });
@@ -88,6 +91,37 @@ export async function POST(request: NextRequest) {
     }
 
     const { message, conversationHistory, pendingConfirmationId, activeEntity } = parseResult.data;
+
+    /*
+     * 3b. The chat area's AI is switched off (Layer 2 FR-14, RC-W2).
+     *
+     * After auth, the feature flag and validation, and before the data layer is
+     * even constructed — so `AIDataLayerService` makes no model call, no ledger
+     * row and no AI audit entry is written, and an unauthenticated or malformed
+     * request still gets its usual 401/400 rather than a sentence about the
+     * assistant.
+     *
+     * The profile is read ONLY here (N-7): this route has no use for it on the
+     * normal path, and adding a query to every turn to translate a message
+     * almost nobody sees would be the wrong trade.
+     */
+    if (!(await isBosLlmAreaEnabled('chat'))) {
+      const { data: profile } = await businessProfileRepository.findByUserId(user.id);
+      requestLogger.info(
+        { userId: user.id, area: 'chat', reason: 'disabled' },
+        'Chat-v2 request refused: the chat area AI is switched off'
+      );
+
+      return NextResponse.json({
+        success: true,
+        data: {
+          message: chatUnavailableMessage(profile?.language),
+          actions: [],
+          pendingConfirmation: undefined,
+          toolCalls: undefined,
+        },
+      });
+    }
 
     requestLogger.info(
       {
