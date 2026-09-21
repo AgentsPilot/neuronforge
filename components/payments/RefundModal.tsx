@@ -153,6 +153,15 @@ export function RefundModal({
       setLivePlan(null);
       setShowStopPlan(false);
       setBlockedProcessor(null);
+      // `deleteBooking` was missing here, and it is the one flag in this list
+      // that DELETES A CUSTOMER'S BOOKING. It was survivable only because every
+      // caller unmounts this component on close, destroying the state — but a
+      // closed render is now a supported state (see the hoisted effects below),
+      // and in that world arming "delete booking", closing, and reopening on a
+      // different payment would carry the armed switch across. The effect below
+      // only disarms it when the option is not offered; if the next refund also
+      // offers it, it would stay on.
+      setDeleteBooking(false);
     }
   }, [isOpen]);
 
@@ -230,6 +239,65 @@ export function RefundModal({
     return () => { cancelled = true; };
   }, [isOpen, transactionId, invoiceId, bookingId]);
 
+  /*
+   * ⚠️ EVERY HOOK MUST STAY ABOVE THE `if (!isOpen) return null` BELOW.
+   *
+   * The two effects that follow used to sit after it, among the derived consts.
+   * That made the hook count 18 when closed and 20 when open, so any render of
+   * a still-MOUNTED component with `isOpen` false would throw "Rendered fewer
+   * hooks than expected". It never fired only because all five call sites
+   * happen to unmount this dialog rather than render it closed — an invariant
+   * nobody wrote down and one `setState` split away from a white screen on the
+   * payments UI. Do not move them back down.
+   *
+   * `canOfferDelete` is hoisted with them because they depend on it; it is a
+   * plain prop alias, so reading it earlier changes nothing.
+   */
+
+  /*
+   * Offered for BOTH partial and full refunds, by product decision.
+   *
+   * Note what it means on a partial: the booking record goes, while the money
+   * not returned stays on the ledger — so the payment outlives the appointment
+   * it belonged to, and the drawer will no longer show what it was for. The
+   * refund and the transaction still carry the history; only the booking's own
+   * row is removed.
+   *
+   * A live payment plan does not withdraw the option — it forces the plan to
+   * stop alongside it, below.
+   */
+  const canOfferDelete = showDeleteBookingOption;
+
+  /*
+   * A hidden switch must not still be armed.
+   *
+   * `deleteBooking` kept its value when the refund changed from full to partial:
+   * the control disappeared while the flag was still submitted, so a partial
+   * refund could delete the booking. State that is no longer offered has to be
+   * cleared, not merely hidden.
+   *
+   * No `if (!isOpen) return` guard: disarming a switch the user cannot see is
+   * exactly this effect's job, so skipping it while closed would defeat it.
+   */
+  useEffect(() => {
+    if (!canOfferDelete && deleteBooking) setDeleteBooking(false);
+  }, [canOfferDelete, deleteBooking]);
+
+  /*
+   * Deleting a booking that still has a live plan MUST stop the plan.
+   *
+   * Otherwise the schedule keeps charging the client for an appointment that no
+   * longer exists, and there is no booking left to reach it from. Forced rather
+   * than merely warned about: this is not a combination anyone means to choose.
+   *
+   * Inert on a closed render because its deps are unchanged by the close itself,
+   * and the reset effect above has by then cleared `livePlan`/`stopPlan`/
+   * `deleteBooking` — so the guard is false on the following commit too.
+   */
+  useEffect(() => {
+    if (deleteBooking && livePlan && !stopPlan) setStopPlan(true);
+  }, [deleteBooking, livePlan, stopPlan]);
+
   if (!isOpen) return null;
 
   /*
@@ -282,43 +350,6 @@ export function RefundModal({
 
   const maxRefundable = serverRemaining ?? originalAmount - alreadyRefunded;
   const effectiveType = isGroup ? 'full' : refundType;
-
-  /*
-   * Offered for BOTH partial and full refunds, by product decision.
-   *
-   * Note what it means on a partial: the booking record goes, while the money
-   * not returned stays on the ledger — so the payment outlives the appointment
-   * it belonged to, and the drawer will no longer show what it was for. The
-   * refund and the transaction still carry the history; only the booking's own
-   * row is removed.
-   *
-   * A live payment plan does not withdraw the option — it forces the plan to
-   * stop alongside it, below.
-   */
-  const canOfferDelete = showDeleteBookingOption;
-
-  /*
-   * A hidden switch must not still be armed.
-   *
-   * `deleteBooking` kept its value when the refund changed from full to partial:
-   * the control disappeared while the flag was still submitted, so a partial
-   * refund could delete the booking. State that is no longer offered has to be
-   * cleared, not merely hidden.
-   */
-  useEffect(() => {
-    if (!canOfferDelete && deleteBooking) setDeleteBooking(false);
-  }, [canOfferDelete, deleteBooking]);
-
-  /*
-   * Deleting a booking that still has a live plan MUST stop the plan.
-   *
-   * Otherwise the schedule keeps charging the client for an appointment that no
-   * longer exists, and there is no booking left to reach it from. Forced rather
-   * than merely warned about: this is not a combination anyone means to choose.
-   */
-  useEffect(() => {
-    if (deleteBooking && livePlan && !stopPlan) setStopPlan(true);
-  }, [deleteBooking, livePlan, stopPlan]);
 
   const refundAmount = effectiveType === 'full' ? maxRefundable : parseFloat(partialAmount) || 0;
 
