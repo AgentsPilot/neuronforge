@@ -1,13 +1,13 @@
 # Workplan: Business OS LLM — Layer 2: Model Settings per Area
 
-> **Last Updated**: 2026-09-20
+> **Last Updated**: 2026-09-21
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_LLM_MODEL_SETTINGS_LAYER2_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_MODEL_SETTINGS_LAYER2_REQUIREMENT.md): 18 FRs (FR-9 deferred), 16 ACs. Approved; SA RC-1 to RC-12 applied; user answers BQ-1 (approved as written, onboarding never switchable) and BQ-2 (yes, Step 0 in this layer, ships first).
 **Context:** [LLM_CREDIT_AND_AUDIT_TRACKING.md](/docs/investigations/LLM_CREDIT_AND_AUDIT_TRACKING.md); the Layer 1, 1.5 and 3 requirements; the `bos-llm-call-standards` skill; the Layer 3 workplan [BUSINESS_OS_LLM_AUDIT_TRAIL_WORKPLAN.md](/docs/workplans/BUSINESS_OS_LLM_AUDIT_TRAIL_WORKPLAN.md) (format and its Step 0 precedent).
 **Branch:** Step 0 was built on `feature/business-os-llm-layer2-model-settings` (worktree `neuronforge-llm-layer15`, off `main` `e35c83d4`) and is **merged to `main`**. **Step 1 is on `feature/business-os-llm-layer2-step1`** (worktree `neuronforge-llm-layer2-step1`, off `main` `ba25fb9a`). Each step is its own PR (see §9 release mechanics).
 **Date:** 2026-09-19
-**Status:** **Step 0 merged and deployed. Step 1 code complete (uncommitted, in its own worktree); SA code review + QA done, all S1-1 … S1-12 and D-Q1 … D-Q8 fixed; SA re-check ✅ approved with one must-fix (R-1, the read budget), see "SA Re-check — Step 1".** Step 1 ships the machinery only — **no call site changes behaviour** and nothing calls the resolver. The seed migration file is written and **NOT applied** (§9 P-1 … P-5b). Steps 2–4 not started. SA APPROVED WITH CHANGES (§15); RC-W1 to RC-W11 and the Q-1 to Q-12 rulings are applied in the body below.
+**Status:** **Steps 0 and 1 merged and deployed; the seed is APPLIED to production (2026-09-21). Step 2 code complete (uncommitted, in worktree `neuronforge-llm-layer2-step2`, branch `feature/business-os-llm-layer2-step2`, merged up to `origin/main` `7a2a06c5`) — awaiting SA review. Steps 3–4 not started.** Step 1 ships the machinery only — **no call site changes behaviour** and nothing calls the resolver. The seed migration file is written and **NOT applied** (§9 P-1 … P-5b). Steps 2–4 not started. SA APPROVED WITH CHANGES (§15); RC-W1 to RC-W11 and the Q-1 to Q-12 rulings are applied in the body below.
 **Open items waiting on the user:** (1) the final live QA off/on check for lead-reply and chat AI on the live system, since no test environment exists yet (§6.5, §7.5, AC-13): **pending user decision**. (2) Converting the 2 `console.error` calls in `app/business-os/website/page.tsx` in Step 3 (§12): **pending user OK**.
 
 ## Overview
@@ -669,9 +669,9 @@ Every item is addressed in code; nothing is deferred. Re-run gates in §5.4.
 
 ### 6.2 Tasks
 
-- ⬜ **T2.0** Confirm §9 P-6 (seed applied and post-checked) **before merging**.
-- ⬜ **T2.1** Insights ×3 · ⬜ **T2.2** Briefing · ⬜ **T2.3** Leads · ⬜ **T2.4** Intake ×2 (+ FR-13) · ⬜ **T2.5** Onboarding ×4 · ⬜ **T2.6** Website `full_site` (build path), `landing_page`, the AI-content service ×6.
-- ⬜ **T2.7** Tests T2-S, T2-O, T2-R, T2-M, T2-M-I; gates.
+- ✅ **T2.0** Seed applied to production (user, 2026-09-21) — the eight rows exist and hold today's exact values. **§10.2's P-2 / P-5 / P-5b / P-5c rows are still empty and are owed by the user/QA before this step merges** (§6.6 D-33).
+- ✅ **T2.1** Insights ×3 · ✅ **T2.2** Briefing · ✅ **T2.3** Leads · ✅ **T2.4** Intake ×2 (+ FR-13) · ✅ **T2.5** Onboarding ×4 · ✅ **T2.6** Website `full_site` (build path), `landing_page`, the AI-content service ×6.
+- ✅ **T2.7** Tests T2-S, T2-O, T2-R, T2-M, T2-M-I; gates (§6.4).
 - ⬜ **T2.8** SA → QA (AC-13 item 3 for these areas) → user → RM.
 
 ### 6.3 Tests
@@ -686,11 +686,79 @@ Every item is addressed in code; nothing is deferred. Re-run gates in §5.4.
 
 ### 6.4 Gates
 
-As in Step 1 (incl. the RC-W9 `--list` diff: every Step 2 call site becomes a caller of `lib/business-os/llm/`), plus `npx jest lib/business-os/insight lib/business-os/briefing lib/business-os/leads lib/services app/api/intake app/api/website`. No new `'use client'` import path to the resolver (the website services are server-only; checked with `next build`).
+As in Step 1 (incl. the RC-W9 `--list` diff), plus `npx jest lib/business-os/insight lib/business-os/briefing lib/business-os/leads lib/services app/api/intake app/api/website`. No new `'use client'` import path to the resolver (the website services are server-only; checked with `next build`).
+
+**Run 2026-09-21 (Dev), verbatim:**
+
+```
+> npm run typecheck:bos-llm
+typecheck-bos-llm: 171 files in scope, 30 errors, 0 new (134.1s)
+typecheck-bos-llm: passed
+```
+
+```
+> npm run build
+ ✓ Compiled successfully
+ ✓ Generating static pages (296/296)
+(exit code 0)
+```
+
+```
+> npx jest lib/business-os app/api/cron/insight-detect app/api/onboarding app/api/website app/api/intake lib/services lib/ai --ci
+Test Suites: 123 passed, 123 total
+Tests:       28 skipped, 2044 passed, 2072 total
+Snapshots:   20 passed, 20 total
+```
+
+`--ci`, so no snapshot could be written to make itself pass.
+
+```
+> NODE_OPTIONS=--max-old-space-size=8192 npx tsc --noEmit | grep -c "error TS"
+2035          (2,031 excluding the 4 in generated .next/types)
+```
+
+The pre-existing baseline, recorded separately as Step 1 did. It reads **2,031** here against Step 1's **2,034**; the difference is the merge of `origin/main` `7a2a06c5`, not this step. What matters for Step 2: **no error is in any of the ten production files or four test files this step adds or changes.** The only touched file that appears at all is `app/api/onboarding/build/route.ts`, with three pre-existing `TS18047 'existingProfile.data' is possibly null` at lines 396–398 — five hundred lines above this step's one-line change at `:903`, and present before it.
+
+**`--list` diff (RC-W9).** The only files that JOIN the scope are the three new test suites under `lib/business-os/llm/__tests__/` (a CORE dir). **No production file joins**: every Step 2 call site already imported `callCatalog` for `buildBosCallContext`, so it was already a catalog importer before this step — the workplan's expectation that they would newly join was wrong (§6.6 D-32). The baseline file is unchanged and `--update-baseline` was NOT used.
+
+⚠️ The list also grew by ten `.next/types/**/route.ts` shims. Those are **generated** by `next build`, so the gate's file count depends on whether `.next` exists in the checkout: 158 before a build, 171 after. Not a Step 2 change, and it does not affect the error count (0 new either way), but it makes "files in scope" a number to read with care when comparing rounds. Recorded as a follow-up (§6.7 FU-2).
+
+---
+
+### 6.6 Implementation notes and deviations (Dev, 2026-09-21)
+
+**Branch:** `feature/business-os-llm-layer2-step2`, cut off `main` `ae902874` and **merged up to `origin/main` `7a2a06c5`** (PR #81, the admin-authz close-out) at the start of the work — fast-forward, no conflicts. Nothing in that delta touches `lib/business-os/**`, `lib/ai/**` or the Step 1 machinery.
+
+**What was wired: 19 call sites across 10 production files.** Each now takes `{ provider, model, temperature }` from `resolveBosLlmSettings(area, call)`, spreads the temperature conditionally (`...(settings.temperature !== undefined ? { temperature: settings.temperature } : {})`, FR-4), and builds its request **inside** a `withModelFallback` attempt (FR-11, RC-W4) so a retry on the code default carries the model that actually ran. No attribution, grouping id, `runAiAction` scope, cost-tracking call or audit entry changed anywhere.
+
+| # | Note |
+|---|---|
+| **D-28** | **T2-S lives in its own file, `lib/business-os/llm/__tests__/callParams.boundary.step2.test.ts`, not inside `callParams.snapshot.test.ts`** as §6.1 said. The two need incompatible module graphs: the snapshot test mocks only the config repository and the pricing module, while driving nineteen call sites needs `@/lib/auth`, `supabaseServer`, four repositories, the audit service and `uuid` mocked as well. Merging them would have made Step 1's legs (B) and (C) depend on that whole surface. Both files are in the `typecheck:bos-llm` scope and both are run by the §6.4 selection. |
+| **D-29** | **How T2-S proves "byte-for-byte what it is today", and why long strings are digested.** The nineteen snapshots were captured with the production changes **stashed** — against the pre-Step-2 call sites, with this test file unchanged — and the changes were then restored and the suite re-run with `--ci`, which never writes: **19 snapshots passed**. That is the AC-2 before/after comparison made on the same code path, not on two descriptions of it. What is recorded is the **whole argument list of every `chatCompletion` call**, attribution context included, **plus the call count**. Strings longer than 200 characters (prompts, system messages) are recorded as `sha256:<hex> (len N)` — still byte-exact, since one changed character changes the digest, but it keeps a 2,000-line snapshot readable. Everything AC-2 is actually about (model, temperature, `max_tokens`, `response_format`, roles, `feature`, `component`, `sessionId`, `userId`) is recorded literally. Per-request UUIDs map to `<uuid>`; the fixture ids to `<user>` / `<group>` / `<run>` / `<briefing-group>`. |
+| **D-30** | **The spy is at `ProviderFactory.getProvider`, not at `complete()`.** `getProviderFactory().complete()` ends in `ProviderFactory.getProvider('openai').chatCompletion(...)`, so one spy covers both mechanisms **and leaves the `complete()` wrapper running for real** — which is the point, because the wrapper is where twelve calls could be handed a parameter none of them passed. Proven, not asserted: mutating `providerFactory.ts` to `chatParams.temperature = params.temperature ?? 0.9` fails exactly the four onboarding extractors (the only calls that send none) and nothing else — the escape SA named, caught. A second mutation (`max_tokens: 320` to `321` in `BriefingNarrator`) fails exactly the briefing snapshot. Both reverted. |
+| **D-31** | **Leg-(A) entries deleted for every Step 2 call.** `callParams.snapshot.test.ts` keeps leg (A) for the three Step 3 calls only — `chat/planner`, `chat/analysis`, `images/image_generation` — and a new assertion states that the unwired set is **exactly** those three, so a later step cannot quietly leave one behind. Legs (B) and (C) still cover all 22 calls, and **the committed T1-14 snapshot did not move**. `leads/reply_recommendation` also left the `storedKey` list: it no longer reads `lead_reply_recommender_model`. |
+| **D-32** | **No production file joined the `typecheck:bos-llm` scope.** RC-W9 predicted every Step 2 site would become a new caller of `lib/business-os/llm/`; in fact all nineteen already imported `callCatalog` for `buildBosCallContext`, so they were catalog importers already. Only the three new test files join. The prediction still holds for Step 3's chat v1/v2 routes, which import nothing from that directory today. |
+| **D-33** | **§10.2's post-seed rows are still empty.** The user reports the seed applied and holding today's values, which is what T2.0 needed; but P-2 (stored values), P-5 (the eight rows plus `get <area>` for all eight), P-5b (`verify-equivalence`) and P-5c (the md5 re-apply proof) have no recorded output in this workplan. They are the evidence that deploying Step 2 is safe, so they are listed as owed by the user/QA before merge rather than assumed. |
+| **D-34** | **Intake FR-13 changed shape slightly.** `callLLM` now returns `model?: string`, and `generated_from.model` is `generated.model` — the model that ran — instead of the deleted module constant `MODEL`. After a retry it therefore records the code default, not the model that was refused, which is what FR-13 asks for and what T2-M asserts both ways. The fallback paths still record no model at all. |
+| **D-35** | **`website/field_regenerate` and `website/testimonial_enhance` got model and temperature but NO off branch**, deliberately (D-27, RC-W8b). They are `switchable: false` until Step 3, so the resolver always reports them `enabled: true`, and a branch for `false` would be dead code pretending an off path exists. T2-O asserts the opposite of the usual thing here — that with `website.enabled: false` these three still resolve ON and still reach the provider — so flipping the policy before their messages ship fails the test. |
+| **D-36** | **`generateWebsite` gained `onAiDisabled` and a `code?: 'ai_unavailable'` return field, with only the `'fallback'` caller wired.** The onboarding build passes `'fallback'` explicitly; the `'fail'` callers (generate-from-profile, the chat mutate path) arrive in Step 3 with the owner-facing message. Both branches are tested now, by lifting the `full_site` lock inside the test and putting it back, so Step 3 inherits a proven mechanism rather than an untested option. The refusal returns **before any write** — only three reads run before `callLLM`. |
+| **D-37** | **Four dormant website block fallbacks were extracted into private methods** (`heroFallback`, `aboutFallback`, `faqFallback`, `featuresFallback`). The template objects are unchanged character for character; they simply have one home now instead of sitting inline in a `catch`, so the off path and a model failure cannot drift apart. |
+| **D-38** | **Twelve existing test files gained a resolver mock pinned to the code defaults** (`resolveBosLlmSettings` returning `bosLlmCodeDefaults`), per §6.1. Not one assertion in them changed. Without it each would have made a real `getByKeys` call against the configured Supabase project during a unit run; the resolver would still have degraded to the code defaults after its 3-second budget, so they would have passed — slowly, and with a live network attempt inside a unit suite. `lead-reply-attribution.test.ts` additionally needed its `SystemConfigRepository` mock widened to spread the real module: the Layer 2 policy reads `IMAGE_GENERATION_CONFIG_DEFAULTS` from it at import time and that file's hand-built mock did not provide it. That was the one genuine test failure this step caused. |
+| **D-39** | **`console.*` in touched files: none.** All ten production files were already Pino-only, so §12's table is unchanged and nothing needed converting or flagging to the user. |
+| **D-40** | **Two environment fixes, not code.** The worktree had no `node_modules` and no `.env.local`, so jest and `next build` could not run in it (the build failed at `/api/admin/execution-tiers` with "Missing Supabase environment variables" — an environment symptom, not a merge problem). `node_modules` is now a directory junction to the main checkout's and `.env.local` was copied in; both are gitignored and neither is part of the change. |
+
+---
+
+### 6.7 Follow-ups recorded out of Step 2 (do not widen this step)
+
+| # | Item | Evidence | Why not now |
+|---|---|---|---|
+| **FU-3** | **Who may change a live setting — PARKED by the user, 2026-09-21.** From the Step 2 deploy the eight rows stop being inert: a write to `system_settings_config` changes six areas' model, provider, temperature or on/off switch within 60 s, with no code review, no deploy and no approval step. Today that reaches: platform admins through the Step 0-gated admin routes, anyone running `npm run bos:llm-settings set` with the service-role key, and anyone with direct database access. **User's decision: leave it as is — "only admins can change it".** No approval workflow, no second pair of eyes, no change-request trail beyond the existing audit entry and the resolver's change-seen log. Revisit when the admin screen lands in a later layer, and note that the leaked service-role key ([environments & deployment strategy]) currently widens "only admins" beyond the admin_users table until it is rotated | SA Code Review — Step 2, business decision (9a); §3.6 | Deliberately parked, not overlooked. Layer 2 delivers the control; governing *who* pulls it is the admin-UI layer's problem, and the current reach is acceptable pre-launch |
+| FU-2 | **`typecheck:bos-llm`'s file count depends on whether `.next/` exists.** The gate walks generated `.next/types/**/route.ts` shims as "callers", so the same tree reports **158 files** before a build and **171** after. The error count is unaffected (0 new either way) and no baseline entry comes from them, but comparing "files in scope" between rounds is misleading, and a generated file could in principle contribute an error to the gate. Candidate fix: exclude `.next/` from the file walk in `scripts/typecheck-bos-llm.ts`, as `jest.config.js` already excludes `.claude/` | §6.4 `--list` diff, 2026-09-21 | It is a gate-hygiene change with its own blast radius — it moves the denominator every previous round was measured against — and Step 2 must not alter the gate it is being measured by |
 
 ### 6.5 Rollout notes
 
-- **Must not merge before the seed is applied** (§9). If it were deployed first, leads would lose any stored `lead_reply_recommender_*` override for the window.
+- **Must not merge before the seed is applied** (§9). Applied by the user on 2026-09-21; §10.2's P-2 / P-5 / P-5b / P-5c outputs are still owed (D-33). Had this deployed first, leads would have lost any stored `lead_reply_recommender_*` override for the window.
 - After deploy, AC-13 item 3 (one action per area).
 - **AC-13 items 4–5, the leads on/off cycle (switch lead-reply AI off with the change script, check the fallback and the info log, switch it back on): pending user decision.** No test environment exists yet, so this would run on the live system. The user is being asked whether that is acceptable. Until the user decides, QA does not run it and AC-13 items 4–5 stay open.
 
@@ -854,9 +922,16 @@ Five PRs from this branch, in order (RM splits by commit, as in Layer 3). **Each
 |---|---|---|
 | **1b** duplicate active price rows (S1-4, pre-deploy re-check) | user | **Run 2026-09-20 on production.** 3 models with >1 active row (`claude-3-5-sonnet-20241022`, `claude-3-haiku-20240307`, `gpt-4o-mini` — 4 rows each), **all price-identical on input**; the output-side check returned 0 rows → **no charge changes**. Raw output in §5.5; re-run before each deploy carrying this reader |
 | P-1 / P-2 observed while running the script (S1-1) | Dev | **2026-09-20:** no `bos_llm_area_*` row exists, and **none of the six legacy keys is stored** — `verify-stored` exit 0, `verify-equivalence` exit 0 (`checked: 6`). The user still runs P-1 and P-2 formally at apply time |
-| P-2 stored F-3 values | user | *(pending — expected to show all six keys absent, per the row above)* |
-| P-5 rows + resolved settings | user / QA | *(pending)* |
-| P-5b `verify-equivalence` output (legacy readers vs resolver, six fields) | user / QA | *(pending)* |
+| **1b** re-run immediately before the Step 1 deploy | user | **2026-09-21, production.** Same 3 models, 4 active rows each; `min = max` on **both** `input_cost_per_token` and `output_cost_per_token` (sonnet 0.000003 / 0.000015, haiku 0.00000025 / 0.00000125, gpt-4o-mini 0.00000015 / 0.0000006) → the newest-price-wins reader changed **no charge**. The merge was approved on this evidence |
+| P-1 no area row exists | user | **2026-09-21, production: 0 rows** |
+| P-2 stored F-3 values | user | **2026-09-21, production: 0 rows** — none of the six legacy keys is stored, so the seed wrote the code defaults throughout (as the row above predicted) |
+| P-3 `verify-stored` | user | **2026-09-21: exit 0**, `checked: 0, notStored: 6`, all six reported "Not stored; the seed will use the code default" — so no `"no"` / `"0"` / `0` value existed that reads as *off* today and would have been seeded *on* |
+| **P-3b dry run** (D-Q7 — the first and only parse of this SQL by PostgreSQL) | user | **2026-09-21: `BEGIN; <migration>; SELECT …; ROLLBACK;` — no error, 8 rows, all rolled back** |
+| P-4 apply | user | **Applied to production 2026-09-21** |
+| P-5 rows + resolved settings | user | **2026-09-21: 8 rows, identical to the dry run.** briefing `gpt-4o-mini`/0.3 · chat `gpt-4o-mini`/0 (+`planner.model`, `analysis.model` + `enabled`) · images `gpt-image-1` · insights `gpt-4o-mini`/0.3 (+`health_summary` 0.5, `correlated_insight` 0.4) · intake `gpt-4o`/0.3 (+`question_inference` `gpt-4o-mini`/0.2) · leads `gpt-4o-mini`/0.2 · onboarding `gpt-4o`/`temperature: null` · website `gpt-4o-mini`/0.7 (+`full_site` and `landing_page` `gpt-4o`, `testimonial_enhance` 0.5). Matches §10.1 |
+| P-5b `verify-equivalence` output (legacy readers vs resolver, six fields) | user | **2026-09-21: exit 0, `checked: 6`** — "Legacy readers and resolver agree on every field" (planner model, analysis model, analysis enabled, lead-reply model, lead-reply enabled, image model). ⚠️ **Vacuous with respect to the unwrap rules** (D-Q4): nothing was stored, so it compared the seeded rows against the code defaults and no unwrap branch ran |
+| **P-5c re-runnability, proved** (QA's addition) | user | **2026-09-21: the migration was applied a SECOND time and all 8 `md5(value::text)` came back byte-identical** to the pre-re-apply fingerprint → `ON CONFLICT (key) DO NOTHING` verified live, not merely asserted |
+| Step 2 wiring: request at the provider boundary, before vs after | Dev | **2026-09-21: 19 snapshots captured on the UNWIRED call sites, then re-run against the wired ones with `--ci` — 19 passed, nothing moved** (`callParams.boundary.step2.test.ts`; §6.6 D-29). Two mutations prove the record bites: a wrapper-added temperature fails exactly the four onboarding extractors, a changed `max_tokens` fails exactly briefing |
 | After Step 2 deploy: one action per Step 2 area; ledger `model_name` matches "after" | QA | *(pending)* |
 | After Step 3 deploy: chat and images | QA | *(pending)* |
 | Live off/on cycle: lead-reply (after Step 2) and chat (after Step 3) | QA | **pending user decision** (no test environment; §6.5, §7.5) |
@@ -1491,6 +1566,94 @@ Two corrections to how the cost is recorded, neither changing the ruling:
 
 ---
 
+## SA Code Review — Step 2
+
+**Reviewed by SA — 2026-09-21**
+**Status:** ✅ Code Approved for QA — with three conditions carried into Step 3 (F-1, F-9, F-11) and nothing blocking the Step 2 deploy
+**Scope:** the uncommitted tree on `feature/business-os-llm-layer2-step2` (merged `origin/main` `7a2a06c5`): 10 production files, 19 call sites, 4 new test files, 12 existing test files given a resolver mock, this workplan.
+
+### What SA re-ran and verified independently (not read from the Dev's summary)
+
+| Check | Result |
+|---|---|
+| `npx jest <the §6.4 selection> --ci` | **123 suites, 2,044 passed, 28 skipped, 20 snapshots** — identical to §6.4 |
+| `npm run typecheck:bos-llm` | **171 files in scope, 30 errors, 0 new, exit 0** (`.next/` present in the worktree; see the FU-2 ruling) |
+| **D-29's methodology, reproduced from scratch** | SA reverted all ten production files to `HEAD` (diff saved, re-applied afterwards) and ran `callParams.boundary.step2.test.ts --ci`: **19 snapshots passed against the UNWIRED sources**. Restored the diff, re-ran: **19 passed against the wired sources.** The committed snapshot really is the pre-Step-2 request, and the wiring really does not move it. This is the strongest evidence in the step, and it holds |
+| Does the record bite? | SA re-ran one of the Dev's mutations (`max_tokens: 320 → 321` in `BriefingNarrator.ts`): **exactly one snapshot fails, briefing's.** Reverted |
+| Is the spy point the real boundary for **both** mechanisms? | Yes. `getProviderFactory().complete()` resolves through the **static** `ProviderFactory.getProvider('openai')` (`lib/ai/providerFactory.ts:332`), which is what the test spies on, and the `complete()` wrapper then runs for real (`:334-356`). All 19 sites enter through `ProviderFactory.getProvider(...)` directly or through that wrapper — grepped: no site uses `getOpenAI()`, a raw SDK client or an embedding path (`getOpenAI()` has exactly one caller, `GeneratedImageService.ts:355`, which is Step 3) |
+| Is every site wired, once, to its own call name? | `grep` finds exactly **19** `resolveBosLlmSettings('<area>', '<call>')` occurrences in production code — one per catalogued Step 2 call, no duplicates, no site resolving a neighbour's call name |
+| T1-14's snapshot | `lib/business-os/llm/__tests__/__snapshots__/callParams.snapshot.test.ts.snap` is **not in the diff** — it genuinely did not move |
+
+### Code Review Comments
+
+1. **`lib/business-os/llm/__tests__/callParams.boundary.step2.test.ts:169` (`boundaryCalls`) and `:447` (the `getProvider` spy) — T2-S is blind to provider identity. This is the third escape. — Priority: Medium (a Step 3 condition; it does not block this deploy).**
+   The spy is `jest.spyOn(ProviderFactory, 'getProvider').mockReturnValue({ chatCompletion })` — it ignores its own argument — and the snapshot records only `chatCompletion.mock.calls`. The provider name is therefore never recorded. **Mutation-proved by SA:** changing `lib/business-os/briefing/BriefingNarrator.ts:113` to `ProviderFactory.getProvider('anthropic')` leaves **all 20 boundary tests green**, and the whole `lib/business-os/briefing` + `lib/business-os/llm` selection green (**15 suites, 269 tests**). Reverted. A site that changed provider — the first column of §10.1, "Provider before → after" — walks straight through the assertion that replaced leg (A).
+   Not exploitable today: every site hardcodes `'openai'` / `PROVIDERS.OPENAI`, and `ALLOWED_PROVIDERS_LAYER2` is `['openai']`. But it compounds **R-4** from the Step 1 re-check: `settings.provider` is now resolved at all nineteen sites and **used at none**, so the row's `provider` field is inert and the one test that could have said so does not look. Fix, in Step 3 or in whichever change admits a second provider: record `getProvider.mock.calls` next to the request (one line in `boundaryCalls`), and either pass `settings.provider` at the sites or state in §10.1 that the site-level `'openai'` is deliberate.
+
+2. **`callParams.boundary.step2.test.ts:236-421` — T2-S enters below the public surface for most sites. — Priority: Low (record, do not fix here).**
+   Seventeen of nineteen entries drive a **private** method through an `as never as {...}` cast (`callLLM`, `generateLocalizedContent`, `extractBusinessStory`, …). So `expect(chatCompletion).toHaveBeenCalledTimes(1)` counts calls *inside the inner function*, not per owner action: a caller that stops calling the inner function, calls it twice, or short-circuits before it — which is exactly what the new `onAiDisabled` pre-check at `lib/services/WebsiteGenerationService.ts:286` does — is invisible to T2-S. T2-O covers that particular branch, so the step is not exposed; but "a call that no longer happens at all is caught by the count" is true only *below* the entry point each case picked.
+
+3. **`callParams.boundary.step2.test.ts:509` — the call count cannot see a detached call. — Priority: Low.**
+   `toHaveBeenCalledTimes(1)` is evaluated immediately after `await drive()`. A provider call scheduled in a non-awaited promise or a timer after the last `await` would not be counted. No such path exists in the ten files today; it is a limit of the instrument and belongs in D-29 next to the two limits already named.
+
+4. **T2-S's authority is conditional on `__fixtures__/seededRows.ts` matching the live rows. — Priority: Low (statement, not a defect).**
+   What T2-S proves is "wired code + fixture rows == unwired code". The bridge to production is T1-9 (the fixture is checked against the migration) plus §10.2's P-5, which records the eight live rows. SA re-checked the migration by hand: `supabase/migrations/20261003_seed_bos_llm_area_settings.sql:116-212` builds exactly the eight rows in `seededRows.ts`, field for field — including `temperature: NULL` for onboarding (send none) and no temperature key at all for images. Once an operator changes a row, AC-2 stops applying by design; that is the feature, not a hole.
+
+5. **Leg (A) deletion — correct, and nothing was deleted early. — No action.**
+   19 deletions ↔ the 19 wired sites; the retained set is asserted by name (`callParams.snapshot.test.ts:315-322`: `chat/analysis`, `chat/planner`, `images/image_generation`); the `storedKey` list correctly drops `leads/reply_recommendation` (`:416-423`); legs (B) and (C) still iterate all 22 calls. Making `evidence?` optional is what drives `UNWIRED_CALLS`, so a later step cannot drop an entry without also dropping it from the asserted set — the mechanism is sound, not just the current state.
+
+6. **Off paths (T2-O) — the D-27 claim is asserted, not assumed. — No action.**
+   `modelSettings.off.nonchat.test.ts:432-445` asserts that with `website.enabled: false` the three locked calls still resolve `enabled: true`; `:447-455` asserts they **still reach the provider**; `:459` asserts the Step 2 policy really locks `full_site`, so lifting the lock in the sibling test is meaningful; `:461-470` asserts the five switchable website calls do go off. The script half is covered too, and by name: `scripts/__tests__/bos-llm-settings.test.ts:216-231` asserts `callsStillRunning = ['full_site','field_regenerate','testimonial_enhance']` and `PARTIAL SWITCH` in the message. "No audit entry" is genuine rather than hoped for: `lib/business-os/llm/aiActionAudit.ts:304` returns before writing when no call was made, and both route cases assert `mockAuditLog` was not called.
+   **Gap (Low):** for insights, briefing, leads and the intake service, the "no ledger row / no audit entry" half rests on "the provider was never called". True by construction — worth a sentence in the QA report rather than more tests.
+   Nothing in the code or in this workplan implies the website switch is finished: §10.1 marks those three rows "2 (params), 3 (off)", D-35 says it, and both services carry the reason in a comment at the call site.
+
+7. **Attribution, cost and audit — untouched, and proved at the right level. — No action.**
+   No `buildBosCallContext` argument, grouping id, `runAiAction` scope or `callWithTracking` call changed anywhere in the diff, and the boundary snapshot records the **whole attribution object** for all 19 sites (`feature`, `component`, `sessionId`, `userId`, plus briefing's `activity_type`) — it did not move. T2-M-I is the real thing: it subclasses `BaseAIProvider`, drives the actual `callWithTracking`, and asserts `[[CONFIGURED,false],[DEFAULT,true]]` with `input_tokens: 0, output_tokens: 0, cost_usd: 0` on the failed row (`modelSettings.wiring.nonchat.test.ts:283-296`). So the ledger records the model that **ran**, a retry cannot double-count tokens, and FR-13's `generated_from.model` is proved both ways plus the no-model fallback case (`:203-233`).
+   One honest limit: "a retry writes **one** audit entry with `callCount: 2`" is proved in the *site shape* (`modelFallback.test.ts:231-266`), not at a real Step 2 site. Acceptable — `withModelFallback` wraps only the provider call, and no site opens an audit scope inside the attempt (checked at all 19).
+
+8. **`withModelFallback` at 19 sites — scoping is right; the negative cache is process-wide by design. — No action, but record it.**
+   Every site builds its request **inside** the attempt, so a retry carries the model that ran (RC-W4), and every attempt sits inside the caller's existing `runAiAction`. `rejectedModels` (`lib/business-os/llm/modelFallback.ts:37`) is a module-level map — per lambda instance — keyed `provider:model` with the settings window as its TTL. The consequence worth writing down in §3.5: it is **shared across areas**, so one area's refusal also short-circuits another area configured to the same model. That is the behaviour you want; it is also the kind of thing a later reader assumes is per-area.
+
+9. **Resolver call placed outside the existing `try` at several sites. — Priority: Low (Step 3 condition only if the resolver ever gains a throwing path).**
+   `lib/business-os/briefing/BriefingNarrator.ts:102`, `lib/services/WebsiteAIContentService.ts:417`/`:476`/`:625`/`:697`, `lib/services/IntakeGenerationService.ts:259`, `app/api/intake/form/infer-question/route.ts:138`. These sites previously had everything inside a `try` that falls back to a template. The resolver's first promise is "it never throws" (T1-5 proves it for a missing row, a non-object row, a bad field and a repository error), so this is safe today — but the fallback at these sites now depends on that promise holding for ever. Either move the resolve inside the `try` or record the dependency in `modelSettings.ts`'s header. The insights sites already do it the safe way (`InsightRepository.ts:621`, inside the `try`).
+
+10. **Stale model names in prose at wired sites, and one stale line in the skill. — Priority: Low (fold into Step 4 / AC-14).**
+    `app/api/website/landing-pages/generate/route.ts:20` ("This route calls gpt-4o and waits for a full page of copy") and `:108` ("use gpt-4o for better content quality"), `app/api/intake/form/infer-question/route.ts:17`. The code no longer pins those models. Step 4's FR-15 literal gate must either ignore comments or these must be reworded — decide it there, not here. Separately, `.claude/skills/bos-llm-call-standards/SKILL.md` § Standard 4 still carries "*Known exception carried forward:* the onboarding extractors' `'gpt-4o'` literals (Layer 1.5 KI-C, to Layer 2)"; Step 2 removed them, so the skill should lose that line in Step 4.
+
+11. **`lib/services/WebsiteGenerationService.ts:286` — the refusal returns no `error` string. — Priority: Low (Step 3).**
+    `{ success: false, code: 'ai_unavailable', contentSource: 'fallback' }`: a caller that logs or surfaces `result.error` gets `undefined`. Only the `'fallback'` caller is wired in Step 2, so nothing hits it — but give the refusal a message when the Step 3 callers land, or have those callers switch on `code`.
+
+12. **Standards. — Clean.**
+    Repository pattern respected (settings read through `systemConfigRepository`; no new direct Supabase access anywhere in the diff — the landing-page route's `supabaseServer` import is pre-existing). Zod still validates both touched routes ahead of any business logic, and each off branch sits **after** auth and validation. Pino only: SA re-grepped all ten production files — **zero `console.*`**, so D-39 holds and §12 needs no change. No hardcoded model name is left in executable code at any of the 19 sites (only the three comments in finding 10). `next build` passes per §6.4; the owner usage-route snapshot is untouched.
+
+### Rulings on the deviations
+
+- **D-28 (T2-S in its own file) — ✅ accepted.** The module-graph argument is real: driving nineteen sites needs `@/lib/auth`, `supabaseServer`, four repositories, the audit service and `uuid` mocked, and merging that into `callParams.snapshot.test.ts` would make Step 1's legs (B) and (C) — which are about the resolver, not about any call site — depend on all of it. Both files are in the `typecheck:bos-llm` scope (`lib/business-os/llm/` is a CORE dir, confirmed by the 171-file run) and both are run by the §6.4 selection. **Correct §6.1** to name `callParams.boundary.step2.test.ts`, so the file table stops describing a file that was never written.
+- **D-29 (stash capture; digested long strings) — ✅ accepted, and verified rather than believed.** See the table above: SA reproduced the unwired → wired comparison end to end. `sha256:<hex> (len N)` is byte-exact, and every value AC-2 is about is recorded literally. Extend the deviation to name the residual blind spots (findings 1-3) instead of implying the record is complete.
+- **D-30 (spy at `getProvider`, not at `complete`) — ✅ accepted;** it is the only point that covers both mechanisms while leaving the `complete()` wrapper running for real. Subject to finding 1: the spy must also record *which* provider was asked for.
+- **D-31 / D-34 / D-35 / D-36 / D-37 / D-38 / D-39 / D-40 — ✅ accepted as written.** D-38's twelve resolver mocks are pure additions with no assertion changed (checked); the widened `SystemConfigRepository` mock in `lead-reply-attribution.test.ts` is necessary, not cosmetic.
+- **D-32 (RC-W9's prediction was wrong) — ✅ accepted.** Confirmed independently: every Step 2 site already imported `callCatalog` for `buildBosCallContext`, so all nineteen were catalog importers before this step; only the three new test files join. The baseline file is unchanged and `--update-baseline` was not used. The prediction still stands for Step 3's chat v1/v2 routes.
+- **FU-2 (the gate's 158 ↔ 171 file count) — ✅ accepted as a follow-up, and downgraded.** `.github/workflows/bos-llm-typecheck.yml` runs checkout → `npm ci` → `npm run typecheck:bos-llm` with **no `next build`**, so `.next/` never exists in CI and the gate's scope there is deterministic. It is a local-reporting artefact. Do **not** touch the gate inside the step it is measuring — the Dev's call is right.
+- **D-33 (§10.2's filled-in rows) — ✅ what is recorded matches the artefacts.** Checked line by line: P-3's `checked: 0, notStored: 6` and the per-key sentence "Not stored; the seed will use the code default" are the script's own strings (`scripts/bos-llm-settings.ts:387`, `:417-428`), where `checked` is deliberately the number **present**, per D-Q3. P-3b's "8 rows, no error" matches the migration's eight-row `VALUES` list. P-5's rows match §10.1 and the fixture exactly. P-5c's byte-identical `md5`s are the expected consequence of `ON CONFLICT (key) DO NOTHING`. **The P-5b vacuity caveat is stated correctly**, with one refinement worth adding: `checked: 6` there is `LEGACY_FIELDS.length` — six *fields compared*, not six values found — and with nothing stored both sides reduce to the code defaults. So P-5b did prove that the seeded rows resolve to what the legacy readers return; it did **not** exercise any unwrap branch or any stored override, and on this database it never could have.
+
+### Is Step 2 safe to deploy, given the rows are already seeded?
+
+**Yes — deploy it.** In order of what actually protects the owner:
+
+1. The eight rows hold today's values, and that was verified *live* (P-5), not inferred; the migration's `VALUES` list and the test fixture agree field for field.
+2. The request at the provider boundary is byte-identical for all nineteen sites — verified by SA against the unwired sources and then against the wired ones. This is the claim the step rests on, and it survives independent replay.
+3. Every failure mode of the new read degrades to today's behaviour: the resolver never throws, a hung read is capped at 3 s and falls back to last-good or the code defaults, and an unpriced or out-of-bounds field is refused field by field.
+4. Nothing switches off on deploy: no row says `enabled: false`, and the three website calls that have no off path are locked on in the policy, with a test that fails if that changes.
+5. A retry cannot double-charge or double-audit: the failed attempt writes a 0-token, $0 ledger row inside one audit scope.
+
+**What changes the moment it deploys, and should be said out loud:** until now these rows were inert. From this deploy they are live controls — a write to `system_settings_config` changes the model, temperature or on/off state of six areas within 60 seconds, with no deploy and no review. The sanctioned writer is `npm run bos:llm-settings -- set` (which validates, warns about partial switches and refuses locked fields), and the admin route still refuses these keys (DEC-10); but service-role access to that table is now a production control surface. That is the feature working as designed — it is also the one new risk, and it belongs in the rollout note rather than being discovered later.
+
+**Conditions (none block the merge):** findings 1, 9 and 11 carry into Step 3; finding 10 into Step 4's doc task; §6.1 corrected for D-28, and D-29 extended with findings 1-3.
+
+### Code Approved for QA: **Yes**
+
+---
+
 ## 16. QA Testing Report
 
 ## QA Test Report — Step 0
@@ -1961,6 +2124,221 @@ then `npm run bos:llm-settings -- get <area>` for **all eight** → exit 0 each,
 
 ---
 
+## QA Test Report — Step 2
+
+**QA — 2026-09-21** (worktree `neuronforge-llm-layer2-step2`, branch `feature/business-os-llm-layer2-step2`, **uncommitted**, merged `origin/main` `7a2a06c5`; tested against the code, not against the Dev or SA summaries. Nothing was committed, no migration was applied, no production data was read or written. Every mutation below was reverted, and the tree was proved byte-identical to its starting state.)
+
+**Test mode:** full · **Strategy:** B (integration, Jest + mocked boundaries) + A (unit) + mutation testing of the test suite itself; no live system was touched · **Focus:** api, pipeline, schema, spend control, performance (the resolver under load) · **Input source:** prompt keywords + §6.3 / §6.4.
+
+**Counts: 41 checks — 38 PASS, 0 FAIL, 3 BLOCKED (live, post-deploy).** 9 defects: **0 High**, 3 Medium, 6 Low. **Ship recommendation: SHIP.**
+
+---
+
+### QA2-1. Gates, run by QA verbatim
+
+| Gate | QA result | §6.4 claim | Verdict |
+|---|---|---|---|
+| `npm run typecheck:bos-llm` | `171 files in scope, 30 errors, 0 new (88.7s)` · `passed` · exit 0 | 171 / 30 / 0 new | ✅ reproduced |
+| `npm run build` | `✓ Compiled successfully` · `✓ Generating static pages (293/293)` · exit 0 | `296/296` | ✅ passes; **page count differs — D2-8** |
+| `npx jest lib/business-os app/api/cron/insight-detect app/api/onboarding app/api/website app/api/intake lib/services lib/ai --ci` | `123 passed, 123 total` · `28 skipped, 2044 passed, 2072 total` · `20 passed, 20 total` snapshots · exit 0 | identical | ✅ reproduced exactly |
+| `NODE_OPTIONS=--max-old-space-size=8192 npx tsc --noEmit \| grep -c "error TS"` | **2035** (2031 excluding `.next/types`) | 2035 / 2031 | ✅ reproduced exactly |
+| tsc errors inside the 25 files this step touches | **3**, all in `app/api/onboarding/build/route.ts` at `(396,28)`, `(397,29)`, `(398,30)`, all `TS18047 'existingProfile.data' is possibly 'null'` — five hundred lines above this step's one-line change at `:903` | same 3, pre-existing | ✅ **pre-existing**, none new |
+
+The `--ci` selection was re-run **after** every mutation was reverted: `123 passed / 2044 passed / 20 snapshots passed`. Both committed snapshot files were `sha256`-compared before and after the whole QA session and **did not move** (`callParams.boundary.step2.test.ts.snap` `04da180d…`, `callParams.snapshot.test.ts.snap` `5cebb1ee…`), so `--ci` really did stop any snapshot being written.
+
+---
+
+### QA2-2. Attack on T2-S — 11 mutations of real call sites
+
+Each mutation was applied to production source in the worktree, the §6.4 selection (or the `lib/business-os/llm` subset) was run, and the file was restored from a byte copy taken beforehand.
+
+| # | Mutation (real call site) | Caught? | By what |
+|---|---|---|---|
+| M1 | `WebsiteAIContentService:425` re-hardcodes `model: 'gpt-4o-mini'` inside the attempt — the site **ignores the resolver entirely** | ❌ **no** | 123/123 suites green, 20/20 snapshots green → **D2-2** |
+| M2 | `InsightRepository:2178` sends `temperature: 0.45` instead of the resolved 0.5 | ✅ yes | exactly 1 snapshot: `insights/health_summary` |
+| M3 | `LeadReplyRecommender` `max_tokens: 200 → 201` | ✅ yes | exactly 1 snapshot: `leads/reply_recommendation` |
+| M4 | one character of `BUSINESS_STORY_SYSTEM_PROMPT` (`analyzing` → `analysing`) — a >200-character string, so only the SHA-256 digest can see it | ✅ yes | exactly 1 snapshot: `onboarding/business_story_extraction`. **The digest bites.** |
+| M5 | `OnboardingConversationManager:673` — the **public caller stops calling** the wired extractor | ❌ **not by T2-S** (20/20 snapshots green) | caught incidentally by a pre-existing Layer-1.5 suite (`OnboardingConversationManager.attribution.test.ts`, 3 tests). Confirms SA finding 2 empirically → **D2-5** |
+| M6 | `providerFactory.ts` `complete()` silently adds `chatParams.user = context?.userId` **after** the call site built its request | ✅ yes | exactly 13 snapshots — precisely the 13 `complete()`-mechanism sites. **D-30's claim that the wrapper runs for real is proved.** |
+| M7 | `WebsiteAIContentService:417` resolves `'faq_content'` for the **`hero_content`** site | ❌ **no** | 123/123 green → **the fourth blind spot, D2-1** |
+| M8 | `BriefingNarrator:129` pins `model: settings.model` inside the `withModelFallback` attempt, so a retry re-sends the refused model | ❌ **no** | 123/123 green → **D2-3** |
+| M9 | `LeadReplyRecommender:102` switches to `getProvider('anthropic')` | ❌ **no** | SA's finding 1 reproduced independently **on a second site** → **D2-4** |
+| M12 | `LeadReplyRecommender` makes a **second** provider call before the real one | ✅ yes | `expect(chatCompletion).toHaveBeenCalledTimes(1)` at `:497` |
+| M13 | `LeadReplyRecommender` attribution: `groupId` → `userId` | ✅ yes | exactly 1 snapshot: `leads/reply_recommendation` |
+
+**7 of 11 caught; 4 escaped.** Three of the four are SA's known blind spots (M9 is SA-1; M5 is SA-2; M1 is the inherent "T2-S cannot tell wired from unwired", which follows from D-29's capture method).
+
+**The fourth, asked for and found — M7: T2-S never records WHICH `(area, callName)` key a site asks the resolver for.** The snapshot records the request, and the request carries only the resolved *values*. So any two calls whose resolved values coincide can be swapped at the call site with the whole suite green. Today that is **8 of the 19 sites** — the four dormant website blocks (`hero/about/faq/features_content`, all area-level `gpt-4o-mini` / 0.7) and the four onboarding extractors (all `gpt-4o`, no temperature) — and **any** pair joins them the moment an operator sets their values to coincide. The failure this hides is exactly the feature Layer 2 exists for: an operator writes `website.calls.hero_content.model` and it lands on the FAQ block, or nowhere, and nothing fails. SA's grep proved that nineteen distinct `resolveBosLlmSettings('<area>','<call>')` occurrences **exist**; it did not prove the **binding** of site → call name, and no test does. **Fix (one line, Step 3):** spy `resolveBosLlmSettings` and record its arguments next to `getProvider.mock.calls` inside `boundaryCalls()` — that closes SA-1 and this together.
+
+**Not re-tested, accepted as stated:** SA finding 3 (a detached, non-awaited provider call is invisible, because `toHaveBeenCalledTimes(1)` at `:509` is evaluated synchronously after `await drive()`). Confirmed by reading; no such path exists in the ten files today.
+
+---
+
+### QA2-3. T2-O — the off paths, exercised for real
+
+QA wrote a throwaway harness (`qa.step2.offpaths.temp.test.ts`, deleted after the run) that drives each site **twice**: once with its area `enabled: false`, and once with the area on but the model failing the way that site's **existing** fallback was written for. It asserts the two outputs are **deep-equal**, and it uses a real `BaseAIProvider` subclass running the real `callWithTracking`, so "no ledger row" is **observed**, not inferred — which closes SA finding 6's Low gap.
+
+| Area / call | provider calls | ledger rows | audit entries | output vs the existing fallback | Verdict |
+|---|---|---|---|---|---|
+| `insights/insight_content` | 0 | 0 | 0 | identical (translated templates) | ✅ PASS |
+| `insights/correlated_insight` | 0 | 0 | 0 | identical | ✅ PASS |
+| `insights/health_summary` | 0 | 0 | 0 | identical | ✅ PASS |
+| `briefing/daily_narration`, driven through `getBriefing` — the `runAiAction` owner | 0 | 0 | **0** | identical (deterministic composer, `source: 'fallback'`) | ✅ PASS. Note `BriefingStore` calls `h.markFailed('briefing_fallback')` on this path, yet **no** entry is written, because `aiActionAudit.ts:304` returns on `calls.length === 0` before the signalled failure is used. A signalled failure with zero calls is correctly silent (Layer 3 FR-7) |
+| `leads/reply_recommendation` | 0 | 0 | 0 | same ladder `candidate`; `source: 'fallback'`, `fallbackReason: 'disabled'` | ✅ PASS |
+| `intake/form_generation` | 0 | 0 | 0 | identical three starter questions; only `warning` differs (`'disabled'` vs the error reason), by design | ✅ PASS |
+| `intake/question_inference` (route) | 0 | 0 | 0 | identical free-text question (`label` = the owner's note, `long_text`, not required) | ✅ PASS |
+| `website/landing_page` (route) | 0 | 0 | 0 | identical `getDefaultContent()` body | ✅ PASS |
+| `website/hero_content` · `about_content` · `faq_content` · `features_content` | 0 each | 0 each | 0 each | identical per-block templates | ✅ PASS ×4 |
+
+**The deliberate exception (D-27 / RC-W8b / S1-7)** — re-verified against the **real** Step 2 policy, not a test policy:
+
+| Check | Result |
+|---|---|
+| With `website.enabled: false`, `full_site` / `field_regenerate` / `testimonial_enhance` resolve `enabled: true` | ✅ PASS (`modelSettings.off.nonchat.test.ts:432-445`) |
+| …and **still reach the provider** (`regenerateField` + `enhanceTestimonial` → 2 calls) | ✅ PASS (`:447-455`) |
+| The Step 2 policy really locks `full_site`, so lifting the lock in the sibling test is meaningful | ✅ PASS (`:459`; `BOS_LLM_CALL_POLICY.website.full_site.switchable === false`) |
+| The five switchable website calls **do** go off | ✅ PASS (`:461-470`) |
+| `full_site` with the lock lifted: `callLLM` → `{ source: 'fallback', reason: 'disabled', disabled: true }`, no provider call | ✅ PASS |
+| `onAiDisabled: 'fallback'` finishes the build with starter copy, no `code` | ✅ PASS |
+| `onAiDisabled: 'fail'` → `{ success: false, code: 'ai_unavailable' }` **before any write** (only three reads run before `callLLM`) | ✅ PASS |
+| The change script names the three, by name, on `set website --enabled false` (`PARTIAL SWITCH`, `callsStillRunning`) | ✅ PASS (`scripts/__tests__/bos-llm-settings.test.ts:216-231`, `scripts/bos-llm-settings.ts:315`) |
+
+**Does anything now imply the website switch is complete?** Code: **no** — the policy carries the reason in a comment at `modelSettingsPolicy.ts:187-193`, both services repeat it at the call sites, and a test fails if the locks are flipped early. Docs: **almost** — §6, §7.5, D-35 and §10.1's *Step* column all say "partial until Step 3", but **§10.1's `Switchable` column reads `yes` for all three**, which is the Step 3 end state rather than today's. Recorded as **D2-7** (Low, doc only).
+
+---
+
+### QA2-4. Attribution, cost and audit — unchanged, and proved at a real site
+
+| Check | Evidence | Verdict |
+|---|---|---|
+| No `buildBosCallContext` argument, grouping id, `runAiAction` scope or `callWithTracking` call changed anywhere | full diff read; the boundary snapshot records the **whole** attribution object for all 19 sites and did not move; M13 proves that record bites | ✅ PASS |
+| The ledger records the model that **ran**, not the one configured | T2-M-I (`modelSettings.wiring.nonchat.test.ts:283-296`), through the real `callWithTracking` | ✅ PASS |
+| …**and after a fallback retry** | `[[CONFIGURED,false],[DEFAULT,true]]`, the failed row `input_tokens: 0, output_tokens: 0, cost_usd: 0` | ✅ PASS |
+| A retry cannot **double-count tokens** or **emit two audit entries** — *at a real Step 2 site*, which SA recorded as the one honest limit of the evidence | QA harness `qa.step2.retryaudit.temp.test.ts` drove the **landing-page route** (a real `runAiAction` owner) with `website.calls.landing_page.model` configured to a model the key refuses. Result: provider models `['gpt-4o-2099','gpt-4o']`; ledger `[['gpt-4o-2099',false,0,0,0],['gpt-4o',true,10,20,0.0001]]`; **exactly one** audit entry, `"callCount":2,"failedCallCount":1,"inputTokens":10,"outputTokens":20,"totalTokens":30,"estimatedCostUsd":0.0001,"models":["gpt-4o-2099","gpt-4o"],"outcome":"succeeded"` | ✅ PASS — **SA's limit is now closed** |
+| The negative cache: the **next** action goes straight to the default | same harness, second action → one provider call on `gpt-4o`, one audit entry with `"callCount":1` | ✅ PASS |
+| FR-13 intake `generated_from.model` both ways, plus the no-model fallback case | T2-M, three cases | ✅ PASS |
+| No site opens an audit scope **inside** the `withModelFallback` attempt | checked at all 19; the three `runAiAction` owners among the Step 2 files (`infer-question`, `landing-pages/generate`, `BriefingStore`) open it above the resolve | ✅ PASS |
+
+---
+
+### QA2-5. The resolver under load from real call sites
+
+QA harness `qa.step2.loadguards.temp.test.ts` (deleted after the run) drives **six real sites in six areas concurrently** (`Promise.all`: insights, briefing, leads, intake, a dormant website block, `testimonial_enhance`).
+
+| Check | Result | Verdict |
+|---|---|---|
+| Six areas resolving at the same instant share **one** read | `getByKeys` called **1** time | ✅ PASS — the shared in-flight promise holds under real concurrency |
+| Three waves inside the 60 s window | still **1** read in total | ✅ PASS |
+| A read that **never settles**: the 3 s budget (`BOS_LLM_SETTINGS_READ_TIMEOUT_MS`) | all six sites completed; the models were the six code defaults (`gpt-4o` ×1, `gpt-4o-mini` ×5); no site threw | ✅ PASS |
+| A settings read that **rejects** | every site degraded to its code default; no action failed | ✅ PASS |
+| A repository **error response** (`{ data: null, error }`, not a throw) | same degradation | ✅ PASS |
+
+**One structural caveat, recorded not raised:** at six sites the resolve sits **outside** the `try` that owns the fallback (`BriefingNarrator:102`, `WebsiteAIContentService:417/476/625/697`, `IntakeGenerationService:259`, `infer-question/route.ts:138`). QA could not make the resolver throw — T1-5 and the checks above show it does not — so the risk is zero today and entirely contingent on that promise holding for ever. This is SA finding 9; QA agrees with the Step 3 disposition.
+
+---
+
+### QA2-6. Guardrails seen from a wired site
+
+Configured **in test rows only**; production was never touched.
+
+| Configured value | What the site actually sent | Verdict |
+|---|---|---|
+| `insights.model = 'gpt-4o-unpriced'` (no price row) | `{ model: 'gpt-4o-mini', temperature: 0.3 }` — today's | ✅ PASS |
+| `insights.model = 'gpt-4o-free'` (`input: 0, output: 0`) | `{ model: 'gpt-4o-mini' }` — today's. The "free AI" hole stays closed at the call site | ✅ PASS |
+| `insights.provider = 'anthropic'` | `{ model: 'gpt-4o-mini', temperature: 0.3 }` — today's | ✅ PASS *(see D2-4: the site would have used OpenAI regardless — `settings.provider` is resolved at 19 sites and used at none)* |
+| `insights.temperature = 3` (outside `[0,1]`) | `{ temperature: 0.3 }` — today's | ✅ PASS |
+| `insights.enabled = 'no'` (non-boolean) | the area was **not** switched off; one provider call made | ✅ PASS — RC-W1's failure mode does not reach a call site |
+| the whole `intake` row replaced by the string `'nonsense'` | `{ model: 'gpt-4o', temperature: 0.3 }` — today's | ✅ PASS |
+
+Every fault degrades to today's behaviour. **No configuration fault can fail an owner action** — verified from the call site, not only from the resolver's own unit tests.
+
+---
+
+### QA2-7. Defects
+
+**0 High.** Nothing blocks the deploy. D2-1 … D2-3 are **test-coverage** defects: the shipped behaviour is correct today, but the suite would not notice if it stopped being correct.
+
+| # | Defect | Severity | Where / fix |
+|---|---|---|---|
+| **D2-1** | **T2-S never records which `(area, callName)` key a site resolves — the fourth blind spot.** M7 swapped `hero_content`'s site to `'faq_content'` and 123/123 suites stayed green. 8 of 19 sites are mis-keyable invisibly today (4 dormant website blocks, 4 onboarding extractors — each group resolves identical values); any pair joins them once an operator's values coincide. The hidden failure is a per-call override landing on the wrong call, or nowhere, silently. SA's grep proved the 19 occurrences **exist**, not that each site asks for **its own** name | **Medium** | `callParams.boundary.step2.test.ts:169`, `:447`. Fix with SA-1 in one change: spy `resolveBosLlmSettings` and record its arguments in `boundaryCalls()` |
+| **D2-2** | **Nothing proves a site uses the resolved model at all, at 17 of 19 sites.** M1 re-hardcoded `hero_content`'s model and the whole suite stayed green. Leg (A) was deleted for all 19 calls (correctly), but only `insights/insight_content` and `intake/form_generation` have a test that overrides the model and checks the boundary. T2-S cannot help here **by construction** — its snapshot was captured on the unwired sources, so "unwired" is its passing state. FR-15's literal gate arrives only in Step 4 | **Medium** | one `it.each` over the 19 calls: override that call's model in the rows, assert the boundary model. ~20 lines |
+| **D2-3** | **The FR-11 / RC-W4 invariant — "build the request inside the attempt so a retry carries the model that ran" — is untested at 17 of 19 sites.** M8 made `BriefingNarrator` pin `settings.model` inside the attempt (so a retry re-sends the refused model and the action fails) with the suite green. T2-R covers one site per mechanism, not per site | **Medium** | extend the D2-2 loop to also assert `[CONFIGURED, DEFAULT]` on a 404 `model_not_found` |
+| **D2-4** | **Provider identity is invisible, and `settings.provider` is inert.** SA finding 1, independently reproduced by QA on a **second** site (M9, leads → `'anthropic'`, all green). The resolver resolves `provider` at 19 sites and **no site uses it**; §10.1's first column ("Provider before → after") is asserted by nothing | Low *(SA-1; Step 3 — QA concurs)* | as SA |
+| **D2-5** | **T2-S enters below the public surface at 17 of 19 sites**, so a caller that stops calling is invisible to it. Confirmed by M5: 20/20 snapshots green; the mutation was caught only by an unrelated pre-existing Layer-1.5 suite | Low *(SA-2)* | as SA |
+| **D2-6** | **PRE-EXISTING, not introduced by Step 2 — the landing-page route's own error fallback is dead code.** `app/api/website/landing-pages/generate/route.ts:207` calls `await request.clone().json()` inside the outer `catch`, after `request.json()` already consumed the body: `clone()` throws `TypeError: unusable`, so the catch itself throws and the route returns an unhandled 500 instead of the documented "default content on error". Observed live during this QA run (on a provider error, not on the off path). The Step 2 **off** path is unaffected — it returns before the call — but the *error* path this step now sits beside does not do what it says | Low *(pre-existing; propose as a follow-up, not a Step 2 fix)* | `:207`; read the body once at the top and reuse it |
+| **D2-7** | **§10.1's `Switchable` column reads `yes` for `full_site` / `field_regenerate` / `testimonial_enhance`**, which is the Step 3 end state; the Step 2 policy is `switchable: false`. The adjacent *Step* column (`2 (params), 3 (off)`) disambiguates, but the column read on its own says the website switch is complete | Low (doc) | §10.1 |
+| **D2-8** | **§6.4 records `✓ Generating static pages (296/296)`; QA's verbatim `npm run build` on the identical tree reports `293/293`** (exit 0, `✓ Compiled successfully`, both runs). A recorded gate number that cannot be reproduced weakens the record even when the gate passes | Low (doc / evidence) | §6.4 |
+| **D2-9** | **Two SA-required workplan corrections are not yet applied.** (a) §6.1 still names `callParams.snapshot.test.ts` as T2-S's home and lists neither `callParams.boundary.step2.test.ts` nor `modelSettings.wiring.nonchat.test.ts` (SA's D-28 ruling: "Correct §6.1, so the file table stops describing a file that was never written"); (b) D-29 has not been extended to name the residual blind spots (SA's D-29 ruling) — and it should now name the fourth, D2-1 | Low (doc) | §6.1, §6.6 D-29 |
+
+---
+
+### QA2-8. What can only be proven after this deploys
+
+| AC / item | Why it cannot be proven here | Status |
+|---|---|---|
+| AC-13 item 3 — one owner action per Step 2 area, with the ledger `model_name` matching §10.1's "after" column | Needs the deployed code reading the **live** rows. Every test here uses the fixture `SEEDED_ROWS`; the bridge to production is T1-9 (fixture vs migration) plus §10.2's P-5 (the live rows), both already recorded | **BLOCKED — post-deploy** |
+| AC-2 against the live rows | Same. T2-S proves "wired code + fixture rows == unwired code"; once an operator edits a row, AC-2 stops applying **by design** | **BLOCKED — post-deploy** |
+| AC-13 items 4–5 — the leads off/on cycle with the change script, the fallback and the info log | No test environment exists; it would run on the live system. **Pending the user's decision** (§6.5). The automated coverage in QA2-3 stands meanwhile | **BLOCKED — user decision** |
+
+**The exact post-deploy checks (they fill §10.2's "After Step 2 deploy" row).** Perform **one** action per area, then run the query below. Wait **≥ 60 s** after any settings write before reading (R-12). Change no row while doing this — the point is that the deploy changed nothing.
+
+| # | Area | The one action to perform | Expected ledger `model_name` ("after", §10.1) |
+|---|---|---|---|
+| 1 | insights | let the insight-detect cron run once, or trigger a detection run | `gpt-4o-mini` (`component` = `insight_content` / `correlated_insight` / `health_summary`) |
+| 2 | briefing | open My Day so the daily briefing narrates — on a day whose facts hash has moved, otherwise the cache answers and makes **no** call | `gpt-4o-mini` (`daily_narration`) |
+| 3 | leads | let one inbound lead message get a reply recommendation | `gpt-4o-mini` (`reply_recommendation`) |
+| 4 | intake | generate an intake form, then add one question from a free-text note | `gpt-4o` (`form_generation`) and `gpt-4o-mini` (`question_inference`) |
+| 5 | onboarding | send one onboarding chat message that triggers the business-story extractor | `gpt-4o` (`business_story_extraction`). "No temperature sent" is visible only in the request, so confirm instead that the call succeeded |
+| 6 | website | generate one landing page, and regenerate one field on the website page | `gpt-4o` (`landing_page`) and `gpt-4o-mini` (`field_regenerate`) |
+
+```sql
+-- Run once, after all six actions. Read-only.
+SELECT feature, component, model_name, count(*) AS calls, max(created_at) AS latest
+FROM token_usage
+WHERE created_at > now() - interval '2 hours'
+  AND feature LIKE 'business-os-%'
+GROUP BY 1, 2, 3
+ORDER BY 1, 2, 3;
+```
+
+**Pass:** every `(feature, component)` row shows exactly the model in the table's last column, and **no `component` shows two different `model_name` values**.
+**Fail → stop and escalate:** a `model_name` that is not the "after" value means the seeded row is not being read as expected. A second `model_name` for one `component` means an FR-11 retry fired in production and the key is refusing the configured model — look for the `'Provider rejected the configured model; retrying once with the code default'` error line from `BosLlmModelFallback`.
+
+Then confirm no action wrote two audit entries:
+
+```sql
+SELECT entity_id, count(*) FROM audit_trail
+WHERE entity_type = 'ai_action' AND created_at > now() - interval '2 hours'
+GROUP BY 1 HAVING count(*) > 1;   -- expect 0 rows
+```
+
+**D-33 is closed:** §10.2's P-2 / P-5 / P-5b / P-5c rows now carry the user's recorded output. QA re-read them; they match the migration's eight-row `VALUES` list and §10.1 field for field, and the P-5b vacuity caveat is stated correctly.
+
+---
+
+### QA2-9. Standards spot-check
+
+| Rule | Result |
+|---|---|
+| `console.*` in the ten production files | **0** — re-grepped by QA; D-39 and §12 hold |
+| Repository pattern | no new direct Supabase access in the diff; settings read through `systemConfigRepository`; the landing-page route's `supabaseServer` import is pre-existing |
+| Zod before business logic; the off branch after auth and validation | verified in both touched routes |
+| Hardcoded model names in executable code at the 19 sites | none — only the three stale **comments** SA listed at finding 10, for Step 4 |
+| A `'use client'` path reaching the server-only resolver | none; `npm run build` passes |
+
+---
+
+### QA2-10. Final status
+
+- [x] **Behaviour: PASS.** Every acceptance criterion testable without a deploy passes. The request at the provider boundary is byte-identical for all 19 sites (independently re-verified), every off path returns the *existing* fallback with zero spend, zero ledger rows and zero audit entries, a retry writes one audit entry and cannot double-count, and every configuration fault — unpriced, zero-priced, bad provider, out-of-range temperature, non-boolean switch, garbage row, dead database, hung database — degrades to today's behaviour at the call site.
+- [x] **SHIP.** No High is open. The three Medium defects are holes in the *test suite*, not in the shipped code, and none of them can change what runs on deploy day: the rows hold today's values and the boundary record is byte-identical either way.
+- [ ] **D2-1, D2-2 and D2-3 should be closed in Step 3**, together with SA findings 1 and 9 — they are one change (~30 lines: record the resolver's arguments and the provider asked for, plus one `it.each` over the 19 calls that overrides the model and asserts both the boundary model and the retry pair). After Step 2 there is **no** test that a site reads its own setting at 17 of 19 sites, and Step 3 roughly doubles the wired surface.
+- [ ] **D2-7, D2-8, D2-9** are workplan edits of a few minutes; D2-9 (a) and (b) were already required by SA and are still outstanding.
+- [ ] **D2-6** is pre-existing and belongs on the website follow-up list, not in this step.
+- [ ] **Post-deploy: run QA2-8's six actions and two queries**, then fill §10.2's "After Step 2 deploy" row. AC-13 items 4–5 remain **pending the user's decision** on running an off/on cycle against the live system.
+
+---
+
 ## 17. Commit Info
 
 *(RM populates: per-step commit, PR and deploy.)*
@@ -1986,8 +2364,11 @@ then `npm run bos:llm-settings -- get <area>` for **all eight** → exit 0 each,
 | 2026-09-21 | **QA Step 1 report answered — D-Q1 … D-Q8 addressed (still uncommitted); gates BLOCKED on the environment** | **D-Q1 (High):** T1-14 leg (A) closed on all three blind spots — the three stored-key calls now assert the resolved variable reaches the request (`/^\s*model,$/m`), the two shared request builders are asserted directly (forward `params.model`, pin no model, synthesise no temperature), every anchor must be unique in its file, and every model evidence item must find exactly one model assignment in the block. **D-Q2 (Medium):** the refill is raced against a 3-second budget, so a hung read degrades like a failed one; stale-while-revalidate deliberately NOT adopted because it would break AC-7's "used at 60 seconds" — later upheld by SA. (The cost was first stated wrongly as "one call a minute"; corrected under R-2 to ~3 s in every 13 while the database is stalled.) **D-Q3:** `verify-stored` distinguishes present from absent. **D-Q5:** an image-family model is refused on a token call. **D-Q8:** the rollback restores NULL. **D-Q4 and D-Q7 recorded as limitations**, with QA's P-5b scope note, the P-3b `BEGIN … ROLLBACK` dry run and the P-5c md5 re-apply proof folded into §9 and the migration header. **D-Q6:** the shared `node_modules` is still missing everything before `@next` (`.bin`, `@babel`, `@jest/core`), so jest, tsx and next are unrunnable; the three gates and the seven mutation proofs could not be re-run this round and are recorded as BLOCKED pending `npm ci`. §5.9 answers each item. |
 | 2026-09-21 | **SA re-check of Step 1: APPROVED with one must-fix; seed go/no-go stands (GO)** | Limited to what changed since the 2026-09-20 review. Gates re-run by SA: **39 suites / 535 tests pass**, `typecheck:bos-llm` **168 files / 30 errors / 0 new**. S1-1 … S1-12 and D-Q1 … D-Q8 all verified in the code, including the script proven end to end against production and the clamped evidence windows. **Leg (A) ruled as sound as a source-reading assertion can be, and explicitly not a soundness proof:** SA proved two residual escapes on this tree and restored it byte-identical — (i) rewriting `params` one line *above* `providerFactory.complete()`'s inspected slice changes 12 calls with the suite green, (ii) a `...spread` after the recorded `model`/`temperature` in `InsightRepository` passes because `singleModel` counts assignments, not spreads; (iii) reachability is never asserted. Ruling: **stop hardening leg (A)** — it is a drift alarm; the guarantee moves to the provider boundary, and the D-21 amendment is strengthened so **T2-S / T3-S spy at the boundary and assert the whole request object plus the call count**, and each call's leg-(A) entry is **deleted** when its site is wired. **D-Q2 ruled: keep it exact — no stale-while-revalidate, AC-7 unchanged**, because an emergency "off" under SWR always lets one more paid call through per instance and has an unbounded tail on a low-traffic instance, whereas the 3 s wait is rare and bounded. **Must-fix R-1 (Medium):** the budget covers only `getByKeys`; the same refill's `getPricing` / `getImageGenerationConfig` awaits are unbounded and sit behind the shared in-flight promise — invisible today (every seeded model equals its default) but live the moment an operator configures a different model. Race the whole `refill()` against the budget. Recorded, non-blocking: **R-2** the timeout's real cost is every call arriving in the ≤3 s window (~3 s per 13 s while the DB is stalled), not one call a minute; **R-3** §9 and the migration header order P-5b/P-5c differently; **R-4** S1-8 silently reverts a provider-only configuration (unreachable until a second provider is allowed — revisit then, ideally reporting it as `adjusted`); **R-5** the residual leg-(A) class is recorded in the re-check as authoritative. **D-Q4 / D-Q7 handled sufficiently:** P-3b (`BEGIN … ROLLBACK`) and P-5c (fingerprint, apply twice, re-fingerprint) close them, and P-5b's vacuity is a consequence of none of the six legacy keys being stored — which also removes the risk RC-W1 guarded. **Seed migration: GO**, condition S1-1 closed, with P-3b before P-4, P-5c after P-5, and §9 step 1b re-run before the deploy carrying the new pricing reader |
 | 2026-09-20 | **SA Step 1 review answered — S1-1 … S1-12 all fixed (still uncommitted)** | **S1-1:** `npm run bos:llm-settings` added (`tsx --import ./scripts/env-preload.ts`), the invocation corrected in the script header, the migration header, §3.6 and §9, and the script **run end to end against production, read-only**: usage exit 2, `get leads` exit 0, `verify-stored` exit 0 (none of the six legacy keys is stored), `verify-equivalence` exit 0 with `checked: 6` — and no `bos_llm_area_*` row exists yet. **S1-2:** T1-14's evidence window is now bounded by the neighbouring call anchors (with an explicit `side` for the onboarding layout); SA's four mutations each fail the right test and the file reverts green. **S1-3:** T1-9 parses the migration's `jsonb_build_object` trees and the CTE's COALESCE defaults and compares them with the fixture value for value; proven by mutating the SQL. **S1-4:** §5.5 and §9 step 1b record that the newest-price-wins fix is a real, product-wide charging change and gate the deploy on the read-only duplicate-price query. **S1-5:** `listActive()` gains `lte('effective_date', today)` and a `created_at` tie-break. **S1-6:** the repository header now names the two caller classes, including the ungated billing reader. **S1-7:** the change script warns, by name, which calls keep spending when an area is switched off, computed from the policy. **S1-8/9/10/11/12:** provider follows the model on fallback; an area-level locked temperature that differs is reported as `adjusted`; the RC-11 drop is reported at call level; both verify commands name the Supabase host; the superseded marker no longer turns a NULL description into the key. SA rulings applied: D-18 with S1-9, D-21 with §6.3/§7.3 now requiring T2-S/T3-S to capture the whole request object at the provider boundary plus the call count, D-22 … D-27 accepted. §5.7 answers each item. |
+| 2026-09-21 | **Step 2 implemented — the six non-chat areas wired (code complete, uncommitted)** | Branch `feature/business-os-llm-layer2-step2` off `main` `ae902874`, merged up to `origin/main` `7a2a06c5` (PR #81) before any edit; no conflicts, nothing in that delta touches this layer. **19 call sites in 10 files** now take model, temperature and the on/off switch from `resolveBosLlmSettings` and wrap their provider call in `withModelFallback`: insights ×3 (`InsightRepository`), briefing (`BriefingNarrator`, `OPENAI_MODELS` import dropped), leads (`LeadReplyRecommender`, both `lead_reply_recommender_*` key reads dropped), intake ×2 (`IntakeGenerationService` — `MODEL` constant deleted and `generated_from.model` now records the model that RAN, FR-13 — and `infer-question`), onboarding ×4 (temperature still sent only if resolved, so the four extractors go on sending none), website ×8 (`full_site` + the new `onAiDisabled` option, `landing_page`, and the six calls in `WebsiteAIContentService`). Off paths use the EXISTING fallback in every case — insight templates, the deterministic composer, the starter form, the free-text question, the lead ladder, `getDefaultContent()`, the per-block templates — and write no audit entry, because no LLM call is made. **`full_site`, `field_regenerate` and `testimonial_enhance` stay locked ON (D-27, S1-7): the website kill switch is still partial until Step 3, and T2-O asserts that rather than assuming it.** Tests: **T2-S** spies at `ProviderFactory.getProvider(...).chatCompletion` — the real boundary for both mechanisms, with `complete()` left running — and snapshots the whole argument list plus the call count for all nineteen sites; the snapshots were taken with the wiring **stashed** and then passed unchanged against the wired code (`--ci`, no writes). Mutation-proved twice, including the wrapper-adds-a-parameter escape SA named. **Leg (A) deleted for every wired call**; `callParams.snapshot.test.ts` now covers only `chat/planner`, `chat/analysis` and `images/image_generation`, asserts that set explicitly, and its T1-14 snapshot did not move. Also new: **T2-O** (22 cases, per-area off behaviour + the three locked website calls), **T2-R** (one retry per mechanism), **T2-M** (intake records the model that ran, and the default after a retry), **T2-M-I** (the insights ledger row's `model_name` through the REAL `callWithTracking`, incl. the 0-token failure row). Twelve existing suites gained a resolver mock pinned to the code defaults; no assertion in them changed. Gates: `typecheck-bos-llm: 171 files in scope, 30 errors, 0 new`, baseline untouched and no production file newly in scope (D-32); `npm run build` ✅; jest **123 suites / 2,044 passed / 20 snapshots** (`--ci`); `tsc` 2,031 excluding generated `.next/types` (2,034 at Step 1; the delta is the `origin/main` merge, and no error is in a file this step touches). Deviations D-28 … D-40 and follow-up FU-2 in §6.6/§6.7 — **D-33 (the empty §10.2 post-seed rows) is the one to settle before merge** |
 | 2026-09-20 | **Step 1 implemented (code complete, uncommitted)** | Branch `feature/business-os-llm-layer2-step1` off `main` `ba25fb9a`. New under `lib/business-os/llm/`: `modelSettingsPolicy.ts` (every call's code default, locks, allowed providers, temperature bounds — the only place a Business OS model name or temperature is written), `modelSettingsSchema.ts`, `modelSettings.ts` (typed resolver, 60 s cache with a shared in-flight read and a 10 s retry after a failed one, guardrails, locks, the change-seen log, `isBosLlmAreaEnabled`, `validateAreaRow`, never throws) and `modelFallback.ts` (one retry on a classified model-not-found, negatively cached for the settings window). `openaiProvider.ts` exports `rejectsSamplingParameters` and a module-level `usesMaxCompletionTokens` that the private method now delegates to (RC-W5). `scripts/bos-llm-settings.ts` adds `get` / `set` / `verify-stored` / `verify-equivalence`, validating with the resolver's own schema and guardrails before any write. Seed migration **written, not applied**, renamed `20261003_…` (D-19), with the P-1…P-5b checks and the rollback in its header. Per the SA addendum §E, `lib/ai/pricing.ts` moved to `aiModelPricingRepository.listActive()` (new method), its 9 `console.*` became Pino, and the oldest-price-wins cache bug is fixed; per D-14 / QA D-Q9 the zero-price alert no longer fires on an input-only embedding model. Tests: 5 new `llm/` suites, the provider family suite, the script suite, `lib/ai/__tests__/pricing.test.ts`, `listActive` cases and 3 zero-price cases — all passing. Gates in §5.4: `typecheck:bos-llm` 158 files / 30 errors / **0 new**, baseline unchanged; `next build` clean; `tsc` unchanged at 2,034 (excluding generated `.next/types`) with none in a touched file. Deviations D-18 … D-27 in §5.6 — **D-21 is the one SA should look at first**. |
 | 2026-09-20 | **SA code review of Step 0 (re-review): APPROVED WITH CHANGES** | Re-verified against the working tree, not the Dev summary. **S-1**, **S-2** and the **D-1** uuid narrowing all land as specified. **T0.10-T0.13** conform to the SA addendum and REPOSITORY_STRATEGY: injectable client, `AgentRepositoryResult`, never throws, the `user_id` exemption documented with all five required points, `syncMany` proven not to be an upsert and the `.single()` duplicate bug fixed by newest-row-wins, 404s on both missing-row paths, and the route suites genuinely moved to a repository double with only arrangement changed (read the tests; every denial still asserts zero data access). The static gate is real (recursive, asserts >=3 files, forbids `createClient` / raw clients / `.from('...')` / `console.*`). Gates re-run by SA: **29 suites / 284 tests pass**; full `tsc` shows the only touched-file errors are the 4 pre-existing `reward_config` ones. Zero-price policy and the `ai_pricing` entity type (D-10) approved — blast radius confirmed nil. **Migration: GO, conditional** on (1) `search_path` reordered to `pg_catalog, public` (R-1), (2) `PUBLIC` added to both REVOKEs (R-2), (3) the operator confirming from raw `pg_policies` output that `system_settings_config` has a SELECT policy independent of the two being dropped (R-3) — otherwise the DROPs would take anonymous read access with them and break the V2 theme provider. Billing-break risk cleared: every `ai_model_pricing` reader is service-role, `supabaseServer` has no anon fallback, no browser reader exists (R-9); no anon/authenticated writer of either table exists (R-10). Non-blocking: **C-1** the zero-price alert will false-positive on input-only embedding models (an SA spec correction, carried into Step 1 with S-6). **P-2**: fold F-1's real write hole (the `profiles` UPDATE policy with no `WITH CHECK`) and the now-stale "no code reads profiles.role for access" claim into `docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md` at merge |
 | 2026-09-20 | **QA test report for Step 0: SHIP, with two blocked live checks** | Gates re-run by QA: `typecheck:bos-llm` 156 files / 30 errors / **0 new**; `npm run build` clean (295/295, exit 0, the three routes dynamic); **29 suites / 284 tests pass**. 13 PASS, 0 FAIL, 2 BLOCKED. Live HTTP proof (anonymous) that all six handlers answer 401 and that the deleted settings `POST` is a real **405**; a bogus bearer and a garbage cookie also give 401, not 500. Adversarial probe of the reserved-key refusal (17 payload shapes): nesting, arrays, duplicate JSON keys and `__proto__` are all safe, but **D-Q1** zero-width / Cyrillic / full-width look-alikes defeat the prefix test and are written, and **D-Q2** a `__proto__` key is dropped while the route still reports success. Ten defects, none High: **D-Q4 (Medium)** the migration ROLLBACK re-grants writes on `system_settings_config` that the §4.4 read never recorded; D-Q1, D-Q2, D-Q3 (`getUser()` unguarded → 500 instead of 401), D-Q5 to D-Q8 Low; D-Q9, D-Q10 informational. Response contract verified unchanged on all five page calls (`getAll` is byte-identical to the old service call; `set` preserves `category`). Audit entries serialise correctly (`sanitizeChanges` does not redact `*_cost_per_token`) and are effectively non-blocking. **BLOCKED: T0.8-b (non-admin 403) and T0.8-c (admin page load / billing save / price edit / sync)** — no credentials, and minting a user would write to the live project; the user must run L-0. Full report in §16 |
 | 2026-09-20 | **SA code review of Step 1: FIX REQUIRED (2 must-fix), seed migration GO conditional on one of them** | Re-verified against the working tree: 18 suites / 343 tests pass, `typecheck:bos-llm` 0 new, 0 `console.*` in all nine touched files, no client-side import of the resolver or of `lib/ai/pricing`, and the seed SQL read by hand against §10 and the fixture — all eight rows match value for value. **S1-1 (High):** `scripts/bos-llm-settings.ts` loads no environment and crashes at import (`Error: supabaseUrl is required.`), so **P-3 and P-5b cannot be run as documented**; the repo's own `scripts/env-preload.ts` fixes it (SA verified) and the invocation must be corrected in the script header, the migration header, §3.6 and §9. **S1-2 (High):** T1-14's evidence check uses a ±45-line window, and SA demonstrated four false negatives in `WebsiteAIContentService.ts` (`hero_content` model and temperature, `field_regenerate` model, `testimonial_enhance` model) where a sibling call's identical literal satisfies the check. Medium: T1-9 proves the seed SQL by substring only (S1-3); the `lib/ai/pricing.ts` newest-price-wins fix is a **real production charging change** in a step advertised as inert and needs a pre-deploy duplicate-row query (S1-4); `listActive()` lacks an `effective_date <= today` filter and a tie-break (S1-5); `AiModelPricingRepository`'s "every caller is admin-gated" header is now false (S1-6); the website kill switch is partial and silent between Steps 2 and 3 (S1-7). Rulings: **D-18 accepted** with S1-9 (report an area-level locked temperature that differs, as a non-blocking `adjusted`); **D-21 accepted as amended** — legs B and C are real, not a tautology, but leg A is unsound today and proves text rather than dataflow, so §6.3/§7.3 must make T2-S/T3-S capture the whole request object at the provider boundary plus the call count; **D-22, D-23, D-24, D-25, D-26 accepted**; **D-27 accepted for chat and onboarding, conditional on S1-7 for website**. **Seed migration: GO, conditional on S1-1 only**, with the order of operations (incl. a pre-deploy pricing-duplicates check) spelled out in the review |
 | 2026-09-20 | **QA test report for Step 1: CONDITIONAL SHIP (1 High open)** | Gates re-run by QA verbatim: `typecheck:bos-llm` **168 files / 30 errors / 0 new**; `npm run build` **Compiled successfully, exit 0** (the `DYNAMIC_SERVER_USAGE` lines are pre-existing); **39 suites / 533 tests / 1 snapshot pass**, no pre-existing failure in scope. **34 PASS / 1 FAIL / 2 BLOCKED; 1 High, 1 Medium, 6 Low.** **D-Q1 (High):** twenty one-line mutations of real call sites show T1-14 leg (A) still has **seven** false negatives after S1-2 — the three stored-key calls (`Planner.ts:447`, `AnalysisService.ts:127`, `LeadReplyRecommender.ts:103` are all `model,` and are asserted by nothing, only the config read's fallback literal is), the two shared request builders (`providerFactory.complete()` = 12 calls, `openaiProvider.chatCompletion()` = 8 calls, plus a synthesised temperature on the four onboarding extractors), a duplicate `model:` key in the same object literal, and a second call site for the same `callName`. The planner and leads mutations survive **1,956 tests** across `lib/business-os lib/ai lib/services`. **D-Q2 (Medium):** the resolver has no read timeout — a hung `getByKeys` leaves every caller pending forever with no last-good on a cold start (probe `HUNG`), contradicting "a configuration fault can never fail an owner action"; inert now, hot path from Step 2. Low: `verify-stored` says "checked: 6" when six were absent and none checked (D-Q3); P-5b passes **vacuously** with respect to RC-W1 because nothing is stored, so no unwrap branch ever executes (D-Q4); a priced **image** model is accepted on a **token** call (D-Q5); the seed SQL has never been parsed by PostgreSQL (D-Q7); the rollback leaves `''` where the description was NULL (D-Q8). **Everything else passed:** 57 adversarial probes — 26 malformed row shapes plus repository error/throw/undefined/non-array, `getPricing` throw, image-config throw — all fall back to today; 100 concurrent callers share **1** read and 50 sequential calls after a failure issue **0**; 16/16 guardrail and lock cases fall back rather than fail; the oldest-price-wins bug is confirmed present in `HEAD` and fixed, `listActive()` has both the `effective_date <= today` filter and the `created_at` tie-break, and `lib/ai/pricing.ts` **dropped** its own `createClient` for the repository's service-role client (no reader moved off the service role). The change script was **run for real against production, read-only**: all eight `get` commands exit 0 and reproduce §10's "after" column for **all 22 calls**; `verify-stored` and `verify-equivalence` exit 0; every bad-input path exits 2; **no `bos_llm_area_*` row exists and none of the six legacy keys is stored** — Dev's two claims independently confirmed. P-3 was checked against **both** `getBoolean` implementations: no stored value was found that reads *off* today and would be seeded *on*. **BLOCKED (environment, D-Q6):** the shared `node_modules` lost every entry before `@next` (incl. `.bin` and `@jest`) mid-session, so five seed-SQL mutations could not be executed — verified by reading T1-9 instead, which genuinely parses the migration's `jsonb_build_object` trees; **`npm ci` is needed in the main checkout**. QA-10 gives the exact post-apply commands, adding a `BEGIN … ROLLBACK` dry run and a **P-5c** second-apply re-runnability proof. Full report in §16 |
+| 2026-09-21 | **QA test report for Step 2: SHIP (0 High), with 3 blocked live checks** | Gates re-run by QA verbatim on the same tree: `typecheck:bos-llm` **171 files / 30 errors / 0 new**, exit 0; `npm run build` **✓ Compiled successfully**, exit 0 (**293/293** static pages, not the 296/296 §6.4 records — D2-8); jest §6.4 selection **123 suites / 2,044 passed / 28 skipped / 20 snapshots**, identical to Dev and SA; `tsc` **2,035 / 2,031** excluding generated `.next/types`, with the only touched-file errors the 3 pre-existing `TS18047` in `onboarding/build/route.ts:396-398`. **41 checks: 38 PASS, 0 FAIL, 3 BLOCKED.** **T2-S attacked with 11 mutations of real call sites, 7 caught, 4 escaped.** Caught: a hardcoded temperature (1 snapshot), `max_tokens` +1 (1 snapshot), **one character of a >200-char system prompt** (1 snapshot — the SHA-256 digest bites), a parameter the `complete()` wrapper adds **after** the call site (exactly the 13 `complete()` sites — D-30 proved), a second provider call (the call count), and a swapped grouping id (1 snapshot). Escaped: SA's three known blind spots — a provider switch (reproduced on a **second** site, leads → `'anthropic'`), a public caller that stops calling a privately-driven site, and the fact that T2-S passes on unwired source by construction — **plus a FOURTH, found here: T2-S never records WHICH `(area, callName)` key a site resolves**, so swapping `hero_content`'s site to `'faq_content'` leaves 123/123 suites green (D2-1). Two consequences of the leg-(A) deletion follow: **nothing proves a site uses the resolved model at all at 17 of 19 sites** (D2-2, mutation-proved by re-hardcoding a model), and **the FR-11/RC-W4 "build inside the attempt" invariant is untested at 17 of 19 sites** (D2-3, mutation-proved by pinning `settings.model` inside the attempt so a retry re-sends the refused model). All three Medium, all test-coverage rather than shipped behaviour. **Off paths driven for real** with a throwaway harness: each of the 12 switchable non-chat calls was run twice — area off, and area on with the model failing — and the outputs are **deep-equal**, with **0 provider calls, 0 ledger rows (through the REAL `callWithTracking`, closing SA finding 6's gap) and 0 audit entries**, including briefing through `getBriefing`, where `markFailed` is signalled and still writes nothing. The D-27 exception re-verified against the real policy: the three locked website calls still resolve ON and still reach the provider; nothing in the code implies the switch is finished, and only §10.1's `Switchable: yes` column reads that way (D2-7). **SA's one honest limit closed:** a retry at a real Step 2 site (the landing-page route) writes **exactly one** audit entry, `callCount 2 / failedCallCount 1 / totalTokens 30 / $0.0001 / models [refused, default] / outcome succeeded`, with the refused attempt a 0-token, $0 ledger row — no double count, no second entry; the negative cache then sends the next action straight to the default. **Resolver under load from six real sites at once:** one shared read, still one across three waves inside the 60 s window, a never-settling read abandoned at the 3 s budget with all six sites completing on their code defaults, and both a rejected read and a repository error response degrading the same way. **Guardrails from a wired site:** unpriced, zero-priced, bad provider, temperature 3, non-boolean `enabled` and a garbage row each land on today's exact request. Also found: **D2-6 (pre-existing, not this step)** — the landing-page route's own error fallback is dead code, because `request.clone().json()` at `:207` runs after the body was consumed and throws `TypeError: unusable`. All mutations reverted; the tree and both committed snapshot files proved byte-identical to their starting state, and the full selection re-run green afterwards. Post-deploy checks (six actions, two SQL queries) written out in QA2-8. Full report in §16 |
+| 2026-09-21 | SA code review: Step 2 | **Code Approved for QA.** SA reproduced D-29 end to end (reverted the ten production files to HEAD, ran the boundary suite with `--ci`: 19 snapshots passed unwired; restored, 19 passed wired) and re-ran the gates (123 suites / 2,044 tests; typecheck 171 files, 0 new). Found a THIRD escape from T2-S and mutation-proved it: the `getProvider` spy ignores its argument and the snapshot records only `chatCompletion` calls, so switching a site to another provider stays green (F-1, Medium, Step 3). Leg-(A) deletion verified exact (19 deleted ↔ 19 resolver call sites; T1-14 snapshot unmoved); T2-O verified to ASSERT the D-27 lock, on both the resolver and the change-script side; T2-M-I verified to drive the real `callWithTracking`. D-28, D-29, D-30, D-31-D-40, D-32, FU-2 and D-33 all ruled acceptable (FU-2 downgraded: CI never builds, so its count is deterministic). **Deploy: safe**, with the note that the rows stop being inert on this deploy |
