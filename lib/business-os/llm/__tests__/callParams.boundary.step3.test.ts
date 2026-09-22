@@ -257,24 +257,55 @@ const NAMED_IDS: Record<string, string> = {
 };
 
 /**
+ * Any ISO-8601 calendar date, with or without a time, anywhere in a string.
+ *
+ * Prompts that carry "today" (the planner writes `Today is 2026-09-21.`) would
+ * otherwise bake the recording day into the snapshot and be red every day after
+ * it - permanently, since the value is re-derived per UTC day. Replacing the
+ * date keeps the record date-independent while leaving every other byte asserted.
+ */
+const ISO_DATETIME = /\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?/g;
+
+/** `2026-09-21` -> `<date>`; `2026-09-21T08:00:00.000Z` -> `<timestamp>`. */
+function undateString(value: string): string {
+  return value.replace(ISO_DATETIME, (match) => (match.length > 10 ? '<timestamp>' : '<date>'));
+}
+
+/**
+ * Fields the date rule must never touch (SA review, dated snapshots).
+ *
+ * Model ids carry dates: `gpt-4o-2024-08-06` is a real, settable value, and an
+ * operator can put it in an area row through `npm run bos:llm-settings`. Undating
+ * it would record `gpt-4o-<date>`, hollowing out the one assertion these suites
+ * exist to make - which model went on the wire - and the dateless-snapshot guard
+ * would not notice, because the snapshot would then contain no date to find.
+ */
+const DATE_EXEMPT_KEYS = new Set(['model', 'provider']);
+
+/**
  * Long strings become `sha256:<hex> (len N)`.
  *
  * Byte-exact — a single changed character of prompt changes the digest — but it
  * keeps the record readable. The planner's system prompt alone is several
  * thousand characters of catalog.
  */
-function normalise(value: unknown): unknown {
+function normalise(value: unknown, key?: string): unknown {
   if (typeof value === 'string') {
     if (NAMED_IDS[value]) return NAMED_IDS[value];
     if (UUID.test(value)) return '<uuid>';
-    if (value.length > 200) {
-      return `sha256:${createHash('sha256').update(value, 'utf8').digest('hex')} (len ${value.length})`;
+    // Before the digest, not after: a date inside a long prompt moves the hash
+    // just as surely as one in a short message, and is far harder to diagnose.
+    // Exempt keys keep their date - see DATE_EXEMPT_KEYS.
+    const dateless = DATE_EXEMPT_KEYS.has(key ?? '') ? value : undateString(value);
+    if (dateless.length > 200) {
+      return `sha256:${createHash('sha256').update(dateless, 'utf8').digest('hex')} (len ${dateless.length})`;
     }
-    return value;
+    return dateless;
   }
-  if (Array.isArray(value)) return value.map(normalise);
+  // The key travels into arrays too: `model: [...]` would otherwise lose the exemption.
+  if (Array.isArray(value)) return value.map((item) => normalise(item, key));
   if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, normalise(v)]));
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, normalise(v, k)]));
   }
   return value;
 }
