@@ -13,7 +13,7 @@
 import { createHash } from 'crypto';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
-import { narrateBriefing, PROMPT_VERSION, type BriefingLanguage, type BriefingSource, type BusinessType } from './BriefingNarrator';
+import { narrateBriefing, briefingModel, PROMPT_VERSION, type BriefingLanguage, type BriefingSource, type BusinessType } from './BriefingNarrator';
 import type { BriefingFacts } from './BriefingFactsService';
 
 const logger = createLogger({ service: 'BriefingStore' });
@@ -79,6 +79,13 @@ export function hashFacts(
      * the next day, with nothing to indicate why.
      */
     prompt: PROMPT_VERSION,
+    /*
+     * The model is part of the key for the same reason the prompt is: it
+     * decides the words. Switching models would otherwise reach only users with
+     * no cached briefing yet, and everyone else would keep yesterday's model's
+     * phrasing until tomorrow with nothing to say why.
+     */
+    model: briefingModel(),
     /*
      * The business type is part of the fingerprint because it now decides the
      * words. A trainer whose vertical is corrected from 'other' should not keep

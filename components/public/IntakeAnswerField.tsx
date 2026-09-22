@@ -47,6 +47,245 @@ interface Props {
   t: (key: string) => string;
 }
 
+/**
+ * The "Other" answer, when the business has offered one.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * No list an owner writes fits every client. A fitness level of Beginner /
+ * Intermediate / Advanced has no row for "returning after an injury", and
+ * without somewhere to say so that client picks a box that misdescribes them —
+ * the business then prepares from an answer nobody meant. A wrong answer is
+ * worse than a missing one, because nothing about it looks wrong later.
+ *
+ * WHAT IT STORES IS THE TYPED TEXT, exactly as a chosen option stores its
+ * label. Nothing downstream needs to know this control exists: the submission
+ * reads the same either way, and `IntakeSubmission` already snapshots the
+ * questions, so a later reader can still see what was on offer.
+ *
+ * Which is also how "is Other selected?" is answered, with no extra state: a
+ * value that is set but matches no option IS the other answer.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function OtherAnswer({
+  selected,
+  text,
+  onSelect,
+  onText,
+  style,
+  base,
+  t,
+}: {
+  selected: boolean;
+  text: string;
+  onSelect: () => void;
+  onText: (value: string) => void;
+  style: React.CSSProperties;
+  base: string;
+  t: (key: string) => string;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <button
+        type="button"
+        onClick={onSelect}
+        className="flex w-full items-center gap-2.5 px-3 py-2.5 text-start text-sm transition-colors"
+        style={{ ...style, borderColor: selected ? 'var(--ap-brand)' : style.borderColor }}
+      >
+        <span
+          className="h-3.5 w-3.5 flex-shrink-0 rounded-full"
+          style={{
+            border: `2px solid ${selected ? 'var(--ap-brand)' : 'var(--ap-border)'}`,
+            background: selected
+              ? 'radial-gradient(circle, var(--ap-brand) 0 40%, transparent 45%)'
+              : 'transparent',
+          }}
+        />
+        {t('intake.other')}
+      </button>
+
+      {/* Revealed by choosing it, so the form does not show an empty box under
+          every choice question whether or not anyone needs it. */}
+      {selected && (
+        <input
+          type="text"
+          value={text}
+          onChange={e => onText(e.target.value)}
+          autoFocus
+          placeholder={t('intake.other_placeholder')}
+          className={base}
+          style={style}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Pick one, with an optional "Other".
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A component rather than a branch inside the switch, because "is Other
+ * chosen?" needs STATE and a switch case cannot hold a hook.
+ *
+ * Inferring it from the value alone does not work, and the failure is instant:
+ * choosing Other has to clear whatever was picked before — one answer to a
+ * pick-one question — and the moment the value is empty, "not one of the listed
+ * options" stops being true. The box opens and closes in the same click.
+ *
+ * So the choice is remembered, and the value stays the plain text the client
+ * typed. Seeded from the value on mount so a part-filled form reopens showing
+ * what they wrote.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function SingleChoiceAnswer({
+  question,
+  value,
+  onChange,
+  style,
+  base,
+  t,
+}: {
+  question: IntakeQuestion;
+  value: string;
+  onChange: (value: unknown) => void;
+  style: React.CSSProperties;
+  base: string;
+  t: (key: string) => string;
+}) {
+  const labels = new Set((question.options ?? []).map(option => option.label));
+  const [otherChosen, setOtherChosen] = useState(value !== '' && !labels.has(value));
+
+  return (
+    <div className="space-y-1.5">
+      {(question.options ?? []).map(option => {
+        const on = !otherChosen && value === option.label;
+        return (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() => {
+              setOtherChosen(false);
+              onChange(option.label);
+            }}
+            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-start text-sm transition-colors"
+            style={{ ...style, borderColor: on ? 'var(--ap-brand)' : style.borderColor }}
+          >
+            <span
+              className="h-3.5 w-3.5 flex-shrink-0 rounded-full"
+              style={{
+                border: `2px solid ${on ? 'var(--ap-brand)' : 'var(--ap-border)'}`,
+                background: on
+                  ? 'radial-gradient(circle, var(--ap-brand) 0 40%, transparent 45%)'
+                  : 'transparent',
+              }}
+            />
+            {option.label}
+          </button>
+        );
+      })}
+
+      {question.allowOther && (
+        <OtherAnswer
+          selected={otherChosen}
+          text={otherChosen ? value : ''}
+          onSelect={() => {
+            setOtherChosen(true);
+            // Clears the previous pick: one answer to a pick-one question.
+            onChange('');
+          }}
+          onText={onChange}
+          style={style}
+          base={base}
+          t={t}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Pick several, with an optional "Other".
+ *
+ * The same reasoning as above, with one extra wrinkle: the free-text entry
+ * lives in the same array as the chosen options, so it is identified as the one
+ * entry matching no option. An empty Other is held in state rather than as a
+ * blank string in the array — a `''` sitting in the answers would satisfy a
+ * required question while saying nothing.
+ */
+function MultiChoiceAnswer({
+  question,
+  value,
+  onChange,
+  style,
+  base,
+  t,
+}: {
+  question: IntakeQuestion;
+  value: string[];
+  onChange: (value: unknown) => void;
+  style: React.CSSProperties;
+  base: string;
+  t: (key: string) => string;
+}) {
+  const labels = new Set((question.options ?? []).map(option => option.label));
+  const existingOther = value.find(entry => !labels.has(entry));
+  const [otherChosen, setOtherChosen] = useState(existingOther !== undefined);
+
+  const chosenOptions = value.filter(entry => labels.has(entry));
+
+  return (
+    <div className="space-y-1.5">
+      {(question.options ?? []).map(option => {
+        const on = value.includes(option.label);
+        return (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() =>
+              onChange(
+                on ? value.filter(item => item !== option.label) : [...value, option.label]
+              )
+            }
+            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-start text-sm transition-colors"
+            style={{ ...style, borderColor: on ? 'var(--ap-brand)' : style.borderColor }}
+          >
+            <span
+              className="h-3.5 w-3.5 flex-shrink-0 rounded-sm"
+              style={{
+                border: `2px solid ${on ? 'var(--ap-brand)' : 'var(--ap-border)'}`,
+                background: on ? 'var(--ap-brand)' : 'transparent',
+              }}
+            />
+            {option.label}
+          </button>
+        );
+      })}
+
+      {question.allowOther && (
+        <OtherAnswer
+          selected={otherChosen}
+          text={existingOther ?? ''}
+          onSelect={() => {
+            if (otherChosen) {
+              setOtherChosen(false);
+              // Drop the typed entry with the tick, not just the box.
+              onChange(chosenOptions);
+            } else {
+              setOtherChosen(true);
+            }
+          }}
+          onText={next =>
+            onChange(next.trim() ? [...chosenOptions, next] : chosenOptions)
+          }
+          style={style}
+          base={base}
+          t={t}
+        />
+      )}
+    </div>
+  );
+}
+
 export function IntakeAnswerField({ question, value, invalid, token, onChange, t }: Props) {
   const base = 'w-full px-3 py-2.5 text-sm outline-none transition-colors';
   const style = { ...fieldStyle, borderColor: invalid ? '#DC2626' : 'var(--ap-border)' };
@@ -88,70 +327,30 @@ export function IntakeAnswerField({ question, value, invalid, token, onChange, t
 
     case 'single_choice':
       return (
-        <div className="space-y-1.5">
-          {(question.options ?? []).map(option => (
-            <button
-              key={option.id}
-              type="button"
-              onClick={() => onChange(option.label)}
-              className="flex w-full items-center gap-2.5 px-3 py-2.5 text-start text-sm transition-colors"
-              style={{
-                ...style,
-                borderColor: value === option.label ? 'var(--ap-brand)' : style.borderColor,
-              }}
-            >
-              <span
-                className="h-3.5 w-3.5 flex-shrink-0 rounded-full"
-                style={{
-                  border: `2px solid ${value === option.label ? 'var(--ap-brand)' : 'var(--ap-border)'}`,
-                  background:
-                    value === option.label
-                      ? 'radial-gradient(circle, var(--ap-brand) 0 40%, transparent 45%)'
-                      : 'transparent',
-                }}
-              />
-              {option.label}
-            </button>
-          ))}
-        </div>
+        <SingleChoiceAnswer
+          question={question}
+          value={typeof value === 'string' ? value : ''}
+          onChange={onChange}
+          style={style}
+          base={base}
+          t={t}
+        />
       );
 
-    case 'multi_choice': {
-      // Always an array, even for one answer. A value that is sometimes a
-      // string and sometimes a list is the shape that breaks whoever reads the
-      // submission later.
-      const selected = Array.isArray(value) ? (value as string[]) : [];
-
+    case 'multi_choice':
       return (
-        <div className="space-y-1.5">
-          {(question.options ?? []).map(option => {
-            const on = selected.includes(option.label);
-            return (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() =>
-                  onChange(
-                    on ? selected.filter(item => item !== option.label) : [...selected, option.label]
-                  )
-                }
-                className="flex w-full items-center gap-2.5 px-3 py-2.5 text-start text-sm transition-colors"
-                style={{ ...style, borderColor: on ? 'var(--ap-brand)' : style.borderColor }}
-              >
-                <span
-                  className="h-3.5 w-3.5 flex-shrink-0 rounded-sm"
-                  style={{
-                    border: `2px solid ${on ? 'var(--ap-brand)' : 'var(--ap-border)'}`,
-                    background: on ? 'var(--ap-brand)' : 'transparent',
-                  }}
-                />
-                {option.label}
-              </button>
-            );
-          })}
-        </div>
+        <MultiChoiceAnswer
+          question={question}
+          // Always an array, even for one answer. A value that is sometimes a
+          // string and sometimes a list is the shape that breaks whoever reads
+          // the submission later.
+          value={Array.isArray(value) ? (value as string[]) : []}
+          onChange={onChange}
+          style={style}
+          base={base}
+          t={t}
+        />
       );
-    }
 
     case 'date':
       return (

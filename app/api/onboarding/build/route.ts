@@ -387,13 +387,17 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (replacingPreviousBusiness) {
+    // Bound once rather than re-reached three times: the flag above is only ever
+    // true when this is set, but nothing in the type system says so.
+    const previous = existingProfile.data;
+
+    if (replacingPreviousBusiness && previous) {
       requestLogger.warn(
         {
           userId: user.id,
-          previousCompany: existingProfile.data.company_name,
-          previousVertical: existingProfile.data.vertical,
-          previousCreatedAt: existingProfile.data.created_at,
+          previousCompany: previous.company_name,
+          previousVertical: previous.vertical,
+          previousCreatedAt: previous.created_at,
         },
         'Rebuilding over a completed business — deleting it so the cascade clears its data'
       );

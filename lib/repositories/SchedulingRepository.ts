@@ -330,30 +330,102 @@ export class SchedulingServiceRepository {
   }
 
   /**
-   * Publish a draft service (change status from draft to active)
+   * Publish a service: make it active and bookable.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * IDEMPOTENT, and that is the fix rather than a nicety.
+   *
+   * This filtered on `status = 'draft'` and read the result with `.single()`, so
+   * publishing something already published matched zero rows and threw
+   * PGRST116 — "JSON object requested, multiple (or no) rows returned" — which
+   * the route turned into a 400 and the owner saw as a failure to save.
+   *
+   * Reaching that state takes no misuse at all. Listing services has been
+   * observed taking almost nine seconds, so a second click, a retry, a stale
+   * list or a second tab all arrive at a service that is already active. And
+   * "make this published" is a request about a DESIRED STATE: if it is already
+   * true, the request succeeded.
+   *
+   * A row that cannot be published for any OTHER reason is still an error —
+   * missing, owned by somebody else, or sitting in a status this was never
+   * meant to move (`inactive` is a deliberate pause, and silently un-pausing it
+   * would be a different operation wearing this one's name).
+   * ───────────────────────────────────────────────────────────────────────────
    */
   async publish(
     id: string,
     userId: string
   ): Promise<SchedulingRepositoryResult<SchedulingService>> {
     try {
-      logger.info({ serviceId: id, userId }, 'Publishing draft service');
+      logger.info({ serviceId: id, userId }, 'Publishing service');
 
+      // `maybeSingle`, because "no row matched" is a state to inspect rather
+      // than an exception to throw.
       const { data, error } = await this.supabase
         .from('scheduling_services')
         .update({ status: 'active', is_active: true })
         .eq('id', id)
         .eq('user_id', userId)
-        .eq('status', 'draft') // Only publish drafts
+        .eq('status', 'draft')
         .select()
-        .single();
+        .maybeSingle();
 
       if (error) throw error;
 
-      logger.info({ serviceId: id, userId }, 'Draft service published');
-      return { data, error: null };
+      if (data) {
+        logger.info({ serviceId: id, userId }, 'Draft service published');
+        return { data, error: null };
+      }
+
+      /*
+       * Nothing was updated. Find out why before calling it a failure — the
+       * common case is that the work is already done.
+       */
+      const { data: existing, error: readError } = await this.supabase
+        .from('scheduling_services')
+        .select('*')
+        .eq('id', id)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (readError) throw readError;
+
+      if (!existing) {
+        logger.warn({ serviceId: id, userId }, 'Cannot publish: service not found for this user');
+        return { data: null, error: new Error('Service not found') };
+      }
+
+      if (existing.status === 'active') {
+        // Already where the caller wanted it. `is_active` is repaired if it
+        // somehow disagrees with the status, since the two together are what
+        // decides whether a client can book.
+        if (existing.is_active === false) {
+          const { data: repaired } = await this.supabase
+            .from('scheduling_services')
+            .update({ is_active: true })
+            .eq('id', id)
+            .eq('user_id', userId)
+            .select()
+            .maybeSingle();
+
+          logger.info({ serviceId: id, userId }, 'Service was active but not bookable; re-enabled');
+          return { data: repaired ?? existing, error: null };
+        }
+
+        logger.info({ serviceId: id, userId }, 'Service already published; nothing to do');
+        return { data: existing, error: null };
+      }
+
+      logger.warn(
+        { serviceId: id, userId, status: existing.status },
+        'Cannot publish from this status'
+      );
+      return {
+        data: null,
+        error: new Error(`Cannot publish a service with status "${existing.status}"`),
+      };
     } catch (error) {
-      logger.error({ err: error, serviceId: id, userId }, 'Failed to publish draft service');
+      logger.error({ err: error, serviceId: id, userId }, 'Failed to publish service');
       return { data: null, error: error as Error };
     }
   }

@@ -68,11 +68,37 @@ export async function GET(request: NextRequest) {
   try {
     requestLogger.info('Starting payment reminders cron job');
 
-    // Process scheduled reminders that are due
-    const reminderStats = await paymentReminderService.processDueReminders();
-
-    // Check for overdue items and schedule overdue reminders
+    /*
+     * Scan first, send second. The order is the whole schedule.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * These ran the other way round, and it cost every overdue reminder a
+     * full day.
+     *
+     * `processOverdueItems` does not send. It finds what is due and writes a
+     * reminder row stamped `scheduled_at: now`. `processDueReminders` is the
+     * part that sends. With the sender running first, a row created in the
+     * scan had already missed its own run and sat until the next one — and
+     * this cron runs once a day, at 08:00.
+     *
+     * So the schedule an owner configures as days 1, 3 and 7 past due was
+     * delivering on days 2, 4 and 8. Visible in the data: a reminder stamped
+     * 2026-09-16T08:00:12 went out at 2026-09-17T08:00:12, exactly
+     * twenty-four hours later.
+     *
+     * `LeadResponseDispatchService` already had this right and says why:
+     * "Enqueue BEFORE claiming, so something that became due this minute goes
+     * out on this run rather than the next." Same rule, same reason.
+     *
+     * Nothing double-sends as a result. `processOverdueItems` skips any
+     * invoice already reminded within 24 hours, and the send path claims each
+     * row exclusively.
+     * ───────────────────────────────────────────────────────────────────────
+     */
     const overdueStats = await paymentReminderService.processOverdueItems();
+
+    // Now send everything due, including what the scan just queued.
+    const reminderStats = await paymentReminderService.processDueReminders();
 
     /*
      * Stamp the status, once a day, here.
@@ -86,6 +112,10 @@ export async function GET(request: NextRequest) {
      * 'overdue' both, so the order no longer decides whether a client gets
      * reminded — but running the write second keeps the two independent even
      * if that filter is ever narrowed again.
+     *
+     * Still last after the scan and send were swapped: this stamps a status
+     * column and sends nothing, so it has no bearing on when anyone is
+     * reminded.
      */
     const overdueSweep = await paymentInvoiceRepository.markAllOverdueInvoices();
     if (overdueSweep.error) {

@@ -20,6 +20,7 @@
 
 import { CATALOG, type ResolvedEntity, type ResolvedField } from '@/lib/business-os/catalog';
 import { evaluateExpression } from './expression';
+import { formatIntakeSubmission } from '@/lib/business-os/intake/formatSubmission';
 import type {
   ComputeResult,
   FindResult,
@@ -46,6 +47,20 @@ export interface RenderContext {
 export interface RenderedRow {
   id: string;
   label: string;
+  /**
+   * The ids of the rows this one points AT, keyed by entity — a booking's
+   * `{ contacts: '…', services: '…' }`.
+   *
+   * Carried so that a follow-up about the PERSON in a row has a correct id to
+   * use. Conversation memory used to keep the row's own id and nothing else,
+   * and a booking is labelled with its client's name — so "did this customer
+   * pay?", asked after a booking was listed, filtered `contacts` by the
+   * BOOKING's id and answered "contacts: 0" about a client who had paid.
+   *
+   * Derived from the catalog, not hand-listed: every relation whose foreign key
+   * sits on this row (`via.side === 'local'`) is one of these.
+   */
+  refs?: Record<string, string>;
   fields: Array<{ key: string; label: string; value: string }>;
 }
 
@@ -69,6 +84,17 @@ export interface RenderedAnswer {
    * Callers that log or test answers need to tell that apart from a real result.
    */
   unmatched?: UnmatchedFilter[];
+  /**
+   * Values held by real rows that this business's configuration does not
+   * account for — a stage renamed after the rows were written, say.
+   *
+   * The compiler has always collected these and every result shape has always
+   * carried them; nothing ever read them, so a silently undercounted answer
+   * went out while the server logged the warning. Surfaced here beside
+   * `truncated`, `approximate` and `collapsed`, which is where the reader
+   * already looks for "this number has a caveat".
+   */
+  unclassified?: Array<{ field: string; values: string[] }>;
 }
 
 // =============================================================================
@@ -147,6 +173,14 @@ function formatValue(
       return stored.replace(/_/g, ' ');
     }
 
+    case 'intake': {
+      // The submission carries the questions it was answered against, so this
+      // needs nothing but the column. Empty means a form exists with every
+      // answer blank — worth saying, rather than printing nothing.
+      const lines = formatIntakeSubmission(value, (ctx.language as 'en' | 'he' | 'es') ?? 'en');
+      return lines || '—';
+    }
+
     case 'tags':
       return Array.isArray(value) ? value.join(', ') : String(value);
 
@@ -218,8 +252,26 @@ function pickLabel(
   return String(row.id ?? '—').slice(0, 8);
 }
 
-function renderRow(entity: ResolvedEntity, row: QueryRow, ctx: RenderContext): RenderedRow {
-  const displayKeys = entity.displayFields ?? Object.keys(entity.fields);
+function renderRow(
+  entity: ResolvedEntity,
+  row: QueryRow,
+  ctx: RenderContext,
+  /**
+   * Fields the step asked for by name, shown in ADDITION to the usual ones.
+   *
+   * Some fields are too big to belong on every card — a whole intake form on
+   * each of five bookings is sixty lines of someone's medical history in answer
+   * to "what's on this week". Those stay out of `displayFields` and are fetched
+   * only when a step selects them, which is the planner saying the question was
+   * about that field. Fetching it and then not rendering it was the old
+   * behaviour, and it made such a field unreachable.
+   */
+  selected?: string[]
+): RenderedRow {
+  const base = entity.displayFields ?? Object.keys(entity.fields);
+  const displayKeys = selected?.length
+    ? [...base, ...selected.filter((k) => !base.includes(k))]
+    : base;
 
   const fields = displayKeys
     .map((key) => {
@@ -255,7 +307,21 @@ function renderRow(entity: ResolvedEntity, row: QueryRow, ctx: RenderContext): R
     });
   }
 
-  return { id: String(row.id ?? ''), label: pickLabel(entity, row, ctx), fields };
+  // The ids this row points at. `side: 'local'` is precisely "the foreign key
+  // is a column on this row", so the value is sitting in the row already.
+  const refs: Record<string, string> = {};
+  for (const relation of Object.values(entity.relations ?? {})) {
+    if (relation.via.side !== 'local') continue;
+    const value = row[relation.via.column];
+    if (typeof value === 'string' && value) refs[relation.target] = value;
+  }
+
+  return {
+    id: String(row.id ?? ''),
+    label: pickLabel(entity, row, ctx),
+    ...(Object.keys(refs).length > 0 ? { refs } : {}),
+    fields,
+  };
 }
 
 // =============================================================================
@@ -531,7 +597,15 @@ function resolvePlaceholder(
     const find = result as FindResult;
     switch (path) {
       case 'count':
-        return String(find.rows.length);
+        /*
+         * What matched, not what fits on the page.
+         *
+         * This was `rows.length`, which the compiler has already sliced to the
+         * step's limit — so a count over a capped result reported the cap. The
+         * truncation warning that follows reads as being about the LIST, which
+         * leaves the number looking unqualified and wrong.
+         */
+        return String(find.total ?? find.rows.length);
       case 'rows': {
         const entity = CATALOG.entities[find.entity];
         if (!entity) return String(find.rows.length);
@@ -619,7 +693,21 @@ function resolvePlaceholder(
     }
   }
 
-  if (compute.value === null) return '0';
+  /*
+   * No rows to reduce is NOT zero.
+   *
+   * The compiler returns null here on purpose — "min/max/avg stay null: there
+   * is genuinely no smallest invoice when there are no invoices, and answering
+   * '0' would invent one" — and this line converted that null straight back
+   * into the invented zero, eight lines below the comment forbidding it. A
+   * quarter with no invoices reported "your average invoice is 0.00" as a
+   * measured fact.
+   *
+   * Empty string rather than a dash, so the existing `emptySubstitution` path
+   * takes over: a sentence built around a figure that does not exist should be
+   * replaced, not patched mid-clause.
+   */
+  if (compute.value === null) return '';
 
   // An aggregate takes its unit from the FIELD it reduced, not from the entity.
   //
@@ -680,7 +768,10 @@ export function renderAnswer(
   const primary = findResults.sort((a, b) => b.rows.length - a.rows.length)[0];
 
   const entity = primary ? CATALOG.entities[primary.entity] : undefined;
-  const rows = primary && entity ? primary.rows.map((row) => renderRow(entity, row, ctx)) : [];
+  const rows =
+    primary && entity
+      ? primary.rows.map((row) => renderRow(entity, row, ctx, primary.select))
+      : [];
 
   // Track whether any placeholder resolved to nothing. A sentence built around a
   // list — "Your clients are {s1.rows}" — collapses to "Your clients are ." when
@@ -712,6 +803,23 @@ export function renderAnswer(
     (r) => (r as { unmatched?: UnmatchedFilter[] }).unmatched ?? []
   );
 
+  /*
+   * Merged across steps and by field: two steps touching the same column report
+   * the same orphan, and the reader needs the fact once, not once per step.
+   */
+  const unclassified = (() => {
+    const byField = new Map<string, Set<string>>();
+    for (const r of results) {
+      for (const entry of (r as { unclassified?: Array<{ field: string; values: string[] }> })
+        .unclassified ?? []) {
+        const seen = byField.get(entry.field) ?? new Set<string>();
+        entry.values.forEach((v) => seen.add(v));
+        byField.set(entry.field, seen);
+      }
+    }
+    return [...byField.entries()].map(([field, values]) => ({ field, values: [...values] }));
+  })();
+
   return {
     text: unmatched.length
       ? unmatchedText(unmatched, ctx)
@@ -728,6 +836,7 @@ export function renderAnswer(
       0
     ),
     ...(unmatched.length > 0 ? { unmatched } : {}),
+    ...(unclassified.length > 0 ? { unclassified } : {}),
   };
 }
 
@@ -755,8 +864,15 @@ function unmatchedText(all: UnmatchedFilter[], ctx: RenderContext): string {
   // The parts belong to one name the user typed as one name, so they are joined
   // back into one. Deduplicated first, since the same part arrives from every
   // step that filtered on it.
+  /*
+   * An id miss is worded separately, and takes precedence over a name miss on
+   * the same entity: the uuid is never shown, so there is nothing to join it to.
+   */
+  const idMisses = new Set(all.filter((u) => u.by === 'id').map((u) => u.entity));
+
   const byEntity = new Map<string, string[]>();
-  for (const { entity, value } of all) {
+  for (const { entity, value, by } of all) {
+    if (by === 'id' || idMisses.has(entity)) continue;
     const values = byEntity.get(entity) ?? [];
     if (!values.includes(value)) values.push(value);
     byEntity.set(entity, values);
@@ -773,12 +889,31 @@ function unmatchedText(all: UnmatchedFilter[], ctx: RenderContext): string {
   // unreachable — and the compiler said so.
   const language = (ctx.language ?? 'en') as 'en' | 'he' | 'es';
 
-  return unmatched
+  const nounFor = (entity: string): string => {
+    const target = CATALOG.entities[entity];
+    return target ? (target.labels.one[language] ?? target.labels.one.en) : entity;
+  };
+
+  /*
+   * No quoted value: the id came from the previous turn, not from the user, so
+   * there is no word of theirs to repeat back. What they need to know is that
+   * the row was not found — not which uuid was tried.
+   */
+  const idSentences = [...idMisses].map((entity) => {
+    const noun = nounFor(entity);
+    switch (language) {
+      case 'he':
+        return `לא הצלחתי למצוא את ה${noun} הזה.`;
+      case 'es':
+        return `No pude encontrar ese ${noun}.`;
+      default:
+        return `I could not find that ${noun}.`;
+    }
+  });
+
+  const nameSentences = unmatched
     .map(({ entity, value }) => {
-      const target = CATALOG.entities[entity];
-      const noun = target
-        ? (target.labels.one[language] ?? target.labels.one.en)
-        : entity;
+      const noun = nounFor(entity);
 
       switch (language) {
         case 'he':
@@ -788,8 +923,9 @@ function unmatchedText(all: UnmatchedFilter[], ctx: RenderContext): string {
         default:
           return `No ${noun} found matching "${value}".`;
       }
-    })
-    .join(' ');
+    });
+
+  return [...idSentences, ...nameSentences].join(' ');
 }
 
 /**
@@ -825,6 +961,24 @@ function fallbackText(
   // compiler had the number in hand. An empty reply reads as a broken product,
   // and it is the one outcome worse than a terse one.
   const compute = results.find((r): r is ComputeResult => r.op === 'compute');
+
+  /*
+   * An aggregate with nothing to reduce, said plainly.
+   *
+   * Without this the null fell past every branch to '' — a blank reply, which
+   * the comment above calls the one outcome worse than a terse one. The dash is
+   * the same marker `formatValue` already uses for an absent value, so it needs
+   * no translation table and cannot be mistaken for a measured zero.
+   */
+  if (compute && compute.value === null) {
+    const target = CATALOG.entities[compute.entity];
+    const field = compute.agg?.field ? target?.fields[compute.agg.field] : undefined;
+    const label = field
+      ? field.labels[language] ?? field.labels.en
+      : target?.labels.many[language] ?? target?.labels.many.en;
+    return label ? `${label}: —` : '';
+  }
+
   if (compute && compute.value !== null) {
     // Only a COUNT is a number of entities. Labelling a sum with the entity noun
     // would read as "invoices: 5066.61" — a total presented as a tally. A

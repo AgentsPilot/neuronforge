@@ -39,6 +39,7 @@ import {
 } from '../types';
 import { getActionLog } from './ActionLog';
 import { performEmail } from './emailSend';
+import { marketingConsentRepository } from '@/lib/repositories/MarketingConsentRepository';
 import { executeMutate } from './MutateExecutor';
 
 const logger = createLogger({ module: 'BizQLForEach' });
@@ -201,7 +202,84 @@ export async function executeForEach(
     );
   }
 
-  const targets = deduplicated;
+  /*
+   * Drop the people who never agreed to be emailed — BEFORE the preview.
+   *
+   * The transport refuses them anyway, so this changes nothing about what goes
+   * out. What it changes is what the owner is told: without it they confirm
+   * "email 100 people", 60 arrive, and the two numbers never meet. That is the
+   * same failure the dedup above exists to prevent, and it is worse here,
+   * because a compliant-but-silent drop looks exactly like a broken feature.
+   *
+   * A blocked recipient also must not spend the daily quota below. They were
+   * never a send.
+   */
+  let withheld = 0;
+  let targets = deduplicated;
+
+  if (query.action === 'send') {
+    const addresses = deduplicated
+      .map((row) => {
+        try {
+          const params = resolveParams(query.params, row, entity);
+          return typeof params.to === 'string' ? params.to : null;
+        } catch {
+          return null;
+        }
+      })
+      .filter((address): address is string => Boolean(address));
+
+    const { data: consent, error: consentError } = await marketingConsentRepository.getStateBulk(
+      ctx.userId,
+      addresses
+    );
+
+    if (consentError) {
+      // Fail closed, and say so. Guessing here means either emailing people who
+      // did not agree, or telling the owner a number that is not true.
+      throw new BizQLValidationError([
+        'Could not check who has agreed to receive email, so nothing was sent. Try again.',
+      ]);
+    }
+
+    const allowed: QueryRow[] = [];
+    for (const row of deduplicated) {
+      let address: string | null = null;
+      try {
+        const params = resolveParams(query.params, row, entity);
+        address = typeof params.to === 'string' ? params.to : null;
+      } catch {
+        // A row that cannot resolve an address fails visibly per-item below,
+        // the same way the dedup pass lets it through.
+        allowed.push(row);
+        continue;
+      }
+
+      // A row with no resolvable address is NOT a consent problem. Let it
+      // through to fail visibly per item, the same as the dedup pass does —
+      // counting it here would hide "you have no email for this person" behind
+      // "they did not agree", which is a different and unfixable message.
+      if (!address) {
+        allowed.push(row);
+        continue;
+      }
+
+      if (consent?.get(address.trim().toLowerCase()) === true) {
+        allowed.push(row);
+      } else {
+        withheld++;
+      }
+    }
+
+    if (withheld > 0) {
+      logger.info(
+        { entity: query.entity, withheld, of: deduplicated.length },
+        'Withheld recipients with no marketing consent'
+      );
+    }
+
+    targets = allowed;
+  }
 
   const log = getActionLog();
 
@@ -215,7 +293,10 @@ export async function executeForEach(
       attempted: targets.length,
       succeeded: 0,
       failed: 0,
-      skipped: duplicates,
+      // Both kinds of exclusion, so the confirmation the owner reads accounts
+      // for every row the query found.
+      skipped: duplicates + withheld,
+      withheldForConsent: withheld,
       items: targets.map((row) => ({
         id: String(row.id ?? ''),
         target: (() => {
@@ -282,7 +363,13 @@ export async function executeForEach(
     try {
       const result =
         query.action === 'send'
-          ? await performEmail(params, options.branding)
+          ? await performEmail(params, {
+              branding: options.branding,
+              // MARKETING. Owner-written content going out to a list of people
+              // who did not ask for it — the definition of the thing consent
+              // exists to govern.
+              kind: { kind: 'marketing', ownerUserId: ctx.userId, contactId: itemId },
+            })
           : await executeMutate(
               {
                 op: 'mutate',
@@ -310,10 +397,11 @@ export async function executeForEach(
   });
 
   const succeeded = outcomes.filter((o) => o.ok && !o.skipped).length;
-  // Both reasons for not acting count as skipped: already-claimed (idempotency)
-  // and collapsed duplicate recipients. Counting only the former would make the
-  // execution total disagree with the preview the user approved.
-  const skipped = outcomes.filter((o) => o.skipped).length + duplicates;
+  // Every reason for not acting counts as skipped: already-claimed
+  // (idempotency), collapsed duplicate recipients, and people who never agreed
+  // to marketing email. Counting only the first would make the execution total
+  // disagree with the preview the user approved.
+  const skipped = outcomes.filter((o) => o.skipped).length + duplicates + withheld;
   const failed = outcomes.filter((o) => !o.ok).length;
 
   logger.info(
@@ -340,5 +428,6 @@ export async function executeForEach(
     skipped,
     items: outcomes.map(({ id, target, ok, error }) => ({ id, target, ok, error })),
     cappedAt: ceiling,
+    withheldForConsent: withheld,
   };
 }

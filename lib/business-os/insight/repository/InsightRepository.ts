@@ -9,6 +9,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider';
 import { resolveUserLanguage } from '@/lib/business-os/userLanguage';
 import { createLogger } from '@/lib/logger';
 import type { DetectionResult, InsightSeverity } from '../detectors/types';
@@ -17,6 +18,8 @@ import type { BusinessEventCategory } from '../events/types';
 import type { CorrelatedInsight, CorrelationSummary } from '../correlation/types';
 import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
 import { getVerticalConfig, buildTerminologyInstruction, getVerticalDescriptor } from '../vertical-config';
+import { OPERATIONAL_AUTOMATIONS } from '@/lib/business-os/gaps/automations';
+import { automationApplies } from '@/lib/business-os/gaps/automationApplies';
 
 const logger = createLogger({ service: 'InsightRepository' });
 
@@ -24,7 +27,15 @@ const logger = createLogger({ service: 'InsightRepository' });
 // Types
 // ===========================
 
-export type InsightStatus = 'new' | 'viewed' | 'snoozed' | 'dismissed' | 'acted' | 'automated';
+/**
+ * 'resolved' is set by the detection sweep, not by a person: the condition
+ * stopped holding — the invoice was paid, the lead booked, the detector was
+ * removed. Kept distinct from 'dismissed', which means somebody looked and
+ * chose to close it, so "how much of what we surface sorts itself out" stays a
+ * question with an answer.
+ */
+export type InsightStatus =
+  | 'new' | 'viewed' | 'snoozed' | 'dismissed' | 'acted' | 'automated' | 'resolved';
 
 export interface Insight {
   id: string;
@@ -199,6 +210,8 @@ export interface JourneyAnchors {
    * moment, so the node can state it.
    */
   firstAutomationAt: string | null;
+  /** Standing automations switched on right now. */
+  runningAutomations: number;
 }
 
 export interface VectorMaturityData {
@@ -244,7 +257,6 @@ interface VectorThreshold {
    * business that took ONE booking in January had "42 days of pricing data" by
    * mid-February, and pricing insights unlocked on a sample of one.
    *
-   * The detectors never believed this. `pricing_discount_abuse` wants 20
    * transactions, `ret_cancellation_spike` wants 20 bookings — so the vector
    * said "lit, start reasoning" and the detector then declined on sample size.
    * The gate and the detector disagreed about what readiness means, and the
@@ -381,6 +393,77 @@ export interface CreateInsightParams {
 // ===========================
 // InsightRepository
 // ===========================
+
+/**
+ * The earliest of several dates, ignoring the absent ones.
+ *
+ * Null when nothing is known, which the journey renders as "unknown" rather
+ * than as "started this morning".
+ */
+function earliestOf(candidates: Array<string | null | undefined>): string | null {
+  const times = candidates
+    .filter((c): c is string => !!c)
+    .map(c => ({ iso: c, ms: new Date(c).getTime() }))
+    .filter(c => Number.isFinite(c.ms));
+
+  if (times.length === 0) return null;
+  return times.reduce((a, b) => (a.ms <= b.ms ? a : b)).iso;
+}
+
+/**
+ * Which model writes the insight text: titles, narratives, the correlation
+ * stories and the weekly health summary.
+ *
+ * `gpt-4.1`, for the same measured reason the daily briefing moved to it. On a
+ * real day's facts `gpt-4o-mini` split one appointment across three sentences
+ * every run, and `gpt-4.1-mini` called two enquiries "clients" and dropped one
+ * of the names. This text is read by owners and is not guarded the way the
+ * briefing's figures are — nothing here checks a fabricated number — so the
+ * model's reliability IS the safeguard.
+ *
+ * Previously three hardcoded `'gpt-4o-mini'` literals, which the project rules
+ * forbid: model choice is configuration. Overridable by env so it can be rolled
+ * back without a deploy.
+ */
+function insightModel(): string {
+  return process.env.BUSINESS_OS_INSIGHT_MODEL || OPENAI_MODELS.GPT_41;
+}
+
+/**
+ * Whether this detection actually measured a change against something.
+ *
+ * Sixteen detectors report `percentChange: 100` beside `baselineValue: 0`, not
+ * because anything doubled but because they are absolute counts — three
+ * invoices overdue, one payout blocked — and the field had to be given a value.
+ * Passing that to the model as "Change from baseline: 100%" is how an owner was
+ * told a single unpaid invoice represented "a 100% increase in your expected
+ * cash flow this period": a fabricated statistic, of the same kind as the
+ * assumed payment rate this module has already had to remove once.
+ *
+ * A change needs something to have changed FROM. With no baseline the line is
+ * omitted entirely, and the model has nothing to narrate — the same discipline
+ * the daily briefing applies to absent facts.
+ */
+function hasRealBaseline(detection: {
+  percentChange?: number | null;
+  baselineValue?: number | null;
+}): boolean {
+  return (
+    typeof detection.percentChange === 'number' &&
+    typeof detection.baselineValue === 'number' &&
+    detection.baselineValue !== 0
+  );
+}
+
+/**
+ * How long a resolved insight stays visible before it goes.
+ *
+ * Long enough that somebody who looks at the dashboard once a day sees that the
+ * thing they were told about sorted itself out, rather than finding the card
+ * simply gone and wondering whether they imagined it. Short enough that the
+ * advisor does not become a list of things not to worry about.
+ */
+const RESOLVED_VISIBLE_HOURS = 24;
 
 export class InsightRepository {
   private supabase: SupabaseClient;
@@ -649,20 +732,23 @@ export class InsightRepository {
         // Phase 4: Website Content
         web_missing_cta: 'pages missing clear calls-to-action',
         web_incomplete_content: 'website sections with incomplete content',
-        web_page_underperform: 'high-traffic pages with no conversions',
-        web_mobile_issues: 'mobile visitors converting at lower rates than desktop',
         // Phase 5: Cash Flow Deep
-        cash_cards_expiring: 'customer payment cards expiring soon',
         cash_ar_aging: 'invoices aging into harder-to-collect buckets (60+ days)',
         cash_refund_pattern: 'high refund rate that may signal service issues',
         cash_payout_blocked: 'Stripe payouts blocked - cannot receive money',
         // Phase 6: Pricing
-        pricing_discount_abuse: 'excessive discounting that may be eroding margins',
         pricing_intro_offer_stuck: 'customers using intro offers but not converting to full price',
         // MVP0: the three journey gaps
         cash_booking_unpaid: 'upcoming appointments that were supposed to be paid for in advance and have not been',
+        cash_work_unbilled: 'completed appointments that were never invoiced and never paid for',
+        cash_income_drop: 'money received over the last four weeks falling well below the four weeks before',
+        cash_client_concentration: 'a single client accounting for an outsized share of everything received',
+        conv_quote_acceptance_drop: 'the share of answered quotes that were accepted falling against the previous quarter',
+        web_mobile_conversion_gap: 'mobile visitors getting in touch far less often than desktop visitors',
+        web_page_no_conversions: 'published pages with real traffic that produced no enquiries at all',
+        web_link_not_converting: 'shared links that people click and that produced no bookings or enquiries behind any click',
+        web_link_dead_destination: 'a link the owner is still sharing whose destination cannot open on anyone else\'s device',
         conv_no_next_step: 'people who had activity but now have nothing scheduled to happen next — no booking, no task, no movement',
-        ret_package_ending: 'clients on the final instalment of a package with no renewal arranged',
         cash_revenue_at_risk: 'money that has been billed or quoted and has not arrived yet — invoices, plan instalments and unanswered quotes together',
         conv_stage_dropoff: 'a stage in the customer journey that people reach and never move past',
         conv_service_rate_drop: 'an entry service converting into paid work less often than it used to',
@@ -693,7 +779,7 @@ Detection details:
 - Amount involved: ${formatMoney(detection.currentValue, businessContext.currency)}
 - Estimated impact: ${formatMoney(detection.estimatedImpactUsd, businessContext.currency)}
 - Severity: ${detection.severity}
-${typeof detection.percentChange === 'number' ? `- Change from baseline: ${detection.percentChange.toFixed(0)}%` : ''}
+${hasRealBaseline(detection) ? `- Change from baseline: ${detection.percentChange!.toFixed(0)}%` : ''}
 ${issueType ? `- Specific issue: ${issueType}` : ''}
 
 TONE & STYLE GUIDELINES:
@@ -717,7 +803,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       const response = await provider.chatCompletion(
         {
           messages: [{ role: 'user' as const, content: prompt }],
-          model: 'gpt-4o-mini',
+          model: insightModel(),
           temperature: 0.3,
           max_tokens: 300,
         },
@@ -814,25 +900,63 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     }
   }
 
-  /**
-   * Get active insights for a user (new status, not snoozed)
-   */
+/**
+ * Get active insights for a user, plus the ones that have just resolved.
+ *
+ * Resolved rows are included deliberately. An insight that disappears the
+ * instant its condition clears leaves the owner with a card they half remember
+ * and no idea what happened to it — and the platform loses the one chance it
+ * has to say "that sorted itself out", which is the most reassuring thing an
+ * advisor ever gets to report. They carry `resolved_at`, and the dashboard
+ * renders them read-only.
+ */
   async findActive(
     userId: string,
     limit: number = 10
   ): Promise<RepositoryResult<Insight[]>> {
     try {
-      const { data, error } = await this.supabase
-        .from('insights')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('status', 'new')
-        .or(`snoozed_until.is.null,snoozed_until.lt.${new Date().toISOString()}`)
-        .order('priority_score', { ascending: false })
-        .limit(limit);
+      const now = new Date().toISOString();
+      const resolvedSince = new Date(Date.now() - RESOLVED_VISIBLE_HOURS * 3_600_000).toISOString();
 
-      if (error) throw error;
-      return { data: data || [], error: null };
+      const [openResult, resolvedResult] = await Promise.all([
+        this.supabase
+          .from('insights')
+          .select('*')
+          .eq('user_id', userId)
+          .eq('status', 'new')
+          .or(`snoozed_until.is.null,snoozed_until.lt.${now}`)
+          .order('priority_score', { ascending: false })
+          .limit(limit),
+        this.supabase
+          .from('insights')
+          .select('*')
+          .eq('user_id', userId)
+          .eq('status', 'resolved')
+          .gte('resolved_at', resolvedSince)
+          .order('resolved_at', { ascending: false })
+          .limit(limit),
+      ]);
+
+      if (openResult.error) throw openResult.error;
+
+      /*
+       * A failure on the resolved half is not fatal.
+       *
+       * Until 20260917_insight_resolution.sql is applied there is no
+       * `resolved_at` column, and PostgREST rejects the whole select for one
+       * unknown name. Degrading to the open insights alone keeps the advisor
+       * working through the window between deploy and migration, which this
+       * repository has been caught out by before.
+       */
+      if (resolvedResult.error) {
+        logger.warn(
+          { err: resolvedResult.error, userId },
+          'Could not read resolved insights; showing open ones only'
+        );
+        return { data: openResult.data || [], error: null };
+      }
+
+      return { data: [...(openResult.data || []), ...(resolvedResult.data || [])], error: null };
     } catch (error) {
       return { data: null, error: error as Error };
     }
@@ -907,50 +1031,94 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
   }
 
   /**
+   * How many of the three operational automations are on AND able to act.
+   *
+   * Reads the profile once. Only the ones actually switched on are then asked
+   * whether they could do anything, so a business that has enabled nothing pays
+   * for a single row and no further queries.
+   *
+   * Never throws: this feeds a journey node on the dashboard, and an
+   * unreadable profile should cost the number, not the page. Unreadable reports
+   * zero, which understates rather than invents.
+   */
+  private async countOperationalAutomations(userId: string): Promise<number> {
+    try {
+      const columns = OPERATIONAL_AUTOMATIONS.map(a => a.column).join(', ');
+
+      const { data, error } = await this.supabase
+        .from('business_profiles')
+        .select(columns)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      const approvals = (data ?? {}) as unknown as Record<string, unknown>;
+      const enabled = OPERATIONAL_AUTOMATIONS.filter(a => Boolean(approvals[a.column]));
+
+      if (enabled.length === 0) return 0;
+
+      const verdicts = await Promise.all(
+        enabled.map(automation => automationApplies(userId, automation))
+      );
+
+      return verdicts.filter(Boolean).length;
+    } catch (error) {
+      logger.warn({ err: error, userId }, 'Could not count operational automations; reporting none running');
+      return 0;
+    }
+  }
+
+  /**
    * Mark insight as surfaced (shown to user)
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Read, then write. Not an RPC.
+   *
+   * This used to assign a query builder as a column value —
+   * `surface_count: this.supabase.rpc('increment_surface_count', …)` — which is
+   * not an increment and never was. `increment_surface_count` does not exist in
+   * the database, so the whole update failed on every call and the code fell
+   * into a fallback that did the read-then-write properly. The fast path had
+   * never once worked.
+   *
+   * The same shape was found and removed from `SmartLinkRepository.markConversion`
+   * the day before this. If a third turns up, it is worth grepping for
+   * `: this.supabase.rpc(` across the repositories.
+   *
+   * A read-then-write can lose a concurrent increment. That is accepted here:
+   * this counts how many times a card has been shown to one person on one
+   * dashboard, and two simultaneous loads of the same insight by the same owner
+   * is not a case worth a stored procedure.
+   * ───────────────────────────────────────────────────────────────────────────
    */
   async markSurfaced(id: string, userId: string): Promise<RepositoryResult<Insight>> {
     try {
+      const { data: current, error: readError } = await this.supabase
+        .from('insights')
+        .select('surface_count')
+        .eq('id', id)
+        .eq('user_id', userId)
+        .single();
+
+      if (readError) throw readError;
+
       const { data, error } = await this.supabase
         .from('insights')
         .update({
           last_surfaced_at: new Date().toISOString(),
-          surface_count: this.supabase.rpc('increment_surface_count', { insight_id: id }),
+          surface_count: (current?.surface_count || 0) + 1,
         })
         .eq('id', id)
         .eq('user_id', userId)
         .select()
         .single();
 
-      if (error) {
-        // Fallback without RPC
-        const { data: fallbackData, error: fallbackError } = await this.supabase
-          .from('insights')
-          .select('surface_count')
-          .eq('id', id)
-          .eq('user_id', userId)
-          .single();
-
-        if (fallbackError) throw fallbackError;
-
-        const { data: updated, error: updateError } = await this.supabase
-          .from('insights')
-          .update({
-            last_surfaced_at: new Date().toISOString(),
-            surface_count: (fallbackData?.surface_count || 0) + 1,
-          })
-          .eq('id', id)
-          .eq('user_id', userId)
-          .select()
-          .single();
-
-        if (updateError) throw updateError;
-        return { data: updated, error: null };
-      }
+      if (error) throw error;
 
       return { data, error: null };
     } catch (error) {
-      logger.error({ err: error }, 'Failed to mark insight surfaced');
+      logger.error({ err: error, insightId: id }, 'Failed to mark insight surfaced');
       return { data: null, error: error as Error };
     }
   }
@@ -1039,6 +1207,133 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
   }
 
   /**
+   * Close every open insight whose condition no longer holds.
+   *
+   * Called at the end of a detection run, which is the one moment the platform
+   * knows the full answer: every detector has just been asked, so a detector
+   * absent from `firedDetectorIds` either found nothing or no longer exists.
+   * Both mean the same thing to the owner — whatever this card was about is not
+   * true any more.
+   *
+   * This closes two failures with one sweep:
+   *
+   *   the world moved   an invoice was paid, a lead booked, a page was fixed
+   *   the code moved    a detector was deleted and its rows outlived it
+   *
+   * Snoozed insights are left alone. A snooze is a person saying "not now", and
+   * resolving it underneath them would answer a question they asked to be asked
+   * again later.
+   *
+   * Returns how many were closed, so the cron can report it rather than sweep
+   * silently.
+   */
+  async resolveStaleInsights(
+    userId: string,
+    firedDetectorIds: string[]
+  ): Promise<RepositoryResult<number>> {
+    try {
+      const { data: open, error: readError } = await this.supabase
+        .from('insights')
+        .select('id, detector_id')
+        .eq('user_id', userId)
+        .in('status', ['new', 'viewed']);
+
+      if (readError) throw readError;
+
+      const fired = new Set(firedDetectorIds);
+      const stale = (open ?? []).filter(row => !fired.has(String(row.detector_id)));
+
+      if (stale.length === 0) return { data: 0, error: null };
+
+      const { error: writeError } = await this.supabase
+        .from('insights')
+        .update({
+          status: 'resolved',
+          resolved_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .in('id', stale.map(row => row.id))
+        // Scoped again on the write: the ids came from this user's own read,
+        // and a filter that is cheap to repeat is worth repeating on a
+        // service-role update.
+        .eq('user_id', userId);
+
+      if (writeError) throw writeError;
+
+      logger.info(
+        { userId, resolved: stale.length, detectors: [...new Set(stale.map(r => r.detector_id))] },
+        'Closed insights whose condition no longer holds'
+      );
+      return { data: stale.length, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to resolve stale insights');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Mark an insight as handed to a standing automation.
+   */
+  async markAutomated(id: string, userId: string): Promise<RepositoryResult<Insight>> {
+    return this.updateStatus(id, userId, 'automated');
+  }
+
+  /**
+   * Turn an insight into a standing rule.
+   *
+   * The row is what `AutomationManager.runDueAutomations` drains and what the
+   * journey's "working on its own" count reads, so creating it is the whole of
+   * turning an automation on. The API used to answer "coming in Phase 4" with
+   * success: true, which showed the owner an automation that did not exist.
+   *
+   * `created_from_insight_id` keeps the provenance: months later, "why is the
+   * platform emailing my clients" has an answer.
+   */
+  async createAutomation(input: {
+    userId: string;
+    detectorId: string;
+    processId: string;
+    parameters?: Record<string, unknown>;
+    insightId?: string;
+  }): Promise<RepositoryResult<{ id: string }>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('insight_automations')
+        .insert({
+          user_id: input.userId,
+          detector_id: input.detectorId,
+          kernel_process_id: input.processId,
+          process_parameters: input.parameters ?? {},
+          trigger_condition: {},
+          is_active: true,
+          /*
+           * Checked on the same cadence as the drain that follows it. Left to
+           * the column default would mean the owner turns something on and
+           * nothing happens for however long that default is.
+           */
+          check_interval_minutes: 60,
+          created_from_insight_id: input.insightId ?? null,
+        })
+        .select('id')
+        .single();
+
+      if (error) throw error;
+
+      logger.info(
+        { userId: input.userId, detectorId: input.detectorId, processId: input.processId },
+        'Standing automation created'
+      );
+      return { data: { id: data.id as string }, error: null };
+    } catch (error) {
+      logger.error(
+        { err: error, userId: input.userId, detectorId: input.detectorId },
+        'Failed to create the standing automation'
+      );
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Log insight interaction to history
    */
   private async logHistory(
@@ -1079,14 +1374,27 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     const impact = detection.estimatedImpactUsd || 0;
     const rawPctChange = typeof detection.percentChange === 'number' ? detection.percentChange : parseFloat(String(detection.percentChange)) || 0;
     const pctChange = Math.abs(rawPctChange).toFixed(0);
+    /* See the description builder: a landing page and a home page get named. */
+    const titlePageKind = (detection.processParameters?.page_kind as string) || 'mixed';
 
     // Hebrew titles
     if (language === 'he') {
       const hebrewTitles: Record<string, string> = {
         cash_ar_overdue: `${count} חשבוניות שלא שולמו - ${formatMoney(value, currency)}`,
         cash_booking_unpaid: `${count} פגישות שטרם שולמו - ${formatMoney(impact, currency)}`,
+        cash_work_unbilled: `${count} פגישות שהסתיימו ולא חויבו - ${formatMoney(impact, currency)}`,
+        cash_income_drop: `ההכנסות ירדו - ${formatMoney(impact, currency)}`,
+        cash_client_concentration: `לקוח אחד מהווה חלק גדול מההכנסה - ${formatMoney(impact, currency)}`,
+        conv_quote_acceptance_drop: `פחות הצעות מחיר מאושרות - ${formatMoney(impact, currency)}`,
+        web_mobile_conversion_gap: `פחות פניות ממכשירים ניידים`,
+        web_page_no_conversions: titlePageKind === 'landing'
+          ? `${count} דפי נחיתה עם תנועה וללא פניות`
+          : titlePageKind === 'homepage'
+            ? `דף הבית מקבל תנועה ולא מביא פניות`
+            : `${count} עמודים עם תנועה וללא פניות`,
+        web_link_not_converting: `${count} קישורים שנלחצים ולא מביאים כלום`,
+        web_link_dead_destination: `${count} קישורים ששיתפת לא נפתחים`,
         conv_no_next_step: `${count} אנשים בלי המשך`,
-        ret_package_ending: `${count} חבילות מסתיימות - ${formatMoney(impact, currency)}`,
         cash_revenue_at_risk: `${formatMoney(impact, currency)} ממתינים בצנרת`,
         conv_stage_dropoff: `${count} אנשים נתקעו באותו שלב`,
         conv_service_rate_drop: `שיעור ההמרה ירד ב-${Math.abs(Number(pctChange))} נקודות`,
@@ -1109,13 +1417,9 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         ops_peak_unutilized: `שעות השיא ${(100 - value).toFixed(0)}% ריקות`,
         web_missing_cta: `${count} עמודים ללא קריאה לפעולה`,
         web_incomplete_content: `${count} אזורי תוכן לא שלמים`,
-        web_page_underperform: `${count} עמודים עם תנועה ללא המרות`,
-        web_mobile_issues: `המרות במובייל נמוכות ב-${pctChange}%`,
-        cash_cards_expiring: `${count} כרטיסי אשראי פגים בקרוב`,
         cash_ar_aging: `${formatMoney(impact, currency)} בחשבוניות מזדקנות (60+ יום)`,
         cash_refund_pattern: `שיעור החזרים של ${value.toFixed(1)}%`,
         cash_payout_blocked: `העברות Stripe חסומות`,
-        pricing_discount_abuse: `${value.toFixed(0)}% מהמכירות בהנחה`,
         pricing_intro_offer_stuck: `רק ${value.toFixed(0)}% ממבצעי היכרות הומרו`,
       };
       return hebrewTitles[detection.detectorId] || `${count} בעיות זוהו`;
@@ -1125,8 +1429,19 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     const titles: Record<string, string> = {
       cash_ar_overdue: `${formatMoney(value, currency)} in Overdue Invoices`,
       cash_booking_unpaid: `${count} Appointment${count === 1 ? '' : 's'} Not Paid For`,
+      cash_work_unbilled: `${count} Completed Session${count === 1 ? '' : 's'} Never Billed`,
+      cash_income_drop: `Income Down ${formatMoney(impact, currency)} On Last Month`,
+      cash_client_concentration: `One Client Is ${count}% Of Your Income`,
+      conv_quote_acceptance_drop: `Fewer Quotes Are Being Accepted`,
+      web_mobile_conversion_gap: `Your Site Works Less Well On Phones`,
+      web_page_no_conversions: titlePageKind === 'landing'
+        ? `${count} Landing Page${count === 1 ? '' : 's'} With Readers And No Enquiries`
+        : titlePageKind === 'homepage'
+          ? `Your Home Page Has Readers And No Enquiries`
+          : `${count} Page${count === 1 ? '' : 's'} With Readers And No Enquiries`,
+      web_link_not_converting: `${count} Shared Link${count === 1 ? '' : 's'} Nobody Books From`,
+      web_link_dead_destination: `${count === 1 ? 'A Link You Share Does Not Open' : `${count} Links You Share Do Not Open`}`,
       conv_no_next_step: `${count} People With No Next Step`,
-      ret_package_ending: `${count} Package${count === 1 ? '' : 's'} Ending`,
       cash_revenue_at_risk: `${formatMoney(impact, currency)} Sitting In Your Pipeline`,
       conv_stage_dropoff: `${count} People Stopped At The Same Step`,
       conv_service_rate_drop: `Conversion Fell ${Math.abs(Number(pctChange))} Points`,
@@ -1149,13 +1464,9 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       ops_peak_unutilized: `Peak Hours ${(100 - value).toFixed(0)}% Empty`,
       web_missing_cta: `${count} Pages Missing Call-to-Action`,
       web_incomplete_content: `${count} Incomplete Content Sections`,
-      web_page_underperform: `${count} High-Traffic Pages Not Converting`,
-      web_mobile_issues: `Mobile Conversion ${pctChange}% Lower`,
-      cash_cards_expiring: `${count} Customer Cards Expiring Soon`,
       cash_ar_aging: `${formatMoney(impact, currency)} in Aging Invoices (60+ Days)`,
       cash_refund_pattern: `Refund Rate at ${value.toFixed(1)}%`,
       cash_payout_blocked: `Stripe Payouts Blocked`,
-      pricing_discount_abuse: `${value.toFixed(0)}% of Sales Discounted`,
       pricing_intro_offer_stuck: `Only ${value.toFixed(0)}% Intro Offers Converting`,
     };
 
@@ -1225,14 +1536,43 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     const pctChange = Math.abs(rawPctChange).toFixed(0);
     const avgDaysStuck = (detection.processParameters?.avg_days_stuck as number) || 14;
     const avgDaysSilent = (detection.processParameters?.avg_days_silent as number) || 30;
+    /*
+     * The clicks are the whole point of the link sentence: "3 links" is a
+     * housekeeping note, "62 people clicked and none of them booked" is the
+     * finding. No default worth inventing, so an absent value falls to 0 and
+     * the caller reads the count instead.
+     */
+    const wastedClicks = (detection.processParameters?.wasted_clicks as number) || 0;
+    /* People who already pressed a broken link and got an error page. */
+    const lostClicks = (detection.processParameters?.lost_clicks as number) || 0;
+    /*
+     * What kind of page this is about. A landing page and a home page fail in
+     * different ways and the owner fixes them in different places, so the
+     * sentence names which one rather than saying "page" for both.
+     *
+     * 'mixed' when the finding spans more than one kind, which is the only
+     * honest thing to call it.
+     */
+    const pageKind = (detection.processParameters?.page_kind as string) || 'mixed';
 
     // Hebrew descriptions
     if (language === 'he') {
       const hebrewDescriptions: Record<string, string> = {
         cash_ar_overdue: `יש לך ${count} חשבוניות בסך ${formatMoney(value, currency)} שנמצאות בפיגור של יותר מ-7 ימים.`,
         cash_booking_unpaid: `${count} פגישות קרובות היו אמורות להיות משולמות מראש והתשלום טרם הגיע. סה\"כ ${formatMoney(impact, currency)}.`,
+        cash_work_unbilled: `${count} פגישות הסתיימו ומעולם לא נשלחה עליהן חשבונית. סה\"כ ${formatMoney(impact, currency)}.`,
+        cash_income_drop: `נכנס פחות כסף בארבעה השבועות האחרונים מאשר בארבעה שלפניהם, הפרש של ${formatMoney(impact, currency)}.`,
+        cash_client_concentration: `לקוח אחד אחראי ל-${count}% מכל הכסף שנכנס בחצי השנה האחרונה, ${formatMoney(impact, currency)}.`,
+        conv_quote_acceptance_drop: `${count} הצעות מחיר לא אושרו ברבעון האחרון, בשווי ${formatMoney(impact, currency)}.`,
+        web_mobile_conversion_gap: `${count} מבקרים הגיעו מהנייד, והם פונים אליך בשיעור נמוך בהרבה מאשר ממחשב.`,
+        web_page_no_conversions: pageKind === 'landing'
+          ? `${count} דפי נחיתה קיבלו תנועה אמיתית בחודש האחרון ואיש לא יצר קשר דרכם. זו בדיוק המטרה היחידה של דף נחיתה.`
+          : pageKind === 'homepage'
+            ? `דף הבית שלך קיבל תנועה אמיתית בחודש האחרון ואיש לא יצר קשר ממנו.`
+            : `${count} עמודים קיבלו תנועה אמיתית בחודש האחרון ואיש לא יצר קשר דרכם.`,
+        web_link_not_converting: `${wastedClicks} אנשים לחצו על ${count} קישורים ששיתפת, ואף אחד מהם לא קבע פגישה או יצר קשר. הקישור עובד, מה שנמצא בצד השני שלו לא.`,
+        web_link_dead_destination: `${count === 1 ? 'קישור פעיל שאתה משתף מוביל' : `${count} קישורים פעילים שאתה משתף מובילים`} לכתובת שלא נפתחת אצל אף אחד אחר. אצלך במחשב זה עובד, אצל הלקוח מופיעה שגיאה. ${lostClicks > 0 ? `${lostClicks} אנשים כבר לחצו והגיעו לשם.` : 'עדיין אף אחד לא לחץ.'}`,
         conv_no_next_step: `${count} אנשים היו פעילים אצלך ועכשיו אין להם שום דבר מתוכנן - לא פגישה, לא משימה, לא שלב הבא.`,
-        ret_package_ending: `${count} לקוחות נמצאים בתשלום האחרון של החבילה שלהם ולא נקבע המשך. שווי החבילות: ${formatMoney(impact, currency)}.`,
         cash_revenue_at_risk: `${formatMoney(impact, currency)} חויבו או הוצעו ועדיין לא התקבלו. יש ${count} אנשים לפנות אליהם.`,
         conv_stage_dropoff: `${count} אנשים הגיעו לאותו שלב ולא התקדמו ממנו. זו הנקודה שבה אתה מאבד הכי הרבה.`,
         conv_service_rate_drop: `שירות הכניסה שלך ממיר פחות מבעבר - ${value}% לעומת ${baseline}% בתקופה הקודמת.`,
@@ -1255,13 +1595,9 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         ops_peak_unutilized: `שעות השיא ההיסטוריות שלך ${(100 - value).toFixed(0)}% ריקות.${money ? ` הזדמנות הכנסה: ${money}.` : ''}`,
         web_missing_cta: `${count} עמודים חסרים קריאה לפעולה ברורה. מבקרים עלולים לעזוב בלי לפעול.`,
         web_incomplete_content: `${count} אזורים עם תוכן לא שלם. זה עלול לפגוע באמינות.`,
-        web_page_underperform: `${count} עמודים עם תנועה גבוהה ללא המרות. שקול להוסיף קריאות לפעולה חזקות יותר.`,
-        web_mobile_issues: `המבקרים במובייל ממירים ${pctChange}% פחות מדסקטופ. שקול לבדוק את חוויית המובייל.`,
-        cash_cards_expiring: `${count} כרטיסי אשראי של לקוחות פגים בתוך 30 יום. הכנסה חוזרת בסיכון: ${formatMoney(impact, currency)}.`,
         cash_ar_aging: `חשבוניות מזדקנות מעבר ל-60 יום, מה שמקשה על הגבייה. סכום בסיכון: ${formatMoney(impact, currency)}.`,
         cash_refund_pattern: `שיעור ההחזרים שלך הוא ${value.toFixed(1)}%, מעל הסף של ${baseline.toFixed(1)}%. זה עשוי להצביע על בעיות שירות.`,
         cash_payout_blocked: `חשבון ה-Stripe שלך לא יכול לקבל העברות. זה חוסם ${formatMoney(impact, currency)} בכספים ממתינים.`,
-        pricing_discount_abuse: `${value.toFixed(0)}% מהעסקאות בהנחה, מה ששוחק את הרווחיות. סך הנחות: ${formatMoney(impact, currency)}.`,
         pricing_intro_offer_stuck: `רק ${value.toFixed(0)}% מלקוחות מבצע ההיכרות עוברים למחיר מלא. הכנסה חסרה: ${formatMoney(impact, currency)}.`,
       };
       return hebrewDescriptions[detection.detectorId] || `${count} פריטים זוהו שדורשים תשומת לב. השפעה משוערת: ${formatMoney(impact, currency)}.`;
@@ -1272,8 +1608,19 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     const descriptions: Record<string, string> = {
       cash_ar_overdue: `You have ${count} invoice${plural ? 's' : ''} totaling ${formatMoney(value, currency)} that ${plural ? 'are' : 'is'} more than 7 days overdue.`,
       cash_booking_unpaid: `${count} upcoming appointment${plural ? 's were' : ' was'} due to be paid for in advance and ${plural ? 'have' : 'has'} not been. ${formatMoney(impact, currency)} outstanding.`,
+      cash_work_unbilled: `${count} completed appointment${plural ? 's were' : ' was'} never invoiced and never paid for. ${formatMoney(impact, currency)} never asked for.`,
+      cash_income_drop: `Less money came in over the last four weeks than the four before, a difference of ${formatMoney(impact, currency)}.`,
+      cash_client_concentration: `One client accounts for ${count}% of everything received in the last six months, ${formatMoney(impact, currency)}.`,
+      conv_quote_acceptance_drop: `${count} quote${count === 1 ? ' was' : 's were'} turned down this quarter, worth ${formatMoney(impact, currency)}.`,
+      web_mobile_conversion_gap: `${count} people visited on a phone, and they got in touch far less often than desktop visitors did.`,
+      web_page_no_conversions: pageKind === 'landing'
+        ? `${count} landing page${count === 1 ? ' had' : 's had'} real traffic this month and nobody got in touch from ${count === 1 ? 'it' : 'them'}. Getting in touch is the only thing a landing page is for.`
+        : pageKind === 'homepage'
+          ? `Your home page had real traffic this month and nobody got in touch from it.`
+          : `${count} published page${count === 1 ? ' had' : 's had'} real traffic this month and nobody got in touch from ${count === 1 ? 'it' : 'them'}.`,
+      web_link_not_converting: `${wastedClicks} people clicked ${count === 1 ? 'a link you shared' : `${count} links you shared`} and not one of them booked or got in touch. The link is working: what sits on the other side of it is not.`,
+      web_link_dead_destination: `${count === 1 ? 'A link you are still sharing points' : `${count} links you are still sharing point`} at an address that cannot open on anyone else's device. It works on your own computer, and shows an error on theirs. ${lostClicks > 0 ? `${lostClicks} ${lostClicks === 1 ? 'person has' : 'people have'} already clicked through to it.` : 'Nobody has clicked it yet.'}`,
       conv_no_next_step: `${count} ${plural ? 'people have' : 'person has'} had activity with you and now ${plural ? 'have' : 'has'} nothing scheduled next — no booking, no task, no stage to move to.`,
-      ret_package_ending: `${count} client${plural ? 's are' : ' is'} on the final instalment of their package with no renewal arranged. ${formatMoney(impact, currency)} of package value.`,
       cash_revenue_at_risk: `${formatMoney(impact, currency)} has been billed or quoted and has not arrived. ${count} ${plural ? 'people' : 'person'} worth following up.`,
       conv_stage_dropoff: `${count} ${plural ? 'people' : 'person'} reached the same step and went no further. This is where you lose the most.`,
       conv_service_rate_drop: `Your entry service is converting less than it was — ${value}% this period against ${baseline}% last.`,
@@ -1296,13 +1643,9 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       ops_peak_unutilized: `Your historically busy time slots are ${(100 - value).toFixed(0)}% empty.${money ? ` Potential revenue opportunity: ${money}.` : ''}`,
       web_missing_cta: `${count} page${plural ? 's are' : ' is'} missing a clear call-to-action. Visitors may leave without taking action.`,
       web_incomplete_content: `${count} section${plural ? 's have' : ' has'} incomplete content. This can hurt credibility with visitors.`,
-      web_page_underperform: `${count} high-traffic page${plural ? 's have' : ' has'} zero conversions. Consider adding stronger CTAs.`,
-      web_mobile_issues: `Mobile visitors convert ${pctChange}% less than desktop. Consider reviewing mobile experience.`,
-      cash_cards_expiring: `${count} customer card${plural ? 's are' : ' is'} expiring within 30 days. Recurring revenue at risk: ${formatMoney(impact, currency)}.`,
       cash_ar_aging: `Invoices are aging past 60 days, making them harder to collect. Amount at risk: ${formatMoney(impact, currency)}.`,
       cash_refund_pattern: `Your refund rate is ${value.toFixed(1)}%, above the ${baseline.toFixed(1)}% threshold. This may signal service issues.`,
       cash_payout_blocked: `Your Stripe account cannot receive payouts. This is blocking ${formatMoney(impact, currency)} in pending funds.`,
-      pricing_discount_abuse: `${value.toFixed(0)}% of transactions are discounted, eroding margins. Total discounts: ${formatMoney(impact, currency)}.`,
       pricing_intro_offer_stuck: `Only ${value.toFixed(0)}% of intro offer customers convert to full price. Missing upsell revenue: ${formatMoney(impact, currency)}.`,
     };
 
@@ -1375,14 +1718,25 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
   private generateRecommendation(detection: DetectionResult, language: string = 'en', currency: string = 'USD'): string {
     const issueType = detection.processParameters?.issue_type as string | undefined;
     const impact = detection.estimatedImpactUsd || 0;
+    /* See the description builder: a landing page is fixed differently. */
+    const recPageKind = (detection.processParameters?.page_kind as string) || 'mixed';
 
     // Hebrew recommendations
     if (language === 'he') {
       const hebrewRecommendations: Record<string, string> = {
         cash_ar_overdue: `שלח תזכורות תשלום ללקוחות עם חשבוניות בפיגור. זה יכול לעזור לגבות עד ${formatMoney(impact, currency)}.`,
         cash_booking_unpaid: `בקש את התשלום לפני הפגישה. מומלץ להתחיל מהפגישה הקרובה ביותר.`,
+        cash_work_unbilled: `שלח חשבונית על העבודה שכבר בוצעה, החל מהוותיקה ביותר.`,
+        cash_income_drop: `בדוק מה השתנה: פחות עבודה, פחות פניות, או תשלומים שטרם נגבו.`,
+        cash_client_concentration: `שווה לחזק את הקשר איתם, ובמקביל להרחיב את בסיס הלקוחות.`,
+        conv_quote_acceptance_drop: `בדוק מה השתנה: המחיר, ההיקף, או כמה מהר חוזרים ללקוח.`,
+        web_mobile_conversion_gap: `פתח את האתר בטלפון שלך ובדוק את המסלול עד יצירת הקשר.`,
+        web_page_no_conversions: recPageKind === 'landing'
+          ? `דף נחיתה צריך לבקש דבר אחד. צמצם אותו לבקשה הזאת ושים אותה במקום שלא צריך לגלול כדי למצוא.`
+          : `בדוק שיש בעמוד דרך ברורה ליצור קשר או לקבוע פגישה.`,
+        web_link_not_converting: `לחץ בעצמך על הקישור ותראה מה הלקוח רואה: אם יש זמנים פנויים, אם המחיר ברור, וכמה פרטים אתה מבקש ממישהו שעוד לא מכיר אותך.`,
+        web_link_dead_destination: `ערוך את הקישור ועדכן את כתובת היעד לכתובת הציבורית של העסק. הדרך לוודא: פתח את הקישור בטלפון עם אינטרנט סלולרי, לא ברשת המשרד.`,
         conv_no_next_step: `עבור על הרשימה וקבע לכל אחד צעד הבא - פגישה, משימה או פנייה.`,
-        ret_package_ending: `פנה אליהם לפני המפגש האחרון. חידוש לפני הסיום שווה עד ${formatMoney(impact, currency)}.`,
         cash_revenue_at_risk: `התחל מהחשבוניות שכבר נשלחו - זה הכסף שכבר סוכם.`,
         conv_stage_dropoff: `פנה לאנשים שנתקעו בשלב הזה ובדוק מה עוצר אותם.`,
         conv_service_rate_drop: `בדוק מה השתנה - המחיר, ההצעה, או מה שקורה אחרי הפגישה הראשונה.`,
@@ -1405,13 +1759,9 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         ops_peak_unutilized: `שלח אימייל קידום מכירות המדגיש משבצות פנויות בשעות העמוסות שלך.`,
         web_missing_cta: `הוסף כפתור קריאה לפעולה ברור (הזמן עכשיו, צור קשר, התחל) לעמודים האלה.`,
         web_incomplete_content: `השלם את חלקי התוכן החסרים כדי לבנות אמון ואמינות עם מבקרים.`,
-        web_page_underperform: `הוסף ווידג'טים להזמנות או טפסי יצירת קשר לעמודים עם תנועה גבוהה אלה.`,
-        web_mobile_issues: `בדוק את האתר שלך במכשירים ניידים ופשט את תהליך ההזמנה/יצירת הקשר למשתמשי מובייל.`,
-        cash_cards_expiring: `שלח ללקוחות תזכורת לעדכן את אמצעי התשלום לפני שהכרטיס פג.`,
         cash_ar_aging: `הסלם את מאמצי הגבייה לחשבוניות מעל 60 יום. שקול להציע תוכניות תשלום.`,
         cash_refund_pattern: `בדוק את סיבות ההחזרים כדי לזהות בעיות שירות. שקול לפנות להבין חששות.`,
         cash_payout_blocked: `השלם את הגדרת חשבון ה-Stripe מיד כדי לשחרר העברות ולהתחיל לקבל כספים.`,
-        pricing_discount_abuse: `בדוק את אסטרטגיית ההנחות שלך. שקול להגביל קודי הנחה או לקבוע סכומי הנחה מקסימליים.`,
         pricing_intro_offer_stuck: `צור רצף מעקב למשתמשי מבצע היכרות. הצע תמריץ מוגבל בזמן להמרה למחיר מלא.`,
       };
       return hebrewRecommendations[detection.detectorId] || `בדוק את התובנה הזו ונקוט בפעולה לטיפול בבעיה.`;
@@ -1421,8 +1771,17 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     const recommendations: Record<string, string> = {
       cash_ar_overdue: `Send payment reminders to clients with overdue invoices. This could help recover up to ${formatMoney(impact, currency)}.`,
       cash_booking_unpaid: `Request payment before the appointment, starting with the soonest one.`,
+      cash_work_unbilled: `Invoice the work you have already done, starting with the oldest.`,
+      cash_income_drop: `Look at what changed: less work booked, fewer enquiries, or payments not yet collected.`,
+      cash_client_concentration: `Worth looking after that relationship, and worth widening the base alongside it.`,
+      conv_quote_acceptance_drop: `Look at what changed: the price, the scope, or how quickly you get back to people.`,
+      web_mobile_conversion_gap: `Open your own site on your phone and walk through booking, start to finish.`,
+      web_page_no_conversions: recPageKind === 'landing'
+        ? `A landing page should ask for one thing. Cut it back to that one ask and put it where nobody has to scroll to find it.`
+        : `Check each one has an obvious way to get in touch or book.`,
+      web_link_not_converting: `Click it yourself and see what a stranger sees: whether there are times free, whether the price is clear, and how much you are asking of someone who has not met you yet.`,
+      web_link_dead_destination: `Edit the link and point it at your public address. The way to be sure it is fixed: open it on your phone over mobile data, not on your own network.`,
       conv_no_next_step: `Go through the list and give each person a next step — a booking, a task, or a message.`,
-      ret_package_ending: `Reach out before their final session. Renewing before it ends is worth up to ${formatMoney(impact, currency)}.`,
       cash_revenue_at_risk: `Start with what has already been invoiced — that money is agreed, only uncollected.`,
       conv_stage_dropoff: `Reach out to the people stuck at this step and find out what is holding them.`,
       conv_service_rate_drop: `Look at what changed — the price, the offer, or what happens after the first session.`,
@@ -1445,13 +1804,9 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       ops_peak_unutilized: `Send a promotional email highlighting available slots during your normally busy hours.`,
       web_missing_cta: `Add a clear call-to-action button (Book Now, Contact Us, Get Started) to these pages.`,
       web_incomplete_content: `Complete the missing content sections to build trust and credibility with visitors.`,
-      web_page_underperform: `Add booking widgets or contact forms to these high-traffic pages to capture leads.`,
-      web_mobile_issues: `Test your website on mobile devices and simplify the booking/contact process for mobile users.`,
-      cash_cards_expiring: `Send customers a reminder to update their payment method before their card expires.`,
       cash_ar_aging: `Escalate collection efforts for invoices over 60 days. Consider offering payment plans.`,
       cash_refund_pattern: `Review refund reasons to identify service issues. Consider reaching out to understand concerns.`,
       cash_payout_blocked: `Complete your Stripe account setup immediately to unblock payouts and start receiving funds.`,
-      pricing_discount_abuse: `Review your discounting strategy. Consider limiting discount codes or setting maximum discount amounts.`,
       pricing_intro_offer_stuck: `Create a follow-up sequence for intro offer users. Offer a limited-time incentive to convert to full price.`,
     };
 
@@ -1728,7 +2083,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       const response = await provider.chatCompletion(
         {
           messages: [{ role: 'user' as const, content: prompt }],
-          model: 'gpt-4o-mini',
+          model: insightModel(),
           temperature: 0.4,
           max_tokens: 400,
         },
@@ -2113,7 +2468,7 @@ Generate in ${langName}. Respond with ONLY a JSON object:
       const response = await provider.chatCompletion(
         {
           messages: [{ role: 'user' as const, content: prompt }],
-          model: 'gpt-4o-mini',
+          model: insightModel(),
           temperature: 0.5,
           max_tokens: 800,
         },
@@ -2491,6 +2846,62 @@ Generate in ${langName}. Respond with ONLY a JSON object:
 
       // Get first client date to calculate days with clients.
       // The date itself is kept, not just the elapsed count — see JourneyAnchors.
+      /*
+       * The first time anybody looked at this business online.
+       *
+       * Part of the journey's anchor: a business whose site had visitors in
+       * June did not start today, whatever its profile row says.
+       */
+      /*
+       * Automations the owner has switched on and not paused.
+       *
+       * `is_active` is the same flag `AutomationManager.pause()` clears, so a
+       * paused automation stops counting the moment it is paused.
+       */
+      const { count: activeAutomations } = await this.supabase
+        .from('insight_automations')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('is_active', true);
+
+      /*
+       * ...and the ones that do not live in that table at all.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * Automations exist in TWO places, and this node was only ever reading
+       * one of them.
+       *
+       *   insight_automations   a standing rule attached to a detector, created
+       *                         by "Set this up permanently" on an insight card
+       *
+       *   business_profiles     the three operational automations the advisor
+       *                         asks about — reply to enquiries, chase invoices,
+       *                         remind about the form — each a boolean column
+       *
+       * So the journey said "nothing is working on its own" to an owner with
+       * two of the three switched on and demonstrably sending email on their
+       * behalf. `insight_automations` is empty on every account in the
+       * database; the operational ones are the only automations anybody has
+       * actually turned on. Counting only the empty table made the node read
+       * zero forever.
+       *
+       * An enabled automation that CANNOT act does not count. A business with
+       * the intake reminder on but no published form has nothing running, and
+       * saying otherwise is the same overstatement in a different place — so
+       * each one is checked, and only the ones whose column is on are checked
+       * at all, which costs nothing for a business that has enabled nothing.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const operationalRunning = await this.countOperationalAutomations(userId);
+
+      const { data: firstView } = await this.supabase
+        .from('website_page_views')
+        .select('viewed_at')
+        .eq('user_id', userId)
+        .order('viewed_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
       const { data: firstClient } = await this.supabase
         .from('crm_contacts')
         .select('created_at')
@@ -2680,14 +3091,47 @@ Generate in ${langName}. Respond with ONLY a JSON object:
           totalVectors: 7,
           accountAgeDays,
           journeyAnchors: {
-            // `accountResult` rather than the local `accountCreatedAt`, which
-            // falls back to today when there is no profile row. A missing
-            // anchor must read as "unknown", not as "started this morning".
-            accountCreatedAt: accountResult.data?.created_at ?? null,
+            /*
+             * The EARLIEST evidence, not the profile row.
+             *
+             * This used to read `business_profiles.created_at`, which is not
+             * when the business started — it is when its profile row was last
+             * written. Deleting and recreating a business resets it to today,
+             * and every milestone on the rail is then dated against an anchor
+             * younger than the events it is measuring: a first booking from
+             * last week lands before day zero, and "today" reads as day 0 on an
+             * account that has been trading for months.
+             *
+             * It is the same trap the vector thresholds were moved off for,
+             * documented in the module guidance as "count from the first
+             * booking / first client, never from signup". The timeline was
+             * missed at the time.
+             *
+             * The profile row is kept as the LAST resort, for an account with
+             * no evidence at all — where it is the only date there is, and
+             * where being wrong about it costs nothing because there are no
+             * milestones to mis-date.
+             */
+            accountCreatedAt: earliestOf([
+              firstBooking?.created_at,
+              firstClient?.created_at,
+              firstView?.viewed_at,
+              accountResult.data?.created_at,
+            ]),
             firstBookingAt: firstBooking?.created_at ?? null,
             firstClientAt: firstClient?.created_at ?? null,
             convCrossedAt,
             firstAutomationAt: firstAutomation?.created_at ?? null,
+            /*
+             * How many are switched on RIGHT NOW.
+             *
+             * `firstAutomationAt` records that the owner once handed something
+             * over and stays set forever; it cannot answer "is anything working
+             * on its own today", which is what the journey node claims. An
+             * account that turned one on in March and paused it in April has
+             * reached the milestone and has nothing running.
+             */
+            runningAutomations: (activeAutomations ?? 0) + operationalRunning,
           },
           note,
           noteKey,
@@ -2718,7 +3162,6 @@ Generate in ${langName}. Respond with ONLY a JSON object:
       'conv_pipeline_stuck': { metric: 'total_contacts', needed: 10 },
       'crm_cold_leads': { metric: 'total_contacts', needed: 10 },
       'ret_cancellation_spike': { metric: 'total_bookings', needed: 20 },
-      'pricing_discount_abuse': { metric: 'total_transactions', needed: 20 },
     };
 
     const threshold = detectorThresholds[detectorId];

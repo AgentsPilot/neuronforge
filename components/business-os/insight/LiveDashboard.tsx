@@ -428,12 +428,34 @@ export function LiveDashboard({
   const { t, isRTL, formatCurrency, language } = useLanguage();
 
   // Format date with proper locale (Hebrew months for Hebrew, etc.)
+  /**
+   * The business's own zone, for anything that has to name a date.
+   *
+   * The briefing carries it; before that arrives this is UTC, which is wrong by
+   * at most a day at the edges and is at least the SAME wrong for every reader.
+   * Defaulting to the browser would make one business's timeline read
+   * differently depending on where it was opened.
+   */
+  const businessTimezone = briefing?.timezone || 'UTC';
+
   const formatMilestoneDate = useCallback((dateStr: string | undefined): string => {
     if (!dateStr) return '';
     const date = new Date(dateStr);
     const locale = language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-US';
-    return date.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
-  }, [language]);
+    /*
+     * Rendered in the same zone the day numbers are counted in.
+     *
+     * These two disagreed: the numbers floored elapsed UTC milliseconds while
+     * the dates printed in whatever zone the browser was in. A node could show
+     * a date from one day and a day number from another, and the today marker
+     * was a full day behind the dates the reader was counting.
+     */
+    return date.toLocaleDateString(locale, {
+      month: 'short',
+      day: 'numeric',
+      timeZone: businessTimezone,
+    });
+  }, [language, businessTimezone]);
   const { dayName, dateStr } = useDateInfo(t);
 
   // Greeting text based on time of day
@@ -442,13 +464,40 @@ export function LiveDashboard({
     afternoon: 'Good afternoon',
     evening: 'Good evening'
   }[greeting];
-  const { insights, vectorMaturity, autonomousWork, healthSummary, runAction, refresh: refreshInsights, loading: insightsLoading } = useInsights();
+  const { insights, vectorMaturity, autonomousWork, healthSummary, runAction, markSeen, refresh: refreshInsights, loading: insightsLoading } = useInsights();
 
   // What the detection engine currently has to say. Anything already acted on,
   // snoozed or dismissed is not pending, so it never reaches the card.
+  /*
+   * What the advisor carries: things to act on, and things that have just
+   * stopped needing action.
+   *
+   * A resolved insight rides along for a day so the owner sees that what they
+   * were told about sorted itself out. It is deliberately NOT counted as
+   * pending anywhere else — `automatableNow` below reads this list, and
+   * offering to automate something already resolved would be the same mistake
+   * as the card that went on asking to chase an invoice after it was paid.
+   */
+  const resolvedInsights = useMemo(
+    () => insights.filter(insight => insight.status === 'resolved'),
+    [insights]
+  );
+
   const pendingInsights = useMemo(
     () => insights.filter(insight => insight.status === 'new' || insight.status === 'viewed'),
     [insights]
+  );
+
+  /*
+   * What the carousel shows: open first, then the recently settled.
+   *
+   * Resolved ones go last deliberately. They need no decision, so putting them
+   * ahead of something that does would make the owner page past good news to
+   * reach the work.
+   */
+  const advisorInsights = useMemo(
+    () => [...pendingInsights, ...resolvedInsights],
+    [pendingInsights, resolvedInsights]
   );
   /**
    * How many pending insights the kernel could take over right now.
@@ -468,11 +517,15 @@ export function LiveDashboard({
   );
 
   /**
-   * Is there an automation still to be asked about?
+   * The automations the platform can run for this business, in whatever state.
    *
-   * Approved ones are a setting and declined ones are an answer; only the
-   * undecided are advice. Computed here because the advisor slot has to know
-   * whether the operational card would render anything before choosing it.
+   * Running, turned down and not-yet-answered all appear. An earlier version
+   * kept only the undecided, which made approval one-way: the moment an owner
+   * said yes, the automation left the only screen it was ever shown on, so
+   * there was nowhere to see it working and nowhere to turn it off.
+   *
+   * Computed here because the advisor slot has to know whether the operational
+   * card would render anything before choosing it.
    */
   const operationalPending = useMemo(
     () => automations ?? [],
@@ -519,13 +572,29 @@ export function LiveDashboard({
    * the card snapped back. An account with automations but no insights could
    * not move off the first page at all, because EVERY page was in the tail.
    */
-  const advisorPageCount = pendingInsights.length + operationalPending.length;
+  const advisorPageCount = advisorInsights.length + operationalPending.length;
 
   useEffect(() => {
     if (currentInsightIndex >= advisorPageCount) {
       setCurrentInsightIndex(0);
     }
   }, [advisorPageCount, currentInsightIndex]);
+
+  /*
+   * Tell the server what the card is actually showing.
+   *
+   * The page the owner is on, not the whole list: an insight three pages back
+   * in the carousel has not been seen, and counting it would make "shown a few
+   * times" mean "existed a few times".
+   *
+   * `markSeen` is idempotent per insight for the life of this mount, so the
+   * dependency on the index is what makes paging forward register each one
+   * exactly once.
+   */
+  useEffect(() => {
+    const shown = advisorInsights[currentInsightIndex];
+    if (shown?.id) markSeen(shown.id);
+  }, [advisorInsights, currentInsightIndex, markSeen]);
 
   const handleInsightAction = useCallback(async (
     action: 'run' | 'snooze' | 'dismiss',
@@ -668,9 +737,22 @@ export function LiveDashboard({
     firstClientAt: vectorMaturity?.journeyAnchors?.firstClientAt ?? null,
     convCrossedAt: vectorMaturity?.journeyAnchors?.convCrossedAt ?? null,
     firstAutomationAt: vectorMaturity?.journeyAnchors?.firstAutomationAt ?? null,
+    runningAutomations: vectorMaturity?.journeyAnchors?.runningAutomations ?? 0,
     automatableNow,
     vectors: vectorMaturity?.vectors ?? [],
-  }), [vectorMaturity, milestoneData, automatableNow]);
+    /*
+     * The business's zone, not the reader's.
+     *
+     * Day numbers count which DATE each event fell on, and dates turn over at
+     * different moments in different places. An owner in New Jersey opening
+     * this from a hotel in Tel Aviv must see the same journey they saw at home.
+     *
+     * The briefing is where the dashboard already holds this. Before it
+     * arrives, `buildJourney` falls back to UTC rather than to the browser, so
+     * the first paint is merely approximate rather than machine-dependent.
+     */
+    timezone: businessTimezone,
+  }), [vectorMaturity, milestoneData, automatableNow, businessTimezone]);
 
   /*
    * Today, read at render rather than taken from the memo above.
@@ -682,7 +764,7 @@ export function LiveDashboard({
    *
    * The nodes are facts about the past and belong in the memo. Today does not.
    */
-  const todayDay = daysSince(vectorMaturity?.journeyAnchors?.accountCreatedAt);
+  const todayDay = daysSince(vectorMaturity?.journeyAnchors?.accountCreatedAt, businessTimezone);
 
   /**
    * The journey as words, in the reader's language.
@@ -690,6 +772,31 @@ export function LiveDashboard({
    * `buildJourney` returns dates and day numbers and stops there; the sentence
    * for each node is composed here, where `t` and the locale live.
    */
+  /*
+   * What a counted node is counting, in the reader's words.
+   *
+   * One label used to serve every node with progress — "visitors so far" —
+   * which the pricing node then showed while counting bookings. The metric now
+   * travels with the progress, and an unrecognised one falls back to a bare
+   * "so far" rather than naming the wrong thing.
+   */
+  const metricLabel = (metric: string): string => {
+    /*
+     * `t` returns the KEY when it has no translation, not an empty string, so
+     * `t(x) || fallback` never falls through — it yields a truthy string and
+     * the raw key is what the owner reads. That is how
+     * "journey.meta.total_bookings" appeared under the pricing node.
+     *
+     * The miss has to be detected rather than coalesced.
+     */
+    const key = `journey.meta.${metric}`;
+    const label = t(key);
+    if (label && label !== key) return label;
+
+    const generic = t('journey.meta.items');
+    return generic && generic !== 'journey.meta.items' ? generic : 'so far';
+  };
+
   const journeyRows = useMemo(() => journey.nodes.map(node => {
     const dated = node.date ? formatMilestoneDate(node.date) : '';
     const counted = node.progress
@@ -698,8 +805,17 @@ export function LiveDashboard({
 
     // The headline number. A day when we have one; otherwise the count, for the
     // one unlock measured in visitors; otherwise nothing to say.
+    /*
+     * What is RUNNING outranks the day it started.
+     *
+     * The handover node is named "working on its own", and a date cannot
+     * answer that — an account that handed over in March and paused in April
+     * would still show March. The live count comes first where there is one.
+     */
     const top =
-      node.day !== null
+      node.running !== null
+        ? String(node.running)
+        : node.day !== null
         ? t('journey.day', { day: node.day })
         : node.progress
         ? counted
@@ -709,13 +825,24 @@ export function LiveDashboard({
 
     // The line under the name. Reached says when; counting says when it will
     // be; waiting says what it is waiting for, and never a date.
+    /*
+     * The date first, where there is one.
+     *
+     * The handover node read "2 / Working on its own / working on their own" —
+     * three lines, the third restating the second. Every other reached node
+     * puts the date there, so this one does too when it has it. An automation
+     * switched on through the advisor has no stored timestamp, and that is the
+     * only case that falls back to naming what the count is.
+     */
     const meta =
-      node.state === 'reached'
-        ? dated || (node.progress ? t('journey.meta.visitors') : '')
+      node.running !== null
+        ? dated || t('journey.meta.running')
+        : node.state === 'reached'
+        ? dated || (node.progress ? metricLabel(node.progress.metric) : '')
         : node.offered !== null
         ? t('journey.meta.ready')
         : node.progress
-        ? t('journey.meta.visitors')
+        ? metricLabel(node.progress.metric)
         : node.date
         ? t('journey.unlocks', { date: dated })
         : t(`journey.wait.${node.key}`);
@@ -756,11 +883,20 @@ export function LiveDashboard({
    */
   const railSpan = 85.8;
   const railStep = railSpan / Math.max(1, journey.nodes.length - 1);
-  const railFilled = Math.max(0, journey.lastReachedIndex) * railStep;
+  /*
+   * The CONTIGUOUS index, not the last reached one.
+   *
+   * Handover sits at the end of the row and can be reached at any time — an
+   * owner who switches on invoice chasing in week one has reached it without
+   * having reached anything between. Filling to the last reached node drew the
+   * orange line straight through a retention node still rendered as a grey
+   * hollow circle, and put "today" on a node with no date.
+   */
+  const railFilled = Math.max(0, journey.contiguousReachedIndex) * railStep;
   const todayAt =
-    journey.lastReachedIndex >= journey.nodes.length - 1
+    journey.contiguousReachedIndex >= journey.nodes.length - 1
       ? 7.1 + railSpan
-      : 7.1 + Math.max(0, journey.lastReachedIndex) * railStep + railStep / 2;
+      : 7.1 + Math.max(0, journey.contiguousReachedIndex) * railStep + railStep / 2;
 
   // State
   const [selectedNode, setSelectedNode] = useState<string>(() =>
@@ -2261,13 +2397,13 @@ export function LiveDashboard({
         back at the reader — the only scripted copy left is the setup pitch,
         which exists because its buttons genuinely do something.
       */}
-      {(pendingInsights.length > 0 || operationalPending.length > 0 ? (
+      {(advisorInsights.length > 0 || operationalPending.length > 0 ? (
         <InsightAdvisorCard
-          insights={pendingInsights}
+          insights={advisorInsights}
           operational={operationalPending}
           onOperationalDecide={handleOperationalDecide}
           currentIndex={currentInsightIndex}
-          projection={pendingInsights[currentInsightIndex]?.projection}
+          projection={advisorInsights[currentInsightIndex]?.projection}
           automationConfig={automationConfig}
           stage={vectorMaturity?.maturityLevel === 'cold_start' ? 'setup' : 'run'}
           onIndexChange={setCurrentInsightIndex}

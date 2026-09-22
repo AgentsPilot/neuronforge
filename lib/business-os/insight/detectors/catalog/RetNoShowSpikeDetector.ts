@@ -64,139 +64,127 @@ export class RetNoShowSpikeDetector extends BaseDetector {
   }
 
   async evaluate(userId: string): Promise<DetectionResult | null> {
-    // Check cooldown
     if (await this.isOnCooldown(userId)) {
       this.logDetection(userId, null);
       return null;
     }
 
-    // Get baseline for no-show rate.
-    // no_show_rate is stored at weekly/monthly granularity; 'weekly' is the finest
-    // supported period and matches this detector's weekly impact framing.
-    const baseline = await this.baselineCalculator.computeBaseline(
-      userId,
-      'retention.no_show_rate',
-      'weekly',
-      this.getBaselineLookbackDays()
-    );
+    const now = Date.now();
+    const recentFrom = new Date(now - WINDOW_DAYS * 86_400_000).toISOString();
+    const baselineFrom = new Date(now - (WINDOW_DAYS + BASELINE_DAYS) * 86_400_000).toISOString();
 
-    // Not enough data
-    if (!baseline.isSignificant) {
-      this.logDetection(userId, null);
-      return null;
-    }
-
-    // Get current no-show rate (last week)
-    const latest = await this.getLatestMetricValue(userId, 'retention.no_show_rate');
-
-    if (!latest) {
-      this.logDetection(userId, null);
-      return null;
-    }
-
-    const currentValue = latest.value;
-
-    // Check if above threshold (baseline + 2 * stdDev)
-    const threshold = baseline.threshold;
-
-    if (currentValue <= threshold) {
-      this.logDetection(userId, null);
-      return null;
-    }
-
-    // Calculate delta and severity
-    const delta = currentValue - baseline.mean;
-    // getPercentChange returns { percentChange: number | null, baseline }; coalesce the
-    // null case (insignificant/zero baseline) to 0 since DetectionResult.percentChange is number.
-    const { percentChange: computedPercentChange } = await this.baselineCalculator.getPercentChange(
-      userId,
-      'retention.no_show_rate',
-      'weekly',
-      currentValue,
-      this.getBaselineLookbackDays()
-    );
-    const percentChange = computedPercentChange ?? 0;
-    const severity = this.definition.severityFn(delta, baseline.mean);
-
-    // Get recent no-shows for context
-    const weekAgo = new Date();
-    weekAgo.setDate(weekAgo.getDate() - 7);
-
-    const { data: noShows } = await this.supabase
-      .from('business_events')
-      .select('entity_id, contact_id')
-      .eq('user_id', userId)
-      .eq('event_type', 'booking.no_show')
-      .gte('created_at', weekAgo.toISOString());
-
-    const affectedBookings = noShows?.map((ns) => ns.entity_id) || [];
-
-    // Estimate revenue impact (assume avg booking value)
     /*
-     * What a booking is typically worth, from the bookings themselves.
+     * Read from the bookings, not from the event rail.
      *
-     * This used to average `value_usd` on `booking.completed` events — a table
-     * that, until those events started being written, had nothing in it. The
-     * query succeeded, returned no rows, and every run silently fell through to
-     * a hardcoded $75 that was then shown to the owner as their own average.
-     *
-     * The event rail is still the better long-term source once it has history.
-     * Until then the answer is in the bookings: what was actually charged, or
-     * failing that what the service lists.
+     * This used to ask `business_events` for `booking.no_show` and
+     * `derived_metrics` for a pre-computed rate. Nothing writes to either, so
+     * the detector was correct code over two empty tables and could never fire.
+     * `scheduling_bookings.status` already has a `no_show` value, the PATCH
+     * route already accepts it, and the stats route already counts it — the
+     * fact was reachable all along.
      */
-    const { data: avgBooking, error: avgBookingError } = await this.supabase
+    const { data, error } = await this.supabase
       .from('scheduling_bookings')
-      .select('payment_amount, service:scheduling_services(price)')
+      .select('id, status, start_time, contact_id, payment_amount, service_id')
       .eq('user_id', userId)
-      .eq('status', 'completed')
-      .limit(100);
+      .gte('start_time', baselineFrom)
+      .lt('start_time', new Date(now).toISOString());
 
-    if (avgBookingError) {
-      logger.warn(
-        { err: avgBookingError, userId },
-        'Could not read booking values; falling back to the default estimate'
-      );
+    if (error) throw error;
+
+    const rows = (data ?? []) as unknown as BookingRow[];
+
+    // Only appointments that have HAPPENED can be no-shows. A confirmed
+    // booking next week is neither attended nor missed.
+    const settled = rows.filter(r => CONCLUDED.has((r.status ?? '').toLowerCase()));
+
+    const recent = settled.filter(r => (r.start_time ?? '') >= recentFrom);
+    const baseline = settled.filter(r => (r.start_time ?? '') < recentFrom);
+
+    if (recent.length < MIN_RECENT_BOOKINGS || baseline.length < MIN_BASELINE_BOOKINGS) {
+      this.logDetection(userId, null);
+      return null;
     }
 
-    const bookingValues = (avgBooking ?? [])
-      .map((row) => {
-        const charged = parseFloat(String((row as { payment_amount?: unknown }).payment_amount ?? '0'));
-        if (Number.isFinite(charged) && charged > 0) return charged;
-        const service = (row as { service?: { price?: unknown } | null }).service;
-        const listed = parseFloat(String(service?.price ?? '0'));
-        return Number.isFinite(listed) ? listed : 0;
-      })
-      .filter((value) => value > 0);
+    const recentNoShows = recent.filter(r => r.status === 'no_show');
+    const recentRate = Math.round((recentNoShows.length / recent.length) * 100);
+    const baselineRate = Math.round(
+      (baseline.filter(r => r.status === 'no_show').length / baseline.length) * 100
+    );
 
-    // Null rather than a guess — see OpsPeakUnutilizedDetector.
-    const avgBookingValue =
-      bookingValues.length > 0
-        ? bookingValues.reduce((sum, value) => sum + value, 0) / bookingValues.length
-        : null;
+    const risePoints = recentRate - baselineRate;
+    if (recentRate < MIN_RATE_PERCENT || risePoints < RISE_THRESHOLD_POINTS) {
+      this.logDetection(userId, null);
+      return null;
+    }
 
-    const estimatedLoss =
-      avgBookingValue === null ? undefined : affectedBookings.length * avgBookingValue;
+    /*
+     * What the missed appointments were worth, from the bookings themselves.
+     *
+     * The charge on the booking where there is one. No fallback to an invented
+     * average: an earlier version of this file defaulted to a hardcoded $75 and
+     * showed it to owners as their own figure.
+     */
+    const lostValue = recentNoShows.reduce((sum, r) => sum + toNumber(r.payment_amount), 0);
+
+    const severity = this.definition.severityFn(risePoints, baselineRate);
 
     const result = this.createDetectionResult({
       severity,
       metricKey: 'retention.no_show_rate',
-      currentValue,
-      baselineValue: baseline.mean,
-      thresholdValue: threshold,
-      percentChange,
+      currentValue: recentRate,
+      baselineValue: baselineRate,
+      thresholdValue: RISE_THRESHOLD_POINTS,
+      percentChange: risePoints,
       direction: 'above',
       affectedEntityType: 'booking',
-      affectedEntityIds: affectedBookings,
-      affectedCount: affectedBookings.length,
-      estimatedImpactUsd: estimatedLoss,
+      affectedEntityIds: recentNoShows.map(r => r.id),
+      affectedCount: recentNoShows.length,
+      estimatedImpactUsd: Math.round(lostValue * 100) / 100,
       impactDirection: 'loss',
-      impactPeriod: 'weekly',
+      impactPeriod: 'monthly',
       processParameters: {
-        hours_before: 24,
+        window_days: WINDOW_DAYS,
+        no_show_rate: recentRate,
+        baseline_rate: baselineRate,
+        rise_points: risePoints,
+        no_shows: recentNoShows.length,
+        appointments: recent.length,
       },
     });
 
     this.logDetection(userId, result);
     return result;
   }
+}
+
+/** Statuses that mean the appointment is in the past and its outcome is known. */
+const CONCLUDED = new Set(['completed', 'no_show']);
+
+const WINDOW_DAYS = 30;
+const BASELINE_DAYS = 60;
+/** Concluded appointments needed before a rate is a rate. */
+const MIN_RECENT_BOOKINGS = 10;
+const MIN_BASELINE_BOOKINGS = 20;
+/** Below this, a no-show rate is not worth raising however it moved. */
+const MIN_RATE_PERCENT = 10;
+/** How many percentage points it must have risen. */
+const RISE_THRESHOLD_POINTS = 10;
+
+interface BookingRow {
+  id: string;
+  status: string | null;
+  start_time: string | null;
+  contact_id: string | null;
+  payment_amount: number | string | null;
+  service_id: string | null;
+}
+
+function toNumber(value: number | string | null | undefined): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') {
+    const parsed = parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
 }

@@ -219,7 +219,6 @@ export const DETECTOR_TO_PROCESS: Record<string, string> = {
   cash_booking_unpaid: 'chase_overdue_invoices',
   cash_revenue_at_risk: 'chase_overdue_invoices',
   conv_no_next_step: 'send_followup_nudge',
-  ret_package_ending: 'send_followup_nudge',
   conv_stage_dropoff: 'send_followup_nudge',
   conv_service_rate_drop: 'send_followup_nudge',
 };

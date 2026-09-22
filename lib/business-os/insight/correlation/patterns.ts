@@ -20,7 +20,7 @@ export const CORRELATION_PATTERNS: CorrelationPattern[] = [
     name: 'Acquisition Funnel Breakdown',
     category: 'funnel',
     requiredDetectors: ['acq_traffic_drop', 'acq_low_conversion'],
-    optionalDetectors: ['crm_cold_leads', 'web_missing_cta', 'web_page_underperform', 'conv_service_rate_drop'],
+    optionalDetectors: ['crm_cold_leads', 'web_missing_cta', 'conv_service_rate_drop'],
     minMatches: 2,
     storyTemplate:
       'Your acquisition funnel is broken at multiple points. ' +
@@ -60,7 +60,7 @@ export const CORRELATION_PATTERNS: CorrelationPattern[] = [
     name: 'Client Retention Crisis',
     category: 'retention',
     requiredDetectors: ['crm_engagement_decay', 'ret_repeat_booking_low'],
-    optionalDetectors: ['ret_cancellation_spike', 'ret_no_show_spike', 'ret_package_ending'],
+    optionalDetectors: ['ret_cancellation_spike', 'ret_no_show_spike'],
     minMatches: 2,
     storyTemplate:
       'Your clients are disengaging. ' +
@@ -139,8 +139,8 @@ export const CORRELATION_PATTERNS: CorrelationPattern[] = [
     id: 'website_crisis',
     name: 'Website Conversion Crisis',
     category: 'funnel',
-    requiredDetectors: ['web_missing_cta', 'web_page_underperform'],
-    optionalDetectors: ['web_incomplete_content', 'web_mobile_issues', 'acq_low_conversion'],
+    requiredDetectors: ['web_missing_cta'],
+    optionalDetectors: ['web_incomplete_content', 'acq_low_conversion'],
     minMatches: 2,
     storyTemplate:
       'Your website is not converting visitors. ' +
@@ -159,7 +159,7 @@ export const CORRELATION_PATTERNS: CorrelationPattern[] = [
     id: 'cash_flow_warning',
     name: 'Cash Flow Warning',
     category: 'revenue',
-    requiredDetectors: ['cash_ar_aging', 'cash_cards_expiring'],
+    requiredDetectors: ['cash_ar_aging'],
     optionalDetectors: ['cash_payment_issues', 'cash_ar_overdue'],
     minMatches: 2,
     storyTemplate:
@@ -179,7 +179,7 @@ export const CORRELATION_PATTERNS: CorrelationPattern[] = [
     id: 'pricing_issue',
     name: 'Pricing Strategy Issue',
     category: 'revenue',
-    requiredDetectors: ['pricing_discount_abuse', 'pricing_intro_offer_stuck'],
+    requiredDetectors: ['pricing_intro_offer_stuck'],
     optionalDetectors: ['cash_refund_pattern'],
     minMatches: 2,
     storyTemplate:

@@ -101,10 +101,17 @@ const TABLES = [
   'channel_metrics_daily',
   // Which marketing accounts are connected, and whether they are still syncing.
   'channel_connections',
-  // The owner's automations. They ask whether these are working, and until now
-  // the answer lived only in a dashboard.
-  'agents',
-  'agent_executions',
+  /*
+   * DENYLISTED: the V2 agent platform.
+   *
+   * `agents` and `agent_executions` were introspected and declared, so the chat
+   * carried two entities, their fields and their links on every prompt — for a
+   * product surface it is not meant to answer for at this point. V2 itself is
+   * untouched and still running; it is simply not part of the chat's world.
+   *
+   * Removed from the allowlist as well as from the semantic layer, so
+   * regenerating this file cannot quietly bring them back.
+   */
 ];
 
 interface OpenApiProperty {

@@ -29,6 +29,8 @@ interface V4Answer {
   truncated: boolean;
   approximate: boolean;
   collapsed?: number;
+  /** Values real rows hold that this business's configuration no longer lists. */
+  unclassified?: Array<{ field: string; values: string[] }>;
 }
 
 /**
@@ -1080,6 +1082,30 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
           ? `אוחדו ${answer.collapsed} רשומות כפולות.`
           : `Merged ${answer.collapsed} duplicate records.`,
       }]);
+    }
+
+    /*
+     * Rows the configuration cannot classify are EXCLUDED from the number above.
+     *
+     * The compiler has collected these since it was written and every result
+     * shape carries them; nothing rendered them, so a business that renamed a
+     * stage saw a quietly undercounted answer with no caveat while the server
+     * logged the warning. This is the fourth sibling of `truncated`,
+     * `approximate` and `collapsed` — and the only one that was built and left
+     * unconnected.
+     *
+     * Through `t()` rather than a Hebrew/English ternary: the two older
+     * warnings beside it are hardcoded in two languages and simply show English
+     * to a Spanish speaker.
+     */
+    if (answer.unclassified?.length) {
+      const values = answer.unclassified.flatMap(entry => entry.values);
+      if (values.length > 0) {
+        setMessages(prev => [...prev, {
+          type: 'ai',
+          content: t('chat.unclassified', { values: values.join(', ') }),
+        }]);
+      }
     }
 
     // Warn only once the answer is on screen: the point is to stop a wall

@@ -3,12 +3,13 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { CRMPipelineView } from '@/components/crm/CRMPipelineView';
+import { CRMSubscriberList } from '@/components/crm/CRMSubscriberList';
 import { CRMContactList } from '@/components/crm/CRMContactList';
 import { CRMTaskList } from '@/components/crm/CRMTaskList';
 import { CRMContactModal } from '@/components/crm/CRMContactModal';
 import { CRMTaskModal } from '@/components/crm/CRMTaskModal';
 import { CRMContactDrawerV2 } from '@/components/crm/contact-drawer';
-import { Plus, Search, Users, Download, LayoutGrid, List, CheckSquare } from 'lucide-react';
+import { Plus, Search, Users, Download, LayoutGrid, List, CheckSquare, Mail } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
@@ -17,7 +18,7 @@ import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
 
 const logger = createLogger({ module: 'CRMPage' });
 
-type ViewMode = 'pipeline' | 'contacts' | 'tasks';
+type ViewMode = 'pipeline' | 'contacts' | 'subscribers' | 'tasks';
 
 export default function CRMPage() {
   const router = useRouter();
@@ -351,6 +352,18 @@ export default function CRMPage() {
               </button>
               <button
                 className={`p-1.5 sm:p-2 transition-all border ${
+                  viewMode === 'subscribers'
+                    ? 'text-[#8B5CF6] border-[#8B5CF6] bg-[#8B5CF6]/10'
+                    : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
+                }`}
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+                onClick={() => setViewMode('subscribers')}
+                title={t('crm.tab_subscribers')}
+              >
+                <Mail className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              </button>
+              <button
+                className={`p-1.5 sm:p-2 transition-all border ${
                   viewMode === 'tasks'
                     ? 'text-[#8B5CF6] border-[#8B5CF6] bg-[#8B5CF6]/10'
                     : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
@@ -432,6 +445,14 @@ export default function CRMPage() {
                 totalPages={totalPages}
                 onPageChange={handlePageChange}
               />
+            )}
+            {viewMode === 'subscribers' && (
+              /*
+                Subscribers are not contacts, so this list fetches its own data
+                rather than filtering the contacts already in memory. Promoting
+                one creates a contact, which is why the pipeline is refreshed.
+              */
+              <CRMSubscriberList onPromoted={() => fetchContacts(true)} />
             )}
             {viewMode === 'tasks' && (
               <CRMTaskList

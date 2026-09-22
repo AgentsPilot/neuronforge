@@ -147,8 +147,32 @@ export class LeadResponseRepository {
     await this.finish(id, { status: 'sent', sent_at: new Date().toISOString() });
   }
 
-  async markSkipped(id: string, reason: string): Promise<void> {
-    await this.finish(id, { status: 'skipped', skip_reason: reason });
+  /**
+   * Close a row that was not sent, and say why.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `detail` is separate from `reason` because the two answer different
+   * questions. `reason` is one of a handful of known outcomes — already_booked,
+   * not_approved, send_failed — and is what you group by. `detail` is the
+   * sentence that explains one row, and only some reasons have one.
+   *
+   * It was missing, and `send_failed` is the reason that needed it most: a
+   * chase would record THAT the email did not go out and discard every word of
+   * why. One such row sat in this table for two days reading
+   * `send_failed / error_message: null`, and nothing on the account or in the
+   * logs could say whether the address had bounced, the provider had refused
+   * it, or the invoice had no payment route. A skip nobody can diagnose is a
+   * silent failure with a row next to it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async markSkipped(id: string, reason: string, detail?: string): Promise<void> {
+    await this.finish(id, {
+      status: 'skipped',
+      skip_reason: reason,
+      // Only overwrite when there is something to say; a later reaper message
+      // is worth more than an empty string.
+      ...(detail ? { error_message: detail.slice(0, 500) } : {}),
+    });
   }
 
   async markFailed(id: string, message: string): Promise<void> {

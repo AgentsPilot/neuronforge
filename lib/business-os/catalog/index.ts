@@ -20,8 +20,11 @@ import { SEMANTIC_CATALOG } from './catalog';
 import {
   CatalogDriftError,
   COMPLEMENTARY_OPS,
+  type EntityDef,
   type FieldType,
   type PhysicalColumn,
+  type PhysicalTable,
+  type RelationDef,
   type ResolvedCatalog,
   type ResolvedEntity,
   type ResolvedField,
@@ -75,6 +78,17 @@ function isCompatible(fieldType: FieldType, pgFormat: string): boolean {
 function buildCatalog(): ResolvedCatalog {
   const problems: string[] = [];
   const entities: Record<string, ResolvedEntity> = {};
+
+  /*
+   * Physical table name -> the entity that speaks for it.
+   *
+   * Built once, before the loop, because a derived relation has to resolve a
+   * foreign key's TARGET table into an entity key, and the target is usually an
+   * entity the loop has not reached yet.
+   */
+  const tableToEntity = new Map<string, string>(
+    Object.entries(SEMANTIC_CATALOG).map(([key, def]) => [def.table, key])
+  );
 
   for (const [entityKey, entity] of Object.entries(SEMANTIC_CATALOG)) {
     const physicalTable = PHYSICAL_CATALOG.tables[entity.table];
@@ -413,7 +427,12 @@ function buildCatalog(): ResolvedCatalog {
       }
     }
 
-    entities[entityKey] = { ...entity, key: entityKey, fields };
+    entities[entityKey] = {
+      ...entity,
+      key: entityKey,
+      fields,
+      relations: deriveRelations(entity, physicalTable, tableToEntity),
+    };
   }
 
   if (problems.length > 0) {
@@ -454,6 +473,90 @@ function buildCatalog(): ResolvedCatalog {
  * plan built from a catalog that no longer exists.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * The links the database already declares, which nobody had written down.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS DERIVED AND NOT TYPED OUT
+ *
+ * PostgREST publishes every foreign key, the generator already captures them,
+ * and `catalog.generated.ts` already carries them. The semantic layer then
+ * re-declared a subset BY HAND: 42 relation edges against 150 the database
+ * publishes, with seven entities — `proposals` among them, the most-asked of
+ * all — declaring none at all.
+ *
+ * The cost was not abstract. "When is the first meeting of the proposal" was
+ * structurally unanswerable: `proposals.booking_id` sits in the database, in
+ * the physical catalog, and on every row — and the chat could not see it. Not a
+ * weak model and not missing data; a file somebody had to remember to edit.
+ *
+ * WHAT IS DERIVED AND WHAT IS NOT
+ *
+ * Structure is derived: target, cardinality and the FK column are facts about
+ * the schema. MEANING is not derivable and is not invented here — a derived
+ * relation borrows the target entity's own labels, which the semantic layer
+ * already states in every language. A hand-written relation always wins, so
+ * naming one is how you give it a better word than the default.
+ *
+ * Tenant scope is skipped: `user_id` is on every table and is not a link a
+ * person would traverse.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function deriveRelations(
+  entity: EntityDef,
+  physicalTable: PhysicalTable | undefined,
+  tableToEntity: Map<string, string>
+): Record<string, RelationDef> {
+  const declared = entity.relations ?? {};
+  if (!physicalTable) return declared;
+
+  // Columns a hand-written relation already speaks for, so a derived one never
+  // shadows a deliberate choice.
+  const spokenFor = new Set(
+    Object.values(declared)
+      .filter((r) => r.via.side === 'local')
+      .map((r) => r.via.column)
+  );
+
+  const derived: Record<string, RelationDef> = {};
+
+  for (const column of physicalTable.columns) {
+    const fk = column.foreignKey;
+    if (!fk) continue;
+    if (spokenFor.has(column.name)) continue;
+    // Tenant scope, where it is a column on this very table. A relation-scoped
+    // entity reaches its owner through another table, so nothing to skip here.
+    if (entity.userScope?.kind === 'column' && column.name === entity.userScope.column) continue;
+
+    const targetKey = tableToEntity.get(fk.table);
+    if (!targetKey) continue;
+
+    const target = SEMANTIC_CATALOG[targetKey];
+    if (!target) continue;
+
+    /*
+     * Named from the COLUMN, not the target.
+     *
+     * A table can point at the same entity twice — a proposal has both a
+     * `contact_id` and a `supersedes_id` — so keying by target would collapse
+     * the two into one link and silently lose whichever came second.
+     */
+    const key = column.name.replace(/_id$/, '');
+    if (!key || declared[key] || derived[key]) continue;
+
+    derived[key] = {
+      target: targetKey,
+      // The FK lives on THIS table, so this row points at exactly one of those.
+      cardinality: 'one',
+      via: { column: column.name, side: 'local' },
+      labels: target.labels.one,
+    };
+  }
+
+  return { ...derived, ...declared };
+}
+
+
 function computeVersion(entities: Record<string, ResolvedEntity>): string {
   /** What a human reads, not what a plan is built from. */
   const IGNORED = new Set(['labels', 'enumLabels', 'physical']);

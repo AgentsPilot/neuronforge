@@ -44,21 +44,24 @@ import { OpsPeakUnutilizedDetector } from './catalog/OpsPeakUnutilizedDetector';
 // Phase 4: Website Content Detectors
 import { WebMissingCtaDetector } from './catalog/WebMissingCtaDetector';
 import { WebIncompleteContentDetector } from './catalog/WebIncompleteContentDetector';
-import { WebPageUnderperformDetector } from './catalog/WebPageUnderperformDetector';
-import { WebMobileIssuesDetector } from './catalog/WebMobileIssuesDetector';
 
 // Phase 5: Cash Flow Deep Detectors
-import { CashCardsExpiringDetector } from './catalog/CashCardsExpiringDetector';
 import { CashArAgingDetector } from './catalog/CashArAgingDetector';
 import { CashRefundPatternDetector } from './catalog/CashRefundPatternDetector';
 import { CashPayoutBlockedDetector } from './catalog/CashPayoutBlockedDetector';
 
 // Phase 6: Pricing Detectors
-import { PricingDiscountAbuseDetector } from './catalog/PricingDiscountAbuseDetector';
 import { PricingIntroOfferStuckDetector } from './catalog/PricingIntroOfferStuckDetector';
 import { CashBookingUnpaidDetector } from './catalog/CashBookingUnpaidDetector';
+import { CashWorkUnbilledDetector } from './catalog/CashWorkUnbilledDetector';
+import { CashIncomeDropDetector } from './catalog/CashIncomeDropDetector';
+import { CashClientConcentrationDetector } from './catalog/CashClientConcentrationDetector';
+import { ConvQuoteAcceptanceDropDetector } from './catalog/ConvQuoteAcceptanceDropDetector';
+import { WebMobileConversionGapDetector } from './catalog/WebMobileConversionGapDetector';
+import { WebPageNoConversionsDetector } from './catalog/WebPageNoConversionsDetector';
+import { WebLinkNotConvertingDetector } from './catalog/WebLinkNotConvertingDetector';
+import { WebLinkDeadDestinationDetector } from './catalog/WebLinkDeadDestinationDetector';
 import { ConvNoNextStepDetector } from './catalog/ConvNoNextStepDetector';
-import { RetPackageEndingDetector } from './catalog/RetPackageEndingDetector';
 import { CashRevenueAtRiskDetector } from './catalog/CashRevenueAtRiskDetector';
 import { ConvStageDropoffDetector } from './catalog/ConvStageDropoffDetector';
 import { ConvServiceRateDropDetector } from './catalog/ConvServiceRateDropDetector';
@@ -133,17 +136,13 @@ export class DetectorEngine {
       // Phase 4: Website Content
       new WebMissingCtaDetector(supabase),
       new WebIncompleteContentDetector(supabase),
-      new WebPageUnderperformDetector(supabase),
-      new WebMobileIssuesDetector(supabase),
 
       // Phase 5: Cash Flow Deep
-      new CashCardsExpiringDetector(supabase),
       new CashArAgingDetector(supabase),
       new CashRefundPatternDetector(supabase),
       new CashPayoutBlockedDetector(supabase),
 
       // Phase 6: Pricing
-      new PricingDiscountAbuseDetector(supabase),
       new PricingIntroOfferStuckDetector(supabase),
 
       /*
@@ -154,8 +153,15 @@ export class DetectorEngine {
        * and the catch-all for people with no future at all.
        */
       new CashBookingUnpaidDetector(supabase),
+      new CashWorkUnbilledDetector(supabase),
+      new CashIncomeDropDetector(supabase),
+      new CashClientConcentrationDetector(supabase),
+      new ConvQuoteAcceptanceDropDetector(supabase),
+      new WebMobileConversionGapDetector(supabase),
+      new WebPageNoConversionsDetector(supabase),
+      new WebLinkNotConvertingDetector(supabase),
+      new WebLinkDeadDestinationDetector(supabase),
       new ConvNoNextStepDetector(supabase),
-      new RetPackageEndingDetector(supabase),
       new CashRevenueAtRiskDetector(supabase),
       new ConvStageDropoffDetector(supabase),
       new ConvServiceRateDropDetector(supabase),

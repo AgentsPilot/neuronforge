@@ -101,14 +101,27 @@ export function BeforeAfterPanel({ left, right }: BeforeAfterPanelProps) {
         )}
       </div>
 
-      {/* Right column: .pj (second) - has green background and green value text */}
+      {/*
+       * Right column: .pj (second) — the good outcome, tinted green.
+       *
+       * The tint is a TOKEN, not a literal. `#F6FBF8` is a near-white mint that
+       * only exists in the light palette, so in dark mode this panel rendered as
+       * a white slab in the middle of a dark card — and the label and subtext
+       * below, which correctly follow `--v2-text-secondary`, turned light grey
+       * on it and became unreadable. A hardcoded background and themed text on
+       * top of it can never both be right.
+       *
+       * `--v2-status-success-*` is the one green family defined for BOTH themes;
+       * `--v2-success-bg` and friends are declared only under `:root`, so they
+       * carry a light value into dark mode.
+       */}
       <div
         className="pj"
         style={{
           flex: 1,
           padding: '13px 15px',
           minWidth: 0,
-          background: '#F6FBF8',
+          background: 'var(--v2-status-success-bg)',
           borderInlineStart: '1px solid var(--v2-border)',
         }}
       >
@@ -136,7 +149,10 @@ export function BeforeAfterPanel({ left, right }: BeforeAfterPanelProps) {
             fontSize: '16px',
             fontWeight: 600,
             letterSpacing: '-0.02em',
-            color: '#22C58B',
+            // Reads on both grounds: a deep green on the light tint, a bright
+            // one on the dark. `#22C58B` was fixed, so it sat mid-contrast on
+            // each and comfortable on neither.
+            color: 'var(--v2-status-success-text)',
           }}
         >
           {right.value}

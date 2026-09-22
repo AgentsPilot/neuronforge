@@ -139,6 +139,9 @@ export class OpenAIProvider extends BaseAIProvider {
       (result: OpenAI.Chat.ChatCompletion) => ({
         inputTokens: result.usage?.prompt_tokens || 0,
         outputTokens: result.usage?.completion_tokens || 0,
+        // Surfaced so the prompt-cache hit rate is a measurement rather than a
+        // hope. Recorded alongside the call, not derived from it later.
+        cachedInputTokens: this.cachedInputTokens(result.usage),
         cost: this.calculateCost(params.model, result.usage),
         responseSize: JSON.stringify(result).length
       })
@@ -405,12 +408,39 @@ export class OpenAIProvider extends BaseAIProvider {
     return conversation;
   }
 
+  /**
+   * How many of the prompt tokens OpenAI served from its cache.
+   *
+   * Reported on every response as `usage.prompt_tokens_details.cached_tokens`
+   * and read by nothing until now — so `input_tokens` recorded the full price
+   * whatever was actually billed, and the caching work this number exists to
+   * measure could not be measured. Zero when nothing cached, which is also the
+   * honest answer for a provider that does not report it.
+   */
+  private cachedInputTokens(usage: any): number {
+    const cached = usage?.prompt_tokens_details?.cached_tokens;
+    return typeof cached === 'number' && cached > 0 ? cached : 0;
+  }
+
   private calculateCost(model: string, usage: any): number {
-    // Use shared pricing service with database-backed pricing
+    const prompt = usage?.prompt_tokens || 0;
+    const cached = Math.min(this.cachedInputTokens(usage), prompt);
+
+    /*
+     * Cached input is billed at a discount, so charging it at full rate
+     * overstates spend — and `cost_usd` is what the daily budget and the
+     * owner-facing credits card both read. Split rather than scaled: the two
+     * halves are priced differently and only the uncached half is new work.
+     *
+     * OpenAI's published rate for a cache read is half the input rate, so the
+     * cached half is costed as if it were half as many tokens. Kept here rather
+     * than in the shared pricing table because it is a property of HOW the
+     * request was served, not of the model.
+     */
     return calculateCostSync(
       'openai',
       model,
-      usage?.prompt_tokens || 0,
+      prompt - cached + Math.round(cached / 2),
       usage?.completion_tokens || 0
     );
   }

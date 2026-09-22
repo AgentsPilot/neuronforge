@@ -14,6 +14,7 @@ import { createLogger } from '@/lib/logger';
 import { smartLinkRepository } from '@/lib/repositories/SmartLinkRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { buildAttributionFromRequest, appendUTMToUrl } from '@/lib/utils/attribution';
+import { utmForVariant } from '@/lib/business-os/channel-insights/shareDestinations';
 
 const logger = createLogger({ module: 'SmartLinkRedirect' });
 
@@ -118,6 +119,30 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     if (smartLink.medium) utmParams.utm_medium = smartLink.medium;
     if (smartLink.campaign) utmParams.utm_campaign = smartLink.campaign;
     if (smartLink.content) utmParams.utm_content = smartLink.content;
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * WHERE THE OWNER SAID THEY WERE POSTING IT.
+     *
+     * `?v=wa` on the incoming link, put there by the share menu when the owner
+     * clicked WhatsApp. Expanded here rather than baked into the shared URL so
+     * the link stays short, does not read as tracking to the person receiving
+     * it, and so the mapping can change for links already in circulation.
+     *
+     * This is the only way some of these leads can be attributed at all:
+     * WhatsApp and a printed QR code send NO referrer, so without a tag they
+     * arrive as `direct` beside people who typed the address.
+     *
+     * It does NOT override a per-link source the owner configured — those
+     * columns win, because they were set deliberately. An unrecognised code is
+     * ignored entirely; the referrer still answers, as it does for any
+     * untagged link.
+     */
+    const shareUtm = utmForVariant(request.nextUrl.searchParams.get('v'));
+    if (shareUtm) {
+      if (!utmParams.utm_source) utmParams.utm_source = shareUtm.utm_source;
+      if (!utmParams.utm_medium) utmParams.utm_medium = shareUtm.utm_medium;
+    }
 
     // Add session_id for conversion tracking
     if (attribution.session_id) {

@@ -94,7 +94,16 @@ export type FormatHint =
   | 'enum'
   | 'tags'
   | 'url'
-  | 'boolean';
+  | 'boolean'
+  /**
+   * A completed intake form, rendered as the questions and what was answered.
+   *
+   * The only format backed by a jsonb column. It is a DISPLAY hint and nothing
+   * more — the query layer still cannot filter inside the document, so "who
+   * mentioned a knee injury" remains out of reach. This shows a form the chat
+   * is already talking about; it does not search across them.
+   */
+  | 'intake';
 
 /**
  * The logical type the query IR reasons about. Narrower than Postgres types on

@@ -247,6 +247,7 @@ async function dispatchOne(
   });
 
   await sendEmail({
+    kind: 'transactional',
     to: [ownerEmail],
     subject,
     html,

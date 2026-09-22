@@ -38,6 +38,26 @@ jest.mock('../mutate/ActionLog', () => ({
   idempotencyKey: (p: string, s: string, i?: string) => `${p}|${s}|${i}`,
 }));
 
+// Consent. Everyone has agreed unless a test says otherwise — these tests are
+// about the OTHER safety rails, and making each one set up consent first would
+// bury what it is actually asserting.
+type ConsentResult = { data: Map<string, boolean> | null; error: Error | null };
+
+const consentStub = {
+  getStateBulk: jest.fn<Promise<ConsentResult>, [string, string[]]>(async (_userId, emails) => ({
+    data: new Map(emails.map((e) => [e.trim().toLowerCase(), true])),
+    error: null,
+  })),
+};
+
+// Delegating rather than passing `consentStub` directly: jest.mock factories
+// are hoisted above the const, so a direct reference is read before it exists.
+jest.mock('@/lib/repositories/MarketingConsentRepository', () => ({
+  marketingConsentRepository: {
+    getStateBulk: (...args: unknown[]) => consentStub.getStateBulk(...(args as [string, string[]])),
+  },
+}));
+
 import { sendEmail } from '@/lib/notifications/emailTransport';
 
 const CTX = { userId: '11111111-1111-1111-1111-111111111111', consumer: 'chat' as const };
@@ -69,6 +89,10 @@ beforeEach(() => {
   actionLogStub.claim.mockResolvedValue({ proceed: true, entryId: 'entry-1' });
   actionLogStub.countToday.mockResolvedValue(0);
   actionLogStub.dailyLimit.mockResolvedValue(200);
+  consentStub.getStateBulk.mockImplementation(async (_userId: string, emails: string[]) => ({
+    data: new Map(emails.map((e) => [e.trim().toLowerCase(), true])),
+    error: null,
+  }));
 });
 
 describe('fan-out — what it refuses', () => {
@@ -255,5 +279,72 @@ describe('fan-out — idempotency', () => {
 
     expect(result.skipped).toBe(1);
     expect(sendEmail).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('fan-out — marketing consent', () => {
+  it('does not email someone with no recorded consent', async () => {
+    consentStub.getStateBulk.mockResolvedValue({
+      data: new Map([
+        ['person0@example.com', true],
+        // person1 has no row at all, which is the common case and reads as "no".
+        ['person2@example.com', false],
+      ]),
+      error: null,
+    });
+
+    const result = await executeForEach(emailStep(), rows(3), CTX, OPTIONS);
+
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    expect((sendEmail as jest.Mock).mock.calls[0][0].to).toEqual(['person0@example.com']);
+    expect(result.succeeded).toBe(1);
+    expect(result.withheldForConsent).toBe(2);
+    expect(result.skipped).toBe(2);
+  });
+
+  it('tells the owner the true number BEFORE they confirm', async () => {
+    // The whole point. Confirming "email 3 people" and having 1 arrive is
+    // compliant and dishonest, and reads as the feature being broken.
+    consentStub.getStateBulk.mockResolvedValue({
+      data: new Map([['person0@example.com', true]]),
+      error: null,
+    });
+
+    const result = await executeForEach(emailStep(), rows(3), CTX, {
+      ...OPTIONS,
+      dryRun: true,
+    });
+
+    expect(result.attempted).toBe(1);
+    expect(result.withheldForConsent).toBe(2);
+    expect(result.items.map((i) => i.target)).toEqual(['person0@example.com']);
+  });
+
+  it('withheld recipients do not spend the daily quota', async () => {
+    // 3 requested, 1 sendable, and only 1 left in the budget. If the two
+    // blocked recipients counted, this would be refused outright.
+    actionLogStub.dailyLimit.mockResolvedValue(1);
+    consentStub.getStateBulk.mockResolvedValue({
+      data: new Map([['person0@example.com', true]]),
+      error: null,
+    });
+
+    const result = await executeForEach(emailStep(), rows(3), CTX, OPTIONS);
+
+    expect(result.succeeded).toBe(1);
+  });
+
+  it('sends nothing at all when the consent lookup fails', async () => {
+    // Fail closed. The alternative is emailing people who may not have agreed,
+    // or reporting a count that is not true.
+    consentStub.getStateBulk.mockResolvedValue({
+      data: null,
+      error: new Error('database unreachable'),
+    });
+
+    await expect(executeForEach(emailStep(), rows(3), CTX, OPTIONS)).rejects.toThrow(
+      /could not check who has agreed/i
+    );
+    expect(sendEmail).not.toHaveBeenCalled();
   });
 });

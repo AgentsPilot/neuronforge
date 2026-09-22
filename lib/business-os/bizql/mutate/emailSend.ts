@@ -19,7 +19,7 @@
  * @module lib/business-os/bizql/mutate
  */
 
-import { sendEmail, type EmailAttachment } from '@/lib/notifications/emailTransport';
+import { sendEmail, type EmailAttachment, type EmailKind } from '@/lib/notifications/emailTransport';
 import {
   wrapInBrandedTemplate,
   type BrandingData,
@@ -109,8 +109,19 @@ function readAttachments(
  */
 export async function performEmail(
   params: Record<string, unknown>,
-  branding?: BrandingData
+  options: {
+    branding?: BrandingData;
+    /**
+     * Required, deliberately. This function is reached from `contacts.send`,
+     * where the body is whatever the owner typed — which can be a receipt or
+     * can be a broadcast, and the caller is the only one who knows which.
+     * Leaving it to a default here is how an ungated marketing path gets built
+     * by accident.
+     */
+    kind: EmailKind;
+  }
 ): Promise<EmailOutcome> {
+  const branding = options.branding;
   const to = params.to;
 
   if (typeof to !== 'string' || !to.includes('@')) {
@@ -133,6 +144,25 @@ export async function performEmail(
   // as one deliberately, and nesting a second <html> inside it renders as broken
   // markup in most clients.
   const isWholeDocument = /^\s*(<!doctype html|<html)/i.test(body);
+
+  /*
+   * A marketing message must carry its compliance footer — the unsubscribe
+   * link, the sender's postal address — and that footer is added by the
+   * branded wrapper. A whole document skips the wrapper, so a marketing send
+   * down this branch would go out with no way to opt out of it.
+   *
+   * Refused rather than patched. Injecting a footer into someone else's
+   * hand-authored document is guesswork, and a silently footerless marketing
+   * email is the failure this whole system exists to prevent.
+   */
+  if (options.kind.kind === 'marketing' && isWholeDocument) {
+    return {
+      ok: false,
+      error:
+        'a marketing email cannot be sent as a whole HTML document — it would have no unsubscribe footer',
+    };
+  }
+
   const html =
     branding && !isWholeDocument ? wrapInBrandedTemplate(content, branding) : content;
 
@@ -153,14 +183,32 @@ export async function performEmail(
   // Sent as the business: this reaches a CLIENT, and it is the owner they
   // should see in their inbox and reach on Reply. The caller supplies the owner
   // — this function receives a loose param bag and has no user of its own.
+  /*
+   * A marketing send carries the owner in `kind` — consent is held per
+   * business, so the caller has to have named it already. A transactional one
+   * falls back to the loose param bag, which is where it has always come from.
+   */
   const ownerUserId = typeof params.userId === 'string' ? params.userId : undefined;
+
   const result = await sendEmail({
+    ...(options.kind.kind === 'marketing'
+      ? {
+          kind: 'marketing' as const,
+          ownerUserId: options.kind.ownerUserId,
+          contactId: options.kind.contactId,
+        }
+      : { kind: 'transactional' as const, ownerUserId }),
     to: [to],
     subject,
     html,
-    ownerUserId,
     ...(attachments ? { attachments } : {}),
   });
 
-  return { ok: result.sent, provider: result.provider, error: result.error };
+  // Blocked is not an error the caller should retry: the recipient never agreed
+  // to marketing, and that answer will not change on a second attempt.
+  return {
+    ok: result.sent,
+    provider: result.provider,
+    error: result.blocked ? `not sent: ${result.blocked}` : result.error,
+  };
 }

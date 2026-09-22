@@ -17,7 +17,7 @@ interface PublicShellProps {
   header?:
     | false
     | { title?: string; subtitle?: string; backHref?: string; backLabel?: string; compact?: boolean };
-  footer?: false | { showPoweredBy?: boolean; showContact?: boolean };
+  footer?: false | { showPoweredBy?: boolean; showContact?: boolean; showPrivacy?: boolean };
 }
 
 /**

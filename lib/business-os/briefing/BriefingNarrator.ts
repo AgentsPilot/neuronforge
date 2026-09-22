@@ -105,11 +105,19 @@ export async function narrateBriefing(
      */
     const completion = await provider.chatCompletion(
       {
-        model: OPENAI_MODELS.GPT_4O_MINI,
+        model: briefingModel(),
         messages: [{ role: 'user', content: buildPrompt(facts, language, businessType) }],
-        // Low, deliberately. This is reporting, not writing — the same facts
-        // should read the same way twice.
-        temperature: 0.3,
+        /*
+         * Zero, not merely low.
+         *
+         * The comment here used to say "the same facts should read the same
+         * way twice" while setting 0.3, which does not deliver that: three
+         * runs over one unchanged day produced two different briefings, and
+         * one of them invented a line. This is reporting — there is no
+         * sentence worth varying, and every variation is a chance to state
+         * something the facts do not support.
+         */
+        temperature: 0,
         max_tokens: 320,
       },
       {
@@ -164,9 +172,41 @@ export async function narrateBriefing(
  * It costs one re-narration per user on the day it changes, which is the same
  * price as any other fact moving.
  */
-export const PROMPT_VERSION = 3;
+export const PROMPT_VERSION = 9;
 
-function buildPrompt(
+/**
+ * Which model writes the briefing.
+ *
+ * `gpt-4.1`, chosen on measured behaviour rather than on tier. Run three times
+ * each against one real day's facts:
+ *
+ *   gpt-4o-mini   split a SINGLE appointment across three sentences, 3 times
+ *                 out of 3, so a reader could not tell whether the person named
+ *                 was the one that had been completed
+ *   gpt-4.1-mini  obeyed that rule, then called two enquiries "2 new clients"
+ *                 and silently dropped one of the two names, 3 times out of 3
+ *   gpt-4.1       correct and identical on all three runs
+ *
+ * `gpt-4.1-mini` is not a middle option: calling an enquiry a client is a
+ * factual error the owner would act on, and neither guard in this file can
+ * catch it — no number is wrong.
+ *
+ * Cost is $0.0033 a briefing against $0.0003, which is one call per business
+ * per day: about $100 a month at a thousand businesses. This is the first thing
+ * an owner reads each morning and the surface where a wrong word misleads most.
+ *
+ * Overridable by env so it can be rolled back without a deploy, per the
+ * project rule that model choice is configuration rather than a constant.
+ */
+export function briefingModel(): string {
+  return process.env.BUSINESS_OS_BRIEFING_MODEL || OPENAI_MODELS.GPT_41;
+}
+
+/**
+ * Exported for comparison harnesses that measure one prompt across models.
+ * Not part of the module's contract — `narrateBriefing` is.
+ */
+export function buildPrompt(
   facts: BriefingFacts,
   language: BriefingLanguage,
   businessType: BusinessType
@@ -190,10 +230,22 @@ function buildPrompt(
     '6. Write every count as its number. "2 clients are ready", never "clients are ready".',
     '7. The JSON field names are English labels for the data. NEVER copy a field name into',
     '   your sentence — every word you write must be in the target language.',
+    '8. A subject with no field in the JSON does not exist. If there is no `ready`,',
+    '   say nothing about readiness; no `newLeads`, nothing about enquiries; no',
+    '   `payments`, nothing about money owed. Absent is not zero and not "none" —',
+    '   it is a subject you may not raise at all.',
+    '9. Every number you write must come from the field you are writing about.',
+    '   Never reuse a figure from one fact in a sentence about another.',
     '',
     'WHAT THE FIELDS MEAN — read these before writing:',
     '- receivedToday: money that ARRIVED today. Good news — report it as money in,',
     '  never as something owed or outstanding. Do not confuse it with payments below.',
+    '- receivedCount: how many separate PAYMENTS that money arrived in. It is a',
+    '  count of transactions, NOT of people: "$1,750 across 2 payments" is right,',
+    '  "$1,750 from 2 trainees" is wrong and the platform cannot know who paid.',
+    '- paymentsSummary: money owed, TOTALLED rather than listed, because there are',
+    '  more than two debts. Report it as ONE line: how many people, the total, and',
+    '  the largest. Never invent the individual amounts — they are not here.',
     '- payments: money someone STILL OWES the business. It has NOT been paid.',
     '  Never describe it as paid, received, settled or collected. The owner needs to chase it.',
     '- awaitingIntake: these people have NOT returned their intake form yet.',
@@ -203,6 +255,9 @@ function buildPrompt(
     '- allReady: every appointment today is ready; nothing is outstanding on them.',
     '- completed: appointments that have ALREADY HAPPENED. Say so as a fact about the',
     '  day — never as something outstanding, and never as a reason to chase anyone.',
+    '- only: THE single appointment of the day, with its state. When this is present',
+    '  there are no counts to report — write ONE sentence naming the person, the',
+    '  time and the state, and nothing else about appointments.',
     '- newLeads: people who got in touch for the first time today. `count` is how',
     '  many there were; `people` are the ones you may name, with `note` being what',
     '  they asked about. Name them where you can — it is the point of the line.',
@@ -235,12 +290,20 @@ function buildPrompt(
     'says clients. Choose the natural word for this business and this language.',
     'Never use CRM vocabulary: not "contacts", not "leads", not "records", not',
     '"entries". Those are the database\'s words, never the owner\'s.',
+    'That word names the PEOPLE and nothing else. An appointment is an',
+    'appointment; a session is a session. "2 trainees are already completed" is',
+    'wrong — the appointments completed, not the people.',
     'If you cannot tell what kind of business it is, say "clients" in the target language.',
     '',
     'FORMAT: a list, one fact per line, separated by newlines.',
     'Each line is a single short sentence — under about ten words — that stands on its own.',
     'No bullet characters, no numbering, no headings, no greeting, no sign-off, no blank lines.',
-    'At most six lines, fewer when there is less to say.',
+    'AT MOST SIX LINES. This is a hard limit, not a preference: a briefing read',
+    'over coffee stops being read at about six. A busy day does NOT earn more',
+    'lines — it earns shorter ones. Combine related facts into one sentence',
+    'rather than giving each its own, and if something must go, drop from the',
+    'BOTTOM of the order below: the outlook goes before the money, and the money',
+    'goes before the day itself.',
     '',
     /*
      * The order is fixed here because it was previously fixed nowhere.
@@ -255,19 +318,21 @@ function buildPrompt(
      * This list mirrors the fallback step for step. Change one and change the
      * other, or the card starts depending on whether the model was reachable.
      */
-    'ORDER: report the facts in this sequence, skipping anything absent.',
-    '1. How many appointments there are today.',
-    '2. How many of them are already completed.',
-    '3. How many are ready.',
-    '4. Anyone who has not returned an intake form.',
-    '5. Anyone who has not paid for today\'s appointment.',
-    '6. Money that came in today.',
-    '7. Money still owed.',
-    '8. Cancellations.',
-    '9. Which appointment is first, and when.',
-    '10. What is coming next: new enquiries, quotes, the next appointment.',
-    'The day comes before the money. Never open with an amount when there are',
-    'appointments to report — takings are the result of the day, not its headline.',
+    'ORDER: six lines, in this order of importance. Combine within a line;',
+    'never spend two lines on one subject.',
+    '1. The day: how many appointments, and which is FIRST, with the time.',
+    '   These belong together — "6 appointments today, first is Moshe at 09:00"',
+    '   is one line and tells the owner what they are walking into.',
+    '2. What is outstanding on today: how many are ready, who has not returned',
+    '   intake, who has not paid. One line, names where there is room.',
+    '3. Money that came IN today.',
+    '4. Money still OWED: the total, how many people, who owes most.',
+    '5. Cancellations, as openings in the day rather than as losses.',
+    '6. What is coming: new enquiries by name, and quotes needing attention.',
+    '',
+    'If a day is so full that six lines cannot hold it, SHORTEN the lines and',
+    'combine harder — do not drop subject 4 or 5 to give subject 1 more room.',
+    'Money owed and a cancelled slot are decisions the owner makes today.',
     'The lines above name what to cover in what order. They are not phrasings to',
     'copy — write each fact in your own natural sentence.',
     '',
@@ -301,9 +366,32 @@ function buildPrompt(
 function toPromptShape(facts: BriefingFacts) {
   const { appointments, money } = facts;
 
+  /*
+   * With ONE appointment, the counts are not sent at all.
+   *
+   * Telling the model there is 1 appointment, that 1 is completed, and who it
+   * is with invites three sentences about one thing — and no instruction
+   * reliably stops that, because each line is individually true. The fix is the
+   * same one this file already applies to empty arrays: what is absent cannot
+   * be narrated. So the singular day sends the appointment itself, with its
+   * state attached, and nothing to count.
+   */
+  const singleAppointment =
+    appointments.total === 1 && appointments.first
+      ? {
+          name: appointments.first.name,
+          time: appointments.first.timeLocal,
+          service: appointments.first.serviceName,
+          ownerNote: appointments.first.note,
+          state: appointments.completed === 1 ? 'already completed' : undefined,
+        }
+      : null;
+
   const shape: Record<string, unknown> = {
-    date: facts.day.date,
-    appointments: {
+    appointments: singleAppointment
+      ? // One appointment: the appointment itself, nothing to count.
+        { only: singleAppointment }
+      : {
       total: appointments.total,
       /*
        * Readiness is a flag when it is universal and a count only when it is
@@ -341,7 +429,7 @@ function toPromptShape(facts: BriefingFacts) {
           reason: c.reason,
         })),
       }),
-    },
+        },
   };
 
   if (money.receivedToday > 0) {
@@ -353,20 +441,34 @@ function toPromptShape(facts: BriefingFacts) {
 
   if (money.owed.length > 0) {
     /*
-     * `overdue` is present only when true.
+     * AGGREGATED once there are more than two.
      *
-     * Sent as `false` the model reports it — "The payment is not overdue." —
-     * which is the same failure as sending an empty array: a field with a
-     * falsy value is still a fact to state. Nothing absent can be narrated.
+     * Sending five debts produced five lines, because each one is a true fact
+     * and the model narrates what it is given. On a busy day that alone
+     * overran the six-line brief the FORMAT rules ask for, and buried the
+     * appointment the owner is about to walk into under a list of names.
+     *
+     * Two or fewer are still named: "Acme owes $2,400" is more use than "2
+     * clients owe $2,880" when there are only two. Beyond that the total plus
+     * the biggest one carries the same decision — who to chase first — in one
+     * sentence instead of five.
      */
-    shape.payments = money.owed.slice(0, 5).map(o => ({
-      name: o.name,
-      // Pre-formatted, so the model copies a string rather than composing one
-      // from a number and a currency code — which produced "200 USD" where a
-      // reader expects "$200".
-      amount: formatMoney(o.amount, o.currency),
-      ...(o.overdue && { overdue: true }),
-    }));
+    if (money.owed.length <= 2) {
+      shape.payments = money.owed.map(o => ({
+        name: o.name,
+        amount: formatMoney(o.amount, o.currency),
+        ...(o.overdue && { overdue: true }),
+      }));
+    } else {
+      const largest = [...money.owed].sort((a, b) => b.amount - a.amount)[0];
+      const overdueCount = money.owed.filter(o => o.overdue).length;
+      shape.paymentsSummary = {
+        people: money.owed.length,
+        total: formatMoney(money.totalOwed, money.currency),
+        largest: { name: largest.name, amount: formatMoney(largest.amount, largest.currency) },
+        ...(overdueCount > 0 && { overdue: overdueCount }),
+      };
+    }
   }
 
   /*
@@ -478,11 +580,37 @@ export function findUnsupportedFigures(narrative: string, facts: BriefingFacts):
   walk(toPromptShape(facts));
 
   const { appointments } = facts;
-  // Counts the model may state that are not themselves fields in the payload.
+  /*
+   * Counts the model may state that are not themselves fields in the payload.
+   *
+   * The allowlist is built from the FACTS, not from what happens to have been
+   * sent. `total` and `completed` are the case that proves why: on a day with
+   * one appointment the shape deliberately omits both — there is nothing to
+   * count, only somebody to name — and a briefing that still said "1
+   * appointment" was then flagged as fabricating a figure that is plainly true.
+   *
+   * The guard's question is "is this number real", not "did we mention it".
+   */
+  permit(appointments.total);
+  permit(appointments.completed);
+  permit(appointments.ready);
   permit(appointments.awaitingIntake.length);
   permit(appointments.cancelled.length);
-  // The date the briefing is about, in every shape it might be written.
-  for (const part of facts.day.date.split('-')) permit(Number(part));
+  permit(appointments.awaitingPayment.length);
+
+  /*
+   * The date is NOT permitted, and is no longer sent.
+   *
+   * It used to be, "in every shape it might be written" — which licensed every
+   * component of it. On 2026-09-17 that quietly allowed 2026, 9 and 17 to
+   * appear anywhere in the prose, so "9 new enquiries" passed this check on a
+   * day with one, purely because it was September. A guard against invented
+   * figures that permits 1-31 and 1-12 all month is not much of a guard.
+   *
+   * Nothing is lost by dropping it: the model never writes the date. The card
+   * renders "Thursday 17 September" in its own header, and the FORMAT rules
+   * forbid headings and greetings, which is where a date would otherwise go.
+   */
 
   /*
    * One token per written number, thousands separators and decimals included.
@@ -557,7 +685,21 @@ export function composeFallback(facts: BriefingFacts, language: BriefingLanguage
   const { appointments, money } = facts;
   const lines: string[] = [];
 
-  if (appointments.total > 0) {
+  /*
+   * One appointment is one sentence.
+   *
+   * Counting it, then counting how many of it are done, then naming who it is
+   * with, is three lines about one thing — and the reader cannot tell whether
+   * the person named is the one that was completed. With a single appointment
+   * the honest form names the person and the state together.
+   */
+  if (appointments.total === 1 && appointments.first) {
+    lines.push(
+      appointments.completed === 1
+        ? phrase.onlyOneDone(appointments.first.name, appointments.first.timeLocal)
+        : phrase.onlyOne(appointments.first.name, appointments.first.timeLocal)
+    );
+  } else if (appointments.total > 0) {
     lines.push(phrase.appointments(appointments.total));
 
     /*
@@ -600,15 +742,33 @@ export function composeFallback(facts: BriefingFacts, language: BriefingLanguage
     );
   }
 
-  for (const entry of money.owed.slice(0, 3)) {
-    lines.push(phrase.owes(entry.name, formatAmount(entry.amount, entry.currency)));
+  /*
+   * Totalled past two, for the same reason the prompt shape aggregates: three
+   * debts became three lines, and on a busy day the composer produced eighteen
+   * lines for a card that asks for six.
+   */
+  if (money.owed.length <= 2) {
+    for (const entry of money.owed) {
+      lines.push(phrase.owes(entry.name, formatAmount(entry.amount, entry.currency)));
+    }
+  } else {
+    lines.push(
+      phrase.owedSummary(
+        money.owed.length,
+        formatAmount(money.totalOwed, money.currency),
+        money.owed.reduce((a, b) => (a.amount >= b.amount ? a : b)).name
+      )
+    );
   }
 
   for (const cancellation of appointments.cancelled.slice(0, 2)) {
     lines.push(cancellation.timeLocal ? phrase.cancelledAt(cancellation.timeLocal) : phrase.cancelled());
   }
 
-  if (appointments.first) {
+  // Skipped when the single-appointment line above already named this person:
+  // "One appointment today: Moshe at 09:00" followed by "Your first appointment
+  // is Moshe at 09:00" is the same sentence twice.
+  if (appointments.first && appointments.total !== 1) {
     lines.push(phrase.first(appointments.first.name, appointments.first.timeLocal));
   }
 
@@ -732,9 +892,15 @@ interface FallbackPhrases {
   /** `money` is already formatted; `n` is how many payments made it up. */
   receivedToday: (money: string, n: number) => string;
   owes: (name: string, amount: string) => string;
+  /** Several debts, totalled rather than listed. */
+  owedSummary: (people: number, total: string, largest: string) => string;
   cancelledAt: (time: string) => string;
   cancelled: () => string;
   first: (name: string, time: string) => string;
+  /** The day's only appointment, named rather than counted. */
+  onlyOne: (name: string, time: string) => string;
+  /** The day's only appointment, already done. */
+  onlyOneDone: (name: string, time: string) => string;
   quiet: () => string;
   /** The next appointment beyond today. `day` arrives already localised. */
   next: (name: string, day: string, time: string) => string;
@@ -789,10 +955,13 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
     awaitingIntake: name => `${name} hasn't completed intake.`,
     awaitingPayment: name => `${name} hasn't paid yet.`,
     owes: (name, amount) => `${name} still owes ${amount}.`,
+    owedSummary: (people, total, largest) => `${people} clients owe you ${total}, ${largest} the most.`,
     receivedToday: (money, n) => (n === 1 ? `${money} came in today.` : `${money} came in today, across ${n} payments.`),
     cancelledAt: time => `Your ${time} appointment was cancelled, leaving an opening.`,
     cancelled: () => 'An appointment was cancelled, leaving an opening.',
     first: (name, time) => `Your first appointment is ${name} at ${time}.`,
+    onlyOne: (name, time) => `One appointment today: ${name} at ${time}.`,
+    onlyOneDone: (name, time) => `One appointment today: ${name} at ${time}, already done.`,
     quiet: () => 'No activity we could see for today.',
     next: (name, day, time) => `Your next is ${name}, ${day} at ${time}.`,
     newLeads: (n, people) => {
@@ -819,10 +988,13 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
     awaitingIntake: name => `${name} no ha completado el formulario.`,
     awaitingPayment: name => `${name} todavía no ha pagado.`,
     owes: (name, amount) => `${name} todavía debe ${amount}.`,
+    owedSummary: (people, total, largest) => `${people} clientes te deben ${total}, ${largest} lo mayor.`,
     receivedToday: (money, n) => (n === 1 ? `Entraron ${money} hoy.` : `Entraron ${money} hoy, en ${n} pagos.`),
     cancelledAt: time => `Tu cita de las ${time} se canceló y dejó un hueco libre.`,
     cancelled: () => 'Se canceló una cita y dejó un hueco libre.',
     first: (name, time) => `Tu primera cita es ${name} a las ${time}.`,
+    onlyOne: (name, time) => `Una cita hoy: ${name} a las ${time}.`,
+    onlyOneDone: (name, time) => `Una cita hoy: ${name} a las ${time}, ya realizada.`,
     quiet: () => 'No detectamos actividad para hoy.',
     next: (name, day, time) => `Tu próxima es ${name}, el ${day} a las ${time}.`,
     newLeads: (n, people) => {
@@ -847,10 +1019,13 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
     awaitingIntake: name => `${name} לא השלים את הטופס.`,
     awaitingPayment: name => `${name} עדיין לא שילם.`,
     owes: (name, amount) => `${name} עדיין חייב ${amount}.`,
+    owedSummary: (people, total, largest) => `${people} לקוחות חייבים ${total}, ${largest} הכי הרבה.`,
     receivedToday: (money, n) => (n === 1 ? `${money} נכנסו היום.` : `${money} נכנסו היום, ב-${n} תשלומים.`),
     cancelledAt: time => `הפגישה שלך ב-${time} בוטלה ונפתח חלון פנוי.`,
     cancelled: () => 'פגישה בוטלה ונפתח חלון פנוי.',
     first: (name, time) => `הפגישה הראשונה שלך היא ${name} בשעה ${time}.`,
+    onlyOne: (name, time) => `פגישה אחת היום: ${name} בשעה ${time}.`,
+    onlyOneDone: (name, time) => `פגישה אחת היום: ${name} בשעה ${time}, כבר התקיימה.`,
     quiet: () => 'לא זיהינו פעילות להיום.',
     next: (name, day, time) => `הפגישה הבאה שלך היא ${name}, ב${day} בשעה ${time}.`,
     newLeads: (n, people) => {

@@ -515,6 +515,7 @@ export class BookingEmailService {
 
       // Send email
       const result = await sendEmail({
+        kind: 'transactional',
         to: [clientEmail],
         subject,
         html,
@@ -681,6 +682,7 @@ export class BookingEmailService {
 
       // Send email
       const result = await sendEmail({
+        kind: 'transactional',
         to: [paymentData.customerEmail],
         subject,
         html,
@@ -837,6 +839,7 @@ export class BookingEmailService {
 
       // Send email
       const result = await sendEmail({
+        kind: 'transactional',
         to: [clientEmail],
         subject,
         html,
@@ -950,6 +953,7 @@ export class BookingEmailService {
 
       // Send email
       const result = await sendEmail({
+        kind: 'transactional',
         to: [clientEmail],
         subject,
         html,
@@ -1050,6 +1054,7 @@ export class BookingEmailService {
 
       // Send email
       const result = await sendEmail({
+        kind: 'transactional',
         to: [formData.email],
         subject,
         html,
@@ -1177,6 +1182,7 @@ export class BookingEmailService {
 
       // Send email
       const result = await sendEmail({
+        kind: 'transactional',
         to: [formData.email],
         subject,
         html,
@@ -1388,6 +1394,7 @@ export class BookingEmailService {
 
       // Send email
       const result = await sendEmail({
+        kind: 'transactional',
         to: [clientEmail],
         subject,
         html,
@@ -1544,6 +1551,7 @@ export class BookingEmailService {
       });
 
       const result = await sendEmail({
+        kind: 'transactional',
         to: [clientEmail],
         subject,
         html,
@@ -1653,6 +1661,7 @@ export class BookingEmailService {
 
       // Send email
       const result = await sendEmail({
+        kind: 'transactional',
         to: [clientEmail],
         subject,
         html,

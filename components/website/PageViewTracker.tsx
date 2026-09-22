@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { resolveVisitorSessionId } from '@/lib/analytics/visitorSession';
 
 /**
  * Records one page view, from the browser.
@@ -41,6 +42,16 @@ export function PageViewTracker({ subdomain }: PageViewTrackerProps) {
       utm_source: params.get('utm_source') || undefined,
       utm_medium: params.get('utm_medium') || undefined,
       utm_campaign: params.get('utm_campaign') || undefined,
+      /*
+       * Who is reading this, so views can be counted per VISITOR.
+       *
+       * Prefers the `_sid` the smart-link redirect put in the URL, which is
+       * what joins a click to the view it produced and, later, to the booking:
+       * `SmartLinkRepository.markConversion()` matches on exactly this id.
+       * Without it every view was an anonymous row and no conversion could ever
+       * be attributed to a link.
+       */
+      session_id: resolveVisitorSessionId(),
       source: 'public',
     };
 

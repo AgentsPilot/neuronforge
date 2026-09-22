@@ -35,6 +35,8 @@ const bodySchema = z.object({
   utm_medium: z.string().max(255).optional(),
   utm_campaign: z.string().max(255).optional(),
   source: z.string().max(50).optional(),
+  /** The browser's visitor id, or the `_sid` a smart link handed it. */
+  session_id: z.string().max(128).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -46,7 +48,7 @@ export async function POST(request: NextRequest) {
     if (!parsed.success) {
       return NextResponse.json({ success: false, error: 'Invalid request body' }, { status: 400 });
     }
-    const { page_id, subdomain: providedSubdomain, referrer, utm_source, utm_medium, utm_campaign } =
+    const { page_id, subdomain: providedSubdomain, referrer, utm_source, utm_medium, utm_campaign, session_id } =
       parsed.data;
 
     const user = await getUser();
@@ -119,6 +121,19 @@ export async function POST(request: NextRequest) {
       utm_source: utm_source ?? null,
       utm_medium: utm_medium ?? null,
       utm_campaign: utm_campaign ?? null,
+      session_id: session_id ?? null,
+      /*
+       * Where the visitor is, from the edge rather than from a lookup.
+       *
+       * Vercel resolves this before the request reaches us and it costs
+       * nothing to read. The column has existed and been null on every row;
+       * for a business deciding where its clients come from, "most of your
+       * traffic is not in your country" is worth knowing.
+       */
+      country_code:
+        request.headers.get('x-vercel-ip-country') ||
+        request.headers.get('cf-ipcountry') ||
+        null,
       is_owner_view: isOwnerView,
     });
 

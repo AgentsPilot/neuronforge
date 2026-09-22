@@ -2479,6 +2479,72 @@ function validateNoFabricatedThreshold(plan: Plan, problems: string[]): void {
   }
 }
 
+/**
+ * Two steps that ask the database exactly the same thing.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE DIVERGENCE THIS CLOSES
+ *
+ * Three phrasings of one question — "how many proposals have I sent?" — were
+ * planned three different ways, and all three sit in the production plan cache:
+ *
+ *   count(*) + count(* where sent)   correct: a figure and what it is out of
+ *   count(*) + count(*)              the filter is GONE; answers a different question
+ *   find where sent, {count}         the page size, not the count
+ *
+ * The second is this rule. Two identical steps cannot be answering two
+ * questions, so one of them is a predicate the model dropped — and the sentence
+ * built over them reads as a comparison while both halves are the same number.
+ *
+ * WHY IDENTITY, NOT "UNCITED" OR "UNFILTERED"
+ *
+ * An unfiltered sibling beside a filtered one is the CORRECT shape for "3 of
+ * the 7" and must survive. A step the answer does not cite may still feed
+ * another step. Byte-identical query shape is the one case that cannot be
+ * legitimate, so it is the only one rejected — this narrows the grammar rather
+ * than adding a judgement.
+ *
+ * Names no entity, no field and no language: it is a statement about plan
+ * shape, so it holds for every question, including ones nobody has asked yet.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function validateNoDuplicateSteps(plan: Plan, problems: string[]): void {
+  const seen = new Map<string, string>();
+
+  plan.steps.forEach((step, index) => {
+    const s = step as unknown as Record<string, unknown>;
+    if (s.op !== 'find' && s.op !== 'compute') return;
+
+    // Everything that decides what rows come back. `id` and the answer text are
+    // deliberately excluded — two steps differing only by name are duplicates.
+    const shape = JSON.stringify({
+      op: s.op,
+      entity: s.entity,
+      where: s.where ?? null,
+      agg: s.agg ?? null,
+      group_by: s.group_by ?? null,
+      order_by: s.order_by ?? null,
+      limit: s.limit ?? null,
+      include: s.include ?? null,
+      same_rows: s.same_rows ?? null,
+    });
+
+    const id = (s.id as string) ?? `s${index + 1}`;
+    const first = seen.get(shape);
+
+    if (first) {
+      problems.push(
+        `step '${id}' asks exactly what step '${first}' already asked. Two identical ` +
+          `steps cannot answer two questions — if one of them was meant to be narrowed, ` +
+          `add the predicate; if not, emit a single step.`
+      );
+      return;
+    }
+
+    seen.set(shape, id);
+  });
+}
+
 export function validatePlan(plan: Plan, userMessage?: string): string[] {
   const problems: string[] = [];
 
@@ -2496,6 +2562,7 @@ export function validatePlan(plan: Plan, userMessage?: string): string[] {
   validateSendAddress(plan, problems);
   validateNoFabricatedThreshold(plan, problems);
   validateNotAScattergun(plan, problems);
+  validateNoDuplicateSteps(plan, problems);
   validateAnalyseStep(plan, problems);
   validateNamedDateHasDigits(plan, problems, userMessage);
   validateAnswer(plan, problems, userMessage);

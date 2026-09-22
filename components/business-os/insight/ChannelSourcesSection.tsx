@@ -124,6 +124,9 @@ const CHANNEL_COLORS: Record<Channel, string> = {
   tiktok: '#141414',
   linkedin: '#0A66C2',
   youtube: '#E8332A',
+  // Slate: a printed code has no brand of its own, and borrowing one would
+  // imply a platform it did not come from.
+  qr: '#64748B',
   email: '#8B5CF6',
   referral: '#64748B',
   direct: '#94A3B8',
@@ -143,6 +146,7 @@ export const CHANNEL_LABELS: Record<Channel, Record<string, string>> = {
   linkedin: { en: 'LinkedIn', es: 'LinkedIn', he: 'לינקדאין' },
   youtube: { en: 'YouTube', es: 'YouTube', he: 'יוטיוב' },
   email: { en: 'Email', es: 'Correo', he: 'אימייל' },
+  qr: { en: 'QR / print', es: 'QR / impreso', he: 'QR / דפוס' },
   referral: { en: 'Other sites', es: 'Otros sitios', he: 'אתרים אחרים' },
   direct: { en: 'Direct / unknown', es: 'Directo / desconocido', he: 'ישיר / לא ידוע' },
 };

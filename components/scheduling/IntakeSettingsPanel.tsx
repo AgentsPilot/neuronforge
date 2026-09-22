@@ -33,8 +33,6 @@ import {
   Eye,
   Pencil,
   Trash2,
-  ArrowUp,
-  ArrowDown,
   Plus,
   Sparkles,
   AlertCircle,
@@ -45,6 +43,22 @@ import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { TabFooter } from '@/components/business-os/settings/TabFooter';
 import { createLogger } from '@/lib/logger';
 import type { IntakeForm, IntakeQuestion } from '@/lib/business-os/intake/types';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { IntakeQuestionRow } from './intake/IntakeQuestionRow';
 import { IntakeCustomerPreview } from './intake/IntakeCustomerPreview';
 import { AddIntakeQuestion } from './intake/AddIntakeQuestion';
@@ -280,19 +294,31 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
      */
     saveQuestions(form.questions.filter(q => q.id !== id && q.showIf?.questionId !== id));
 
-  const move = (id: string, direction: -1 | 1) => {
-    const index = form.questions.findIndex(q => q.id === id);
-    const target = index + direction;
-    if (index < 0 || target < 0 || target >= form.questions.length) return;
+  const sensors = useSensors(
+    // 8px before a drag begins, matching the website sections — enough that a
+    // click on the handle is not read as a one-pixel drag.
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
 
-    const next = [...form.questions];
-    [next[index], next[target]] = [next[target], next[index]];
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const from = form.questions.findIndex(q => q.id === active.id);
+    const to = form.questions.findIndex(q => q.id === over.id);
+    if (from === -1 || to === -1) return;
+
+    const next = arrayMove(form.questions, from, to);
 
     /*
-     * A follow-up cannot be moved above the question it depends on, and its
-     * parent cannot be moved below it. The server refuses that order anyway;
-     * refusing it here means the row simply does not move, rather than moving
-     * and springing back when the save fails.
+     * A follow-up cannot be dropped above the question it depends on, and its
+     * parent cannot be dropped below it. The server refuses that order anyway;
+     * refusing it here means the row springs back to where it was, rather than
+     * settling into a position and then jumping when the save fails.
+     *
+     * Kept exactly as it was when this was two arrow buttons — dragging makes
+     * the broken order easier to REACH, not less broken.
      */
     const positions = new Map(next.map((q, i) => [q.id, i]));
     const broken = next.some(
@@ -435,27 +461,39 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
                 />
               ) : (
                 <div className="space-y-2">
-                  {form.questions.map((question, index) => (
-                    <IntakeQuestionRow
-                      key={question.id}
-                      question={question}
-                      index={index}
-                      total={form.questions.length}
-                      // Drawn under its parent so a condition reads as a shape
-                      // rather than as a rule the owner has to decode.
-                      parentLabel={
-                        question.showIf
-                          ? form.questions.find(q => q.id === question.showIf!.questionId)?.label
-                          : undefined
-                      }
-                      onChange={patch => updateQuestion(question.id, patch)}
-                      onDelete={() => deleteQuestion(question.id)}
-                      onMoveUp={() => move(question.id, -1)}
-                      onMoveDown={() => move(question.id, 1)}
-                      isRTL={isRTL}
-                      t={t}
-                    />
-                  ))}
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    modifiers={[restrictToVerticalAxis]}
+                    onDragEnd={handleDragEnd}
+                  >
+                    <SortableContext
+                      items={form.questions.map(q => q.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      <div className="space-y-2">
+                        {form.questions.map((question, index) => (
+                          <IntakeQuestionRow
+                            key={question.id}
+                            question={question}
+                            index={index}
+                            // Drawn under its parent so a condition reads as a
+                            // shape rather than a rule the owner has to decode.
+                            parentLabel={
+                              question.showIf
+                                ? form.questions.find(
+                                    q => q.id === question.showIf!.questionId
+                                  )?.label
+                                : undefined
+                            }
+                            onChange={patch => updateQuestion(question.id, patch)}
+                            onDelete={() => deleteQuestion(question.id)}
+                            t={t}
+                          />
+                        ))}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
 
                   <AddIntakeQuestion onAdd={addQuestion} t={t} isRTL={isRTL} />
                 </div>

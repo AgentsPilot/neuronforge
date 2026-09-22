@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
+import { bustSiteCache } from '@/lib/website-builder/siteCache';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsitePageRepository, PageTheme } from '@/lib/repositories/WebsitePageRepository';
 import { WebsiteBlockRepository, WebsiteBlockInsert } from '@/lib/repositories/WebsiteBlockRepository';
@@ -170,6 +171,9 @@ export async function POST(
 
     // Fetch updated page
     const updatedPage = await pageRepo.findById(pageId, user.id);
+
+    // Every section on the page was just replaced.
+    bustSiteCache(updatedPage.data?.subdomain ?? existingPage.data.subdomain);
 
     requestLogger.info({
       pageId,

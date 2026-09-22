@@ -48,6 +48,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const outcome = await sendBookingLink(contactId, user.id, {
       serviceId: validated.service_id ?? null,
+      // A person clicked Send, in reply to an enquiry. Transactional.
+      trigger: 'owner',
     });
 
     if (!outcome.ok) {

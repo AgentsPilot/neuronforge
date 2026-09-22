@@ -429,8 +429,25 @@ export class ImpactProjector {
   private projectOpsUtilizationLow(insight: Insight, currency: string): ImpactProjection {
     const utilization = insight.current_value || 0;
     const unfilledHours = insight.affected_count || 0;
-    const avgBookingValue = 75;
-    const potentialRevenue = unfilledHours * avgBookingValue;
+
+    /*
+     * What a booking is actually worth here, or nothing.
+     *
+     * This was `const avgBookingValue = 75`, multiplied by the empty hours and
+     * shown to the owner as their own potential revenue. Nobody chose $75: it
+     * was the placeholder left behind when the detector stopped guessing, and
+     * on the account where it was caught the real service price was $100, so
+     * the figure was wrong in the currency AND wrong in the arithmetic.
+     *
+     * The detector now measures it from what has actually been charged and
+     * passes it through. When it could not measure one, there is no money
+     * sentence at all — the same rule the rest of this module follows: a
+     * detector that cannot price a business reports no impact rather than a
+     * figure somebody picked.
+     */
+    const measured = (insight.process_parameters as Record<string, unknown> | null)?.avg_booking_value;
+    const avgBookingValue = typeof measured === 'number' && measured > 0 ? measured : null;
+    const potentialRevenue = avgBookingValue === null ? null : unfilledHours * avgBookingValue;
 
     return {
       doNothing: {
@@ -440,13 +457,26 @@ export class ImpactProjector {
           key: 'insight.ops_utilization_low.do_nothing',
           params: { percent: (100 - utilization).toFixed(0) },
         },
-        details: `~${unfilledHours} hours available this week, potential revenue of ~${formatMoney(potentialRevenue, currency)}`,
-        detailsLine: {
-          text: `~${unfilledHours} hours available this week, potential revenue of ~${formatMoney(potentialRevenue, currency)}`,
-          key: 'insight.ops_utilization_low.do_nothing_detail',
-          params: { hours: unfilledHours, amount: formatMoney(potentialRevenue, currency) },
-        },
-        projectedLoss: potentialRevenue,
+        /*
+         * The hours are measured; the money is only sometimes. With no priced
+         * booking behind it the sentence ends at the hours, which is the part
+         * that is true, rather than carrying a figure nobody can check.
+         */
+        details: potentialRevenue === null
+          ? `~${unfilledHours} hours available this week`
+          : `~${unfilledHours} hours available this week, potential revenue of ~${formatMoney(potentialRevenue, currency)}`,
+        detailsLine: potentialRevenue === null
+          ? {
+              text: `~${unfilledHours} hours available this week`,
+              key: 'insight.ops_utilization_low.do_nothing_detail_hours',
+              params: { hours: unfilledHours },
+            }
+          : {
+              text: `~${unfilledHours} hours available this week, potential revenue of ~${formatMoney(potentialRevenue, currency)}`,
+              key: 'insight.ops_utilization_low.do_nothing_detail',
+              params: { hours: unfilledHours, amount: formatMoney(potentialRevenue, currency) },
+            },
+        projectedLoss: potentialRevenue ?? undefined,
       },
       letMeHandleIt: {
         summary: `Consider promoting available slots`,

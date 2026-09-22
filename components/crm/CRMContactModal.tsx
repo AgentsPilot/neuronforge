@@ -31,15 +31,9 @@ interface CRMContactModalProps {
   prefill?: Record<string, any>; // Pre-fill values for new contact (from chat)
 }
 
-const SOURCE_OPTIONS = [
-  { value: 'google', labelKey: 'crm.source.google', icon: SearchIcon },
-  { value: 'facebook', labelKey: 'crm.source.facebook', icon: Facebook },
-  { value: 'instagram', labelKey: 'crm.source.instagram', icon: MessageCircle },
-  { value: 'website', labelKey: 'crm.source.website', icon: Globe },
-  { value: 'referral', labelKey: 'crm.source.referral', icon: UsersIcon },
-  { value: 'phone_call', labelKey: 'crm.source.phone_call', icon: PhoneIcon },
-  { value: 'in_person', labelKey: 'crm.source.in_person', icon: User }
-];
+// Shared with the drawer, so the two cannot drift and neither can miss a value
+// capture writes. See components/crm/contactSources.ts.
+import { CONTACT_ORIGINS, contactOrigin } from '@/components/crm/contactSources';
 
 export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpdated, prefill }: CRMContactModalProps) {
   const { t } = useLanguage();
@@ -395,15 +389,21 @@ export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpd
                 {t('crm.modal.how_found')}
               </Label>
               <div className="flex flex-wrap gap-2">
-                {SOURCE_OPTIONS.map(source => {
+                {/* Same groups as the drawer, from the same list — see
+                    components/crm/contactSources.ts. A contact added by hand has
+                    no capture metadata, so the chip is simply what is chosen. */}
+                {CONTACT_ORIGINS.map(source => {
                   const Icon = source.icon;
+                  // Derived, not compared: a contact captured as
+                  // `website_booking` has to light the Website chip.
+                  const selected = contactOrigin(formData.source)?.group === source.value;
                   return (
                     <button
                       key={source.value}
                       type="button"
                       onClick={() => setFormData(prev => ({ ...prev, source: source.value }))}
                       className={`flex items-center gap-2 px-3 py-2 text-sm font-medium border transition-all ${
-                        formData.source === source.value
+                        selected
                           ? 'border-[#8B5CF6] bg-[#8B5CF6]/10 text-[#8B5CF6]'
                           : 'border-[var(--v2-border)] bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:border-[#8B5CF6]/50'
                       }`}
@@ -411,7 +411,7 @@ export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpd
                     >
                       <Icon className="h-4 w-4" />
                       {t(source.labelKey)}
-                      {formData.source === source.value && <Check className="h-4 w-4" />}
+                      {selected && <Check className="h-4 w-4" />}
                     </button>
                   );
                 })}

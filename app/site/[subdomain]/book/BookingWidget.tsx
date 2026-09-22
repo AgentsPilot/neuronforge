@@ -8,6 +8,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { resolveVisitorSessionId } from '@/lib/analytics/visitorSession';
 import { Calendar, Clock, User, Mail, ArrowLeft, ArrowRight, Check, Loader2, ClipboardList, CreditCard, ChevronDown } from 'lucide-react';
 import PhoneInput from 'react-phone-number-input';
 import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
@@ -17,6 +18,8 @@ import type { CountryCode } from 'libphonenumber-js/core';
 import { isValidPhoneNumber } from 'react-phone-number-input';
 import { WebsiteCountrySelect } from '@/components/website/blocks/WebsiteCountrySelect';
 import 'react-phone-number-input/style.css';
+import { ConsentCheckbox } from '@/components/public/ConsentCheckbox';
+import { useConsentCopy, consentPayload } from '@/hooks/useConsentCopy';
 
 interface Service {
   id: string;
@@ -303,6 +306,14 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
   const [phoneCountry, setPhoneCountry] = useState<CountryCode>(locale === 'he' ? 'IL' : locale === 'es' ? 'ES' : 'US');
   const [notes, setNotes] = useState('');
 
+  /*
+   * Marketing consent. Unticked, optional, and it never blocks the booking —
+   * permission conditioned on getting the appointment is not freely given, so a
+   * checkbox that gates this form would destroy the thing it collects.
+   */
+  const consentCopy = useConsentCopy({ subdomain, locale });
+  const [consentGiven, setConsentGiven] = useState(false);
+
   // Intake form state
   const [intakeTemplate, setIntakeTemplate] = useState<IntakeTemplate | null>(null);
   const [hasIntake, setHasIntake] = useState(false);
@@ -571,6 +582,19 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           subdomain,
+          // Carried from the page so the click that produced this booking can
+          // be matched to it. The page's `_sid` is not visible to an API route.
+          session_id: resolveVisitorSessionId(),
+          /*
+           * Which page they booked from.
+           *
+           * The route falls back to its OWN path otherwise, so every booking
+           * ever made recorded `capture_page_url` as
+           * '/api/website/booking/create' — the one value that cannot answer
+           * which page converts. The contact form has always sent this; the
+           * booking widget never did.
+           */
+          page_url: typeof window !== 'undefined' ? window.location.href : undefined,
           service_id: selectedService.id,
           // A product has no datetime step, so there is no slot to send. The
           // create route already reads a missing `start_time` as a booking
@@ -582,6 +606,7 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
           phone: phone || undefined,
           notes: notes || undefined,
           timezone,
+          consent: consentPayload(consentCopy, consentGiven),
           // Skip contact creation for paid services - contact will be created after payment
           skip_contact: requiresPayment
         })
@@ -1000,6 +1025,17 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
               placeholder={t.notes_placeholder}
             />
           </div>
+
+          {/* Read before the decision to confirm, never validated. */}
+          {consentCopy && (
+            <ConsentCheckbox
+              copy={consentCopy}
+              checked={consentGiven}
+              onChange={setConsentGiven}
+              disabled={submitting}
+              isRTL={isRTL}
+            />
+          )}
 
           {error && (
             <p className="text-sm text-red-600">{error}</p>

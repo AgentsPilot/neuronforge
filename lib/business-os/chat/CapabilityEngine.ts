@@ -602,6 +602,12 @@ export class CapabilityEngine {
 
   // ============== EMAIL EXECUTOR ==============
 
+  /**
+   * Not implemented. When it is: this sends owner-composed content to a client,
+   * which makes it `kind: 'marketing'` on the transport — it needs the
+   * recipient's recorded opt-in, the same as `contacts.send`. Do not reach for
+   * `kind: 'transactional'` because it is the one that always works.
+   */
   private async sendEmail(params: Record<string, unknown>): Promise<ExecutionResult> {
     // Get contact email
     const contactResult = await crmContactRepository.findById(

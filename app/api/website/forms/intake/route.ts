@@ -63,6 +63,18 @@ const TherapistIntakeFields = z.object({
   medications: z.string().optional(),
   goals: z.string().optional(),
   preferred_communication: z.enum(['phone', 'email', 'text']).optional(),
+  /*
+   * Consent to TREATMENT. Nothing to do with marketing consent, and it must
+   * never be merged with it: bundling the two would make each unspecific, and
+   * a marketing permission obtained as a condition of being treated is not
+   * freely given and does not count.
+   *
+   * Marketing consent for this flow is collected one step earlier, on the
+   * details step, and recorded there. Intake is only ever reached after it in
+   * the process flow, so asking again here would put the same question to the
+   * same person twice in one sitting. If intake ever becomes reachable on its
+   * own — a link in a booking email, say — it needs its own checkbox.
+   */
   consent_treatment: z.boolean().optional()
 });
 

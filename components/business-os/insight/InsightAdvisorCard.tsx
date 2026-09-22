@@ -36,6 +36,20 @@ export interface OperationalItem {
   waiting: number;
   labelKey: string;
   hintKey: string;
+  /**
+   * Whether the owner has already switched this on, and whether they have said
+   * no to it before.
+   *
+   * Both come from `/api/business-os/gaps` and were previously absent from this
+   * type, so the card could not tell a running automation from an unanswered
+   * offer and asked "shall I do this?" about jobs it was already doing. An
+   * owner with all three enabled saw three pages inviting them to enable them.
+   *
+   * Optional so an older caller that omits them still renders the ask, which is
+   * the safe reading of "we do not know".
+   */
+  enabled?: boolean;
+  declined?: boolean;
 }
 
 interface PendingInsight extends Omit<InsightData, 'eligible_for_automation'> {
@@ -157,6 +171,16 @@ export function InsightAdvisorCard({
    * a single running position, which is what makes this one card rather than
    * two sharing a shell.
    */
+  /*
+   * Already sorted itself out.
+   *
+   * A resolved insight rides the carousel for a day so the owner sees what
+   * happened to something they were told about. It must not offer to act: the
+   * invoice is paid, the lead booked, and "Handle it for me" on a settled thing
+   * is exactly the card that prompted this work.
+   */
+  const isResolved = insight?.status === 'resolved';
+
   const operationalItem =
     currentIndex >= insights.length ? operational[currentIndex - insights.length] : undefined;
 
@@ -209,7 +233,7 @@ export function InsightAdvisorCard({
    * implements, and offering to run one was how the card came to report success
    * for work that never started.
    */
-  const canRun = !!operationalItem || !!insight?.paired_process_id;
+  const canRun = !isResolved && (!!operationalItem || !!insight?.paired_process_id);
 
   // Get eyebrow text based on stage
   const getEyebrowText = () => {
@@ -258,7 +282,28 @@ export function InsightAdvisorCard({
       return t('insight.seen.win') || 'Wins are the only thing I can honestly report this early — they\'re facts, not judgements.';
     }
     if (cardState === 'default' && insight) {
-      return t('insight.seen.first') || 'First time I\'ve seen this. I\'ll offer to handle it standing once it has happened a few times.';
+      /*
+       * How many times this has actually been shown, not a guess.
+       *
+       * This line said "First time I've seen this" unconditionally, to every
+       * owner, about an insight that may have been sitting on their dashboard
+       * for a week — and it was true of nothing, because `surface_count` was
+       * never incremented by anything. Now that it is, the sentence can be the
+       * one the number supports.
+       *
+       * The count is what the server held when this list was fetched, so it
+       * does not include the view happening right now: 0 really is the first
+       * time.
+       */
+      const shown = insight.surface_count ?? 0;
+
+      if (shown === 0) {
+        return t('insight.seen.first') || 'First time I\'ve seen this. I\'ll offer to handle it standing once it has happened a few times.';
+      }
+      if (shown >= 3) {
+        return t('insight.seen.repeated') || 'This keeps coming back. If it is going to keep happening, I can handle it standing.';
+      }
+      return t('insight.seen.again') || 'You have seen this one before and it is still open.';
     }
     return null;
   };
@@ -317,6 +362,22 @@ export function InsightAdvisorCard({
    * jobs not yet due. The page simply leaves the carousel once answered,
    * because the parent stops sending it.
    */
+  /**
+   * What this operational page is: a job already running, one turned down, or a
+   * question not yet answered.
+   *
+   * Drives both buttons. Without it the card asked "shall I do this?" about
+   * automations the owner had already switched on, because the only thing it
+   * knew about them was the label.
+   */
+  const operationalState: 'on' | 'off' | 'unanswered' | null = !operationalItem
+    ? null
+    : operationalItem.enabled
+      ? 'on'
+      : operationalItem.declined
+        ? 'off'
+        : 'unanswered';
+
   const handleDecide = useCallback(
     async (approve: boolean) => {
       if (!operationalItem || !onOperationalDecide) return;
@@ -400,6 +461,37 @@ export function InsightAdvisorCard({
   const eyebrow = getEyebrowText();
   const seenText = getSeenText();
 
+  /**
+   * Left and right step through the pages.
+   *
+   * The keys are read as screen directions, not as back and forward: in Hebrew
+   * the card is laid out right-to-left, so the left key moves the way the eye
+   * expects it to on that screen, which is onward. Anyone who has ever used an
+   * arrow key on a carousel expects the key to follow the layout.
+   *
+   * Nothing is intercepted while the reader is typing. There is no text input
+   * on this card today, and there is no reason for a future one to lose its
+   * cursor keys to a pager.
+   */
+  const handleKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
+
+      const forward = isRTL ? event.key === 'ArrowLeft' : event.key === 'ArrowRight';
+      const next = forward ? currentIndex + 1 : currentIndex - 1;
+
+      if (next < 0 || next >= totalPages) return;
+
+      event.preventDefault();
+      onIndexChange(next);
+    },
+    [currentIndex, totalPages, isRTL, onIndexChange]
+  );
+
   // CSS Reference from mockup:
   // .adv{background:var(--card);border:1px solid var(--line);border-radius:22px;box-shadow:0 26px 60px -32px rgba(20,26,44,.3);overflow:hidden;margin-bottom:16px}
   // .adv-in{padding:20px 22px}
@@ -414,6 +506,23 @@ export function InsightAdvisorCard({
   return (
     <div
       className="adv"
+      /*
+       * Arrow keys move between pages.
+       *
+       * `role="group"` with a name, rather than a listbox or a tablist: this is
+       * a set of cards shown one at a time, not a set of options being chosen
+       * between, and announcing it as a chooser would promise a screen reader
+       * something the card does not do.
+       *
+       * `tabIndex={-1}` makes the container focusable by script and click but
+       * keeps it out of the tab order, so nobody tabbing through the dashboard
+       * lands on a whole card before reaching its buttons.
+       */
+      role={totalPages > 1 ? 'group' : undefined}
+      aria-roledescription={totalPages > 1 ? t('insight.nav.carousel') || 'Carousel' : undefined}
+      aria-label={totalPages > 1 ? t('insight.nav.position', { current: currentIndex + 1, total: totalPages }) : undefined}
+      tabIndex={totalPages > 1 ? -1 : undefined}
+      onKeyDown={totalPages > 1 ? handleKeyDown : undefined}
       style={{
         direction: isRTL ? 'rtl' : 'ltr',
         background: 'var(--v2-surface)',
@@ -434,6 +543,18 @@ export function InsightAdvisorCard({
             alignItems: 'center',
             gap: '11px',
             marginBottom: '12px',
+            /*
+             * Wrap rather than overflow.
+             *
+             * This row carries the orb, the eyebrow, the category badge and now
+             * the pager with two arrows either side. On a narrow phone that is
+             * more than fits, and the pager is the part that would have been
+             * pushed off the edge — the control the reader is least likely to
+             * already know about. Wrapping costs a line only when the
+             * alternative was losing it.
+             */
+            flexWrap: 'wrap',
+            rowGap: '8px',
           }}
         >
           {/* Orange gradient orb: .adv-orb */}
@@ -513,6 +634,28 @@ export function InsightAdvisorCard({
               >
                 {t('insight.nav.position', { current: currentIndex + 1, total: totalPages })}
               </span>
+              {/*
+                An arrow either side of the dots.
+
+                The dots alone said how many there were without saying that
+                anything could be done about it — they read as a progress
+                indicator, which is what people took them for. An arrow is the
+                one control everyone already knows means "there is another one
+                that way", and at the first page the forward arrow is the only
+                lit thing in the row, which is the signal that was missing.
+
+                Disabled at the ends rather than wrapping, so the extent is
+                legible: a dimmed back arrow on page one says this is the
+                beginning, where wrapping would just move without explaining.
+              */}
+              <PagerArrow
+                direction="back"
+                isRTL={isRTL}
+                disabled={currentIndex === 0}
+                label={t('insight.nav.prev') || 'Previous'}
+                onClick={() => onIndexChange(currentIndex - 1)}
+              />
+
               {/* Gap lives in the buttons' padding now, so the space between
                   dots is part of a hit area rather than a dead zone. */}
               <div style={{ display: 'flex', gap: 0 }}>
@@ -549,13 +692,23 @@ export function InsightAdvisorCard({
                         width: i === currentIndex ? '14px' : '6px',
                         height: '6px',
                         borderRadius: i === currentIndex ? '4px' : '50%',
-                        background: i === currentIndex ? '#F97316' : '#D6DAE6',
+                        // Inactive dots ride the theme's border colour; the
+                        // fixed light grey was near-white on a dark card.
+                        background: i === currentIndex ? '#F97316' : 'var(--v2-border)',
                         transition: 'width 0.2s, background 0.2s',
                       }}
                     />
                   </button>
                 ))}
               </div>
+
+              <PagerArrow
+                direction="forward"
+                isRTL={isRTL}
+                disabled={currentIndex >= totalPages - 1}
+                label={t('insight.nav.next') || 'Next'}
+                onClick={() => onIndexChange(currentIndex + 1)}
+              />
             </div>
           )}
         </div>
@@ -641,23 +794,49 @@ export function InsightAdvisorCard({
             */}
             {canRun && (
             <button
-              onClick={operationalItem ? () => handleDecide(true) : handleRun}
+              /*
+               * A running automation has nothing to approve, so the primary
+               * button stops being a button and becomes the status. Turning it
+               * off lives on the secondary, where the destructive choice
+               * belongs — a control labelled "Working on its own" that switches
+               * it off when pressed would be a trap.
+               */
+              disabled={operationalState === 'on'}
+              onClick={
+                operationalItem
+                  ? operationalState === 'on'
+                    ? undefined
+                    : () => handleDecide(true)
+                  : handleRun
+              }
               className="adv-btn"
               style={{
-                background: 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)',
-                color: '#FFFFFF',
+                // Running reads as a settled state rather than an offer: the
+                // orange call-to-action is what invites a press.
+                background:
+                  operationalState === 'on'
+                    ? 'rgba(34,197,94,0.14)'
+                    : 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)',
+                color: operationalState === 'on' ? '#15803D' : '#FFFFFF',
                 borderRadius: '12px',
                 padding: '11px 18px',
                 fontSize: '14px',
                 fontWeight: 600,
-                boxShadow: '0 8px 20px -9px rgba(249,115,22,0.9)',
-                border: 'none',
-                cursor: 'pointer',
+                boxShadow:
+                  operationalState === 'on' ? 'none' : '0 8px 20px -9px rgba(249,115,22,0.9)',
+                border: operationalState === 'on' ? '1.5px solid rgba(34,197,94,0.35)' : 'none',
+                cursor: operationalState === 'on' ? 'default' : 'pointer',
                 fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
               }}
             >
               {operationalItem
-                ? t('automation.approve')
+                ? operationalState === 'on'
+                  // Running. The only move left is to stop it, so the primary
+                  // button stops being an invitation.
+                  ? t('automation.running')
+                  : operationalState === 'off'
+                    ? t('automation.enable')
+                    : t('automation.approve')
                 : t('insight.action.primary') || 'Handle it for me'}
             </button>
             )}
@@ -677,10 +856,14 @@ export function InsightAdvisorCard({
                 fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
               }}
             >
-              {!canRun && !operationalItem
+              {isResolved
+                ? t('insight.action.acknowledge') || 'Got it'
+                : !canRun && !operationalItem
                 ? t('insight.action.acknowledge') || 'Got it'
                 : operationalItem
-                ? t('automation.decline')
+                ? operationalState === 'on'
+                  ? t('automation.turn_off')
+                  : t('automation.decline')
                 : t('insight.action.secondary') || 'Not now'}
             </button>
 
@@ -721,7 +904,10 @@ export function InsightAdvisorCard({
               marginTop: '16px',
               padding: '16px',
               borderRadius: '14px',
-              background: '#F8F9FC',
+              // A neutral inset panel, one step off the card. `#F8F9FC` was a
+              // light-mode wash that turned into a white slab in dark mode,
+              // under text that follows the theme tokens.
+              background: 'var(--v2-surface-hover)',
               border: '1px solid var(--v2-border)',
             }}
           >
@@ -797,8 +983,10 @@ export function InsightAdvisorCard({
           <div
             style={{
               marginTop: '18px',
-              border: '1.5px solid #B8E9D3',
-              background: '#F3FBF7',
+              // The success family that exists in BOTH themes. The literals
+              // here were a light mint that stayed light in dark mode.
+              border: '1.5px solid var(--v2-status-success-border)',
+              background: 'var(--v2-status-success-bg)',
               borderRadius: '16px',
               padding: '17px 18px',
               display: 'flex',
@@ -909,7 +1097,9 @@ export function InsightAdvisorCard({
                 alignItems: 'center',
                 gap: '12px',
                 background: 'var(--v2-surface)',
-                border: '1px solid #F3D2B4',
+                // Tinted from the accent rather than a fixed pale peach, so it
+                // stays a hairline against a dark surface instead of glowing.
+                border: '1px solid rgba(249, 115, 22, 0.32)',
                 borderRadius: '12px',
                 padding: '11px 14px',
                 flexWrap: 'wrap',
@@ -1046,8 +1236,10 @@ export function InsightAdvisorCard({
             className="auto-done"
             style={{
               marginTop: '18px',
-              border: '1.5px solid #B8E9D3',
-              background: '#F3FBF7',
+              // The success family that exists in BOTH themes. The literals
+              // here were a light mint that stayed light in dark mode.
+              border: '1.5px solid var(--v2-status-success-border)',
+              background: 'var(--v2-status-success-bg)',
               borderRadius: '16px',
               padding: '17px 18px',
               display: 'flex',
@@ -1104,5 +1296,84 @@ export function InsightAdvisorCard({
           whenever there was a pending insight. LiveDashboard owns them now, and
           shows them whether or not an insight is pending. */}
     </div>
+  );
+}
+
+/**
+ * One step back or forward through the advisor's pages.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `direction` is 'back' / 'forward' rather than 'left' / 'right', because which
+ * side of the screen those are depends on the language. In Hebrew, back is the
+ * right-hand arrow. Naming the buttons by their position would have meant the
+ * Hebrew card pointing the wrong way round, which is a bug you only see if you
+ * read Hebrew.
+ *
+ * The visible glyph flips with `isRTL`. The DOM order does not need to: the row
+ * is laid out by flexbox inside an RTL document, so the browser reverses it.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function PagerArrow({
+  direction,
+  isRTL,
+  disabled,
+  label,
+  onClick,
+}: {
+  direction: 'back' | 'forward';
+  isRTL: boolean;
+  disabled: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  const pointsLeft = isRTL ? direction === 'forward' : direction === 'back';
+
+  return (
+    <button
+      type="button"
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      aria-label={label}
+      title={label}
+      style={{
+        /*
+         * 26px. Bigger than the 6px dots were before their hit areas were
+         * widened, because this is the control most people will reach for and
+         * the card is often read on a phone.
+         */
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '26px',
+        height: '26px',
+        padding: 0,
+        border: 'none',
+        borderRadius: '50%',
+        background: 'transparent',
+        /*
+         * The whole point of the arrows: at the first page the forward one is
+         * the only lit thing in the row, and that is what says there is more to
+         * see. So the enabled state is the card's own accent rather than the
+         * muted grey the dots use.
+         */
+        color: disabled ? 'var(--v2-border)' : '#F97316',
+        cursor: disabled ? 'default' : 'pointer',
+        transition: 'color 0.2s, background 0.2s',
+      }}
+    >
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <polyline points={pointsLeft ? '15 18 9 12 15 6' : '9 18 15 12 9 6'} />
+      </svg>
+    </button>
   );
 }

@@ -79,6 +79,16 @@ export const BUSINESS_OWNED_TABLES = [
   // Intake
   'business_intake_forms',
   'user_intake_settings',
+  // The business's newsletter audience. Deleting the business deletes its list,
+  // the same as its contacts — these people gave their address to THIS business.
+  // (The record of what they CONSENTED to is separate and outlives it; see
+  // marketing_consent_events below.)
+  'business_subscribers',
+  // Marketing consent — the business's OWN wording, privacy notice and postal
+  // address. The decisions those settings produced are user-owned and outlive
+  // the business (below); this is configuration, and a new business must not
+  // inherit another's legal notice.
+  'marketing_consent_settings',
   // Email
   'email_campaigns',
   'email_sends',
@@ -89,6 +99,8 @@ export const BUSINESS_OWNED_TABLES = [
   'lead_responses',
   // What the business switched on
   'user_capabilities',
+  // Queued actions the platform takes on the business's behalf
+  'insight_actions',
   // Business chat
   'business_chat_action_log',
   'business_chat_conversation',
@@ -116,6 +128,16 @@ export const USER_OWNED_TABLES: Record<string, string> = {
   email_unsubscribes:
     'Compliance. An unsubscribe has to outlive the business that collected it, ' +
     'or rebuilding would resume mailing people who opted out.',
+
+  marketing_consent_events:
+    'Compliance, in both directions. A withdrawal has to outlive the business ' +
+    'for the same reason an unsubscribe does; a grant has to outlive it because ' +
+    'the record of what someone agreed to is the only thing that can answer a ' +
+    'complaint later, and it cannot be reconstructed after the fact.',
+
+  marketing_consent_state:
+    'The projection the send gate reads. Tied to the events above, and losing ' +
+    'it would lose every suppression they encode.',
 
   user_preferences: 'Theme, sidebar, default model. The person\'s settings, not the business\'s.',
   profiles: 'Account level.',

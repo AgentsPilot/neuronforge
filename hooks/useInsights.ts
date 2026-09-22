@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { InsightData, InsightProjection, InsightProcess } from '@/components/business-os/insight';
 
 // ===========================
@@ -116,6 +116,14 @@ export interface VectorMaturityData {
     firstBookingAt: string | null;
     firstClientAt: string | null;
     convCrossedAt: string | null;
+    /**
+     * Standing automations switched on right now.
+     *
+     * Separate from `firstAutomationAt`, which records that the owner once
+     * handed something over and stays set forever. The journey node claims the
+     * platform is "working on its own", and only this can answer that.
+     */
+    runningAutomations?: number;
     firstAutomationAt: string | null;
   };
   /** English fallback. Prefer `noteKey`, which the reader's language can reach. */
@@ -220,6 +228,15 @@ interface UseInsightsResult {
   selectInsight: (insightId: string) => Promise<void>;
   clearSelection: () => void;
   runAction: (insightId: string, action: 'run' | 'automate' | 'snooze' | 'dismiss', params?: Record<string, unknown>) => Promise<boolean>;
+  /**
+   * Tell the server this insight was actually put in front of the owner.
+   *
+   * Separate from `runAction` for two reasons: it must not refetch — a refetch
+   * on display would re-render the card and mark it seen again, forever — and
+   * it is not an action the owner took, so a failure is not worth an error
+   * banner. It is a fact about what the screen showed.
+   */
+  markSeen: (insightId: string) => void;
   refresh: () => Promise<void>;
 }
 
@@ -330,6 +347,49 @@ export function useInsights(): UseInsightsResult {
     setSelectedProcess(null);
   }, []);
 
+  /**
+   * Record that an insight was displayed.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Nothing did this. `surface_count` was 0 and `last_surfaced_at` null on
+   * every row in the database, and `owner_insight_history` was empty, because
+   * the only caller of the `view` action was a `runAction` union that did not
+   * include it — so the server route existed and was unreachable.
+   *
+   * The consequences were quiet. The advisor card told every owner "first time
+   * I've seen this" about an insight that had been on their dashboard for a
+   * week. `timeToAction` could never be computed, because it is measured from
+   * `last_surfaced_at`. And the one table that could answer whether any of this
+   * advice is ever acted on had nothing in it.
+   *
+   * Once per insight per mount: the dashboard mounts on a page load, which is
+   * the unit "how many times has this been shown" should count.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const seen = useRef(new Set<string>());
+
+  const markSeen = useCallback((insightId: string) => {
+    // Demo rows have no server side to tell.
+    if (insightId.startsWith('00000000-')) return;
+    if (seen.current.has(insightId)) return;
+    seen.current.add(insightId);
+
+    fetch('/api/business-os/insights', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ insightId, action: 'view' }),
+    }).catch(() => {
+      /*
+       * Swallowed on purpose, and the id stays marked.
+       *
+       * The owner did not ask for this and must not be shown a failure for it.
+       * Retrying on the next render would turn one dropped request into a loop
+       * against a server that is already unhappy; the count being low is a
+       * smaller harm than that.
+       */
+    });
+  }, []);
+
   // Run an action on an insight
   const runAction = useCallback(async (
     insightId: string,
@@ -403,6 +463,7 @@ export function useInsights(): UseInsightsResult {
     selectInsight,
     clearSelection,
     runAction,
+    markSeen,
     refresh: fetchInsights,
   };
 }

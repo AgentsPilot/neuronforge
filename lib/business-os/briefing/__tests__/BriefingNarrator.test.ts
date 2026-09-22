@@ -76,9 +76,30 @@ describe('findUnsupportedFigures', () => {
     expect(findUnsupportedFigures('Your first appointment is Studio 54 at 09:00.', studio)).toEqual([]);
   });
 
-  it('allows the date written out', () => {
-    expect(findUnsupportedFigures('Today is 8 September 2026. You have 6 appointments.', facts()))
-      .toEqual([]);
+  it('does NOT license every number just because the date contains it', () => {
+    /*
+     * This used to assert the opposite, and the opposite was a hole.
+     *
+     * Permitting the date "in every shape it might be written" allowed each of
+     * its components through for the whole briefing: on the 17th of September,
+     * 17 and 9 became valid figures anywhere in the prose. A real account was
+     * told it had "9 new enquiries" on a day with one, and this check passed it
+     * — the 9 came from the month.
+     *
+     * A guard that permits 1-31 and 1-12 all month is not a guard. The cost of
+     * the swap is small and safe: the model is told not to write a date at all
+     * (no headings, no greeting), and if it does anyway the briefing falls back
+     * to the deterministic composer rather than shipping something wrong.
+     */
+    const day = facts();
+    expect(findUnsupportedFigures(`Today is 8 September ${day.day.date.slice(0, 4)}.`, day))
+      .not.toEqual([]);
+  });
+
+  it('still allows figures that really are in the facts', () => {
+    // The other half of the trade: tightening the date must not start flagging
+    // counts the facts genuinely support.
+    expect(findUnsupportedFigures('You have 6 appointments.', facts())).toEqual([]);
   });
 
   it('tolerates thousands separators and decimals on a real amount', () => {

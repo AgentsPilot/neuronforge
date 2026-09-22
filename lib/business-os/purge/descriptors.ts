@@ -185,7 +185,18 @@ const IN_SCOPE: PurgeDescriptor[] = [
   { table: 'email_sends', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
   { table: 'email_sequence_enrollments', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
   { table: 'email_unsubscribes', level: 'never', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
-    notes: 'K* — RETAINED BY BOTH LEVELS (D8). A third party withdrew consent. auth.users survives, so the same user_id can re-onboard; deleting this would resume emailing people who opted out. FR-23 requires the copy to say so.' },
+    notes: 'K* — RETAINED BY BOTH LEVELS (D8). A third party withdrew consent. auth.users survives, so the same user_id can re-onboard; deleting this would resume emailing people who opted out. FR-23 requires the copy to say so. Now DERIVED from marketing_consent_events by trigger, and kept because this promise is made to users in two places.' },
+
+  { table: 'business_subscribers', level: 'reset', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+    notes: 'The newsletter audience. Reset clears it with the rest of the business data — unlike the consent ledger, which records what each person AGREED to and is retained forever. A rebuilt business starts with an empty list and has to earn it again.' },
+
+  // ── §3.6b Marketing consent ──────────────────────────────────────────────
+  { table: 'marketing_consent_events', level: 'never', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows',
+    notes: 'Same reasoning as email_unsubscribes, in both directions. A withdrawal must outlive the business, or a reset resumes mailing people who opted out. A GRANT must outlive it too: the evidence of what someone agreed to is what answers a complaint or a subject access request years later, and it cannot be reconstructed.' },
+  { table: 'marketing_consent_state', level: 'never', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+    notes: 'The projection the send gate reads. Deleting it would read as "no decision recorded", which fails closed for grants but would also lose every suppression. Derived, but not disposable.' },
+  { table: 'marketing_consent_settings', level: 'purge', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
+    notes: 'Business configuration — the tenant\'s own consent wording, privacy notice and postal address. Unlike the decisions above, this is theirs, not their clients\'.' },
 
   // ── §3.7 Intake ──────────────────────────────────────────────────────────
   { table: 'user_intake_settings', level: 'purge', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows' },

@@ -387,7 +387,8 @@
               "transactions",
               "bookings",
               "invoices",
-              "installments"
+              "installments",
+              "proposals"
             ]
           },
           "having": {
@@ -1860,6 +1861,8 @@
         "total",
         "currency",
         "status",
+        "document_id",
+        "payment_shape",
         "valid_until",
         "decline_reason",
         "sent_at",
@@ -1923,6 +1926,14 @@
                   "type": "string",
                   "description": "status · (enum) · one of: draft, sent, viewed, accepted, declined, expired, withdrawn, superseded · business terms: {\"$semantic\":\"open\"}, {\"$semantic\":\"awaiting_reply\"}"
                 },
+                "document_id": {
+                  "type": "string",
+                  "description": "document · (uuid)"
+                },
+                "payment_shape": {
+                  "type": "string",
+                  "description": "how it is paid · (json)"
+                },
                 "valid_until": {
                   "type": "string",
                   "description": "valid until · (date)"
@@ -1982,7 +1993,7 @@
         "properties": {
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | title — title · (string) | description — description · (string) | contact_id — contact · (uuid) | service_id — service · (uuid) | booking_id — booking · (uuid) | total — quote value · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, viewed, accepted, declined, expired, withdrawn, superseded · business terms: {\"$semantic\":\"open\"}, {\"$semantic\":\"awaiting_reply\"} | valid_until — valid until · (date) | decline_reason — reason for declining · (enum) · one of: too_expensive, timing, scope, chose_other, other | sent_at — sent at · (datetime) | viewed_at — opened at · (datetime) | decided_at — answered at · (datetime) | created_at — created at · (datetime) | is_current_version — is the current version | has_open_payments — has payments still to collect | was_sent — was sent to the client",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | title — title · (string) | description — description · (string) | contact_id — contact · (uuid) | service_id — service · (uuid) | booking_id — booking · (uuid) | total — quote value · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, viewed, accepted, declined, expired, withdrawn, superseded · business terms: {\"$semantic\":\"open\"}, {\"$semantic\":\"awaiting_reply\"} | document_id — document · (uuid) | payment_shape — how it is paid · (json) | valid_until — valid until · (date) | decline_reason — reason for declining · (enum) · one of: too_expensive, timing, scope, chose_other, other | sent_at — sent at · (datetime) | viewed_at — opened at · (datetime) | decided_at — answered at · (datetime) | created_at — created at · (datetime) | is_current_version — is the current version | has_open_payments — has payments still to collect | was_sent — was sent to the client",
             "items": {
               "type": "object",
               "properties": {
@@ -1998,6 +2009,8 @@
                     "total",
                     "currency",
                     "status",
+                    "document_id",
+                    "payment_shape",
                     "valid_until",
                     "decline_reason",
                     "sent_at",
@@ -2054,6 +2067,8 @@
                     "total",
                     "currency",
                     "status",
+                    "document_id",
+                    "payment_shape",
                     "valid_until",
                     "decline_reason",
                     "sent_at",
@@ -2190,12 +2205,15 @@
               "total",
               "currency",
               "status",
+              "document_id",
+              "payment_shape",
               "valid_until",
               "decline_reason",
               "sent_at",
               "viewed_at",
               "decided_at",
               "created_at",
+              "supersedes",
               "contact",
               "service",
               "booking",
@@ -2260,7 +2278,7 @@
           },
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | title — title · (string) | description — description · (string) | contact_id — contact · (uuid) | service_id — service · (uuid) | booking_id — booking · (uuid) | total — quote value · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, viewed, accepted, declined, expired, withdrawn, superseded · business terms: {\"$semantic\":\"open\"}, {\"$semantic\":\"awaiting_reply\"} | valid_until — valid until · (date) | decline_reason — reason for declining · (enum) · one of: too_expensive, timing, scope, chose_other, other | sent_at — sent at · (datetime) | viewed_at — opened at · (datetime) | decided_at — answered at · (datetime) | created_at — created at · (datetime) | is_current_version — is the current version | has_open_payments — has payments still to collect | was_sent — was sent to the client",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | title — title · (string) | description — description · (string) | contact_id — contact · (uuid) | service_id — service · (uuid) | booking_id — booking · (uuid) | total — quote value · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, viewed, accepted, declined, expired, withdrawn, superseded · business terms: {\"$semantic\":\"open\"}, {\"$semantic\":\"awaiting_reply\"} | document_id — document · (uuid) | payment_shape — how it is paid · (json) | valid_until — valid until · (date) | decline_reason — reason for declining · (enum) · one of: too_expensive, timing, scope, chose_other, other | sent_at — sent at · (datetime) | viewed_at — opened at · (datetime) | decided_at — answered at · (datetime) | created_at — created at · (datetime) | is_current_version — is the current version | has_open_payments — has payments still to collect | was_sent — was sent to the client",
             "items": {
               "type": "object",
               "properties": {
@@ -2276,6 +2294,8 @@
                     "total",
                     "currency",
                     "status",
+                    "document_id",
+                    "payment_shape",
                     "valid_until",
                     "decline_reason",
                     "sent_at",
@@ -2340,6 +2360,8 @@
         "total",
         "currency",
         "status",
+        "document_id",
+        "payment_shape",
         "valid_until",
         "decline_reason",
         "sent_at",
@@ -2393,7 +2415,7 @@
         "properties": {
           "data": {
             "type": "object",
-            "description": "Values to write. Writable fields: title, description, contact_id, service_id, booking_id, total, currency, valid_until. Required: contact_id, title, total.",
+            "description": "Values to write. Writable fields: title, description, contact_id, service_id, booking_id, total, currency, payment_shape, valid_until. Required: contact_id, title, total.",
             "properties": {
               "contact_id": {
                 "type": "string",
@@ -2426,6 +2448,10 @@
               "currency": {
                 "type": "string",
                 "description": "currency · (enum) · one of: USD, EUR, ILS, GBP"
+              },
+              "payment_shape": {
+                "type": "string",
+                "description": "how it is paid · (json)"
               }
             }
           }
@@ -2455,6 +2481,8 @@
         "total",
         "currency",
         "status",
+        "document_id",
+        "payment_shape",
         "valid_until",
         "decline_reason",
         "sent_at",
@@ -2514,7 +2542,7 @@
           },
           "data": {
             "type": "object",
-            "description": "Values to write. Writable fields: title, description, contact_id, service_id, booking_id, total, currency, valid_until. Required: contact_id, title, total.",
+            "description": "Values to write. Writable fields: title, description, contact_id, service_id, booking_id, total, currency, payment_shape, valid_until. Required: contact_id, title, total.",
             "properties": {
               "contact_id": {
                 "type": "string",
@@ -2547,6 +2575,10 @@
               "currency": {
                 "type": "string",
                 "description": "currency · (enum) · one of: USD, EUR, ILS, GBP"
+              },
+              "payment_shape": {
+                "type": "string",
+                "description": "how it is paid · (json)"
               }
             }
           }
@@ -2576,6 +2608,8 @@
         "total",
         "currency",
         "status",
+        "document_id",
+        "payment_shape",
         "valid_until",
         "decline_reason",
         "sent_at",
@@ -2659,6 +2693,8 @@
         "total",
         "currency",
         "status",
+        "document_id",
+        "payment_shape",
         "valid_until",
         "decline_reason",
         "sent_at",
@@ -3052,6 +3088,9 @@
               "trigger",
               "completed_at",
               "proposal_id",
+              "booking",
+              "transaction",
+              "invoice",
               "contact",
               "plan",
               "subscription",
@@ -3179,6 +3218,7 @@
         "payment_status",
         "intake_completed_at",
         "intake_sent_at",
+        "intake_responses",
         "notes",
         "payment_amount",
         "invoice_id",
@@ -3240,6 +3280,10 @@
                   "type": "string",
                   "description": "intake form sent at · (datetime)"
                 },
+                "intake_responses": {
+                  "type": "string",
+                  "description": "intake answers · (json)"
+                },
                 "notes": {
                   "type": "string",
                   "description": "notes · (string)"
@@ -3291,7 +3335,7 @@
         "properties": {
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | service_id — service · (uuid) | start_time — start time · (datetime) | end_time — end time · (datetime) | status — status · (enum) · one of: confirmed, cancelled, completed, no_show · business terms: {\"$semantic\":\"upcoming\"} | payment_status — payment status · (enum) · one of: pending, paid, refunded | intake_completed_at — intake completed at · (datetime) | intake_sent_at — intake form sent at · (datetime) | notes — notes · (string) | payment_amount — amount · (number) | invoice_id — invoice · (uuid) | created_at — created · (datetime)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | service_id — service · (uuid) | start_time — start time · (datetime) | end_time — end time · (datetime) | status — status · (enum) · one of: confirmed, cancelled, completed, no_show · business terms: {\"$semantic\":\"upcoming\"} | payment_status — payment status · (enum) · one of: pending, paid, refunded | intake_completed_at — intake completed at · (datetime) | intake_sent_at — intake form sent at · (datetime) | intake_responses — intake answers · (json) | notes — notes · (string) | payment_amount — amount · (number) | invoice_id — invoice · (uuid) | created_at — created · (datetime)",
             "items": {
               "type": "object",
               "properties": {
@@ -3307,6 +3351,7 @@
                     "payment_status",
                     "intake_completed_at",
                     "intake_sent_at",
+                    "intake_responses",
                     "notes",
                     "payment_amount",
                     "invoice_id",
@@ -3358,6 +3403,7 @@
                     "payment_status",
                     "intake_completed_at",
                     "intake_sent_at",
+                    "intake_responses",
                     "notes",
                     "payment_amount",
                     "invoice_id",
@@ -3492,10 +3538,12 @@
               "payment_status",
               "intake_completed_at",
               "intake_sent_at",
+              "intake_responses",
               "notes",
               "payment_amount",
               "invoice_id",
               "created_at",
+              "payment_plan",
               "contact",
               "invoice",
               "service",
@@ -3556,7 +3604,7 @@
           },
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | service_id — service · (uuid) | start_time — start time · (datetime) | end_time — end time · (datetime) | status — status · (enum) · one of: confirmed, cancelled, completed, no_show · business terms: {\"$semantic\":\"upcoming\"} | payment_status — payment status · (enum) · one of: pending, paid, refunded | intake_completed_at — intake completed at · (datetime) | intake_sent_at — intake form sent at · (datetime) | notes — notes · (string) | payment_amount — amount · (number) | invoice_id — invoice · (uuid) | created_at — created · (datetime)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | service_id — service · (uuid) | start_time — start time · (datetime) | end_time — end time · (datetime) | status — status · (enum) · one of: confirmed, cancelled, completed, no_show · business terms: {\"$semantic\":\"upcoming\"} | payment_status — payment status · (enum) · one of: pending, paid, refunded | intake_completed_at — intake completed at · (datetime) | intake_sent_at — intake form sent at · (datetime) | intake_responses — intake answers · (json) | notes — notes · (string) | payment_amount — amount · (number) | invoice_id — invoice · (uuid) | created_at — created · (datetime)",
             "items": {
               "type": "object",
               "properties": {
@@ -3572,6 +3620,7 @@
                     "payment_status",
                     "intake_completed_at",
                     "intake_sent_at",
+                    "intake_responses",
                     "notes",
                     "payment_amount",
                     "invoice_id",
@@ -3631,6 +3680,7 @@
         "payment_status",
         "intake_completed_at",
         "intake_sent_at",
+        "intake_responses",
         "notes",
         "payment_amount",
         "invoice_id",
@@ -3712,6 +3762,7 @@
         "payment_status",
         "intake_completed_at",
         "intake_sent_at",
+        "intake_responses",
         "notes",
         "payment_amount",
         "invoice_id",
@@ -3793,6 +3844,7 @@
         "payment_status",
         "intake_completed_at",
         "intake_sent_at",
+        "intake_responses",
         "notes",
         "payment_amount",
         "invoice_id",
@@ -3874,6 +3926,7 @@
         "payment_status",
         "intake_completed_at",
         "intake_sent_at",
+        "intake_responses",
         "notes",
         "payment_amount",
         "invoice_id",
@@ -3955,6 +4008,7 @@
         "payment_status",
         "intake_completed_at",
         "intake_sent_at",
+        "intake_responses",
         "notes",
         "payment_amount",
         "invoice_id",
@@ -4035,6 +4089,7 @@
         "payment_status",
         "intake_completed_at",
         "intake_sent_at",
+        "intake_responses",
         "notes",
         "payment_amount",
         "invoice_id",
@@ -4116,6 +4171,7 @@
         "payment_status",
         "intake_completed_at",
         "intake_sent_at",
+        "intake_responses",
         "notes",
         "payment_amount",
         "invoice_id",
@@ -4211,6 +4267,7 @@
         "payment_status",
         "intake_completed_at",
         "intake_sent_at",
+        "intake_responses",
         "notes",
         "payment_amount",
         "invoice_id",
@@ -6548,6 +6605,8 @@
               "card_last4",
               "created_at",
               "cancelled_at",
+              "booking",
+              "service",
               "contact",
               "plan",
               "next_charge_at:day",
@@ -8731,6 +8790,7 @@
               "status",
               "estimated_impact_usd",
               "detected_at",
+              "correlation_parent",
               "detected_at:day",
               "detected_at:week",
               "detected_at:month",
@@ -9439,8 +9499,8 @@
       }
     },
     "publish_pages": {
-      "description": "put the website live — page in the user's own business records",
-      "usage_context": "put the website live. This CHANGES the user's real business data. Requires explicit confirmation before it runs. Applies to exactly ONE page; there is no bulk form.",
+      "description": "publish a page — page in the user's own business records",
+      "usage_context": "publish a page. This CHANGES the user's real business data. Requires explicit confirmation before it runs. Applies to exactly ONE page; there is no bulk form.",
       "idempotent": false,
       "domain": "business",
       "capability": "publish",
@@ -9487,10 +9547,10 @@
         }
       },
       "output_guidance": {
-        "success_description": "put the website live",
+        "success_description": "publish a page",
         "sample_output": {
           "applied": true,
-          "summary": "put the website live",
+          "summary": "publish a page",
           "row": {
             "title": "<title>",
             "slug": "<slug>",
@@ -9513,8 +9573,8 @@
       }
     },
     "unpublish_pages": {
-      "description": "take the website offline — page in the user's own business records",
-      "usage_context": "take the website offline. This CHANGES the user's real business data. Requires explicit confirmation before it runs. Applies to exactly ONE page; there is no bulk form.",
+      "description": "unpublish a page — page in the user's own business records",
+      "usage_context": "unpublish a page. This CHANGES the user's real business data. Requires explicit confirmation before it runs. Applies to exactly ONE page; there is no bulk form.",
       "idempotent": false,
       "domain": "business",
       "capability": "unpublish",
@@ -9561,10 +9621,10 @@
         }
       },
       "output_guidance": {
-        "success_description": "take the website offline",
+        "success_description": "unpublish a page",
         "sample_output": {
           "applied": true,
-          "summary": "take the website offline",
+          "summary": "unpublish a page",
           "row": {
             "title": "<title>",
             "slug": "<slug>",
@@ -9864,6 +9924,7 @@
               "referer",
               "device_type",
               "country_code",
+              "page",
               "viewed_at:day",
               "viewed_at:week",
               "viewed_at:month",
@@ -13887,788 +13948,6 @@
         },
         "required": [
           "target_id"
-        ]
-      }
-    },
-    "find_agents": {
-      "description": "Find automations in the user's own business records",
-      "usage_context": "Read the business's own automations. This is the user's private data — no external service is involved and nothing needs connecting. Use it to answer questions about their business, or to select rows for a later action.",
-      "idempotent": true,
-      "domain": "business",
-      "capability": "search",
-      "input_entity": null,
-      "output_entity": "agents",
-      "input_cardinality": null,
-      "output_cardinality": "collection",
-      "output_fields": [
-        "id",
-        "name",
-        "description",
-        "status",
-        "last_run",
-        "next_run",
-        "created_at"
-      ],
-      "required_params": [],
-      "optional_params": [
-        "filters",
-        "limit",
-        "order_by"
-      ],
-      "must_support": [
-        "field_filtering",
-        "user_scoped"
-      ],
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "rows": {
-            "type": "array",
-            "description": "The matching automations.",
-            "x-guaranteed": true,
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string",
-                  "description": "ID · (uuid)"
-                },
-                "name": {
-                  "type": "string",
-                  "description": "name · (string)"
-                },
-                "description": {
-                  "type": "string",
-                  "description": "description · (string)"
-                },
-                "status": {
-                  "type": "string",
-                  "description": "status · (string)"
-                },
-                "last_run": {
-                  "type": "string",
-                  "description": "last run · (datetime)"
-                },
-                "next_run": {
-                  "type": "string",
-                  "description": "next run · (datetime)"
-                },
-                "created_at": {
-                  "type": "string",
-                  "description": "created · (datetime)"
-                }
-              }
-            }
-          },
-          "count": {
-            "type": "integer",
-            "description": "How many rows were returned.",
-            "x-guaranteed": true
-          },
-          "truncated": {
-            "type": "boolean",
-            "description": "True when the limit was reached and more rows exist.",
-            "x-guaranteed": true
-          }
-        }
-      },
-      "output_guidance": {
-        "success_description": "Found automations",
-        "sample_output": {
-          "rows": [
-            {
-              "name": "<name>",
-              "status": "<status>",
-              "last_run": "<last_run>"
-            }
-          ],
-          "count": 1,
-          "truncated": false
-        }
-      },
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "filters": {
-            "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | name — name · (string) | description — description · (string) | status — status · (string) | last_run — last run · (datetime) | next_run — next run · (datetime) | created_at — created · (datetime)",
-            "items": {
-              "type": "object",
-              "properties": {
-                "field": {
-                  "type": "string",
-                  "enum": [
-                    "id",
-                    "name",
-                    "description",
-                    "status",
-                    "last_run",
-                    "next_run",
-                    "created_at"
-                  ]
-                },
-                "op": {
-                  "type": "string",
-                  "enum": [
-                    "eq",
-                    "neq",
-                    "gt",
-                    "gte",
-                    "lt",
-                    "lte",
-                    "in",
-                    "not_in",
-                    "contains",
-                    "starts_with",
-                    "is_null",
-                    "is_not_null"
-                  ]
-                },
-                "value": {
-                  "description": "A literal, an array of literals, {\"$semantic\":\"term\"} for a business term, or {\"$date\":\"today|tomorrow|start_of_week|…\"} for a relative date. Omit entirely for is_null / is_not_null."
-                }
-              },
-              "required": [
-                "field",
-                "op"
-              ]
-            }
-          },
-          "order_by": {
-            "type": "array",
-            "description": "Sort order.",
-            "items": {
-              "type": "object",
-              "properties": {
-                "field": {
-                  "type": "string",
-                  "enum": [
-                    "id",
-                    "name",
-                    "description",
-                    "status",
-                    "last_run",
-                    "next_run",
-                    "created_at"
-                  ]
-                },
-                "dir": {
-                  "type": "string",
-                  "enum": [
-                    "asc",
-                    "desc"
-                  ]
-                }
-              },
-              "required": [
-                "field"
-              ]
-            }
-          },
-          "limit": {
-            "type": "number",
-            "description": "How many to return. Capped at 200.",
-            "minimum": 1,
-            "maximum": 200,
-            "default": 50
-          }
-        },
-        "required": []
-      }
-    },
-    "aggregate_agents": {
-      "description": "Aggregate automations — totals, counts and averages, optionally grouped",
-      "usage_context": "Answer a QUANTITATIVE question about the business's own automations — \"how much\", \"how many\", \"what is the average\", and the same broken down by a field. Prefer this over fetching rows and adding them up: the arithmetic runs against the data rather than in the workflow, and the result reports whether it was complete. This reads private data and changes nothing.",
-      "idempotent": true,
-      "domain": "business",
-      "capability": "aggregate",
-      "input_entity": null,
-      "output_entity": "agents",
-      "input_cardinality": null,
-      "output_cardinality": "single",
-      "output_fields": [],
-      "required_params": [
-        "fn"
-      ],
-      "optional_params": [
-        "field",
-        "group_by",
-        "filters",
-        "distinct"
-      ],
-      "must_support": [
-        "field_filtering",
-        "user_scoped"
-      ],
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "value": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "description": "The aggregate over everything matched. Null when nothing matched.",
-            "x-guaranteed": true
-          },
-          "groups": {
-            "type": "array",
-            "description": "Present when group_by was supplied: one entry per distinct value.",
-            "items": {
-              "type": "object",
-              "properties": {
-                "key": {
-                  "type": "string"
-                },
-                "value": {
-                  "type": "number"
-                }
-              }
-            }
-          },
-          "approximate": {
-            "type": "boolean",
-            "description": "True when the aggregate ran over a capped scan and may be incomplete. MUST be surfaced rather than presenting the number as a final total.",
-            "x-guaranteed": true
-          }
-        }
-      },
-      "output_guidance": {
-        "success_description": "Aggregated automations",
-        "sample_output": {
-          "value": 0,
-          "groups": [
-            {
-              "key": "<group>",
-              "value": 0
-            }
-          ],
-          "approximate": false
-        }
-      },
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "fn": {
-            "type": "string",
-            "description": "Which aggregate to compute.",
-            "enum": [
-              "count",
-              "sum",
-              "avg",
-              "min",
-              "max"
-            ]
-          },
-          "field": {
-            "type": "string",
-            "description": "The field to aggregate. Required for sum, avg, min and max; ignored by count.",
-            "enum": []
-          },
-          "group_by": {
-            "type": "string",
-            "description": "Break the result down, one entry per distinct value. Three forms: a field on this record; a RELATION NAME on its own ('service', 'contact') to group by what the related thing is CALLED rather than by its id; or a date field with a bucket ('created_at:month') to group a trend by calendar period.",
-            "enum": [
-              "id",
-              "name",
-              "description",
-              "status",
-              "last_run",
-              "next_run",
-              "created_at",
-              "last_run:day",
-              "last_run:week",
-              "last_run:month",
-              "last_run:year",
-              "next_run:day",
-              "next_run:week",
-              "next_run:month",
-              "next_run:year",
-              "created_at:day",
-              "created_at:week",
-              "created_at:month",
-              "created_at:year"
-            ]
-          },
-          "distinct": {
-            "type": "boolean",
-            "description": "Count how many DIFFERENT values the field has rather than how many rows. Only meaningful for count."
-          },
-          "over": {
-            "type": "string",
-            "description": "Aggregate the records on the far side of a relation, one group per record HERE — 'services' with over='transactions' ranks every service by revenue, including the ones that earned nothing. Use this for \"which X is doing least\": grouping the other way round omits any record with no related rows, so the lowest group returned is the lowest NON-ZERO one. Filters apply to the related records.",
-            "enum": [
-              "runs"
-            ]
-          },
-          "having": {
-            "type": "object",
-            "description": "Keep only the groups whose aggregate passes this test — \"clients who spent over 5000\". Applied after the aggregate, so it needs group_by to mean anything.",
-            "properties": {
-              "op": {
-                "type": "string",
-                "enum": [
-                  "gt",
-                  "gte",
-                  "lt",
-                  "lte",
-                  "eq",
-                  "neq"
-                ]
-              },
-              "value": {
-                "type": "number"
-              }
-            },
-            "required": [
-              "op",
-              "value"
-            ]
-          },
-          "filters": {
-            "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | name — name · (string) | description — description · (string) | status — status · (string) | last_run — last run · (datetime) | next_run — next run · (datetime) | created_at — created · (datetime)",
-            "items": {
-              "type": "object",
-              "properties": {
-                "field": {
-                  "type": "string",
-                  "enum": [
-                    "id",
-                    "name",
-                    "description",
-                    "status",
-                    "last_run",
-                    "next_run",
-                    "created_at"
-                  ]
-                },
-                "op": {
-                  "type": "string",
-                  "enum": [
-                    "eq",
-                    "neq",
-                    "gt",
-                    "gte",
-                    "lt",
-                    "lte",
-                    "in",
-                    "not_in",
-                    "contains",
-                    "starts_with",
-                    "is_null",
-                    "is_not_null"
-                  ]
-                },
-                "value": {
-                  "description": "A literal, an array of literals, {\"$semantic\":\"term\"} for a business term, or {\"$date\":\"today|tomorrow|start_of_week|…\"} for a relative date. Omit entirely for is_null / is_not_null."
-                }
-              },
-              "required": [
-                "field",
-                "op"
-              ]
-            }
-          }
-        },
-        "required": [
-          "fn"
-        ]
-      }
-    },
-    "find_agent_runs": {
-      "description": "Find automation runs in the user's own business records",
-      "usage_context": "Read the business's own automation runs. This is the user's private data — no external service is involved and nothing needs connecting. Use it to answer questions about their business, or to select rows for a later action.",
-      "idempotent": true,
-      "domain": "business",
-      "capability": "search",
-      "input_entity": null,
-      "output_entity": "agent_runs",
-      "input_cardinality": null,
-      "output_cardinality": "collection",
-      "output_fields": [
-        "id",
-        "agent_id",
-        "status",
-        "started_at",
-        "completed_at",
-        "duration_ms",
-        "error_message",
-        "created_at"
-      ],
-      "required_params": [],
-      "optional_params": [
-        "filters",
-        "limit",
-        "order_by"
-      ],
-      "must_support": [
-        "field_filtering",
-        "user_scoped"
-      ],
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "rows": {
-            "type": "array",
-            "description": "The matching automation runs.",
-            "x-guaranteed": true,
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string",
-                  "description": "ID · (uuid)"
-                },
-                "agent_id": {
-                  "type": "string",
-                  "description": "automation · (uuid)"
-                },
-                "status": {
-                  "type": "string",
-                  "description": "status · (string)"
-                },
-                "started_at": {
-                  "type": "string",
-                  "description": "started · (datetime)"
-                },
-                "completed_at": {
-                  "type": "string",
-                  "description": "finished · (datetime)"
-                },
-                "duration_ms": {
-                  "type": "number",
-                  "description": "duration (ms) · (number)"
-                },
-                "error_message": {
-                  "type": "string",
-                  "description": "error · (string)"
-                },
-                "created_at": {
-                  "type": "string",
-                  "description": "created · (datetime)"
-                }
-              }
-            }
-          },
-          "count": {
-            "type": "integer",
-            "description": "How many rows were returned.",
-            "x-guaranteed": true
-          },
-          "truncated": {
-            "type": "boolean",
-            "description": "True when the limit was reached and more rows exist.",
-            "x-guaranteed": true
-          }
-        }
-      },
-      "output_guidance": {
-        "success_description": "Found automation runs",
-        "sample_output": {
-          "rows": [
-            {
-              "started_at": "<started_at>",
-              "status": "<status>",
-              "duration_ms": 0
-            }
-          ],
-          "count": 1,
-          "truncated": false
-        }
-      },
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "filters": {
-            "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | agent_id — automation · (uuid) | status — status · (string) | started_at — started · (datetime) | completed_at — finished · (datetime) | duration_ms — duration (ms) · (number) | error_message — error · (string) | created_at — created · (datetime)",
-            "items": {
-              "type": "object",
-              "properties": {
-                "field": {
-                  "type": "string",
-                  "enum": [
-                    "id",
-                    "agent_id",
-                    "status",
-                    "started_at",
-                    "completed_at",
-                    "duration_ms",
-                    "error_message",
-                    "created_at"
-                  ]
-                },
-                "op": {
-                  "type": "string",
-                  "enum": [
-                    "eq",
-                    "neq",
-                    "gt",
-                    "gte",
-                    "lt",
-                    "lte",
-                    "in",
-                    "not_in",
-                    "contains",
-                    "starts_with",
-                    "is_null",
-                    "is_not_null"
-                  ]
-                },
-                "value": {
-                  "description": "A literal, an array of literals, {\"$semantic\":\"term\"} for a business term, or {\"$date\":\"today|tomorrow|start_of_week|…\"} for a relative date. Omit entirely for is_null / is_not_null."
-                }
-              },
-              "required": [
-                "field",
-                "op"
-              ]
-            }
-          },
-          "order_by": {
-            "type": "array",
-            "description": "Sort order.",
-            "items": {
-              "type": "object",
-              "properties": {
-                "field": {
-                  "type": "string",
-                  "enum": [
-                    "id",
-                    "agent_id",
-                    "status",
-                    "started_at",
-                    "completed_at",
-                    "duration_ms",
-                    "error_message",
-                    "created_at"
-                  ]
-                },
-                "dir": {
-                  "type": "string",
-                  "enum": [
-                    "asc",
-                    "desc"
-                  ]
-                }
-              },
-              "required": [
-                "field"
-              ]
-            }
-          },
-          "limit": {
-            "type": "number",
-            "description": "How many to return. Capped at 500.",
-            "minimum": 1,
-            "maximum": 500,
-            "default": 50
-          }
-        },
-        "required": []
-      }
-    },
-    "aggregate_agent_runs": {
-      "description": "Aggregate automation runs — totals, counts and averages, optionally grouped",
-      "usage_context": "Answer a QUANTITATIVE question about the business's own automation runs — \"how much\", \"how many\", \"what is the average\", and the same broken down by a field. Prefer this over fetching rows and adding them up: the arithmetic runs against the data rather than in the workflow, and the result reports whether it was complete. This reads private data and changes nothing.",
-      "idempotent": true,
-      "domain": "business",
-      "capability": "aggregate",
-      "input_entity": null,
-      "output_entity": "agent_runs",
-      "input_cardinality": null,
-      "output_cardinality": "single",
-      "output_fields": [],
-      "required_params": [
-        "fn"
-      ],
-      "optional_params": [
-        "field",
-        "group_by",
-        "filters",
-        "distinct"
-      ],
-      "must_support": [
-        "field_filtering",
-        "user_scoped"
-      ],
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "value": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "description": "The aggregate over everything matched. Null when nothing matched.",
-            "x-guaranteed": true
-          },
-          "groups": {
-            "type": "array",
-            "description": "Present when group_by was supplied: one entry per distinct value.",
-            "items": {
-              "type": "object",
-              "properties": {
-                "key": {
-                  "type": "string"
-                },
-                "value": {
-                  "type": "number"
-                }
-              }
-            }
-          },
-          "approximate": {
-            "type": "boolean",
-            "description": "True when the aggregate ran over a capped scan and may be incomplete. MUST be surfaced rather than presenting the number as a final total.",
-            "x-guaranteed": true
-          }
-        }
-      },
-      "output_guidance": {
-        "success_description": "Aggregated automation runs",
-        "sample_output": {
-          "value": 0,
-          "groups": [
-            {
-              "key": "<group>",
-              "value": 0
-            }
-          ],
-          "approximate": false
-        }
-      },
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "fn": {
-            "type": "string",
-            "description": "Which aggregate to compute.",
-            "enum": [
-              "count",
-              "sum",
-              "avg",
-              "min",
-              "max"
-            ]
-          },
-          "field": {
-            "type": "string",
-            "description": "The field to aggregate. Required for sum, avg, min and max; ignored by count.",
-            "enum": [
-              "duration_ms"
-            ]
-          },
-          "group_by": {
-            "type": "string",
-            "description": "Break the result down, one entry per distinct value. Three forms: a field on this record; a RELATION NAME on its own ('service', 'contact') to group by what the related thing is CALLED rather than by its id; or a date field with a bucket ('created_at:month') to group a trend by calendar period.",
-            "enum": [
-              "id",
-              "agent_id",
-              "status",
-              "started_at",
-              "completed_at",
-              "duration_ms",
-              "error_message",
-              "created_at",
-              "agent",
-              "started_at:day",
-              "started_at:week",
-              "started_at:month",
-              "started_at:year",
-              "completed_at:day",
-              "completed_at:week",
-              "completed_at:month",
-              "completed_at:year",
-              "created_at:day",
-              "created_at:week",
-              "created_at:month",
-              "created_at:year"
-            ]
-          },
-          "distinct": {
-            "type": "boolean",
-            "description": "Count how many DIFFERENT values the field has rather than how many rows. Only meaningful for count."
-          },
-          "over": {
-            "type": "string",
-            "description": "Aggregate the records on the far side of a relation, one group per record HERE — 'services' with over='transactions' ranks every service by revenue, including the ones that earned nothing. Use this for \"which X is doing least\": grouping the other way round omits any record with no related rows, so the lowest group returned is the lowest NON-ZERO one. Filters apply to the related records.",
-            "enum": []
-          },
-          "having": {
-            "type": "object",
-            "description": "Keep only the groups whose aggregate passes this test — \"clients who spent over 5000\". Applied after the aggregate, so it needs group_by to mean anything.",
-            "properties": {
-              "op": {
-                "type": "string",
-                "enum": [
-                  "gt",
-                  "gte",
-                  "lt",
-                  "lte",
-                  "eq",
-                  "neq"
-                ]
-              },
-              "value": {
-                "type": "number"
-              }
-            },
-            "required": [
-              "op",
-              "value"
-            ]
-          },
-          "filters": {
-            "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | agent_id — automation · (uuid) | status — status · (string) | started_at — started · (datetime) | completed_at — finished · (datetime) | duration_ms — duration (ms) · (number) | error_message — error · (string) | created_at — created · (datetime)",
-            "items": {
-              "type": "object",
-              "properties": {
-                "field": {
-                  "type": "string",
-                  "enum": [
-                    "id",
-                    "agent_id",
-                    "status",
-                    "started_at",
-                    "completed_at",
-                    "duration_ms",
-                    "error_message",
-                    "created_at"
-                  ]
-                },
-                "op": {
-                  "type": "string",
-                  "enum": [
-                    "eq",
-                    "neq",
-                    "gt",
-                    "gte",
-                    "lt",
-                    "lte",
-                    "in",
-                    "not_in",
-                    "contains",
-                    "starts_with",
-                    "is_null",
-                    "is_not_null"
-                  ]
-                },
-                "value": {
-                  "description": "A literal, an array of literals, {\"$semantic\":\"term\"} for a business term, or {\"$date\":\"today|tomorrow|start_of_week|…\"} for a relative date. Omit entirely for is_null / is_not_null."
-                }
-              },
-              "required": [
-                "field",
-                "op"
-              ]
-            }
-          }
-        },
-        "required": [
-          "fn"
         ]
       }
     },

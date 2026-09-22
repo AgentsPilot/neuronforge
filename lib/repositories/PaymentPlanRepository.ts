@@ -130,6 +130,14 @@ export interface PaymentPlanInstallmentInsert {
 }
 
 export interface PaymentPlanInstallmentUpdate {
+  /**
+   * The invoice raised for this stage.
+   *
+   * The column has always existed and the proposal flow has always written it;
+   * it was simply missing from this type, so the one caller that sets it went
+   * around the repository to do so.
+   */
+  invoice_id?: string | null;
   amount?: number;
   due_date?: string;
   status?: InstallmentStatus;

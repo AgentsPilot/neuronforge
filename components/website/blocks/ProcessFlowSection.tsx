@@ -27,6 +27,8 @@ import type { BlockRendererProps, FlowStep, FormField } from './types';
 import { flowHasScheduling, flowHasClientInfo } from './types';
 import { IntakeFormStep, type IntakeTemplate } from './IntakeFormStep';
 import { StripePaymentForm } from './StripePaymentForm';
+import { ConsentCheckbox, type ConsentCopy } from '@/components/public/ConsentCheckbox';
+import { useConsentCopy, consentPayload } from '@/hooks/useConsentCopy';
 
 // ============================================================================
 // TYPES
@@ -783,6 +785,10 @@ interface DetailsStepProps {
   nextStepLabel: string;
   /** Whether flow includes scheduling (shows back to datetime vs back to services) */
   hasScheduling?: boolean;
+  /** Null where the business does not collect marketing consent. */
+  consentCopy?: ConsentCopy | null;
+  consentGiven?: boolean;
+  onConsentChange?: (next: boolean) => void;
 }
 
 export function DetailsStep({
@@ -806,7 +812,10 @@ export function DetailsStep({
   theme,
   locale = 'en',
   nextStepLabel,
-  hasScheduling = true
+  hasScheduling = true,
+  consentCopy,
+  consentGiven = false,
+  onConsentChange
 }: DetailsStepProps) {
   const formatFullDate = (isoString: string) => {
     const date = new Date(isoString);
@@ -1035,6 +1044,21 @@ export function DetailsStep({
             placeholder={labels.notesPlaceholder}
           />
         </div>
+
+        {/*
+          Last thing in the form, above the pinned footer's button, so it is
+          read before the decision to continue. Never required, and never
+          validated — see the note where the state lives.
+        */}
+        {consentCopy && onConsentChange && (
+          <ConsentCheckbox
+            copy={consentCopy}
+            checked={consentGiven}
+            onChange={onConsentChange}
+            disabled={submitting}
+            isRTL={isRTL}
+          />
+        )}
 
         {error && <p className="text-sm text-red-600">{error}</p>}
 
@@ -1933,6 +1957,22 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
   const [clientPhone, setClientPhone] = useState('');
   const [clientNotes, setClientNotes] = useState('');
 
+  /*
+   * Marketing consent, offered on the details step.
+   *
+   * Unticked, optional, and it never blocks a submit — a booking that fails
+   * because of a consent checkbox is both a lost booking and, legally, a
+   * consent that does not count: permission conditioned on getting the
+   * appointment is not freely given.
+   *
+   * It is here because it is the only place it can be. The one feature that
+   * needs it is the follow-up nudge to lapsed clients, and a client whose whole
+   * relationship with the business is a booking has no other surface to give it
+   * on.
+   */
+  const consentCopy = useConsentCopy({ subdomain, userCode, locale });
+  const [consentGiven, setConsentGiven] = useState(false);
+
   // Intake - capability-based template
   const [intakeTemplate, setIntakeTemplate] = useState<IntakeTemplate | null>(null);
   const [intakeAnswers, setIntakeAnswers] = useState<Record<string, any>>({});
@@ -2242,6 +2282,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
               : undefined,
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             page_url: typeof window !== 'undefined' ? window.location.href : undefined,
+            consent: consentPayload(consentCopy, consentGiven),
           }),
         });
 
@@ -2298,6 +2339,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
           email: clientEmail,
           phone: clientPhone || undefined,
           notes: clientNotes || undefined,
+          consent: consentPayload(consentCopy, consentGiven),
           // Skip contact creation for paid services - contact will be created after payment
           skip_contact: requiresPayment
         })
@@ -2678,6 +2720,9 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
                     locale={locale}
                     nextStepLabel={getNextStepLabel()}
                     hasScheduling={hasScheduling}
+                    consentCopy={consentCopy}
+                    consentGiven={consentGiven}
+                    onConsentChange={setConsentGiven}
                   />
                 )}
 

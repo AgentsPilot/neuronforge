@@ -224,6 +224,7 @@ async function notifyInvoiceRefund(
   });
 
   const result = await sendEmail({
+    kind: 'transactional',
     to: [invoice.client_email],
     subject,
     html,

@@ -22,7 +22,7 @@
  */
 
 import { createLogger } from '@/lib/logger';
-import { ProviderFactory } from '@/lib/ai/providerFactory';
+import { ProviderFactory, PROVIDERS, type ProviderName } from '@/lib/ai/providerFactory';
 import { SystemConfigService } from '@/lib/services/SystemConfigService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { CATALOG, CATALOG_VERSION } from '@/lib/business-os/catalog';
@@ -34,7 +34,7 @@ import {
   getVerifiedQuestions,
   renderExamplesForPrompt,
 } from './VerifiedQuestions';
-import { buildPlanTool, plannerSystemPrompt } from './planTool';
+import { buildPlanTool, plannerSystemPrompt, plannerVersion } from './planTool';
 import {
   guessRelevantEntities,
   renderCatalogForPrompt,
@@ -120,6 +120,42 @@ async function resolveModel(): Promise<string> {
     'bizchat_planner_model',
     'gpt-4o-mini'
   );
+}
+
+/**
+ * Which provider serves the planner.
+ *
+ * The MODEL has always been config-driven; the provider was the literal
+ * `'openai'` at the call site — so the factory that exists to make provider
+ * choice a setting was being bypassed by the one caller that most needed it.
+ * The practical cost is that no other provider's prompt caching or latency can
+ * be tried without a deploy.
+ *
+ * Same default, so nothing moves until somebody changes the setting.
+ */
+async function resolveProvider(): Promise<ProviderName> {
+  const configured = await SystemConfigService.getString(
+    supabaseServer,
+    'bizchat_planner_provider',
+    PROVIDERS.OPENAI
+  );
+
+  /*
+   * Checked against the factory's own list, not cast.
+   *
+   * A typo in a settings row would otherwise reach `getProvider` as a string
+   * and fail at the call — mid-turn, on a user's question. Falling back to the
+   * default keeps the chat answering and says so in the log, which is the right
+   * trade for a value an operator edits by hand.
+   */
+  const known = Object.values(PROVIDERS) as string[];
+  if (known.includes(configured)) return configured as ProviderName;
+
+  logger.warn(
+    { configured, using: PROVIDERS.OPENAI },
+    'bizchat_planner_provider names an unknown provider; using the default'
+  );
+  return PROVIDERS.OPENAI;
 }
 
 /**
@@ -311,7 +347,40 @@ export class BizQLPlanner {
       }
     }
 
-    const entities = guessed.size > 0 ? [...guessed] : undefined;
+    /*
+     * Per-question scoping, or one stable prompt for this business.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * Scoping trims the catalog to what a keyword match thinks the question
+     * needs. It also changes the prompt on EVERY turn, and a prompt that
+     * changes cannot be cached — so the ~2,800-token tool schema sitting behind
+     * it is re-billed at full price every time, along with everything else.
+     *
+     * Measured on this catalog (tokens billed, cached input at half rate):
+     *
+     *   scoping hits           3,768/2 + 1,151 + 2,715  =  5,750
+     *   scoping misses         3,768/2 + 3,935 + 2,832  =  8,651
+     *   stable, fully cached  (3,768 + 3,935 + 2,832)/2 =  5,268
+     *
+     * The stable prompt beats scoping's BEST case and halves its worst, and
+     * production's median of 8,666 sent tokens says the miss case is the common
+     * one. It also removes a live source of inconsistency: the catalog shown to
+     * the planner currently depends on the previous turn's rows, so the same
+     * sentence scopes differently depending on what was on screen before.
+     *
+     * Behind a switch because the saving depends on the provider actually
+     * caching. `cached_input_tokens` is now recorded on every call, so this is
+     * a measurement rather than a belief — and if it does not hold, this flips
+     * back without a deploy.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const stablePrefix = await SystemConfigService.getBoolean(
+      supabaseServer,
+      'bizchat_stable_prompt_prefix',
+      true
+    );
+
+    const entities = stablePrefix ? undefined : guessed.size > 0 ? [...guessed] : undefined;
 
     // Writes are now expressible, so the planner must see which actions exist
     // and which of them require confirmation.
@@ -440,7 +509,7 @@ export class BizQLPlanner {
       let raw: Record<string, unknown>;
 
       try {
-        const provider = ProviderFactory.getProvider('openai');
+        const provider = ProviderFactory.getProvider(await resolveProvider());
         const response = await provider.chatCompletion(
           {
             model,
@@ -448,6 +517,18 @@ export class BizQLPlanner {
             tools: [tool],
             tool_choice: 'required',
             temperature: 0,
+            /*
+             * Route every planner call at the same cache.
+             *
+             * The prefix is identical across turns and across businesses, but
+             * requests still land on different machines, and a cache is per
+             * machine. This key asks the provider to keep them together.
+             *
+             * Stamped with `plannerVersion()` so a prompt change starts a new
+             * cache rather than contending with the old one — the same reason
+             * that hash is already in the plan-cache key.
+             */
+            prompt_cache_key: `bizchat-planner-${plannerVersion()}`,
             /*
              * What stops the runaway the cap below only made cheap.
              *

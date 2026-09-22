@@ -28,6 +28,15 @@ function slowStart(overrides: Partial<JourneyInput> = {}) {
       { key: 'ret', dataPoints: 0, threshold: 60 },
     ],
     now: at('2026-09-04T09:00:00Z'), // day 34
+    /*
+     * Stated, not inherited.
+     *
+     * Day numbers count which DATE an instant fell on, so they depend on a
+     * zone. Leaving it to the machine running the suite made these assertions
+     * pass in London and fail in Auckland, where 14:00Z is the next morning.
+     * The literals below are UTC instants; UTC is the zone that reads them.
+     */
+    timezone: 'UTC',
     ...overrides,
   });
 }
@@ -306,6 +315,148 @@ describe('buildJourney', () => {
       // The old node promised "Day 90 · Automated". Nothing here predicts one.
       const journey = slowStart({ automatableNow: 5 });
       expect(node(journey, 'handover').date).toBeNull();
+    });
+  });
+
+  /*
+   * The rail drawn across the journey is a sequence. The journey is not.
+   *
+   * Handover sits at the end of the row and can be reached at any time — an
+   * owner switching on invoice chasing in their first week reaches it long
+   * before they have the client history for retention insights. Filling the
+   * rail to the last REACHED node drew an unbroken orange line through a
+   * retention node still rendered as a grey hollow circle, and moved the
+   * "today" marker onto a node with no date.
+   */
+  describe('how far the rail is allowed to fill', () => {
+    it('stops at the first thing that has not happened', () => {
+      const journey = slowStart({ runningAutomations: 2 });
+
+      // Reached in its own right: two automations really are running.
+      expect(node(journey, 'handover').state).toBe('reached');
+      expect(journey.lastReachedIndex).toBe(7);
+
+      // But the rail stops at the booking, because conv/price/ret have not
+      // been reached and a filled rail claims everything behind it.
+      expect(journey.contiguousReachedIndex).toBe(3);
+    });
+
+    it('agrees with the last reached index when nothing is skipped', () => {
+      const journey = buildJourney({
+        accountCreatedAt: '2026-05-01T09:00:00Z',
+        firstVisitorAt: '2026-05-02T09:00:00Z',
+        firstEnquiryAt: '2026-05-03T09:00:00Z',
+        firstBookingAt: '2026-05-10T09:00:00Z',
+        firstClientAt: '2026-06-04T09:00:00Z',
+        convCrossedAt: '2026-05-22T09:00:00Z',
+        firstAutomationAt: '2026-08-13T09:00:00Z',
+        vectors: [
+          { key: 'conv', dataPoints: 400, threshold: 25 },
+          { key: 'price', dataPoints: 118, threshold: 42 },
+          { key: 'ret', dataPoints: 93, threshold: 60 },
+        ],
+        now: at('2026-09-03T09:00:00Z'),
+      });
+
+      expect(journey.contiguousReachedIndex).toBe(journey.lastReachedIndex);
+    });
+
+    it('fills nothing when even the account node is not reached', () => {
+      // No day zero: the account milestone itself cannot be dated.
+      const journey = slowStart({ accountCreatedAt: null, runningAutomations: 1 });
+
+      expect(journey.contiguousReachedIndex).toBeLessThan(1);
+    });
+  });
+
+  /*
+   * A day number counts dates, not elapsed hours.
+   *
+   * The reported case: the anchor was a first page view at 21:08 and the today
+   * marker read DAY 3 on the fifth calendar date of the journey. Every node
+   * carries a calendar date, so a reader counting Sep 14, 15, 16, 17, 18 got
+   * four and the card said three.
+   *
+   * Local times throughout, built from parts rather than from UTC strings, so
+   * these assertions do not change with the machine running them — the day
+   * boundary under test is the local one.
+   */
+  describe('day numbers count dates, not elapsed hours', () => {
+    /** The reported account: anchored on a 21:08 page view. */
+    const lateEvening = (overrides: Partial<JourneyInput> = {}) =>
+      buildJourney({
+        accountCreatedAt: '2026-09-14T21:08:00Z',
+        firstVisitorAt: '2026-09-14T21:08:00Z',
+        firstEnquiryAt: '2026-09-16T20:53:00Z',
+        firstBookingAt: '2026-09-16T20:53:00Z',
+        firstClientAt: null,
+        vectors: VECTORS,
+        now: at('2026-09-18T12:00:00Z'),
+        timezone: 'UTC',
+        ...overrides,
+      });
+
+    it('calls the fifth date day 4, not day 3', () => {
+      // 14th to 18th is four dates. Elapsed time is 3 days and 15 hours, which
+      // floored to 3 and was the number on the card.
+      expect(lateEvening().todayDay).toBe(4);
+    });
+
+    it('still calls an event later the same evening day 0', () => {
+      // What the old flooring was protecting, and it survives: same date, same
+      // day number, however many hours after the anchor.
+      const journey = lateEvening({ firstVisitorAt: '2026-09-14T23:59:00Z' });
+
+      expect(node(journey, 'visitor').day).toBe(0);
+    });
+
+    it('calls the next morning day 1, where flooring called it day 0', () => {
+      // Nine hours after a 21:08 anchor is the next date. This is the case the
+      // elapsed rule got wrong in both directions.
+      const journey = lateEvening({ firstVisitorAt: '2026-09-15T06:00:00Z' });
+
+      expect(node(journey, 'visitor').day).toBe(1);
+    });
+
+    it('agrees with the dates the row prints beside it', () => {
+      const journey = lateEvening();
+
+      expect(node(journey, 'visitor').day).toBe(0);   // Sep 14
+      expect(node(journey, 'enquiry').day).toBe(2);   // Sep 16
+      expect(node(journey, 'booking').day).toBe(2);   // Sep 16
+      expect(journey.todayDay).toBe(4);               // Sep 18
+    });
+
+    it('answers for the business, not for the machine reading it', () => {
+      /*
+       * The same instants, two zones, two different answers.
+       *
+       * 21:08 UTC on the 14th is already 00:08 on the 15th in Jerusalem, so
+       * that business's journey starts a date later — while 12:00 UTC on the
+       * 18th is still the 18th there. One date lost at the start and none
+       * gained at the end: three, where the same instants are four in UTC.
+       *
+       * Both are right for their own business. Neither may depend on where the
+       * dashboard happens to be open.
+       */
+      expect(lateEvening({ timezone: 'UTC' }).todayDay).toBe(4);
+      expect(lateEvening({ timezone: 'Asia/Jerusalem' }).todayDay).toBe(3);
+    });
+
+    it('defaults to UTC rather than to whichever machine is rendering', () => {
+      // A caller with no timezone must still get the same answer everywhere.
+      const { timezone: _dropped, ...noZone } = {
+        accountCreatedAt: '2026-09-14T21:08:00Z',
+        firstVisitorAt: null,
+        firstEnquiryAt: null,
+        firstBookingAt: null,
+        firstClientAt: null,
+        vectors: VECTORS,
+        now: at('2026-09-18T12:00:00Z'),
+        timezone: 'UTC',
+      };
+
+      expect(buildJourney(noZone).todayDay).toBe(4);
     });
   });
 

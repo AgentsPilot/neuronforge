@@ -71,7 +71,7 @@ export interface InsightData {
   recommendation?: string;
   severity: 'low' | 'medium' | 'high' | 'critical';
   category: string;
-  status: 'new' | 'viewed' | 'snoozed' | 'dismissed' | 'acted' | 'automated';
+  status: 'new' | 'viewed' | 'snoozed' | 'dismissed' | 'acted' | 'automated' | 'resolved';
   current_value?: number;
   baseline_value?: number;
   percent_change?: number;

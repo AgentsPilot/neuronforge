@@ -274,11 +274,23 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
           to: contact.email,
           subject: data.subject,
           body: data.body,
+          // The sending business. Without it the mail goes out in the
+          // platform's name, and a marketing send has no list to check.
+          userId: ctx.userId,
           // Present only when the caller supplied files; `performEmail` refuses
           // malformed ones rather than dropping them silently.
           ...(data.attachments ? { attachments: data.attachments } : {}),
         },
-        branding
+        {
+          branding,
+          /*
+           * MARKETING. The subject and body are whatever the owner typed into
+           * the chat, so this could be anything — and the one thing it is not
+           * is something the recipient asked for. Treated as a solicitation,
+           * which means it needs a recorded opt-in.
+           */
+          kind: { kind: 'marketing', ownerUserId: ctx.userId, contactId },
+        }
       );
 
       if (!outcome.ok) {

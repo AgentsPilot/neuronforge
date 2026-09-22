@@ -118,6 +118,8 @@ interface DetectionStats {
   usersProcessed: number;
   detectorsRun: number;
   detectionsFound: number;
+  /** Open insights closed because their condition no longer holds. */
+  insightsResolved: number;
   insightsCreated: number;
   correlatedInsightsCreated: number;
   healthSummariesCreated: number;
@@ -148,6 +150,7 @@ export async function GET(request: NextRequest) {
       usersProcessed: 0,
       detectorsRun: 0,
       detectionsFound: 0,
+      insightsResolved: 0,
       insightsCreated: 0,
       correlatedInsightsCreated: 0,
       healthSummariesCreated: 0,
@@ -271,6 +274,25 @@ export async function GET(request: NextRequest) {
             }
           }
         }
+
+        /*
+         * Close what is no longer true.
+         *
+         * Runs for EVERY user, including those with no detections at all —
+         * which is the case that matters most. A business whose last open
+         * insight has just resolved produces an empty detection list, and if
+         * the sweep sat inside `if (detections.length > 0)` that card would
+         * stay on the dashboard for ever.
+         *
+         * Placed after the insights are written so a detector that fired again
+         * this run has already refreshed its row and is not swept by its own
+         * pass.
+         */
+        const resolved = await repository.resolveStaleInsights(
+          userId,
+          detections.map(d => d.detectorId)
+        );
+        if (resolved.data) stats.insightsResolved += resolved.data;
 
         stats.usersProcessed++;
 

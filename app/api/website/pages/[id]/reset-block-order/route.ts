@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
+import { bustSiteCache } from '@/lib/website-builder/siteCache';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
@@ -93,6 +94,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       blockCount: orderedBlockIds.length,
       order: sortedBlocks.map(b => b.block_type)
     }, 'Reset block order to defaults');
+
+    // Reordering changes what a visitor reads first.
+    bustSiteCache(pageResult.data.subdomain);
 
     return NextResponse.json({
       success: true,

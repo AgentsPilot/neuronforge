@@ -30,7 +30,7 @@
  */
 
 import { createLogger } from '@/lib/logger';
-import { ProviderFactory } from '@/lib/ai/providerFactory';
+import { ProviderFactory, PROVIDERS, type ProviderName } from '@/lib/ai/providerFactory';
 import { SystemConfigService } from '@/lib/services/SystemConfigService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { buildAnalysisPayload, type AnalysisPayload } from './payload';
@@ -94,6 +94,31 @@ async function resolveModel(): Promise<string> {
   return SystemConfigService.getString(supabaseServer, 'bizchat_analysis_model', 'gpt-4o-mini');
 }
 
+/**
+ * Which provider serves the analysis pass.
+ *
+ * The model was config-driven and the provider was the literal `'openai'` at
+ * the call site — the same split the planner carried. Validated against the
+ * factory's own list rather than cast, so a typo in a settings row degrades to
+ * the default instead of throwing mid-answer.
+ */
+async function resolveProvider(): Promise<ProviderName> {
+  const configured = await SystemConfigService.getString(
+    supabaseServer,
+    'bizchat_analysis_provider',
+    PROVIDERS.OPENAI
+  );
+
+  const known = Object.values(PROVIDERS) as string[];
+  if (known.includes(configured)) return configured as ProviderName;
+
+  logger.warn(
+    { configured, using: PROVIDERS.OPENAI },
+    'bizchat_analysis_provider names an unknown provider; using the default'
+  );
+  return PROVIDERS.OPENAI;
+}
+
 export interface AnalysisRequest {
   question: string;
   language: string;
@@ -121,7 +146,7 @@ export async function analyse(request: AnalysisRequest): Promise<string | null> 
 
     const model = await resolveModel();
 
-    const response = await ProviderFactory.getProvider('openai').chatCompletion(
+    const response = await ProviderFactory.getProvider(await resolveProvider()).chatCompletion(
       {
         model,
         messages: [

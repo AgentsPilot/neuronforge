@@ -61,7 +61,15 @@ export interface JourneyNode {
    * Progress toward a threshold counted in things rather than days.
    * Only the conversion vector uses one; the rest are dated.
    */
-  progress: { current: number; threshold: number } | null;
+  /**
+   * How far along a counted unlock is, and WHAT is being counted.
+   *
+   * `metric` is carried because the dashboard cannot otherwise tell: it used
+   * one hardcoded label, "visitors so far", for every node with progress — so
+   * the pricing node, which counts BOOKINGS, told the owner it was counting
+   * visitors. The vector always knew; this shape was dropping it.
+   */
+  progress: { current: number; threshold: number; metric: string } | null;
   /**
    * Jobs the platform could take over right now, for the handover node.
    *
@@ -70,7 +78,30 @@ export interface JourneyNode {
    * say before the owner has handed over anything.
    */
   offered: number | null;
+  /**
+   * Standing automations actually switched on right now.
+   *
+   * Distinct from `offered`, which counts what COULD be handed over. The node
+   * is named "working on its own", and that phrase is only true of something
+   * running — showing the offer under it said the platform was doing work
+   * nobody had asked it to do.
+   */
+  running: number | null;
 }
+
+/**
+ * What a counted unlock is counting, where the vector does not say.
+ *
+ * A vector names a metric only for its `also` volume condition. The `conv`
+ * node counts the contacts the conversion vector has seen, and without this it
+ * would fall back to the generic word — which is how "visitors so far" ended up
+ * under a node counting bookings.
+ */
+const DEFAULT_METRIC: Partial<Record<JourneyNodeKey, string>> = {
+  conv: 'total_contacts',
+  price: 'total_bookings',
+  ret: 'total_clients',
+};
 
 export interface JourneyVector {
   key: string;
@@ -104,19 +135,53 @@ export interface JourneyInput {
    * insights and the per-detector eligibility flag.
    */
   automatableNow?: number;
+  /** Standing automations switched on right now. Drives "working on its own". */
+  runningAutomations?: number;
   /** From `vectorMaturity.vectors` — needs `conv` for the count threshold. */
   vectors: JourneyVector[];
   /** Injectable so the tests are not a function of the day they run. */
   now?: number;
+  /**
+   * The business's own zone, for counting which date each event fell on.
+   *
+   * Defaults to UTC, which keeps a caller that has not got one deterministic
+   * rather than quietly using whichever machine is rendering. See `dayNumber`
+   * for why this is the business's zone and not the reader's.
+   */
+  timezone?: string;
 }
 
 export interface Journey {
   nodes: JourneyNode[];
   /**
    * Index of the last node in the `reached` state, or -1.
-   * The rail fills to here and the "today" marker sits just past it.
+   *
+   * NOT what the rail fills to — see `contiguousReachedIndex`.
    */
   lastReachedIndex: number;
+  /**
+   * Index of the last node in an unbroken run of `reached` from the start,
+   * or -1.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * This exists because the journey is NOT a strict sequence, and the rail
+   * drawn across it is.
+   *
+   * Handover is the last node and it can be reached at any time: an owner can
+   * switch on invoice chasing in their first week, long before they have the
+   * client history that unlocks retention insights. The moment that happened,
+   * `lastReachedIndex` jumped to the end, the rail filled the whole way, and
+   * the orange line ran straight THROUGH a retention node still drawn as a grey
+   * hollow circle — the line saying done, the circle saying not yet, about the
+   * same thing. The "today" marker went to the far right with it, landing on a
+   * node that has no date at all.
+   *
+   * A filled rail means everything up to here has happened. So it stops at the
+   * first thing that has not, and a later milestone still shows as reached in
+   * its own right, just without claiming the ones before it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  contiguousReachedIndex: number;
   /** Today, as a day number, when day zero is known. */
   todayDay: number | null;
 }
@@ -128,13 +193,68 @@ const parse = (value: string | null | undefined): number | null => {
 };
 
 /**
- * Whole days from day zero — 0 on the day the account was created.
+ * Which calendar date an instant falls on, in a given zone. `YYYY-MM-DD`.
  *
- * Floored, so an event four hours after signup is day 0 rather than day 1.
- * That is the honest reading: it happened on the first day.
+ * Formatters are not free to build, and a journey asks for a dozen of them in
+ * one render, so they are kept.
  */
-const dayNumber = (at: number | null, zero: number | null): number | null =>
-  at === null || zero === null ? null : Math.max(0, Math.floor((at - zero) / DAY_MS));
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
+function dateKey(ms: number, timezone: string): string {
+  let formatter = formatters.get(timezone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    formatters.set(timezone, formatter);
+  }
+  // en-CA gives ISO order, which is what makes the parts safe to reassemble.
+  return formatter.format(new Date(ms));
+}
+
+/**
+ * Whole days from day zero — 0 on the day the journey started.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * CALENDAR DATES, NOT ELAPSED TIME.
+ *
+ * This floored elapsed milliseconds: `Math.floor((at - zero) / DAY_MS)`. The
+ * reasoning was that an event four hours after signup happened on the first day
+ * and should read day 0, which is right — but it only holds when day zero falls
+ * near the start of a day.
+ *
+ * On a real account the anchor was a first page view at 21:08. From there,
+ * anything before 21:08 the NEXT date still floored to 0, and the today marker
+ * read DAY 3 on the fifth date of a journey whose first node was labelled
+ * Sep 14: a reader counting Sep 14, 15, 16, 17, 18 gets four. Every node in
+ * that row carries a calendar date, and the day number beside it was not
+ * counting them.
+ *
+ * IN THE BUSINESS'S ZONE, WHICH IS WHY IT IS A PARAMETER
+ *
+ * Not the reader's. The journey is a set of facts about a business, and an
+ * owner in New Jersey opening the dashboard from a hotel in Tel Aviv must not
+ * see their first booking move to a different day. A parameter also makes this
+ * function total: same arguments, same answer, on any machine.
+ *
+ * Both instants are reduced to their calendar date first and only then
+ * subtracted, so the arithmetic is exact across daylight-saving changes, where
+ * two midnights are 23 or 25 hours apart.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const dayNumber = (at: number | null, zero: number | null, timezone: string): number | null => {
+  if (at === null || zero === null) return null;
+
+  const midnightUtc = (ms: number) => {
+    const [year, month, day] = dateKey(ms, timezone).split('-').map(Number);
+    return Date.UTC(year, month - 1, day);
+  };
+
+  return Math.max(0, Math.round((midnightUtc(at) - midnightUtc(zero)) / DAY_MS));
+};
 
 /**
  * Whole days from day zero to now — the "today" marker's number.
@@ -145,25 +265,31 @@ const dayNumber = (at: number | null, zero: number | null): number | null =>
  * behind a memo keyed on the data it froze at whatever it read when the page
  * was opened. A tab left open over a weekend went on insisting it was Friday.
  */
-export function daysSince(iso: string | null | undefined, now: number = Date.now()): number | null {
+export function daysSince(
+  iso: string | null | undefined,
+  timezone: string = 'UTC',
+  now: number = Date.now()
+): number | null {
   // `dayNumber` already answers null for an absent or unparseable anchor.
-  return dayNumber(now, parse(iso));
+  return dayNumber(now, parse(iso), timezone);
 }
 
 /** A milestone: reached the moment the event has a date, waiting until then. */
 function milestone(
   key: JourneyNodeKey,
   at: number | null,
-  zero: number | null
+  zero: number | null,
+  timezone: string
 ): JourneyNode {
   return {
     key,
     kind: 'milestone',
     state: at === null ? 'waiting' : 'reached',
-    day: dayNumber(at, zero),
+    day: dayNumber(at, zero, timezone),
     date: at === null ? null : new Date(at).toISOString(),
     progress: null,
     offered: null,
+    running: null,
   };
 }
 
@@ -179,12 +305,13 @@ function datedUnlock(
   thresholdDays: number,
   zero: number | null,
   now: number,
+  timezone: string,
   vector?: JourneyVector
 ): JourneyNode {
   if (anchor === null) {
     return {
       key, kind: 'unlock', state: 'waiting',
-      day: null, date: null, progress: null, offered: null,
+      day: null, date: null, progress: null, offered: null, running: null,
     };
   }
 
@@ -211,8 +338,9 @@ function datedUnlock(
       state: also!.current > 0 ? 'counting' : 'waiting',
       day: null,
       date: null,
-      progress: { current: also!.current, threshold: also!.threshold },
+      progress: { current: also!.current, threshold: also!.threshold, metric: also!.metric },
       offered: null,
+      running: null,
     };
   }
 
@@ -220,10 +348,11 @@ function datedUnlock(
     key,
     kind: 'unlock',
     state: dayReached ? 'reached' : 'counting',
-    day: dayNumber(unlocksAt, zero),
+    day: dayNumber(unlocksAt, zero, timezone),
     date: new Date(unlocksAt).toISOString(),
     progress: null,
     offered: null,
+    running: null,
   };
 }
 
@@ -240,7 +369,8 @@ function countedUnlock(
   key: JourneyNodeKey,
   vector: JourneyVector | undefined,
   crossedAt: number | null,
-  zero: number | null
+  zero: number | null,
+  timezone: string
 ): JourneyNode {
   const current = vector?.dataPoints ?? 0;
   const threshold = vector?.threshold ?? 0;
@@ -251,10 +381,11 @@ function countedUnlock(
     key,
     kind: 'unlock',
     state,
-    day: reached ? dayNumber(crossedAt, zero) : null,
+    day: reached ? dayNumber(crossedAt, zero, timezone) : null,
     date: reached && crossedAt !== null ? new Date(crossedAt).toISOString() : null,
-    progress: { current, threshold },
+    progress: { current, threshold, metric: vector?.also?.metric ?? DEFAULT_METRIC[key] ?? 'items' },
     offered: null,
+    running: null,
   };
 }
 
@@ -282,17 +413,33 @@ function countedUnlock(
 function handoverUnlock(
   firstAutomationAt: number | null,
   offered: number,
-  zero: number | null
+  zero: number | null,
+  running: number,
+  timezone: string
 ): JourneyNode {
-  if (firstAutomationAt !== null) {
+  /*
+   * Two different questions, and the node answers both.
+   *
+   * REACHED is a milestone: the owner handed something over, on this date. A
+   * timeline does not un-happen, so this stays true even if every automation is
+   * later paused — which is what the tests below pin down.
+   *
+   * RUNNING is the live count, and it is what the node's name actually claims.
+   * "Working on its own" is only true of something switched on right now, so
+   * the headline number comes from `running` rather than from the offer. An
+   * account that handed over in March and paused in April is still a business
+   * that reached the milestone, and it is not a business working on its own.
+   */
+  if (firstAutomationAt !== null || running > 0) {
     return {
       key: 'handover',
       kind: 'unlock',
       state: 'reached',
-      day: dayNumber(firstAutomationAt, zero),
-      date: new Date(firstAutomationAt).toISOString(),
+      day: dayNumber(firstAutomationAt, zero, timezone),
+      date: firstAutomationAt === null ? null : new Date(firstAutomationAt).toISOString(),
       progress: null,
       offered: null,
+      running: running > 0 ? running : null,
     };
   }
 
@@ -304,6 +451,7 @@ function handoverUnlock(
     date: null,
     progress: null,
     offered: offered > 0 ? offered : null,
+    running: null,
   };
 }
 
@@ -323,17 +471,24 @@ export function buildJourney(input: JourneyInput): Journey {
 
   const vector = (key: string) => input.vectors.find(v => v.key === key);
 
+  /*
+   * UTC when the caller has none. A wrong-but-fixed zone is off by at most a
+   * day at the edges; falling back to the rendering machine's zone would make
+   * the same business's timeline read differently on two screens.
+   */
+  const timezone = input.timezone || 'UTC';
+
   const nodes: JourneyNode[] = [
-    milestone('account', zero, zero),
-    milestone('visitor', parse(input.firstVisitorAt), zero),
-    milestone('enquiry', parse(input.firstEnquiryAt), zero),
-    milestone('booking', firstBooking, zero),
-    countedUnlock('conv', vector('conv'), parse(input.convCrossedAt), zero),
+    milestone('account', zero, zero, timezone),
+    milestone('visitor', parse(input.firstVisitorAt), zero, timezone),
+    milestone('enquiry', parse(input.firstEnquiryAt), zero, timezone),
+    milestone('booking', firstBooking, zero, timezone),
+    countedUnlock('conv', vector('conv'), parse(input.convCrossedAt), zero, timezone),
     // 42 and 60 are not chosen here — they are read off the vector, which is
     // the one place a threshold is allowed to live. See VECTOR_THRESHOLDS.
-    datedUnlock('price', firstBooking, vector('price')?.threshold ?? 42, zero, now, vector('price')),
-    datedUnlock('ret', firstClient, vector('ret')?.threshold ?? 60, zero, now, vector('ret')),
-    handoverUnlock(parse(input.firstAutomationAt), input.automatableNow ?? 0, zero),
+    datedUnlock('price', firstBooking, vector('price')?.threshold ?? 42, zero, now, timezone, vector('price')),
+    datedUnlock('ret', firstClient, vector('ret')?.threshold ?? 60, zero, now, timezone, vector('ret')),
+    handoverUnlock(parse(input.firstAutomationAt), input.automatableNow ?? 0, zero, input.runningAutomations ?? 0, timezone),
   ];
 
   let lastReachedIndex = -1;
@@ -341,9 +496,17 @@ export function buildJourney(input: JourneyInput): Journey {
     if (node.state === 'reached') lastReachedIndex = index;
   });
 
+  // Stops at the first gap. See `contiguousReachedIndex`.
+  let contiguousReachedIndex = -1;
+  for (const node of nodes) {
+    if (node.state !== 'reached') break;
+    contiguousReachedIndex += 1;
+  }
+
   return {
     nodes,
     lastReachedIndex,
-    todayDay: dayNumber(now, zero),
+    contiguousReachedIndex,
+    todayDay: dayNumber(now, zero, timezone),
   };
 }

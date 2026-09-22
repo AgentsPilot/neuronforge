@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Mail, Loader2, CheckCircle, ArrowRight } from 'lucide-react';
 import type { BlockRendererProps } from './types';
+import { useConsentCopy } from '@/hooks/useConsentCopy';
+import { ALREADY_SUBSCRIBED, CONFIRM_PROMPT } from '@/lib/consent/confirmPrompt';
 
 interface NewsletterContent {
   title?: string;
@@ -24,7 +26,8 @@ const LABELS = {
     button: 'Subscribe',
     success: 'Thanks for subscribing!',
     error: 'Something went wrong. Please try again.',
-    invalidEmail: 'Please enter a valid email address'
+    invalidEmail: 'Please enter a valid email address',
+    privacyNotice: 'Privacy notice'
   },
   es: {
     title: 'Mantente Informado',
@@ -33,7 +36,8 @@ const LABELS = {
     button: 'Suscribirse',
     success: '¡Gracias por suscribirte!',
     error: 'Algo salió mal. Por favor, inténtalo de nuevo.',
-    invalidEmail: 'Por favor, introduce un correo electrónico válido'
+    invalidEmail: 'Por favor, introduce un correo electrónico válido',
+    privacyNotice: 'Aviso de privacidad'
   },
   he: {
     title: 'הישאר מעודכן',
@@ -42,11 +46,12 @@ const LABELS = {
     button: 'הרשמה',
     success: '!תודה על ההרשמה',
     error: 'משהו השתבש. אנא נסה שוב.',
-    invalidEmail: 'אנא הזן כתובת אימייל תקינה'
+    invalidEmail: 'אנא הזן כתובת אימייל תקינה',
+    privacyNotice: 'הצהרת פרטיות'
   }
 };
 
-export function NewsletterBlock({ content, styles, theme, locale, isRTL, className }: BlockRendererProps) {
+export function NewsletterBlock({ content, styles, theme, locale, isRTL, className, subdomain, userCode }: BlockRendererProps) {
   const {
     title,
     description,
@@ -61,7 +66,17 @@ export function NewsletterBlock({ content, styles, theme, locale, isRTL, classNa
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  /** Set where the address was already confirmed, so no email is coming. */
+  const [already, setAlready] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /*
+   * As on the template newsletter shape: no checkbox on a one-field form whose
+   * only purpose is the list, and submitting starts a double opt-in rather than
+   * subscribing anyone. Consent is recorded when the emailed link is clicked.
+   */
+  const consentCopy = useConsentCopy({ subdomain, userCode, locale });
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -76,13 +91,29 @@ export function NewsletterBlock({ content, styles, theme, locale, isRTL, classNa
     setLoading(true);
 
     try {
-      const response = await fetch('/api/website/public/newsletter', {
+      /*
+       * The business's own subscriber list.
+       *
+       * This posted to `/api/website/public/newsletter`, which does not exist
+       * and never has — every subscriber saw the generic error and the address
+       * went nowhere. It is not the CONTACT endpoint either: a subscriber is an
+       * audience, and a contact is something the chasers act on.
+       */
+      const response = await fetch('/api/public/newsletter/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
+        body: JSON.stringify({
+          subdomain,
+          userCode,
+          email,
+          locale,
+          page_url: typeof window !== 'undefined' ? window.location.href : undefined
+        })
       });
 
       if (response.ok) {
+        const json = await response.json().catch(() => null);
+        if (json?.data?.alreadySubscribed) setAlready(true);
         setSubmitted(true);
         setEmail('');
       } else {
@@ -97,6 +128,37 @@ export function NewsletterBlock({ content, styles, theme, locale, isRTL, classNa
 
   const isGradientBg = styles?.background?.includes('gradient');
   const layoutStyle = styles?.layout || 'inline';
+  /*
+   * What the visitor is agreeing to, in the business's own words.
+   *
+   * Rendered as text rather than as a checkbox label: this form has one field
+   * and one button, and pressing Subscribe IS the affirmative act — there is no
+   * bundling for a tick to unbundle. It has to be visible BEFORE the button,
+   * because agreeing to something you were not shown is not consent.
+   *
+   * Shared by both layouts below so the two cannot drift into saying different
+   * things — which is how one of them came to say nothing at all.
+   */
+  const statement = consentCopy ? (
+    <p
+      className={`mt-3 text-xs leading-relaxed ${isGradientBg ? 'text-white/70' : 'ap-ink-3'}`}
+    >
+      {consentCopy.text}
+      {consentCopy.privacyPolicyUrl && (
+        <>
+          {' '}
+          <a
+            href={consentCopy.privacyPolicyUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-2"
+          >
+            {labels.privacyNotice}
+          </a>
+        </>
+      )}
+    </p>
+  ) : null;
 
   // Card layout
   if (layoutStyle === 'card') {
@@ -141,7 +203,7 @@ export function NewsletterBlock({ content, styles, theme, locale, isRTL, classNa
                 className="flex items-center justify-center gap-2 text-green-600"
               >
                 <CheckCircle className="w-5 h-5" />
-                <span>{success_message || labels.success}</span>
+                <span>{already ? ALREADY_SUBSCRIBED[locale] ?? ALREADY_SUBSCRIBED.en : CONFIRM_PROMPT[locale] ?? CONFIRM_PROMPT.en}</span>
               </motion.div>
             ) : (
               <form onSubmit={handleSubmit} className="space-y-3">
@@ -174,6 +236,7 @@ export function NewsletterBlock({ content, styles, theme, locale, isRTL, classNa
                     </>
                   )}
                 </button>
+                {statement}
               </form>
             )}
           </motion.div>
@@ -216,7 +279,7 @@ export function NewsletterBlock({ content, styles, theme, locale, isRTL, classNa
               className={`flex items-center justify-center gap-2 ${isGradientBg ? 'text-white' : 'text-green-600'}`}
             >
               <CheckCircle className="w-6 h-6" />
-              <span className="text-lg font-medium">{success_message || labels.success}</span>
+              <span className="text-lg font-medium">{already ? ALREADY_SUBSCRIBED[locale] ?? ALREADY_SUBSCRIBED.en : CONFIRM_PROMPT[locale] ?? CONFIRM_PROMPT.en}</span>
             </motion.div>
           ) : (
             <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-3 max-w-lg mx-auto">
@@ -245,6 +308,8 @@ export function NewsletterBlock({ content, styles, theme, locale, isRTL, classNa
               </button>
             </form>
           )}
+
+          {!submitted && statement}
 
           {error && (
             <p className="mt-3 text-sm text-red-200">{error}</p>

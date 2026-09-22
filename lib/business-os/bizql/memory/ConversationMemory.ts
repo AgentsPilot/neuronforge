@@ -53,8 +53,15 @@ export interface RememberedTurn {
 
 export interface RememberedRows {
   entity: string;
-  /** id + label only. Never the full row: this is context, not a data store. */
-  items: Array<{ id: string; label: string }>;
+  /**
+   * id + label only. Never the full row: this is context, not a data store.
+   *
+   * `refs` is the exception, and a narrow one: the ids this row POINTS AT, so a
+   * follow-up about the person in it has a correct id to use. Without them a
+   * booking remembers only its own id while being labelled with its client's
+   * name, and "did this customer pay?" filtered contacts by a booking id.
+   */
+  items: Array<{ id: string; label: string; refs?: Record<string, string> }>;
   at: string;
 }
 
@@ -324,8 +331,22 @@ export function renderContextForPrompt(context: ConversationContext): string {
   }
 
   if (context.lastRows && context.lastRows.items.length > 0) {
+    /*
+     * Each row's own id, then the ids it points at, named by what they ARE.
+     *
+     * A booking is labelled with its client's name, so the list reads as people
+     * however clearly the line above calls them bookings. Asked "did this
+     * customer pay?", the planner had exactly one id available and used it —
+     * against `contacts`, where a booking id matches nothing, and the answer
+     * came back "contacts: 0" for a client who had paid.
+     */
     const rows = context.lastRows.items
-      .map((r, i) => `  ${i + 1}. ${r.label} (id ${r.id})`)
+      .map((r, i) => {
+        const refs = Object.entries(r.refs ?? {})
+          .map(([entity, id]) => `, its ${entity} id ${id}`)
+          .join('');
+        return `  ${i + 1}. ${r.label} (id ${r.id}${refs})`;
+      })
       .join('\n');
 
     /*
@@ -368,6 +389,20 @@ export function renderContextForPrompt(context: ConversationContext): string {
             `naming no other row, refers to the single row above — act on it by id ` +
             `rather than searching for it again.\n`
           : '') +
+        /*
+         * Which id, not just which row.
+         *
+         * Two rules, and the first one is the fix for a real failure: "did this
+         * customer pay?" after a booking was listed produced `contacts where id
+         * is <booking id>` and answered "contacts: 0" — the client had paid, and
+         * the turn before had displayed exactly that.
+         */
+        `A question about something a row POINTS AT — its customer, its service, ` +
+        `its invoice — is a question about THAT entity, and takes the id named ` +
+        `for it above. A row's own id only ever matches its own ${context.lastRows.entity}.\n` +
+        `If what is being asked is a field you already showed on the row itself — ` +
+        `its payment status, its time, its status — answer from ${context.lastRows.entity} ` +
+        `rather than looking the related row up at all.\n` +
         `When you do use an id, copy it CHARACTER FOR CHARACTER — a dropped character ` +
         `makes it invalid.`
     );

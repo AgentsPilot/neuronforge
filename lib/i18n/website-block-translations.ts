@@ -83,6 +83,9 @@ interface BlockTranslations {
     selectService: TranslationRecord;
     ourServices: TranslationRecord;
     allServices: TranslationRecord;
+    /** Expands a description that was clipped to keep the cards even. */
+    readMore: TranslationRecord;
+    readLess: TranslationRecord;
   };
 
   // Testimonials Block
@@ -303,6 +306,8 @@ export const websiteBlockTranslations: BlockTranslations = {
     selectService: { en: 'Select Service', es: 'Seleccionar Servicio', he: 'בחר שירות' },
     ourServices: { en: 'Our Services', es: 'Nuestros Servicios', he: 'השירותים שלנו' },
     allServices: { en: 'All Services', es: 'Todos los Servicios', he: 'כל השירותים' },
+    readMore: { en: 'Read more', es: 'Leer más', he: 'קראו עוד' },
+    readLess: { en: 'Show less', es: 'Mostrar menos', he: 'הצגה מקוצרת' },
   },
 
   // Testimonials Block

@@ -25,13 +25,28 @@ import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { syncBookingToOwnerCalendar } from '@/lib/scheduling/syncBookingCalendar';
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
 import { buildAttributionFromRequest, type LeadSourceMetadata } from '@/lib/utils/attribution';
+import { resolveCapturePageType } from '@/lib/business-os/capturePageType';
+import { smartLinkRepository } from '@/lib/repositories/SmartLinkRepository';
 import { z } from 'zod';
+import { ConsentInputSchema } from '@/lib/validation/consent';
+import { recordConsent } from '@/lib/consent/recordConsent';
 
 const logger = createLogger({ module: 'WebsiteBookingCreateAPI' });
 
 // Subdomain or userCode is optional - if not provided, authenticated user is used (preview mode)
 // start_time is optional - if not provided, booking is created without scheduling (for courses, products, etc.)
 const BookingSchema = z.object({
+  /*
+   * The visitor id the booking page was carrying.
+   *
+   * Sent from the browser because this is a POST to an API route: the page's
+   * `_sid` is in the PAGE's URL, and `buildAttributionFromRequest` reading the
+   * request URL finds nothing here. Without it the click that produced this
+   * booking can never be matched to it.
+   */
+  session_id: z.string().max(128).optional(),
+  /** The public page the visitor booked from, e.g. /c/abc123/book. */
+  page_url: z.string().max(2048).optional(),
   // Transform empty strings to undefined so they're treated as "not provided"
   subdomain: z.string().optional().transform(val => val && val.trim() ? val : undefined),
   // userCode is an alternative to subdomain for standalone booking pages (/c/[userCode]/book)
@@ -44,7 +59,13 @@ const BookingSchema = z.object({
   email: z.string().email('Invalid email address'),
   phone: z.string().optional().transform(val => val && val.trim() ? val : undefined),
   notes: z.string().max(2000).optional().transform(val => val && val.trim() ? val : undefined),
-  timezone: z.string().optional().default('UTC')
+  timezone: z.string().optional().default('UTC'),
+  /*
+   * Marketing consent, where the client ticked the box on the details step.
+   * Optional in every sense: absent is normal, false is normal, and neither
+   * can fail the booking.
+   */
+  consent: ConsentInputSchema
   // Removed skip_contact - we now always create contact first, using stage to differentiate lead vs active_client
 });
 
@@ -69,9 +90,31 @@ export async function POST(request: NextRequest) {
 
     // Extract attribution data from request (UTM params, referrer, etc.)
     const attribution = buildAttributionFromRequest(request, {
+      /*
+       * The page the visitor was on, not this route's own path.
+       *
+       * `buildAttributionFromRequest` falls back to `url.pathname`, and for a
+       * POST to an API route that is the API route — so every contact ever
+       * created recorded `capture_page_url` as '/api/website/...'. The field
+       * existed and stored the one value that cannot answer the question it was
+       * added for: which page converts.
+       */
+      pageUrl: data.page_url,
       captureChannel: 'booking',
+      sessionId: data.session_id,
       generateSessionId: true
     });
+
+    /*
+     * Which KIND of page this was, recorded now rather than inferred later.
+     * A landing page is only distinguishable by matching the path against the
+     * owner's landing slugs, and the CRM cannot do that per contact it draws.
+     * Enrichment only: a failure here leaves the contact grouped under Website.
+     */
+    const capturePageType = await resolveCapturePageType(data.subdomain, data.page_url);
+    if (capturePageType) {
+      (attribution as Record<string, unknown>).page_type = capturePageType;
+    }
 
     let ownerId: string;
 
@@ -361,6 +404,24 @@ export async function POST(request: NextRequest) {
     }
 
     /*
+     * Marketing consent, where the client gave it.
+     *
+     * After the contact, and non-blocking: a failure here loses a consent
+     * record, never a booking. An untouched checkbox writes nothing at all —
+     * it is not a withdrawal, and treating it as one would silently
+     * unsubscribe somebody who opted in on a different form last month.
+     */
+    void recordConsent({
+      userId: ownerId,
+      contactId,
+      email: data.email,
+      consent: data.consent,
+      sourceSurface: 'booking',
+      sourcePageUrl: data.page_url ?? null,
+      attribution,
+    });
+
+    /*
      * Reuse the booking this client already has waiting, rather than adding
      * another.
      *
@@ -607,6 +668,23 @@ export async function POST(request: NextRequest) {
       { bookingId: booking.id, subdomain: data.subdomain, serviceId: data.service_id, requiresPayment, isScheduledBooking },
       'Booking created successfully'
     );
+
+    /*
+     * Close the loop from click to booking.
+     *
+     * `markConversion` matches the click on `session_id`, which is why the id
+     * had to travel from the smart-link redirect through the page and into this
+     * request. It has existed and been called by nothing, so no smart link has
+     * ever reported a conversion.
+     *
+     * Non-blocking and never fatal: the booking is made, and a business must
+     * not lose one because attribution failed.
+     */
+    if (data.session_id) {
+      smartLinkRepository
+        .markConversion(data.session_id, 'booking')
+        .catch(err => requestLogger.warn({ err }, 'Could not mark the smart-link conversion'));
+    }
 
     return NextResponse.json({
       success: true,

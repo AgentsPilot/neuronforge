@@ -25,8 +25,10 @@ import {
   AlertCircle,
   Settings,
   LogOut,
+  MailCheck,
 } from 'lucide-react';
 import { LeadNotificationToggles } from '@/components/business-os/settings/LeadNotificationToggles';
+import { MarketingConsentPanel } from '@/components/business-os/settings/MarketingConsentPanel';
 import { ErasureRequestContent } from '@/components/business-os/purge/DangerZonePanel';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
@@ -390,15 +392,81 @@ function BusinessOSSettingsContent() {
    * — it belongs to the marketing site, on its own origin.
    * ─────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * Give a best-effort network call a deadline it cannot outlive.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * Both calls below were `await`ed inside a try/catch, which catches a
+   * REJECTION and does nothing at all about a promise that simply never
+   * settles. A stalled request therefore left `loggingOut` true forever — and
+   * the dialog refuses to close while that is true — so a person who pressed
+   * log out sat on a spinner with no cancel, no escape and no way back.
+   *
+   * Resolves rather than rejects on timeout: every caller here is best-effort,
+   * and the only outcome that matters is that the browser ends up signed out
+   * and somewhere else.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  const withDeadline = async (work: Promise<unknown>, ms: number, what: string) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const deadline = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), ms);
+    });
+
+    try {
+      const outcome = await Promise.race([work.then(() => 'done' as const), deadline]);
+      if (outcome === 'timeout') {
+        logger.warn({ what, ms }, 'Logout step exceeded its deadline; continuing without it');
+      }
+    } catch (err) {
+      logger.warn({ err, what }, 'Logout step failed; continuing without it');
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+
+  /**
+   * Every key that holds a SESSION, whoever wrote it.
+   *
+   * The list below used to name `sb-auth-token` and `supabase.auth.token`, and
+   * neither is what Supabase actually writes: the real key carries the project
+   * ref (`sb-<ref>-auth-token`) and is chunked into `.0`, `.1`, … when the JWT
+   * is large. So a sign-out that failed or timed out left the session sitting
+   * in storage while the browser was sent to the login page — signed out in
+   * appearance only, and signed straight back in on return.
+   *
+   * Matched by shape rather than by a literal, so this holds in every
+   * environment and survives a project change.
+   */
+  const clearSessionKeys = (store: Storage) => {
+    const doomed: string[] = [];
+    for (let i = 0; i < store.length; i++) {
+      const key = store.key(i);
+      if (key && /^sb-.*-auth-token/.test(key)) doomed.push(key);
+    }
+    doomed.forEach((key) => store.removeItem(key));
+  };
+
   const handleLogout = async () => {
     setLoggingOut(true);
 
+    /*
+     * Leaving is the ONE guaranteed outcome.
+     *
+     * Everything below is best-effort with a deadline; the navigation is in a
+     * finally so that no future step — a throw, an added await, a storage API
+     * that refuses — can strand somebody in a dialog that will not close.
+     */
+    try {
+
     // Best-effort, and before the sign-out: afterwards there is no session to
     // attribute it to. A failed audit entry must never trap someone in a
-    // session they asked to leave.
+    // session they asked to leave — and neither must a slow one, which is what
+    // the deadline is for.
     try {
       if (user?.id) {
-        await fetch('/api/audit/log', {
+        await withDeadline(fetch('/api/audit/log', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-id': user.id },
           body: JSON.stringify({
@@ -411,19 +479,25 @@ function BusinessOSSettingsContent() {
             severity: 'info',
             complianceFlags: ['SOC2'],
           }),
-        });
+        }), 2000, 'audit');
       }
     } catch (err) {
       logger.warn({ err }, 'Logout audit failed (non-blocking)');
     }
 
-    try {
-      await supabase.auth.signOut({ scope: 'global' });
-    } catch (err) {
-      // Log it, then leave anyway. A user who pressed log out must end up
-      // logged out of this browser even if the server call failed.
-      logger.error({ err }, 'Global sign-out failed — clearing locally regardless');
-    }
+    /*
+     * Ending the session everywhere is worth waiting for — but not forever.
+     *
+     * `scope: 'global'` revokes every device's session server-side, which is
+     * the slowest thing on this path and the one most likely to stall. Past the
+     * deadline the local clear below is what makes this browser safe, and the
+     * server session expires on its own.
+     */
+    await withDeadline(
+      supabase.auth.signOut({ scope: 'global' }),
+      5000,
+      'global sign-out'
+    );
 
     try {
       // Everything that belongs to a PERSON. `app-theme` and `v2-theme-mode`
@@ -435,12 +509,16 @@ function BusinessOSSettingsContent() {
         'business-os-language', 'business-os-currency',
         'agent_builder_session_key', 'agent_builder_user_view_preference',
         'helpBotContext', 'helpBotOpen',
-        'sb-auth-token', 'supabase.auth.token',
       ].forEach(key => {
         localStorage.removeItem(key);
         sessionStorage.removeItem(key);
       });
       sessionStorage.removeItem('onboarding_preview_data');
+
+      // The session itself, by shape rather than by a guessed name. This is
+      // what actually signs the browser out when the call above could not.
+      clearSessionKeys(localStorage);
+      clearSessionKeys(sessionStorage);
     } catch {
       // Private mode, or storage disabled. The sign-out above is what matters.
     }
@@ -454,13 +532,15 @@ function BusinessOSSettingsContent() {
      * neither guess is right. All three are inlined at build time, so this is a
      * plain string by the time it runs.
      */
-    const marketingUrl =
-      process.env.NEXT_PUBLIC_MARKETING_URL ||
-      (process.env.NODE_ENV === 'development'
-        ? 'http://localhost:3001'
-        : 'https://agentspilot.com');
+    } finally {
+      const marketingUrl =
+        process.env.NEXT_PUBLIC_MARKETING_URL ||
+        (process.env.NODE_ENV === 'development'
+          ? 'http://localhost:3001'
+          : 'https://agentspilot.com');
 
-    window.location.href = `${marketingUrl}/login`;
+      window.location.href = `${marketingUrl}/login`;
+    }
   };
 
   /*
@@ -791,6 +871,25 @@ function BusinessOSSettingsContent() {
             {expandedSection === 'preferences' && (
               <div className="px-4 pb-4 space-y-4">
                 <LeadNotificationToggles />
+              </div>
+            )}
+          </div>
+
+          {/* Marketing consent */}
+          <div id="settings-section-consent">
+            <button
+              onClick={() => setExpandedSection(expandedSection === 'consent' ? null : 'consent')}
+              className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <MailCheck className="w-5 h-5 text-[var(--v2-text-muted)]" />
+                <span className="text-sm text-[var(--v2-text-primary)]">Marketing permission</span>
+              </div>
+              <ChevronRight className={`w-4 h-4 text-[var(--v2-text-muted)] transition-transform ${expandedSection === 'consent' ? 'rotate-90' : ''}`} />
+            </button>
+            {expandedSection === 'consent' && (
+              <div className="px-4 pb-4">
+                <MarketingConsentPanel />
               </div>
             )}
           </div>

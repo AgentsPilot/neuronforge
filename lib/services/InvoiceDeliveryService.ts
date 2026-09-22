@@ -568,6 +568,7 @@ async function sendByEmail(
      * exactly as before.
      */
     const emailResult = await sendEmail({
+      kind: 'transactional',
       to: [invoice.client_email!],
       subject,
       html,

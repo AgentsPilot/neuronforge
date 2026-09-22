@@ -218,12 +218,21 @@ export class AutonomousWorkFeed {
 
     switch (processId) {
       case 'chase_overdue_invoices': {
-        const paid = Math.round(outcome.itemsSucceeded * 0.3); // Assume 30% paid
-        const value = outcome.valueImpact || 0;
-        if (paid > 0 && value > 0) {
-          return `Chased ${outcome.itemsProcessed} invoices — ${paid} paid ($${value.toLocaleString()})`;
-        }
-        return `Chased ${outcome.itemsProcessed} invoice${outcome.itemsProcessed !== 1 ? 's' : ''}`;
+        /*
+         * Reports what was SENT, never what it earned.
+         *
+         * This used to multiply the successes by 0.3 — "Assume 30% paid" — and
+         * print the result beside a money figure as though both were measured.
+         * Nothing anywhere counts invoices paid because a reminder went out, so
+         * the number was invented, and it was invented on the one card whose
+         * whole purpose is to tell the owner what the platform did for them.
+         *
+         * A chase is a send. Whether it worked shows up where money is already
+         * counted, and if that attribution is ever built it can be stated here
+         * as a fact rather than a coefficient.
+         */
+        const n = outcome.itemsProcessed;
+        return `Chased ${n} invoice${n !== 1 ? 's' : ''}`;
       }
 
       case 'send_reminder_sequence':

@@ -1,6 +1,11 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import {
+  contactOrigin,
+  originOption,
+  type ContactSourceMetadata,
+} from '@/components/crm/contactSources';
 import { Badge } from '@/components/ui/badge';
 import { Mail, Phone, Calendar, GripVertical, User, Clock, CheckSquare } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -383,11 +388,27 @@ export function CRMPipelineView({ contacts, stages, onContactClick, onContactUpd
                           <div className="font-semibold text-[var(--v2-text-primary)] group-hover:text-[#8B5CF6] transition-colors truncate">
                             {contact.first_name} {contact.last_name}
                           </div>
-                          {contact.source && (
-                            <div className="text-xs text-[var(--v2-text-muted)] mt-0.5">
-                              {t(`crm.source.${contact.source}`)}
-                            </div>
-                          )}
+                          {/*
+                            The same group the drawer lights, from the same
+                            derivation — the card said "Website Booking" while
+                            the drawer showed nothing selected, because one
+                            resolved a label straight off the stored value and
+                            the other matched it against a list that never
+                            contained it.
+                          */}
+                          {(() => {
+                            const origin = contactOrigin(
+                              contact.source,
+                              contact.source_metadata as ContactSourceMetadata | null
+                            );
+                            const option = originOption(origin?.group);
+                            if (!option) return null;
+                            return (
+                              <div className="text-xs text-[var(--v2-text-muted)] mt-0.5">
+                                {t(option.labelKey)}
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
                       {/* Drag Handle */}

@@ -6,9 +6,9 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { revalidateTag } from 'next/cache';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
+import { bustSiteCache } from '@/lib/website-builder/siteCache';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 import { WebsiteBlockRepository, WebsiteBlockInsert, BlockType } from '@/lib/repositories/WebsiteBlockRepository';
@@ -113,6 +113,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     requestLogger.info({ blockId: result.data.id, pageId: id }, 'Created website block');
 
+    // A new section is as visible to a visitor as an edited one. Only PUT
+    // invalidated before, so an added block stayed hidden until the TTL expired.
+    bustSiteCache(pageResult.data.subdomain);
+
     return NextResponse.json({ success: true, block: result.data });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -161,7 +165,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     // Revalidate the public website cache if page has a subdomain
     if (pageResult.data.subdomain) {
       try {
-        revalidateTag(`website-${pageResult.data.subdomain}`);
+        bustSiteCache(pageResult.data.subdomain);
         requestLogger.info({ subdomain: pageResult.data.subdomain }, 'Revalidated public website cache');
       } catch (revalidateError) {
         // Non-blocking - log but don't fail the request

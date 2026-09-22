@@ -25,6 +25,22 @@ export type WeeklyAvailability = Record<string, { start: string; end: string }[]
 const DEFAULT_AVAILABLE_HOURS_PER_WEEK = 40;
 
 /**
+ * Days of taking bookings before an empty slot is worth remarking on.
+ *
+ * Four weeks, which is what `minSamples: 28` on the definition below has always
+ * claimed and never enforced. Measured from the first booking.
+ */
+const MIN_DAYS_TAKING_BOOKINGS = 28;
+
+/**
+ * Bookings behind the rate before it is a rate.
+ *
+ * Eight. Below that the percentage swings wildly on one booking, and an owner
+ * told their calendar is "critical" can do the arithmetic themselves.
+ */
+const MIN_BOOKINGS = 8;
+
+/**
  * Parse an `HH:MM` string into fractional hours. Returns null for anything malformed.
  */
 function parseTimeToHours(value: unknown): number | null {
@@ -101,9 +117,70 @@ export class OpsUtilizationLowDetector extends BaseDetector {
     super(supabase);
   }
 
+  /**
+   * Enough days AND enough bookings for a utilisation rate to mean something.
+   *
+   * Returns false for a calendar that is simply new. See the note at the call
+   * site for why this is counted from the first booking rather than from the
+   * account, and why both conditions are needed.
+   */
+  private async calendarHasHistory(userId: string): Promise<boolean> {
+    const { data, error } = await this.supabase
+      .from('scheduling_bookings')
+      .select('created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: true })
+      .limit(MIN_BOOKINGS);
+
+    if (error) {
+      // Unreadable means we cannot show this is worth saying, so we do not say
+      // it. Failing towards silence, as everywhere else in this module.
+      logger.warn({ err: error, userId }, 'Could not read booking history; not reporting utilisation');
+      return false;
+    }
+
+    const bookings = data ?? [];
+    if (bookings.length < MIN_BOOKINGS) return false;
+
+    const first = Date.parse(String(bookings[0].created_at));
+    if (Number.isNaN(first)) return false;
+
+    const daysTakingBookings = Math.floor((Date.now() - first) / 86_400_000);
+    return daysTakingBookings >= MIN_DAYS_TAKING_BOOKINGS;
+  }
+
   async evaluate(userId: string): Promise<DetectionResult | null> {
     // Check cooldown
     if (await this.isOnCooldown(userId)) {
+      this.logDetection(userId, null);
+      return null;
+    }
+
+    /*
+     * Has this calendar been open long enough for "empty" to mean anything?
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * A new business has an empty calendar. That is what new means, not a
+     * finding, and telling somebody six days in that 32 slots are "critical"
+     * describes their situation back to them as a failure.
+     *
+     * `minSamples: 28` has been declared on this detector since it was written
+     * and was never read by anything. The only gate that actually ran was the
+     * ops vector's, and that lights on `total_bookings >= 1` — so one booking
+     * was enough for the platform to start judging the other thirty-nine hours
+     * of the week.
+     *
+     * Counted from the FIRST BOOKING, never from signup. That is the module's
+     * own rule, for the reason `VECTOR_THRESHOLDS.ret` gives about retention:
+     * a rate needs enough history behind it to be a rate. Re-running onboarding
+     * also recreates the profile row, so account age is not a clock.
+     *
+     * Both conditions, because either alone is defeatable: four weeks with one
+     * booking is not a utilisation rate, and twenty bookings in three days is
+     * a business whose calendar is still filling.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    if (!(await this.calendarHasHistory(userId))) {
       this.logDetection(userId, null);
       return null;
     }
@@ -226,7 +303,23 @@ export class OpsUtilizationLowDetector extends BaseDetector {
       estimatedImpactUsd: estimatedOpportunity,
       impactDirection: 'opportunity',
       impactPeriod: 'weekly',
-      processParameters: {},
+      processParameters: {
+        /*
+         * Carried so the projection does not have to invent one.
+         *
+         * `ImpactProjector.projectOpsUtilizationLow` held `const
+         * avgBookingValue = 75` and multiplied the empty hours by it — the same
+         * fabricated $75 the comment above describes removing from this
+         * detector. The number was shown to owners as their own potential
+         * revenue; on the account this was found from, the real service price
+         * is $100.
+         *
+         * Null when nothing has been charged yet, and the projection then
+         * states no money at all rather than a guess.
+         */
+        avg_booking_value: avgBookingValue,
+        available_hours_per_week: availableHoursPerWeek,
+      },
     });
 
     this.logDetection(userId, result);

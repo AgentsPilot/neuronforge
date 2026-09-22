@@ -405,7 +405,9 @@ export class NotificationService {
     body: string,
     data: any
   ): Promise<boolean> {
-    const result = await sendEmail({ to, subject, html: body, from: data?.from, ownerUserId: data?.ownerUserId });
+    // Approval and calibration notices, addressed to the account owner about
+    // their own agents. Transactional by any reading.
+    const result = await sendEmail({ kind: 'transactional', to, subject, html: body, from: data?.from, ownerUserId: data?.ownerUserId });
     if (result.sent) {
       logger.info({ provider: result.provider, recipients: to.length }, 'Email sent');
     } else {

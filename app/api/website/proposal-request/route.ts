@@ -24,6 +24,9 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { notifyOwnerOfLead } from '@/lib/services/LeadAlertService';
 import { buildAttributionFromRequest } from '@/lib/utils/attribution';
+import { resolveCapturePageType } from '@/lib/business-os/capturePageType';
+import { ConsentInputSchema } from '@/lib/validation/consent';
+import { recordConsent } from '@/lib/consent/recordConsent';
 
 const logger = createLogger({ module: 'ProposalRequestAPI' });
 
@@ -48,6 +51,8 @@ const ProposalRequestSchema = z
     end_time: z.string().datetime().optional(),
     timezone: z.string().max(64).optional(),
     page_url: z.string().max(500).optional(),
+    /** Marketing consent, where the client ticked the box. Never required. */
+    consent: ConsentInputSchema,
   })
   .refine(data => data.subdomain || data.userCode, {
     message: 'Either subdomain or userCode is required',
@@ -75,6 +80,17 @@ export async function POST(request: NextRequest) {
       pageUrl: data.page_url,
       generateSessionId: true,
     });
+
+    /*
+     * Which KIND of page this was, recorded now rather than inferred later.
+     * A landing page is only distinguishable by matching the path against the
+     * owner's landing slugs, and the CRM cannot do that per contact it draws.
+     * Enrichment only: a failure here leaves the contact grouped under Website.
+     */
+    const capturePageType = await resolveCapturePageType(data.subdomain, data.page_url);
+    if (capturePageType) {
+      (attribution as Record<string, unknown>).page_type = capturePageType;
+    }
 
     /*
      * The owner comes from the address the client arrived at, never from the
@@ -191,6 +207,21 @@ export async function POST(request: NextRequest) {
       }
       contactId = created.id;
     }
+
+    /*
+     * Marketing consent, where the client gave it. After the contact exists and
+     * non-blocking: a failure here loses a consent record, never a quote
+     * request. An untouched checkbox writes nothing rather than a withdrawal.
+     */
+    void recordConsent({
+      userId: ownerId,
+      contactId,
+      email: data.email,
+      consent: data.consent,
+      sourceSurface: 'proposal_request',
+      sourcePageUrl: data.page_url ?? null,
+      attribution,
+    });
 
     // ---- the consultation, where the service books one ---------------------
 

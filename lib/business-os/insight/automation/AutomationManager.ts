@@ -10,6 +10,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 import { KernelTrigger } from '../kernel/KernelTrigger';
+import { enqueueInsightActions } from './InsightActionEnqueuer';
 import { TRIGGERABLE_PROCESSES, getProcess, getProcessForDetector } from '../kernel/TriggerableProcesses';
 import { DetectorEngine } from '../detectors/DetectorEngine';
 import type { Insight } from '../repository/InsightRepository';
@@ -248,17 +249,56 @@ export class AutomationManager {
       return { automationId: id, status: 'skipped', reason: 'no_detection' };
     }
 
-    // Limit entity IDs
-    const entityIds = detection.affectedEntityIds?.slice(0, max_items_per_run);
-
-    // Trigger the kernel process
-    const result = await this.kernelTrigger.trigger({
-      processId: kernel_process_id,
+    /*
+     * Queue the work rather than triggering the kernel.
+     *
+     * `KernelTrigger.trigger()` ends at a throw for every one of these
+     * processes — 'not implemented; refusing rather than reporting fabricated
+     * work' — so every automation this manager ran was inert. Enqueuing puts
+     * the action onto the durable queue that already delivers payment
+     * reminders, the daily briefing and lead responses, and the drain runner
+     * decides at send time whether it is still true.
+     *
+     * The cap moves with it: `max_items_per_run` now bounds how many ROWS one
+     * detection may queue, which is the same guarantee expressed where the work
+     * is actually created.
+     */
+    const enqueued = await enqueueInsightActions({
       userId: user_id,
-      triggeredBy: 'automation',
+      processId: kernel_process_id,
+      detection,
+      detectorId: detector_id,
+      automationId: id,
       parameters: process_parameters,
-      entityIds,
+      maxItems: max_items_per_run,
     });
+
+    if (enqueued.skipped) {
+      logger.warn(
+        { automationId: id, detectorId: detector_id, reason: enqueued.skipped },
+        'Automation produced no work'
+      );
+      await this.updateNextCheck(id, automation.check_interval_minutes);
+      return { automationId: id, status: 'skipped', reason: enqueued.skipped };
+    }
+
+    /*
+     * Reported as QUEUED, not as done.
+     *
+     * Nothing has been sent at this point and it may never be: the drain runner
+     * re-checks every row and skips the ones that have stopped being true. The
+     * counts here are what was queued, and `itemsSucceeded` deliberately equals
+     * them rather than being estimated — this is the same file whose feed used
+     * to multiply successes by 0.3 and call the result money.
+     */
+    const result = {
+      status: 'completed' as const,
+      executionId: null as string | null,
+      itemsProcessed: enqueued.queued + enqueued.duplicates,
+      itemsSucceeded: enqueued.queued,
+      itemsFailed: 0,
+      valueImpact: 0,
+    };
 
     // Update automation stats
     const updates: Record<string, unknown> = {
@@ -296,9 +336,17 @@ export class AutomationManager {
 
     return {
       automationId: id,
-      executionId: result.executionId,
-      status: result.status === 'completed' ? 'executed' : 'failed',
-      reason: result.error,
+      // No execution id: there is no kernel execution any more. The work lives
+      // as rows in `insight_actions`, addressed by this automation's id.
+      executionId: result.executionId ?? undefined,
+      status: 'executed',
+      /*
+       * `valueImpact` is zero, not estimated.
+       *
+       * Queueing a chase is worth nothing until somebody pays, and attributing
+       * a figure to it here is exactly the invention this module has already
+       * had to remove once.
+       */
       itemsProcessed: result.itemsProcessed,
       valueImpact: result.valueImpact,
     };
