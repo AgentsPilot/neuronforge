@@ -1,12 +1,39 @@
--- Verification for the Business OS entitlements migrations (component 1).
+-- ╔══════════════════════════════════════════════════════════════════════════╗
+-- ║  PROBE SUITE — THIS SCRIPT WRITES. IT MUST END IN ROLLBACK.              ║
+-- ╚══════════════════════════════════════════════════════════════════════════╝
 --
---   psql "<BRANCH OR LOCAL DATABASE URL>" -v ON_ERROR_STOP=1 \
---     -f scripts/verify-bos-entitlements-migration.sql
+--   psql "$BOS_DB" -v ON_ERROR_STOP=1 -f scripts/verify-bos-entitlements-migration.sql
 --
--- ⚠️ NEVER RUN THIS AGAINST PRODUCTION. It creates and then rolls back a test
--- auth user and a test tenant. The whole script runs inside one transaction and
--- ends with ROLLBACK, so it leaves nothing behind — but a rollback is not a
--- substitute for using a branch or local database.
+-- Run it as a FILE, never by pasting fragments: the `BEGIN` below and the
+-- `ROLLBACK` at the very end are what make it safe. A guard a few lines down
+-- refuses to run if the statements are not inside an explicit transaction, so a
+-- half-pasted run fails instead of writing.
+--
+-- ── Where it may run ────────────────────────────────────────────────────────
+-- Preferably a branch or throwaway database. It CAN be run against production
+-- (the project has no branch database), because every write is rolled back —
+-- but read these three caveats first:
+--
+--   1. It inserts four rows into `auth.users` inside the transaction. If this
+--      database has an `on_auth_user_created` trigger, that fires too. All of it
+--      rolls back; sequence values consumed along the way do not, which is
+--      harmless (the ids here are uuids).
+--   2. Section B4 briefly adds `CHECK (false)` to `business_os_account_plans` to
+--      prove a failing plan write cannot fail a product write. That takes an
+--      ACCESS EXCLUSIVE lock on the plan table for the length of the
+--      transaction. On a live database, a customer onboarding in that window
+--      would have their plan-row trigger time out after 2s and log a WARNING —
+--      their message still saves, but their plan row is not created and is only
+--      recovered by re-running the backfill. **B4 is therefore OPT-IN.** It runs
+--      only with `-v probe_locks=on`. Prefer a quiet window, and re-run
+--      `20261005b` afterwards.
+--   3. It holds one transaction open for its whole run (seconds). Do not run it
+--      through a transaction pooler — use the direct connection (port 5432).
+--
+-- For the checks that are unconditionally safe on production — objects,
+-- bindings, privileges, constraint definitions, backfill shape and counts —
+-- use `scripts/check-bos-entitlements-migration.sql`, which runs READ ONLY and
+-- can be run any time, before or after this one.
 --
 -- It fails loudly: every check raises an exception naming the property that
 -- broke, and `ON_ERROR_STOP=1` stops the run there.
@@ -19,8 +46,30 @@
 -- triggers exist and the schema objects are configured as intended.
 
 \set ON_ERROR_STOP on
+-- Default: the lock probe is OFF. Override with `-v probe_locks=on`.
+\if :{?probe_locks}
+\else
+  \set probe_locks off
+\endif
 
 BEGIN;
+
+-- The guard that makes the header's promise enforceable.
+--
+-- `transaction_timestamp()` is fixed when the transaction starts, while
+-- `statement_timestamp()` moves with each statement — so inside an explicit
+-- transaction with at least one statement before it (the BEGIN above), the two
+-- differ. In autocommit, where every statement is its own transaction, they are
+-- identical. So this fires exactly when someone runs the probes outside a
+-- transaction that can be rolled back.
+DO $$
+BEGIN
+  IF statement_timestamp() = transaction_timestamp() THEN
+    RAISE EXCEPTION
+      'REFUSING TO RUN: this probe suite writes and must run inside an explicit transaction that ends in ROLLBACK. Run the whole file with psql -f, do not paste fragments.'
+      USING ERRCODE = '25P01';
+  END IF;
+END $$;
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- A. Schema, RLS and privileges (workplan §13.1 list)
@@ -220,13 +269,13 @@ END $$;
 -- schema differs between Supabase versions, and some projects have a
 -- `handle_new_user` trigger that fails here), replace the INSERT with three
 -- existing auth user ids that are NOT Business OS tenants, written into
--- `_bos_probe` as 'tenant', 'tenant2' and 'tenant3', and keep the rest of the
+-- `_bos_probe` as 'tenant', 'tenant2', 'tenant3' and 'tenant4', and keep the rest of the
 -- script:
 --
 --   SELECT u.id FROM auth.users u
 --   LEFT JOIN public.business_profiles bp ON bp.user_id = u.id
 --   LEFT JOIN public.onboarding_conversations oc ON oc.user_id = u.id
---   WHERE bp.user_id IS NULL AND oc.user_id IS NULL LIMIT 3;
+--   WHERE bp.user_id IS NULL AND oc.user_id IS NULL LIMIT 4;
 CREATE TEMP TABLE _bos_probe(kind text primary key, user_id uuid, ts timestamptz);
 
 DO $$
@@ -234,6 +283,7 @@ DECLARE
   v_user uuid := gen_random_uuid();
   v_user2 uuid := gen_random_uuid();
   v_user3 uuid := gen_random_uuid();
+  v_user4 uuid := gen_random_uuid();
   v_admin uuid := gen_random_uuid();
 BEGIN
   INSERT INTO auth.users (id, email, aud, role, created_at, updated_at)
@@ -241,10 +291,12 @@ BEGIN
          (v_user2, 'bos-entitlements-probe-' || v_user2 || '@example.invalid', 'authenticated', 'authenticated', now(), now()),
          -- tenant3 is the C0 "pre-existing tenant": history written, plan row
          -- removed, then the backfill statement run over it.
-         (v_user3, 'bos-entitlements-probe-' || v_user3 || '@example.invalid', 'authenticated', 'authenticated', now(), now());
+         (v_user3, 'bos-entitlements-probe-' || v_user3 || '@example.invalid', 'authenticated', 'authenticated', now(), now()),
+         -- tenant4 is used only by the opt-in lock probe (B4).
+         (v_user4, 'bos-entitlements-probe-' || v_user4 || '@example.invalid', 'authenticated', 'authenticated', now(), now());
 
   INSERT INTO _bos_probe(kind, user_id)
-  VALUES ('tenant', v_user), ('tenant2', v_user2), ('tenant3', v_user3), ('admin', v_admin);
+  VALUES ('tenant', v_user), ('tenant2', v_user2), ('tenant3', v_user3), ('tenant4', v_user4), ('admin', v_admin);
 END $$;
 
 -- B1. The onboarding trigger records the fact and opens a trial row.
@@ -318,33 +370,64 @@ BEGIN
 END $$;
 
 -- B4. S-8(i): a failing plan-table write can NEVER fail the product write.
---     The constraint makes every insert into the plan table raise; the
---     onboarding insert must still succeed, with no plan row created.
+--
+-- ⚠️ OPT-IN (`-v probe_locks=on`). The constraint takes an ACCESS EXCLUSIVE lock
+-- on the plan table for the rest of the transaction. On a live database that
+-- makes every concurrent plan-row trigger wait out its 2s `lock_timeout` and log
+-- a WARNING — the customer's write still succeeds, but their plan row is not
+-- created, and only a re-run of the backfill recovers it. Skip it on a busy
+-- production database, or run it in a quiet window and re-run `20261005b`
+-- afterwards. Everything else in this file works either way.
+\if :probe_locks
+DO $$
+DECLARE
+  v_user4 uuid := (SELECT user_id FROM _bos_probe WHERE kind = 'tenant4');
+  n int;
+BEGIN
+  ALTER TABLE public.business_os_account_plans ADD CONSTRAINT tmp_fail CHECK (false) NOT VALID;
+
+  INSERT INTO public.onboarding_conversations (user_id, message_sequence, role, content)
+  VALUES (v_user4, 1, 'user', 'probe under a failing plan table');
+
+  SELECT count(*) INTO n FROM public.onboarding_conversations WHERE user_id = v_user4;
+  IF n <> 1 THEN RAISE EXCEPTION 'B4 the product write was lost when the plan write failed'; END IF;
+
+  SELECT count(*) INTO n FROM public.business_os_account_plans WHERE user_id = v_user4;
+  IF n <> 0 THEN RAISE EXCEPTION 'B4 a plan row appeared despite the failing constraint'; END IF;
+
+  ALTER TABLE public.business_os_account_plans DROP CONSTRAINT tmp_fail;
+  RAISE NOTICE 'B4 passed: a failing plan write did not fail the product write.';
+END $$;
+\else
+\echo 'B4 SKIPPED (the never-raise proof). Re-run with -v probe_locks=on, ideally in a quiet window.'
+\endif
+
+-- B4b. Set up the repair case for B7, without any lock probe.
+--
+-- tenant2 needs HISTORY but NO plan row. The trigger will create one when the
+-- messages land, so it is deleted again — inside this transaction, which is
+-- rolled back regardless. That replaces what the `CHECK (false)` trick used to
+-- do here, and costs no lock beyond the row itself.
+--
+-- The first message is BACKDATED to a literal the triggers could not produce:
+-- `now()` is the transaction timestamp, so without it a repair that simply wrote
+-- now() would be indistinguishable from one that read history (QA Q-20).
 DO $$
 DECLARE
   v_user2 uuid := (SELECT user_id FROM _bos_probe WHERE kind = 'tenant2');
   n int;
 BEGIN
-  ALTER TABLE public.business_os_account_plans ADD CONSTRAINT tmp_fail CHECK (false) NOT VALID;
-
-  -- Two messages, the first BACKDATED to a literal the triggers could not
-  -- produce. Both are written here, while the plan table refuses every write, so
-  -- tenant2 reaches B7 with history but no plan row — the repair case. The
-  -- backdated one is what makes B7's "did the repair read HISTORY?" assertion
-  -- able to fail: `now()` is the transaction timestamp, so a repair that wrote
-  -- now() would be indistinguishable from one that read a fact created in this
-  -- same transaction (QA Q-20).
   INSERT INTO public.onboarding_conversations (user_id, message_sequence, role, content, created_at)
   VALUES (v_user2, 0, 'user', 'the first message, long before the repair', timestamptz '2021-03-04 05:06:07+00'),
-         (v_user2, 1, 'user', 'probe under a failing plan table', now());
+         (v_user2, 1, 'user', 'a later message', now());
 
   SELECT count(*) INTO n FROM public.onboarding_conversations WHERE user_id = v_user2;
-  IF n <> 2 THEN RAISE EXCEPTION 'B4 the product write was lost when the plan write failed'; END IF;
+  IF n <> 2 THEN RAISE EXCEPTION 'B4b the transcript was not written'; END IF;
+
+  DELETE FROM public.business_os_account_plans WHERE user_id = v_user2;
 
   SELECT count(*) INTO n FROM public.business_os_account_plans WHERE user_id = v_user2;
-  IF n <> 0 THEN RAISE EXCEPTION 'B4 a plan row appeared despite the failing constraint'; END IF;
-
-  ALTER TABLE public.business_os_account_plans DROP CONSTRAINT tmp_fail;
+  IF n <> 0 THEN RAISE EXCEPTION 'B4b tenant2 still has a plan row; B7 would not exercise the repair branch'; END IF;
 END $$;
 
 -- B5. M-3: an end date with nothing to end is rejected, in both directions.
@@ -492,9 +575,10 @@ BEGIN
   SELECT count(*) INTO n FROM public.business_os_account_plans WHERE user_id = v_user2;
   IF n <> 0 THEN RAISE EXCEPTION 'B7 precondition: tenant2 should have no plan row'; END IF;
 
-  -- tenant2's transcript (written in B4, while the plan table refused writes)
+  -- tenant2's transcript was written in B4b, and the plan row the trigger made
+  -- for it was deleted there, so this is the repair branch. The transcript
   -- starts with a BACKDATED message, which is what gives the fact assertion
-  -- below its teeth — see B4 and QA Q-20. Nothing may be inserted for tenant2
+  -- below its teeth (QA Q-20). Nothing may be inserted for tenant2
   -- here: a message now would fire the trigger, create a plan row, and send the
   -- reset down its DO UPDATE branch instead of the repair branch under test.
 
@@ -509,7 +593,7 @@ BEGIN
   -- QA Q-2: the repaired row must carry the facts, recovered from the tenant's
   -- own history. The triggers are AFTER INSERT only, so a fact left NULL here
   -- can never be filled — and the trial clock is derived from it. tenant2 has an
-  -- onboarding row (written in B4 while the plan table was failing) and no
+  -- onboarding row (written in B4b) and no
   -- profile, so exactly one fact is recoverable.
   IF r.onboarding_started_at IS NULL THEN
     RAISE EXCEPTION 'B7 the repair did not recover onboarding_started_at: a repaired trial has no clock';

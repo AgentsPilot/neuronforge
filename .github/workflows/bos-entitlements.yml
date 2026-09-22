@@ -1,0 +1,123 @@
+# Business OS Entitlements Invariants
+#
+# Runs the Jest suites that guard the entitlement module:
+#
+#   lib/business-os/entitlements/**        the catalog, the tier-matrix
+#                                          mechanism, the loader's Zod rules, the
+#                                          chat mapping, the drift snapshot and
+#                                          the no-tier-names-in-code rule
+#   lib/repositories/__tests__/**          the account-plan and shadow
+#                                          repositories, and the import guard
+#                                          that keeps their write methods out of
+#                                          application code
+#   supabase/migrations/__tests__/**       the migration guard: the backfill
+#                                          stays out of the DDL transaction, the
+#                                          reset never deletes an override row
+#   the purge descriptor + ownership tests so a new table cannot be left
+#   unclassified
+#
+# ── WHY THIS WORKFLOW HAS TO EXIST ────────────────────────────────────────
+# NOTHING ELSE RUNS THESE. `plugin-tests.yml` is path-filtered to the plugin
+# directories, `admin-authz-guard.yml` runs one guard file, and
+# `bos-llm-typecheck.yml` runs `tsc`, not Jest. Without this job, the
+# requirement's promise that an invalid configuration "fails at load and in CI"
+# (FR-7, §10.6) would be half true: it fails at load, and CI never finds out.
+#
+# The other half — that a tier row missing a capability is a TYPE error — is
+# covered by `bos-llm-typecheck.yml`, whose scope now includes
+# `lib/business-os/entitlements/`. Deliberately not duplicated here.
+#
+# ── NO `paths:` FILTER, ON PURPOSE ────────────────────────────────────────
+# Same reasoning as the other two guards. The config is validated against the
+# LIVE chat catalog and the LIVE plugin definition, so a change to either — in a
+# directory this job would never have listed — can break these suites. A filtered
+# workflow would be defeated by exactly the change it exists to catch.
+#
+# The scope step below is not that filter: it is the shared "could this change
+# reach an environment at all?" rule, which skips only docs, root markdown,
+# scripts and .claude config. The job still reports on every PR, so it stays
+# safe to make a required status check.
+#
+# ── ⚠️ NOT A GATE UNTIL IT IS A REQUIRED STATUS CHECK ─────────────────────
+# A red workflow blocks nothing by itself. `main` currently requires exactly one
+# check, `Admin authz surface guard`. Before Business OS entitlement enforcement
+# is switched on (workplan G-2), the repository owner must add:
+#
+#   Business OS entitlements invariants      <- the JOB name below
+#   Build (next build)
+#   Type check (Business OS LLM attribution)
+#
+# Settings → Branches → branch protection for `main` → "Require status checks".
+# GitHub only offers names it has seen, so the workflow must have run once first.
+#
+# Renaming the job below silently un-gates whatever requires it. If you rename
+# it, update the protection rule in the same change.
+
+name: Business OS Entitlements
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only: the job checks out and runs Jest.
+permissions:
+  contents: read
+
+# A newer push to the same branch supersedes a running check.
+concurrency:
+  group: bos-entitlements-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  # ⚠️ Renaming this job un-gates `main` if it is a required status check.
+  bos-entitlements:
+    name: Business OS entitlements invariants
+    runs-on: ubuntu-latest
+    # The suites are fast (seconds); the budget is for install.
+    timeout-minutes: 15
+    steps:
+      # fetch-depth 2 so HEAD^ resolves, for the scope rule below.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Can this change affect the entitlement configuration?
+        id: scope
+        env:
+          # Measure the whole push, not just its last commit. Empty on
+          # pull_request, where the script's HEAD^ default is the base tip.
+          BASE: ${{ github.event_name == 'push' && github.event.before || '' }}
+        run: |
+          if bash .github/ci/non-deploying-change.sh "$BASE"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: steps.scope.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        if: steps.scope.outputs.skip != 'true'
+        run: npm ci
+
+      - name: Run the entitlement invariants
+        if: steps.scope.outputs.skip != 'true'
+        run: npm run test:bos-entitlements
+
+      - name: Note the skip in the run summary
+        if: steps.scope.outputs.skip == 'true'
+        run: |
+          echo "Skipped: every changed file is documentation, scripts or" >> "$GITHUB_STEP_SUMMARY"
+          echo "Claude Code config, so it cannot change the entitlement config." >> "$GITHUB_STEP_SUMMARY"
+          echo "Rule: .github/ci/non-deploying-change.sh" >> "$GITHUB_STEP_SUMMARY"

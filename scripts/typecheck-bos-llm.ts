@@ -72,8 +72,21 @@ const TSCONFIG = path.join(ROOT, 'tsconfig.json');
 const BASELINE = path.join(ROOT, 'scripts', 'typecheck-bos-llm.baseline.json');
 const CATALOG = 'lib/business-os/llm/callCatalog.ts';
 
-/** Everything under these is in scope. */
-const SCOPED_DIRS = ['lib/business-os/llm/', 'lib/business-os/usage/'];
+/**
+ * Everything under these is in scope.
+ *
+ * `entitlements/` joined the list for the same reason the LLM catalog is here:
+ * its types are the gate. A tier row is a mapped type over the capability
+ * catalog, so a tier that forgets a capability — or gives one the wrong kind of
+ * value — is a TYPE error and nothing else would catch it (the Next build
+ * ignores type errors, and Jest transpiles without checking). The Zod schemas
+ * and the invariant tests are the runtime half; this is the compile-time half.
+ */
+const SCOPED_DIRS = [
+  'lib/business-os/llm/',
+  'lib/business-os/usage/',
+  'lib/business-os/entitlements/',
+];
 
 const ATTRIBUTION_TEST = /attribution[^/]*\.test\.tsx?$/;
 

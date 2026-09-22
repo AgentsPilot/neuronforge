@@ -33,6 +33,17 @@ BEGIN;
 
 SET LOCAL lock_timeout = '5s';
 
+-- A deliberate ceiling on how long this may run (SA P-2).
+--
+-- Supabase sets role-level statement timeouts, so without this the backfill
+-- inherits a number nobody here chose: it either dies at a surprise boundary
+-- part-way through a scan, or runs unbounded on a table whose size we do not
+-- know in advance. Ten minutes is far beyond the expected runtime — the
+-- pre-flight script measures the real scan first — and failing at a chosen
+-- limit is recoverable: the whole file is one transaction, so a timeout leaves
+-- the database exactly as it was and the run can simply be repeated.
+SET LOCAL statement_timeout = '10min';
+
 INSERT INTO public.business_os_account_plans (
   user_id, cohort, cohort_expires_at, origin,
   onboarding_started_at, profile_created_at
