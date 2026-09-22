@@ -104,8 +104,8 @@ export async function recommendLeadReply(
     const { result: response } = await withModelFallback(settings, (model) =>
       provider.chatCompletion(
         {
-          model,
-          ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+          model: 'gpt-4o',
+          temperature: 0.2,
           max_tokens: 200,
           response_format: { type: 'json_object' },
           messages: [
