@@ -41,8 +41,41 @@ The separation is the point: `catalog.ts` says what `marketing.posts` *is*, `tie
 
 1. Add the name to `TIER_ORDER` in `config/tierMatrix.ts`, cheapest first.
 2. Add its row to `tiers` — **one value per capability**. A missing one does not compile (`TierRow` is a mapped type over the catalog) and does not validate (Zod repeats the rule, because the Next build ignores type errors).
-3. `npm run entitlements:snapshot` to refresh the drift snapshot.
-4. `npm run test:bos-entitlements`.
+3. **Check every capability you are granting against its `lifecycle` in `catalog.ts`.** A tier may **not** grant one that is `not_built`, and the config will **refuse to load** if it does — see below, because this is the step most likely to stop you.
+4. `npm run entitlements:snapshot` to refresh the drift snapshot.
+5. `npm run test:bos-entitlements`.
+
+> ### ⚠️ Step 3 in full: you cannot sell what does not exist
+>
+> This is not a style rule, it is a load-time error, and it is the most likely thing to interrupt you: it rejected **eight** capabilities in Eyal's draft matrix the first time it ran.
+>
+> **What counts as granting** — all of these fail on a `not_built` capability:
+>
+> | Shape | Granting | Withheld |
+> |---|---|---|
+> | boolean / group | `true` | `false` |
+> | variant | any value above the first | the first variant |
+> | add-on | `'purchasable'` **or** `'included'` | `'unavailable'` |
+> | metered / fair-use | any non-zero | `{ perMonth: 0 }` / `{ ceilingPerMonth: 0 }` |
+> | quantity | non-zero `included`, **or** `purchasable: true` | `{ included: 0, purchasable: false }` |
+>
+> `'purchasable'` counts on purpose: it is an **offer to sell** something that does not exist, and the customer finds out after paying.
+>
+> **What the failure looks like.** Any test that loads the config fails, with an `EntitlementConfigError` naming the capability, the tier, the value you used and the value that would withhold it:
+>
+> ```
+> entitlement config: tier matrix is invalid — tier "growth" grants
+> "payments.reminders" (true), but that capability is not_built — it does not
+> exist yet, so it cannot be allocated. Either withhold it (false) or change its
+> lifecycle in the catalog, which means proving a customer gets the outcome.
+> ```
+>
+> **How to fix it**, in order of what is usually true:
+>
+> 1. **Withhold it in the tier row** (the value in the right-hand column above) and keep the intended value in a trailing comment, so nothing is lost when the feature is built. This is what the fixture matrix does.
+> 2. **If you believe the feature does exist**, the catalog entry is wrong, not your row. Change `lifecycle` in `catalog.ts` — but the bar is *"a customer gets the outcome"*, not *"the tables and the code exist"*. Three entries were corrected downwards on exactly that test: `marketing.mass_email` (a campaign builder with no dispatcher), `payments.reminders` (the sender returns a simulated success) and `website.custom_domain` (the lookup has no caller). Put the trace in the entry's `note`.
+>
+> The same rule applies to a **cohort's** explicit numbers and to an **override** — an admin cannot grant a `not_built` capability either (the route refuses with `capability_not_built`).
 
 Moving a capability between plans is **one line** — change its value in the row. `oneLineChange.test.ts` proves that end to end: the same account gets `not_entitled` before the edit and `allowed` after, with nothing else changed.
 
