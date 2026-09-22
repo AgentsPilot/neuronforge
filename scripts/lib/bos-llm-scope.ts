@@ -188,16 +188,33 @@ export function buildImportGraph(
  * assertions are a hand-enumerated subset of the AST rules, its file list does
  * not follow the code, and jest is not a required check on this repository.
  */
-export const LITERAL_SCOPE_INCLUSIONS: ReadonlyArray<{ file: string; reason: string }> = [
-  {
-    file: 'app/api/admin/business-os/llm-settings/route.ts',
-    reason:
-      'Business OS LLM model-settings admin route: reaches the catalog through adminSettingsView, so the direct-import rule misses it, but it serves the model picker and must never write a model id.',
-  },
-];
+export interface LiteralScopeInclusion {
+  file: string;
+  reason: string;
+}
 
-export function literalScope(graph: Map<string, FileImports>): string[] {
-  const included = new Set(LITERAL_SCOPE_INCLUSIONS.map((entry) => entry.file));
+/**
+ * EMPTY ON PURPOSE, and it must stay empty until an entry's file exists.
+ *
+ * An inclusion entry CANNOT ship ahead of the file it names. `staleInclusions`
+ * (in check-bos-llm-literals.ts) treats an entry whose target is not in scope
+ * as a hard failure - correctly, because that is precisely the rot it was
+ * built to catch, and it cannot distinguish "renamed away" from "not written
+ * yet". So an entry and the file it covers land in the SAME change, never in
+ * two.
+ *
+ * The machinery below is fully exercised regardless: `literalScope` and
+ * `staleInclusions` both take the list as an injectable argument, so the
+ * gate's own suite proves the cap, the staleness failure and the monotonicity
+ * property against a fixture instead of waiting for a real entry.
+ */
+export const LITERAL_SCOPE_INCLUSIONS: ReadonlyArray<LiteralScopeInclusion> = [];
+
+export function literalScope(
+  graph: Map<string, FileImports>,
+  inclusions: ReadonlyArray<LiteralScopeInclusion> = LITERAL_SCOPE_INCLUSIONS
+): string[] {
+  const included = new Set(inclusions.map((entry) => entry.file));
 
   return [...graph.entries()]
     .filter(
