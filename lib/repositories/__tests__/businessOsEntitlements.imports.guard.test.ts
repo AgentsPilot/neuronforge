@@ -57,6 +57,14 @@ const ALLOWED = new Set(
     // Types only: `fromPlanRow` maps a row to the resolver's vocabulary.
     'lib/business-os/entitlements/account.ts',
     'lib/business-os/entitlements/__tests__/entitlementService.test.ts',
+    // ── Component 4, 2026-09-22 — shadow mode and the report ───────────────
+    // `shadow.ts` records OBSERVATIONS (`recordEvents`); `report.ts` reads plan
+    // rows and observations. Neither may change plan state, which is what the
+    // check below enforces for everything in NO_STATE_WRITE_REFERRERS.
+    'lib/business-os/entitlements/shadow.ts',
+    'lib/business-os/entitlements/report.ts',
+    'lib/business-os/entitlements/__tests__/shadow.test.ts',
+    'lib/business-os/entitlements/__tests__/report.test.ts',
   ].map((p) => p.split('/').join(sep))
 );
 
@@ -64,18 +72,24 @@ const ALLOWED = new Set(
 const WRITE_METHODS = ['ensurePlanRow', 'updatePlan', 'createOverride', 'endOverride', 'resetPlanState'];
 
 /**
- * Allowed files that are NOT the repository layer and NOT an admin route — i.e.
- * files allowed to READ entitlement state and nothing more.
+ * Allowed files that are NOT the repository layer and NOT an admin route.
+ *
+ * The invariant is **"may not change entitlement STATE"**, which is narrower
+ * than "read only" and is why the list is named this way: `shadow.ts` writes —
+ * it records observations through `recordEvents` — but a shadow event is
+ * observability, not a plan. What none of these may do is call a method that
+ * changes what an account is entitled to; those belong to component 5's admin
+ * routes, behind `requireAdmin`, Zod and the audit trail.
  *
  * Listed rather than derived (SA C3-3): the next entry someone adds to ALLOWED
- * inherits the read-only condition only if they put it here too, and that is a
- * line in a diff someone has to write on purpose. When component 5's admin
- * routes join ALLOWED they do **not** belong in this list — they are the code
- * that may write.
+ * inherits the condition only if they put it here too, and that is a line in a
+ * diff someone has to write on purpose.
  */
-const READ_ONLY_REFERRERS = [
+const NO_STATE_WRITE_REFERRERS = [
   'lib/business-os/entitlements/EntitlementService.ts',
   'lib/business-os/entitlements/account.ts',
+  'lib/business-os/entitlements/shadow.ts',
+  'lib/business-os/entitlements/report.ts',
 ].map((p) => p.split('/').join(sep));
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -119,7 +133,7 @@ describe('RC-15 — entitlement repository referrers', () => {
     expect(referrers).toEqual([]);
   });
 
-  it.each(READ_ONLY_REFERRERS)('%s READS entitlement state and never writes it', (relativePath) => {
+  it.each(NO_STATE_WRITE_REFERRERS)('%s never changes entitlement STATE', (relativePath) => {
     // Why these files are on the allowed list at all: they are the read path. If
     // one ever calls a write method, the admin gate, the Zod validation and the
     // audit trail in front of those writes have been bypassed — so the allowance
@@ -136,15 +150,15 @@ describe('RC-15 — entitlement repository referrers', () => {
     expect(service).toMatch(/findEntitlementInputs\b/);
   });
 
-  it('every read-only referrer is itself on the allowed list', () => {
+  it('every no-state-write referrer is itself on the allowed list', () => {
     // A file listed there but not in ALLOWED would be checked for writes and
     // then fail the referrer scan anyway — confusing.
-    expect(READ_ONLY_REFERRERS.filter((p) => !ALLOWED.has(p))).toEqual([]);
+    expect(NO_STATE_WRITE_REFERRERS.filter((p) => !ALLOWED.has(p))).toEqual([]);
   });
 
   it('every allowed file falls into exactly one category (QA C-1)', () => {
     // The hazard the previous test does NOT catch: a new non-route file added to
-    // ALLOWED and *not* to READ_ONLY_REFERRERS, which would then inherit no
+    // ALLOWED and *not* to NO_STATE_WRITE_REFERRERS, which would then inherit no
     // write condition at all. A comment asked a human to notice; this makes the
     // classification compulsory, because an unclassified file fails here.
     const category = (rel: string): string[] => {
@@ -153,7 +167,7 @@ describe('RC-15 — entitlement repository referrers', () => {
       // 1. The repository layer itself — the code that is *supposed* to write.
       if (p.startsWith('lib/repositories/') && !p.includes('__tests__/')) of.push('repository');
       // 2. Readers: allowed to look, never to change. Checked above.
-      if (READ_ONLY_REFERRERS.includes(rel)) of.push('read_only');
+      if (NO_STATE_WRITE_REFERRERS.includes(rel)) of.push('no_state_write');
       // 3. Admin routes (component 5) — gated, audited, and allowed to write.
       if (p.startsWith('app/api/admin/')) of.push('admin_route');
       // 4. Tests, which name these symbols in order to assert on them.

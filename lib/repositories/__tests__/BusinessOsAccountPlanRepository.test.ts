@@ -23,6 +23,7 @@ interface Calls {
   is: Array<[string, unknown]>;
   gt: Array<[string, unknown]>;
   in?: [string, unknown[]];
+  not?: [string, string, unknown];
   order?: [string, unknown];
   limit?: number;
   insert?: Record<string, unknown>;
@@ -50,6 +51,7 @@ function mockSupabase(result: { data: unknown; error: unknown } | Array<{ data: 
     is: jest.fn((col: string, val: unknown) => { calls.is.push([col, val]); return builder; }),
     gt: jest.fn((col: string, val: unknown) => { calls.gt.push([col, val]); return builder; }),
     in: jest.fn((col: string, vals: unknown[]) => { calls.in = [col, vals]; return builder; }),
+    not: jest.fn((col: string, op: string, val: unknown) => { calls.not = [col, op, val]; return builder; }),
     order: jest.fn((col: string, opts: unknown) => { calls.order = [col, opts]; return builder; }),
     limit: jest.fn((n: number) => { calls.limit = n; return builder; }),
     insert: jest.fn((payload: Record<string, unknown>) => { calls.insert = payload; return builder; }),
@@ -214,6 +216,106 @@ describe('pagePlans', () => {
 
     expect(calls.limit).toBe(1000);
     expect(calls.gt).toEqual([]);
+  });
+});
+
+describe('findRecentOnboardedPlans (QA B-1)', () => {
+  it('orders by the account\'s own start, newest first — not by created_at', async () => {
+    // `created_at` is the moment the BACKFILL ran for every account it touched,
+    // so ordering by it would sort tens of thousands of accounts by one
+    // identical timestamp and the "recent" sample would be arbitrary.
+    const { client, calls } = mockSupabase({ data: [PLAN_ROW], error: null });
+
+    await new BusinessOsAccountPlanRepository(client).findRecentOnboardedPlans({ limit: 200 });
+
+    expect(calls.table).toBe('business_os_account_plans');
+    expect(calls.order).toEqual(['onboarding_started_at', { ascending: false }]);
+    expect(calls.limit).toBe(200);
+  });
+
+  it('excludes accounts that never started onboarding', async () => {
+    const { client, calls } = mockSupabase({ data: [], error: null });
+
+    await new BusinessOsAccountPlanRepository(client).findRecentOnboardedPlans();
+
+    expect(calls.not).toEqual(['onboarding_started_at', 'is', null]);
+  });
+
+  it('clamps the sample size', async () => {
+    const { client, calls } = mockSupabase({ data: [], error: null });
+    await new BusinessOsAccountPlanRepository(client).findRecentOnboardedPlans({ limit: 999999 });
+    expect(calls.limit).toBe(1000);
+  });
+});
+
+describe('findTenantsMissingPlanRow (QA B-5)', () => {
+  it('chunks the plan lookups at the batch limit and reports the gap', async () => {
+    // 150 profiles, so the plan lookup must be TWO queries of 100 and 50.
+    const profiles = Array.from({ length: 150 }, (_, i) => ({ user_id: `acct-${String(i).padStart(3, '0')}` }));
+    // The first chunk comes back missing two accounts; the second is complete.
+    const firstChunk = profiles.slice(0, 100).filter((row) => !['acct-005', 'acct-007'].includes(row.user_id));
+    const secondChunk = profiles.slice(100);
+
+    const { client, builder } = mockSupabase([
+      { data: profiles, error: null },
+      { data: firstChunk, error: null },
+      { data: secondChunk, error: null },
+    ]);
+
+    const result = await new BusinessOsAccountPlanRepository(client).findTenantsMissingPlanRow();
+
+    expect(result.error).toBeNull();
+    expect(result.data).toMatchObject({ checked: 150, missing: ['acct-005', 'acct-007'], truncated: false });
+
+    const chunkSizes = builder.in.mock.calls.map((call: unknown[]) => (call[1] as string[]).length);
+    expect(chunkSizes).toEqual([BOS_ENTITLEMENT_BATCH_LIMIT, 50]);
+  });
+
+  it('de-duplicates profiles for the same account', async () => {
+    // One account with two profile rows must not be checked twice, and must not
+    // be reported missing twice either.
+    const { client } = mockSupabase([
+      { data: [{ user_id: 'acct-1' }, { user_id: 'acct-1' }], error: null },
+      { data: [], error: null },
+    ]);
+
+    const result = await new BusinessOsAccountPlanRepository(client).findTenantsMissingPlanRow();
+
+    expect(result.data).toMatchObject({ checked: 1, missing: ['acct-1'] });
+  });
+
+  it('says when it stopped short rather than implying it scanned everything', async () => {
+    // The `maxAccounts + 1` probe: one more row than asked for means there are
+    // more, and a truncated scan reporting `missing: []` as if it were complete
+    // is the answer that would be believed.
+    const profiles = Array.from({ length: 4 }, (_, i) => ({ user_id: `acct-${i}` }));
+    const { client, calls } = mockSupabase([
+      { data: profiles, error: null },
+      { data: profiles.slice(0, 3), error: null },
+    ]);
+
+    const result = await new BusinessOsAccountPlanRepository(client).findTenantsMissingPlanRow({ maxAccounts: 3 });
+
+    expect(calls.limit).toBe(4); // maxAccounts + 1
+    expect(result.data).toMatchObject({ checked: 3, truncated: true });
+  });
+
+  it('returns the error rather than a falsely empty answer', async () => {
+    const { client } = mockSupabase({ data: null, error: new Error('timeout') });
+
+    const result = await new BusinessOsAccountPlanRepository(client).findTenantsMissingPlanRow();
+
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+  });
+
+  it('asks no plan questions when there are no profiles', async () => {
+    const { client, builder } = mockSupabase({ data: [], error: null });
+
+    const result = await new BusinessOsAccountPlanRepository(client).findTenantsMissingPlanRow();
+
+    expect(result.data).toMatchObject({ checked: 0, missing: [] });
+    expect(builder.in).not.toHaveBeenCalled();
   });
 });
 

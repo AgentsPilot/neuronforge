@@ -94,6 +94,10 @@ import type {
 } from '@/lib/business-os/bizql/types';
 import { CATALOG, CATALOG_VERSION } from '@/lib/business-os/catalog';
 import type { Plan } from '@/lib/business-os/bizql/planner/Planner';
+// Shadow-mode entitlements. Imports only the logger and the mode flag at module
+// scope (RC-7), so a broken entitlement config cannot affect this route's cold
+// start while the feature is off.
+import { shadowChatPlan } from '@/lib/business-os/entitlements/shadow';
 
 /**
  * What a completed write is called, in the reader's language.
@@ -981,6 +985,17 @@ async function handleChatTurn(
         { status: 200 }
       );
     }
+
+    /*
+     * 5b. Entitlements, in shadow: record what this turn WOULD have needed.
+     *
+     * Nothing is gated. The call returns immediately when
+     * `BOS_ENTITLEMENTS_MODE` is unset — which it is in production — and when it
+     * is not, everything it does happens in an un-awaited promise with its own
+     * try/catch. It cannot throw into this request, cannot slow it down, and
+     * cannot fail it. See lib/business-os/entitlements/shadow.ts.
+     */
+    shadowChatPlan({ userId: user.id, plan, correlationId });
 
     // 6. Writes: preview and park rather than execute.
     const writes = plan.steps.filter(

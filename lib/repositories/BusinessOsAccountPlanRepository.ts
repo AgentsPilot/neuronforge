@@ -280,6 +280,114 @@ export class BusinessOsAccountPlanRepository {
     }
   }
 
+  /**
+   * The most recently onboarded accounts, newest first (QA B-1).
+   *
+   * For the report's setup-AI sample, which needs **recent** accounts because
+   * they used the current product — an account that set up a year ago says
+   * nothing about what setting up costs today.
+   *
+   * Ordered by `onboarding_started_at`, not by `created_at`: for every account
+   * the backfill touched, `created_at` is the moment the backfill ran, so
+   * ordering by it would sort tens of thousands of accounts by an identical
+   * timestamp. `onboarding_started_at` is the account's own start.
+   *
+   * Rows without that fact are excluded rather than sorted last: a sample of
+   * accounts that never started onboarding would measure nothing.
+   */
+  async findRecentOnboardedPlans(
+    options: { limit?: number } = {}
+  ): Promise<RepositoryResult<BusinessOsAccountPlan[]>> {
+    const limit = Math.min(Math.max(options.limit ?? 200, 1), 1000);
+
+    try {
+      const { data, error } = await this.supabase
+        .from('business_os_account_plans')
+        .select(PLAN_COLUMNS)
+        .not('onboarding_started_at', 'is', null)
+        .order('onboarding_started_at', { ascending: false })
+        .limit(limit);
+
+      if (error) throw error;
+      return { data: (data ?? []) as unknown as BusinessOsAccountPlan[], error: null };
+    } catch (error) {
+      this.logger.error({ err: error }, 'Failed to read recently onboarded plan rows');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Business OS tenants that have **no** plan row (workplan §4.10, report §1).
+   *
+   * Every tenant should have one: two triggers create it on the first
+   * onboarding message or the first business profile, and the backfill covered
+   * everyone who existed at rollout. A non-empty answer here therefore means a
+   * trigger failed — which the fact triggers do SILENTLY by design (S-8(i): they
+   * swallow their own error so a customer's write is never lost), so this read
+   * is one of the two places that failure becomes visible at all.
+   *
+   * ── WHAT IT SCANS, AND WHAT IT DOES NOT ───────────────────────────────────
+   * Tenants that have a **business profile**. It does not scan
+   * `onboarding_conversations`, which holds one row per message and has no
+   * DISTINCT through PostgREST — an anti-join across both tables needs SQL, and
+   * SQL here would mean an RPC this slice does not otherwise need. The gap is
+   * covered from two directions instead: `scripts/check-…` row B1 does the full
+   * anti-join at apply time, and the report's own "no end date" list shows
+   * onboarding-only accounts from the other side (S1-T11a).
+   *
+   * Bounded twice: `maxAccounts` rows of profiles, checked 100 ids at a time
+   * (RC-12), so a report on a large database is a predictable number of small
+   * queries rather than one enormous one.
+   *
+   * ⚠️ **This must become exhaustive before enforcement is switched on** (SA,
+   * component 4 review — recorded as a blocking item in workplan §5). The gap is
+   * harmless while nothing is enforced: a missing plan row costs nobody
+   * anything. Under enforcement it resolves to the `no_plan_row` anomaly, which
+   * DENIES owner-paid capabilities — so a bookkeeping failure we could not see
+   * becomes a real customer refused something they are entitled to. The fix is
+   * an RPC doing the anti-join in SQL, the same one `scripts/check-…` row B1
+   * already performs at apply time.
+   */
+  async findTenantsMissingPlanRow(
+    options: { maxAccounts?: number } = {}
+  ): Promise<RepositoryResult<{ checked: number; missing: string[]; truncated: boolean }>> {
+    const maxAccounts = Math.min(Math.max(options.maxAccounts ?? 2000, 1), 20000);
+
+    try {
+      const { data, error } = await this.supabase
+        .from('business_profiles')
+        .select('user_id')
+        .order('user_id', { ascending: true })
+        .limit(maxAccounts + 1);
+
+      if (error) throw error;
+
+      const ids = [...new Set(((data ?? []) as Array<{ user_id: string }>).map((row) => row.user_id))];
+      const truncated = ids.length > maxAccounts;
+      const scanned = truncated ? ids.slice(0, maxAccounts) : ids;
+
+      const missing: string[] = [];
+
+      for (let i = 0; i < scanned.length; i += BOS_ENTITLEMENT_BATCH_LIMIT) {
+        const chunk = scanned.slice(i, i + BOS_ENTITLEMENT_BATCH_LIMIT);
+        const { data: plans, error: planError } = await this.supabase
+          .from('business_os_account_plans')
+          .select('user_id')
+          .in('user_id', chunk);
+
+        if (planError) throw planError;
+
+        const present = new Set(((plans ?? []) as Array<{ user_id: string }>).map((row) => row.user_id));
+        for (const id of chunk) if (!present.has(id)) missing.push(id);
+      }
+
+      return { data: { checked: scanned.length, missing, truncated }, error: null };
+    } catch (error) {
+      this.logger.error({ err: error }, 'Failed to look for tenants without a plan row');
+      return { data: null, error: error as Error };
+    }
+  }
+
   /** One override by id, scoped to its account so a foreign id cannot be ended. */
   async findOverrideById(
     overrideId: string,
