@@ -38,25 +38,46 @@ export interface CohortConfig extends CohortConfigShape<CohortExplicitValues> {}
  * compile error rather than a discovery — so adding a new metered capability to
  * the catalog fails the build until someone decides what champions get.
  *
- * All numbers are placeholders until the trial allowance is sized from real
- * setup-cost data (B-12, task S1-T15).
+ * ⚠️ **EVERY NUMBER BELOW IS A PLACEHOLDER THAT NOBODY HAS CHOSEN.**
+ *
+ * The 14 / 7 / 30-day durations further down ARE the user's decisions (D-2,
+ * D-4). The allowances and ceilings are not: they were invented to make the
+ * config valid, and they are marked here so they cannot quietly become policy
+ * by sitting in a file long enough.
+ *
+ * They are harmless today — nothing meters anything until Slice 3, and no
+ * account is blocked by a number that nothing counts. **Slice 3 sets them from
+ * evidence**: the shadow report's setup-AI measurement (task S1-T15) gives the
+ * trial total the size a real setup needs with headroom (B-12), and observed
+ * usage gives the champion rate. Until then, treat every `PLACEHOLDER` below as
+ * "we have not decided", not as "the current policy".
  */
 const CHAMPION_VALUES: CohortExplicitValues = {
-  // Champions who run out ask an admin for more; they never buy boosts (D-7).
+  // PLACEHOLDER (not chosen by anyone). Champions who run out ask an admin for
+  // more; they never buy boosts (D-7), so this number's only job today is to be
+  // large enough not to matter.
   'ai.actions': { perMonth: 3000 },
+  // Zero because SMS is `not_built`. This one is NOT a placeholder: a feature
+  // that does not exist cannot be allocated, and the loader enforces it.
   'sms.messages': { perMonth: 0 },
+  // PLACEHOLDER. A fair-use ceiling only ever alerts the platform team (B-7), so
+  // the number is an abuse threshold, not a product promise — but it is still a
+  // number nobody has chosen.
   'email.volume': { ceilingPerMonth: 10000 },
+  // NOT a placeholder: one owner seat and one location is what exists. Invites
+  // and multi-location are unbuilt (§18), so these cannot be raised yet.
   'team.seats': { included: 1, purchasable: false },
   'business.locations': { included: 1, purchasable: false },
 };
 
 const TRIAL_VALUES: CohortExplicitValues = {
-  // A one-off TOTAL, not a monthly rate: using it up ends the trial (D-2,
-  // FR-27). It must cover a full setup with headroom, because setup AI counts
-  // against it (B-12) — the number comes from the S1-T15 measurement.
+  // PLACEHOLDER — and the one that matters most. A one-off TOTAL, not a monthly
+  // rate: using it up ENDS THE TRIAL (D-2, FR-27). Setup AI counts against it
+  // (B-12), so too small a number ends a customer's trial on their first day.
+  // Slice 3 sets it from the S1-T15 measurement of what a real setup costs.
   'ai.actions': { total: 150 },
-  'sms.messages': { perMonth: 0 },
-  'email.volume': { ceilingPerMonth: 2000 },
+  'sms.messages': { perMonth: 0 }, // not_built, as above
+  'email.volume': { ceilingPerMonth: 2000 }, // PLACEHOLDER
   'team.seats': { included: 1, purchasable: false },
   'business.locations': { included: 1, purchasable: false },
 };

@@ -12,6 +12,27 @@
 // user has confirmed are marked (S); the five rows still with Eyal are (?).
 // If the real matrix arrives and differs, this file does not need to change —
 // it is a shape, not a source of truth.
+//
+// ── WHERE THIS DIVERGES FROM THE SHEET, AND WHY (2026-09-22) ────────────────
+// The sheet sells things that do not exist yet. Under the user's rule — **if a
+// feature does not exist it cannot be allocated** — the loader now rejects a
+// tier that grants a `not_built` capability, and this fixture was doing exactly
+// that: it was a fixture bug, and a useful one, because it is the same mistake
+// the real matrix will make the first time it is written.
+//
+// Clamped to "withheld" here, with the draft value kept in the comment so
+// nothing is lost when these features are built:
+//
+//   marketing.posts          pro: true          -> false
+//   marketing.mass_email     growth/pro: true   -> false      (no dispatcher)
+//   payments.reminders       growth/pro: true   -> false      (sender is a stub)
+//   website.custom_domain    purchasable/incl.  -> unavailable (no serving path)
+//   addon.marketing_analytics / addon.mobile / addon.full_payment_cycle /
+//   addon.act_for_you / addon.sms   purchasable/included -> unavailable
+//
+// `purchasable` counts as granting: it is an offer to sell, and the customer
+// finds out afterwards. Each line goes back to its draft value in the same
+// change that makes the feature real.
 
 import type { TierMatrixShape } from '../types';
 import type { TierRow } from '../config/catalog';
@@ -42,9 +63,9 @@ const COMMON: Pick<
   'payments.card': true, // (?) B-1
   'chat.email': true,
   'chat.scheduling': true,
-  'addon.sms': 'purchasable',
+  'addon.sms': 'unavailable', // sheet: purchasable — not_built (no SMS path)
   'sms.messages': { perMonth: 0 },
-  'addon.act_for_you': 'purchasable',
+  'addon.act_for_you': 'unavailable', // sheet: purchasable — not_built
 };
 
 const basic: TierRow = {
@@ -52,7 +73,7 @@ const basic: TierRow = {
   'website.branding': 'branded', // (S)
   'intake.forms': 'manual', // (S)
   'intake.reminders': false, // (S)
-  'payments.reminders': false, // (S)
+  'payments.reminders': false, // (S) — also not_built: the sender is a stub
   'payments.multi_currency': false,
   'chat.marketing': false, // (?) B-1
   'chat.invoice_control': false,
@@ -61,20 +82,20 @@ const basic: TierRow = {
   'chat.reporting': false,
   'chat.bulk': false,
   'ai.actions': { perMonth: 100 },
-  'marketing.mass_email': false, // (?) B-1
+  'marketing.mass_email': false, // (?) B-1 — also not_built: no dispatcher
   'marketing.lead_response': false,
-  'marketing.posts': false,
+  'marketing.posts': false, // not_built
   'insights.checks': false, // (S)
   'insights.channels': false,
   'insights.daily_briefing': false,
   'support.level': 'standard',
   'email.volume': { ceilingPerMonth: 2000 },
-  'addon.marketing_analytics': 'purchasable', // (?) B-1
-  'addon.mobile': 'purchasable', // (?) B-1
-  'addon.full_payment_cycle': 'purchasable', // (?) B-1
+  'addon.marketing_analytics': 'unavailable', // sheet: purchasable — not_built (?) B-1
+  'addon.mobile': 'unavailable', // sheet: purchasable — not_built (?) B-1
+  'addon.full_payment_cycle': 'unavailable', // sheet: purchasable — not_built (?) B-1
   'team.seats': { included: 1, purchasable: false },
   'business.locations': { included: 1, purchasable: false },
-  'website.custom_domain': 'purchasable',
+  'website.custom_domain': 'unavailable', // sheet: purchasable — not_built (no serving path)
 };
 
 const growth: TierRow = {
@@ -82,13 +103,14 @@ const growth: TierRow = {
   'website.branding': 'unbranded',
   'intake.forms': 'ai', // (S)
   'intake.reminders': true, // (S)
-  'payments.reminders': true,
+  // sheet: true — not_built (PaymentReminderService.sendEmailReminder is a stub)
+  'payments.reminders': false,
   'chat.marketing': true,
   'chat.invoice_control': true,
   'chat.quotes': true,
   'chat.reporting': true,
   'ai.actions': { perMonth: 500 },
-  'marketing.mass_email': true,
+  'marketing.mass_email': false, // sheet: true — not_built (no dispatcher)
   'marketing.lead_response': true,
   'insights.checks': true, // (S)
   'insights.channels': true,
@@ -105,14 +127,14 @@ const pro: TierRow = {
   'chat.search': true,
   'chat.bulk': true,
   'ai.actions': { perMonth: 2000 },
-  'marketing.posts': true,
+  'marketing.posts': false, // sheet: true — not_built
   'support.level': 'priority',
   'email.volume': { ceilingPerMonth: 20000 },
-  'addon.marketing_analytics': 'included', // (?) B-1
-  'addon.mobile': 'included', // (?) B-1
+  'addon.marketing_analytics': 'unavailable', // sheet: included — not_built (?) B-1
+  'addon.mobile': 'unavailable', // sheet: included — not_built (?) B-1
   'team.seats': { included: 5, purchasable: true },
   'business.locations': { included: 3, purchasable: true },
-  'website.custom_domain': 'included',
+  'website.custom_domain': 'unavailable', // sheet: included — not_built
 };
 
 export const FIXTURE_TIER_MATRIX: TierMatrixShape<FixtureTierId, TierRow> = {

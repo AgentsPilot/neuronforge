@@ -1,39 +1,90 @@
 -- ╔══════════════════════════════════════════════════════════════════════════╗
--- ║  PROBE SUITE — THIS SCRIPT WRITES. IT MUST END IN ROLLBACK.              ║
+-- ║  PROBE SUITE — DO NOT RUN THIS ON PRODUCTION. DO NOT PASTE IT INTO THE   ║
+-- ║  SUPABASE SQL EDITOR. It needs psql and a database you can throw away.   ║
 -- ╚══════════════════════════════════════════════════════════════════════════╝
 --
 --   psql "$BOS_DB" -v ON_ERROR_STOP=1 -f scripts/verify-bos-entitlements-migration.sql
 --
--- Run it as a FILE, never by pasting fragments: the `BEGIN` below and the
--- `ROLLBACK` at the very end are what make it safe. A guard a few lines down
--- refuses to run if the statements are not inside an explicit transaction, so a
--- half-pasted run fails instead of writing.
+-- ── THE DECISION, AND WHY (2026-09-22) ──────────────────────────────────────
+-- The operator applies these migrations from the Supabase SQL editor, against
+-- production, with no branch database anywhere. The two read-only scripts were
+-- rewritten for that (they are one `SET … read_only` plus one SELECT). **This
+-- one was not, and deliberately is not.** It is quarantined instead.
 --
--- ── Where it may run ────────────────────────────────────────────────────────
--- Preferably a branch or throwaway database. It CAN be run against production
--- (the project has no branch database), because every write is rolled back —
--- but read these three caveats first:
+-- The reason is not the rollback — every write here is inside a transaction that
+-- ends in `ROLLBACK`. It is what the probes have to write in order to mean
+-- anything:
 --
---   1. It inserts four rows into `auth.users` inside the transaction. If this
---      database has an `on_auth_user_created` trigger, that fires too. All of it
---      rolls back; sequence values consumed along the way do not, which is
---      harmless (the ids here are uuids).
---   2. Section B4 briefly adds `CHECK (false)` to `business_os_account_plans` to
---      prove a failing plan write cannot fail a product write. That takes an
---      ACCESS EXCLUSIVE lock on the plan table for the length of the
---      transaction. On a live database, a customer onboarding in that window
---      would have their plan-row trigger time out after 2s and log a WARNING —
---      their message still saves, but their plan row is not created and is only
---      recovered by re-running the backfill. **B4 is therefore OPT-IN.** It runs
---      only with `-v probe_locks=on`. Prefer a quiet window, and re-run
---      `20261005b` afterwards.
---   3. It holds one transaction open for its whole run (seconds). Do not run it
---      through a transaction pooler — use the direct connection (port 5432).
+--   1. **They insert rows into `auth.users`.** Both fact triggers hang off
+--      tenant tables whose plan rows carry an FK to `auth.users`, so proving a
+--      trigger fires requires inventing a login. In the editor there is no
+--      `psql -f`: the file arrives as ONE command string, and if any part of the
+--      transaction discipline is lost — a pooled connection reset, a paste that
+--      starts below the `BEGIN`, an editor that wraps statements its own way —
+--      the fabricated users are COMMITTED into the production auth schema, where
+--      `on_auth_user_created` triggers and every downstream table are waiting.
+--      A rolled-back transaction is a good safety property; it is not one worth
+--      betting the identity table on, for evidence we can get another way.
+--   2. **The lock probe was worse.** Section B4 added `CHECK (false)` to the
+--      plan table to prove a failing plan write cannot fail a product write,
+--      which takes an ACCESS EXCLUSIVE lock for the length of the transaction.
+--      It was opt-in behind `\if :probe_locks` — and QA (R-1) showed the opt-in
+--      was the trap: pasting into the editor fails on the first backslash, and
+--      the obvious repair is to delete the backslash lines, which leaves the
+--      lock probe ENABLED on production. The user's instruction was to remove
+--      it, not to re-gate it. **It is gone** (see B4 below), so there is no
+--      longer a version of this file that can lock the plan table.
 --
--- For the checks that are unconditionally safe on production — objects,
--- bindings, privileges, constraint definitions, backfill shape and counts —
--- use `scripts/check-bos-entitlements-migration.sql`, which runs READ ONLY and
--- can be run any time, before or after this one.
+-- ── WHAT IS LOST, AND HOW EACH PIECE IS COVERED INSTEAD ─────────────────────
+-- Five behaviours can only be proven by writing. None is unobserved:
+--
+--   | Behaviour                         | Covered instead by                   |
+--   |-----------------------------------|--------------------------------------|
+--   | The trigger records a fact        | Real traffic. `check-…` row 61 counts |
+--   |                                   | plan rows with a trigger origin; it   |
+--   |                                   | is 0 at apply time and must stop      |
+--   |                                   | being 0 once anyone signs up          |
+--   |                                   | (§4.20 step 8). Production's own      |
+--   |                                   | signups are a better sample than      |
+--   |                                   | three fabricated ones.                |
+--   | A failing plan write cannot fail  | Structure: `check-…` row 22 asserts   |
+--   | a product write                   | both fact functions are SECURITY      |
+--   |                                   | DEFINER with `lock_timeout=2s`, and   |
+--   |                                   | the `EXCEPTION WHEN OTHERS → WARNING` |
+--   |                                   | handler is asserted from the source   |
+--   |                                   | text by the Jest migration guard.     |
+--   |                                   | **Behaviourally unproven until a      |
+--   |                                   | throwaway database exists — the one   |
+--   |                                   | real gap, and it fails SAFE.**        |
+--   | A trial cannot be restarted       | The upsert never overwrites a cohort; |
+--   |                                   | asserted from the source text by the  |
+--   |                                   | Jest migration guard, and by the      |
+--   |                                   | resolver's own tests once Slice 2     |
+--   |                                   | reads these rows.                     |
+--   | `business_os_reset_plan_state`    | Nothing calls it until the Slice-1    |
+--   |                                   | admin route exists (component 5); it  |
+--   |                                   | gets its first real exercise there,   |
+--   |                                   | against one account, by an admin who  |
+--   |                                   | typed a confirmation.                 |
+--   | The shadow RPC's arithmetic       | Shadow mode itself (Slice 2) writes   |
+--   |                                   | real events with the product off; QA  |
+--   |                                   | reads the first day's rows.           |
+--
+-- If an environment ever exists where this file CAN run — the staging database
+-- in docs/ENVIRONMENTS_AND_DEPLOYMENT_STRATEGY.md, or a Supabase branch — run it
+-- there before trusting any of the five. That is the point of keeping it.
+--
+-- ── If you are the operator and you are holding this file ───────────────────
+-- Run `scripts/preflight-…` before the apply and `scripts/check-…` after it.
+-- Those two are written for the SQL editor, write nothing, and are enforced
+-- read-only by the database. This file is not for you.
+--
+-- Everything below still assumes `psql -f`, a `BEGIN`, and the `ROLLBACK` at the
+-- end. The guard a few lines down refuses to run outside an explicit
+-- transaction, so a half-pasted run fails instead of writing.
+--
+--   * It holds one transaction open for its whole run (seconds). Do not run it
+--     through a transaction pooler — use the direct connection (port 5432).
 --
 -- It fails loudly: every check raises an exception naming the property that
 -- broke, and `ON_ERROR_STOP=1` stops the run there.
@@ -45,12 +96,11 @@
 -- which reads both files. This script checks the database-side halves: the
 -- triggers exist and the schema objects are configured as intended.
 
+-- This file now contains exactly one psql meta-command. That is on purpose: it
+-- is the thing that makes a paste into the Supabase SQL editor fail on the first
+-- line and execute nothing (QA R-1), and there is no longer anything in here
+-- that deleting it would arm.
 \set ON_ERROR_STOP on
--- Default: the lock probe is OFF. Override with `-v probe_locks=on`.
-\if :{?probe_locks}
-\else
-  \set probe_locks off
-\endif
 
 BEGIN;
 
@@ -60,8 +110,17 @@ BEGIN;
 -- `statement_timestamp()` moves with each statement — so inside an explicit
 -- transaction with at least one statement before it (the BEGIN above), the two
 -- differ. In autocommit, where every statement is its own transaction, they are
--- identical. So this fires exactly when someone runs the probes outside a
--- transaction that can be rolled back.
+-- identical — and so they are when the WHOLE FILE arrives as a single command
+-- string (`psql -c "$(cat …)"`, or any editor paste), because every statement of
+-- a simple-query batch shares one receipt time and an explicit `BEGIN` inside
+-- that batch adopts it (QA R-3). So this guard errs towards refusing: a refusal
+-- is never damage, and the only correct way to run this file is `psql -f`.
+--
+-- Second line of defence, deliberate rather than lucky (QA R-2): a guard that
+-- was not pasted cannot run, so a fragment pasted from the MIDDLE of this file
+-- would slip past the check above. Every writing block below reads the
+-- `_bos_probe` TEMP table created in the header — so a fragment run on its own
+-- fails with `relation "_bos_probe" does not exist` before it writes anything.
 DO $$
 BEGIN
   IF statement_timestamp() = transaction_timestamp() THEN
@@ -269,13 +328,16 @@ END $$;
 -- schema differs between Supabase versions, and some projects have a
 -- `handle_new_user` trigger that fails here), replace the INSERT with three
 -- existing auth user ids that are NOT Business OS tenants, written into
--- `_bos_probe` as 'tenant', 'tenant2', 'tenant3' and 'tenant4', and keep the rest of the
+-- `_bos_probe` as 'tenant', 'tenant2' and 'tenant3', and keep the rest of the
 -- script:
 --
 --   SELECT u.id FROM auth.users u
 --   LEFT JOIN public.business_profiles bp ON bp.user_id = u.id
 --   LEFT JOIN public.onboarding_conversations oc ON oc.user_id = u.id
---   WHERE bp.user_id IS NULL AND oc.user_id IS NULL LIMIT 4;
+--   WHERE bp.user_id IS NULL AND oc.user_id IS NULL LIMIT 3;
+--
+-- This insert into `auth.users` is the reason the whole file is quarantined from
+-- production: see the header.
 CREATE TEMP TABLE _bos_probe(kind text primary key, user_id uuid, ts timestamptz);
 
 DO $$
@@ -283,7 +345,6 @@ DECLARE
   v_user uuid := gen_random_uuid();
   v_user2 uuid := gen_random_uuid();
   v_user3 uuid := gen_random_uuid();
-  v_user4 uuid := gen_random_uuid();
   v_admin uuid := gen_random_uuid();
 BEGIN
   INSERT INTO auth.users (id, email, aud, role, created_at, updated_at)
@@ -291,12 +352,11 @@ BEGIN
          (v_user2, 'bos-entitlements-probe-' || v_user2 || '@example.invalid', 'authenticated', 'authenticated', now(), now()),
          -- tenant3 is the C0 "pre-existing tenant": history written, plan row
          -- removed, then the backfill statement run over it.
-         (v_user3, 'bos-entitlements-probe-' || v_user3 || '@example.invalid', 'authenticated', 'authenticated', now(), now()),
-         -- tenant4 is used only by the opt-in lock probe (B4).
-         (v_user4, 'bos-entitlements-probe-' || v_user4 || '@example.invalid', 'authenticated', 'authenticated', now(), now());
+         -- (There used to be a fourth, for the lock probe that B4 removed.)
+         (v_user3, 'bos-entitlements-probe-' || v_user3 || '@example.invalid', 'authenticated', 'authenticated', now(), now());
 
   INSERT INTO _bos_probe(kind, user_id)
-  VALUES ('tenant', v_user), ('tenant2', v_user2), ('tenant3', v_user3), ('tenant4', v_user4), ('admin', v_admin);
+  VALUES ('tenant', v_user), ('tenant2', v_user2), ('tenant3', v_user3), ('admin', v_admin);
 END $$;
 
 -- B1. The onboarding trigger records the fact and opens a trial row.
@@ -369,38 +429,27 @@ BEGIN
   IF p.origin <> 'onboarding_trigger' THEN RAISE EXCEPTION 'B3 origin was overwritten to %', p.origin; END IF;
 END $$;
 
--- B4. S-8(i): a failing plan-table write can NEVER fail the product write.
+-- B4. REMOVED, 2026-09-22, on the user's instruction — not disabled, removed.
 --
--- ⚠️ OPT-IN (`-v probe_locks=on`). The constraint takes an ACCESS EXCLUSIVE lock
--- on the plan table for the rest of the transaction. On a live database that
--- makes every concurrent plan-row trigger wait out its 2s `lock_timeout` and log
--- a WARNING — the customer's write still succeeds, but their plan row is not
--- created, and only a re-run of the backfill recovers it. Skip it on a busy
--- production database, or run it in a quiet window and re-run `20261005b`
--- afterwards. Everything else in this file works either way.
-\if :probe_locks
-DO $$
-DECLARE
-  v_user4 uuid := (SELECT user_id FROM _bos_probe WHERE kind = 'tenant4');
-  n int;
-BEGIN
-  ALTER TABLE public.business_os_account_plans ADD CONSTRAINT tmp_fail CHECK (false) NOT VALID;
-
-  INSERT INTO public.onboarding_conversations (user_id, message_sequence, role, content)
-  VALUES (v_user4, 1, 'user', 'probe under a failing plan table');
-
-  SELECT count(*) INTO n FROM public.onboarding_conversations WHERE user_id = v_user4;
-  IF n <> 1 THEN RAISE EXCEPTION 'B4 the product write was lost when the plan write failed'; END IF;
-
-  SELECT count(*) INTO n FROM public.business_os_account_plans WHERE user_id = v_user4;
-  IF n <> 0 THEN RAISE EXCEPTION 'B4 a plan row appeared despite the failing constraint'; END IF;
-
-  ALTER TABLE public.business_os_account_plans DROP CONSTRAINT tmp_fail;
-  RAISE NOTICE 'B4 passed: a failing plan write did not fail the product write.';
-END $$;
-\else
-\echo 'B4 SKIPPED (the never-raise proof). Re-run with -v probe_locks=on, ideally in a quiet window.'
-\endif
+-- It proved S-8(i): a failing plan-table write can never fail the product write.
+-- It did that by adding `CHECK (false)` to the plan table, which takes an ACCESS
+-- EXCLUSIVE lock for the rest of the transaction — on a live database every
+-- concurrent plan-row trigger then waits out its 2s `lock_timeout` and logs a
+-- WARNING, so the customer's message saves but their plan row does not exist
+-- until someone re-runs the backfill.
+--
+-- It used to be opt-in behind `\if :probe_locks`. QA (R-1) showed why that was
+-- the wrong shape: this file cannot run in the Supabase SQL editor because of
+-- the backslash lines, and the natural repair is to DELETE the backslash lines —
+-- which silently arms the lock probe against production. An opt-in whose default
+-- is destroyed by the obvious workaround is not an opt-in.
+--
+-- The property is now covered structurally instead: `check-…` row 22 asserts
+-- both fact functions are SECURITY DEFINER with `lock_timeout=2s`, and the Jest
+-- migration guard asserts the `EXCEPTION WHEN OTHERS → WARNING` handler from the
+-- source text. That is weaker — it proves the mechanism is present, not that it
+-- behaves — and the header says so. If a throwaway database ever exists, the
+-- probe is worth rewriting there; it is not worth writing on production.
 
 -- B4b. Set up the repair case for B7, without any lock probe.
 --

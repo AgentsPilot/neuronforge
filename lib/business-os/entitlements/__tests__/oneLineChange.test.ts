@@ -20,6 +20,9 @@ import { FIXTURE_TIER_MATRIX } from '@/lib/business-os/entitlements/__fixtures__
 import { fixtureConfig } from '@/lib/business-os/entitlements/__fixtures__/fixtureSource';
 import { validateEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import type { EntitlementConfig } from '@/lib/business-os/entitlements/source';
+import { decide } from '@/lib/business-os/entitlements/decide';
+import { lowestTierFor, resolveEntitlements } from '@/lib/business-os/entitlements/resolver';
+import { tierAccount } from '@/lib/business-os/entitlements/__fixtures__/accounts';
 
 /** Every leaf of an object, as `path = json` strings. */
 function leaves(value: unknown, path: string[] = []): string[] {
@@ -57,6 +60,56 @@ describe('AC-4 — "search via chat" moves from Pro to Growth', () => {
     // version bump — the asymmetry is the point.
     expect(after.removals).toEqual([]);
     expect(after.version).toBe(before.version);
+  });
+});
+
+describe('S1-T6a (SA C-1) — and the account actually gets it', () => {
+  // The three assertions above measure the CONFIG. They would all pass if the
+  // resolver ignored the matrix entirely, which is exactly the hole SA asked to
+  // close: the claim is not "one line changes a file", it is "one line changes
+  // what a customer can do".
+  const after = JSON.parse(JSON.stringify(FIXTURE_TIER_MATRIX)) as typeof FIXTURE_TIER_MATRIX;
+  (after.tiers.growth as Record<string, unknown>)['chat.search'] = true;
+
+  const NOW = new Date('2026-09-22T00:00:00.000Z');
+  const growthAccount = tierAccount('growth');
+
+  it('a Growth account cannot search before the change', () => {
+    const decision = decide({
+      config: fixtureConfig(),
+      resolution: resolveEntitlements({ config: fixtureConfig(), account: growthAccount, overrides: [], now: NOW }),
+      capability: 'chat.search',
+      request: { surfaceKind: 'owner_read' },
+    });
+
+    expect(decision).toMatchObject({ outcome: 'not_entitled', lowestTier: 'pro' });
+  });
+
+  it('the same account can search after it — with nothing else changed', () => {
+    const config = fixtureConfig({ matrix: after as unknown as EntitlementConfig['matrix'] });
+    const decision = decide({
+      config,
+      resolution: resolveEntitlements({ config, account: growthAccount, overrides: [], now: NOW }),
+      capability: 'chat.search',
+      request: { surfaceKind: 'owner_read' },
+    });
+
+    expect(decision.outcome).toBe('allowed');
+    // And the cheapest tier that satisfies it has moved down, so an upgrade
+    // prompt shown to a Basic account now names Growth rather than Pro.
+    expect(lowestTierFor(config, 'chat.search')).toBe('growth');
+  });
+
+  it('a Basic account is unaffected in both directions', () => {
+    const config = fixtureConfig({ matrix: after as unknown as EntitlementConfig['matrix'] });
+    const decision = decide({
+      config,
+      resolution: resolveEntitlements({ config, account: tierAccount('basic'), overrides: [], now: NOW }),
+      capability: 'chat.search',
+      request: { surfaceKind: 'owner_read' },
+    });
+
+    expect(decision).toMatchObject({ outcome: 'not_entitled', lowestTier: 'growth' });
   });
 });
 

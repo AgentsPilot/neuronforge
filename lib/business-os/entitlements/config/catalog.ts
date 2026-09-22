@@ -26,13 +26,17 @@
 // answer was not obvious the evidence is in the entry's `note`.
 //
 // ⚠️ THE TEST FOR `available` IS "A CUSTOMER GETS THE OUTCOME", NOT "THE TABLES
-// EXIST". `marketing.mass_email` was marked available on the strength of its
-// tables and routes, and turned out to have no dispatcher at all — the builder
-// without the sender. It is now `not_built`, and its note records how to tell.
-// Two entries still carry a known gap between the feature and its delivery:
+// EXIST". Three entries were marked available on storage and plumbing and have
+// been corrected; each note records the trace that settled it:
 //
-//   marketing.mass_email  no dispatcher: nothing reads `next_send_at`
-//   payments.reminders    the sender is a stub (PaymentReminderService)
+//   marketing.mass_email   builder with no dispatcher — nothing reads next_send_at
+//   payments.reminders     the sender returns `true; // Simulated success`
+//   website.custom_domain  middleware only rewrites *.baseHost; the lookup has no caller
+//
+// The user's rule follows from the same place: **if a feature does not exist it
+// cannot be allocated.** A tier may not grant a `not_built` capability, and the
+// loader rejects a config that tries (see `schema.ts`). That is why getting
+// `lifecycle` right is not documentation — it decides what can be sold.
 //
 // **Gate before the first tier is configured** (not before this merges — nothing
 // is sold yet): walk every `available` capability and confirm an end-to-end path
@@ -154,12 +158,22 @@ export const CAPABILITIES = {
     labels: { en: 'Payment reminders and retries', he: 'תזכורות ותשלום חוזר', es: 'Recordatorios y reintentos de pago' },
     category: 'payments',
     shape: { kind: 'boolean' },
-    lifecycle: 'available',
+    // NOT BUILT — corrected 2026-09-22 (QA C2-1), by the same rule that moved
+    // marketing.mass_email.
+    lifecycle: 'not_built',
     audience: 'client',
     messageClass: 'transactional',
     atLimit: 'none',
     sellableAsAddon: false,
-    note: 'Scheduled by BookingLifecycleService; the payment-reminders cron sends. NOTE: PaymentReminderService.sendEmailReminder is still a stub, tracked separately.',
+    note:
+      'Everything except the send exists: BookingLifecycleService schedules reminders for every ' +
+      'booking invoice and the payment-reminders cron claims them. But ' +
+      'PaymentReminderService.sendEmailReminder (lib/services/PaymentReminderService.ts:500-527) ' +
+      'logs "Would send payment reminder email" and returns `true; // Simulated success`. ' +
+      'That is worse than a missing sender: the row is marked SENT while no client receives ' +
+      'anything, so the failure is invisible from inside the product. Marking this `available` ' +
+      'would sell a reminder that is recorded as delivered and never arrives. ' +
+      'Flip to `available` in the same change that makes the sender real.',
   },
   'payments.multi_currency': {
     labels: { en: 'Multiple currencies', he: 'מספר מטבעות', es: 'Varias monedas' },
@@ -453,11 +467,19 @@ export const CAPABILITIES = {
     labels: { en: 'Custom domain', he: 'דומיין מותאם', es: 'Dominio propio' },
     category: 'addon',
     shape: { kind: 'addon' },
-    lifecycle: 'available',
+    // NOT BUILT — corrected 2026-09-22 (QA C2-2). Storage is not a feature.
+    lifecycle: 'not_built',
     audience: 'client_render',
     atLimit: 'none',
     sellableAsAddon: true,
-    note: 'custom_domain is carried on website pages (WebsitePageRepository) and in the chat catalog.',
+    note:
+      'The column and the lookup exist; the serving path does not. `middleware.ts:56-69` rewrites ' +
+      'to /site/[subdomain] ONLY when the host ends with the platform base host, so a genuine ' +
+      'custom domain never matches, and WebsitePageRepository.findByCustomDomain ' +
+      '(lib/repositories/WebsitePageRepository.ts:330) has no caller anywhere in the repository. ' +
+      'A customer who bought this would point their DNS at us and get nothing. Same evidence ' +
+      'class as marketing.mass_email: a column, a flag and a repository method, with no path to ' +
+      'the outcome.',
   },
   'addon.act_for_you': {
     labels: { en: 'Act-for-you automations', he: 'אוטומציות שפועלות בשבילך', es: 'Automatizaciones por ti' },

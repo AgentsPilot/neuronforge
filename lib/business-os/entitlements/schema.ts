@@ -20,7 +20,8 @@
 import { z } from 'zod';
 import { CAPABILITIES } from './config/catalog';
 import type { CapabilityId } from './config/catalog';
-import type { CapabilityDef, CapabilityShape } from './types';
+import { rankValue } from './snapshot';
+import type { CapabilityDef, CapabilityShape, CapabilityValue, QuantityValue } from './types';
 
 /**
  * A catalog to validate against.
@@ -35,6 +36,86 @@ export type CatalogLike = Readonly<Record<string, CapabilityDef>>;
 
 function idsOf(catalog: CatalogLike): string[] {
   return Object.keys(catalog);
+}
+
+/**
+ * Does this value GRANT the capability, as opposed to withholding it?
+ *
+ * "Granted" is anything above the bottom of the capability's own scale: `true`
+ * for a boolean or a group, any variant other than the first, `purchasable` or
+ * `included` for an add-on, and any non-zero quantity, allowance or ceiling.
+ *
+ * `purchasable` counts as granting on purpose. It is an offer to sell, and
+ * offering to sell something that does not exist is the failure this rule is
+ * about — the customer pays and then finds out.
+ *
+ * A value the scale cannot rank is treated as granting: if we cannot tell, we
+ * do not hand it out.
+ */
+export function isGrantingValue(value: CapabilityValue, definition: CapabilityDef): boolean {
+  // QA B-1: `{ included: 0, purchasable: true }` ranks 0 — nothing is included —
+  // but it still OFFERS TO SELL more. That is the same failure `purchasable` on
+  // an add-on is treated as granting for: the customer pays, and finds out
+  // afterwards. The quantity shape is the only other place the word appears.
+  if (definition.shape.kind === 'quantity' && (value as QuantityValue)?.purchasable === true) return true;
+
+  const rank = rankValue(value, definition);
+  return rank === null ? true : rank > 0;
+}
+
+/**
+ * The user's rule, 2026-09-22: **if a feature does not exist it cannot be
+ * allocated.**
+ *
+ * `lifecycle: 'not_built'` already means "never entitled" at resolution time
+ * (FR-13), so a tier that grants one would be a promise the resolver silently
+ * refuses to keep — a plan whose feature list does not match what the customer
+ * gets, discovered by the customer. Rejecting it at load makes the two
+ * impossible to disagree.
+ *
+ * Reported as a list rather than one issue at a time: someone adding a tier
+ * wants to know about all of them at once, not one release at a time.
+ */
+function addNotBuiltGrantIssues(
+  row: Record<string, unknown>,
+  catalog: CatalogLike,
+  where: string,
+  ctx: z.RefinementCtx
+): void {
+  for (const [capability, value] of Object.entries(row)) {
+    const definition = catalog[capability];
+    if (!definition || definition.lifecycle !== 'not_built') continue;
+    if (!isGrantingValue(value as CapabilityValue, definition)) continue;
+
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        `${where} grants "${capability}" (${JSON.stringify(value)}), but that capability is ` +
+        `not_built — it does not exist yet, so it cannot be allocated. Either withhold it ` +
+        `(${JSON.stringify(withheldValueFor(definition))}) or change its lifecycle in the catalog, ` +
+        `which means proving a customer gets the outcome.`,
+    });
+  }
+}
+
+/** The value that withholds a capability, for the error message above. */
+function withheldValueFor(definition: CapabilityDef): CapabilityValue {
+  const shape = definition.shape;
+  switch (shape.kind) {
+    case 'boolean':
+    case 'group':
+      return false;
+    case 'variant':
+      return shape.variants[0];
+    case 'addon':
+      return 'unavailable';
+    case 'metered':
+      return { perMonth: 0 };
+    case 'quantity':
+      return { included: 0 };
+    case 'fair_use':
+      return { ceilingPerMonth: 0 };
+  }
 }
 
 /** The value schema for one capability, derived from its declared shape. */
@@ -177,6 +258,11 @@ export function tierMatrixSchema(
         }
       }
 
+      // "If a feature does not exist it cannot be allocated."
+      for (const [tier, row] of Object.entries(matrix.tiers as Record<string, Record<string, unknown>>)) {
+        addNotBuiltGrantIssues(row, catalog, `tier "${tier}"`, ctx);
+      }
+
       // A removal records what the subscriber KEEPS, so its value has to be a
       // legal value for that capability — otherwise grandfathering would restore
       // something the resolver cannot interpret.
@@ -255,6 +341,18 @@ export function cohortsSchema(tierOrder: readonly string[], catalog: CatalogLike
           message: 'includeLifecycle may not contain "not_built": a cohort cannot grant a feature that does not exist',
         });
       }
+
+      // The same rule on the numeric side. `{ all: true }` derives booleans and
+      // variants and skips `not_built` by construction — but the quantities and
+      // allowances are written by hand here, so a champion could be handed 500
+      // SMS messages that nothing can send. Zero is the only legal value for a
+      // capability that does not exist.
+      addNotBuiltGrantIssues(
+        cohortConfig.values as Record<string, unknown>,
+        catalog,
+        'the cohort',
+        ctx
+      );
     });
 
   return z
