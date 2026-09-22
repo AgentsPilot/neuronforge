@@ -173,3 +173,95 @@ describe('no console logging remains', () => {
     expect(source).not.toContain('createClient');
   });
 });
+
+/**
+ * S1-T13 — `listPricedModels`, the admin screen's model picker source (FR-8).
+ *
+ * The property that matters: it reports what the LOOKUP would serve, database
+ * rows and in-code fallback entries alike. A list built from the database
+ * alone would omit models `getPricing` accepts, so the picker would teach an
+ * operator that a usable model is refused.
+ *
+ * It deliberately applies NO acceptability rule of its own — Business OS's
+ * "> 0 on both sides" lives with the guardrail that owns it.
+ */
+describe('listPricedModels (admin model options)', () => {
+  it('reports database rows, in the units the cache holds (per 1,000 tokens)', async () => {
+    mockListActive.mockResolvedValue({
+      data: [row({ provider: 'openai', model_name: 'gpt-4o', input_cost_per_token: '0.0000025', output_cost_per_token: '0.00001' })],
+      error: null,
+    });
+    const pricing = await freshPricing();
+
+    const { models } = await pricing.listPricedModels();
+    const found = models.find((m) => m.model === 'gpt-4o')!;
+
+    expect(found.source).toBe('database');
+    expect(found.inputPer1kTokens).toBeCloseTo(0.0025);
+    expect(found.outputPer1kTokens).toBeCloseTo(0.01);
+  });
+
+  it('includes the in-code fallback entries the lookup would also serve', async () => {
+    mockListActive.mockResolvedValue({ data: [], error: null });
+    const pricing = await freshPricing();
+
+    const { models } = await pricing.listPricedModels();
+    const fallbackOnly = models.filter((m) => m.source === 'fallback');
+
+    expect(fallbackOnly.length).toBeGreaterThan(0);
+    // Every one of them must really be servable by the lookup — that is the
+    // claim this list is making.
+    for (const candidate of fallbackOnly.slice(0, 5)) {
+      expect(await pricing.getPricing(candidate.provider, candidate.model)).not.toBeNull();
+    }
+  });
+
+  it('lets the database win over the fallback for the same model', async () => {
+    mockListActive.mockResolvedValue({
+      data: [row({ provider: 'openai', model_name: 'gpt-4o', input_cost_per_token: '0.000009', output_cost_per_token: '0.000009' })],
+      error: null,
+    });
+    const pricing = await freshPricing();
+
+    const { models } = await pricing.listPricedModels();
+    const entries = models.filter((m) => m.provider === 'openai' && m.model === 'gpt-4o');
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('database');
+  });
+
+  it('filters NOTHING — an input-only model is reported, and the caller decides', async () => {
+    mockListActive.mockResolvedValue({ data: [], error: null });
+    const pricing = await freshPricing();
+
+    const { models } = await pricing.listPricedModels();
+
+    // `text-embedding-*` is legitimately priced input-only. Business OS refuses
+    // it (`zero_price`), but that rule belongs to the guardrail, not here:
+    // pushing it into this module would be the second opinion D-3 forbids.
+    expect(models.some((m) => m.model.startsWith('text-embedding-') && m.outputPer1kTokens === 0)).toBe(true);
+  });
+
+  it('reports the cache age, because the list is advisory for up to an hour', async () => {
+    mockListActive.mockResolvedValue({ data: [row({})], error: null });
+    const pricing = await freshPricing();
+
+    const { cacheAgeMs, cacheTtlMs } = await pricing.listPricedModels();
+
+    expect(cacheTtlMs).toBe(60 * 60 * 1000);
+    expect(cacheAgeMs).toBeGreaterThanOrEqual(0);
+    expect(cacheAgeMs).toBeLessThan(cacheTtlMs);
+  });
+
+  it('does not re-implement the lookup: one repository read serves both', async () => {
+    mockListActive.mockResolvedValue({ data: [row({})], error: null });
+    const pricing = await freshPricing();
+
+    await pricing.listPricedModels();
+    await pricing.getPricing('openai', 'gpt-4o');
+
+    // The same TTL path, so the list and the lookup can never be served from
+    // different snapshots within one request.
+    expect(mockListActive).toHaveBeenCalledTimes(1);
+  });
+});

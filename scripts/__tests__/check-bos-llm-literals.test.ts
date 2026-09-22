@@ -361,13 +361,11 @@ describe('T4-1: the gate on this tree (AC-11)', () => {
  *     no-op and drops the file it covered back OUT of scope with a green gate
  *     - the precise failure the inclusion list was written to prevent.
  *
- * The real list is EMPTY on this branch, because an entry cannot ship ahead of
- * the file it names (see `LITERAL_SCOPE_INCLUSIONS`' doc block). That must not
- * leave the machinery untested until the first entry arrives, so every
- * property below is proved against a FIXTURE through the injectable argument
- * `literalScope` and `staleInclusions` both take. The one thing a fixture
- * cannot prove - that a real entry pulls a real file in - is asserted in the
- * change that adds the entry.
+ * The properties below are proved against a FIXTURE, through the injectable
+ * argument `literalScope` and `staleInclusions` both take, so the machinery
+ * stays proven independently of what the real list happens to hold. The one
+ * thing a fixture cannot prove - that the real entry pulls a real file in -
+ * is asserted directly, here, in the change that adds that entry.
  */
 describe('the scope inclusions', () => {
   // A path that is deliberately NOT in the repository. It reaches the catalog
@@ -378,15 +376,24 @@ describe('the scope inclusions', () => {
     { file: FIXTURE, reason: 'fixture: reaches the catalog one hop away, so the direct-import rule misses it' },
   ];
 
-  it('is empty, and every entry it ever gains carries a reason', () => {
+  const ADMIN_ROUTE = 'app/api/admin/business-os/llm-settings/route.ts';
+
+  it('names exactly one file, with a reason', () => {
     // Mirrors the EXEMPTIONS cap: the list's contents are pinned by equality,
-    // so ANY entry - the first, or a later one - fails this assertion and
-    // arrives with a review rather than as a config line. Scope only ever
-    // grows here, on purpose, and growth must be visible.
-    expect(LITERAL_SCOPE_INCLUSIONS.map((entry) => entry.file)).toEqual([]);
+    // so a SECOND entry fails this assertion and arrives with a review rather
+    // than as a config line. Scope only ever grows here, on purpose, and
+    // growth must be visible.
+    expect(LITERAL_SCOPE_INCLUSIONS.map((entry) => entry.file)).toEqual([ADMIN_ROUTE]);
     for (const entry of LITERAL_SCOPE_INCLUSIONS) {
       expect(entry.reason.length).toBeGreaterThan(20);
     }
+  });
+
+  it('the real entry actually pulls the real route into scope', () => {
+    // The one property a fixture cannot prove, asserted in the change that
+    // adds the entry: the named path matches a file the walk really finds.
+    expect(scopedFiles()).toContain(ADMIN_ROUTE);
+    expect(staleInclusions(scopedFiles())).toEqual([]);
   });
 
   it('an entry is not decorative: it actually pulls its file into scope', () => {

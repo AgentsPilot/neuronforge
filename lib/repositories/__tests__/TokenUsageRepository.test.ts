@@ -438,3 +438,112 @@ describe('chat telemetry reads', () => {
     expect(result.error).toBeTruthy();
   });
 });
+
+/**
+ * S1-T14 — `summariseFeatureAllAccountsInWindow`, the SECOND deliberate
+ * all-accounts read (admin screen FR-18 / AC-25).
+ *
+ * The point of these tests is what it does NOT return. It is unscoped by
+ * design, so the only defence against it becoming a cross-tenant leak is that
+ * it can only ever answer with two numbers.
+ */
+describe('summariseFeatureAllAccountsInWindow (admin ledger check)', () => {
+  const FEATURE = 'business-os-leads';
+
+  function leadRows(): Row[] {
+    return [
+      row({ user_id: A, feature: FEATURE, created_at: '2026-09-17T10:30:00.000Z', cost_usd: '0.02' }),
+      row({ user_id: B, feature: FEATURE, created_at: '2026-09-17T11:30:00.000Z', cost_usd: '0.03' }),
+      row({ user_id: B, feature: FEATURE, created_at: '2026-09-17T11:45:00.000Z', cost_usd: '0.04' }),
+      // Another feature, and another window — neither may be counted.
+      row({ user_id: A, feature: 'business-os-chat', created_at: '2026-09-17T11:00:00.000Z' }),
+      row({ user_id: A, feature: FEATURE, created_at: '2026-09-16T11:00:00.000Z' }),
+    ];
+  }
+
+  it('counts every account, and reports the newest timestamp', async () => {
+    const { fake, repo } = setup({ tables: { token_usage: leadRows() } });
+
+    const result = await repo.summariseFeatureAllAccountsInWindow(WINDOW, FEATURE);
+
+    expect(result.error).toBeNull();
+    expect(result.data).toEqual({ count: 3, latestAt: '2026-09-17T11:45:00.000Z' });
+    // Deliberately unscoped: the question "is this platform-wide switch
+    // holding" has no per-tenant answer.
+    for (const query of fake.queries) expect(accountFilterOf(query)).toEqual([]);
+  });
+
+  it('returns two facts and NOTHING else — no rows, no accounts, no owner text, no cost', async () => {
+    const { repo } = setup({ tables: { token_usage: leadRows() } });
+
+    const result = await repo.summariseFeatureAllAccountsInWindow(WINDOW, FEATURE);
+
+    expect(Object.keys(result.data!).sort()).toEqual(['count', 'latestAt']);
+    const serialised = JSON.stringify(result.data);
+    expect(serialised).not.toContain(A);
+    expect(serialised).not.toContain(B);
+    // RC-6: cost was dropped on purpose. PostgREST cannot sum without an RPC,
+    // so it would have been a capped page summed in code — and a silently
+    // short cost figure, rendered during a cost incident, is worse than none.
+    expect(serialised).not.toContain('cost');
+  });
+
+  it('selects no forbidden column', async () => {
+    const { fake, repo } = setup({ tables: { token_usage: leadRows() } });
+
+    await repo.summariseFeatureAllAccountsInWindow(WINDOW, FEATURE);
+
+    expect(fake.queries).toHaveLength(2);
+    for (const query of fake.queries) {
+      for (const forbidden of FORBIDDEN) expect(query.select).not.toContain(forbidden);
+    }
+  });
+
+  it('reports an empty window as zero, not as an error', async () => {
+    const { repo } = setup({ tables: { token_usage: [] } });
+
+    const result = await repo.summariseFeatureAllAccountsInWindow(WINDOW, FEATURE);
+
+    // "No calls" is the reading the panel needs most; it must not arrive as a
+    // failure the UI would render as "could not check".
+    expect(result.error).toBeNull();
+    expect(result.data).toEqual({ count: 0, latestAt: null });
+  });
+
+  it('refuses a bad window or feature before any query, without throwing', async () => {
+    const { fake, repo } = setup({ tables: { token_usage: leadRows() } });
+
+    const bad = await Promise.all([
+      repo.summariseFeatureAllAccountsInWindow({ start: WINDOW.end, end: WINDOW.start }, FEATURE),
+      repo.summariseFeatureAllAccountsInWindow(WINDOW, 'Bad Feature!'),
+      repo.summariseFeatureAllAccountsInWindow(WINDOW, ''),
+    ]);
+
+    for (const result of bad) {
+      expect(result.data).toBeNull();
+      expect(result.error).toBeInstanceOf(Error);
+    }
+    expect(fake.queries).toHaveLength(0);
+  });
+
+  it('returns a read error without throwing', async () => {
+    const { repo } = setup({ tables: { token_usage: leadRows() }, errorWhen: () => ({ message: 'boom' }) });
+
+    const result = await repo.summariseFeatureAllAccountsInWindow(WINDOW, FEATURE);
+
+    expect(result.data).toBeNull();
+    expect(result.error).toBeTruthy();
+  });
+
+  it('is named so a reader cannot miss that it is cross-tenant', () => {
+    // The naming convention is the guardrail: `listChatCallsAllAccountsInWindow`
+    // set it, and every future unscoped read must be obvious at the call site.
+    const unscoped = Object.getOwnPropertyNames(TokenUsageRepository.prototype).filter((name) =>
+      name.includes('AllAccounts')
+    );
+    expect(unscoped.sort()).toEqual([
+      'listChatCallsAllAccountsInWindow',
+      'summariseFeatureAllAccountsInWindow',
+    ]);
+  });
+});
