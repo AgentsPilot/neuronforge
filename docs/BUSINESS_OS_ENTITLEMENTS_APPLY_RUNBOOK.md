@@ -77,7 +77,14 @@ New query tab → paste the whole of `supabase/migrations/20261005_business_os_e
 
 New query tab → paste the whole of `supabase/migrations/20261005b_business_os_entitlements_backfill.sql` → **Run**.
 
-*Expect:* "Success. No rows returned." **Note the elapsed time the editor shows.** Doing this right after step 4 keeps a small gap small — see row 54 below. It stops itself after ten minutes; if that happens nothing is left half-done and you can simply run it again.
+*Expect:* "Success. No rows returned." **Note the elapsed time the editor shows.** Doing this right after step 4 keeps a small gap small — see row 54 below.
+
+| If it fails with | What it means | Do |
+|---|---|---|
+| **"cannot execute … in a read-only transaction"** | Same as step 4 — a checking script ran on this tab. Nothing was applied | `RESET default_transaction_read_only;` (or a new tab), paste again |
+| **"canceling statement due to statement timeout"** | It stopped itself after ten minutes. **Nothing is half-done** — the whole thing rolled back | Just run it again. It is built to be re-run: a second run fills in what is missing and changes nothing else |
+| **"violates foreign key constraint"** | An account has no login record — what step 2 row 3 warns about. Nothing was inserted | Stop. Re-read step 2 row 3's advice |
+| **Anything else** | Unknown | **Stop and ask**, pasting the message into the PR. Unlike step 4, the tables from step 4 **are** there now — that is fine, they do nothing until this step succeeds. Re-running this step later is safe |
 
 ### 6. Check it landed
 
