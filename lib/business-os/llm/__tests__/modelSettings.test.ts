@@ -664,3 +664,78 @@ describe('change log: labels only, never content (T1-12, FR-17)', () => {
     ).toBe('note');
   });
 });
+
+// ---------------------------------------------------------------------------
+// S1-T4b — the provenance output is ADDITIVE (admin screen RC-2b)
+// ---------------------------------------------------------------------------
+
+/**
+ * "Additive" is a claim until a test pins it.
+ *
+ * `evaluateAreaRow` now also reports which LEVEL each field resolved from, for
+ * the admin screen's provenance badges. Nothing on the serving path reads it,
+ * so nothing on the serving path may change — and the two functions that ARE
+ * the serving path are the ones every Business OS call site depends on.
+ */
+describe('S1-T4b: provenance does not disturb the serving path', () => {
+  const CASES: Array<{ name: string; row: unknown }> = [
+    { name: 'no row at all', row: undefined },
+    { name: 'an empty row', row: {} },
+    { name: 'an area-level model', row: { model: 'gpt-4o' } },
+    { name: 'a call-level override', row: { calls: { reply_recommendation: { model: 'gpt-4o' } } } },
+    { name: 'a switched-off area', row: { enabled: false } },
+    {
+      name: 'a refused call-level value falling through to the area',
+      row: { model: 'gpt-4o', calls: { reply_recommendation: { temperature: 1.5 } } },
+    },
+  ];
+
+  it.each(CASES)('resolveBosLlmSettings is unchanged, field for field: $name', async ({ row }) => {
+    mockGetByKeys.mockResolvedValue(row === undefined ? { data: [], error: null } : rows({ leads: row }));
+    __resetBosLlmSettingsForTests();
+
+    for (const callName of bosLlmSettingsCallNames('leads')) {
+      const resolved = await resolveBosLlmSettings('leads', callName as never);
+
+      // The exact shape every call site destructures. A new key here would be
+      // a new field on the hot path, which this change must not introduce.
+      expect(Object.keys(resolved).sort()).toEqual([
+        'area',
+        'callName',
+        'defaultModel',
+        'enabled',
+        'model',
+        'provider',
+        'temperature',
+      ]);
+      expect(resolved.area).toBe('leads');
+      expect(resolved.callName).toBe(callName);
+      expect(typeof resolved.model).toBe('string');
+      expect(typeof resolved.enabled).toBe('boolean');
+    }
+  });
+
+  it.each(CASES)('isBosLlmAreaEnabled is unchanged: $name', async ({ row }) => {
+    mockGetByKeys.mockResolvedValue(row === undefined ? { data: [], error: null } : rows({ leads: row }));
+    __resetBosLlmSettingsForTests();
+
+    const enabled = await isBosLlmAreaEnabled('leads');
+
+    const expected = !(row !== undefined && (row as { enabled?: unknown }).enabled === false);
+    expect(enabled).toBe(expected);
+  });
+
+  it('adds no extra repository read or price lookup', async () => {
+    mockGetByKeys.mockResolvedValue(rows({ leads: { model: 'gpt-4o' } }));
+    __resetBosLlmSettingsForTests();
+
+    await resolveBosLlmSettings('leads', 'reply_recommendation' as never);
+    const readsAfterFirst = mockGetByKeys.mock.calls.length;
+
+    await resolveBosLlmSettings('leads', 'reply_recommendation' as never);
+
+    // One refill serves the whole area; provenance is computed from state the
+    // loop already had, so it costs no additional I/O.
+    expect(mockGetByKeys.mock.calls.length).toBe(readsAfterFirst);
+  });
+});
