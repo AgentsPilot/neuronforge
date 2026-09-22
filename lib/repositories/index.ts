@@ -20,6 +20,33 @@ export { CalibrationHistoryRepository } from './CalibrationHistoryRepository';
 export { InsightRepository } from './InsightRepository';
 export { UserProfileRepository, userProfileRepository } from './UserProfileRepository';
 export type { UserProfile } from './UserProfileRepository';
+
+// Business OS entitlements (component 1). Server-only: these tables have RLS on
+// with no policies, so every method runs with the service role by design — see
+// the header of each file. Never import them from a 'use client' module.
+export {
+  BusinessOsAccountPlanRepository,
+  businessOsAccountPlanRepository,
+  BOS_ENTITLEMENT_BATCH_LIMIT,
+} from './BusinessOsAccountPlanRepository';
+export type {
+  BusinessOsAccountPlan,
+  BusinessOsEntitlementOverride,
+  BusinessOsEntitlementInputs,
+  BusinessOsAccountPlanPatch,
+  EnsureBusinessOsAccountPlanInput,
+  CreateBusinessOsOverrideInput,
+  ResetBusinessOsPlanStateInput,
+} from './BusinessOsAccountPlanRepository';
+export {
+  BusinessOsEntitlementShadowRepository,
+  businessOsEntitlementShadowRepository,
+  BOS_SHADOW_EVENT_BATCH_LIMIT,
+} from './BusinessOsEntitlementShadowRepository';
+export type {
+  BusinessOsShadowEvent,
+  BusinessOsShadowEventInput,
+} from './BusinessOsEntitlementShadowRepository';
 export {
   OrganizationRepository,
   organizationRepository,
