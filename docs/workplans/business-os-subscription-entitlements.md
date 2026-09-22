@@ -2586,6 +2586,118 @@ With R4-5 it is as good as this can be without a rehearsal. Nothing in it missta
 2. **One fix matters to you rather than to the code.** The report that will tell you what to put in each plan currently counts some chat activity twice, because we deliberately record every lookup under both possible readings of the "search" question. Left as is, it would overstate how many customers a given plan would affect. It is being fixed before the report is switched on, so the first numbers you see are the real ones.
 3. **The apply instructions are ready to follow as written.** I reviewed them as the thing you will actually use, not as a design document, and the one place I would still improve is more detail if the second apply step fails.
 
+### 13.8 SA Code Review — component 5 (admin operations + docs), and Slice 1 exit
+
+**Reviewed by SA — 2026-09-22** (uncommitted tree; workplan at `4590000e`; component 4 committed at `af9748a6`)
+**Status:** ✅ **APPROVED — CLEARED FOR QA.** Two low-priority fixes (**C5-1, C5-2**), neither blocking. **This closes Slice 1's code.**
+
+**What SA ran:** `npm run test:bos-entitlements` — **48 suites, 912 tests, 0 failures**; `npm run test:authz-guard` — 74 passing, **no new exemption**; `npm run lint:hooks` — clean. I also walked `app/api/admin/**` myself rather than trusting the guard's report (below).
+
+**All five fixes from §13.7 landed** — the replay now takes and names a reading (R4-1), shadow routes through `resolveAccountId` (R4-2), the control is `keptCapabilitySurfaceCount` next to `accountsAffectedCount` (R4-3), fan-out counts are labelled upper bounds in both the type and the report (R4-4), and runbook step 5 has its failure table (R4-5).
+
+---
+
+#### 1. Authorization — verified independently
+
+| Check | Result |
+|---|---|
+| Gate is the first statement | ✅ All four handlers. I read each one: `const gate = await requireAdmin(...); if (gate instanceof NextResponse) return gate;` with **nothing above it** — the correlation id, the child logger, the `try`, the uuid parse and the body read all come after. |
+| Nothing happens before the gate on **any** path | ✅ The `try` opens *after* the gate in every handler, so there is no error path that can precede it either. No body parse, no param validation, no repository read, no audit write. |
+| No route imports `AdminAccessService` | ✅ Scanned; none of the three files mentions it. |
+| The repo-wide guard genuinely covers them | ✅ **Checked rather than assumed.** Walking `app/api/admin/**` finds **47 route files** where the census recorded 44 — the three new ones are in the scanned set, and the guard's own assertion is a floor (`>= 40`), not an equality, so they are counted rather than quietly excluded. R1 passing with no new exemption therefore means each of the four handlers contains the gate. |
+| AC-6 (`profiles.role = 'admin'` still 403) | ✅ In the route suite, alongside 401, 403 and the admin-check-throwing case, each asserting **no repository call and no audit entry**. That last part is the assertion that makes the others worth something. |
+| Error detail in production | ✅ The 500 path returns a generic message; Zod issue detail is `NODE_ENV === 'development'` only. |
+
+**One improvement on the plan worth recording:** the audit entry uses `userId = accountId` (the account the change is about) and `actorId = gate.user.id`. I checked that `actorId` is a real persisted column (`actor_id`) rather than an ignored field — it is, so the acting admin is durably recorded. That is a better shape than the `userId: adminId` the workplan originally specified.
+
+---
+
+#### 2. The write ops
+
+Every condition I set in earlier rounds is present and behaves as specified:
+
+| Condition | Verdict |
+|---|---|
+| **R2-2** explicit cohort on `ensure_plan_row` | ✅ Required in the schema, no default. |
+| **RC-4 / A-1** `expiresAt` a required *key* | ✅ Champion without it → 400 `expires_at_required_for_champion`; explicit `null` accepted as "open-ended". Same for `assign_tier`. |
+| **R2-3** `wouldLeaveNoBasis` | ✅ **Correct, and for the right reason.** It projects the row the patch *would* produce, replicates `updatePlan`'s paired-expiry clearing so the projection cannot disagree with reality, and tests the result with `tierInForce(next, now)` — so an **expired** tier does not count as a basis. That is the subtle half, and it is right. |
+| **Q-15** | ✅ 409 `plan_row_missing` rather than reading "no row matched" as success. |
+| **Q-6 / M-3 / M-4** | ✅ Explicit `no_cohort_to_expire` / `no_tier_to_expire` 409s, so a CHECK constraint is never the message the caller sees; unknown tier and unknown capability refused by the schema; blank cohort refused. |
+| **C3-2** | ✅ `capability_not_built` 409 on a granting override, **revoke still allowed** — which is the correct asymmetry: you may withhold something that does not exist, you may not hand it out. |
+| **RC-10** | ✅ 404 `not_a_business_os_account` before anything else touches the plan row. |
+| **A-3** | ✅ All four guards: the confirm literal (`z.literal`), the echoed account id matching the path, `tier_assigned` unless `confirmTierLoss`, and the before-state carrying the ended overrides into the audit entry. |
+| **WC-7** | ✅ `await auditTrail.flush()` **before** the response, with the route test asserting the order rather than just the calls. |
+
+**Tenant isolation (service-role write on a caller-supplied id).** The full guard pattern is present and in the right order: admin gate → uuid parse → tenant pre-check → plan-row check → invariant pre-check → an **allow-listed** patch through component 1's `PATCH_FIELDS` → `.eq('user_id', accountId)`. The account id comes from a validated path parameter and is never spread into a payload. This is the M1/G3 pattern applied correctly.
+
+**On the vacuous-test class Dev self-reported** (a `reason: 'x'` below the minimum, so "refuses an unknown tier" was really asserting "refuses a short reason"): the structural defence is asserting the *specific* error code, not merely that the call refused. The suite now does exactly that — **16 refusal assertions name their code and none asserts a bare `ok: false`**. Finding and reporting that class unprompted is the behaviour that makes a test suite worth trusting.
+
+---
+
+#### 3. Dev's calls — all four endorsed
+
+| Call | Verdict |
+|---|---|
+| `launch` returns **501** for a real run | **Right, and the right status.** The endpoint exists and its dry run works (R2-1); execution belongs to Slice 2. 501 says "not built yet"; 403 or 409 would have implied a policy refusal and sent someone hunting for permissions. |
+| RC-15 guard gains `admin_ops`, with `isTest` decided **first** | **Right, and the ordering is the point** — without it a test file living under the admin path would be classified as an admin route and inherit write permission. |
+| `adminOps.ts` classified EXEMPT by the seam guard | **Accepted.** It *is* the write path; exempting it is honest rather than a loophole, and it is bounded by the gated route being its only caller, which the import graph shows. |
+| Eight audit events + one entity type added to shared files | **Fine — additive, nothing existing changed.** See C5-2 on the one loose end. |
+
+---
+
+#### 4. The architecture doc
+
+**Yes — someone adding a tier in six months can work from it.** It states who owns each layer and when it changes, the four-step add-a-tier procedure, the deliberate one-line/two-line asymmetry for adding versus removing (with the ledger and version bump), why `'renewal'` is rejected before billing, histories, the staleness bound, the mode flag, the enforcement gates (G-1, G-2, UD-2, the exhaustive missing-plan-row scan and the trim list), the admin surface and the ops checks. It follows the doc standard (ToC, change history) and points at the apply runbook rather than repeating it.
+
+**C5-1 (low):** the add-a-tier procedure does not mention **the rule most likely to stop the person following it** — a tier may not grant a `not_built` capability, and the loader will reject the config. That rule rejected Eyal's draft matrix on eight capabilities. One line in step 2.
+
+**Note on the CLAUDE.md row:** it is now present on disk (`BUSINESS_OS_ENTITLEMENTS.md`, dated 2026-09-22), so §4.30.5's "awaiting the user" is stale and should be marked applied. I have not touched it.
+
+---
+
+#### 5. Slice 1 exit criteria (§4.16)
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | AC-1, AC-3, AC-5, AC-6, AC-36, AC-37 on production config; AC-2, AC-4, AC-7 on the fixture | ✅ **Met.** 912 tests green, and AC-4 is now proven end to end through the resolver (my C-1). |
+| 2 | Flag off ⇒ no entitlement reads or writes; chat-v4 never loads config | ✅ **Met**, and independently verified in §13.7 rather than taken from the tests. |
+| 3 | The shadow path cannot throw, including a throwing config loader | ✅ **Met.** |
+| 4 | The verification script proves triggers never raise, a trial cannot restart, no user policies, revokes in effect, reset atomicity | 🔄 **Deliberately replaced.** The probe suite is prohibited on production (§4.20.2), so these are structurally asserted plus covered by the read-only checker at apply time. Honestly recorded; I accepted the trade in §13.6. |
+| 5 | A-1 fallbacks covered; the no-end-date list covers both kinds | ✅ **Met.** |
+| 6 | Shadow on for ~a week; report shows real usage; tenants-without-plan-row = 0 | ⛔ **Cannot be met before the apply.** Depends on the user's production run, then a week of traffic. |
+| 7 | The CI typecheck and entitlement jobs green on the PR | ⛔ **Pending the PR's first run.** Green locally; the scoped typecheck cannot be run faithfully in this worktree (no `node_modules`). |
+
+**Assessment: Slice 1 is code-complete, and every exit criterion that does not require a database is met.** Three remain open purely by dependency, and none is a defect.
+
+**What is genuinely blocked, and on whom:**
+
+| Item | Blocked on |
+|---|---|
+| The production apply (migration + backfill + checks) | **The user**, following `BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md` |
+| A week of shadow data, and the report meaning anything | The apply, then `BOS_ENTITLEMENTS_MODE=shadow` |
+| **G-1** — service-role key rotated, old key revoked, verified | Blocks `enforce` and all of Slice 4. Unchanged and still the biggest one |
+| **G-2** — the three CI checks made required on `main` | A repository setting (user or repo admin) |
+| An **exhaustive** missing-plan-row scan | Before the Slice 2 switch-on, per §13.7 |
+| The first tier being configured | The user's pricing decision, plus the `available`-capability gate (§13.5 C-2) |
+
+---
+
+#### Low-priority fixes
+
+| # | Fix |
+|---|---|
+| **C5-1** | Add the `not_built` rule to the architecture doc's add-a-tier step 2. |
+| **C5-2** | `AUDIT_EVENTS[outcome.action] ?? outcome.action` in the account route would silently write an unregistered action string if a constant were ever missing. The op union is closed, so either drop the fallback or make it throw in development. |
+
+---
+
+#### For the user
+
+1. **Slice 1 is finished as code.** Everything that could be proven without a database has been; what is left needs the migration run against production, which is your step, with instructions written for you.
+2. **The admin operations are locked down.** Every one of the four new endpoints refuses anyone who is not a platform admin before it reads a body or touches a record, and a user who has given themselves the "admin" label in their own profile is still refused. I checked this myself rather than relying on the test names.
+3. **Nothing about the product has changed.** The feature is off, no plan exists, and no customer sees anything different.
+4. **The two things still waiting on you** are the production apply, and rotating the database key before enforcement is ever switched on. The second is the one that matters most: until it is done, the guarantee that only the server can change what an account is entitled to does not really hold.
+
 ## 14. QA Testing Report
 
 ### 14.1 Component 1 (plan records + migration) — QA, 2026-09-21
@@ -3346,3 +3458,4 @@ _RM to populate._
 | 2026-09-22 | QA of component 4 (shadow mode + report): PASS (QA) | Added §14.11. Ran it all: **46 suites / 853 tests**, the chat-v4 audit suite green with the hook in place, authz guard 74, hooks lint clean, 0 `console.*`/`any`, typecheck at the unchanged **2,030** baseline with **0** in any entitlements file and **0** in chat-v4. Verified **R4-1 to R4-5 all applied** (re-read after Dev's parallel edits settled): the `asTier` replay now filters by reading, and its new tests use genuinely dual-recorded events including the case where both capabilities are absent from the tier — the bug stated as a test. **Request path confirmed airtight**: the `off` path does nothing even with every collaborator throwing, one POST records at most once (`runAiAction` is a single invocation, the confirm branch returns before the hook), and SA's two residuals are the only ones. Seven findings, none blocking: **B-1 (Med)** the setup-AI sample claims to be "the most recent accounts" but is the tail of the first page ordered by *uuid*; **B-2 (Med)** the same measurement reads all Business OS calls through a 1,000-row ceiling ordered newest-first and filters chat out in JS, so a chat-heavy account can lose its setup calls and report zero — and `reachedCeiling` is ignored despite the repository's own doc forbidding it; both bias the trial allowance **downwards**. **B-3** `asTier` inherits the 20,000-row truncation without a flag; **B-4** `noEndDateWithoutProfile` counts rows, not accounts; **B-5** `findTenantsMissingPlanRow` has no repository test; **A-1** a read fanned out inside `for_each` is tagged `both` but resolved under one reading; **A-2** R4-2's code landed but its guard assertion did not. **Runbook: yes — he can run it alone.** R4-5's step-5 table is the right one, and the rollback's P-1/P-2 fixes are confirmed in place. The runbook's step-5 edit was committed by Dev as `25773906` while this review was being written. |
 | 2026-09-22 | QA fixes B-1 to B-5, A-1, A-2, D-1 (Dev) | §4.29. All of §14.11, including the three QA offered to defer. **B-1 + B-2 — the setup-AI measurement, which is the one output of this component that becomes a business decision.** The sample was `pagePlans({limit:500})` ordered by **uuid** then `.slice(-200)` — neither recent nor random, and above 500 plan rows most accounts could never be sampled; it now uses a new repository read ordered by `onboarding_started_at` descending, and the output states the basis and the date span. The ledger read fetched **every** Business OS call newest-first under a 1,000-row ceiling and filtered the three setup areas in JS, so a chat-heavy account's setup calls fell off the end and it reported **0**; the filter is now pushed down to the query, and `reachedCeiling` is surfaced as `accountsAtReadCeiling` with the note saying in words that the percentiles are then **lower bounds**. Both defects biased the trial allowance **downwards** — the one direction B-12 exists to prevent. **B-3:** the replay carries the `windowTruncated` flag its sibling already had. **B-4:** the no-end-date counts are distinct **accounts** (`noEndDateAccountCount`, `noEndDateAccountsWithoutProfile`), not rows — one account can appear twice, and this is the list someone acts on. **B-5:** six repository tests for `findTenantsMissingPlanRow` (chunking asserted from the real `in()` calls, de-duplication, the truncation probe, the error path, and the no-profiles case asserting no plan query is sent). **A-1:** `both` now means "the two readings agree", derived by comparing them rather than inferred from `op === 'find'` — a look-up fanned out inside a `for_each` was resolved under one reading and tagged `both`, which is R4-1's double-count one level down. **A-2:** R4-2's missing assertion — the seam is mocked to return a different id and both the snapshot call and every recorded row must carry it, plus a new `accountSeam.guard.test.ts` requiring every module file that handles a `userId` to call `resolveAccountId` or be on an EXEMPT list with a reason. **D-1 + SA's caveat:** a `limitations` block **in the report's own output** — chat is the only hooked surface, absence means "not used through chat", and counts are requests rather than intents. **48 suites / 880 tests green** (was 47 / 858); authz guard 74; typecheck 2,030 — unchanged baseline, 0 in the module; hooks lint clean; 0 `console.*`. Code uncommitted. |
 | 2026-09-22 | Component 5 built: admin operations + docs — Slice 1 complete (Dev) | §4.30. **Three routes** under `app/api/admin/business-os/entitlements/**` — GET inspect (every capability with the layer that decided it, plus the admin-only override reasons), POST with a seven-variant `op` union, the shadow-report route (S1-T12b) and the launch dry run (R2-1). **Every exported handler opens with its own `requireAdmin`**, written out rather than factored into a helper, because the CI guard reads each handler body; `npm run test:authz-guard` stays at 74 with **no new exemption**, no route imports `AdminAccessService`, and the route suite runs **all four handlers** through 401, 403 and "the admin check threw" (fail closed), asserting each time that no repository call and no audit entry happened. AC-6 has its own case. **The rules live in `adminOps.ts`**, not the routes, so they are testable without a request: R2-2 (explicit cohort), RC-4/A-1 (a champion and a tier must both say when they end, even to say never), R2-3 (`would_leave_no_basis` projected against the state the patch WOULD produce, including the paired-expiry clearing), Q-15 (409 `plan_row_missing` rather than reporting "no row matched" as success), Q-13 (unknown tier or capability refused at the route), Q-6/M-3 (an explicit 409, so a CHECK constraint is never how an admin learns), **C3-2** (an override may not grant a `not_built` capability — refused 409, with `revoke` still allowed because it is not a grant), RC-1 (`no_tiers_configured` on the production config), RC-10 (404 for a non-tenant) and A-3's four reset guards. **WC-7:** the audit is flushed before the response, and the test asserts the ORDER, not just that both happened. Eight `BOS_ENTITLEMENT_*` audit events and the `business_os_account_plan` entity type added (additive only). **S1-T16:** `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md` — adding a tier, the removal + version-bump ledger, histories, staleness, the mode flag, the pre-enforcement gates and the ops checks; **the CLAUDE.md row is proposed in §4.30.5, not applied — it needs the user's approval.** The RC-15 guard gained an `admin_ops` category (the routes may write; `adminOps.ts` holds the write calls but is not a route) and now decides `isTest` first so a test under an admin path counts once. A test-quality note worth keeping: the first draft used `reason: 'x'`, which is invalid, so "refuses an unknown tier" was really asserting "refuses a short reason" — its counterpart assertion caught it, and the suite now pins reason length explicitly. **55 suites / 1,052 tests green**; authz guard 74; typecheck 2,030 — unchanged baseline, 0 in any entitlements or admin file; hooks lint clean; 0 `console.*`. Code uncommitted. |
+| 2026-09-22 | SA code review of component 5: APPROVED for QA — Slice 1 code-complete (SA) | Added §13.8. Ran `test:bos-entitlements` (48 suites / 912 tests), `test:authz-guard` (74, no new exemption) and `lint:hooks` — all green; confirmed all five §13.7 fixes landed. Authorization verified independently rather than from test names: the gate is the first statement in all four handlers with the `try` opening after it (so no error path precedes it), no route imports AdminAccessService, and walking `app/api/admin/**` myself found 47 route files against the census 44 — the three new ones are in the guard's scanned set and its assertion is a floor, not an equality, so they are counted rather than excluded. Noted that the audit entry records the target as `userId` and the admin as `actorId`, and that `actorId` is a real persisted column — better than the workplan's original shape. Every write-op condition verified (R2-2, RC-4/A-1, R2-3 — the projection replicates paired-expiry clearing and uses `tierInForce`, so an expired tier is not a basis — Q-15, Q-6/M-3/M-4, C3-2 grant refused but revoke allowed, RC-10, A-3's four guards, WC-7 flush-before-response asserted as an order); tenant isolation follows the M1/G3 pattern end to end. The vacuity class Dev self-reported is structurally closed: 16 refusal assertions name their error code, none asserts a bare `ok: false`. All four of Dev's calls endorsed (501 for a real launch run, `isTest` decided first in the guard, adminOps EXEMPT, additive audit events). The architecture doc is workable for someone adding a tier in six months. Slice 1 exit: code-complete, every criterion not requiring a database met; three open purely by dependency (the production apply, a week of shadow, the PR's first CI run) plus the deliberately replaced probe criterion. Low: C5-1 add the not_built rule to the doc's add-a-tier step, C5-2 drop the silent `AUDIT_EVENTS` fallback. The CLAUDE.md row is now present on disk, so §4.30.5's awaiting-the-user note is stale. |
