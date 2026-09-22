@@ -183,6 +183,13 @@ export function getClientIP(headers: Headers): string | null {
  */
 export interface AttributionWithTracking extends LeadSourceMetadata {
   ip_hash?: string;
+  /**
+   * Which kind of page the lead came from, resolved from the site's own page
+   * records after the request is parsed. Declared here so the capture routes can
+   * assign it without casting the object to a bare record — a cast TypeScript
+   * rejects outright now that these routes are in the Business OS LLM gate's scope.
+   */
+  page_type?: string;
 }
 
 /**

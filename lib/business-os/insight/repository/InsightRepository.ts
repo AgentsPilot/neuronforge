@@ -9,7 +9,6 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider';
 import { resolveUserLanguage } from '@/lib/business-os/userLanguage';
 import { createLogger } from '@/lib/logger';
 import type { DetectionResult, InsightSeverity } from '../detectors/types';

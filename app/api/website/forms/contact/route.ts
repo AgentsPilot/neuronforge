@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
      */
     const capturePageType = await resolveCapturePageType(data.subdomain, data.page_url);
     if (capturePageType) {
-      (attribution as Record<string, unknown>).page_type = capturePageType;
+      attribution.page_type = capturePageType;
     }
 
     let ownerId: string;
