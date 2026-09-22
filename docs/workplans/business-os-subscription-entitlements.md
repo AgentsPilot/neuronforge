@@ -2318,6 +2318,111 @@ Checked against §4.8/§4.9 and my own T-3, T-4, T-5, S-6, S-7, RC-11 and A-1 de
 2. **The scripts you will run are safe, and one of them may need an extra line.** The two checking scripts cannot change anything. If the apply step fails with a message about a "read-only transaction", it is the checking script's safety still switched on for that tab — one command clears it, and I have asked for that to be written into the runbook so it is not a surprise mid-run.
 3. **We decided not to run the write-tests against production.** Proving one of them needs fake user logins inserted into the real identity table, which is not worth the risk for evidence we can get another way. One property — that a problem creating a plan record can never break a customer's signup — is now argued from the code rather than demonstrated. The week-later check in step 8 is how you would notice if that were wrong, and nothing reads these records in the meantime.
 
+### 13.7 SA Code Review — component 4 (shadow mode + report) and the apply runbook
+
+**Reviewed by SA — 2026-09-22** (uncommitted tree; workplan at `5d7771cc`; component 3 committed at `d0995daa`)
+**Status:** 🔄 **APPROVED FOR QA WITH REQUIRED FIXES.** Three required (**R4-1 to R4-3**), two low (**R4-4, R4-5**). None of them affects the request path or the production apply; all three required ones are about **the report being right before anyone prices a plan from it**, so they must land before component 5 exposes it. QA can proceed in parallel.
+
+**What SA ran:** `npm run test:bos-entitlements` — **46 suites, 848 tests, 0 failures**; `npm run lint:hooks` — clean.
+
+---
+
+#### 1. The request path — is it airtight?
+
+**With the flag off: yes, verified rather than accepted.** `shadow.ts`'s only module-scope imports are the logger and `mode.ts`; `getEntitlementMode()` returns `'off'` on the first statement for an unset variable, before any `import()` is reached. No config load, no repository, no DB. That is WC-21 and RC-7 held at the one place that matters.
+
+**With the flag on:** I went looking for each escape route and did not find one.
+
+| Failure | Outcome |
+|---|---|
+| Config loader throws (Zod) | `await import('./source')` and `getEntitlementConfig()` are both inside the `try` → one `logger.error`. |
+| Repository throws | It cannot: component 1 returns `{ error }`. Even if it did, it is inside the `try`. |
+| Slow DB | The promise is never awaited by the route, and `shadowChatPlan` returns `void` — a caller cannot `await` it by accident. That return type is doing real work. |
+| Rejected promise after the response | The `catch` is the last thing in the IIFE, so there is no path to an unhandled rejection. |
+| A throw in the `catch` itself | Only `logger.error` runs there; pino handles circular structures. |
+
+Two honest residuals, neither a defect: **(a)** un-awaited work can be cut short when a serverless function freezes after responding — the cost is a lost observation, never a failed turn; **(b)** under webpack an `import()` of an already-bundled module can evaluate the module body synchronously, so the *first* shadow turn after a cold start pays module evaluation on the request stack. Milliseconds, once per process, only when the flag is on.
+
+**Hook placement (L985) is right and cheap:** after the clarification and no-plan early returns, so it only fires when a real plan exists, and before the write preview, so it records what the turn *needed* rather than what survived confirmation. Consistent with §4.10 leaving the confirm turn and saved-plan runs unhooked in this slice.
+
+---
+
+#### 2. The report's honesty — one real problem
+
+**The `asTier` replay does not discriminate by read rule, and that is the number the first price list will be built from.** By design (S-2, Q-B1) every `find` is recorded **twice**, once under each reading. `replayAsTier` iterates all `allowed` events without filtering on `rule`, so:
+
+- the same underlying read is replayed as two different capabilities (`chat.scheduling` under `domain_group`, `chat.search` under the other reading) and **both appear in `wouldLose`**;
+- `accountsAffected` counts an account that would lose something under **either** reading — a world that cannot exist, since only one reading will ever be configured.
+
+The `asTier` tests use only `rule: 'both'` events, so they pass while never exercising the dual-reading recording the same component introduced. **R4-1.** Dev's three-tier test does discriminate in the sense that Basic/Growth/Pro give three different answers — that part is sound — but it discriminates on a data shape the real recorder will rarely produce.
+
+**`wouldKeep` is not the control it reads as.** It counts distinct `capability|surface` keys, while `accountsAffected` counts accounts. Side by side they invite "X accounts lose something, Y accounts keep everything", which is not what the second number means. **R4-3.**
+
+**Can the report mislead in the two ways asked?**
+- *Capabilities never exercised:* yes, unavoidably — a capability absent from the data may be unused, or used through a surface not yet hooked (only chat is). The report should not be read as "nobody needs this". Worth one line in the report's own header when the route ships; the `scope` precedent below shows Dev already writes these well.
+- *`for_each` double-count:* no double count within a capability — `chat.bulk` and the fanned-out action are different capabilities, and `hits` stays 1 per step with `items` carrying the fan-out. But `items` comes from `step.max ?? 1`, which is the **planned cap, not the rows actually processed**. As an input to "what does bulk usage look like" that is an upper bound, and should be labelled one. **R4-4.**
+
+**RC-16 holds.** The output carries account ids, cohort/tier names and counts; the test asserts that `reason`, `ended_reason`, `business_name`, `email` and both actor columns appear nowhere, and pins the exact key set of a row. **RC-12 holds:** `pagePlans` keyset walk at 500 with a `truncated` flag, and the missing-plan-row read capped at 2,000.
+
+---
+
+#### 3. The mapping judgement calls — all five endorsed
+
+| Call | Verdict |
+|---|---|
+| `analyse` → `owner_ai`, not `owner_read` | **Right.** The overlay treats them differently in grace, and `analyse` asks the model to produce prose — it is AI consumption, not a lookup. `compute` staying `owner_read` is the correct other half of that line: an aggregation is the database working, not the model. |
+| `for_each` records both `chat.bulk` and the inner action, with items | **Right.** Fanning out is itself sellable and the underlying action is still the underlying action; recording one without the other would misprice either bulk or the action. See R4-4 on what `items` actually measures. |
+| Every `find` recorded under both readings | **Right, and the whole point of Q-B1 being config** — but it is precisely what R4-1 must account for when replaying. |
+| Unmapped entity → `error`-level log as an FR-8 defect | **Right.** Once enforcement is on, an unmapped action decides whether an owner may act; that is a defect, not a data point. |
+| `getSnapshot()` + `decide()` rather than `check()` per capability | **Right.** One read per turn, one instant, and shadow has no balance question to ask. |
+
+---
+
+#### 4. `findTenantsMissingPlanRow` is not exhaustive — acceptable for this slice
+
+**Accepted, with one condition.** The gap is real (an onboarding-only tenant with no plan row is invisible to the *report*), but it is covered three ways at the moment it matters: the apply-time `check-` script's B1 uses the full union, the triggers cover new tenants from the first message, and the backfill covered the existing ones. The report also **states its own limitation in its output** (`scope: 'accounts with a business profile …'`), which is the thing that makes a partial answer safe to publish.
+
+**Condition:** it must become exhaustive **before the Slice 2 enforcement flip**, not before this merges. From that moment a missing plan row is an anomaly that denies a real customer, and "we would have seen it in a different script, months ago" stops being good enough. An RPC anti-join now would be premature; a tracked item for Slice 2 is right.
+
+---
+
+#### 5. The rename and deferring the route
+
+**Both approved.** `NO_STATE_WRITE_REFERRERS` is the more accurate name — these files read state and record observations; what they must never do is *change* plan state, which is what the check enforces. It also picks up my C3-3 (the condition now applies to every file in the list, not just the service).
+
+**Moving the shadow-report route to component 5 is the better sequencing:** the whole admin surface then lands behind `requireAdmin` in one PR, reviewed against the authz guard once. `buildShadowReport()` being written, tested and uncalled for one component is acceptable — it is exercised by its own suite, and the import guard will show it the moment it is wired.
+
+---
+
+#### Required fixes
+
+| # | Fix | When |
+|---|---|---|
+| **R4-1** | **Filter the `asTier` replay by read rule.** Take the reading as a parameter (defaulting to the configured `READ_RULE`), keep events where `rule === 'both' || rule === reading`, and name the reading in the section it returns. Add a test with events under **both** readings proving the two give different answers — the current tests use `rule: 'both'` only and cannot see this. | Before the report is exposed (component 5) |
+| **R4-2** | **Route `shadow.ts` through `resolveAccountId`.** It passes the raw `userId` to `getSnapshot()` and records it as `user_id`; `AccountId` is a `string` alias, so the compiler cannot see it. Identity today, so no behaviour changes — but this is the first consumer of the T-2 seam and exactly the call site that would be missed when seats arrive. One line, plus an assertion in the guard that consumers use the seam. | Component 4 |
+| **R4-3** | **Make the control mean what it looks like.** Either rename `wouldKeep` to `capabilitiesKept`, or (better) replace it with `accountsFullyCovered` — accounts with zero losses — which is the number a reader actually wants next to `accountsAffected`. | With R4-1 |
+
+| # | Low | |
+|---|---|---|
+| **R4-4** | Label `items` as an upper bound (`step.max`, the planned cap) rather than rows processed, in the type and in the report. Slice 2 can record the executed count when the executor is hooked. | |
+| **R4-5** | Give step 5 of the runbook the same failure table as step 4 (lock timeout, ten-minute stop, foreign-key error, anything else → nothing applied, re-run or ask). It is the step with the two genuine unknowns and currently the thinnest guidance. | |
+
+---
+
+#### 6. The apply runbook, as the artefact the user will follow
+
+**It is complete, safe, and stands alone in a PR description.** All three of my §13.6 required fixes are in it, and in better shape than I asked: the `25006` trap is called out *before* the steps as "one thing will probably go wrong, and it is one line to fix", the "only steps 4 and 5 change anything" sentence is in the opening, and the log check is its own step tied to the property we stopped proving. It also does three things I did not ask for and should have: it says to copy from **Raw** (the rendered view brings line numbers and the paste fails), it refuses to let the backup step pass silently, and its "anything else → stop, nothing was applied, the file is one transaction" row is the right instruction for a non-engineer facing an unknown error.
+
+With R4-5 it is as good as this can be without a rehearsal. Nothing in it misstates what is proven and what is argued.
+
+---
+
+#### For the user
+
+1. **Nothing here changes what customers see.** Shadow mode is off in production, and with it off this code reads nothing and writes nothing — I checked that specifically rather than taking it on trust.
+2. **One fix matters to you rather than to the code.** The report that will tell you what to put in each plan currently counts some chat activity twice, because we deliberately record every lookup under both possible readings of the "search" question. Left as is, it would overstate how many customers a given plan would affect. It is being fixed before the report is switched on, so the first numbers you see are the real ones.
+3. **The apply instructions are ready to follow as written.** I reviewed them as the thing you will actually use, not as a design document, and the one place I would still improve is more detail if the second apply step fails.
+
 ## 14. QA Testing Report
 
 ### 14.1 Component 1 (plan records + migration) — QA, 2026-09-21
@@ -2983,3 +3088,4 @@ _RM to populate._
 | 2026-09-22 | QA of the SQL-editor scripts, the not_built rule and component 3: PASS (QA) | Added §14.10; corrected §14.6's last "optional" reference to the probe suite (it is prohibited). Ran it all: **43 suites / 801 tests**, authz guard 74, hooks lint clean, 0 `console.*`/`any`, typecheck at the unchanged **2,030** baseline with **0** in any entitlements file (control 3 elsewhere), and the scope confirmed as exactly the seven modified files + four scripts + the new component-3 files. **Independently reproduced Dev's mutation test:** disabling both rule call sites fails **exactly 9** tests in **one** suite (disabling `isGrantingValue` itself gives 11 — the extra two are the helper's own unit assertions). **Part A:** the two read-only scripts are safe by structure (one `SET`, one `SELECT`); the probe-suite prohibition is unmissable and structurally enforced (the lock probe is deleted, and line 103's `\set` makes an editor paste fail at parse); no check passes vacuously on real data — and the two opposite ACL defaults (function NULL `proacl` = EXECUTE to PUBLIC, table NULL `relacl` = owner-only) are both handled correctly. **P-1 (Med):** the rollback's hand-armed guard protects only if the editor submits paste 2 as one implicit transaction — put the drops inside the guard's own `DO` block. **P-2 (Med):** the rollback cannot roll back a *half-applied* migration, the case its own header calls realistic, because the guard counts rows in a table that may not exist. P-3/P-4/P-6 low. **Part B:** the rule is complete across every shape and the `{perMonth:0,total:500}` evasion is closed by `.strict()`; **B-1 (low, latent)** `isGrantingValue` ignores `purchasable: true` on the *quantity* shape while treating `'purchasable'` on an add-on as granting. The clamped fixture still proves the mechanism, with the draft values preserved in comments. **Part C:** no defects. Both vacuity patterns SA flagged are sound (the sweep asserts the five states by equality; the guard's "it does read" line is real). The cache holds raw inputs and re-resolves on every hit, so a trial expiring inside the TTL is structural, not just tested; the balance source is consulted only after steps a and b pass. **C-1** the import guard does not enforce its own stated hazard (a non-route file added to ALLOWED without the read-only condition); **C-2** an expired tier with an ended cohort takes the *cohort's* grace length while the basis is the tier — worth one sentence. **Runbook verdict: a non-engineer can execute §4.20.3 unaided, with three additions** — how to copy the migration file, a stop-or-record rule when there is no backup, and a catch-all failure branch for step 4. |
 | 2026-09-22 | QA fixes P-1 to P-4, B-1, C-1, C-2 + the three runbook gaps (Dev) | §4.26. **P-1:** the nine `DROP`s moved **inside the guard's own `DO` block**, so arming and dropping are one statement and the safety no longer rests on an unverified property of the editor's transaction handling. **P-2:** the rollback now works on a **half-applied** migration — the two "what is lost" counts are wrapped in `to_regclass` checks (PL/pgSQL resolves a statement only when it runs), where previously a missing plan table raised `42P01` and aborted the batch, leaving the exact recovery path the header advertises unusable. **P-3:** `check-…` row 25's `what_to_do` uses the same `DISTINCT` count as its status, so a doubly-granted EXECUTE can no longer produce a PASS row carrying a failure message in the grid that goes into the PR. **P-4:** pre-flight row 6 is scoped to sessions holding a lock on the two parent tables (a `pg_locks` join) instead of any transaction anywhere, with the database-wide numbers kept as context — a row that warns on every healthy project is a row nobody reads. **B-1 fixed now, not deferred:** `isGrantingValue` treats `{ included: 0, purchasable: true }` as granting, because an offer to sell seats that do not exist is the same failure `purchasable` on the add-on shape already covers; mutation-checked at exactly 2 failures, and the new block closes B-2 for the quantity shape via a synthetic catalog entry. **C-1:** the import guard asserts every `ALLOWED` entry falls into exactly one of four categories, so a new non-route file cannot inherit no write condition by omission. **C-2:** stated rather than changed — §4.8's A-1 table and `lifecycle.ts` now name all three decisions in that branch (basis = the tier, access end = the later date, grace length = the **cohort's**) and why the third is deliberate, with a test pinning the champion's 30 days against the shorter subscription grace. **Runbook:** how to obtain the migration text (GitHub → **Raw** → select all, and why not the rendered view), step 3's backup decision as a three-state table ending in "stop and ask, or record *no backup taken* in the PR", a **catch-all failure branch** on step 4 ("stop, do not run step 5, nothing was applied"), the `25006` cross-reference on step 6, and step 8 promoted to tracked task **S1-T19** because a line in a PR is not a reminder. **43 suites / 807 tests green**; authz guard 74; typecheck 2,030 (unchanged baseline, 0 in the module); hooks lint clean. Source changed this round: `schema.ts` only (two lines + an import). Code uncommitted. |
 | 2026-09-22 | Component 4 built: shadow mode + the report (Dev) | §4.27. **`shadow.ts`** — the hook, with the logger and `mode.ts` as its only module-scope imports and everything else behind `await import()` inside an un-awaited `try` (RC-7/WC-21). Three mechanisms keep it off the request path, and each is tested by breaking a collaborator: a throwing config loader, a throwing snapshot, a throwing recorder, an unrecognisable plan — the caller is untouched every time, and the `off` path is asserted **with every collaborator broken**, which is what proves the flag check really is first. **`planCapabilities.ts`** maps a chat plan to capabilities: a `for_each` asks for `chat.bulk` **and** the fanned-out action (with the item count), `analyse` is `owner_ai` rather than `owner_read` because grace treats them differently, an unmapped entity is an `error`-level FR-8 defect rather than a silent skip, and **every read is recorded under both readings of the chat read rule** so Q-B1 can be settled from data (`rule IN ('<reading>', 'both')`). `allowed` outcomes are recorded too (RC-6) — with no tiers and everyone a champion they are nearly all of it, and a denials-only recorder would have produced an empty report. **`report.ts`** — static (states, cohorts, anomalies, tenants with no plan row), observed (capability × surface × outcome × rule, distinct accounts), **`asTier` replay** and the setup-AI measurement. The replay answers "what would tier X cost this account" from **recorded usage**: per capability, how many accounts used it and how often, sorted by accounts then volume, counting only observations that were `allowed`; the discriminating test replays the same usage against Basic/Growth/Pro and gets three different answers. **A-1 + S1-T11a:** one no-end-date list covering open-ended cohorts *and* open-ended tier assignments, each row flagging whether the account ever created a business profile — the onboarding-only champions are the set to trim before enforcement, and now counting them is a decision rather than a discovery. **S1-T15:** distinct Layer-1 action groups in the three setup areas within each account's first 14 days (median/p90/max), read through `TokenUsageRepository`, with chat excluded so the number the trial allowance is sized against is not inflated. One new repository read (`findTenantsMissingPlanRow`), whose limitation — it scans accounts with a business profile, not the full tenant set — is stated in the report's own output, not just in a comment. The RC-15 guard's `READ_ONLY_REFERRERS` is renamed **`NO_STATE_WRITE_REFERRERS`**, because `shadow.ts` writes observations and a list called "read only" would have been a lie; the invariant it enforces is unchanged. The **shadow-report route moves to component 5** (S1-T12b), where `requireAdmin` and the audit trail live. Also added **`docs/BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md`**, the self-contained production hand-off for the PR, written for the operator rather than for us. **47 suites / 853 tests green** (was 43 / 807); typecheck 2,030 — identical to the baseline, 0 in any entitlements file and 0 in `chat-v4/route.ts`; hooks lint clean; 0 `console.*`, 0 `any`. Code uncommitted. |
+| 2026-09-22 | SA code review of component 4 + the apply runbook: APPROVED for QA with required fixes (SA) | Added §13.7. Ran `test:bos-entitlements` (46 suites / 848 tests, green) and `lint:hooks` (clean). Request path verified airtight: with the flag off the mode check returns before any import (only the logger and `mode.ts` are module-scope), and with it on every await sits inside the IIFE try — the two honest residuals (lost observations if the function freezes; first-turn module evaluation on the request stack) are noted. Hook placement at L985 endorsed. All five mapping calls endorsed (`analyse` → `owner_ai`, `for_each` recording both capabilities, both readings per `find`, unmapped = FR-8 defect, `getSnapshot` + `decide` over `check()`), as are the guard rename and deferring the report route to component 5. `findTenantsMissingPlanRow` accepted as non-exhaustive for this slice — the output states its own scope — on condition it becomes exhaustive before the Slice 2 flip. Three required fixes, all about the report being right before anyone prices from it: R4-1 the `asTier` replay does not filter by read rule, so every `find` is replayed under two capabilities and `accountsAffected` counts a world that cannot exist (the tests use `rule: `both`` only and cannot see it); R4-2 `shadow.ts` bypasses `resolveAccountId`, the first consumer of the T-2 seam; R4-3 `wouldKeep` counts capability keys while `accountsAffected` counts accounts. Low: R4-4 `items` is the planned cap not rows processed; R4-5 give runbook step 5 step 4's failure table. The runbook was reviewed as the artefact the user will follow and judged complete and safe standing alone. |
