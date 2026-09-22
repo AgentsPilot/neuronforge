@@ -925,6 +925,7 @@ Component boundaries are §4.0. Each component is one PR, reviewed by SA → QA 
 
 **Component 3 — resolver and the three-step contract**
 - [ ] **S1-T6** `lifecycle.ts` (RC-11 + **A-1 expired-tier fallback**), `resolver.ts` (`{ all: true }`, S-7 histories), `decide.ts` (**A-2 three-step contract**), `balance.ts` (**A-2 seam + `ALWAYS_SUFFICIENT`**), all pure with an injected clock.
+- [ ] **S1-T6a** *(SA C-1, binding)* Extend `oneLineChange.test.ts` to **resolve a fixture Growth account and assert `chat.search` comes back entitled** after the one-line change. Component 2 proves the config accepts the edit; this is what proves the answer a customer gets changes with it, which is the half of AC-4 that matters commercially.
 - [ ] **S1-T10** `account.ts`, `mode.ts` (no config imports, `is…Enabled` naming, UD-2 refusal), `EntitlementService.ts` (input cache, LRU, read-through, failure policy, 100-id chunking, **`check()`** with the injected balance source).
 
 **Component 4 — shadow mode + report**
@@ -1087,6 +1088,7 @@ So verification is now **two scripts with different promises**, plus an undo pat
 
 | Script | Promise | Safe on production |
 |---|---|---|
+| `scripts/preflight-bos-entitlements-migration.sql` **(new, P-1)** | Read-only pre-apply checks: the nine objects do not already exist, no tenant is missing its `auth.users` row (the backfill's FK), the size and timing of the scan, and how busy the database is right now. | ✅ **Unconditionally**, same `SET TRANSACTION READ ONLY` enforcement. |
 | `scripts/check-bos-entitlements-migration.sql` **(new)** | Read-only post-apply checks: objects, RLS, zero policies, client privileges revoked, `service_role` privileges, function `search_path`/`lock_timeout`/definer-ness, trigger binding, constraint **definitions**, and the data the backfill produced (tenant count, missing plan rows, backfill shape, the Q-5 window count, unhealed facts, the S1-T11a trim count). | ✅ **Unconditionally.** The whole run is inside `SET TRANSACTION READ ONLY`, so the database refuses any write — the safety is enforced, not promised. |
 | `scripts/verify-bos-entitlements-migration.sql` **(restructured)** | The behavioural probes: the fact triggers, the trial-restart guarantee, the reset's semantics, the repair path, the shadow RPC's arithmetic, the backfill statement against a synthetic pre-existing tenant. | ⚠️ **Only inside a rolled-back transaction.** It opens with a loud header, and a guard now **refuses to run** when the statements are not inside an explicit transaction (`statement_timestamp() = transaction_timestamp()` means autocommit). Its one genuinely intrusive probe is opt-in. |
 | `scripts/rollback-bos-entitlements-migration.sql` **(new)** | Drops the triggers, functions and three tables, and proves nothing is left. | For the "undo it entirely" case only. |
@@ -1103,29 +1105,98 @@ So verification is now **two scripts with different promises**, plus an undo pat
 |---|---|---|---|
 | **B4: a failing plan write never fails the product write** (with the lock probe off) | The only way to make the plan table reject every write is a table-level constraint, and that lock is visible to live traffic | The S-8(i) "never raises" guarantee stays a code-reading claim: the trigger body's `EXCEPTION WHEN OTHERS → RAISE WARNING` is right there, but unexercised | Run once with `-v probe_locks=on` in a quiet window, then re-run `20261005b` (its heal step repairs anything the window cost). Or accept it as unproven and rely on the Jest guard, which asserts the exception handler exists and that the body cannot `RAISE EXCEPTION` |
 | **A real `auth.users` insert that survives** | Every probe user is rolled back | Nothing: the triggers fire on `onboarding_conversations` / `business_profiles`, and those inserts are what the probes actually need | — |
-| **Timing the backfill before committing to it** | Its duration can only be measured by running it, and running it on production *is* the apply | We cannot promise RM a duration in advance | The read-only script reports `onboarding_rows`, the number that drives the scan. For a genuine pre-measurement, run `SELECT count(*) FROM (…the backfill's SELECT…) t` by hand — read-only, same scan, no write |
+| ~~**Timing the backfill before committing to it**~~ | **Largely solved by P-1.** `scripts/preflight-bos-entitlements-migration.sql` runs the backfill's own `SELECT` — same union, group and joins — counted instead of inserted, with `\timing on`. That is the read cost measured in advance; only the write is left unknown, and the migration now caps itself at ten minutes (P-2) so an unknown cannot become an unbounded one | The insert cost on top of the measured read | Pre-flight step 1 in the runbook |
 | **The PostgREST round trip** (`resetPlanState`, `recordEvents` through supabase-js) | It is a write, and it needs the service-role key | The schema-cache reload step (`NOTIFY pgrst, 'reload schema'`) is unproven until component 3 or 4 actually calls these | Do it when component 3 wires the resolver; it is a one-command check then |
 | **Concurrency** (two writers racing the `ensurePlanRow` upsert) | Needs two sessions and deliberate interleaving | The F-4 race path stays unit-tested only | Accept; the `ON CONFLICT DO NOTHING` semantics are a database guarantee, not ours |
 
 **The production runbook (ordered)**
 
+Seven steps. The first three are read-only and take about two minutes; they exist because this is a first run with no branch database in front of it, and everything that could go wrong is knowable beforehand (SA P-1 to P-3).
+
+**Step 1 — connect on the DIRECT port, not the pooler.** (P-3)
+
 ```bash
-export BOS_DB="postgresql://postgres:<pw>@db.<ref>.supabase.co:5432/postgres"   # direct port, not the pooler
-psql "$BOS_DB" -Atc "select current_database(), version();"                     # confirm what you are connected to
+export BOS_DB="postgresql://postgres:<pw>@db.<ref>.supabase.co:5432/postgres"   # 5432 = direct
+psql "$BOS_DB" -Atc "select current_database(), version(), inet_server_addr();"  # confirm what you are connected to
 ```
 
-1. **Snapshot first.** Take a Supabase backup (or confirm today's automatic one). This is the real undo path; the rollback script is the surgical one.
-2. **Apply the schema:** `psql "$BOS_DB" -v ON_ERROR_STOP=1 -f supabase/migrations/20261005_business_os_entitlements.sql`
-   *Expect:* `BEGIN … COMMIT`, no output. *If it fails with `55P03` (lock_timeout):* something held a lock on `business_profiles` or `onboarding_conversations`. Nothing was applied — retry when idle. That failure mode is exactly what M-1's bounded wait is for.
-3. **Apply the backfill, immediately after:** `time psql "$BOS_DB" -v ON_ERROR_STOP=1 -f supabase/migrations/20261005b_business_os_entitlements_backfill.sql`
-   *Expect:* one `INSERT 0 <n>` where `n` = the tenant count, then the heal `UPDATE`. **Record the wall-clock time and `n`.** Applying it back to back with step 2 is what keeps the Q-5 window to seconds.
-4. **Run the read-only checks:** `psql "$BOS_DB" -v ON_ERROR_STOP=1 -f scripts/check-bos-entitlements-migration.sql`
-   *Expect:* a row of counts and `business_os entitlements: post-apply checks passed (read-only)`. Any failure names the property (`A1`…`B4`). A `WARNING` about the Q-5 window is informational — record the count.
-5. **Optionally run the probe suite:** `psql "$BOS_DB" -v ON_ERROR_STOP=1 -f scripts/verify-bos-entitlements-migration.sql`
-   *Expect:* `business_os entitlements migration: all checks passed`, then `ROLLBACK`. Nothing persists. Add `-v probe_locks=on` only in a quiet window, and re-run step 3 afterwards if you do.
-6. **If something looks wrong:** the tables are additive and nothing reads them, so there is no rush. To remove the module entirely: `psql "$BOS_DB" -v ON_ERROR_STOP=1 -f scripts/rollback-bos-entitlements-migration.sql`, which drops the triggers, functions and tables and proves nothing is left. Re-applying steps 2 and 3 rebuilds every backfilled row from the tenants' own history. **Export first** if any admin operation has already run (the script's header has the two `\copy` lines) — admin-set cohorts, expiries and overrides are the only things a rebuild cannot recreate.
+Port 5432, never the transaction pooler (6543). Every script here depends on multi-statement transactions and `SET LOCAL`, and a transaction pooler gives neither: `SET LOCAL` would silently apply to whatever statement happened to borrow the connection, which is how a `lock_timeout` quietly stops existing. This is not a preference — the migrations are not safe through a pooler.
 
-**For QA:** §14.6 was written against the single-script world and is now partly superseded — its step 0 (seeding a branch database) does not apply, its step 1 numbering matches this runbook, and its steps 3b/3c are now inside the read-only script. **Please re-verify §14.6 against these three scripts** and fold what is still needed into it; where the two disagree, this section is the newer one.
+**Step 2 — pick a quiet window.** (P-3)
+
+Step 4 takes an ACCESS EXCLUSIVE lock on `business_profiles` and `onboarding_conversations` for the instant it creates the triggers, and waits up to 5 s for it. While it waits it also **queues in front of** other writers, so a busy moment means up to five seconds of blocked onboarding and profile writes, then a clean failure. Nothing breaks — but choose the moment rather than discover it. The pre-flight's last query reports the current activity and the longest open transaction.
+
+**Step 3 — pre-flight (read-only).** (P-1)
+
+```bash
+psql "$BOS_DB" -v ON_ERROR_STOP=1 -f scripts/preflight-bos-entitlements-migration.sql
+```
+
+Answers the three questions that make a first run risky, and writes nothing (`SET TRANSACTION READ ONLY`):
+
+| What it checks | Pass | If not |
+|---|---|---|
+| None of the nine objects already exists | `1. clean: …` | **It raises.** `CREATE TABLE IF NOT EXISTS` would skip an existing table with a different shape, and the post-apply checks would pass over the drift. Either it is already applied (run the checker instead) or a previous attempt half-landed (roll back first). |
+| Every tenant has an `auth.users` row | `2. no orphans: …` | A `WARNING` and the offending ids. The backfill's FK would abort the whole insert. Decide now: add `AND EXISTS (SELECT 1 FROM auth.users u WHERE u.id = tenants.user_id)` to its `SELECT`, and record why those accounts exist. |
+| How big the scan is | `onboarding_rows`, `rows_the_backfill_would_insert`, timings, `EXPLAIN` | **Record these.** The counted `SELECT` is the backfill's own scan without the write — the duration estimate §4.20 used to say could not be had. |
+
+**Step 4 — snapshot.** Take a Supabase backup, or confirm today's automatic one. This is the real undo path; the rollback script is the surgical one.
+
+**Step 5 — apply the schema.**
+
+```bash
+time psql "$BOS_DB" -v ON_ERROR_STOP=1 -f supabase/migrations/20261005_business_os_entitlements.sql
+```
+
+*Expect:* `BEGIN … COMMIT`, no output. *If it fails with `55P03` (lock_timeout):* something held a lock on a parent table. **Nothing was applied** — the whole file is one transaction. Retry when idle; that failure mode is exactly what M-1's bounded wait is for.
+
+**Step 6 — apply the backfill, immediately after.**
+
+```bash
+time psql "$BOS_DB" -v ON_ERROR_STOP=1 -f supabase/migrations/20261005b_business_os_entitlements_backfill.sql
+```
+
+*Expect:* `INSERT 0 <n>` where `n` matches `rows_the_backfill_would_insert` from step 3, then the heal `UPDATE`. **Record the wall-clock time and `n`.** Back to back with step 5 is what keeps the Q-5 window to seconds. It caps itself at ten minutes (P-2); a timeout rolls the whole thing back and can simply be repeated.
+
+**Step 7 — post-apply checks (read-only).**
+
+```bash
+psql "$BOS_DB" -v ON_ERROR_STOP=1 -f scripts/check-bos-entitlements-migration.sql
+```
+
+*Expect:* a row of counts and `business_os entitlements: post-apply checks passed (read-only)`. Any failure names the property (`A1`…`B4`). The `WARNING` about the Q-5 window is informational — record the count.
+
+**Optional — the probe suite.**
+
+```bash
+psql "$BOS_DB" -v ON_ERROR_STOP=1 -f scripts/verify-bos-entitlements-migration.sql
+```
+
+*Expect:* `business_os entitlements migration: all checks passed`, then `ROLLBACK`. Nothing persists. Add `-v probe_locks=on` **only** in a quiet window — it locks the plan table for the transaction — and re-run step 6 afterwards if you do.
+
+**If something looks wrong.** The tables are additive and nothing reads them, so there is no rush. To remove the module entirely:
+
+```bash
+psql "$BOS_DB" -v ON_ERROR_STOP=1 -f scripts/rollback-bos-entitlements-migration.sql
+```
+
+It drops the triggers, functions and tables in the right order and proves those nine objects are gone. Re-applying steps 5 and 6 rebuilds every backfilled row from the tenants' own history. **Export first** if any admin operation has already run (the script's header has the two `\copy` lines): admin-set cohorts, expiries and overrides are the only things a rebuild cannot recreate.
+
+**Consistency with §14.6 (QA to re-verify).** §14.6 was written for a branch database and one script. Against this runbook and the **four** scripts, the mapping is:
+
+| §14.6 | Now |
+|---|---|
+| Step 0 — seed tenants into a branch database | **Does not apply.** Production has real tenants; the pre-flight counts them instead, and C0 inside the probe suite makes the backfill statement non-vacuous without seeding anything. |
+| Step 1 — apply both migrations | Runbook steps 5 and 6, now preceded by three read-only steps. Same order, same files. |
+| Step 2 — run the verification script | Split: the unconditionally-safe half is runbook step 7 (`check-…`), the writing half is the optional probe suite. Q-1's expected B8 failure is **fixed**, so the caveat there is stale. |
+| Step 3a backfill non-vacuity / 3b `service_role` + `proowner` / 3c trigger binding | All three are **inside** `check-bos-entitlements-migration.sql` now (`B3`, `A10` + the owner NOTICE, `A9`). |
+| Step 3d — the fact-heal probe (Q-19) | Still only in §14.6. It writes, so it belongs in the probe suite; folding it in as `C4` is the one piece of §14.6 that has nowhere else to live yet. |
+| Step 4 — re-run the backfill, fingerprint | Unchanged and still needed; the runbook does not repeat it. |
+| Step 5 — trigger-created rows stay trials; 5b the window query | 5b is now `check-…`'s Q-5 warning. 5 still needs a manual insert. |
+| Step 6 — numbers for RM | Now split: the pre-flight gives the estimate **before**, `check-…` gives the outcome **after**. |
+| Step 7 — product still works, PostgREST round trip | Unchanged. The round trip remains unprovable until component 3 calls these functions. |
+
+**Please re-verify that mapping and fold step 3d into the probe suite as `C4`.** Where the two sections disagree, this one is newer.
 
 ### 4.21 Component 2 as built (2026-09-22) — for SA review
 
@@ -1202,6 +1273,43 @@ Adding a whole tier is three steps, and two of them are enforced rather than rem
 4. **Lifecycle judgements to sanity-check** (each entry carries its evidence): `marketing.mass_email` and `payments.multi_currency` are marked `available` on the strength of the email-campaign/sequence tables and `currency.ts`; `marketing.posts`, both mobile/analytics add-ons, `addon.full_payment_cycle`, SMS and `addon.act_for_you` are `not_built`. The bias is deliberate and stated in the file header: a wrong `available` is inert, a wrong `not_built` blocks a real feature on day one.
 5. **`team.seats` / `business.locations` are `available` with a value of 1**, not `not_built`, because a quantity of 0 would be a lie — the extra seats are what is unbuilt, not the first one.
 6. **`capabilitiesForPlan` moved to component 4**, where the plan object exists. Component 2 ships `capabilityForOp`, which is what the invariant test needs.
+
+### 4.22 SA review fixes applied (2026-09-22) — P-1 to P-3, C-1 to C-3, and the mass-email correction
+
+Against §13.5. Code still uncommitted.
+
+| # | What changed |
+|---|---|
+| **P-1** | New `scripts/preflight-bos-entitlements-migration.sql`, read-only under `SET TRANSACTION READ ONLY`, and runbook steps 1–3 built around it. It answers the three questions that make a first production run risky: **(a)** none of the nine objects already exists — and this one **raises**, because a silent skip over drift is the dangerous case; **(b)** no tenant is missing its `auth.users` row, with the offending ids listed and the `WHERE EXISTS` guard spelled out as the decision to take *before* applying; **(c)** the scan size, timed — it runs the backfill's own `SELECT`, counted instead of inserted, with `\timing on` and an `EXPLAIN`. It also reports current activity and the longest open transaction, which is what "is now a quiet moment?" actually means. |
+| **P-2** | `SET LOCAL statement_timeout = '10min'` in `20261005b`, next to its `lock_timeout`, with the reasoning in place: Supabase sets role-level timeouts, so inheriting one means dying at a surprise boundary or running unbounded. A timeout rolls the whole file back, so the recovery is "run it again". |
+| **P-3** | The connection and timing constraints are now **steps 1 and 2**, not asides. Step 1 explains *why* the pooler is unsafe rather than just forbidding it: `SET LOCAL` through a transaction pooler applies to whatever statement borrowed the connection, which is how a `lock_timeout` quietly stops existing. Step 2 explains that the apply's 5-second lock wait also queues in front of live onboarding writes. |
+| **C-1** | Recorded as **S1-T6a**, binding on component 3: resolve a fixture Growth account after the one-line change and assert the capability comes back entitled. |
+| **C-2** | Done, and then some — see the mass-email correction below. The catalog header now states the test (**"a customer gets the outcome", not "the tables exist"**), names the two entries with a known gap between feature and delivery (`marketing.mass_email`, `payments.reminders`), and sets the gate: **before the first tier is configured**, walk every `available` capability and confirm an end-to-end path. |
+| **C-3** | The rollback script's leftover check now **enumerates the nine objects** instead of matching `business_os_%`, and names what is left rather than counting it. A Slice 3 table can no longer make a correct rollback report failure — mid-incident, which was the point. |
+
+**The mass-email correction (SA's challenge, and what the code said)**
+
+SA was right, and tracing it answered a question the pricing sheet could not — B-1's "marketing chat (mass email)" versus "mass email campaigns" are **two different things, one of which does not exist**:
+
+| Capability | Evidence found 2026-09-22 | Lifecycle |
+|---|---|---|
+| **`chat.marketing`** — bulk email from chat | `contacts.send` / `invoices.send` → `lib/business-os/bizql/mutate/emailSend.ts:157` → `sendEmail()` in `lib/notifications/emailTransport.ts` (Resend/SMTP, a real transport). `ForEachExecutor` fans the same action out across many contacts, which is what "mass email from chat" means. **It sends.** | `available` |
+| **`marketing.mass_email`** — the campaign/sequence builder | The tables exist (`email_campaigns`, `email_sequences`, `email_sequence_enrollments`), the CRUD exists (`EmailAutomationRepository`), the routes exist (`app/api/email/**`), and `WebsiteEmailSequenceService.triggerSequence` writes an enrollment with a `next_send_at`. **Nothing reads `next_send_at`.** No cron in `vercel.json`, no dispatcher service, and `triggerSequence` has **no caller anywhere in the repository**. An enrolled contact is never emailed. | **`not_built`** (was `available`) |
+
+Both entries now carry that evidence in their `note`, and `catalog.invariant.test.ts` pins the pair with the reasoning, so a future edit cannot flip either back without saying what changed in the code. `not_built` is never entitled (FR-13), so the campaign builder cannot be sold until a dispatcher lands.
+
+**Why this was worth the correction rather than a note.** The rule I had been applying — "bias to `available`, because a wrong `not_built` blocks a real feature" — is right for a capability whose delivery path merely looks thin. It is wrong when the delivery path is **absent**, because then `available` is a promise to send emails that no code will ever send. The header now says which test to apply.
+
+**For SA to confirm at QA time:** this is the code's answer to half of B-1. The commercial question — whether the two are priced separately, and on which plans — is still Eyal's, and both entries keep their `placeholder: 'B-1'` marker.
+
+**Re-verified after these changes**
+
+| Check | Result |
+|---|---|
+| `npm run test:bos-entitlements` | **37 suites, 677 tests, 0 failures** (one new test pins the B-1 split) |
+| Typecheck, the verified method | **2,030 project diagnostics, 0 × TS2688, 0 in any entitlements file**; the control still shows 3 in other `lib/repositories` files, so the tree is genuinely covered |
+| `npm run test:authz-guard` | 74 passed |
+| Hooks ESLint / `console.*` | clean / 0 |
 
 ---
 
@@ -2347,3 +2455,4 @@ _RM to populate._
 | 2026-09-22 | Component 1: QA re-verification findings closed (Dev) | Q-18 the M-1 guard now asserts the schema migration contains **no top-level DML at all** (statement whitelist + a negative control that feeds it both regression shapes), which closes the hole a stripped function body plus a top-level call left open; the splitter ignores semicolons inside quoted strings. Q-20 B7's fact assertion compares a backdated literal, inserted in B4 while the plan table refuses writes, so a `now()` repair would fail it. Q-21 C1 uses `NOT EXISTS` instead of a `NOT IN` whose correctness hung on one `WHERE`. Q-23 a Jest assertion pins C0's copy of the backfill statement to the real one, the un-failable duplicate check is removed, and `stripFunctionBodies` uses a replacer function. Q-22/F-5 both repository headers and S1-T7 now cite 20261005; §4.18's "every reference updated" claim corrected. Q-19 needed no code change and now points at §14.6 step 3d. 35 suites / 464 tests green; typecheck 2,030 baseline, 0 in these files. Code still uncommitted. |
 | 2026-09-22 | Production-safe verification + component 2 built (Dev) | **Verification** (user decision: no branch database; the migration will be run against production): split into a read-only post-apply checker that runs under `SET TRANSACTION READ ONLY` and is unconditionally safe, the probe suite hardened with a refuse-outside-a-transaction guard and an opt-in lock probe (`-v probe_locks=on`), and a rollback script. §4.20 adds the ordered production runbook, what cannot be proven safely on production (the never-raise proof, backfill timing, the PostgREST round trip) and an undo path; QA asked to re-verify §14.6 against it. **Component 2**: the 37-capability catalog with lifecycle evidence, an EMPTY production tier matrix, trial/champion cohorts granting everything with explicit quantities and dated histories, the lifecycle overlay + seeded send registry, the chat map with a configurable read rule, catalog-derived Zod schemas, the lazy `TierMatrixSource` seam, the drift-snapshot comparison, Eyal's matrix as a fixture, 7 suites / 325 tests (incl. 111 generated AC-2 cases and AC-4 measured as a one-leaf diff), the `SCOPED_DIRS` extension and the `Business OS entitlements invariants` CI job running the migration and repository suites too (F-1). 37 suites / 676 tests green; scoped typecheck passed with 0 new errors. Code uncommitted. |
 | 2026-09-22 | SA code review of the production-safe verification + component 2: APPROVED for QA (SA) | Added §13.5. Ran `test:bos-entitlements` (37 suites / 676 tests, green — F-1 closed), `lint:hooks` (clean) and a scoped `tsc` over `lib/business-os/entitlements/**` with resolved jest types (0 diagnostics; the local `typecheck:bos-llm` failure is a worktree artefact — no `node_modules`, so every in-scope test file loses `@types/jest`, including pre-existing ones). Read-only script: safety is genuinely enforced by `SET TRANSACTION READ ONLY` (a transaction property, so `SECURITY DEFINER` cannot defeat it) and it calls none of the module functions. Probe guard, opt-in lock probe and rollback order all correct. Production-apply risk: low overall, moderate only at the backfill (unknown scan duration; FK dependency on `auth.users`), both removable read-only beforehand — hence required P-1 pre-flight section, P-2 explicit `statement_timeout`, P-3 direct-connection and quiet-window steps. Component 2: T-1/RC-1, FR-12, lazy loader, removal-needs-a-version-bump and the negative controls all verified non-vacuous. Second opinion: `marketing.mass_email` = `available` is the weakest entry (no dispatcher found — same class as the known `payments.reminders` stub); the `not_built` set, multi-currency, seats/locations and deferring `capabilitiesForPlan` are all endorsed. Low-priority C-1 (finish AC-4 in component 3), C-2 (record the dispatcher gap; gate `available` before the first tier is configured), C-3 (rollback leftover check should enumerate names, not match `business_os_%`). |
+| 2026-09-22 | SA review fixes: runbook pre-flight + mass-email correction (Dev) | P-1 added `scripts/preflight-bos-entitlements-migration.sql` (read-only) and runbook steps 1-3: the nine objects must not already exist (raises, because a silent skip over drift is the dangerous case), no tenant may be missing its `auth.users` row, and the backfill's own scan is timed in advance. P-2 bounded the backfill with `statement_timeout = '10min'`. P-3 promoted the direct-connection and quiet-window constraints to numbered steps with their reasons. C-3 made the rollback script enumerate its nine objects instead of matching `business_os_%`. C-1 recorded as binding component 3 task S1-T6a. **C-2 / mass email:** SA's challenge was right — tracing it answered half of B-1. `chat.marketing` SENDS (contacts.send -> emailSend.ts -> sendEmail via Resend/SMTP, fanned out by ForEachExecutor) and stays `available`; `marketing.mass_email` is the builder with **no dispatcher** (nothing reads `next_send_at`, no cron, `triggerSequence` has no caller) and is now **`not_built`**. Both carry the evidence, a test pins the pair, and the catalog header sets the gate: before the first tier is configured, every `available` capability needs a demonstrated end-to-end path. §4.20 now also maps this runbook against QA's §14.6 step by step. 37 suites / 677 tests green; 0 typecheck diagnostics in the module. Code uncommitted. |
