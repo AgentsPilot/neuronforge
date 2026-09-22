@@ -15,6 +15,8 @@
  */
 
 import { useState, useEffect } from 'react';
+import { configTabForGap } from '@/lib/business-os/journeyReadiness';
+import { publicSiteDisplayHost } from '@/lib/utils/origins';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Globe, ChevronRight, ChevronLeft, Check, X,
@@ -2055,7 +2057,7 @@ export function LandingPageWizard({
                     <button
                       type="button"
                       onClick={() =>
-                        openConfiguration(isInvoicing ? 'invoice' : 'availability', {
+                        openConfiguration(configTabForGap(gap.kind), {
                           /*
                             Ask again once they come back.
 
@@ -2630,7 +2632,7 @@ export function LandingPageWizard({
               </div>
               <div className="flex-1 flex justify-center">
                 <div className="bg-[var(--v2-surface)] rounded px-3 py-0.5 text-xs text-[var(--v2-text-secondary)] border border-[var(--v2-border)]">
-                  {subdomain || 'yoursite'}.agentspilot.com/{slug || 'service'}
+                  {publicSiteDisplayHost(subdomain || 'yoursite')}/{slug || 'service'}
                 </div>
               </div>
               {/* Device toggle */}
@@ -2693,7 +2695,7 @@ export function LandingPageWizard({
             </label>
             <div className="flex items-center" dir="ltr">
               <span className="px-3 py-2 bg-[var(--v2-surface-hover)] border border-r-0 border-[var(--v2-border)] rounded-l-lg text-sm text-[var(--v2-text-secondary)]">
-                {subdomain || 'yoursite'}.agentspilot.com/
+                {publicSiteDisplayHost(subdomain || 'yoursite')}/
               </span>
               <input
                 type="text"

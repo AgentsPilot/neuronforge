@@ -7,7 +7,9 @@ import Link from 'next/link'
 import clsx from 'clsx'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
-import { marketingLoginUrl } from '@/lib/utils/marketingUrl'
+import { marketingLogoutUrl } from '@/lib/utils/marketingUrl'
+import { signOutUser } from '@/lib/client/auth-actions'
+import { clientLogger } from '@/lib/logger/client'
 import { 
   LayoutDashboard, 
   Bot, 
@@ -162,13 +164,13 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         .single()
 
       if (error) {
-        console.error('Error fetching profile:', error)
+        clientLogger.error({ err: error }, 'Profile fetch failed')
         setProfile(null)
       } else {
         setProfile(data)
       }
     } catch (err) {
-      console.error('Profile fetch error:', err)
+      clientLogger.error({ err }, 'Profile fetch threw')
       setProfile(null)
     }
   }, [user?.id])
@@ -200,14 +202,14 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       if (controller.signal.aborted) return
 
       if (error) {
-        console.error('Error fetching agent count:', error)
+        clientLogger.error({ err: error }, 'Agent count fetch failed')
         setAgentCount(null)
       } else {
         setAgentCount(count ?? 0)
       }
     } catch (err) {
       if (!controller.signal.aborted) {
-        console.error('Agent count fetch error:', err)
+        clientLogger.error({ err }, 'Agent count fetch threw')
         setAgentCount(null)
       }
     } finally {
@@ -237,14 +239,14 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       if (controller.signal.aborted) return
 
       if (error) {
-        console.error('Error fetching template count:', error)
+        clientLogger.error({ err: error }, 'Template count fetch failed')
         setTemplateCount(null)
       } else {
         setTemplateCount(count ?? 0)
       }
     } catch (err) {
       if (!controller.signal.aborted) {
-        console.error('Template count fetch error:', err)
+        clientLogger.error({ err }, 'Template count fetch threw')
         setTemplateCount(null)
       }
     } finally {
@@ -279,7 +281,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         .limit(5)
 
       if (error) {
-        console.error('Supabase search error:', error)
+        clientLogger.error({ err: error }, 'Agent search failed')
         // Fallback: get all agents and filter client-side
         const { data: allAgents, error: fallbackError } = await supabase
           .from('agents')
@@ -300,7 +302,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         setSearchResults(data)
       }
     } catch (err) {
-      console.error('Search error:', err)
+      clientLogger.error({ err }, 'Agent search threw')
       setSearchResults([])
     } finally {
       setIsSearching(false)
@@ -322,17 +324,21 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     fetchTemplateCount()
   }, [fetchTemplateCount])
 
-  // Improved logout function
+  /*
+   * Sign out through `signOutUser`, like every other control that does this.
+   *
+   * This called `supabase.auth.signOut()` directly and so skipped three things
+   * the settings page does: the `USER_LOGOUT` audit entry, the clearing of
+   * person-scoped browser storage, and `scope: 'global'` — the default is
+   * `local`, so signing out here left every other device signed in.
+   */
   const handleLogout = useCallback(async () => {
     try {
-      // Sign out from Supabase
-      const { error } = await supabase.auth.signOut()
-      
-      if (error) {
-        console.error('Logout error:', error)
-        // Still continue with logout process even if there's an error
+      const result = await signOutUser({ scope: 'global', user, method: 'app-sidebar' })
+      if (!result.ok) {
+        clientLogger.error({ err: result.error }, 'Global sign-out failed — cleared locally regardless')
       }
-      
+
       // Clear any cached data
       setAgentCount(null)
       setTemplateCount(null)
@@ -342,16 +348,20 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       setIsMobileOpen(false)
       setProfile(null)
       
-      // A full page load: the sign-in form is on the marketing site, a
-      // different app on a different origin.
-      window.location.href = marketingLoginUrl()
+      /*
+       * A full page load to the marketing site's SIGN-OUT route, not its login
+       * page. That origin keeps its own copy of the session — browser storage
+       * is per-origin, so this app cannot clear it — and its `/auth/callback`
+       * trusts that copy, which is how a person who signed out could be handed
+       * straight back into the app.
+       */
+      window.location.href = marketingLogoutUrl()
 
     } catch (error) {
-      console.error('Unexpected logout error:', error)
-      // Force redirect even if there's an error
-      window.location.href = marketingLoginUrl()
+      clientLogger.error({ err: error }, 'Unexpected sign-out failure — redirecting anyway')
+      window.location.href = marketingLogoutUrl()
     }
-  }, [])
+  }, [user])
 
   const handleSearchResultClick = useCallback((agentId: string) => {
     setShowSearchResults(false)

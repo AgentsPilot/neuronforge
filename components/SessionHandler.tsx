@@ -4,6 +4,9 @@ import { useEffect } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { usePathname } from 'next/navigation';
 import { marketingLoginUrl } from '@/lib/utils/marketingUrl';
+import { clientLogger } from '@/lib/logger/client';
+
+const logger = clientLogger.child({ module: 'SessionHandler' });
 
 export function SessionHandler() {
   const pathname = usePathname();
@@ -13,26 +16,34 @@ export function SessionHandler() {
     const hash = window.location.hash;
 
     if (hash && hash.includes('access_token')) {
-      console.log('[SessionHandler] Found tokens in URL hash');
-
       const params = new URLSearchParams(hash.substring(1));
       const access_token = params.get('access_token');
       const refresh_token = params.get('refresh_token');
 
       if (access_token && refresh_token) {
-        console.log('[SessionHandler] Setting session from marketing site...');
+        logger.debug('Session handoff detected; adopting it');
 
         supabase.auth.setSession({
           access_token,
           refresh_token,
         }).then(({ data, error }) => {
           if (error) {
-            console.error('[SessionHandler] Error setting session:', error);
+            logger.error({ err: error }, 'Session handoff failed');
             // Back to where the handoff came from: the marketing site's login,
             // on its own origin. `router.push` would 404 inside this app.
             window.location.href = marketingLoginUrl('?error=session_failed');
           } else {
-            console.log('[SessionHandler] Session set successfully for user:', data.user?.email);
+            /*
+             * Ids only, never the address.
+             *
+             * This logged `data.user?.email` at every sign-in, putting the
+             * owner's address into the browser console — where a screen share,
+             * a screenshot or a support session picks it up. The user id
+             * identifies the same person for debugging and identifies nobody to
+             * a reader.
+             */
+            logger.debug({ userId: data.user?.id }, 'Session established from handoff');
+
             // Clear hash from URL
             window.history.replaceState(null, '', pathname);
 

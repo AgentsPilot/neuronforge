@@ -3,7 +3,7 @@
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * A subdomain belongs to the BUSINESS, not to one page: every surface it
- * publishes lives under the same one — `{subdomain}.agentspilot.com/{slug}` —
+ * publishes lives under the same one — `{prefix}.agentspilot.ai/{slug}` —
  * and a business does not get a second address by making a second page.
  *
  * It was only ever stored on `website_pages.subdomain`, and only ever read off
@@ -25,6 +25,7 @@
 
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { validatePrefix, normalizePrefix } from './reservedPrefixes';
 
 const logger = createLogger({ module: 'BusinessSubdomain' });
 
@@ -84,6 +85,23 @@ export async function claimBusinessSubdomain(
 ): Promise<boolean> {
   if (!subdomain) return false;
 
+  /*
+   * Validated here too, not only at the API that usually calls this.
+   *
+   * This function writes straight to `business_profiles.subdomain`, and what it
+   * stores becomes a HOSTNAME — `{prefix}.agentspilot.ai`. An unvalidated value
+   * reaching it could claim `app` and shadow the platform itself, or carry a dot
+   * and split into two DNS labels. A guard that lives only at one caller is a
+   * guard the next caller will not have.
+   */
+  const verdict = validatePrefix(subdomain);
+  if (!verdict.ok) {
+    logger.warn({ userId, reason: verdict.reason }, 'Refused to claim an invalid web address');
+    return false;
+  }
+
+  const normalized = normalizePrefix(subdomain);
+
   const { data: profile } = await supabaseServer
     .from('business_profiles')
     .select('subdomain')
@@ -94,14 +112,14 @@ export async function claimBusinessSubdomain(
 
   const { error } = await supabaseServer
     .from('business_profiles')
-    .update({ subdomain, updated_at: new Date().toISOString() })
+    .update({ subdomain: normalized, updated_at: new Date().toISOString() })
     .eq('user_id', userId);
 
   if (error) {
-    logger.error({ err: error, userId, subdomain }, 'Could not claim the business subdomain');
+    logger.error({ err: error, userId, subdomain: normalized }, 'Could not claim the business subdomain');
     return false;
   }
 
-  logger.info({ userId, subdomain }, 'Business web address claimed');
+  logger.info({ userId, subdomain: normalized }, 'Business web address claimed');
   return true;
 }

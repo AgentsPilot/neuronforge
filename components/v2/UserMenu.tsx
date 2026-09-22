@@ -4,7 +4,9 @@ import React, { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
-import { marketingLoginUrl } from '@/lib/utils/marketingUrl'
+import { marketingLogoutUrl } from '@/lib/utils/marketingUrl'
+import { signOutUser } from '@/lib/client/auth-actions'
+import { clientLogger } from '@/lib/logger/client'
 import {
   Settings,
   CreditCard,
@@ -42,7 +44,7 @@ export function UserMenu({ triggerIcon = 'avatar' }: UserMenuProps) {
           setProfile(data)
         }
       } catch (err) {
-        console.error('Profile fetch error:', err)
+        clientLogger.error({ err }, 'Profile fetch failed')
       }
     }
 
@@ -65,7 +67,7 @@ export function UserMenu({ triggerIcon = 'avatar' }: UserMenuProps) {
           setSubscription(data)
         }
       } catch (err) {
-        console.error('Subscription fetch error:', err)
+        clientLogger.error({ err }, 'Subscription fetch failed')
       }
     }
 
@@ -86,24 +88,32 @@ export function UserMenu({ triggerIcon = 'avatar' }: UserMenuProps) {
     }
   }, [isOpen])
 
-  // Logout handler (reuse V1 logic)
+  /*
+   * Sign out through `signOutUser`, like every other control that does this.
+   *
+   * This called `supabase.auth.signOut()` directly, which left three things
+   * undone that the settings page did: no `USER_LOGOUT` audit entry, no
+   * clearing of person-scoped browser storage (so one person's state was
+   * readable by the next), and the DEFAULT `scope: 'local'` — meaning someone
+   * who signed out here stayed signed in on every other device they owned.
+   *
+   * Three sign-out controls, one of them correct, is not a choice anyone made;
+   * it is what happens when the behaviour lives at the call site.
+   */
   const handleLogout = async () => {
-    try {
-      const { error } = await supabase.auth.signOut()
-
-      if (error) {
-        console.error('Logout error:', error)
-      }
-
-      // A full page load, because the destination is the marketing site's
-      // sign-in page — a different app on a different origin. A relative
-      // `/login` is a 404 here.
-      window.location.href = marketingLoginUrl()
-
-    } catch (error) {
-      console.error('Unexpected logout error:', error)
-      window.location.href = marketingLoginUrl()
+    const result = await signOutUser({ scope: 'global', user, method: 'user-menu' })
+    if (!result.ok) {
+      clientLogger.error({ err: result.error }, 'Global sign-out failed — cleared locally regardless')
     }
+
+    /*
+     * A full page load to the marketing site's SIGN-OUT route, not its login
+     * page. That origin holds its own copy of the session, which this app
+     * cannot clear — browser storage is per-origin — and its `/auth/callback`
+     * trusts that copy, so sending people straight to `/login` left half the
+     * session alive and able to hand them back.
+     */
+    window.location.href = marketingLogoutUrl()
   }
 
   const getUserInitials = () => {

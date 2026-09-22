@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { publicSiteUrl } from '@/lib/utils/origins';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { z } from 'zod';
 import { getUser } from '@/lib/auth';
@@ -667,7 +668,7 @@ export async function GET(request: NextRequest) {
       // Website: all pages
       supabaseServer
         .from('website_pages')
-        .select('id, status, subdomain, custom_domain, page_type, theme')
+        .select('id, status, subdomain, page_type, theme')
         .eq('user_id', user.id),
       /*
        * A smart link is the third way a client can reach a booking page, and
@@ -1622,12 +1623,20 @@ export async function GET(request: NextRequest) {
      */
     const isReachable = hasLivePages || hasSmartLinks;
 
-    // Get website URL from first page with subdomain/custom_domain
+    /*
+     * The business's own address, from the one resolver.
+     *
+     * This read `${subdomain}.agentspilot.site` — a domain that appears nowhere
+     * else in the product. The landing-page API built the same URL as
+     * `${subdomain}.agentspilot.com`, and middleware actually served it from
+     * `agentpilot.io`: three answers to one question, so at most one of them was
+     * ever right. `custom_domain` is no longer consulted either; businesses do
+     * not bring their own address.
+     */
     let websiteUrl: string | undefined;
-    const pageWithDomain = allPages.find((p: any) => p.subdomain || p.custom_domain);
-    if (pageWithDomain) {
-      websiteUrl = pageWithDomain.custom_domain ||
-        (pageWithDomain.subdomain ? `${pageWithDomain.subdomain}.agentspilot.site` : undefined);
+    const pageWithDomain = allPages.find((p: any) => p.subdomain);
+    if (pageWithDomain?.subdomain) {
+      websiteUrl = publicSiteUrl(String(pageWithDomain.subdomain));
     }
 
     /*

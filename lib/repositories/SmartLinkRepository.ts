@@ -5,6 +5,7 @@
  */
 
 import { createLogger } from '@/lib/logger';
+import { platformOrigin } from '@/lib/utils/origins';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { resolveChannel } from '@/lib/business-os/channel-insights/channelFromReferrer';
 
@@ -761,7 +762,7 @@ export class SmartLinkRepository {
       result.payment = existing?.find(l => l.destination_type === 'payment') as SmartLink || null;
 
       // Create missing links
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.agentspilot.com';
+      const baseUrl = platformOrigin();
 
       /**
        * A link still addressed to this account.

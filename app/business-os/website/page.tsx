@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { configTabForGap } from '@/lib/business-os/journeyReadiness';
+import { publicSiteDisplayHost, publicSiteSuffix, publicSiteUrl } from '@/lib/utils/origins';
 import { intakeReachesClient } from '@/lib/business-os/intakeReach';
 import { wantsWebsite } from '@/lib/business-os/onlinePresence';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -2505,7 +2507,7 @@ export default function WebsiteManagementPage() {
 
   const copyLink = () => {
     if (page?.subdomain) {
-      navigator.clipboard.writeText(`https://${page.subdomain}.agentpilot.io`);
+      navigator.clipboard.writeText(publicSiteUrl(page.subdomain));
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 2000);
     }
@@ -3941,7 +3943,7 @@ export default function WebsiteManagementPage() {
 
   const getWebsiteUrl = () => {
     if (page?.subdomain) {
-      return `https://${page.subdomain}.agentpilot.io`;
+      return publicSiteUrl(page.subdomain);
     }
     return null;
   };
@@ -4130,7 +4132,7 @@ export default function WebsiteManagementPage() {
                             <button
                               type="button"
                               onClick={() =>
-                                openConfiguration(isInvoicing ? 'invoice' : 'availability', {
+                                openConfiguration(configTabForGap(gap.kind), {
                                   // Cleared rather than re-asked: activation is a
                                   // deliberate click, and it answers freshly.
                                   onClose: () => setSmartLinkNotice(null),
@@ -4423,7 +4425,7 @@ export default function WebsiteManagementPage() {
                         <ShareGuide
                           language={language}
                           isRTL={language === 'he'}
-                          shareDomain={subdomain ? `${subdomain}.agentpilot.io` : undefined}
+                          shareDomain={subdomain ? publicSiteDisplayHost(subdomain) : undefined}
                           kind={link.destination_type === 'form' ? 'form' : 'booking'}
                           code={link.code}
                           prefersReducedMotion={prefersReducedMotion === true}
@@ -4642,7 +4644,7 @@ export default function WebsiteManagementPage() {
                     /* `{subdomain}.agentpilot.io/{slug}` — the route that
                        actually serves it (app/site/[subdomain]/[slug]), not the
                        internal /website-preview/{id} the eye icon opens. */
-                    target={{ kind: 'page', url: `https://${subdomain}.agentpilot.io/${p.slug}` }}
+                    target={{ kind: 'page', url: publicSiteUrl(subdomain, `/${p.slug}`) }}
                     title={p.title}
                     language={language}
                     isRTL={language === 'he'}
@@ -5187,7 +5189,7 @@ export default function WebsiteManagementPage() {
                             token: with nothing to wrap on it pushed the copy
                             button off the card instead of wrapping. */}
                         <span className="flex-1 min-w-0 break-all text-[var(--v2-text-secondary)] text-sm font-mono">
-                          {page.subdomain}.agentpilot.io
+                          {publicSiteDisplayHost(page.subdomain)}
                         </span>
                         {/*
                           Only once the site is LIVE.
@@ -5204,8 +5206,8 @@ export default function WebsiteManagementPage() {
                         */}
                         {page.status === 'live' && (
                         <ShareMenu
-                          target={{ kind: 'page', url: `https://${page.subdomain}.agentpilot.io` }}
-                          title={page.title || `${page.subdomain}.agentpilot.io`}
+                          target={{ kind: 'page', url: publicSiteUrl(page.subdomain) }}
+                          title={page.title || publicSiteDisplayHost(page.subdomain)}
                           language={language}
                           isRTL={language === 'he'}
                           compact
@@ -5400,7 +5402,7 @@ export default function WebsiteManagementPage() {
                                   <button
                                     type="button"
                                     onClick={() =>
-                                      openConfiguration(isInvoicing ? 'invoice' : 'availability', {
+                                      openConfiguration(configTabForGap(gap.kind), {
                                         // The owner has just been sent to fix the very
                                         // thing this names; ask again rather than leave
                                         // the refusal asserting the old answer.
@@ -7968,7 +7970,7 @@ export default function WebsiteManagementPage() {
                     >
                       <Globe className="w-5 h-5 text-[var(--v2-text-muted)] flex-shrink-0" />
                       <span className="flex-1 text-sm font-mono text-[var(--v2-text-secondary)]">
-                        {subdomain}.agentspilot.com
+                        {publicSiteDisplayHost(subdomain)}
                       </span>
                     </div>
                     <p className="text-xs text-[var(--v2-text-muted)] mt-2">
@@ -8060,10 +8062,10 @@ export default function WebsiteManagementPage() {
                             : 'bg-[var(--v2-bg)] border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:ring-2 focus:ring-[#4F6EF7]'
                         }`}
                       />
-                      <span className="text-[var(--v2-text-muted)]">.agentpilot.io</span>
+                      <span className="text-[var(--v2-text-muted)]">{publicSiteSuffix()}</span>
                     </div>
                     <p className="mt-1 text-xs text-[var(--v2-text-muted)]">
-                      {labels.subdomain_desc} https://{subdomain || 'your-business'}.agentpilot.io
+                      {labels.subdomain_desc} {publicSiteUrl(subdomain || 'your-business')}
                     </p>
                   </div>
 
@@ -8373,7 +8375,7 @@ export default function WebsiteManagementPage() {
                   />
                 </div>
                 <p className="mt-1 text-xs text-[var(--v2-text-muted)]">
-                  {page?.subdomain}.agentpilot.io/{newPageSlug || 'your-page-slug'}
+                  {publicSiteDisplayHost(page?.subdomain || '')}/{newPageSlug || 'your-page-slug'}
                 </p>
               </div>
 
@@ -8499,7 +8501,7 @@ export default function WebsiteManagementPage() {
                 }}
                 className="flex-1 px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
               />
-              <span className="text-sm text-[var(--v2-text-muted)]">.agentpilot.io</span>
+              <span className="text-sm text-[var(--v2-text-muted)]">{publicSiteSuffix()}</span>
             </div>
 
             {/* Said plainly rather than left to a red border: the owner is about
@@ -8511,7 +8513,7 @@ export default function WebsiteManagementPage() {
                 <span className="text-red-600 dark:text-red-400">{labels.subdomain_taken}</span>
               ) : (
                 <span className="text-[var(--v2-text-muted)]">
-                  https://{publishAddressValue || 'your-business'}.agentpilot.io
+                  {publicSiteUrl(publishAddressValue || 'your-business')}
                 </span>
               )}
             </p>
@@ -8976,7 +8978,7 @@ export default function WebsiteManagementPage() {
                 />
               )}
               <span className="text-sm text-[var(--v2-text-muted)] font-mono whitespace-nowrap">
-                {publishLanding?.subdomain ? 'agentspilot.com/' : '.agentspilot.com/'}
+                {publishLanding?.subdomain ? `${publicSiteDisplayHost(publishLanding.subdomain)}/` : `${publicSiteSuffix()}/`}
               </span>
               <input
                 type="text"

@@ -7,6 +7,7 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
+import { publicSiteDisplayHost, publicSiteSuffix } from '@/lib/utils/origins';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Globe, ChevronRight, ChevronLeft, Check, X,
@@ -980,7 +981,7 @@ export function WebsiteSetupWizard({
             </div>
             <div className="flex-1 flex justify-center">
               <div className="bg-[var(--v2-surface)] rounded px-3 py-0.5 text-xs text-[var(--v2-text-secondary)] border border-[var(--v2-border)]">
-                {subdomain || 'yoursite'}.agentspilot.com
+                {publicSiteDisplayHost(subdomain || 'yoursite')}
               </div>
             </div>
             {/* Device Toggle */}
@@ -1080,7 +1081,7 @@ export function WebsiteSetupWizard({
               placeholder="yoursite"
             />
             <span className="px-3 py-2 bg-[var(--v2-surface-hover)] border border-l-0 border-[var(--v2-border)] rounded-r-lg text-sm text-[var(--v2-text-secondary)]">
-              .agentspilot.com
+              {publicSiteSuffix()}
             </span>
           </div>
         </div>
@@ -1140,7 +1141,7 @@ export function WebsiteSetupWizard({
               </button>
               <div className="min-w-0">
                 <h1 className="text-white font-medium text-sm sm:text-base truncate">{labels.preview}</h1>
-                <p className="text-gray-500 text-xs sm:text-sm hidden xs:block truncate">{subdomain || 'yoursite'}.agentspilot.com</p>
+                <p className="text-gray-500 text-xs sm:text-sm hidden xs:block truncate">{publicSiteDisplayHost(subdomain || 'yoursite')}</p>
               </div>
             </div>
             {/* Device Toggle */}

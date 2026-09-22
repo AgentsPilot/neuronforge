@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { claimBusinessSubdomain } from '@/lib/business-os/businessSubdomain';
+import { validatePrefix, normalizePrefix } from '@/lib/business-os/reservedPrefixes';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { completeTheme } from '@/lib/branding/theme';
@@ -33,8 +34,37 @@ const UpdatePageSchema = z.object({
   slug: z.string().min(1).max(100).optional(),
   meta_description: z.string().max(160).nullable().optional(),
   seo_keywords: z.array(z.string()).optional(),
-  subdomain: z.string().min(3).max(30).nullable().optional(),
-  custom_domain: z.string().nullable().optional(),
+  /*
+   * The business's web address, validated HERE rather than only by the
+   * availability checker.
+   *
+   * This was `z.string().min(3).max(30)` and nothing else, so the checker was
+   * advisory: `PATCH {subdomain:"app"}` succeeded and would have shadowed the
+   * platform's own hostname once `{prefix}.agentspilot.ai` went live. It also
+   * accepted `"My Site"`, uppercase and `"a.b"` — and a dot turns one DNS label
+   * into two, which defeats the prefix extraction in middleware.
+   *
+   * `validatePrefix` is the same function the checker and middleware use, so
+   * what is offered, what is accepted and what is served can no longer diverge.
+   */
+  subdomain: z
+    .string()
+    .nullable()
+    .optional()
+    .refine((value) => value === null || value === undefined || validatePrefix(value).ok, {
+      message:
+        'Use 3-30 lowercase letters, numbers and hyphens, starting and ending with a letter or number. Some names are reserved.',
+    }),
+
+  /*
+   * `custom_domain` is deliberately NOT accepted any more.
+   *
+   * Businesses do not bring their own address: every public page is served at
+   * `{prefix}.agentspilot.ai`. The column stays in the database (it is null on
+   * every row, so nothing is lost and nothing needs migrating) but nothing may
+   * set it — an unsettable field that URL building still branched on is exactly
+   * how five different domains came to coexist unnoticed.
+   */
   website_language: z.enum(['en', 'es', 'he']).optional(),
   /*
    * The whole design, not only its palette.
@@ -166,8 +196,15 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     if (validated.slug !== undefined) updates.slug = validated.slug;
     if (validated.meta_description !== undefined) updates.meta_description = validated.meta_description;
     if (validated.seo_keywords !== undefined) updates.seo_keywords = validated.seo_keywords;
-    if (validated.subdomain !== undefined) updates.subdomain = validated.subdomain;
-    if (validated.custom_domain !== undefined) updates.custom_domain = validated.custom_domain;
+    /*
+     * Stored lowercased, because a hostname is case-insensitive but a database
+     * comparison is not: `JoesGym` and `joesgym` are the same address to a
+     * browser and two different rows to us.
+     */
+    if (validated.subdomain !== undefined) {
+      updates.subdomain = validated.subdomain === null ? null : normalizePrefix(validated.subdomain);
+    }
+    // `custom_domain` is no longer writable — see the schema above.
     /*
      * A theme is stored whole, never in pieces.
      *
