@@ -2122,184 +2122,25 @@ Jest was run from the worktree using the main checkout's `node_modules` (`node <
 
 ---
 
-### 14.6 Part B — the runnable database script (execute the moment a branch database exists)
+### 14.6 Part B — the database runbook — **SUPERSEDED on 2026-09-22 by §4.20**
 
-**Never against production.** Use a Supabase **branch** database (or a throwaway project restored from a snapshot). Everything below is copy-pasteable. Use the **direct** connection string (port 5432), not the transaction pooler: the verification script uses a temp table and one long transaction.
+**Do not follow this section. The runbook is §4.20.** It was written on 2026-09-21 for a premise that no longer holds — a branch or throwaway database, seeded by QA, with one verification script. The user has since decided there will be **no branch database**: the migrations and the checks run against **production**, from the PR. Keeping two runbooks would guarantee that someone follows the wrong one, so this one is retired rather than patched, and its content was re-verified into §4.20 instead.
 
-```bash
-export BOS_DB="postgresql://postgres:<pw>@db.<branch-ref>.supabase.co:5432/postgres"
-# Refuse to continue if this is production.
-psql "$BOS_DB" -Atc "select current_database(), inet_server_addr(), version();"
-```
+**Where each part went** (QA re-verified this mapping on 2026-09-22, §14.9.3):
 
-**Step 0 — make the backfill provable (fixes Q-3).** If the branch database has **no** pre-existing Business OS tenants, seed three before applying anything. Without this, C1/C2 prove nothing.
-
-```sql
--- seed-tenants.sql  (run BEFORE either migration; keep the ids)
-INSERT INTO auth.users (id, email, aud, role, created_at, updated_at)
-VALUES ('00000000-0000-4000-8000-000000000001','seed1@example.invalid','authenticated','authenticated', now() - interval '90 days', now()),
-       ('00000000-0000-4000-8000-000000000002','seed2@example.invalid','authenticated','authenticated', now() - interval '60 days', now()),
-       ('00000000-0000-4000-8000-000000000003','seed3@example.invalid','authenticated','authenticated', now() - interval '30 days', now());
--- profile + transcript
-INSERT INTO public.business_profiles (user_id, vertical) VALUES ('00000000-0000-4000-8000-000000000001','coach');
-INSERT INTO public.onboarding_conversations (user_id, message_sequence, role, content, created_at)
-VALUES ('00000000-0000-4000-8000-000000000001', 1, 'user', 'seed', now() - interval '89 days');
--- transcript only (the dormant-account case, S1-T11a)
-INSERT INTO public.onboarding_conversations (user_id, message_sequence, role, content, created_at)
-VALUES ('00000000-0000-4000-8000-000000000002', 1, 'user', 'seed', now() - interval '59 days');
--- profile only
-INSERT INTO public.business_profiles (user_id, vertical) VALUES ('00000000-0000-4000-8000-000000000003','lawyer');
-```
-*If the `auth.users` insert is rejected* (the Supabase auth schema differs between versions — extra NOT NULL columns, or a `handle_new_user` trigger that fails): **substitute three existing auth user ids that are not Business OS tenants** —
-```sql
-SELECT u.id FROM auth.users u
-LEFT JOIN public.business_profiles bp ON bp.user_id = u.id
-LEFT JOIN public.onboarding_conversations oc ON oc.user_id = u.id
-WHERE bp.user_id IS NULL AND oc.user_id IS NULL LIMIT 3;
-```
-and use those ids in the `business_profiles` / `onboarding_conversations` inserts above. **The same substitution applies to `scripts/verify-bos-entitlements-migration.sql`** — replace the `INSERT INTO auth.users` block in its `DO $$` at `:156-167` with two such ids written into `_bos_probe`, and keep everything else. *Pass/fail:* three tenant rows exist and none has a plan row yet.
-
-**Step 1 — apply the two migrations, in order, and time them.**
-```bash
-time psql "$BOS_DB" -v ON_ERROR_STOP=1 -f supabase/migrations/20261005_business_os_entitlements.sql
-time psql "$BOS_DB" -v ON_ERROR_STOP=1 -f supabase/migrations/20261005b_business_os_entitlements_backfill.sql
-```
-*Use a clean branch database:* the DDL uses `CREATE TABLE IF NOT EXISTS`, so a half-applied earlier attempt is skipped silently rather than corrected (the constraints would be missing and only A-section checks would notice).
-*Pass:* both exit 0. *Fail:* any error; `lock_timeout` (`55P03`) means something held a lock on a parent table — retry when idle, and **record it**, because it is the failure mode M-1 is designed around.
-*Record:* wall-clock duration of **each** file, especially `20261005b` (it scans `onboarding_conversations` in full — this is the number RM needs before production).
-
-**Step 2 — run the verification script.**
-```bash
-psql "$BOS_DB" -v ON_ERROR_STOP=1 -f scripts/verify-bos-entitlements-migration.sql
-```
-*Expected:* the single row `business_os entitlements migration: all checks passed`, then `ROLLBACK`, preceded by the `NOTICE` from C3 reporting how many backfilled rows were checked. **Record that number.**
-*Pass/fail:* every exception names the property that broke (`A1`…`A10`, `B1`…`B8c`, `M-2`…`M-5`, `R2-3`, `C0`…`C3`) — treat the name as the finding and stop.
-*Superseded (2026-09-22):* the earlier expectation that this run would die at B8 with `ON CONFLICT DO UPDATE command cannot affect row a second time` no longer applies — that was **Q-1**, fixed by the RPC's `GROUP BY`. If it still happens, the fix has been lost.
-*Checks added since the first QA pass, which this run is now also proving:* **A10** (`service_role` privileges), **B7**'s recovered facts, **B8/B8b/B8c**'s three-part arithmetic, and **C0/C3**'s non-vacuous backfill proof.
-
-**Step 3 — the checks the script does not make.**
-> ⚠️ **Run every query in step 3 in a separate psql session, outside the verification script.** The script's C0 creates a synthetic `origin = 'backfill'` row and then rolls the whole transaction back; counting from inside it would count that probe, and counting after it sees only what the real `20261005b` produced. That separation is what makes 3a evidence about the migration rather than about the script.
-
-3a. **Backfill non-vacuity (Q-3).**
-```sql
-SELECT count(*) FILTER (WHERE origin = 'backfill')                                   AS backfilled,
-       count(*) FILTER (WHERE origin = 'backfill' AND cohort = 'champion'
-                             AND cohort_expires_at IS NULL AND tier IS NULL)         AS open_ended_champions,
-       count(*)                                                                      AS total_plan_rows
-FROM public.business_os_account_plans;
-```
-*Pass:* `backfilled >= 3` (the seeds), `open_ended_champions = backfilled`. *Fail:* `backfilled = 0` — the backfill did nothing and C1/C2 proved nothing.
-3b. **`service_role` can still use the tables and the functions (Q-4), and who owns the DEFINER functions (Q-14).**
-```sql
-SELECT t AS table_name,
-       has_table_privilege('service_role','public.'||t,'SELECT') AS sel,
-       has_table_privilege('service_role','public.'||t,'INSERT') AS ins,
-       has_table_privilege('service_role','public.'||t,'UPDATE') AS upd
-FROM unnest(ARRAY['business_os_account_plans','business_os_entitlement_overrides','business_os_entitlement_shadow_events']) AS t;
-
-SELECT p.proname, pg_get_userbyid(p.proowner) AS owner, p.prosecdef AS is_definer,
-       has_function_privilege('service_role', p.oid, 'EXECUTE') AS service_role_can_execute
-FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-WHERE n.nspname = 'public' AND p.proname LIKE 'business_os_%';
-```
-*Pass:* all three tables `true/true/true`; `business_os_record_shadow_events` and `business_os_reset_plan_state` executable by `service_role`. *Fail:* any `false` → the migration must `GRANT` explicitly instead of relying on default privileges. *Record:* the owner of the two `…_plan_fact_…` functions.
-3c. **Trigger binding (Q-8/A9).**
-```sql
-SELECT t.tgname, c.relname AS on_table, p.proname AS calls,
-       (t.tgtype & 4)::boolean AS on_insert, (t.tgtype & 1)::boolean AS for_each_row, (t.tgtype & 2) = 0 AS is_after
-FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_proc p ON p.oid = t.tgfoid
-WHERE NOT t.tgisinternal AND t.tgname LIKE 'business_os_plan_on_%';
-```
-*Pass:* exactly two rows — `…_on_onboarding` on `onboarding_conversations`, `…_on_profile` on `business_profiles`, both AFTER INSERT FOR EACH ROW.
-
-3d. **The fact heal (QA Q-5's fix, and the one statement no database-side check exercises — QA Q-19).** The verification script proves the backfill's `INSERT` (C0) but never runs the `UPDATE … COALESCE` that fills a gap row's missing fact. Prove it directly, in its own transaction, and roll back:
-```sql
-BEGIN;
--- A gap row: the profile trigger fired between the two migrations, so the row
--- exists with ONE fact, and the backfill's INSERT skipped it on conflict.
--- (Use a seeded tenant that has BOTH a transcript and a profile.)
-UPDATE public.business_os_account_plans
-   SET onboarding_started_at = NULL, cohort = 'trial', origin = 'profile_trigger',
-       updated_at = now() - interval '1 hour'
- WHERE user_id = '<seed1>';
-
--- …now run ONLY the heal statement from 20261005b (copy it verbatim from the file).
--- Then:
-SELECT onboarding_started_at =
-         (SELECT min(created_at) FROM public.onboarding_conversations WHERE user_id = '<seed1>') AS fact_healed,
-       cohort   AS cohort_must_still_be_trial,
-       origin   AS origin_must_be_unchanged,
-       tier IS NULL AND trial_started_at IS NULL AND trial_ends_at IS NULL AS pins_untouched
-FROM public.business_os_account_plans WHERE user_id = '<seed1>';
-
--- Inertness: run the same heal statement a second time and confirm updated_at
--- does not move.
-ROLLBACK;
-```
-*Pass:* `fact_healed = true`, `cohort = 'trial'` (the heal must **not** promote a gap row to champion — that is the launch operation's job), `origin` unchanged, `pins_untouched = true`, and the second pass leaves `updated_at` where the first pass put it.
-*Fail:* a moved `updated_at` on the second pass means the `EXISTS` guards are not doing their job and the migration is not inert; a changed cohort means the heal is doing more than healing.
-
-**Step 4 — re-run the backfill and prove it is inert.**
-```sql
-SELECT md5(string_agg(user_id::text || coalesce(cohort,'') || coalesce(origin,'') ||
-     coalesce(cohort_expires_at::text,'') || updated_at::text, '|' ORDER BY user_id)) AS fingerprint,
-     count(*) FROM public.business_os_account_plans;   -- before
-```
-```bash
-time psql "$BOS_DB" -v ON_ERROR_STOP=1 -f supabase/migrations/20261005b_business_os_entitlements_backfill.sql
-```
-Re-run the fingerprint query. *Pass:* identical fingerprint and count; `INSERT 0 0` in the output. *Fail:* any change — the backfill is not idempotent.
-*Why this step matters more than it did:* the file now contains the fact-heal `UPDATE` as well as the insert, and SA's §13.4 is right that its inertness is a **property, not an accident** — it holds only because of the two `EXISTS` guards. The fingerprint includes `updated_at`, so a heal that rewrites rows on every run shows up here as a changed fingerprint with an unchanged row count. Record `UPDATE 0` from the second run as well as `INSERT 0 0`.
-
-**Step 5 — trigger-created rows stay trials, and the window hazard is measured (Q-5).**
-```sql
--- a signup arriving after the migrations must stay a trial
-INSERT INTO public.onboarding_conversations (user_id, message_sequence, role, content)
-VALUES ('<a fresh seeded auth user id>', 1, 'user', 'post-migration signup');
-SELECT cohort, origin, onboarding_started_at IS NOT NULL AS fact_recorded
-FROM public.business_os_account_plans WHERE user_id = '<that id>';
-```
-*Pass:* `trial` / `onboarding_trigger` / `true`. Converting it to a champion is the launch operation's job at switch-on, not the backfill's.
-5b. **The window query** — run on production right after the real apply, and here to confirm it returns what you expect:
-```sql
-SELECT p.user_id, p.origin, p.cohort, p.onboarding_started_at, p.profile_created_at
-FROM public.business_os_account_plans p
-WHERE p.origin IN ('onboarding_trigger','profile_trigger')
-  AND (EXISTS (SELECT 1 FROM public.onboarding_conversations o
-               WHERE o.user_id = p.user_id AND o.created_at < p.created_at)
-       OR EXISTS (SELECT 1 FROM public.business_profiles b
-                  WHERE b.user_id = p.user_id AND b.created_at < p.created_at));
-```
-*Meaning:* every row returned is a **pre-existing** tenant that the trigger caught in the gap between the two migrations and the backfill then skipped. *Pass:* zero rows. *If non-zero:* heal each one to `cohort = 'champion'`, `cohort_expires_at = NULL`, and set the missing fact from its own history. **Record the count.**
-
-**Step 6 — numbers to write down for RM.**
-
-| Measurement | Query / source |
+| §14.6 step | Where it lives now |
 |---|---|
-| `20261005` duration | `time` output, step 1 |
-| **`20261005b` duration** | `time` output, step 1 — the number RM needs before production |
-| Rows created by the backfill | `SELECT count(*) FROM business_os_account_plans WHERE origin = 'backfill';` |
-| Tenants total | `SELECT count(*) FROM (SELECT user_id FROM business_profiles UNION SELECT user_id FROM onboarding_conversations) t;` |
-| Missing plan rows (must be 0) | the C1 query in the verification script |
-| Open-ended champions with **no business profile** (the S1-T11a trim list) | `SELECT count(*) FROM business_os_account_plans WHERE cohort='champion' AND cohort_expires_at IS NULL AND profile_created_at IS NULL;` |
-| Rows caught in the migration window | step 5b |
-| `onboarding_conversations` row count (explains the scan time) | `SELECT count(*) FROM onboarding_conversations;` |
+| 0 — seed tenants so the backfill is provable | **Withdrawn.** Production has real tenants: the pre-flight counts them, `check-…`'s `B3` refuses to pass when tenants exist and nothing was backfilled, and the probe suite's `C0` makes the statement non-vacuous without seeding anything. |
+| 1 — apply both migrations | §4.20 steps 5 and 6, preceded by three read-only steps. Same files, renamed to `20261005` / `20261005b`. |
+| 2 — the verification script | Split in three. The unconditionally-safe checks are `scripts/check-bos-entitlements-migration.sql` (§4.20 step 7); the writing probes stay in `scripts/verify-…` and are optional; the pre-apply questions are `scripts/preflight-…` (§4.20 step 3). |
+| 3a backfill non-vacuity / 3b `service_role` + `proowner` / 3c trigger binding | All three are **inside** `check-…` now (`B3`, `A10` + the owner `NOTICE`, `A9`). Run it instead. |
+| **3d — the fact-heal probe** | **Still homeless. Specified as `C4` in §14.9.4** — it writes, so it belongs in the probe suite, not the read-only checker. |
+| 4 — re-run the backfill and fingerprint | Kept: §14.9.4 restates it as the only real proof of re-run inertness, which matters more now that the file carries the heal `UPDATE`. |
+| 5 — trigger-created rows stay trials; 5b the window query | 5b is `check-…`'s `Q-5` warning. 5 is still a manual insert and is **not** in §4.20 — recorded in §14.9.4 as optional. |
+| 6 — numbers for RM | Split: the pre-flight gives the estimate **before**, `check-…` gives the outcome **after**. Both lists are in §4.20. |
+| 7 — product still works; the PostgREST round trip | Unchanged, and still unproven until component 3 calls these functions. |
 
-**Step 7 — the product still works with the triggers live.**
-1. Insert an onboarding message and create a business profile for a fresh user (as in step 5), through the app if the branch is wired to one, otherwise by SQL. *Pass:* both writes succeed with no perceptible delay.
-2. `select * from pg_stat_statements where query ilike '%business_os_account_plans%'` (if available), and scan the database log for `business_os_plan_fact_`. *Pass:* **no WARNING lines.** A WARNING means the plan write failed silently — the product is fine, but the row is missing and the cause must be found before production.
-3. **PostgREST round trip** (the repositories talk through supabase-js, not psql). With the branch's service-role key:
-   ```bash
-   curl -sS -X POST "$SUPABASE_URL/rest/v1/rpc/business_os_reset_plan_state" \
-     -H "apikey: $SERVICE_KEY" -H "Authorization: Bearer $SERVICE_KEY" -H "Content-Type: application/json" \
-     -d '{"p_user_id":"<seed1>","p_cohort":"champion","p_cohort_expires_at":null,"p_trial_started_at":null,"p_admin_id":"<any uuid>","p_reason":"qa round trip"}'
-   ```
-   *Pass:* the plan row comes back as JSON. *If* `Could not find the function … in the schema cache`: run `NOTIFY pgrst, 'reload schema';` and retry — and note it, because RM must do the same in production.
-   Then the negative: the same call with the **anon** key must return `42883`/permission denied.
-
-**Exit criteria for the database phase:** steps 1–7 all pass, B8/B8b/B8c prove the fold-and-sum arithmetic, C3's `NOTICE` count is non-zero, step 3a's count (measured **outside** the script) is non-zero, step 3b is all `true`, step 3d heals the fact without touching the cohort and is inert on a second pass, step 5b returns zero rows (or the healed rows are recorded), and the `20261005b` duration is written into §15 for RM.
-
----
+Stale items in the retired text, for anyone reading the diff: step 2's "expect B8 to fail with `ON CONFLICT DO UPDATE command cannot affect row a second time`" was Q-1 and is **fixed**; every `20260921…` filename is now `20261005…`; and the seeded `seed1/2/3` ids never existed, because seeding production is not something this project will do.
 
 ### 14.7 Needs a decision from the user / TL
 
@@ -2429,6 +2270,186 @@ Unchanged in status, larger in scope: the fixes added four more properties that 
 - [x] **Four Low findings remain open (Q-18 to Q-23), none blocking.** One is SA's F-5 (two stale file references); the rest are test-quality items best landed with component 2's CI job.
 - [x] **16 properties remain BLOCKED on a branch database** (§14.8.4). **Do not apply either migration anywhere until §14.6 has been run.** Committing the code and applying the migration are separate decisions, and only the first is unblocked.
 
+### 14.9 QA — production-safe verification + component 2 (2026-09-22)
+
+**Test mode:** full, across two scopes — the four verification scripts + the §4.20 runbook, and component 2 (catalog, config, loader, CI).
+**Strategy used:** **A + B + E.** Jest suites run independently (A), the config/loader exercised through their own tests and read line by line (B), and adversarial review of SQL and of a runbook that cannot be executed here (E). No database, and production remains out of bounds for QA.
+**Input source:** the coordinator's brief + §4.19–§4.22 + §13.5 (P-1..P-3, C-1..C-3).
+**Reviewed against:** workplan `67dd9935`; component 1 committed at `2bbbb2ec`; everything else uncommitted.
+
+**Verdict: ✅ PASS — ready for the user's code review and for RM to commit.**
+- **Component 2:** no defects. Every number Dev reports reproduces exactly, the invariant suites carry real negative controls, and the two vacuity traps I went looking for (the empty production matrix, the derived-capability list) are both explicitly defended.
+- **The production-safety story holds.** For the two read-only scripts it is **enforced, not promised** (`SET TRANSACTION READ ONLY`), and every script fails *closed* in the most likely wrong environment.
+- **Nine findings, none blocking a commit.** Three are worth doing before the production apply (**R-1**, **R-4**, **R-7**), and two are judgement calls on the catalog that belong to the C-2 gate (**C2-1**, **C2-2**) — one of which contradicts a decision taken hours earlier.
+
+#### 14.9.1 What QA ran
+
+| Command | Result |
+|---|---|
+| `npm run test:bos-entitlements` (the exact CI command, run as `jest … --ci`) | ✅ **37 suites, 677 tests, 0 failures** — Dev's number to the digit |
+| `npm run test:authz-guard` | ✅ **74 passed**, no new exemption |
+| Hooks ESLint over `lib/business-os/entitlements` + `scripts/write-entitlements-snapshot.ts` | ✅ exit 0 |
+| `console.*` / `: any` in the module's source | ✅ **0** / **0** |
+| Typecheck, the method §4.18 describes (`--max-old-space-size=8192`, `--typeRoots` at the main checkout) | ✅ **2,030 project diagnostics, 0 × TS2688, 0 in any entitlements file**; control: **3** errors in other `lib/repositories/*.ts` and **6** under `supabase/`, so the trees are genuinely in the program |
+| `npm run entitlements:snapshot` reproducibility | ✅ **byte-identical** — verified by backing the file up, running the writer through `tsx`, `diff`, then restoring. See **C2-9** for the one way this claim expires |
+| **F-1** — does the CI job really run both suites? | ✅ **Genuinely closed.** `package.json:20` lists `lib/business-os/entitlements`, `lib/repositories/__tests__`, `supabase/migrations/__tests__`, the purge descriptor suite and the ownership suite; the run above collected all of them. I also checked the way it could still be defeated: `.github/ci/non-deploying-change.sh` sends `supabase/**` to the catch-all (**BUILD**), so a migration-only PR runs this job; `scripts/**` is skippable, which is right because no Jest suite reads the four SQL scripts. The job's own caveat stands: a green workflow gates nothing until `main` requires it (G-2). |
+
+#### 14.9.2 Part A — can any of this write to production?
+
+**The short answer: no, and in the two cases that matter it is the database refusing rather than the script promising.**
+
+| Script | QA verdict |
+|---|---|
+| `preflight-…` | ✅ **Safe unconditionally.** `BEGIN; SET TRANSACTION READ ONLY;` is a transaction property enforced in the executor — a `SECURITY DEFINER` function called from inside it would still get `25006`. `EXPLAIN` without `ANALYZE` executes nothing. `\set ON_ERROR_STOP on` is **inside the file**, so the protection survives an operator who forgets the `-v` flag. |
+| `check-…` | ✅ **Safe unconditionally**, same mechanism. |
+| `verify-…` | ⚠️ **Writes, and is honest about it.** Header, guard and trailing `ROLLBACK` all agree. See R-1 to R-3. |
+| `rollback-…` | ⚠️ **Destructive by design**, correct in order and bounded — but the only script with no confirmation (R-7). |
+
+**Is the pre-flight's "raises if any of the nine objects exists" real?** Yes. It accumulates into `present[]` and `RAISE EXCEPTION`s with the remedy in the message (`preflight-…:77-89`); it is not a `NOTICE` that scrolls past. This is the check that stops `CREATE TABLE IF NOT EXISTS` skipping over a drifted table.
+
+**Does the read-only checker have checks that pass vacuously on a database with real data?** I went looking for the opposite of last round's problem and **found none**. `B1` (missing plan rows), `B2` (backfill shape) and `B4` (unhealed facts) are all *stronger* on production than on any throwaway database, because the tenant set is real; `B3` is an explicit non-vacuity gate (`tenants > 0 AND backfilled = 0` raises); `A1`–`A11` are catalog reads that cannot be satisfied by data. The Q-5 window check is a `WARNING` with a count, which is the right level for a fact rather than a failure.
+
+**Deviations a real operator might plausibly make**
+
+| # | Sev | Finding |
+|---|---|---|
+| **R-1** | **Medium** | **Every script is psql-only, and the plausible workaround is the dangerous one.** All four use meta-commands (`\set`, `\timing`, `\if`, `\echo`, and `\copy` in a comment). Pasted into the Supabase SQL editor — the obvious tool for "apply it myself from a PR" — PostgreSQL parses the whole batch before executing any of it, so the file dies on the first `\` and **executes nothing**: a good failure. The risk is the next thing a person does, which is to delete the backslash lines. For `preflight-…` and `check-…` that is harmless, because their protection (`SET TRANSACTION READ ONLY`) is real SQL that survives the edit. For `verify-…` it is **not**: the lines that make the lock probe opt-in are `\if :probe_locks` / `\else` / `\echo` / `\endif` (`:381-404`), and deleting them leaves the B4 `DO` block **enabled** — the ACCESS EXCLUSIVE lock on the plan table that §4.20 deliberately made opt-in, now running on production. **Fix: one line in §4.20 and one in the probe header — "if you cannot run `psql -f`, run the pre-flight and the checker only, and never the probe suite."** |
+| **R-2** | Low | **The transaction guard is a statement, not a policy.** It catches "pasted from the top without `BEGIN`". It cannot catch "pasted from the middle", because a guard that was not pasted does not run. A second line of defence already exists **by accident**: every writing block reads the `_bos_probe` TEMP table created in the header, so a fragment pasted alone fails with `relation "_bos_probe" does not exist` before it writes anything. That is worth one sentence in the header, so it is deliberate rather than lucky. |
+| **R-3** | Low | **The guard will usually fire even when the file *is* wrapped, if the whole file arrives as one command.** `statement_timestamp()` is the receipt time of the *command message*, so every statement of a multi-statement simple query shares it, and an explicit `BEGIN` inside that batch adopts it as the transaction start. So `psql -c "$(cat …)"` or an editor paste tends to raise `25P01` despite a `BEGIN` being present. That is the safe direction and needs no code change — but the header's explanation ("in autocommit … the two are identical") should add "…or when the whole file arrives as a single command", so the next person does not debug a refusal that is working as intended. |
+| **R-4** | **Medium** | **The pre-flight never checks that the three Supabase roles exist.** `20261005` does `REVOKE … FROM anon, authenticated` and `GRANT … TO service_role`. If any is absent the apply fails — safely, since the file is one transaction — but this is exactly the class of avoidable surprise the pre-flight was added for, and it is one query: `SELECT rolname FROM pg_roles WHERE rolname IN ('anon','authenticated','service_role');` expecting three rows. |
+| **R-5** | Low | **The pre-flight prints the two numbers that would reveal a duplicate-tenant problem but never compares them.** `rows_the_backfill_would_insert` can only exceed the tenant count if `business_profiles.user_id` stopped being `UNIQUE` (it is today) — in which case the backfill's `LEFT JOIN` multiplies rows and `business_os_reset_plan_state`'s scalar sub-select would raise "more than one row returned by a subquery". One `IF … RAISE WARNING` turns two printed numbers into a check. |
+| **R-6** | Low | **The orphan check warns rather than raises** (`preflight-…:111`) — the right call, because it needs a decision and not a stop. But with `ON_ERROR_STOP=1` a `WARNING` scrolls past in a wall of `NOTICE`s. §4.20 step 3 should say what success *looks like*: "you are looking for two notices, `1. clean:` and `2. no orphans:`; anything else, stop and read it." |
+| **R-7** | **Medium** | **The rollback script has no confirmation.** It drops three production tables the moment it is invoked. This module requires a `confirm` literal **and** an echoed account id before resetting **one** account's plan state (§4.12) — so the asymmetry is the module's own standard applied everywhere except the one script that destroys everything. `\if :{?confirm_drop} \else \echo 'REFUSING — re-run with -v confirm_drop=yes' \quit \endif` at the top. |
+| **R-8** | Low | **The rollback drops without saying what cannot be rebuilt.** The header tells you to export first; the script could count it, before the drops: admin-set rows (`origin IN ('admin','admin_reset','launch') OR updated_by_admin_id IS NOT NULL`) and override rows, as a `WARNING`. Mid-incident, a number gets read and a comment does not. |
+| **R-9** | Trivial | `rollback-…:57` says "none of THESE EIGHT OBJECTS"; it is **nine** (3 tables + 4 functions + 2 triggers), as the array immediately below it enumerates and as every other document says. |
+
+**Is the rollback correct, ordered and honest?** Yes to all three. Triggers → functions → tables is right (the triggers are the only objects on tables the product uses, and they come off first); it is bounded by `lock_timeout`; it proves its own completion against an enumerated list rather than a `business_os_%` pattern (SA C-3, correctly applied); and it states plainly that admin-set cohorts, expiries and overrides cannot be rebuilt. R-7 and R-8 are about the moment before it runs, not about what it does.
+
+**What can only fail AFTER the migration is applied** — the honest list, after the pre-flight removes everything it can:
+
+| Still discovered late | Why it cannot be checked earlier | Damage if it happens |
+|---|---|---|
+| The three Supabase roles (**R-4**) | Only because nobody asked — this one is removable today | Apply fails whole; nothing partially applied |
+| `service_role` reaching the RPCs **through PostgREST** | Needs the service-role key and an HTTP call, not `psql` as `postgres`; `check-…`'s A10 proves the grant, not the round trip | Component 3 discovers it, weeks later. Mitigated: A10 + the schema-cache note |
+| The PostgREST schema-cache reload (`NOTIFY pgrst, 'reload schema'`) | Same | Same |
+| The **write** cost of the backfill | The pre-flight times the read; the insert is on top | Bounded by `statement_timeout = '10min'` (P-2), and a timeout rolls back cleanly |
+| The never-raise guarantee (B4) with the lock probe off | The only way to make the plan table reject every write is a table-level constraint | Stays a code-reading claim. Correctly documented in §4.20 |
+
+**Is §4.20 executable by someone who is not us?** Largely yes — seven ordered steps, each with a command, an expected output and a failure branch, and an undo path at the end. Three gaps: **R-1** (it never says the scripts need `psql`), **R-6** (step 3 has no "what success looks like"), and step 4 — "take a Supabase backup, or confirm today's automatic one" — gives no way to *confirm* one, which on a first production apply is the step whose failure is unrecoverable. §4.20 also never states **which role** to connect as; every script assumes enough privilege to read `auth.users` and `pg_stat_activity`, which `postgres` has and a restricted role does not.
+
+#### 14.9.3 Part B — §14.6 reconciled
+
+Done, and §14.6 is now **a pointer, not a second runbook**: its body has been replaced with the mapping table and a note that every stale item (the `20260921…` filenames, the seeded tenants, the "expect B8 to fail" caveat) is gone with it. §4.20 is the single production runbook. Dev's mapping in §4.20 was correct in every row; the only piece with nowhere to live was step 3d, specified below.
+
+#### 14.9.4 The two pieces of §14.6 that must survive
+
+**(1) `C4` — the fact heal, specified.** Dev is right that it belongs in the probe suite: it writes. Drop this in after `C0`, before the `C1/C2/C3` block. It needs no new probe account — `tenant3` already has a transcript **and** a profile, and C0 leaves it with a backfilled plan row:
+
+```sql
+-- C4 — the heal step of 20261005b (QA Q-19). C0 proves the backfill's INSERT;
+-- this proves the UPDATE that fills a fact the INSERT skipped, and proves it is
+-- inert on a second pass — which it is only because of the two EXISTS guards.
+-- ⚠️ Keep the UPDATE below in step with the one in 20261005b.
+DO $$
+DECLARE
+  v_user uuid := (SELECT user_id FROM _bos_probe WHERE kind = 'tenant3');
+  before_updated timestamptz;
+  after_updated  timestamptz;
+  p public.business_os_account_plans;
+BEGIN
+  -- Make tenant3 look like a gap row: a trigger-created trial carrying only the
+  -- profile fact, which the backfill's INSERT then skipped on conflict.
+  UPDATE public.business_os_account_plans
+     SET onboarding_started_at = NULL, cohort = 'trial', origin = 'profile_trigger',
+         updated_at = now() - interval '1 hour'
+   WHERE user_id = v_user;
+
+  SELECT updated_at INTO before_updated FROM public.business_os_account_plans WHERE user_id = v_user;
+
+  -- The heal statement, narrowed to this account.
+  UPDATE public.business_os_account_plans AS p
+     SET onboarding_started_at = COALESCE(p.onboarding_started_at,
+           (SELECT min(oc.created_at) FROM public.onboarding_conversations oc WHERE oc.user_id = p.user_id)),
+         profile_created_at = COALESCE(p.profile_created_at,
+           (SELECT bp.created_at FROM public.business_profiles bp WHERE bp.user_id = p.user_id)),
+         updated_at = now()
+   WHERE p.user_id = v_user
+     AND ((p.onboarding_started_at IS NULL
+           AND EXISTS (SELECT 1 FROM public.onboarding_conversations oc WHERE oc.user_id = p.user_id))
+       OR (p.profile_created_at IS NULL
+           AND EXISTS (SELECT 1 FROM public.business_profiles bp WHERE bp.user_id = p.user_id)));
+
+  SELECT * INTO p FROM public.business_os_account_plans WHERE user_id = v_user;
+
+  -- It healed the fact, from history and not from now().
+  IF p.onboarding_started_at IS DISTINCT FROM timestamptz '2024-05-06 07:08:09+00' THEN
+    RAISE EXCEPTION 'C4 the heal did not recover the fact from history (got %)', p.onboarding_started_at;
+  END IF;
+  -- …and healed NOTHING ELSE. A heal that promoted a gap row to champion would
+  -- be doing the launch operation's job, months early.
+  IF p.cohort <> 'trial' OR p.origin <> 'profile_trigger' THEN
+    RAISE EXCEPTION 'C4 the heal changed the cohort or the provenance (% / %)', p.cohort, p.origin;
+  END IF;
+  IF p.tier IS NOT NULL OR p.trial_started_at IS NOT NULL OR p.trial_ends_at IS NOT NULL THEN
+    RAISE EXCEPTION 'C4 the heal touched a tier or a pin';
+  END IF;
+
+  -- Inert on a second pass: the WHERE now matches nothing, so updated_at holds.
+  after_updated := p.updated_at;
+  IF after_updated <= before_updated THEN
+    RAISE EXCEPTION 'C4 the heal did not run at all (updated_at did not move)';
+  END IF;
+
+  UPDATE public.business_os_account_plans AS p
+     SET onboarding_started_at = COALESCE(p.onboarding_started_at,
+           (SELECT min(oc.created_at) FROM public.onboarding_conversations oc WHERE oc.user_id = p.user_id)),
+         updated_at = now()
+   WHERE p.user_id = v_user
+     AND p.onboarding_started_at IS NULL
+     AND EXISTS (SELECT 1 FROM public.onboarding_conversations oc WHERE oc.user_id = p.user_id);
+
+  SELECT updated_at INTO after_updated FROM public.business_os_account_plans WHERE user_id = v_user;
+  IF after_updated <> p.updated_at THEN
+    RAISE EXCEPTION 'C4 the second pass rewrote the row: the migration is not inert on a re-run';
+  END IF;
+END $$;
+```
+
+Note for whoever lands it: `updated_at` is backdated by an hour first, for the same reason B1 backdates its fact — `now()` is the transaction timestamp, so "did it move?" compares a value with itself otherwise.
+
+**(2) The re-run fingerprint.** §4.20 does not repeat §14.6's step 4, and it should, because the backfill file now carries the heal `UPDATE` as well as the insert: run `20261005b` a **second** time and confirm `INSERT 0 0`, `UPDATE 0`, and an unchanged fingerprint over `(user_id, cohort, origin, cohort_expires_at, updated_at)`. That is the only end-to-end proof of re-run inertness, and it is a property rather than an accident. *(Optional, and cheap: after the apply, insert one onboarding message for a fresh auth user and confirm the row comes out `trial` / `onboarding_trigger` — the §14.6 step 5 manual check.)*
+
+#### 14.9.5 Part C — component 2 findings
+
+| # | Sev | Finding |
+|---|---|---|
+| **C2-1** | **Medium (judgement)** | **`payments.reminders` is `available`, and by the catalog's own stated test it is not.** `lib/services/PaymentReminderService.ts:500-527` — `sendEmailReminder` logs `'Would send payment reminder email'` and ends `return true; // Simulated success`. `catalog.ts:162` acknowledges it ("still a stub, tracked separately"), but `lifecycle` is the field that gates, and `available` means it can be sold. This is the **same evidence class** that moved `marketing.mass_email` to `not_built` hours earlier, and it is worse in one respect: the stub **reports success**, so the reminder is recorded as sent while no client receives anything. Recommend `not_built` for consistency, or an explicit TL/user decision written into the entry. Not urgent — `TIER_ORDER` is empty, so nothing is sold — but it is the one entry the new rule does not cover, and the rule is a day old. |
+| **C2-2** | **Medium (judgement)** | **`website.custom_domain` is `available` on storage evidence only.** Its note cites `WebsitePageRepository` and the chat catalog. But `middleware.ts:56-69` rewrites to `/site/[subdomain]` **only** when `host.endsWith(baseHost)`, so a real custom domain never matches; and `WebsitePageRepository.findByCustomDomain` (`lib/repositories/WebsitePageRepository.ts:330`) **has no caller anywhere in the repository**. Column, verified flag, repository method, no path to the outcome — `marketing.mass_email`'s exact shape, and the exact evidence class ("tables and routes") SA rejected. |
+| **C2-3** | Low | **The complete set of `available` entries that code cannot demonstrate**, for the C-2 gate: `payments.reminders` and `website.custom_domain` (above), plus `support.level` (its own note: "no enforcement surface — it is a commercial promise"), `team.seats` and `business.locations` (both real at a value of 1; SA and I agree the reasoning holds). I spot-checked the remaining `available` entries against their notes and found no further gaps — `intake.reminders` in particular is real (`IntakeReminderService.sendDue` → `BookingEmailService.sendIntakeFormRequest`). |
+| **C2-4** | Low | `lib/business-os/entitlements/__tests__/catalog.invariant.test.ts:142` is titled "marks the **five** rows that are still with Eyal" and asserts **seven** ids. B-1 is "five ambiguous sheet rows" everywhere else in this workplan. Either the mass-email/marketing-chat split legitimately made it seven — in which case say so where B-1 is defined — or the list has drifted. |
+| **C2-5** | Low | `…/__tests__/tierLiteral.forbidden.test.ts:77` builds `PATTERN` with the `g` flag and uses it with `.test()` at `:121`. A global regex is **stateful** across `.test()` calls, so once one offender matches, the next file's scan resumes at a stale `lastIndex` and can miss a second. Harmless today (the assertion fails on the first offender anyway) — but this is a guard, and the fix is one character. |
+| **C2-6** | Low | `…/__tests__/productionConfig.test.ts:132-143`, "lets one override flip that decision without touching code", asserts that the config **validates** and then that `withOverride.sendPolicyOverrides['intake.request'].paused === 'allow'` — the object literal three lines above. What is not asserted is that the override changes the *resolved* answer, because the resolver is component 3. Same shape as SA's **C-1**; recommend folding it into **S1-T6a** so AC-37 is proven end to end and not at the config boundary. |
+| **C2-7** | Low | `…/__tests__/oneLineChange.test.ts:39` computes a **one-directional** diff (leaves in `after` absent from `before`), so a change that also *deleted* five leaves would still report one entry. The companion test catches that (a deleted capability fails validation), so the pair is sound — but the assertion that carries the "it really is one leaf" claim does not, on its own. A symmetric difference is one line. |
+| **C2-8** | Low | The 111 generated AC-2 cases (`tierMatrix.invariant.test.ts:45-52`) assert only `toThrow(/tier matrix/)`. Since each starts from a valid fixture and makes exactly one deletion the error can hardly be anything else, but matching the deleted capability id would make each case prove it failed *for its own reason*. |
+| **C2-9** | Note | "Reproduces the committed snapshot byte for byte" is true **today and only today**: `scripts/write-entitlements-snapshot.ts:25` stamps `generated: new Date()…`, so running it on any later day produces a one-line diff with no config change. `findDrift` ignores `generated`, so this is cosmetic — one line in the script header stops the next person reading it as drift. |
+
+**What I checked and found genuinely sound** (the vacuity hunt): the 37-capability list is **hand-written, not derived**, with a "is 37" guard on top of it; `chatActionMap.invariant` reads the **live** `SEMANTIC_CATALOG`, cross-checks all **107** plugin actions both ways, and carries a negative control proving `capabilityForOp` can return `undefined`; `tierMatrix.snapshot` proves the removals rule in **both** directions (a cut is caught, and the same cut is accepted once recorded and version-bumped) and defends the empty-matrix trap with "snapshots something worth snapshotting"; `tierLiteral.forbidden` ratchets its baseline **by equality in both directions**, so a cleaned-up file must lower the baseline in the same change; `findDrift`'s ranking, removal and history rules are sound and I could not construct a downgrade that slips past them; the loader validates on first `load()` and never at import; and `productionConfig` proves the config survives **having no tiers at all**, which is the state production will be in.
+
+#### 14.9.6 Needs a decision
+
+1. **C2-1 — `payments.reminders`.** The mass-email correction set a rule yesterday ("available means a customer gets the outcome today"); this entry fails it on stronger evidence (the sender returns simulated success). Business call: mark it `not_built`, or record why it is an exception. Nothing is sold today either way.
+2. **C2-2 — `website.custom_domain`.** Same question, same evidence class.
+3. **R-1 — how will the operator actually run these?** If the answer is the Supabase SQL editor rather than `psql`, then the pre-flight and the checker need their two backslash lines removed *by us*, in the file, and the probe suite must not be run at all. This is the one Part A finding that changes what the user does.
+4. **R-4 / R-7** — a five-minute addition each (role check in the pre-flight, confirmation flag on the rollback), both before the production apply.
+5. The database phase stays as §14.8.4 recorded it, minus what `check-…` now covers: **nothing has been run against any database**, and the trial-restart guarantee (B2) is still unproven.
+
+#### 14.9.7 Final Status
+
+- [x] **Component 2 passes. The verification rework passes. Both are ready for the user's code review and for RM to commit.**
+- [x] **Nine findings, none blocking a commit.** R-1, R-4, R-7 before the production apply; C2-1 and C2-2 are decisions for TL/the user; the rest are test- and doc-quality items that can land with component 3.
+- [x] **§14.6 is retired in favour of §4.20**, with `C4` and the re-run fingerprint specified in §14.9.4 as the two pieces that had nowhere else to live.
+- [x] **Still true: no script has been run against any database.**
+
 ## 15. Commit Info
 
 _RM to populate._
@@ -2456,3 +2477,4 @@ _RM to populate._
 | 2026-09-22 | Production-safe verification + component 2 built (Dev) | **Verification** (user decision: no branch database; the migration will be run against production): split into a read-only post-apply checker that runs under `SET TRANSACTION READ ONLY` and is unconditionally safe, the probe suite hardened with a refuse-outside-a-transaction guard and an opt-in lock probe (`-v probe_locks=on`), and a rollback script. §4.20 adds the ordered production runbook, what cannot be proven safely on production (the never-raise proof, backfill timing, the PostgREST round trip) and an undo path; QA asked to re-verify §14.6 against it. **Component 2**: the 37-capability catalog with lifecycle evidence, an EMPTY production tier matrix, trial/champion cohorts granting everything with explicit quantities and dated histories, the lifecycle overlay + seeded send registry, the chat map with a configurable read rule, catalog-derived Zod schemas, the lazy `TierMatrixSource` seam, the drift-snapshot comparison, Eyal's matrix as a fixture, 7 suites / 325 tests (incl. 111 generated AC-2 cases and AC-4 measured as a one-leaf diff), the `SCOPED_DIRS` extension and the `Business OS entitlements invariants` CI job running the migration and repository suites too (F-1). 37 suites / 676 tests green; scoped typecheck passed with 0 new errors. Code uncommitted. |
 | 2026-09-22 | SA code review of the production-safe verification + component 2: APPROVED for QA (SA) | Added §13.5. Ran `test:bos-entitlements` (37 suites / 676 tests, green — F-1 closed), `lint:hooks` (clean) and a scoped `tsc` over `lib/business-os/entitlements/**` with resolved jest types (0 diagnostics; the local `typecheck:bos-llm` failure is a worktree artefact — no `node_modules`, so every in-scope test file loses `@types/jest`, including pre-existing ones). Read-only script: safety is genuinely enforced by `SET TRANSACTION READ ONLY` (a transaction property, so `SECURITY DEFINER` cannot defeat it) and it calls none of the module functions. Probe guard, opt-in lock probe and rollback order all correct. Production-apply risk: low overall, moderate only at the backfill (unknown scan duration; FK dependency on `auth.users`), both removable read-only beforehand — hence required P-1 pre-flight section, P-2 explicit `statement_timeout`, P-3 direct-connection and quiet-window steps. Component 2: T-1/RC-1, FR-12, lazy loader, removal-needs-a-version-bump and the negative controls all verified non-vacuous. Second opinion: `marketing.mass_email` = `available` is the weakest entry (no dispatcher found — same class as the known `payments.reminders` stub); the `not_built` set, multi-currency, seats/locations and deferring `capabilitiesForPlan` are all endorsed. Low-priority C-1 (finish AC-4 in component 3), C-2 (record the dispatcher gap; gate `available` before the first tier is configured), C-3 (rollback leftover check should enumerate names, not match `business_os_%`). |
 | 2026-09-22 | SA review fixes: runbook pre-flight + mass-email correction (Dev) | P-1 added `scripts/preflight-bos-entitlements-migration.sql` (read-only) and runbook steps 1-3: the nine objects must not already exist (raises, because a silent skip over drift is the dangerous case), no tenant may be missing its `auth.users` row, and the backfill's own scan is timed in advance. P-2 bounded the backfill with `statement_timeout = '10min'`. P-3 promoted the direct-connection and quiet-window constraints to numbered steps with their reasons. C-3 made the rollback script enumerate its nine objects instead of matching `business_os_%`. C-1 recorded as binding component 3 task S1-T6a. **C-2 / mass email:** SA's challenge was right — tracing it answered half of B-1. `chat.marketing` SENDS (contacts.send -> emailSend.ts -> sendEmail via Resend/SMTP, fanned out by ForEachExecutor) and stays `available`; `marketing.mass_email` is the builder with **no dispatcher** (nothing reads `next_send_at`, no cron, `triggerSequence` has no caller) and is now **`not_built`**. Both carry the evidence, a test pins the pair, and the catalog header sets the gate: before the first tier is configured, every `available` capability needs a demonstrated end-to-end path. §4.20 now also maps this runbook against QA's §14.6 step by step. 37 suites / 677 tests green; 0 typecheck diagnostics in the module. Code uncommitted. |
+| 2026-09-22 | QA of the production-safe verification + component 2: PASS (QA) | Added §14.9; retired §14.6 in favour of §4.20 so there is one runbook. Ran it all: **37 suites / 677 tests**, authz guard 74, hooks lint clean, 0 `console.*`, 0 `any` in source, and the typecheck reproduced to the digit (2,030 project diagnostics, 0 TS2688, **0** in any entitlements file, control 3 + 6 elsewhere). Snapshot writer verified byte-identical by backup/diff/restore. **F-1 confirmed genuinely closed** — `test:bos-entitlements` lists both required paths, and `supabase/**` is a deploying change so a migration-only PR still runs the job. **Part A:** the two read-only scripts are safe by enforcement (`SET TRANSACTION READ ONLY`), the pre-flight's clean check really raises, the checker has no vacuous checks on real data, and the rollback is correctly ordered and honest. Nine findings, none blocking: **R-1** every script is psql-only and the plausible workaround (deleting the `\` lines) silently re-enables the opt-in lock probe on production; **R-4** the pre-flight never checks that `anon`/`authenticated`/`service_role` exist; **R-7** the rollback drops three production tables with no confirmation, in a module that demands a confirm literal to reset one account; plus R-2/R-3/R-5/R-6/R-8/R-9. **Part C:** no defects in component 2; **C2-1** `payments.reminders` is `available` while its sender returns `true; // Simulated success`, which fails the rule the mass-email correction set a day earlier, and **C2-2** `website.custom_domain` is `available` although `findByCustomDomain` has no caller and middleware only rewrites `*.baseHost` — both for the C-2 gate; C2-4..C2-9 are test/doc quality. §14.9.4 specifies the `C4` fact-heal probe and the re-run fingerprint, the two pieces of §14.6 with nowhere else to live. |
