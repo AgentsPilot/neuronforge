@@ -62,10 +62,10 @@ SA's review (§15) widened N-3: the seed must reproduce what today's boolean and
 | FR-12 | Every catalog call uses the resolved settings; chat v1/v2 entry gates | 2, 3 | T2-S, T3-S, T3-G |
 | FR-13 | Record the model that ran (intake `generated_from.model`, insights ledger `model_name`, planner `diagnostics.model` incl. repair attempts, image price key) | 2 (intake, insights), 3 (planner, images) | T2-M, T2-M-I, T3-M, T3-S |
 | FR-14 | "Off" per the table; three languages; image model into the images row | 2, 3 | T2-O, T3-O |
-| FR-15 | Literal check in the existing CI job | 4 | T4-1 |
+| FR-15 | Literal check in the existing CI job | 4 ✅ | T4-1 (61 cases) + the eight per-area mutations, §8.4 |
 | FR-16 | Seed migration, zero behaviour change, apply order (incl. P-3 canonical stop and P-5b equivalence, RC-W1), old keys marked superseded | 1 (file, script modes), §9 (apply) | T1-9, T1-13b, §10, AC-13 |
 | FR-17 | Change tracking: change script (validated; refuses locked fields; `--include-calls`), change-seen info log, route refusal | 0 (refusal), 1 (script, log) | T0-2, T1-12, T1-13 |
-| FR-18 | Skill, investigation, roadmap, KI-C, runbook | 4 | review |
+| FR-18 | Skill, investigation, roadmap, KI-C, runbook | 4 ✅ | review; each doc has a Change History row (§8.2 T4.3) |
 
 ---
 
@@ -754,7 +754,7 @@ The pre-existing baseline, recorded separately as Step 1 did. It reads **2,031**
 | # | Item | Evidence | Why not now |
 |---|---|---|---|
 | **FU-3** | **Who may change a live setting — PARKED by the user, 2026-09-21.** From the Step 2 deploy the eight rows stop being inert: a write to `system_settings_config` changes six areas' model, provider, temperature or on/off switch within 60 s, with no code review, no deploy and no approval step. Today that reaches: platform admins through the Step 0-gated admin routes, anyone running `npm run bos:llm-settings set` with the service-role key, and anyone with direct database access. **User's decision: leave it as is — "only admins can change it".** No approval workflow, no second pair of eyes, no change-request trail beyond the existing audit entry and the resolver's change-seen log. Revisit when the admin screen lands in a later layer, and note that the leaked service-role key ([environments & deployment strategy]) currently widens "only admins" beyond the admin_users table until it is rotated | SA Code Review — Step 2, business decision (9a); §3.6 | Deliberately parked, not overlooked. Layer 2 delivers the control; governing *who* pulls it is the admin-UI layer's problem, and the current reach is acceptable pre-launch |
-| FU-2 | **`typecheck:bos-llm`'s file count depends on whether `.next/` exists.** The gate walks generated `.next/types/**/route.ts` shims as "callers", so the same tree reports **158 files** before a build and **171** after. The error count is unaffected (0 new either way) and no baseline entry comes from them, but comparing "files in scope" between rounds is misleading, and a generated file could in principle contribute an error to the gate. Candidate fix: exclude `.next/` from the file walk in `scripts/typecheck-bos-llm.ts`, as `jest.config.js` already excludes `.claude/` | §6.4 `--list` diff, 2026-09-21 | It is a gate-hygiene change with its own blast radius — it moves the denominator every previous round was measured against — and Step 2 must not alter the gate it is being measured by |
+| FU-2 | **`typecheck:bos-llm`'s file count depends on whether `.next/` exists.** The gate walks generated `.next/types/**/route.ts` shims as "callers", so the same tree reports **158 files** before a build and **171** after. The error count is unaffected (0 new either way) and no baseline entry comes from them, but comparing "files in scope" between rounds is misleading, and a generated file could in principle contribute an error to the gate. Candidate fix: exclude `.next/` from the file walk in `scripts/typecheck-bos-llm.ts`, as `jest.config.js` already excludes `.claude/` | §6.4 `--list` diff, 2026-09-21 | It is a gate-hygiene change with its own blast radius — it moves the denominator every previous round was measured against — and Step 2 must not alter the gate it is being measured by. **✅ Fixed in Step 4 (D-65): the count is 167 with or without a build; `0 new` and the baseline are unchanged** |
 
 ### 6.5 Rollout notes
 
@@ -914,7 +914,7 @@ New messages appear only when a row switches something off. After deploy, QA: AC
 | # | Item | Evidence | Why not now |
 |---|---|---|---|
 | **FU-4** | **`ImageGenerationConfig.model` has no reader left.** `GeneratedImageService` takes the model from the `images` area row; the config's `model` field (and the `image_generation_model` key behind it) is now read only by the policy's documented default reference. Two ways to end up wrong: an operator edits `image_generation_model` and nothing changes, or someone later "restores" it and the area row is bypassed. Decide with whoever owns the admin image-configuration surface | §7.6 D-50 | Touching a shared config shape is its own blast radius, and this step must not widen into the admin surface |
-| **FU-6** | **The Step 4 runbook must say that the kill switch fails open.** `isBosLlmAreaEnabled` answers `true` on any read failure (D-61), so an area switched off can silently come back if the settings read breaks, and nothing tells the operator except an error log they are not watching. FR-18's runbook is where an operator actually looks, so it must say: what the switch does NOT guarantee, that the resolver logs the failure, and how to confirm an area is still off (`npm run bos:llm-settings -- get <area>`, which reads the row rather than the resolver's view of it). Decide there whether a louder signal is also wanted — an alert on repeated resolver read failures is the obvious candidate, and it is a monitoring change, not a resolver one | §7.6 D-61; `modelSettings.ts` `isBosLlmAreaEnabled` | Step 3 must not rewrite the operator runbook, and FR-18 already owns it |
+| **FU-6** | **The Step 4 runbook must say that the kill switch fails open.** `isBosLlmAreaEnabled` answers `true` on any read failure (D-61), so an area switched off can silently come back if the settings read breaks, and nothing tells the operator except an error log they are not watching. FR-18's runbook is where an operator actually looks, so it must say: what the switch does NOT guarantee, that the resolver logs the failure, and how to confirm an area is still off (`npm run bos:llm-settings -- get <area>`, which reads the row rather than the resolver's view of it). Decide there whether a louder signal is also wanted — an alert on repeated resolver read failures is the obvious candidate, and it is a monitoring change, not a resolver one | §7.6 D-61; `modelSettings.ts` `isBosLlmAreaEnabled` | Step 3 must not rewrite the operator runbook, and FR-18 already owns it. **✅ Documented in Step 4:** [runbook §5](/docs/runbooks/BUSINESS_OS_LLM_MODEL_SETTINGS_RUNBOOK.md). The louder signal (an alert on repeated resolver read failures) is **carried**, as a monitoring change |
 | **FU-5** | **SA-2 is closed at one site of seventeen. SA ruled this is enough for Step 3; carry it as a Step 4 chip.** T2-S/T3-S still count provider calls BELOW the public entry for most sites, so a public caller that stops calling its inner function is invisible. Closing it properly means driving each site's public entry point — roughly eight of them are genuinely private today | §7.6 D-47, SA Step 2 finding 2 | It is a test-architecture change of its own size, and Step 3 already doubles the wired surface |
 
 ---
@@ -927,7 +927,10 @@ New messages appear only when a row switches something off. After deploy, QA: AC
 
 | File | Change |
 |---|---|
-| `scripts/check-bos-llm-literals.ts` | create. Scope: non-test files that import `callCatalog` (the same derivation helper as `scripts/typecheck-bos-llm.ts`, imported, not copied). Fails on quoted `gpt-`, `claude-`, `o1`/`o3`/`o4` model ids, `kimi-`, `text-embedding-`, `gpt-image-`, on `OPENAI_MODELS.`, and on `temperature:\s*[0-9.]`. Only exemption: `lib/business-os/llm/modelSettingsPolicy.ts` with a reason string |
+| `scripts/check-bos-llm-literals.ts` | ✅ created. Scope: every non-test file that imports `callCatalog`, derived through the shared helper below — imported, not copied. **Two named exemptions**, each with a reason and both printed by `--list`: the policy module and `scripts/bos-llm-settings.ts` (D-63, revised after SA finding 8 — no directory exclusion). **AST-based, not regex** (D-62): comments are never scanned. Fails on a string literal that IS a model id, on `OPENAI_MODELS.*`, on a numeric literal bound to `temperature` (including the `?? 0.7` and `|| 0.3` defaulting forms), on a read of a superseded key, and on a model taken from `process.env.*MODEL*` (D-64). Exemptions are named files with reasons, printed by `--list`: the policy module and the operator script (D-63) |
+| `scripts/lib/bos-llm-scope.ts` | ✅ created. The file walk and import graph BOTH gates derive their scope from, so they can never disagree about what the project contains. It excludes generated output — **FU-2 is fixed here** (D-65) |
+| `scripts/typecheck-bos-llm.ts` | ✅ modified: its local `toPosix` / `loadConfig` / `projectFiles` / `readImports` move into the shared module. Verdict unchanged (167 / 31 / 0 new before and after), baseline untouched |
+| `.github/ci/non-deploying-change.sh` | ✅ modified: the two new gate files are carved out of the skip rule, as `typecheck-bos-llm.ts` already was — a change to CI must never skip CI |
 | `scripts/__tests__/check-bos-llm-literals.test.ts` | create: T4-1 |
 | `package.json` | `"check:bos-llm-literals": "tsx scripts/check-bos-llm-literals.ts"` |
 | `.github/workflows/bos-llm-typecheck.yml` | One more step in the existing job: `npm run check:bos-llm-literals` |
@@ -937,14 +940,135 @@ New messages appear only when a row switches something off. After deploy, QA: AC
 
 ### 8.2 Tasks and tests
 
-- ⬜ **T4.1** Script + test T4-1: passes on the branch; fails on a planted `model: 'gpt-4o'` and on `temperature: 0.5` in a temp file that imports the catalog; does not fail on the policy module; does not scan `IntentParser.ts` (no catalog import). **AC-11**
-- ⬜ **T4.2** Workflow step + npm script.
-- ⬜ **T4.3** Docs (AC-14).
+- ✅ **T4.1** Script + test T4-1 (61 cases): passes on the branch (**38 files, 2 exempt, 0 violations** after the D-63 revision; it read 37 / 1 before); fails on a planted model literal, model constant, temperature number and superseded key; does not fail on the policy module, and the exemption is proved **load-bearing** (the policy module *would* fail if it were checked); `IntentParser.ts` and `AIDataLayerService.ts` are asserted out of scope, as decided. **AC-11**
+- ✅ **T4.2** Workflow step (second step in the existing job, `!cancelled()` so a red type check cannot hide a literal regression) + the npm script + the CI skip-rule carve-out.
+- ✅ **T4.3** Docs (AC-14): the skill (Standard 8 added, the stale KI-C exception removed, checklist and anti-patterns extended), the new operator runbook (including the fail-open switch, FU-6), the investigation doc, the Layer 1 roadmap, Layer 1.5 KI-C closed, this workplan, the Layer 2 requirement's status and CLAUDE.md's Key Documentation row. Each changed doc has a Change History row.
 - ⬜ **T4.4** SA → QA → user → RM.
 
-### 8.3 Gates
+### 8.3 Gates — measured
 
-`npm run check:bos-llm-literals` exits 0; `typecheck:bos-llm` unchanged; `next build`.
+| Gate | Result |
+|---|---|
+| `npm run check:bos-llm-literals` | **`38 files in scope, 2 exempt, 0 violations` → `passed`**, exit 0 (see §8.7 for the verbatim post-review runs). Before the D-63 revision it read `37 files, 1 exempt`; the operator script moved from an invisible directory exclusion into a named exemption, so the count went up by one and the exemption is now printed by `--list` |
+| `npm run typecheck:bos-llm` | **`167 files in scope, 31 errors, 0 new (149.7s)` → `passed`**, exit 0. Identical verdict before and after the shared-module refactor, and identical with `.next/` present (`167 … 0 new (109.0s)`). Baseline **unchanged**: 0 insertions, 0 deletions |
+| `npm run build` | **exit 0**, `✓ Compiled successfully`, 291/291 static pages. Re-run after the SA round, which put two comment-only `app/` files into the diff (D-71) |
+| Jest — `lib/business-os/llm` + the new suite | **14 suites / 398 tests / 23 snapshots passed**; 61 of those tests are the new suite (§8.7) |
+| `tsc` baseline (not a gate) | Re-measured on this tree: **2,034** repo-wide pre-existing errors, **2,030** excluding generated `.next/types` — the figures this round was asked to confirm, unchanged by this step. Needs a raised heap (`NODE_OPTIONS=--max-old-space-size=8192`); a plain `npx tsc --noEmit` **dies with a V8 heap OOM (exit 134) and prints no diagnostics at all**, which is worth knowing before anyone reads a `0` from it as good news. `next.config.js` sets `ignoreBuildErrors`, which is why the scoped gate exists |
+
+### 8.4 The fail-and-pass proof (AC-11)
+
+A gate that cannot be shown to fail is not a gate. **One deliberate re-hardcode was planted per area, the check run, and the mutation reverted before the next one** — eight in all, covering four of the five rules (the fifth, `env-model`, is covered by the committed tests; no in-scope file reads a model from the environment today). Every one exited 1 and named the right file, line and column; the tree was then clean (`git status` showed only `package.json`, this step's own edit) and the check passed again.
+
+| Area | Mutation (each reverted) | What the check said |
+|---|---|---|
+| chat | `Planner.ts` `model: attemptModel` → `model: 'gpt-4o'` | `Planner.ts(489,22): model-literal: 'gpt-4o'` |
+| insights | `InsightRepository.ts` conditional spread → `temperature: 0.3` | `InsightRepository.ts(749,13): temperature: temperature: 0.3` |
+| briefing | `BriefingNarrator.ts` `model` → `OPENAI_MODELS.GPT_4O_MINI` | `BriefingNarrator.ts(129,18): model-constant: OPENAI_MODELS` |
+| website | `WebsiteAIContentService.ts` `model` → `model: 'gpt-4o-mini'` | `WebsiteAIContentService.ts(355,14): model-literal: 'gpt-4o-mini'` |
+| intake | `IntakeGenerationService.ts` → `temperature: settings.temperature ?? 0.3` | `IntakeGenerationService.ts(278,24): temperature: settings.temperature ?? 0.3` |
+| leads | `LeadReplyRecommender.ts` re-reads `lead_reply_recommender_model` with a `'gpt-4o-mini'` default | **two** violations: `superseded-key` *and* `model-literal` |
+| images | `GeneratedImageService.ts` → `model: 'gpt-image-1'` | `GeneratedImageService.ts(403,18): model-literal: 'gpt-image-1'` |
+| onboarding | `OnboardingConversationManager.ts` → `model: 'gpt-4o'` | `OnboardingConversationManager.ts(1075,16): model-literal: 'gpt-4o'` |
+
+The intake case is the one worth reading twice. `settings.temperature ?? 0.3` **does** call the resolver and would satisfy any "is the resolver used" test, while quietly pinning the value whenever the row says nothing. It is caught.
+
+Two of the eight are pinned as committed tests rather than one-off runs: T4-1 mutates `Planner.ts`'s real source **in memory** and asserts the violation, and asserts that the policy module would fail if it were not exempt.
+
+### 8.5 Deviations — Step 4
+
+| # | Deviation |
+|---|---|
+| **D-62** | **The detector walks the AST; it is not a regex over the file text.** §8.1 specified regexes (`temperature:` followed by a digit, and friends). A regex cannot tell code from a comment, and SA's Step 2 finding 10 explicitly left that choice to Step 4: either the gate ignores comments, or three stale prose lines get reworded. Ignoring comments is the better trade — *"This route calls gpt-4o"* cannot send anything to a provider, and flagging prose teaches authors to write vaguer comments, not better code. The AST also buys precision a regex could not: `settings.temperature ?? 0.7` is caught, `temperature: settings.temperature` is not, and a module path that looks like a model id is not. **Three of the nine stale comments were fixed after SA's review (D-71); the other six stay.** As first written, all nine were left alone: — they describe behaviour that changed, which is a doc nit, and rewording production files inside a docs-and-CI step means re-running the whole gate set for no functional gain. Named here so SA could overrule cheaply — and SA did, for three of them (D-71). |
+| **D-63** | **Scope excludes `scripts/`** — **REVISED after SA finding 8: it does not.** The first full run failed on **`scripts/bos-llm-settings.ts`** (14 violations, every one required: `verify-equivalence`/P-5b exists to compare the six **superseded** keys and their legacy defaults with the area rows). The first fix excluded the whole `scripts/` directory. SA's arithmetic is right and the argument is better than mine was: that exclusion buys **one** file and blankets ~400 others for ever, including the backfill script somebody writes next year — and my own script header says *"the exemption list is the gate's blast radius"*. **Now:** `scripts/` is in scope, and `scripts/bos-llm-settings.ts` is a **named exemption with its reason**, printed by `--list`. Scope 37 → **38 files, 2 exempt**, same 0 violations. T4-1's assertion moved from scope to exemption, and it now proves the script's exemption is load-bearing the same way the policy module's is. |
+| **D-64** | **Two rules were added beyond §8.1's three.** (a) **A read of a superseded settings key.** FU-4 names the exact regression: someone "restores" `image_generation_model`, an operator edits it, and nothing happens, because the area row is what the code reads. It is the only rule that catches a *silent divergence* rather than a hardcode; the leads mutation above shows it firing. (b) **A model taken from `process.env.*MODEL*`.** That is chat-v2's shape (`process.env.OPENAI_CHAT_MODEL || 'gpt-4o'`) and it defeats Layer 2 exactly as a literal does — an operator cannot change it without a deploy. No file in scope reads one today (the two that do, `AIDataLayerService.ts` and the agents-side `run-step` route, are both out of scope), so it costs nothing now and closes the obvious way around the gate. |
+| **D-65** | **FU-2 is fixed, in the shared module, and the denominator moves.** The walk now excludes `.next/`, `.claude/`, `coverage/` and `out/`. The type gate's scope is **167 files with or without a build in the checkout**; before this it was 158 / 167 / 177 depending on whether `next build` had run. Measured both ways on this tree: with `.next/` present and the exclusion removed the same run reports **177 files, 31 errors, 0 new**; with it, **167 files, 31 errors, 0 new**. **`0 new` is unchanged and the baseline file is untouched** (0 insertions, 0 deletions) — no baseline entry ever came from a generated file, which is why the verdict never depended on them. Done here and not earlier because SA's ruling was "do not touch the gate inside the step it is measuring"; Step 4 is the step that owns the gate. `.claude/` is excluded for the reason `jest.config.js` already excludes it: agent worktrees hold other branches' copies of every file. **Reading old rounds:** 158 / 167 / 177 all mean the same tree state as 167 does now. |
+| **D-66** | **(Outcome stands; the reason was wrong — see D-72.)** **The workflow name and the job name are unchanged, deliberately.** The job now runs two gates and its name no longer describes it exactly. A branch-protection required status check matches on the **name**, so renaming one leaves the old check pending for ever and blocks the merge (the repo already has one required check, the admin authz guard). The workflow comment says so; the new step is named for what it does. |
+| **D-67** | **The two new scripts log with `console.*`, not Pino.** CLAUDE.md § Logging governs `lib/`, `app/` and `components/`. This is CI tooling whose output a human reads in a GitHub log, and the sibling gate `scripts/typecheck-bos-llm.ts` prints the same way; Pino would emit JSON lines nobody can scan. `scripts/bos-llm-settings.ts` uses Pino for the opposite reason — it is an operator tool whose output is pasted into an apply record as evidence. **No file under `lib/`, `app/` or `components/` was touched by this step**, so §12 is otherwise unchanged. |
+| **D-73** | **QA's four evasions were CAUGHT, not documented** (QA D4-3). `request.temperature ??= 0.8`, `opts.temperature ||= 0.3`, `const { temperature: temp = 0.4 } = settings` and `temperature: 0.7 satisfies number` all passed a green gate at real wired call sites. Two of them are the header's **own promise in assignment form** — it said `?? 0.7` and `|| 0.3` are caught — and a stated guarantee that is false is worse than an admitted gap, so documenting them was not an option. Four lines: `QuestionQuestionEqualsToken` and `BarBarEqualsToken` join the defaulting operators, `ts.isSatisfiesExpression` joins `numericLiteralOf`, and `ts.isBindingElement` joins the name-matched branch — keyed on the binding's **source key**, because `{ temperature: t = 0.4 }` gives the alias no signal at all. Five new T4-1 cases; re-proved end to end at `LeadReplyRecommender.ts(104,5)`. The blind list is unchanged and still honest: none of the four was "one file away", computed or behind an unnamed variable, which is exactly why they were defects. |
+| **D-74** | **Three statements the gate made about itself were wrong, and are fixed** (QA D4-1, D4-2). The **failure message** — the one line a contributor reads when the gate fires — still said "the only exempt file is `modelSettingsPolicy.ts`" after D-63 added a second. It now prints **every** exemption with its reason, generated from `EXEMPTIONS`, so it cannot drift again. Same staleness fixed in §8.1, §8.2, §11's AC-11 row and the requirement's Change History row; **AC-11 and RC-12 in the requirement** said "its only exemption is the policy module" while marked verified, which is an acceptance criterion certified against text the code no longer matches. Both now describe named exemptions with reasons. SA's and QA's own review transcripts keep their `37 / 1 exempt` figures — those are dated evidence, not claims about today. |
+| **D-68** | **T4-1 runs the real gate as a Jest assertion** (`scopedFiles()` + `scanFiles()`, ~20 s of module resolution). The duplication with CI is deliberate: the check is then verified by `npm test` and by anyone running the Layer 2 selection, not only by a workflow, and the suite pins the eight per-area call sites **by name**, so a rename cannot silently empty the scope. |
+| **D-69** | **The gate's blind class is now written down in three places** (SA findings 2 + 17): the script header, the skill's Standard 8 and a test block that *asserts the misses pass*. SA proved the main hole end to end against the real tree with the gate green — a helper exporting `PREFERRED_MODEL = 'gpt-4o'`, imported into a wired call site: the helper is out of scope (it does not import the catalog) and the call site is a clean identifier. Also blind: a computed id, an unnamed `const t = 0.7`, `process.env` one alias away, and a model id outside the pattern list. Closing these needs data-flow analysis, which a 20-second PR gate cannot carry. **The fix is honesty:** a green run means no call site hardcodes *in plain sight*; that every site obeys its row is proved by `callParams.boundary.*.test.ts`, per site, at the provider boundary. The four misses are now `it.each` cases that pass **on purpose**, so the day one starts failing, someone updates all three documents together. |
+| **D-70** | **Four should-fixes taken, because each was one line and each shrank D-69's list** (SA findings 3-6): `BOS_LLM_CALL_POLICY` joins the model-constant set — the exempt module's own export was the most obvious door the exemption opens; `chatgpt-`, `tts-`, `sora-`, `omni-moderation-`, `deepseek-`, `grok-` join the model patterns (`chatgpt-4o-latest` is a **current** OpenAI model that would have passed); a ternary, a default parameter and a class property now count as temperature hardcodes, and the name test is **word-aware** (`DEFAULT_TEMP` counts, `template` does not — a plain `includes('temp')` would have flagged half the website files); and a string literal in a **type position** is skipped, because `type M = 'gpt-4o' \| …` cannot send anything to a provider and the admin screen (FU-3) will be made of exactly that. The remaining known false positives — a Zod enum, a `switch` case, a price-index key, a JSX prop — are recorded in the script header so the next contributor meets a list rather than a surprise, and answers with a narrow rule change rather than a third exemption. |
+| **D-71** | **Three comments fixed, six left** (SA finding 9). SA enumerated all nine model mentions in the 36 checked files; six are historical narrative or measured-latency rationale and stay. Three were not aged prose but **instructions that contradict FR-15** — worst `landing-pages/generate/route.ts:108`, `// use gpt-4o for better content quality`, five lines above the `resolveBosLlmSettings` block, telling the next contributor to do the thing CI now fails on. All three reworded to point at the area row. Both files carry **0 `console.*`**, so no logging work rode along and §12 is unchanged. |
+| **D-72** | **D-66's reasoning was wrong and is corrected** (SA finding 10). The workflow comment claimed renaming would leave a required check pending and block merges. `main` requires exactly one context, `Admin authz surface guard` — this job is not required, so **a red literal gate does not block anything today**. Keeping the names stable is still right (free, and the correct posture for the day branch protection adopts the check), but the comment now says the gates are **advisory until then**. That is also the first of the requirement's three named exceptions. |
+
+### 8.6 Follow-ups after Step 4
+
+| # | State |
+|---|---|
+| **Known false positives** | **Seven, all documented in the script header, none reachable today** (SA finding 5 + QA D4-4): a Zod `enum`, a Zod `.default('gpt-4o')`, an `as const` model array, a `switch` case, a price-index key, a JSX prop, and a `TEMPERATURE_MAX` bound. Every one is legitimate code that the gate would fail, and every one is the kind of thing FU-3's admin screen is made of. The answer when one arrives is a narrow rule change, never a third file exemption. |
+| **FU-7 (new, from SA finding 1)** | **The gate cannot block a merge.** `main`'s branch protection requires exactly one context, `Admin authz surface guard`; the job this gate rides in, `Type check (Business OS LLM attribution)`, is **not required**, so a contributor can hardcode a model, watch the check go red and merge anyway. Nothing in the code can fix it — it is a repository-settings change and belongs to the user. It is the same open chip the admin-authz cycle left. **Step 4's anti-drift claim depends on it**, which is why it is the first of the requirement's three named exceptions rather than a footnote. |
+| **FU-8 (new, from SA finding 13)** | **The resolver's fail-open warning says the wrong thing in the dangerous case.** One message — *"serving the last good values"* — covers both outcomes, and only the `servingLastGood` field distinguishes them; when nothing was cached the message is untrue, and an operator greps messages before fields. A conditional message or a distinct `logger.error` closes it. Code change in `modelSettings.ts`, not a Step 4 one; the runbook compensates in prose meanwhile. |
+| **FU-2** | ✅ **Closed** by D-65. |
+| **FU-6** | ✅ **Closed for its documentation half.** Runbook §5 states that the kill switch fails open, *which* instance state makes it bite (an instance with no cached values falls back to the code defaults, where every area is enabled — a warm instance keeps serving the last good "off"), the three log lines that are the only signal, and that `bos:llm-settings -- get <area>` reads the **row**, not the resolver's live view. It also gives the one check that does not depend on the switch: no new ledger rows for that area. **Carried:** the monitoring half — an alert on repeated resolver read failures — is a monitoring change and is not made. |
+| **FU-5** | **Carried unchanged.** Out of scope for Step 4 by instruction; SA ruled it non-blocking for Step 3. The literal gate does not close it and does not pretend to: it proves no site *hardcodes*, not that every public entry reaches its site. |
+| **FU-3 / FU-4** | **Carried.** FU-3 is parked by the user and is now written where an operator will meet it (runbook §8). FU-4 gains a partial guard: the superseded-key rule (D-64) fails CI if a call site starts reading `image_generation_model` again, though the dead `ImageGenerationConfig.model` field is still there. |
+| **D-54** | **Applied as ruled; nothing added.** The site-level `'openai'` stays deliberate and `modelSettingsPolicy.test.ts` is its guard. The literal check does **not** flag a provider literal — adding that would fight a decision SA made. |
+
+### 8.7 Gates re-run after the SA and QA reviews
+
+```text
+> npm run check:bos-llm-literals
+check-bos-llm-literals: 38 files in scope, 2 exempt, 0 violations (26.7s)
+check-bos-llm-literals: passed
+
+> npm run typecheck:bos-llm
+typecheck-bos-llm: 167 files in scope, 31 errors, 0 new (126.3s)
+typecheck-bos-llm: passed
+
+> npm run build
+✓ Compiled successfully
+  Generating static pages (291/291)
+  exit 0
+
+> npx jest lib/business-os/llm scripts/__tests__/check-bos-llm-literals.test.ts --ci
+Test Suites: 14 passed, 14 total
+Tests:       393 passed, 393 total
+Snapshots:   23 passed, 23 total
+```
+
+Two `app/` files entered the diff with D-71 (comment-only); both carry **0 `console.*`**, so §12 is unchanged, and `next build` covers them.
+
+**After the QA review (D-73, D-74), re-run in full — the literal gate twice, with and without a build in the checkout:**
+
+```text
+> rm -rf .next && npm run check:bos-llm-literals          (no .next/)
+check-bos-llm-literals: 38 files in scope, 2 exempt, 0 violations (20.7s)
+check-bos-llm-literals: passed
+
+> npm run build
+✓ Compiled successfully
+✓ Generating static pages (291/291)
+exit 0
+
+> npm run check:bos-llm-literals                          (.next/ present)
+check-bos-llm-literals: 38 files in scope, 2 exempt, 0 violations (21.0s)
+check-bos-llm-literals: passed
+
+> npm run typecheck:bos-llm
+typecheck-bos-llm: 167 files in scope, 31 errors, 0 new (104.0s)
+typecheck-bos-llm: passed
+
+> npx jest lib/business-os/llm scripts/__tests__/check-bos-llm-literals.test.ts --ci
+Test Suites: 14 passed, 14 total
+Tests:       398 passed, 398 total
+Snapshots:   23 passed, 23 total
+```
+
+Both literal runs are identical either way, which is D-65 holding: **38 files, 2 exempt, 0 violations**, build or no build.
+
+**The new rules, re-proved at a real call site** (planted, run, reverted — the tree is byte-identical after):
+
+```text
+lib/business-os/leads/LeadReplyRecommender.ts(104,5): temperature: request.temperature ??= 0.8
+  → take the temperature from resolveBosLlmSettings(area, callName).temperature; …
+Exempt files (2), and why:
+  lib/business-os/llm/modelSettingsPolicy.ts — FR-3: this IS the code-owned policy …
+  scripts/bos-llm-settings.ts — P-5b `verify-equivalence` must name the superseded keys …
+Adding another exemption is a code change with an SA review, not a config line.
+```
+
+That second half is D-74: the failure message now prints the exemptions from `EXEMPTIONS` itself, so it cannot go stale again.
 
 ---
 
@@ -1056,7 +1180,7 @@ Five PRs from this branch, in order (RM splits by commit, as in Layer 3). **Each
 | AC-8 | One retry with default; one audit entry; 0-token row; negative cache; no retry otherwise | 1, 2 | T1-11, T2-R |
 | AC-9 | Off per area incl. chat v1/v2/v4 gates (v4 gate before the budget refusal; parked write still confirmable), `full_site` three callers via `onAiDisabled`, `landing_page` default, images after reuse, three languages | 2, 3 | T2-O, T3-G, T3-O, T3-L |
 | AC-10 | Ledger/audit/intake/planner/image price record the model that ran | 2, 3 | T2-M, **T2-M-I (insights: provider model + ledger `model_name`, RC-W11)**, T3-M (incl. repair after retry, RC-W6), T3-S (image price key, RC-W4), T1-11 (audit models); live check after Step 2 (§10.2) |
-| AC-11 | Literal check passes / fails as specified; only exemption; runs in the existing job | 4 | T4-1 |
+| AC-11 | Literal check passes / fails as specified; **named exemptions with reasons** (two as shipped, D-63); runs in the existing job | 4 | T4-1 (61 cases) + the eight per-area mutations, §8.4 |
 | AC-12 | `typecheck:bos-llm` 0 new, `next build`, no new direct Supabase outside repositories, usage snapshot unchanged | every step | §4.6, §5.4, §6.4, §7.4, §8.3 |
 | AC-13 | Live: pre-apply, rows, per-area behaviour, leads off/on cycle, info log | §9, after 2 and 3 | P-1…P-6 incl. P-5b; QA live. **Items 4–5 (leads off/on) and the chat off/on check: pending user decision** (§6.5, §7.5) |
 | AC-14 | Docs | 4 | T4.3 review |
@@ -1078,6 +1202,7 @@ Five PRs from this branch, in order (RM splits by commit, as in Layer 3). **Each
 | `lib/ai/providers/openaiProvider.ts`, `SystemConfigRepository.ts` (not modified), all Step 2/3 call sites, chat routes, `MutateExecutor.ts`, `GeneratedImageService.ts` | 0 | 1–3 | — |
 | **Not touched, flagged only:** `app/admin/system-config/page.tsx` | **20** | — | Verify-only in Step 0 (N-14). Proposed as a follow-up with the admin-screen layer, which rewrites this page |
 | `lib/ai/pricing.ts` | **9** | 1 | **Converted** (D-25). The file moved to `aiModelPricingRepository.listActive()` in this step (SA addendum §E), so CLAUDE.md § Logging applies: `createLogger({ module: 'AiPricing' })`; 0 `console.*` remain |
+| `scripts/check-bos-llm-literals.ts`, `scripts/lib/bos-llm-scope.ts` (new) | `console.*` by design | 4 | **Not converted, deliberately (D-67).** CI tooling outside `lib/` / `app/` / `components/`; a gate's verdict is plain text a human reads in a GitHub log, and the sibling gate prints the same way. No `lib/`, `app/` or `components/` file was touched in Step 4 |
 | **Not touched, flagged only:** `lib/business-os/LanguageContext.tsx` | **8** | — | Avoided by reusing `media.generate.unavailable` (N-4; Q-6 approved by SA, so it stays untouched) |
 
 ---
@@ -2837,6 +2962,385 @@ GROUP BY 1 HAVING count(*) > 1;   -- expect 0 rows
 
 ---
 
+## SA Code Review — Step 4
+
+**Reviewed by SA — 2026-09-21**
+**Status:** 🔄 Fix Required — **2 must-fix (both one-line / doc-only), then Code Approved for QA.**
+
+Verified against the working tree, not the summary. SA re-ran everything below.
+
+### Gates, re-run by SA verbatim
+
+| Gate | SA's result |
+|---|---|
+| `npx tsx scripts/check-bos-llm-literals.ts` | `37 files in scope, 1 exempt, 0 violations (22.1s)` → `passed`, exit 0 |
+| `npx tsx scripts/check-bos-llm-literals.ts --list` | 37 lines: 36 `checked`, 1 `exempt` (`modelSettingsPolicy.ts`). No test file, no script, no generated file |
+| `typecheck-bos-llm` **with `.next/` present** | `167 files in scope, 31 errors, 0 new (87.8s)` → `passed` |
+| `typecheck-bos-llm` **with `.next/` moved aside** | `167 files in scope, 31 errors, 0 new (82.2s)` → `passed` — **identical**, D-65 confirmed independently |
+| `npx jest scripts/__tests__/check-bos-llm-literals.test.ts` | **37 passed / 37 total** (27.5 s) |
+| Live branch protection on `main` (`gh api .../branches/main/protection`) | required contexts = **`["Admin authz surface guard"]`**, `strict: false`. See finding 1 |
+
+### The mutation proof, re-run
+
+SA planted three of the Dev's eight re-hardcodes **at once**, ran the gate, and reverted. One run, three violations, right file / line / column / rule:
+
+```text
+check-bos-llm-literals: 37 files in scope, 1 exempt, 3 violations (20.2s)
+  lib/business-os/bizql/planner/Planner.ts(489,22): model-literal: 'gpt-4o'
+  lib/services/GeneratedImageService.ts(403,18): model-literal: 'gpt-image-1'
+  lib/services/WebsiteAIContentService.ts(360,20): temperature: settings.temperature ?? 0.7
+```
+
+The gate catches what the Dev says it catches. SA then spent the rest of the review trying to get past it — **59 shapes** driven through `findViolations`, plus one end-to-end evasion against the real tree. Results below.
+
+---
+
+### Findings
+
+**1. `.github/workflows/bos-llm-typecheck.yml:47` — the gate cannot block a merge. Priority: High.**
+Step 4's whole premise is "this is what stops the layer drifting back". It does not, yet. `main`'s branch protection lists exactly one required context, `Admin authz surface guard`; the job this gate rides in is `Type check (Business OS LLM attribution)`, which is **not required**. A contributor can hardcode `model: 'gpt-4o'`, watch this job go red, and merge anyway. Nothing in the code can fix this — it is a repository-settings change and it belongs to the user. **Recorded as the condition on which Step 4's value depends**, and it is the same open chip the admin-authz cycle left ("make the new guard a required check"). Not a blocker for the code; a blocker for the claim.
+
+**2. `scripts/lib/bos-llm-scope.ts:170-179` + `check-bos-llm-literals.ts:202` — the evasion class the gate cannot see: a value one file away. Priority: Medium (document, do not try to fix).**
+SA proved this end to end against the real tree, not on a synthetic string. Added `lib/services/__evasionHelper.ts`:
+
+```typescript
+export const PREFERRED_MODEL = 'gpt-4o';
+export const PREFERRED_TEMPERATURE = 0.7;
+```
+
+imported it into `WebsiteAIContentService.ts` and replaced the resolved temperature with `temperature: PREFERRED_TEMPERATURE`. Result: **`37 files in scope, 1 exempt, 0 violations → passed`.** Both halves are invisible: the helper is out of scope because it does not import the catalog, and the call site is clean because the value arrives as an identifier. The same hole swallows `const t = 0.7`, `['gpt','4o'].join('-')`, a template literal with an expression in it, and a dynamic `import()` of the policy module.
+
+This is inherent: the check is syntactic, and closing it needs type-level or data-flow analysis — disproportionate for a gate that must run in 20 s on every PR. **The fix is honesty, not code.** The script header (`check-bos-llm-literals.ts:15-42`) and the skill's Standard 8 both currently read as if the gate is complete. Both must state: *the gate sees literals and named constants written at the call site; it does not see a model or temperature that arrives from another module, from a computed string, or through a variable it cannot name.* A reviewer who believes the gate is total stops looking, and that is worse than no gate.
+
+**3. `scripts/check-bos-llm-literals.ts:246-265` — temperature shapes the detector misses. Priority: Medium.**
+Rule 3 keys on the *name* `temperature`. Confirmed missed, all realistic:
+
+| Shape | Verdict |
+|---|---|
+| `const DEFAULT_TEMP = 0.7; chat({ temperature: DEFAULT_TEMP })` | **missed** (`DEFAULT_TEMPERATURE` would be caught — the miss is the abbreviation) |
+| `chat({ temperature: cond ? 0.7 : 0.3 })` | **missed** — a ternary is not a numeric literal |
+| `function f(temperature = 0.7)` | **missed** — default parameter |
+| `class A { temperature = 0.7 }` | **missed** — property declaration |
+| `chat({ temperature: Number('0.7') })` | missed (obscure, fine) |
+
+The ternary, the default parameter and the class property are cheap: add `ts.isParameter` / `ts.isPropertyDeclaration` to the name-matched branch, and recurse `numericLiteralOf` into a `ConditionalExpression`'s two branches. Correctly *not* flagged, and good: `temperature: settings.temperature`, `max_tokens: 4000`, `top_p: 0.9`, `frequency_penalty: 0.3`.
+
+**4. `scripts/check-bos-llm-literals.ts:95-102` — `MODEL_ID_PATTERNS` misses live OpenAI model ids. Priority: Medium.**
+Confirmed clean (i.e. **not** flagged): `chatgpt-4o-latest`, `tts-1`, `omni-moderation-latest`, `sora-2`, and any family outside the six patterns (`deepseek-chat`, `grok-2`). `chatgpt-4o-latest` is a real, current OpenAI chat model — a call site could hardcode it today and pass. DEC-4's `openai`-only rule limits the blast radius but does not close it. Add `^chatgpt-`, `^tts-`, `^omni-moderation`, `^sora-` at minimum. This rule needs a maintenance owner: it is a list of vendor naming conventions and it will rot silently, which is the failure mode it exists to prevent.
+
+**5. `scripts/check-bos-llm-literals.ts:213-221` — false positives that will arrive with the admin screen. Priority: Medium.**
+Every one of these is legitimate code and every one **fails the gate**:
+
+| Shape | Violations raised |
+|---|---|
+| `type BosModel = 'gpt-4o' \| 'gpt-4o-mini'` | 2 × `model-literal` |
+| `interface X { model: 'gpt-4o' }` | 1 |
+| `z.enum(['gpt-4o','gpt-4o-mini'])` | 2 |
+| `switch (m) { case 'gpt-4o': ... }` | 1 |
+| `const price = PRICES['gpt-4o']` | 1 |
+| `<ModelPicker model="gpt-4o" />` | 1 |
+
+A **type annotation cannot send anything to a provider** — flagging it is pure noise, and noise is what gets a gate disabled. This is not hypothetical: `app/api/admin/business-os/llm-usage/businesses/route.ts` is already in scope, and FU-3's admin screen is exactly where a model allow-list, a Zod enum of permitted models or a dropdown lands. **Cheap partial fix now:** skip a string literal whose parent is a type position (`ts.isLiteralTypeNode(node.parent)`). Leave the Zod / switch / index-key cases — they are arguable — but record them here so the next contributor meets a known list instead of a surprise, and so the response is a narrow rule change rather than a second exemption.
+
+**6. `lib/business-os/llm/modelSettingsPolicy.ts:166` — the exempt file's exports are a documented bypass. Priority: Medium.**
+The one exempt file exports `BOS_LLM_CALL_POLICY`. A call site can `import { BOS_LLM_CALL_POLICY }` and read `.website.full_site.model` — resolver bypassed, area row ignored, gate silent (SA verified: clean). That is precisely rule 2's subject, "the same hardcode with an import in front of it". **Cheapest closure: add `BOS_LLM_CALL_POLICY` to `MODEL_CONSTANT_IDENTIFIERS` (:105-110).** No in-scope file imports it today, so it costs nothing and shuts the most obvious door the exemption opens.
+
+**7. `scripts/check-bos-llm-literals.ts:233-243` — `env-model` is one alias from blind. Priority: Low.**
+`const cfg = process.env; cfg['OPENAI_CHAT_MODEL']`, `const { OPENAI_CHAT_MODEL } = process.env` and any `getEnv('OPENAI_CHAT_MODEL')` helper all pass. Rule 5 is belt-and-braces (no in-scope file reads a model from the environment), so Low — but the header at :38-42 should not imply it closes the chat-v2 shape generally.
+
+**8. D-63 — ruling: MUST-FIX. Replace the `scripts/` directory exclusion with a named file exemption. `scripts/lib/bos-llm-scope.ts:174`.**
+SA verified the arithmetic: **exactly one** file under `scripts/` imports the catalog — `scripts/bos-llm-settings.ts` (`callCatalog` at :50). `typecheck-bos-llm.ts` and `bos-llm-scope.ts` only hold the catalog *path as a string*, which never resolves as an import. So `!rel.startsWith('scripts/')` buys one file and blankets ~400 others permanently.
+The Dev's argument — "nothing under `scripts/` is a call site, no script is deployed" — is true today and is not durable. `scripts/` already contains files that make live LLM calls, and a backfill or seeding script that imports the catalog tomorrow drops out of scope with no signal. The script's own header makes the counter-argument better than I can: *"the exemption list is the gate's blast radius."* A directory exclusion has a blast radius nobody can read.
+**Change to:** `EXEMPTIONS['scripts/bos-llm-settings.ts'] = 'P-5b verify-equivalence must name the superseded keys and their legacy defaults'`, and drop the `startsWith('scripts/')` clause. Behaviourally identical on this tree (SA checked), and the `--list` output then *shows* the exemption instead of hiding a directory. The test at `check-bos-llm-literals.test.ts:177` ("excludes tests, fixtures and the operator script") needs its assertion moved from scope to exemption.
+
+**9. D-62 — ruling: ACCEPT the AST decision; MUST-FIX three of the nine comments. Priority: Medium.**
+Walking the AST is the right call and SA is not re-opening it: a regex cannot tell code from prose, and flagging prose teaches people to write vaguer comments. SA enumerated every model mention left in the 36 checked files — nine lines. Six are fine (historical narrative or measured-latency rationale): `chat-v4/route.ts:14`, `Planner.ts:9`, `:18`, `:143`, `onboarding/build/route.ts:31`, `website/generate-from-profile/route.ts:24`. Three are not "prose that aged", they are **instructions that contradict FR-15**:
+
+| File:line | Text | Why it must go |
+|---|---|---|
+| `app/api/website/landing-pages/generate/route.ts:108` | `// Generate content using AI - use gpt-4o for better content quality` | Sits five lines above the `resolveBosLlmSettings('website', ...)` block. It tells the next contributor to do the exact thing CI now fails on |
+| `app/api/website/landing-pages/generate/route.ts:20` | `This route calls gpt-4o and waits for a full page of copy.` | False in the present tense; the model is whatever the website row says |
+| `app/api/intake/form/infer-question/route.ts:17` | `` `gpt-4o-mini`, following the codebase's convention of the small model for single-field inference `` | States a convention Layer 2 replaced with a settings row |
+
+The Dev's reason for leaving them — "rewording production files in a docs-and-CI step means re-running the whole gate set" — is the cost of two comment edits, and both files carry **0 `console.*`** (SA checked), so CLAUDE.md rule 3 adds nothing. Fix these three; leave the other six.
+
+**10. D-66 — ruling: ACCEPT the outcome, REJECT the stated reason. Reword `.github/workflows/bos-llm-typecheck.yml:2-3`. Priority: Low.**
+The comment says renaming "leaves the old check pending for ever and blocks the merge". That is only true of a **required** check, and this job is not one (finding 1). As written it will tell the next reader this gate is enforced when it is not. Keeping the names stable is still correct — it is free, and it is the right posture for the day branch protection adopts the check — so the decision stands; only the justification is wrong. Suggested: *"names kept stable so the check's identity survives if branch protection adopts it. It is not a required check today — `Admin authz surface guard` is the only one."*
+
+**11. D-65 / FU-2 — ACCEPTED, independently confirmed. Priority: none.**
+`167 / 31 / 0 new` with `.next/` present and with it moved aside — identical verdicts, two runs, same tree. Literal gate `37 / 1 / 0` both ways. Excluding generated output **cannot** hide a real caller: a `grep -c` for `.next/` or `.claude/` in `typecheck-bos-llm.baseline.json` returns **0**, and a `.next/types/**/route.ts` shim is a wrapper that *imports* the real route file, which is in the tsconfig program on its own account. `out/` and `coverage/` hold no sources. `.claude/` is agent worktrees, excluded for the reason `jest.config.js` already excludes them. FU-2 is correctly closed.
+
+**12. `docs/runbooks/BUSINESS_OS_LLM_MODEL_SETTINGS_RUNBOOK.md` §5 — the fail-open description is ACCURATE; the proof step is not executable. Priority: Medium.**
+SA checked §5 against `lib/business-os/llm/modelSettings.ts`: a warm instance serving last-good, a cold start / fresh deploy falling back to code defaults where every area is enabled, and `isBosLlmAreaEnabled` returning `true` on throw (:860-864) — all three rows are right. The three log lines are real and are the only signal (`:807`, `:849`, and the area-switch error). The `servingLastGood: false` warning is a genuinely good catch.
+What is not executable is the one step that matters. §5 step 3 says *"no new `token_usage` rows for that area's feature"* — and the runbook never names the `feature` values (they are in `lib/business-os/usage/usageCategories.ts`), gives no SQL, and §9's table lists **call names**, not ledger features. §6 has the same gap (`token_usage.model_name`, no query). At 2am, "check the ledger" without a query is not a procedure, and this is the *only* switch-independent proof — SA agrees it is the only one, which is exactly why it has to be copy-pasteable. **Add the per-area `feature` values and one copy-paste query to §5 and §6**, or point at the LLM Usage tab in `/test-business-os`, which already renders it.
+
+**13. `lib/business-os/llm/modelSettings.ts:806-807` — the warn message is wrong in the dangerous case. Priority: Low (code, not this step).**
+One message — *"serving the last good values"* — covers both outcomes; only the `servingLastGood` field distinguishes them, and in the dangerous case the message is untrue. An operator greps messages before fields. Either make the message conditional or emit a distinct `logger.error` when nothing was cached. The runbook compensates in prose, which is the right short-term answer; carry it as a follow-up.
+
+**14. Runbook — two things an operator would do and cannot find. Priority: Low.**
+(a) **The script failing for a non-validation reason.** §3.2 covers every way a *value* is refused; nothing covers an absent or rotated service-role key, which is a live risk (the unrotated key is an open item). (b) **No entry point for "how do I notice".** The runbook starts at "you already know there is an incident". One line pointing at where Business OS spend is watched from would close it.
+
+**15. Doc inconsistency. Priority: Low.** §2's FR-15 row says `T4-1 (34 cases)`; §8.2 and §8.3 say 37. SA measured **37 passed / 37 total**.
+
+**16. Standards — clean.** D-67 accepted: `console.*` in the two new scripts is CI tooling outside `lib/` / `app/` / `components/`, and the sibling gate prints identically; Pino would emit JSON nobody can scan in a GitHub log. `git status` confirms **no `lib/` / `app/` / `components/` file changed in this step**. If finding 9 is taken, two `app/` files enter the diff — both already carry 0 `console.*`, so §12 stays unchanged. Zod, RLS, repository pattern: untouched by this step. `!cancelled()` on the new workflow step is right — a red type check cannot hide a literal regression, and `always()` would have wrongly survived a cancel.
+
+**17. The skill update — it does change what the next contributor does. Priority: Low (one correction).**
+Standard 8 gives the operative shape (`resolveBosLlmSettings` → inside `withModelFallback` → report `modelUsed`), names three worked references at three difficulty levels, and the new anti-pattern line names the *disguised* forms (`settings.temperature ?? 0.7`, `OPENAI_MODELS.GPT_4O_MINI`, the request built outside the callback) rather than only the naive one. Removing the stale KI-C exception is right. **One correction required:** the bullet claims the gate fails "on a number bound to `temperature`". It does not — see findings 2, 3 and 4. State the limit in the skill, because the skill is what a reviewer trusts when deciding whether to look harder.
+
+---
+
+### Must-fix before QA
+
+1. **D-63 (finding 8)** — `scripts/` directory exclusion → named exemption for `scripts/bos-llm-settings.ts`, with the T4-1 assertion moved accordingly.
+2. **D-62 (finding 9)** — the three contradicting comments: `landing-pages/generate/route.ts:108`, `:20`, `infer-question/route.ts:17`.
+3. **Findings 2 + 17** — state the gate's blind class in the script header and in the skill's Standard 8. A gate believed to be total is worse than a gate known to be partial.
+
+### Should-fix (SA recommends, not blocking)
+
+- Finding 6: add `BOS_LLM_CALL_POLICY` to `MODEL_CONSTANT_IDENTIFIERS` — one line, shuts the exemption's own door.
+- Finding 5: skip string literals in type positions — one line, removes the most certain future false positive.
+- Finding 3: ternary + default parameter + class property for `temperature`.
+- Finding 4: `^chatgpt-`, `^tts-`, `^omni-moderation`, `^sora-`.
+- Finding 12: the ledger query and the per-area `feature` values in the runbook.
+- Finding 10: reword the D-66 comment. Finding 15: the 34/37 mismatch.
+
+### Is Layer 2 complete when this lands?
+
+**No — it is code-complete.** Three things stand between that and complete, and the requirement's flat **"Delivered"** obscures all three, even though the body's "Still open after delivery" paragraph lists two of them:
+
+1. **The anti-drift property is not in force.** The gate is not a required status check (finding 1). Until branch protection adopts it, a hardcoded model merges over a red check.
+2. **chat-v2 still picks its own model, and its spend never reaches the ledger.** It is stopped by the chat area gate, so the *kill switch* covers it — but Layer 2's headline promise, "an operator can change any Business OS model without a deploy", is **false for chat-v2**, and its cost is invisible in `token_usage`. This is DEC-11 working as decided, not a defect; it is a caveat the word "Delivered" hides from anyone who did not read DEC-11.
+3. **The Step 2 and Step 3 post-deploy checks are still owed.** Nothing has yet confirmed in production that the wired areas resolve their rows. Delivered in code ≠ delivered in production.
+
+**SA recommends** the requirement status read **"Delivered (code) — with three named exceptions"** and carry those three, rather than plain Delivered. FU-3 / FU-4 / FU-5 / FU-6 are already carried correctly.
+
+### Code Approved for QA: **Not yet** — after the three must-fixes above, yes.
+
+---
+
+## QA Test Report — Step 4
+
+**QA — 2026-09-21**
+**Test mode:** full (adversarial)
+**Strategy used:** C (test script / harness) + B (integration-style: the real gate driven over the real tree) + E (log & doc analysis for the runbook). No UI, so no D. Rationale: Step 4 ships a CI gate and three documents. The only meaningful test of a gate is to plant what it claims to catch and then try to get past it, which is a script problem, not a Jest problem — so the committed suite was re-run *and* a separate 89-shape harness was driven straight through the exported `findViolations`, plus four evasions planted in real wired call sites.
+**Focus:** all — the gate (api/schema), the runbook (operator-facing), the skill (contributor-facing)
+**Skipped:** `set`/`--enabled false` against the live row (see QA4-17, BLOCKED by policy, not by the code)
+**Input source:** prompt keywords (full, adversarial, gate-attack + FP hunt + exemptions + runbook + skill)
+**Worktree:** `neuronforge-llm-layer2-step4`, branch `feature/business-os-llm-layer2-step4`, off `origin/main` `59d7c357`. Nothing committed. **Every mutation was reverted and the tree proved identical to its pre-QA state** (`git status --porcelain` → the same 13 modified + 4 untracked entries; `git diff --stat lib/ app/` → only the two comment-only `app/` files of D-71).
+
+---
+
+### QA4-1. Gates, run by QA verbatim
+
+| Gate | Result | Verdict |
+|---|---|---|
+| `npm run check:bos-llm-literals` **with `.next/` present** | `38 files in scope, 2 exempt, 0 violations (21.1s)` → `passed`, **exit 0** | ✅ |
+| `npm run check:bos-llm-literals` **with `.next/` moved aside** | `38 files in scope, 2 exempt, 0 violations (23.9s)` → `passed`, **exit 0** | ✅ **Identical. FU-2 / D-65 confirmed a third time, this time on the literal gate's own denominator** |
+| `npm run check:bos-llm-literals -- --list` | 38 lines: 36 `checked`, **2 `exempt`** (`modelSettingsPolicy.ts`, `bos-llm-settings.ts`). No test file, no fixture, no `.next/`, no `.claude/` | ✅ |
+| `npm run typecheck:bos-llm` (`.next/` absent) | `167 files in scope, 31 errors, 0 new (104.6s)` → `passed`, **exit 0** | ✅ |
+| `npm run build` | **exit 0**; full route table emitted, middleware built | ✅ |
+| `npx jest lib/business-os/llm scripts/__tests__/check-bos-llm-literals.test.ts --ci` | **14 suites / 393 tests / 23 snapshots passed**, exit 0 (32.0 s) | ✅ |
+| `npx jest scripts/__tests__/check-bos-llm-literals.test.ts --ci` | **56 passed / 56 total** | ✅ — SA finding 15 is closed; §2's FR-15 row, §8.2 and the measured count now all say **56** |
+| `npm run bos:llm-settings` (no args) | usage line matches the runbook's five commands **verbatim**; `supabaseHost` printed first; the eight areas and their call names match §9 | ✅ |
+
+Every figure in §8.3 / §8.7 reproduces. **The scope count is stable across build state — the one thing that was not stable last round.**
+
+---
+
+### QA4-2. The eight per-area mutations, replanted by QA — all eight in ONE run
+
+Not the Dev's list re-read: eight fresh re-hardcodes, planted simultaneously, chosen so that **all five rules fire on the real tree** (the Dev's round left `env-model` to the unit tests only; it is planted at a real call site here).
+
+```text
+check-bos-llm-literals: 38 files in scope, 2 exempt, 8 violations (24.5s)
+check-bos-llm-literals: FAILED. A Business OS call site writes its own model or temperature:
+  lib/business-os/bizql/planner/Planner.ts(489,22): model-literal: 'gpt-4o'
+  lib/business-os/briefing/BriefingNarrator.ts(129,18): model-constant: OPENAI_MODELS
+  lib/business-os/insight/repository/InsightRepository.ts(749,13): temperature: temperature: 0.3
+  lib/business-os/leads/LeadReplyRecommender.ts(107,35): superseded-key: 'lead_reply_recommender_model'
+  lib/services/GeneratedImageService.ts(403,18): model-literal: 'gpt-image-1'
+  lib/services/IntakeGenerationService.ts(278,11): temperature: temperature: isDraft ? 0.2 : 0.8
+  lib/services/OnboardingConversationManager.ts(1075,16): env-model: process.env.ONBOARDING_MODEL
+  lib/services/WebsiteAIContentService.ts(360,20): temperature: settings.temperature ?? 0.7
+exit 1
+```
+
+| Area | Mutation | Rule | File/line/column | Hint |
+|---|---|---|---|---|
+| chat | `model: attemptModel` → `'gpt-4o'` | model-literal | ✅ 489,22 — col 22 is the quote | ✅ |
+| briefing | `model` → `OPENAI_MODELS.GPT_4O_MINI` | model-constant | ✅ 129,18 | ✅ |
+| insights | spread → `temperature: 0.3` | temperature | ✅ 749,13 | ✅ |
+| leads | re-read of `lead_reply_recommender_model` | superseded-key | ✅ 107,35 — col 35 is the string, not the line start | ✅ |
+| images | `model` → `'gpt-image-1'` | model-literal | ✅ 403,18 | ✅ |
+| intake | `temperature: isDraft ? 0.2 : 0.8` | temperature | ✅ 278,11 — **the ternary SA asked for is caught** | ✅ |
+| onboarding | `model: process.env.ONBOARDING_MODEL` | **env-model** | ✅ 1075,16 — **rule 5 proved on the real tree for the first time** | ✅ |
+| website | `temperature: settings.temperature ?? 0.7` | temperature | ✅ 360,20 — the node recorded is the `??` expression, which is right | ✅ |
+
+All eight reverted; `git status` clean; re-run `38 / 2 / 0 → passed`. **PASS.** AC-11's fail-and-pass proof holds independently.
+
+---
+
+### QA4-3. The evasion hunt — 62 shapes through `findViolations`, then 4 planted in real call sites
+
+**The gate is much harder to fool than its header admits on the model side.** These all FAIL the gate and none needed to: `String.raw\`gpt-4o\``, `'gpt-' + '4o'`, an object/array of model literals (`{ chat: 'gpt-4o' }`, `as const`, `MS[0]`), an enum member, a class static, a getter return, `String('gpt-4o')`, a destructuring default `const { model = 'gpt-4o' }`, a JSX attribute, a decorator argument, `satisfies`/`as` casts, a default-export object — because any bare model string anywhere in code is caught. SA finding 6's closure holds in **four** import shapes: named, aliased (`as P`), namespace (`import * as policy`) and **dynamic `await import()`** of the policy module all raise `model-constant`, because the read of `BOS_LLM_CALL_POLICY` is the trigger, not the import. `OPENAI_MODELS` likewise survives aliasing, namespacing and destructuring. The superseded-key rule survives a backtick template literal.
+
+**Documented misses, all reproduced** (so the "WHAT IT CANNOT SEE" block is honest as far as it goes): a value one file away (SA's helper), `['gpt','4o'].join('-')`, a template literal with an expression, `Number('0.7')`, a JSON/`require` read, `const t = 0.7`, `process.env` destructured or one alias away, a model id outside the pattern list.
+
+**Four misses that are NOT in any of the three blind lists** — planted in real, wired call sites and run against the real tree, which reported **`38 files in scope, 2 exempt, 0 violations` → `passed`, exit 0**:
+
+| # | Shape | Planted at | Why it matters |
+|---|---|---|---|
+| 1 | `request.temperature ??= 0.8;` | `OnboardingConversationManager.ts` | The header (lines 28-31) explicitly claims the defaulting forms `?? 0.7` and `\|\| 0.3` are caught. `??=` is the **same operator in assignment form** and is not — `ts.SyntaxKind.QuestionQuestionEqualsToken` is not in the binary-expression branch |
+| 2 | `opts.temperature \|\|= 0.3;` | `InsightRepository.ts` | ditto, `BarBarEqualsToken` |
+| 3 | `const { temperature: temp = 0.4 } = settings; … temperature: temp` | `IntakeGenerationService.ts` | **The most realistic of the four.** A `BindingElement` initializer is not covered by the `VariableDeclaration / Parameter / PropertyDeclaration` branch. This is the same "hardcode wearing a resolver's clothes" as `settings.temperature ?? 0.3` — it even *calls* the resolver — and §8.4 singles that case out as the one worth reading twice |
+| 4 | `temperature: 0.7 satisfies number` | `WebsiteAIContentService.ts` | `numericLiteralOf` recurses into `AsExpression` and `ParenthesizedExpression` but not `SatisfiesExpression` |
+
+None is "one file away", none is computed, none goes through an unnamed variable — so none is covered by the documented blind class. **See defect D4-3.** All four reverted.
+
+Also missed and arguably inside "anything computed", so not counted as defects: a computed property key `{ ['tempera'+'ture']: 0.7 }`, `7 / 10`, `parseFloat(process.env.TEMP ?? '0.7')`, `'image_generation' + '_model'`, `BASE.replace(...)`, a policy read behind a helper function `getPolicy().website.full_site.model`, a `const [temperature = 0.7] = arr` array-destructuring default.
+
+---
+
+### QA4-4. The false-positive hunt — 27 plausible future shapes
+
+**Verified: type positions are skipped and the four documented shapes are the documented four.** Passing (correctly): `type BosModel = 'gpt-4o' | …`, `interface X { model: 'gpt-4o' }`, `Record<'gpt-4o'|…, number>`, `fn<'gpt-4o'>()`, `x as 'gpt-4o'`, a template-literal type `` `gpt-${string}` ``, a type-parameter default, **comments and JSDoc naming a model and a temperature** (rule: never scanned — confirmed), a module specifier, `throw new Error('gpt-4o is not allowed')` (a sentence, not a literal), `temperature: settings.temperature`, `max_tokens: 4000 / top_p: 0.9 / frequency_penalty: 0.3`, `const template = 0.7` (word-aware name test confirmed), `z.object({ temperature: z.number().default(0.7) })`, a temperature range check.
+
+Failing as documented (the four known FPs): `z.enum([...])`, a `switch` case, `PRICES['gpt-4o']`, a JSX prop.
+
+**Three failing shapes that are NOT on the documented list** — see defect D4-4:
+
+| Shape | Violations | Why it will arrive |
+|---|---|---|
+| `const ALLOWED = ['gpt-4o','gpt-4o-mini'] as const;` | 2 × model-literal | A runtime allow-list is what the admin screen (FU-3) validates against. `z.enum` is documented; the plain array that usually sits beside it is not |
+| `const TEMPERATURE_MAX = 2; const TEMPERATURE_MIN = 0;` | 2 × temperature | Today `TEMPERATURE_BOUNDS` lives in the **exempt** policy module, which is the only reason this is hypothetical. The day a bound is needed in `modelSettings.ts` (in scope) the gate goes red on correct code |
+| `z.string().default('gpt-4o')` | 1 × model-literal | Arguable (it *is* a default), but it is a fifth shape a contributor will meet with no list entry |
+
+---
+
+### QA4-5. The two exemptions — load-bearing, and no broader than their reasons
+
+Both were run through `findViolations` **as if they were not exempt**:
+
+| Exempt file | Violations if checked | Do they match the stated reason? |
+|---|---|---|
+| `lib/business-os/llm/modelSettingsPolicy.ts` | **25** (23 model-literal, 2 model-constant) — 21 `'gpt-4o' / 'gpt-4o-mini'` policy defaults, `'gpt-image'`/`'dall-e'` in the image-family test, and its own `BOS_LLM_CALL_POLICY` | ✅ Every one is the FR-3 policy itself. The exemption is unambiguously load-bearing |
+| `scripts/bos-llm-settings.ts` | **14** (11 superseded-key, 3 model-literal) — exactly the six superseded keys of `verify-equivalence` and their three legacy model defaults | ✅ **14 of 14** are covered by the stated reason, word for word. Load-bearing, and the reason is not padded |
+
+**Neither exemption reaches further than claimed.** Both reason strings assert the file sends nothing to a provider: verified — `scripts/bos-llm-settings.ts` contains **no** `providerFactory` / `OpenAI` / `callWithTracking` / `fetch(` reference at all, and `modelSettingsPolicy.ts` imports only `SystemConfigRepository` and the catalog. Keying by repo-relative path means a file move drops the exemption rather than carrying it (read and confirmed at `scanFiles`). `--list` prints both with `exempt `, so the blast radius is visible without reading the source.
+
+One residual, recorded as an observation rather than a defect: an exemption is **whole-file and all-rule**. `scripts/bos-llm-settings.ts` only needs `superseded-key` and `model-literal` silenced; a future `temperature: 0.7` or `process.env.X_MODEL` in that same file would also be invisible. A rule-scoped exemption would be tighter. Not worth a change today (the file makes no model call), but worth knowing when a third exemption is proposed.
+
+---
+
+### QA4-6. The runbook, read as an operator at 2 a.m. — §1 to §9 followed literally
+
+| Runbook claim | How it was checked | Result |
+|---|---|---|
+| §1 — the five commands | `npm run bos:llm-settings` with no args prints a usage line **identical** to the five documented forms | ✅ |
+| §1 — "every command logs the Supabase host first" | First log line is `{"command":"…","supabaseHost":"jgcc….supabase.co"}` | ✅ |
+| §1 / §3.3 — a raw `npx tsx scripts/bos-llm-settings.ts` dies with `supabaseUrl is required` | Reproduced exactly: `Error: supabaseUrl is required.` from `validateSupabaseUrl`, exit 1, before any usage text | ✅ |
+| §2 — `get <area>` prints `row`, `rowUpdatedAt`, `resolved`, `areaEnabled`, `issues` | Run **live, read-only, against production**: `get website` returned all five fields, `issues: []`, `rowUpdatedAt 2026-09-21T10:14:08Z` | ✅ |
+| §3.1 — the example `row.json` | It is the **actual production website row** (`model: gpt-4o-mini`, `temperature: 0.7`, `full_site`/`landing_page` → `gpt-4o`, `testimonial_enhance` → `0.5`). An operator copying it changes nothing by accident | ✅ Better than plausible — it is real |
+| §5 — the three fail-open rows | Checked line-for-line against `modelSettings.ts`: `onReadFailure` keeps a non-`fromFailedRead` snapshot (**last good, stays off**); `if (!snapshot) snapshot = defaultSnapshot(true)` and `defaultAreaSnapshot` returns **`enabled: true` for all eight areas** (**cold start / fresh deploy re-enables**); `isBosLlmAreaEnabled` returns `true` on throw | ✅ **All three accurate** |
+| §5 — the three log lines are the only signal | All three strings match the source exactly (`modelSettings.ts:807`, `:862`, `:848`) | ✅ |
+| **FU-8** — "the warning message is untrue in the dangerous case" | Confirmed at `modelSettings.ts:806-809`: one `logger.warn('Could not read …; serving the last good values')` fires whether or not anything was cached; only `servingLastGood` distinguishes. **The runbook says so explicitly** — "the field `servingLastGood: false` in that line is the dangerous case" | ✅ The prose compensates correctly; FU-8 is correctly carried as a code follow-up, not silently absorbed |
+| §5 / §6 — the `token_usage` query | Columns `feature`, `component`, `model_name`, `cost_usd`, `created_at` all exist (`TOKEN_USAGE_COLUMNS`, `baseProvider.ts:117/161`). **`model_name` is written by `baseProvider` on every tracked call, not only chat**, so §6's "do one action, read `model_name`" works for all eight areas | ✅ Runnable as written |
+| §5 — the eight `feature` values | `bosFeature(area)` returns `` `business-os-${area}` `` and `BOS_LLM_AREAS` is exactly `chat, insights, briefing, website, intake, leads, onboarding, images`. **All eight rows correct** | ✅ |
+| §5 — "one area is invisible: chat-v2 writes no ledger row" | Correct, and it is the single most important caveat on the only switch-independent proof | ✅ |
+| §9 — areas, calls, locked fields | Chat 2, insights 3, briefing 1, website 8, intake 2, leads 1, images 1 — all match the script's own dump. **Onboarding's four call names are missing** | ⚠️ **D4-5** |
+| §4 — `--enabled false` refuses while call-level `enabled: true` exists | Not exercised: see QA4-7 | ⛔ BLOCKED |
+
+**Nothing in §5 would mislead someone stopping a cost runaway.** The fail-open description is the accurate one, the dangerous case is named, the `get`-reads-the-row warning is where it needs to be, and the ledger proof is now copy-pasteable. That was the single worst gap SA found and it is properly closed.
+
+---
+
+### QA4-7. Not run (BLOCKED, by QA policy)
+
+`npm run bos:llm-settings -- set leads --enabled false --dry-run` and the `--include-calls` refusal path (§4 item 1, RC-W8c) were **not executed**. The only checkout with credentials points at **production** (`supabaseHost` confirms it), and QA does not exercise a write path — even a documented dry-run — against live data. The same boundary was drawn in the Step 1 report ("`set` never run"). The refusal logic itself is covered by Step 1's QA and by `modelSettings` unit tests; what is unverified here is only that the **runbook's two command lines** behave as printed.
+
+---
+
+### QA4-8. The skill — does Standard 8 tell a new contributor the truth?
+
+**Substantially yes, and it is the most honest section in the skill.** It states the operative shape (resolve → inside `withModelFallback` → report `modelUsed`), that defaults live in exactly one file, the three-part new-area checklist, and — the part that matters — two sentences a reviewer needs: *"a green run means no call site hardcodes in plain sight; it does **not** mean every call site obeys its area row"* and *"**It is also not a required status check today**, so a red run does not block a merge. Review accordingly: read the call site, do not read the badge."* SA finding 17's correction is applied (the bullet no longer claims a flat "number bound to `temperature`"; it enumerates `?? 0.7`, a ternary and a default parameter). The stale KI-C exception is gone from Standard 4 and the review checklist and anti-patterns both gained a line.
+
+Two gaps: its blind list inherits **D4-3** (no `??=`, `||=`, destructuring default or `satisfies`), and the shape it *claims* — "including `?? 0.7`" — is where the nearest miss lives. And see **D4-7**: `CLAUDE.md`'s new Layer 2 sentence, which more agents read than read the skill, says the gate "fails on a model or temperature literal" with no advisory caveat at all.
+
+---
+
+### QA4-9. CI wiring
+
+`.github/workflows/bos-llm-typecheck.yml` adds one step guarded by `if: ${{ !cancelled() && steps.scope.outputs.skip != 'true' }}` — correct: a red type check cannot hide a literal regression, and a cancel does not run it. If the `scope` step itself fails, `skip` is empty and the gate **runs**, which is the safe direction. `.github/ci/non-deploying-change.sh` carves out all three new/changed gate files (`check-bos-llm-literals.ts`, `lib/bos-llm-scope.ts`, alongside the existing `typecheck-bos-llm.ts`), so a change to CI can never skip CI. The workflow header now carries D-72's corrected wording — advisory, `Admin authz surface guard` is the only required context. ✅
+
+---
+
+### QA4-10. Defects
+
+#### High
+None. No functional regression was found; every gate is green and the tree is unchanged by QA.
+
+#### Medium
+
+1. **D4-1 — The gate's own failure output misstates its blast radius.** `scripts/check-bos-llm-literals.ts:401`. Every failing run ends with: *"The only exempt file is `lib/business-os/llm/modelSettingsPolicy.ts` (FR-3). Adding a second exemption needs SA review."* **There are two exemptions**, and the second was added in this same round (D-63 / SA finding 8). This is the line a contributor reads at the exact moment the gate bites, and it is false about the one property the step sells as readable — the script's own header says *"the exemption list is the gate's blast radius, so it has to be readable"*. Severity Medium because it is runtime output, not prose.
+   - Same staleness in three documents: workplan §8.1 (line 930 — the **same table cell** says "Two named exemptions" and then "Only exemption: modelSettingsPolicy.ts"), workplan §8.2 (line 943 — "passes on the branch (37 files, 1 exempt, 0 violations)"), and the requirement's 2026-09-21 Change History row ("with the policy module as its only exemption"). SA's own review record (lines 2932/2944/2967/3124) correctly keeps 37/1 as dated evidence — those are **not** defects.
+   - Fix: one string at `:401`, three doc edits.
+
+2. **D4-2 — AC-11 and RC-12 still specify ONE exemption, while the shipped gate has two, and AC-11 is marked verified.** `BUSINESS_OS_LLM_MODEL_SETTINGS_LAYER2_REQUIREMENT.md:291` — *"Its only exemption is the policy module."* — and `:436` (RC-12) — *"The only exemption is the FR-3 policy module (V-12)."* SA's D-63 ruling changed the design **after** those lines were written; only the status header was amended, not the body. As literally worded, the delivered code does not satisfy its own acceptance criterion, and §11's AC-11 row ("only exemption") inherits it. This is the traceability half of D4-1 and needs a BA/SA-sanctioned amendment, not a silent edit.
+
+3. **D4-3 — Four temperature hardcodes evade the gate and are in none of the three blind lists; two of them contradict the header directly.** Proved end to end at real wired call sites with the gate reporting `38 files in scope, 2 exempt, 0 violations → passed`:
+   `request.temperature ??= 0.8` · `opts.temperature ||= 0.3` · `const { temperature: temp = 0.4 } = settings` · `temperature: 0.7 satisfies number`.
+   The header at lines 28-31 promises that *"the defaulting forms `settings.temperature ?? 0.7` and `|| 0.3` … are hardcodes wearing a resolver's clothes"* are caught; `??=` / `||=` are those operators in assignment form. The destructuring default is the same species as the intake case §8.4 singles out as the one worth reading twice — it calls the resolver and pins the value anyway. None of the four is "one file away", computed, or behind an unnamed variable, so the documented blind class does not cover them.
+   Per the brief's rule — *every evasion not already in "WHAT IT CANNOT SEE" is a defect* — this is the report's substantive finding. The honesty of that block is what Step 4 is selling, and it is currently 4 shapes short.
+   Fix is small **either way**: ~4 lines of code (add `QuestionQuestionEqualsToken` + `BarBarEqualsToken` to the binary branch, `ts.isSatisfiesExpression` to `numericLiteralOf`, `ts.isBindingElement` to the name-matched branch) or three synchronised doc edits (header, skill Standard 8, the `it.each` blind-spot block). **Code is preferable** — these are the only four and they are cheap; documenting them makes the blind list longer without making the gate better.
+
+#### Low
+
+4. **D4-4 — Three future-code false positives beyond the documented four.** `const ALLOWED = ['gpt-4o','gpt-4o-mini'] as const` (2 violations — the runtime allow-list that will sit beside FU-3's `z.enum`), `const TEMPERATURE_MAX = 2 / TEMPERATURE_MIN = 0` (2 violations — hypothetical only because `TEMPERATURE_BOUNDS` lives in the *exempt* policy module today), and `z.string().default('gpt-4o')`. Add to the KNOWN FALSE POSITIVES block so the next contributor meets a list, not a surprise — the stated reason the first four are listed.
+
+5. **D4-5 — The runbook promises call names it does not give, for the one area with no off switch.** §3.1 says *"Call names are in §9"*; §9's onboarding row says only *"the extractor calls"*. The four real names — `business_story_extraction`, `client_workflow_extraction`, `client_tracking_extraction`, `adjustment_intent_extraction` — appear nowhere in the runbook. Onboarding cannot be switched off, so **changing its model is the only lever an operator has on onboarding spend**, and a per-call override needs the exact name or the script returns `unknown_call_name`. One table cell.
+
+6. **D4-6 — A duplicated paragraph in the requirement's status block.** `…LAYER2_REQUIREMENT.md` gained **both** "**Also still open:**" and "**Still open after delivery:**", which are near-identical (admin screen, FU-3/4/5/6, AC-13 items 4-5). Both are `+` lines in the diff, so it is an unremoved first draft, not a pre-existing line. Delete one.
+
+7. **D4-7 — `CLAUDE.md` says the gate "fails", with no advisory caveat.** The new Layer 2 sentence in the Key Documentation row reads *"`npm run check:bos-llm-literals` (a second step in the same CI job) **fails** on a model or temperature literal"*. True of the command, misleading about the consequence — the skill, the workflow header and the requirement all now say a red run blocks no merge (FU-7). CLAUDE.md is the first document every contributor and agent reads. Half a sentence.
+
+---
+
+### QA4-11. Coverage against the acceptance criteria
+
+| AC | Tested? | Result | Notes |
+|---|---|---|---|
+| **AC-11** — literal check passes on the branch; fails on a planted hardcode; one exemption; runs in the existing job | ✅ | **Partial** | Passes (`38/2/0`, both build states) and fails on **eight** fresh per-area mutations with correct file/line/column/rule across **all five** rules. Runs as a second step with `!cancelled()`. ⚠️ The "one exemption" clause is no longer true of the code — **D4-2** |
+| **AC-14** — docs: skill, runbook, investigation, roadmap, KI-C closed, Change History rows | ✅ | **Pass** | Standard 8 added and honest about the gate's limits; KI-C exception removed; runbook created and verified runnable against production; every touched doc carries a Change History row. Two wording defects (D4-5, D4-7) |
+| **FR-15** — no call site writes its own model or temperature | ✅ | **Pass, within the gate's stated reach** | 0 violations over 36 checked files; the two exempt files are load-bearing and no broader than their reasons |
+| **FR-18** — operator documentation | ✅ | **Pass** | §1-§9 followed literally; commands runnable as written; the fail-open description is accurate in all three instance states |
+| Standards (Pino, Zod, RLS, repository) | ✅ | **Pass** | D-67 stands — the two new scripts are CI tooling outside `lib/`/`app/`/`components/`, and the sibling gate prints identically. QA confirms **no `lib/` file changed in this step**, and the only two `app/` files are comment-only with 0 `console.*` |
+
+**PASS / FAIL / BLOCKED: 8 gate runs PASS · 8 mutation cases PASS · 62 + 4 evasion probes run, 4 undocumented misses = FAIL (D4-3) · 27 false-positive probes, 3 undocumented = FAIL (D4-4) · 2 exemption probes PASS · 13 runbook checks: 12 PASS, 1 FAIL (D4-5) · 1 BLOCKED (QA4-7) · skill PARTIAL · CI wiring PASS.**
+
+---
+
+### QA4-12. What can only be proven after deploy — and what it does to the owed Step 2/3 checks
+
+**Step 4 adds nothing to the post-deploy list.** It ships a CI script, a skill file and a markdown runbook; none of the three runs in production, and the gate is developer-time only. The Step 2 and Step 3 post-deploy checks (§QA2-8, §QA3-10) are **unchanged, still owed, and not affected by anything in this step** — QA4-6's live `get website` confirms the row is there and resolves, but reading the row is not the same as an instance honouring it, which is exactly what those checks exist to prove.
+
+Two Step 4 items can only be settled off the code:
+
+1. **FU-7 — the gate cannot block a merge.** A repository-settings change (add `Type check (Business OS LLM attribution)` to `main`'s required contexts, which today list only `Admin authz surface guard`). Until then Step 4's anti-drift claim is advisory, and the four documents that say so are the mitigation. This is the same open chip the admin-authz cycle left, and it is the user's to close.
+2. **The runbook's write paths** (§4's `--enabled false` refusal and `--include-calls`) are proven only by Step 1's unit coverage; the printed command lines themselves remain unexercised — QA4-7.
+
+---
+
+### QA4-13. Final status
+
+- [ ] All acceptance criteria pass — ready for commit
+- [x] **Issues found — Dev must address before commit**
+
+**Ship recommendation: ship after D4-1, D4-2 and D4-3.** None is a functional defect, no High severity exists, every gate is green and the delivered gate is genuinely harder to fool than its own documentation claims on the model side. But this step's product is *a gate plus an honest account of what it cannot do*, and three of its own statements are currently wrong about itself: the failure message names one exemption when there are two (D4-1), the acceptance criterion that certifies it still says the same (D4-2), and the blind list is four shapes short — two of which the header specifically promises are covered (D4-3). D4-3 is ~4 lines of code; D4-1 is one string and three doc lines; D4-2 is a requirement amendment. D4-4 to D4-7 are worth taking in the same pass but need not gate the commit.
+
+After those three: **yes, ship.** The gate does what §8.4 says, the runbook is the first document in this cycle that an operator could actually follow at 2 a.m., and Standard 8 tells a reviewer not to trust the badge — which is the rarest and most valuable thing in the step.
+
+---
+
 ## 17. Commit Info
 
 | Step | Commits | PR | Merged | Notes |
@@ -2853,6 +3357,9 @@ GROUP BY 1 HAVING count(*) > 1;   -- expect 0 rows
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-09-21 | **QA Step 4 report answered — D4-1 … D4-7 all closed (still uncommitted); all gates green** | **D4-3 (Medium) — caught, not documented.** QA proved four temperature hardcodes at real wired call sites with the gate green: `request.temperature ??= 0.8`, `opts.temperature ||= 0.3`, `const { temperature: temp = 0.4 } = settings` and `temperature: 0.7 satisfies number`. The first two are the header's **own promise in assignment form**, and a stated guarantee that is false is worse than an admitted gap, so all four were fixed in code (four lines: the two logical-assignment operators, `ts.isSatisfiesExpression`, `ts.isBindingElement` keyed on the binding's **source key**). Five new T4-1 cases; re-proved end to end at `LeadReplyRecommender.ts(104,5)`. The blind list is unchanged — none of the four was one-file-away, computed or behind an unnamed variable, which is why they were defects (D-73). **D4-1 (Medium) — the gate no longer lies about itself.** Its failure output said "the only exempt file is modelSettingsPolicy.ts" after D-63 added a second; it now prints **every** exemption with its reason, generated from `EXEMPTIONS`, so it cannot drift again. Same staleness fixed in §8.1, §8.2 and §11. **D4-2 (Medium):** the requirement's **AC-11 and RC-12** said "its only exemption is the policy module" while AC-11 was marked verified — an acceptance criterion certified against text the code no longer matched. Both now describe named exemptions with reasons, as does FR-15's body (D-74). **D4-4:** the documented false-positive list grows from four to **seven** (`as const` model array, `z.string().default()`, `TEMPERATURE_MAX`). **D4-5:** the runbook §9 now lists onboarding's four call names — the one area with no off switch, where changing the model is the only lever — and notes that `client_tracking_extraction` is unreachable today. **D4-6:** the duplicated "still open" paragraph is gone, merged into one that also carries FU-7 and FU-8. **D4-7:** CLAUDE.md's Layer 2 sentence now says the job is **not a required check**, so a red run warns rather than blocks. QA's own runbook verification is recorded as-is: the commands run as printed, `get website` returned all five documented fields against production, §3.1's example row is the real production row, and §5's fail-open rows were confirmed line-for-line against `defaultAreaSnapshot`. Gates (§8.7): literals **38 / 2 exempt / 0 violations — twice, with and without `.next/`**, typecheck **167 / 31 / 0 new**, build **exit 0, 291/291**, jest **14 suites / 398 tests / 23 snapshots** |
+| 2026-09-21 | **SA Step 4 review answered — 3 must-fixes and 6 should-fixes applied (still uncommitted); all gates green** | **Must-fix 1 (D-63, SA finding 8):** the `scripts/` directory exclusion is gone. `scripts/` is in scope and **`scripts/bos-llm-settings.ts` is a named exemption with its reason**, printed by `--list`. SA's arithmetic was right — the exclusion bought one file and blanketed ~400 for ever — and my own header says the exemption list is the gate's blast radius. Scope **37 → 38 files, 1 → 2 exempt**, still 0 violations; T4-1's assertion moved from scope to exemption and now proves the script's exemption load-bearing too. **Must-fix 2 (D-71, finding 9):** the three comments that were *instructions contradicting FR-15* are reworded — `landing-pages/generate/route.ts:108` (`// use gpt-4o for better content quality`, five lines above the resolver) and `:20`, and `infer-question/route.ts:17`. The other six model mentions are historical narrative and stay. Both files carry 0 `console.*`, so §12 is unchanged. **Must-fix 3 (D-69, findings 2 + 17):** the gate's **blind class** is now stated in the script header, in the skill's Standard 8 **and** as four `it.each` cases that pass on purpose — a value imported from another module (SA proved this end to end with the gate green), a computed id, an unnamed `const t = 0.7`, `process.env` one alias away. The skill also says the gate is **not a required check**, so a red run blocks nothing. **Should-fixes taken (D-70, findings 3-6):** `BOS_LLM_CALL_POLICY` added to the model-constant set (the exempt module's own bypass); `chatgpt-`/`tts-`/`sora-`/`omni-moderation-`/`deepseek-`/`grok-` added to the model patterns (`chatgpt-4o-latest` is current and would have passed); ternary, default parameter and class-property temperatures now caught with a **word-aware** name test (`DEFAULT_TEMP` yes, `template` no); string literals in **type positions** skipped, since the admin screen will be made of them. Remaining false positives (Zod enum, `switch` case, price-index key, JSX prop) are listed in the header. **D-72 (finding 10):** the D-66 comment's reasoning was wrong — corrected to say both gates are **advisory** until someone makes the job a required check. **Runbook (findings 12, 14):** §5 and §6 gained a copy-paste `token_usage` query plus the eight `business-os-<area>` feature values — the only switch-independent proof was not executable at 2am — and name the one area it cannot see (chat-v2 writes no ledger row); new §3.3 for non-value failures, and an Overview line on how you would notice at all. **New follow-ups: FU-7** (the gate cannot block a merge — branch protection, user-owned) and **FU-8** (the resolver's fail-open warning message is untrue in the dangerous case). **Requirement status reworded to "Delivered (code) — with three named exceptions"** per SA. Gates (§8.7): literals **38 / 2 exempt / 0 violations**, typecheck **167 / 31 / 0 new**, build **exit 0, 291/291**, jest **14 suites / 393 tests / 23 snapshots** |
+| 2026-09-21 | **Step 4 implemented — the FR-15 literal gate and the docs (code complete, uncommitted); all gates green** | Branch `feature/business-os-llm-layer2-step4` off `origin/main` `59d7c357` (Step 3 = PR #87). **The gate:** `scripts/check-bos-llm-literals.ts`, a second step in the existing `bos-llm-typecheck` job, AST-based so comments are never scanned (D-62), over the 37 non-test, non-`scripts/` files that import the call catalog, with `modelSettingsPolicy.ts` as its **only** exemption. Five rules: a string literal that IS a model id, `OPENAI_MODELS.*`, a numeric literal bound to `temperature` (including `?? 0.7`), a read of a superseded key (the FU-4 shape) and a model taken from `process.env.*MODEL*` (chat-v2's shape) — the last two beyond §8.1 (D-64). **Proved both ways:** one re-hardcode planted and reverted **per area** — eight, all four rules — each failing with the right file, line and column, and the clean tree passing (§8.4). Committed as tests too: 61 cases, including a mutation of `Planner.ts`'s real source in memory and a proof that the single exemption is load-bearing. **FU-2 fixed** (D-65): the shared scope module excludes generated output, so the type gate reports **167 files with or without a build** (it was 158 / 167 / 177); `0 new` and the baseline are unchanged — measured both ways on this tree. **FU-6 closed for documentation:** the new [operator runbook](/docs/runbooks/BUSINESS_OS_LLM_MODEL_SETTINGS_RUNBOOK.md) says the kill switch **fails open**, when that bites, the only log lines that signal it, and that `get <area>` reads the row rather than the resolver's live view; the monitoring half is carried. **Docs (AC-14):** skill Standard 8 added and the stale KI-C line removed, investigation and Layer 1 roadmap mirrored, Layer 1.5 **KI-C closed**, the requirement marked Delivered, CLAUDE.md's Key Documentation row updated. Gates: `check:bos-llm-literals` **37 / 1 exempt / 0 violations, passed**; `typecheck:bos-llm` **167 / 31 / 0 new, passed**; `npm run build` **exit 0**; jest **14 suites / 374 tests / 23 snapshots**. Deviations D-62 … D-68, of which **D-63 (scope excludes `scripts/`) and D-62 (the three stale comments left as prose) are the two SA should rule on** |
 | 2026-09-21 | **QA Step 3 report answered — D3-1 … D3-5 all closed (still uncommitted)** | **D3-1 (Medium), the fifth blind spot — closed and mutation-proved.** FR-13's model-reporting paths were asserted at 1 of 9 planner sites; a sentinel model at the other eight left 891/891 and 2176/2176 green, including **`:605`, which was SA finding 5's entire fix from the previous round**, and **`:709`, the plan-cache `store({ model })`** named in this step's own scope. Seven new cases in `callParams.boundary.step3.test.ts` drive each reachable path with the configured model REFUSED, so the FR-11 fallback runs on the code default, and assert the path reports the default rather than the model that was refused. **All eight mutation-proved one at a time, reverting between each: every sentinel failed exactly one test, and exactly the intended one** (`:558`, `:592`, `:605`, `:620`, `:709`, `:781`, `:792`, `:802`); `Planner.ts` was then proved byte-identical to its starting state. `:802` is **unreachable** — the malformed-JSON branch only `continue`s on `attempt === 0` and the validation branch only on `attempt < 2`, so the last iteration always falls through to `:792` — and its test says so plainly instead of pretending to drive it (D-60). **D3-2 (Low)** — the 2026-09-21 Change History row quoted the gate numbers SA rejected (`32 errors`, `2,260 tests`, `25 baseline keys`); corrected to the tree's real figures (**31 / 2,272 / 24**), with a note that the row is superseded by the SA and QA rounds. **D3-3 (Low)** — §7.4 no longer offers three identical `177 files` runs as proof of stability. What is stable is the **verdict** (`31 errors, 0 new`, `passed`, three runs running); the **scope count is not**, because the walk includes generated `.next/types` shims and so depends on whether a build has been run — QA measured 177 then 167 on the same tree. Cross-referenced to **FU-2**, with the note that CI never builds first so the count is deterministic there. **D3-4 (Low)** — the `tsc` figures now record **QA's 2034 / 2030**, which the Dev reproduced exactly on re-measurement. The earlier `2035 / 2031` was taken *before* the `chat-v2` `entityType` fix, which removes precisely one error; Step 3 adds none either way. **D3-5 (Low), documented not changed** — `isBosLlmAreaEnabled` returns `true` on any read failure, so **the kill switch fails open**: a settings-read problem silently re-enables a switched-off area. That is FR-6 working as specified (a configuration fault must never take Business OS down) and it stays, but it was undocumented, and it is the wrong thing to discover after switching an area off to stop a cost runaway. Written up as **D-61**, and carried as **FU-6** for the Step 4 runbook, which is where an operator actually looks: what the switch does not guarantee, that the failure is only visible in the resolver's log, and how to confirm an area is still off (`bos:llm-settings -- get <area>`, which reads the row rather than the resolver's view of it). ⚠️ **One self-inflicted incident, recorded because it nearly cost the step:** a careless `git checkout -- Planner.ts`, run as a 'safety' revert before the mutation sweep, discarded the file's entire Step 3 wiring **and** SA finding 5's fix. Recovered from the saved wiring patch plus a re-application of the finding-5 change, and verified green (36 suites / 488 tests) before the sweep began; the sweep itself reverts from an in-memory copy and never touches git. **Gates (§7.4), verbatim:** `typecheck-bos-llm: 177 files in scope, 31 errors, 0 new` (71.4s) and again (75.4s), **passed** both; `npm run build` ✅ `Compiled successfully` / `293/293`, exit 0; jest **134 suites / 2,272 passed / 28 skipped / 25 snapshots** (`--ci`); `tsc` **2,034 / 2,030** excluding generated `.next/types`. Deviations D-60, D-61 and follow-up FU-6 added in §7.6/§7.7 |
 | 2026-09-21 | **QA test report — Step 3: SHIP (0 High, 1 Medium, 4 Low)** | 47 checks: **43 PASS, 0 FAIL, 4 BLOCKED** (live / post-deploy). **All gates re-run verbatim by QA and reproduced:** `typecheck:bos-llm` **twice** (`31 errors, 0 new, passed` both runs — the *scope* count moved 177 → 167, **D3-3**), `npm run build` `✓ Compiled successfully` `293/293` exit 0, jest **134 suites / 2,264 tests / 25 snapshots**, `tsc` **2030** excluding generated `.next/types` (recorded as 2031 — **D3-4**; the conclusion "Step 3 adds none" holds and is one safer), 9 pre-existing errors in touched files at exactly the lines §7.4 names, baseline **24 keys**. **33 mutations of real production source: 25 caught, 8 escaped (the eight are one finding); the tree was proved byte-identical afterwards by a 34-file SHA-256 manifest.** **The four Step 2 blind spots are genuinely closed** — QA re-ran its own M1 (re-hardcode), M7 (neighbour's key), M8 (pin inside the retry) and the provider switch at all three Step 3 sites, **11/11 caught**, and confirms M7 leaves the boundary snapshot green, so the settings-key assertion is the only instrument that sees it. Fourteen further mutations were all caught: the RC-W4 price-key hazard, an off-gate that returns the right shape but still spends, a detached call, a right-key-wrong-result site, a gate on the wrong area, a gate that lost its `await`, both chat v1/v2 gates removed, a website off-check removed, and two message/language drifts. **The fifth blind spot, found — D3-1 (Medium):** the closures are per call SITE and say nothing about the model-REPORTING paths; a sentinel at eight of the planner's nine `fail` / `diagnostics` / plan-cache-store sites leaves the suite green, including **`:605`, which is SA finding 5's entire fix added this round**, and **`:709`, the plan-cache `store({ model })`** named in the step's own scope statement. Behaviour verified correct by reading — a suite hole, not a code fault. **Chat gates verified adversarially:** the planner and analysis have **exactly two** production callers, both below the v4 gate; `AIDataLayerService` and `IntentParser` one each, both below theirs; no cron reaches chat; the plan-cache embedding is below the gate. **The documented exception confirmed end to end** — confirming a parked landing page **does** spend on `website/full_site` with chat off, and `rows({ website: false })` stops it, with **QA proving that row load-bearing** (closing SA's optional item 2 properly rather than by rename). **Images:** price and request proved to use the same resolved model **at runtime** through the real `runAiAction` — ledger `[[override,false,0,0,$0],[default,true,…,$0.25]]`, the **default's** price, and **exactly one** audit entry with `callCount: 2, failedCallCount: 1`, grouping ids intact. Other defects: **D3-2** the Change History row below still carries the gate numbers SA rejected (32 errors / 2,260 tests / 25 baseline keys; the tree has 31 / 2,264 / **24**); **D3-5** the kill switch **fails open** by design and no doc says so (owed to the Step 4 runbook). ⚠️ **Step 2's own post-deploy verification is STILL OWED and this report does not imply otherwise;** Step 3's five post-deploy actions and two SQL queries are written out in §QA3-10 |
 | 2026-09-21 | **SA Step 3 review answered — 2 High, 2 Medium, 1 Low all fixed (still uncommitted)** | **High 1 — the gate was red, and the baseline was the cause.** SA measured `177 files, 32 errors, 1 new` twice against this step's recorded `167 / 0 new`. The `chat-v2` baseline key embedded a **truncated** union (`… 11 more …`) whose member order is not stable across program shapes, so the same error matched on one run and not the next and was reported as both "fixed" and "new". Fixed at the root instead of baselined: `entityType: 'chat'` is not a member of `EntityType` and never was — it is now `'system'`, which is what chat-v4 already writes — and the baseline entry is deleted (25 → 24 keys, error count 32 → **31**). The gate now reads **`177 files in scope, 31 errors, 0 new`, passed, on three consecutive runs** (D-58). **High 2 — a comment claimed a guarantee the code does not make.** `chat-v4/route.ts`'s gate comment said the confirm/cancel branches "make no model call at all"; false for confirm, because `applyFrozenWrites` → `pages.create` (landing) → `generateWebsite` is a full `website/full_site` call made while chat is off. The behaviour stays — it is website spend, the website switch owns it — and the comment now says exactly that (D-56). **Medium 3 — covered rather than described.** Two tests added: a parked write can still be **confirmed** with chat off (only *cancel* was tested), and the spending path driven through the real `executeMutate` — with chat off it reaches `generateWebsite` asking for `onAiDisabled: 'fail'`; with the website area also off the page is still created, no copy is written, and the reply carries the preview link plus the translated sentence (D-57). **Medium 4 — line endings.** The workplan was CRLF against an LF blob, so an unnormalised diff showed 4,839 changed lines for ~103 real ones. Converted to LF: `git diff --stat` now reports **200 insertions / 12 deletions with `core.autocrlf` either on or off** (D-59). **Low 5 —** `Planner.ts` now records the model on the wire *before* each attempt, so a throw from the FALLBACK attempt reports the model that actually ran rather than the configured one; every success, diagnostics and cache path was already correct. **Rulings applied: D-54** — the site-level `'openai'` is declared deliberate, **not** retrofitted, and guarded by a new policy test asserting `ALLOWED_PROVIDERS_LAYER2 === ['openai']` and `allowedProviders: ['openai']` at all 22 calls, because `getProviderArgs` cannot tell a literal from a resolved value. **D-52** accepted (no move). **D-46** confirmed (0 `console.*` across all 16 touched files). **FU-5** carried as a Step 4 chip. SA also rated the **D-48** capture stronger than the Dev argued: the seed `COALESCE`s the legacy keys into the area row, so the equivalence is structural rather than contingent on P-2. **Gates (§7.4), all verbatim:** `typecheck-bos-llm: 177 files in scope, 31 errors, 0 new` ×3, **passed**; `npm run build` ✅ `Compiled successfully` / `293/293`, exit 0; jest **134 suites / 2,264 passed / 28 skipped / 25 snapshots** (`--ci`); `tsc` **2,031** excluding generated `.next/types`, unchanged from Step 2. Deviations D-56 … D-59 added in §7.6 |
@@ -2882,3 +3389,5 @@ GROUP BY 1 HAVING count(*) > 1;   -- expect 0 rows
 | 2026-09-21 | **SA re-check of Step 3: CODE APPROVED FOR QA** (1 Low must-fix, doc-only) | Delta since the SA Step 3 review, verified against the tree. **All five findings fixed.** **F-1:** SA re-ran `typecheck-bos-llm` **three times — `177 files / 31 errors / 0 new` / `passed`, byte-identical every run**; the right fix was taken (`entityType: 'system'` at `chat-v2/route.ts:158`, the unstable truncated-union key **deleted** not re-recorded). Baseline diff vs `HEAD` is now **1 insertion, 0 deletions** (23 → 24 keys, only the stable chat-v1 `duration` entry), nothing altered. **F-2:** the chat-v4 comment (`:730-764`) now states that confirm replays frozen writes and that `pages.create` with `page_type: 'landing'` reaches `generateWebsite` while chat is off, why that is defensible, and where it is pinned — and it does **not** overclaim in the other direction: the closing promise is scoped to "past this point". Handler gate verified at `MutateExecutor.ts:808`. **F-3:** both new cases pin behaviour — `:406` drives the real route with a real frozen confirmation (write ran, answer is about the write, planner and analysis never called) and `:450` drives the **real** `executeMutate` through to the service boundary asserting `onAiDisabled: 'fail'` with chat off. Caveat (Low, non-blocking): `:462` forces the refusal with `mockResolvedValueOnce`, so `rows({ website: false })` is decorative there — what it really pins is the `notice` plumbing (`applied: true` + link + translated sentence), which is new and worth having; the half its name claims is proved in `off.nonchat`. **F-4:** LF restored, `git diff --stat` 201/12. **F-5:** `lastModelOnWire` set inside the attempt at `:486` and read at exactly one site, the terminal `catch` (`:605`); no already-correct path changed. **D-54 applied correctly and it closes the gap** — `modelSettingsPolicy.test.ts:215` asserts `ALLOWED_PROVIDERS_LAYER2 === ['openai']` and per-call `allowedProviders` for all 22, and since `BosLlmProvider` is derived from that constant the allowed set cannot widen without failing first; the comment names the thing `getProviderArgs` cannot see. **Workplan integrity after the §7.6/§7.7 rebuild: nothing lost** — 0 of 40 deviation IDs missing (D-41…D-59 added, contiguous), 0 missing across all ten other ID families (`FU-`, `RC-`, `S1-`, `Q-`, `T*.N`, `AC-`, `FR-`, `DEC-`, `D2-`, `D-Q`), no heading removed, top-level section list byte-identical, and all 12 deleted lines individually confirmed to be stale rows replaced in place. **One Low must-fix:** the rebuild left `### 7.5 Rollout notes` **out of order** (now 7.1-7.4, 7.6, 7.7, **7.5** at `:903`) with a `---` against its heading — content intact, ordering only. SA gates: typecheck ×3 green, Layer 2 jest **18 suites / 415 tests / 23 snapshots pass**. **Deploy: safe.** Standard #1 met on the terms recorded in the Step 3 review — complete for the 22 catalogued calls, with chat-v2 and chat-v1 still choosing their own model by prior documented decision and now stopped by the chat gate |
 | 2026-09-21 | **SA code review of Step 3: FIX REQUIRED (2 High, 2 Medium, 1 Low)** | Verified against the tree, not the summary. The 18 Layer 2 Jest suites are green (411 tests / 23 snapshots) but **`typecheck:bos-llm` is RED in SA's run, twice, deterministically: `177 files in scope, 32 errors, 1 new … FAILED`**. Cause: the new `chat-v2` baseline key embeds a **truncated union** (`… 11 more …`) whose member order is not stable across program shapes, so the gate reports the entry "fixed" *and* the error "new"; the Dev's recorded `167 files / 0 new` is also stale against the final tree (**F-1, High**). Fix `entityType: 'chat'` (`chat-v2/route.ts:151`; not an `EntityType`, and chat-v4 already writes `'system'`) and delete the entry rather than baselining an unstable key. **F-2 (High):** the chat-v4 gate comment claims the confirm branch "makes no model call at all" — it does: `applyFrozenWrites` → `MutateExecutor.ts:719 pages.create` → `WebsiteGenerationService.generateWebsite` (`:822`) is a full `website/full_site` call made **while chat is off**. The behaviour is defensible (the spend is website-area and the website switch stops it); the claim is not. **F-3 (Medium):** only the *cancel* branch is tested with chat off — the confirmable promise and the one spending path are uncovered. **F-4 (Medium):** the workplan was rewritten LF→CRLF (4,839 changed lines for 103 real insertions). **F-5 (Low):** the planner's terminal `catch` can name a model that was not the last attempted, when the fallback itself throws. **Verified correct:** all three gate placements (401/400 still win; `runAiAction` writes nothing at `calls.length === 0`); the images change (price resolver built inside the attempt from the same `model`); the `let model` reassignment on every success, diagnostics and cache path, with no stale re-entry; leg (A) genuinely empty; the S1-7 policy test stronger than the warning it replaced; **the baseline edit honest** (2 insertions, 0 deletions, both pre-existing verbatim at HEAD, nothing altered); 0 `console.*` in all 16 touched files. **Rulings — D-48: accepted, and stronger than argued** — the seed migration `COALESCE`s each legacy key into the area row (`20261003_…:106-111`), so the before/after equivalence is structural and does not rest on P-2; mocking `SystemConfigService` to return each key's `fallback` is exactly what the real service does when the key is absent. **Blind-spot closures generalise** — D2-1/2/3 are `it.each` over all 19 Step 2 sites plus the 3 Step 3 sites, and D2-1's exact-equality key assertion is stronger than "not the neighbour's". **D-54: declare the site-level `'openai'` deliberate, do NOT retrofit** — `allowedProviders` is `OPENAI_ONLY` at all 22 calls so the divergence is inert; guard it with a policy test instead (the existing `getProviderArgs` assertion is not that guard). **D-52: accept, no move** — both resolver entry points have catch-alls, so "never throws" is a module property, not a caller obligation. **D-46: confirmed.** **FU-5: enough for Step 3**, tracked as a Step 4 chip. **Deploy: the code is safe; Step 3 must not land until F-1 and F-2 are fixed and F-3 added.** **Standard #1 is met for the 22 catalogued calls, not platform-wide:** chat-v2 `AIDataLayerService.ts:896/:1244` (raw SDK, `OPENAI_CHAT_MODEL` or `gpt-4o`, **no ledger row at all**) and chat-v1 `IntentParser.ts:116` still pick their own model — documented out of scope (F-13/V-4) and now stopped by the chat gate, so the kill switch is whole even where model resolution is not |
 | 2026-09-21 | SA code review: Step 2 | **Code Approved for QA.** SA reproduced D-29 end to end (reverted the ten production files to HEAD, ran the boundary suite with `--ci`: 19 snapshots passed unwired; restored, 19 passed wired) and re-ran the gates (123 suites / 2,044 tests; typecheck 171 files, 0 new). Found a THIRD escape from T2-S and mutation-proved it: the `getProvider` spy ignores its argument and the snapshot records only `chatCompletion` calls, so switching a site to another provider stays green (F-1, Medium, Step 3). Leg-(A) deletion verified exact (19 deleted ↔ 19 resolver call sites; T1-14 snapshot unmoved); T2-O verified to ASSERT the D-27 lock, on both the resolver and the change-script side; T2-M-I verified to drive the real `callWithTracking`. D-28, D-29, D-30, D-31-D-40, D-32, FU-2 and D-33 all ruled acceptable (FU-2 downgraded: CI never builds, so its count is deterministic). **Deploy: safe**, with the note that the rows stop being inert on this deploy |
+| 2026-09-21 | **SA code review of Step 4: FIX REQUIRED (3 must-fix, all one-line or doc-only) — Layer 2 is code-complete, not complete** | Verified against the tree. Gates re-run by SA verbatim: literal gate **37 files / 1 exempt / 0 violations**, exit 0; jest **37/37**; and **D-65/FU-2 confirmed independently** — `typecheck-bos-llm` reports **167 / 31 / 0 new** both with `.next/` present and with it moved aside, with 0 generated-file keys in the baseline, so excluding generated output cannot hide a real caller. Three of the eight per-area mutations replanted at once and all three caught with the right file, line, column and rule. SA then ran **59 evasion shapes** through the detector plus one end-to-end escape against the real tree: a `lib/services/__evasionHelper.ts` exporting `PREFERRED_MODEL = 'gpt-4o'` / `PREFERRED_TEMPERATURE = 0.7`, imported into `WebsiteAIContentService.ts` — **the gate passed, 0 violations**. **The class it cannot see: any model or temperature that arrives from another module, a computed string, or a variable it cannot name.** Also missed: a ternary, a default parameter, a class property, `chatgpt-4o-latest` / `tts-1` / `sora-2`, `process.env` one alias away, and a direct read of the exempt policy module's exported `BOS_LLM_CALL_POLICY`. Confirmed false positives that will arrive with the admin screen: a **type literal**, a Zod enum, a `switch` case, a price index key. Rulings — **D-62 accept the AST decision, but fix 3 of the 9 stale comments** (two are instructions contradicting FR-15, not aged prose); **D-63 must-fix — the `scripts/` directory exclusion buys exactly one file and blankets ~400, replace it with a named exemption for `scripts/bos-llm-settings.ts`**, because the script's own header says the exemption list is the gate's blast radius; **D-66 outcome accepted, reasoning rejected — the job is NOT a required check** (`gh api` shows `main` requires only `Admin authz surface guard`), so nothing is pending-for-ever and, more to the point, **a red literal gate does not block a merge**. Runbook §5's fail-open description checks out line-for-line against `modelSettings.ts`, but its one switch-independent proof (no new `token_usage` rows) names no `feature` values and gives no query. **Layer 2 is code-complete only:** the anti-drift property is advisory until branch protection adopts the check, chat-v2 still picks its own model and its spend never reaches the ledger, and the Step 2/3 post-deploy checks are still owed — SA recommends a status of "Delivered (code) — with three named exceptions" rather than plain Delivered |
+| 2026-09-21 | **QA test report — Step 4: ISSUES FOUND (0 High, 3 Medium, 4 Low) — ship after D4-1/D4-2/D4-3** | All gates re-run verbatim and green: literal gate **38 files / 2 exempt / 0 violations, exit 0, IDENTICAL with `.next/` present and moved aside** (the scope-count instability of FU-2/D-65 is closed on this gate too), `typecheck:bos-llm` **167 / 31 / 0 new**, `next build` **exit 0**, jest **14 suites / 393 tests / 23 snapshots**, T4-1 **56/56** (SA finding 15 closed). **Eight fresh per-area mutations planted in one run** — all eight caught with the right file, line, column and rule, and QA planted `env-model` at a real call site so **all five rules are now proved on the real tree**, not four. **Attack: 62 evasion shapes through `findViolations` plus 4 planted in real wired call sites.** The model side is harder to fool than documented (`String.raw`, concatenation, an object/array of literals, `as const`, an enum member, a class static, a getter, a decorator, JSX, and the policy module read through a named, aliased, namespace **or dynamic `await import()`** all fail the gate). **Four temperature hardcodes evade it and are in none of the three blind lists** — `temperature ??= 0.8`, `temperature ||= 0.3`, `const { temperature: temp = 0.4 } = settings`, `temperature: 0.7 satisfies number` — with the gate reporting `0 violations → passed`; two of them contradict the header's own promise that `?? 0.7` and `|| 0.3` are caught (**D4-3**, ~4 lines of code to close). **Three undocumented false positives** beyond the four listed: a runtime `as const` model allow-list, `TEMPERATURE_MAX/MIN` constants, `z.string().default('gpt-4o')` (**D4-4**). Type positions confirmed skipped; comments and JSDoc confirmed never scanned. **Both exemptions proved load-bearing and no broader than their reasons** — the policy module would raise 25 violations, the operator script 14, and all 14 are the superseded keys and legacy defaults its reason names; neither file touches a provider. **The failure output itself is wrong about the gate's blast radius** — `:401` still says "the only exempt file is modelSettingsPolicy.ts" when there are two, and the same staleness sits in workplan §8.1 (a cell that contradicts itself), §8.2 and the requirement's Change History (**D4-1**); worse, **AC-11 and RC-12 still specify one exemption** while AC-11 is marked verified (**D4-2**). **Runbook followed literally, 12 of 13 checks pass:** the five commands run as printed, `get website` was run **live read-only against production** and returned all five documented fields, §3.1's example row **is** the real production row, the `token_usage` query uses real columns and `model_name` is written by `baseProvider` for **every** area (not just chat), all eight `business-os-<area>` feature values are correct, and §5's three fail-open rows check out line-for-line against `modelSettings.ts` (`defaultAreaSnapshot` returns `enabled: true` for all eight areas, so a cold start does re-enable a switched-off area). **FU-8 confirmed and correctly compensated**: one warn fires in both cases and only `servingLastGood` distinguishes them — the runbook says exactly that. **§9 omits onboarding's four call names** while §3.1 promises they are there, for the one area with no off switch (**D4-5**). Plus a duplicated "still open" paragraph in the requirement (**D4-6**) and a `CLAUDE.md` line that says the gate "fails" with no advisory caveat (**D4-7**). `set`/`--enabled false --dry-run` **not run** — the only credentialled checkout points at production. **Step 4 adds nothing to the post-deploy list; the Step 2 and Step 3 checks are unchanged and still owed.** Every mutation reverted and the tree proved identical to its pre-QA state |

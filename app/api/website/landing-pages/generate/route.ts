@@ -17,7 +17,8 @@ import { z } from 'zod';
 const logger = createLogger({ module: 'LandingPageGenerateAPI' });
 
 /*
- * This route calls gpt-4o and waits for a full page of copy.
+ * This route calls a model and waits for a full page of copy — whichever
+ * model the website area row names (Layer 2), not a model this file picks.
  *
  * Without `maxDuration` a Vercel function is killed at the platform default
  * while the browser is still waiting, and the wizard's spinner — which only
@@ -105,7 +106,8 @@ export async function POST(request: NextRequest) {
     const prompt = buildGenerationPrompt(validated, profile, contentLanguage);
     const systemPrompt = buildSystemPrompt(contentLanguage);
 
-    // Generate content using AI - use gpt-4o for better content quality
+    // Generate content using AI. The model is NOT chosen here: it comes from
+    // the website area row (Layer 2 FR-15), resolved a few lines below.
     const provider = ProviderFactory.getProvider('openai');
 
     // The call and the parse are one AI action, one audit entry (Layer 3,

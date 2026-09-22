@@ -37,8 +37,10 @@
 # at the repo root, so that directory never matches.
 #
 # scripts/typecheck-bos-llm.ts and its baseline ARE the Business OS LLM type
-# gate. A change to them is a change to CI itself and must be run, so they are
-# carved back out below.
+# gate; scripts/check-bos-llm-literals.ts is the FR-15 literal gate that runs
+# beside it, and scripts/lib/bos-llm-scope.ts is the file walk BOTH derive
+# their scope from. A change to any of them is a change to CI itself and must
+# be run, so they are carved back out below.
 #
 # Tests living under scripts/ are carved back out too: the root Jest project
 # has `roots: ['<rootDir>']`, so `npm test` collects
@@ -103,7 +105,7 @@ while IFS= read -r file; do
   [ -n "$file" ] || continue
   case "$file" in
     # CI's own gate definition — always run it.
-    scripts/typecheck-bos-llm.ts|scripts/typecheck-bos-llm.baseline.json)
+    scripts/typecheck-bos-llm.ts|scripts/typecheck-bos-llm.baseline.json|scripts/check-bos-llm-literals.ts|scripts/lib/bos-llm-scope.ts)
       decide_build "$file defines a CI gate" ;;
     # Jest suites that live under scripts/ are tests, not tooling.
     scripts/*.test.ts|scripts/*.test.tsx|scripts/*/__tests__/*)

@@ -1,6 +1,6 @@
 ---
 name: bos-llm-call-standards
-description: Make every Business OS AI call follow the LLM standards built in Layers 1, 1.1, 1.5, the logging clean-up and Layer 3. That means a catalogued call name, a server-side account, one grouping id per action, cost tracked through the provider layer, no owner text in logs, and one audit entry per AI action (`runAiAction`). Use when adding, changing or reviewing an LLM/AI call, embedding, image generation or AI feature in Business OS code — `lib/business-os/**`, `app/api/business-os/**`, and the Business OS services (`lib/services/Website*`, `Intake*`, `Onboarding*`, `LeadAlert*`, `GeneratedImage*`) and their routes. Does NOT apply to the agents side (`lib/agentkit/**` including V6, `lib/pilot/**`), which also uses `callWithTracking` / `ProviderFactory` under its own rules. It prevents the classic failures: spend landing on the platform account, ungroupable ledger rows, untracked cost, and owner text in production logs.
+description: Make every Business OS AI call follow the LLM standards built in Layers 1, 1.1, 1.5, the logging clean-up and Layer 3. That means a catalogued call name, a server-side account, one grouping id per action, cost tracked through the provider layer, no owner text in logs, one audit entry per AI action (`runAiAction`), and a model/temperature resolved from the area settings instead of hardcoded. Use when adding, changing or reviewing an LLM/AI call, embedding, image generation or AI feature in Business OS code — `lib/business-os/**`, `app/api/business-os/**`, and the Business OS services (`lib/services/Website*`, `Intake*`, `Onboarding*`, `LeadAlert*`, `GeneratedImage*`) and their routes. Does NOT apply to the agents side (`lib/agentkit/**` including V6, `lib/pilot/**`), which also uses `callWithTracking` / `ProviderFactory` under its own rules. It prevents the classic failures: spend landing on the platform account, ungroupable ledger rows, untracked cost, and owner text in production logs.
 ---
 
 # bos-llm-call-standards
@@ -12,7 +12,8 @@ Use this whenever a Business OS feature **calls a model**: chat, embeddings, ima
   - `docs/requirements/BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_REQUIREMENT.md` (naming, attribution, grouping);
   - `docs/requirements/BUSINESS_OS_LLM_USAGE_VERIFICATION_LAYER1_1_REQUIREMENT.md` (the checks);
   - `docs/requirements/BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md` (onboarding, images, the platform-account helper).
-  - `docs/requirements/BUSINESS_OS_LLM_AUDIT_TRAIL_REQUIREMENT.md` (Layer 3: one audit entry per AI action).
+  - `docs/requirements/BUSINESS_OS_LLM_AUDIT_TRAIL_REQUIREMENT.md` (Layer 3: one audit entry per AI action);
+  - `docs/requirements/BUSINESS_OS_LLM_MODEL_SETTINGS_LAYER2_REQUIREMENT.md` (Layer 2: model settings per area, the kill switch, FR-15).
 - **Logging:** `docs/workplans/BUSINESS_OS_LLM_LOGGING_CLEANUP_WORKPLAN.md` (the clean-up workplan) and `docs/SYSTEM_LOGGING_GUIDELINES.md` (the project guidelines).
 - **The investigation that drives all of it:** `docs/investigations/LLM_CREDIT_AND_AUDIT_TRACKING.md`.
 
@@ -63,7 +64,7 @@ Use this whenever a Business OS feature **calls a model**: chat, embeddings, ima
 - **Images are priced per image** (both in `GeneratedImageService.ts`):
   - `imagePriceResolver` prices the image **after** the call, at the quality the provider reports (Layer 1.5 D-7);
   - `resolveImagePrice` does the lookup: configuration (`system_settings_config`, via `SystemConfigRepository.getImageGenerationConfig`), then the documented fallback in `IMAGE_FALLBACK_PRICING`, then $0 with an error log.
-- **No hardcoded model names or prices** (CLAUDE.md rule 5). *Known exception carried forward:* the onboarding extractors' `'gpt-4o'` literals (Layer 1.5 KI-C, to Layer 2).
+- **No hardcoded model names or prices** (CLAUDE.md rule 5). There is **no exception left**: Layer 2 Step 2 removed the onboarding extractors' `'gpt-4o'` literals (Layer 1.5 KI-C, closed), and Standard 8 is now enforced by CI.
 
 ## Standard 5: Privacy and logging
 
@@ -124,6 +125,23 @@ Every AI action writes exactly one `audit_trail` entry that summarises its LLM c
 
 ---
 
+## Standard 8: Model settings (resolve them; never write them)
+
+Layer 2 moved every catalogued call onto settings an operator can change without a deploy. A call site that hardcodes a model still works, still tracks cost and still passes every attribution test — it just stops obeying its area row, and nobody finds out until someone changes a setting and nothing happens.
+
+- **Resolve, then call.** `const settings = await resolveBosLlmSettings(area, callName)` (`lib/business-os/llm/modelSettings.ts`) returns `{ enabled, provider, model, temperature }`. The resolver **never throws**: a missing row, an invalid field, a dead database or a 3-second hang all degrade to the code defaults, which are today's behaviour.
+- **Honour `enabled: false`:** make no provider call, write no ledger row and no audit entry, and return the area's documented fallback (`aiUnavailableMessages.ts` for owner-facing text). An area-wide entry gate uses `isBosLlmAreaEnabled(area)`.
+- **Build the request INSIDE the retry:** `await withModelFallback(settings, (model) => provider.chatCompletion({ model, ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}) }, context))`. `withModelFallback` (`lib/business-os/llm/modelFallback.ts`) retries once on the code default when a configured model is refused, so a bad setting can never take a feature down. Building the request outside the callback means the retry re-sends the model that was just refused.
+- **Report the model that RAN**, not the one you asked for: `modelUsed` from the fallback, in any stored `generated_from.model`, `diagnostics.model` or cache entry (FR-13).
+- **Defaults live in exactly one file:** `lib/business-os/llm/modelSettingsPolicy.ts`. It is typed against the catalog, so a new catalogued call with no policy entry is a `typecheck:bos-llm` error.
+- **A new area or call needs three things:** a policy entry (model, temperature, `switchable`), a row field in the seed/migration if it should be operator-visible from day one, and a decision on whether it can be switched off. `switchable: true` with no off path is a lie the operator will act on.
+- **`npm run check:bos-llm-literals` is CI** (a second step in `.github/workflows/bos-llm-typecheck.yml`). It fails on a quoted model id (`'gpt-4o'`, `'o3-mini'`, `'chatgpt-4o-latest'`, `'gpt-image-1'`), on `OPENAI_MODELS.*` or `BOS_LLM_CALL_POLICY.*`, on a number bound to a name like `temperature` (including `?? 0.7`, `??=`, `||=`, a ternary, a default parameter, a class property, a destructuring default and `satisfies number`), on a read of a superseded key (`bizchat_planner_model`, `image_generation_model`, …) and on `process.env.*MODEL*`, in any non-test file that imports the catalog. Exempt files are named, with reasons, and both `--list` and the failure output print them: the policy module and the operator script. A third is a code change with an SA review, never a directory exclusion. Comments are not scanned — prose may name a model; code may not.
+- **Know what that check does NOT see, or you will trust it too far.** It is syntactic: it sees a value written **at** the call site. It does **not** see a model or temperature that arrives from **another module** (`import { PREFERRED_MODEL }` — SA proved this end to end with the gate green), one that is **computed** (`['gpt','4o'].join('-')`, a template literal, a JSON file), one reached through an **unnamed variable** (`const t = 0.7`), a model id **outside its pattern list**, or `process.env` **one alias away**. A green run means no call site hardcodes in plain sight; it does **not** mean every call site obeys its area row — that is what the per-site boundary tests (`callParams.boundary.*.test.ts`) prove. **It is also not a required status check today**, so a red run does not block a merge. Review accordingly: read the call site, do not read the badge.
+- **Operator side:** [BUSINESS_OS_LLM_MODEL_SETTINGS_RUNBOOK.md](/docs/runbooks/BUSINESS_OS_LLM_MODEL_SETTINGS_RUNBOOK.md). Worth knowing while you code: the kill switch **fails open** — an instance that cannot read the settings treats every area as enabled.
+- **Worked references:** `lib/business-os/briefing/BriefingNarrator.ts` (the smallest complete shape), `lib/services/GeneratedImageService.ts` (the price resolved inside the attempt, so cost follows the model that ran), `lib/business-os/bizql/planner/Planner.ts` (a retry plus a repair loop reporting the right model).
+
+---
+
 ## Review checklist
 
 - [ ] The call name exists in `BOS_LLM_CALLS`; the context is built with `buildBosCallContext` (or `toEmbeddingAttribution`)
@@ -133,7 +151,8 @@ Every AI action writes exactly one `audit_trail` entry that summarises its LLM c
 - [ ] No prompt, owner text or model output at info or above; the `SyntaxError` pattern on parse failures
 - [ ] A new area: catalog entry + empty legacy list + usage category
 - [ ] Tests: area / call name / account / group asserted; a sentinel shows raw text never logged
-- [ ] `typecheck:bos-llm` 0 new, baseline unchanged; the LLM Usage tab green; the usage snapshot unchanged
+- [ ] The model and temperature come from `resolveBosLlmSettings`, inside `withModelFallback`; `enabled: false` makes no call; the default is in `modelSettingsPolicy.ts`
+- [ ] `typecheck:bos-llm` 0 new, baseline unchanged; `check:bos-llm-literals` passes; the LLM Usage tab green; the usage snapshot unchanged
 - [ ] The action is wrapped in `runAiAction` (one entry, never awaited); failures signalled with `markFailed`; no `'use client'` path imports it; `next build` passes
 
 ## Anti-patterns (probable bugs)
@@ -145,6 +164,7 @@ Every AI action writes exactly one `audit_trail` entry that summarises its LLM c
 - **A fresh `newBosGroupId()` per call** instead of per action (one action becomes many groups).
 - **`await AuditTrail.log(…)`** on a request path, or an audit entry per call.
 - **A direct `openai.*` call "just for this one feature",** or a model name or price literal in feature code.
+- **`model: 'gpt-4o'` or `temperature: 0.7` at a call site** — including the disguised forms `settings.temperature ?? 0.7`, `OPENAI_MODELS.GPT_4O_MINI`, and a request built OUTSIDE the `withModelFallback` callback so the retry re-sends the refused model.
 - **A shared helper that imports the catalog.** Every file that imports the helper is then pulled into the `typecheck:bos-llm` gate with it. This is why `lib/platformAccount.ts` imports nothing: the catalog imports it, never the reverse (Layer 1.5 OQ-G).
 
 ## When NOT to use

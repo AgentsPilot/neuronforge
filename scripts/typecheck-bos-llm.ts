@@ -29,10 +29,20 @@
  *
  * SCOPE (derived from the import graph, not hand-listed)
  *
- * Imports are resolved by the TypeScript compiler (`ts.preProcessFile` +
- * `ts.resolveModuleName` with the tsconfig options), so `@/` aliases, relative
- * paths, `index.ts` barrels, type-only imports, `import()` and `require()` are
- * all followed the way `tsc` follows them.
+ * The file walk and the import resolution live in `scripts/lib/bos-llm-scope.ts`,
+ * shared with `scripts/check-bos-llm-literals.ts` (FR-15) so the two gates can
+ * never disagree about what the project contains. Imports are resolved by the
+ * TypeScript compiler (`ts.preProcessFile` + `ts.resolveModuleName` with the
+ * tsconfig options), so `@/` aliases, relative paths, `index.ts` barrels,
+ * type-only imports, `import()` and `require()` are all followed the way `tsc`
+ * follows them.
+ *
+ * Generated output is excluded there (`.next/`, `.claude/`, `coverage/`,
+ * `out/`). Before that, `next build`'s `.next/types/route.ts` shims counted as
+ * callers and the same tree reported 158, 167 or 177 files depending on whether
+ * a build had been run in the checkout — a number that could not be compared
+ * between review rounds (workplan FU-2, QA D3-3). The verdict never depended on
+ * it: no baseline entry has ever come from a generated file.
  *
  * 1. CORE: every file under SCOPED_DIRS (the catalog and the usage mapping);
  *    every file that imports the catalog (the only way to use
@@ -67,10 +77,17 @@ import * as fs from 'fs';
 import * as path from 'path';
 import ts from 'typescript';
 
-const ROOT = path.resolve(__dirname, '..');
-const TSCONFIG = path.join(ROOT, 'tsconfig.json');
+import {
+  CATALOG,
+  ROOT,
+  type FileImports,
+  buildImportGraph,
+  loadConfig,
+  projectFiles,
+  toPosix,
+} from './lib/bos-llm-scope';
+
 const BASELINE = path.join(ROOT, 'scripts', 'typecheck-bos-llm.baseline.json');
-const CATALOG = 'lib/business-os/llm/callCatalog.ts';
 
 /** Everything under these is in scope. */
 const SCOPED_DIRS = ['lib/business-os/llm/', 'lib/business-os/usage/'];
@@ -80,81 +97,12 @@ const ATTRIBUTION_TEST = /attribution[^/]*\.test\.tsx?$/;
 type Baseline = Record<string, number>;
 type Reason = 'core' | 'catalog-importer' | 'attribution-test' | 'barrel' | 'caller';
 
-function toPosix(file: string): string {
-  return path.relative(ROOT, path.resolve(file)).split(path.sep).join('/');
-}
-
-function loadConfig(): ts.ParsedCommandLine {
-  const config = ts.readConfigFile(TSCONFIG, ts.sys.readFile);
-  if (config.error) {
-    console.error(ts.flattenDiagnosticMessageText(config.error.messageText, '\n'));
-    process.exit(2);
-  }
-  return ts.parseJsonConfigFileContent(config.config, ts.sys, ROOT);
-}
-
-/** Project source files: the tsconfig program minus declarations and dependencies. */
-function projectFiles(parsed: ts.ParsedCommandLine): string[] {
-  return parsed.fileNames
-    .filter((file) => !file.endsWith('.d.ts') && !file.includes('/node_modules/') && fs.existsSync(file))
-    .map(toPosix)
-    .filter((rel) => !rel.startsWith('..'));
-}
-
-interface FileImports {
-  /** Every project file this file imports, re-exports or dynamically loads. */
-  imports: Set<string>;
-  /** The subset reached through `export … from`. */
-  reExports: Set<string>;
-}
-
-/** Resolve one file's module specifiers through the compiler. */
-function readImports(
-  rel: string,
-  options: ts.CompilerOptions,
-  cache: ts.ModuleResolutionCache,
-  known: Set<string>
-): FileImports {
-  const absolute = path.join(ROOT, rel);
-  const text = fs.readFileSync(absolute, 'utf8');
-  const result: FileImports = { imports: new Set(), reExports: new Set() };
-
-  const resolve = (specifier: string): string | undefined => {
-    const resolved = ts.resolveModuleName(specifier, absolute, options, ts.sys, cache).resolvedModule;
-    if (!resolved || resolved.isExternalLibraryImport) return undefined;
-    const target = toPosix(resolved.resolvedFileName);
-    return known.has(target) ? target : undefined;
-  };
-
-  // import / export-from / import() / require(), including type-only imports.
-  for (const { fileName } of ts.preProcessFile(text, true, true).importedFiles) {
-    const target = resolve(fileName);
-    if (target) result.imports.add(target);
-  }
-
-  // Re-exports need the AST: preProcessFile does not say which imports are `export … from`.
-  const source = ts.createSourceFile(absolute, text, ts.ScriptTarget.Latest, false);
-  for (const statement of source.statements) {
-    if (
-      ts.isExportDeclaration(statement) &&
-      statement.moduleSpecifier &&
-      ts.isStringLiteral(statement.moduleSpecifier)
-    ) {
-      const target = resolve(statement.moduleSpecifier.text);
-      if (target) result.reExports.add(target);
-    }
-  }
-
-  return result;
-}
-
 function computeScope(parsed: ts.ParsedCommandLine): Map<string, Reason> {
-  const files = projectFiles(parsed).filter((rel) => rel !== 'scripts/typecheck-bos-llm.ts');
-  const known = new Set(files);
-  const cache = ts.createModuleResolutionCache(ROOT, (name) => name, parsed.options);
-
-  const graph = new Map<string, FileImports>();
-  for (const rel of files) graph.set(rel, readImports(rel, parsed.options, cache, known));
+  // This gate and its sibling ARE the tooling; they must not gate themselves.
+  const files = projectFiles(parsed).filter(
+    (rel) => rel !== 'scripts/typecheck-bos-llm.ts' && rel !== 'scripts/check-bos-llm-literals.ts'
+  );
+  const graph = buildImportGraph(files, parsed.options);
 
   const scope = new Map<string, Reason>();
 
