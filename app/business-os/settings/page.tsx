@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
 import { supabase } from '@/lib/supabaseClient';
 import { signOutUser } from '@/lib/client/auth-actions';
+import { marketingLoginUrl } from '@/lib/utils/marketingUrl';
 import {
   ArrowLeft,
   Loader2,
@@ -470,21 +471,16 @@ function BusinessOSSettingsContent() {
     }
 
     /*
-     * The marketing site is a separate application on its own origin —
-     * `localhost:3001` beside this app's 3000 in development, the apex domain
-     * in production while the app sits on `app.`.
+     * Through the shared helper, not a second copy of the same resolution.
      *
-     * `NEXT_PUBLIC_MARKETING_URL` overrides both, for preview deployments where
-     * neither guess is right. All three are inlined at build time, so this is a
-     * plain string by the time it runs.
+     * This used to inline its own `NEXT_PUBLIC_MARKETING_URL ?? localhost ??
+     * apex` chain, and it drifted exactly as a duplicated constant does: when
+     * the production fallback was corrected away from `agentspilot.com` — an
+     * apex with an expired certificate, so signing out from here hit a browser
+     * security interstitial — every other sign-out in the app was fixed by that
+     * one edit and this one alone kept the broken domain.
      */
-    const marketingUrl =
-      process.env.NEXT_PUBLIC_MARKETING_URL ||
-      (process.env.NODE_ENV === 'development'
-        ? 'http://localhost:3001'
-        : 'https://agentspilot.com');
-
-    window.location.href = `${marketingUrl}/login`;
+    window.location.href = marketingLoginUrl();
   };
 
   /*
