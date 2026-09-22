@@ -38,6 +38,10 @@ const EXEMPT: Record<string, string> = {
   'account.ts': 'defines resolveAccountId',
   'report.ts': 'reads plan rows, which are keyed by account id already',
   'EntitlementService.ts': 'its parameter IS an AccountId; the caller resolves',
+  // It works in account ids throughout (`ctx.accountId`, resolved by the route).
+  // The `userId` the guard sees is the REPOSITORY's input field name — the
+  // column is `user_id` — not a user id arriving from outside.
+  'adminOps.ts': 'works in account ids; `userId` is the repository input field name',
 };
 
 function read(file: string): string {

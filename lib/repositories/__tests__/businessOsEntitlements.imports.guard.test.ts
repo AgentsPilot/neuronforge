@@ -65,6 +65,16 @@ const ALLOWED = new Set(
     'lib/business-os/entitlements/report.ts',
     'lib/business-os/entitlements/__tests__/shadow.test.ts',
     'lib/business-os/entitlements/__tests__/report.test.ts',
+    // ── Component 5, 2026-09-22 — the admin surface ────────────────────────
+    // These ARE the code that may write entitlement state, which is why they
+    // are the only files here that do NOT belong in NO_STATE_WRITE_REFERRERS.
+    // Each one gates with `requireAdmin` as its first statement, validates with
+    // Zod, and writes an audit entry that is flushed before it responds.
+    'app/api/admin/business-os/entitlements/accounts/[accountId]/route.ts',
+    'app/api/admin/business-os/entitlements/launch/route.ts',
+    'lib/business-os/entitlements/adminOps.ts',
+    'lib/business-os/entitlements/__tests__/adminOps.test.ts',
+    'app/api/admin/business-os/entitlements/__tests__/routes.test.ts',
   ].map((p) => p.split('/').join(sep))
 );
 
@@ -164,14 +174,23 @@ describe('RC-15 — entitlement repository referrers', () => {
     const category = (rel: string): string[] => {
       const p = rel.split(sep).join('/');
       const of: string[] = [];
+      // Decided first so a test UNDER an admin path counts once, as a test:
+      // otherwise `app/api/admin/**/__tests__/x.test.ts` lands in two
+      // categories and the partition fails for a file that is not ambiguous.
+      const isTest = p.includes('__tests__/') && p.endsWith('.test.ts');
+
       // 1. The repository layer itself — the code that is *supposed* to write.
-      if (p.startsWith('lib/repositories/') && !p.includes('__tests__/')) of.push('repository');
+      if (p.startsWith('lib/repositories/') && !isTest) of.push('repository');
       // 2. Readers: allowed to look, never to change. Checked above.
       if (NO_STATE_WRITE_REFERRERS.includes(rel)) of.push('no_state_write');
       // 3. Admin routes (component 5) — gated, audited, and allowed to write.
-      if (p.startsWith('app/api/admin/')) of.push('admin_route');
+      if (!isTest && p.startsWith('app/api/admin/')) of.push('admin_route');
+      // 3b. The module the admin routes delegate to. It holds the pre-checks and
+      // the write calls; it is not a route, so it needs its own category rather
+      // than being smuggled in as a "reader".
+      if (!isTest && p === 'lib/business-os/entitlements/adminOps.ts') of.push('admin_ops');
       // 4. Tests, which name these symbols in order to assert on them.
-      if (p.includes('__tests__/') && p.endsWith('.test.ts')) of.push('test');
+      if (isTest) of.push('test');
       return of;
     };
 
