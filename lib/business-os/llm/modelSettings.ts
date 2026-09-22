@@ -121,6 +121,20 @@ export interface ResolvedBosLlmSettings {
 }
 
 /**
+ * Which level a resolved field actually came from (admin screen FR-4).
+ *
+ * NOT derivable from the stored row: a call-level value a guardrail REFUSED
+ * falls through to the area level, so "the row sets a call-level model" and
+ * "this call uses a call-level model" are different facts, and only the
+ * resolver knows which. Re-deriving this outside the module would be a second
+ * implementation of precedence (admin-screen workplan W-1 / RC-2).
+ */
+export type BosLlmFieldLevel = 'call' | 'area' | 'default';
+
+/** The level each of the four fields of one call resolved from. */
+export type BosLlmCallProvenance = Record<BosLlmSettingField, BosLlmFieldLevel>;
+
+/**
  * Why a configured value was not used.
  *
  *  - `rejected` — the value broke a guardrail; the field falls back (DEC-7).
@@ -346,14 +360,67 @@ export async function checkModelAcceptable(
   area: BosLlmArea,
   callName: string,
   provider: BosLlmProvider,
-  model: string
+  model: string,
+  ctx: GuardrailContext = newGuardrailContext()
 ): Promise<FieldCheck> {
   const policy = getBosLlmCallPolicy(area, callName);
   if (!policy) return { ok: false, reason: 'unknown_call_name' };
-  const ctx = newGuardrailContext();
   return policy.kind === 'image'
     ? checkImageModel(ctx, model)
     : checkTokenModel(ctx, provider, model, policy);
+}
+
+/**
+ * Would the resolver accept this `(provider, model)` pair FOR THIS CALL?
+ *
+ * This is the question a picker must ask, and it is deliberately different
+ * from `checkModelAcceptable` above:
+ *
+ *  - it runs `checkProvider` against the call's OWN `allowedProviders`, not a
+ *    global list — the two coincide today only because every call is
+ *    `['openai']`, and the day one call is narrower a picker built on the
+ *    global list would offer a provider the resolver refuses;
+ *  - it runs `checkModel`, which applies the four SHAPE rules
+ *    (`model_not_a_string`, `model_empty`, `model_not_trimmed`,
+ *    `model_too_long`) that `checkModelAcceptable` skips. Candidates come from
+ *    `ai_model_pricing`, an operator-editable table, so a `model_name` with a
+ *    stray space would otherwise be offered in the picker and then refused on
+ *    save.
+ *
+ * `checkModelAcceptable` keeps its own narrower job — proving the code
+ * defaults would themselves pass, which needs the "equal to the default"
+ * shortcut bypassed — so neither can be expressed in terms of the other.
+ *
+ * Share a `ctx` across a batch of questions (see `newModelCheckContext`).
+ */
+export async function checkModelForCall(
+  area: BosLlmArea,
+  callName: string,
+  provider: string,
+  model: unknown,
+  ctx: GuardrailContext = newGuardrailContext()
+): Promise<FieldCheck> {
+  const policy = getBosLlmCallPolicy(area, callName);
+  if (!policy) return { ok: false, reason: 'unknown_call_name' };
+
+  const providerCheck = checkProvider(provider, policy);
+  if (!providerCheck.ok) return providerCheck;
+
+  return checkModel(ctx, provider as BosLlmProvider, model, policy);
+}
+
+/**
+ * A fresh memoisation context for a caller that asks many model questions at
+ * once — the admin screen builds a per-call option list, which is every
+ * candidate model × every call of an area.
+ *
+ * Without a shared context each `checkModelAcceptable` would re-read the image
+ * configuration from the repository, and the price memo would be thrown away
+ * between questions. It is the SAME context type the resolver uses on refill,
+ * so the answers cannot differ from what the resolver would give.
+ */
+export function newModelCheckContext(): GuardrailContext {
+  return newGuardrailContext();
 }
 
 function checkProvider(provider: unknown, policy: BosLlmCallPolicy): FieldCheck {
@@ -395,6 +462,12 @@ export interface AreaEvaluation {
   enabled: boolean;
   calls: Map<string, ResolvedBosLlmSettings>;
   issues: BosLlmSettingIssue[];
+  /**
+   * Per call, the level each field resolved from (FR-4). Additive: the
+   * resolver and the entry gates never read it, so `resolveBosLlmSettings`
+   * and `isBosLlmAreaEnabled` are unchanged.
+   */
+  provenance: Map<string, BosLlmCallProvenance>;
 }
 
 /**
@@ -410,6 +483,7 @@ export async function evaluateAreaRow(
 ): Promise<AreaEvaluation> {
   const issues: BosLlmSettingIssue[] = [];
   const calls = new Map<string, ResolvedBosLlmSettings>();
+  const provenance = new Map<string, BosLlmCallProvenance>();
   const areaLockedOff = !BOS_LLM_AREA_LOCKS[area].switchable;
 
   const row = rowValue === undefined || rowValue === null ? null : parseAreaRow(rowValue);
@@ -473,6 +547,8 @@ export async function evaluateAreaRow(
 
   // --- the area switch (what `isBosLlmAreaEnabled` reports) -----------------
   let areaEnabled = true;
+  /** True only when the row's AREA-level `enabled` was accepted and used. */
+  let areaEnabledFromRow = false;
   const rawAreaEnabled = readField(areaLevel, 'enabled');
   if (rawAreaEnabled !== ABSENT) {
     if (areaLockedOff) {
@@ -501,6 +577,7 @@ export async function evaluateAreaRow(
       });
     } else {
       areaEnabled = rawAreaEnabled;
+      areaEnabledFromRow = true;
     }
   }
 
@@ -519,6 +596,15 @@ export async function evaluateAreaRow(
       value: unknown
     ) => issues.push({ area, callName, level, field, kind, reason, value });
 
+    // Which level each field actually resolved from (FR-4). Recorded at the
+    // same `break` the value is taken at, so it cannot drift from precedence.
+    const from: BosLlmCallProvenance = {
+      enabled: 'default',
+      provider: 'default',
+      model: 'default',
+      temperature: 'default',
+    };
+
     // --- provider ----------------------------------------------------------
     let provider: BosLlmProvider = defaults.provider;
     for (const level of levels) {
@@ -530,6 +616,7 @@ export async function evaluateAreaRow(
         continue;
       }
       provider = raw as BosLlmProvider;
+      from.provider = level!.level;
       break;
     }
 
@@ -545,6 +632,7 @@ export async function evaluateAreaRow(
         continue;
       }
       model = raw as string;
+      from.model = level!.level;
       break;
     }
 
@@ -554,7 +642,12 @@ export async function evaluateAreaRow(
     // every call allows only OpenAI, but `{ provider: 'anthropic', model: <an
     // OpenAI default> }` is exactly the trap waiting for the first call that
     // legitimately allows a second provider.
-    if (model === defaults.model) provider = defaults.provider;
+    if (model === defaults.model) {
+      provider = defaults.provider;
+      // The provider went with it, so its provenance must too — otherwise the
+      // screen would badge a code-default provider as configured.
+      from.provider = 'default';
+    }
 
     // --- temperature -------------------------------------------------------
     let temperature: number | undefined = defaults.temperature;
@@ -595,6 +688,7 @@ export async function evaluateAreaRow(
           continue;
         }
         temperature = raw === null ? undefined : (raw as number);
+        from.temperature = level!.level;
         break;
       }
     }
@@ -619,12 +713,14 @@ export async function evaluateAreaRow(
       }
     } else {
       enabled = areaEnabled;
+      if (areaEnabledFromRow) from.enabled = 'area';
       const rawCall = readField(levels[0], 'enabled');
       if (rawCall !== ABSENT) {
         if (typeof rawCall !== 'boolean') {
           push('call', 'enabled', 'rejected', 'enabled_not_a_boolean', rawCall);
         } else {
           enabled = rawCall;
+          from.enabled = 'call';
         }
       }
     }
@@ -636,6 +732,9 @@ export async function evaluateAreaRow(
       // about which level the value came from.
       push('call', 'temperature', 'adjusted', 'model_rejects_sampling_parameters', temperature);
       temperature = undefined;
+      // No configured temperature is in force any more — a model rule dropped
+      // it. Badging it `call` or `area` would claim a value that is not sent.
+      from.temperature = 'default';
     }
 
     calls.set(callName, {
@@ -647,9 +746,10 @@ export async function evaluateAreaRow(
       temperature,
       defaultModel: defaults.defaultModel,
     });
+    provenance.set(callName, from);
   }
 
-  return { enabled: areaLockedOff ? true : areaEnabled, calls, issues };
+  return { enabled: areaLockedOff ? true : areaEnabled, calls, issues, provenance };
 }
 
 // ---------------------------------------------------------------------------
@@ -878,6 +978,8 @@ export interface AreaRowValidation {
   resolved: Map<string, ResolvedBosLlmSettings>;
   /** The area-level switch this row produces. */
   enabled: boolean;
+  /** Per call, the level each field resolved from (FR-4). */
+  provenance: Map<string, BosLlmCallProvenance>;
 }
 
 /**
@@ -897,6 +999,7 @@ export async function validateAreaRow(area: BosLlmArea, rowValue: unknown): Prom
     adjusted,
     resolved: evaluation.calls,
     enabled: evaluation.enabled,
+    provenance: evaluation.provenance,
   };
 }
 
