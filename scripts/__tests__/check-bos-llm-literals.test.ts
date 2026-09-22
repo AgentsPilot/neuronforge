@@ -20,9 +20,16 @@ import {
   findViolations,
   scanFiles,
   scopedFiles,
+  staleInclusions,
   type Violation,
 } from '../check-bos-llm-literals';
-import { CATALOG, isTestFile, literalScope, type FileImports } from '../lib/bos-llm-scope';
+import {
+  CATALOG,
+  LITERAL_SCOPE_INCLUSIONS,
+  isTestFile,
+  literalScope,
+  type FileImports,
+} from '../lib/bos-llm-scope';
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const POLICY = 'lib/business-os/llm/modelSettingsPolicy.ts';
@@ -338,5 +345,100 @@ describe('T4-1: the gate on this tree (AC-11)', () => {
     // this scope automatically, and this expectation is what says so.
     expect(files).not.toContain('lib/business-os/IntentParser.ts');
     expect(files.filter((rel) => rel.endsWith('AIDataLayerService.ts'))).toEqual([]);
+  });
+});
+
+/**
+ * The inclusion list gets the same discipline as the exemption list.
+ *
+ * `EXEMPTIONS` is capped by equality above, so a third entry fails the suite
+ * deliberately. `LITERAL_SCOPE_INCLUSIONS` is the symmetric lever - it decides
+ * what the gate DOES cover - and shipped without either guard. Two ways it
+ * could rot silently:
+ *
+ *   - an unnoticed entry widening the gate's surface unreviewed;
+ *   - an entry naming a file that no longer exists, which quietly becomes a
+ *     no-op and drops the file it covered back OUT of scope with a green gate
+ *     - the precise failure the inclusion list was written to prevent.
+ *
+ * The real list is EMPTY on this branch, because an entry cannot ship ahead of
+ * the file it names (see `LITERAL_SCOPE_INCLUSIONS`' doc block). That must not
+ * leave the machinery untested until the first entry arrives, so every
+ * property below is proved against a FIXTURE through the injectable argument
+ * `literalScope` and `staleInclusions` both take. The one thing a fixture
+ * cannot prove - that a real entry pulls a real file in - is asserted in the
+ * change that adds the entry.
+ */
+describe('the scope inclusions', () => {
+  // A path that is deliberately NOT in the repository. It reaches the catalog
+  // one hop away in the fixture graph, which is the shape a real inclusion
+  // exists for.
+  const FIXTURE = 'app/api/admin/__fixture__/one-hop-away/route.ts';
+  const FIXTURE_INCLUSIONS = [
+    { file: FIXTURE, reason: 'fixture: reaches the catalog one hop away, so the direct-import rule misses it' },
+  ];
+
+  it('is empty, and every entry it ever gains carries a reason', () => {
+    // Mirrors the EXEMPTIONS cap: the list's contents are pinned by equality,
+    // so ANY entry - the first, or a later one - fails this assertion and
+    // arrives with a review rather than as a config line. Scope only ever
+    // grows here, on purpose, and growth must be visible.
+    expect(LITERAL_SCOPE_INCLUSIONS.map((entry) => entry.file)).toEqual([]);
+    for (const entry of LITERAL_SCOPE_INCLUSIONS) {
+      expect(entry.reason.length).toBeGreaterThan(20);
+    }
+  });
+
+  it('an entry is not decorative: it actually pulls its file into scope', () => {
+    const graph = new Map<string, FileImports>([
+      [CATALOG, { imports: new Set<string>() }],
+      [FIXTURE, { imports: new Set<string>(['lib/business-os/llm/adminSettingsView.ts']) }],
+    ]);
+
+    expect(literalScope(graph, FIXTURE_INCLUSIONS)).toContain(FIXTURE);
+  });
+
+  it('an entry is load-bearing: its file does NOT reach scope by the direct-import rule', () => {
+    // The counterfactual. If a real included file ever starts importing the
+    // catalog directly, its entry can be retired rather than left to rot.
+    const graph = new Map<string, FileImports>([
+      [CATALOG, { imports: new Set<string>() }],
+      [FIXTURE, { imports: new Set<string>(['lib/business-os/llm/adminSettingsView.ts']) }],
+    ]);
+
+    const withoutInclusion = [...graph.entries()]
+      .filter(([rel, imports]) => !isTestFile(rel) && (rel === CATALOG || imports.imports.has(CATALOG)))
+      .map(([rel]) => rel);
+
+    expect(withoutInclusion).not.toContain(FIXTURE);
+    expect(literalScope(graph, FIXTURE_INCLUSIONS)).toContain(FIXTURE);
+  });
+
+  it('reports an inclusion naming a file that is not in scope, so a rename cannot go green', () => {
+    // The real list is clean - vacuously so while it is empty, and this keeps
+    // holding as entries arrive.
+    expect(staleInclusions(scopedFiles())).toEqual([]);
+
+    // A scope that has LOST the file is detected rather than ignored. This is
+    // the assertion that makes the guard a guard, and it is proved here
+    // independently of whether a real entry exists yet.
+    expect(staleInclusions([CATALOG], FIXTURE_INCLUSIONS)).toEqual([FIXTURE]);
+
+    // ...and an entry whose file IS in scope is not reported.
+    expect(staleInclusions([CATALOG, FIXTURE], FIXTURE_INCLUSIONS)).toEqual([]);
+  });
+
+  it('can only ever ADD files: the predicate gained a disjunct, so scope cannot shrink', () => {
+    const graph = new Map<string, FileImports>([
+      [CATALOG, { imports: new Set<string>() }],
+      ['lib/business-os/llm/someCallSite.ts', { imports: new Set<string>([CATALOG]) }],
+    ]);
+
+    const direct = [CATALOG, 'lib/business-os/llm/someCallSite.ts'].sort();
+
+    // Nothing an inclusion can do removes a direct importer - with the real
+    // (empty) list, or with a fixture that names an unrelated file.
+    expect(literalScope(graph)).toEqual(direct);
+    expect(literalScope(graph, FIXTURE_INCLUSIONS)).toEqual(direct);
   });
 });

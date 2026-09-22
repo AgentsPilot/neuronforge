@@ -99,6 +99,15 @@
  * name models, because pinning "what the provider actually received" is how
  * Layer 2 is proved at all.
  *
+ * INCLUSIONS are the mirror image: named files pulled INTO scope that the
+ * direct-import rule would miss - a file that reaches the catalog one hop away
+ * and would otherwise go unchecked. Scope only ever grows there, one named
+ * file at a time, and `--list` marks them `included`. This is the "narrow rule
+ * change, never a file exemption" this header prescribes. The list is EMPTY
+ * today: an entry must land in the same change as the file it names, because
+ * `staleInclusions` below treats a missing target as the rot it exists to
+ * catch.
+ *
  * EXEMPTIONS are named files, each with its reason, and `--list` prints them.
  * Two today: the FR-3 policy module (the place defaults are meant to live) and
  * the operator script (P-5b must name the superseded keys). A third is a code
@@ -122,6 +131,8 @@ import * as path from 'path';
 import ts from 'typescript';
 
 import {
+  LITERAL_SCOPE_INCLUSIONS,
+  type LiteralScopeInclusion,
   ROOT,
   buildImportGraph,
   literalScope,
@@ -399,14 +410,54 @@ export function scopedFiles(): string[] {
   return literalScope(buildImportGraph(files, parsed.options));
 }
 
+/**
+ * Inclusions that name a file which is not in scope.
+ *
+ * Such an entry has silently become a no-op — and the file it was meant to
+ * cover is now unchecked with a GREEN gate, which is the exact failure the
+ * inclusion list exists to prevent. So it is a hard failure, not a warning:
+ * rename or move the route and the gate stops, rather than quietly reverting
+ * to not covering it.
+ *
+ * Exported for the gate's own test.
+ */
+export function staleInclusions(
+  files: readonly string[],
+  inclusions: ReadonlyArray<LiteralScopeInclusion> = LITERAL_SCOPE_INCLUSIONS
+): string[] {
+  const inScope = new Set(files);
+  return inclusions.filter((entry) => !inScope.has(entry.file)).map((e) => e.file);
+}
+
 function main(): void {
   const started = Date.now();
   const args = new Set(process.argv.slice(2));
   const files = scopedFiles();
 
+  const stale = staleInclusions(files);
+  if (stale.length > 0) {
+    console.error(
+      'check-bos-llm-literals: FAILED. An entry in LITERAL_SCOPE_INCLUSIONS names a file that is not in scope:'
+    );
+    for (const file of stale) console.error(`  ${file}`);
+    console.error('  It was moved, renamed or deleted, so the file it covered is no longer checked.');
+    console.error('  Update the entry, or remove it if the file is genuinely gone.');
+    process.exitCode = 1;
+    return;
+  }
+
   if (args.has('--list')) {
-    for (const rel of files) console.log(`${EXEMPTIONS[rel] ? 'exempt ' : 'checked'} ${rel}`);
-    console.log(`check-bos-llm-literals: ${files.length} files in scope, ${Object.keys(EXEMPTIONS).length} exempt`);
+    // Inclusions are printed with their own marker, like exemptions: a file
+    // that is in scope only because it was NAMED in should be as visible as a
+    // file that is out of scope because it was named out.
+    const included = new Set(LITERAL_SCOPE_INCLUSIONS.map((entry) => entry.file));
+    for (const rel of files) {
+      const marker = EXEMPTIONS[rel] ? 'exempt ' : included.has(rel) ? 'included' : 'checked';
+      console.log(`${marker} ${rel}`);
+    }
+    console.log(
+      `check-bos-llm-literals: ${files.length} files in scope, ${Object.keys(EXEMPTIONS).length} exempt, ${LITERAL_SCOPE_INCLUSIONS.length} included by name`
+    );
     return;
   }
 
