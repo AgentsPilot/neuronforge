@@ -20,9 +20,16 @@ import {
   findViolations,
   scanFiles,
   scopedFiles,
+  staleInclusions,
   type Violation,
 } from '../check-bos-llm-literals';
-import { CATALOG, isTestFile, literalScope, type FileImports } from '../lib/bos-llm-scope';
+import {
+  CATALOG,
+  LITERAL_SCOPE_INCLUSIONS,
+  isTestFile,
+  literalScope,
+  type FileImports,
+} from '../lib/bos-llm-scope';
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const POLICY = 'lib/business-os/llm/modelSettingsPolicy.ts';
@@ -338,5 +345,69 @@ describe('T4-1: the gate on this tree (AC-11)', () => {
     // this scope automatically, and this expectation is what says so.
     expect(files).not.toContain('lib/business-os/IntentParser.ts');
     expect(files.filter((rel) => rel.endsWith('AIDataLayerService.ts'))).toEqual([]);
+  });
+});
+
+/**
+ * The inclusion list gets the same discipline as the exemption list.
+ *
+ * `EXEMPTIONS` is capped by equality above, so a third entry fails the suite
+ * deliberately. `LITERAL_SCOPE_INCLUSIONS` is the symmetric lever — it decides
+ * what the gate DOES cover — and shipped without either guard. Two ways it
+ * could rot silently:
+ *
+ *   - an unnoticed third entry widening the gate's surface unreviewed;
+ *   - an entry naming a file that no longer exists, which quietly becomes a
+ *     no-op and drops the file it covered back OUT of scope with a green gate
+ *     — the precise failure the inclusion list was written to prevent.
+ */
+describe('the scope inclusions', () => {
+  const ADMIN_ROUTE = 'app/api/admin/business-os/llm-settings/route.ts';
+
+  it('includes exactly one named file, with a reason', () => {
+    // Mirrors the EXEMPTIONS cap. A second inclusion is a code change with an
+    // SA review, not a config line — scope only ever grows here, on purpose,
+    // and growth must be visible.
+    expect(LITERAL_SCOPE_INCLUSIONS.map((entry) => entry.file)).toEqual([ADMIN_ROUTE]);
+    for (const entry of LITERAL_SCOPE_INCLUSIONS) {
+      expect(entry.reason.length).toBeGreaterThan(20);
+    }
+  });
+
+  it('actually pulls the route into scope — the inclusion is not decorative', () => {
+    expect(scopedFiles()).toContain(ADMIN_ROUTE);
+  });
+
+  it('is load-bearing: the route does NOT reach scope by the direct-import rule', () => {
+    // If this ever starts failing, the route began importing the catalog
+    // directly and the inclusion can be retired rather than left to rot.
+    const graph = new Map<string, FileImports>([
+      [CATALOG, { imports: new Set<string>() }],
+      [ADMIN_ROUTE, { imports: new Set<string>(['lib/business-os/llm/adminSettingsView.ts']) }],
+    ]);
+
+    const withoutInclusion = [...graph.entries()]
+      .filter(([rel, imports]) => !isTestFile(rel) && (rel === CATALOG || imports.imports.has(CATALOG)))
+      .map(([rel]) => rel);
+
+    expect(withoutInclusion).not.toContain(ADMIN_ROUTE);
+    expect(literalScope(graph)).toContain(ADMIN_ROUTE);
+  });
+
+  it('reports an inclusion naming a file that is not in scope, so a rename cannot go green', () => {
+    // The real list is clean...
+    expect(staleInclusions(scopedFiles())).toEqual([]);
+    // ...and a scope that has lost the file is detected rather than ignored.
+    expect(staleInclusions(['lib/business-os/llm/callCatalog.ts'])).toEqual([ADMIN_ROUTE]);
+  });
+
+  it('can only ever ADD files: the predicate gained a disjunct, so scope cannot shrink', () => {
+    const graph = new Map<string, FileImports>([
+      [CATALOG, { imports: new Set<string>() }],
+      ['lib/business-os/llm/someCallSite.ts', { imports: new Set<string>([CATALOG]) }],
+    ]);
+
+    // Nothing an inclusion can do removes a direct importer.
+    expect(literalScope(graph)).toEqual([CATALOG, 'lib/business-os/llm/someCallSite.ts'].sort());
   });
 });
