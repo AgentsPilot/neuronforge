@@ -20,14 +20,21 @@
  * is inlined at build time along with `NODE_ENV`, so this is plain string work
  * by the time it runs, on the server and in the browser alike.
  *
- * NOTE: the production fallback follows the rest of this codebase, which spells
- * the apex `agentspilot.com` (subdomains, smart links, the website builder).
- * The marketing repo's own docs say `agentspilot.ai`. Whichever is really
- * served, set `NEXT_PUBLIC_MARKETING_URL` in the deployment and neither guess
- * matters.
+ * THE FALLBACK IS THE VERCEL DEPLOYMENT, NOT AN APEX DOMAIN, AND THAT IS
+ * DELIBERATE: no custom domain is served yet. This used to be
+ * `agentspilot.com` — chosen because the rest of this codebase spells the apex
+ * that way for subdomains, smart links and the website builder — and signing
+ * out landed everyone on a browser interstitial, because that domain has an
+ * expired certificate (`ERR_CERT_DATE_INVALID`). `agentspilot.ai`, which the
+ * marketing repo's own docs use throughout, is not served either.
+ *
+ * So the fallback points at the marketing app where it is actually reachable
+ * today. When a custom domain is finally configured, set
+ * `NEXT_PUBLIC_MARKETING_URL` on the deployment rather than editing this —
+ * that is what the override is for, and it needs no code change.
  */
 const DEV_MARKETING_URL = 'http://localhost:3001';
-const PROD_MARKETING_URL = 'https://agentspilot.com';
+const PROD_MARKETING_URL = 'https://agentspilot-marketing.vercel.app';
 
 /** The marketing site's origin, with no trailing slash. */
 export function marketingOrigin(): string {
