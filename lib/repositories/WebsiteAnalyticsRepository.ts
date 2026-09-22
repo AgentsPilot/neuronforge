@@ -121,12 +121,39 @@ export function detectDeviceType(userAgent: string | null): string {
 
   const ua = userAgent.toLowerCase();
 
-  if (ua.includes('mobile') || ua.includes('android') || ua.includes('iphone')) {
-    return 'mobile';
-  }
-  if (ua.includes('tablet') || ua.includes('ipad')) {
+  /*
+   * Tablets are tested FIRST, and the order is the whole fix.
+   *
+   * This used to check mobile/android/iphone before tablet/ipad, which made the
+   * tablet branch unreachable for the two most common tablets in existence:
+   * every Android tablet's user agent contains "android", and an iPad's
+   * contains "mobile". Both were recorded as phones.
+   *
+   * It matters because the one insight that reads this column compares mobile
+   * conversion against desktop. A mobile bucket padded with tablets is not a
+   * mobile bucket, and the gap it reports is not a mobile problem.
+   */
+  if (ua.includes('ipad') || ua.includes('tablet') || ua.includes('kindle') || ua.includes('playbook')) {
     return 'tablet';
   }
+
+  // An Android device WITHOUT "mobile" is a tablet by Google's own convention:
+  // Chrome puts "Mobile" in the token only on phones.
+  if (ua.includes('android') && !ua.includes('mobile')) {
+    return 'tablet';
+  }
+
+  if (ua.includes('mobile') || ua.includes('android') || ua.includes('iphone') || ua.includes('ipod')) {
+    return 'mobile';
+  }
+
+  /*
+   * KNOWN LIMIT: an iPad running iPadOS 13 or later reports itself as
+   * "Macintosh" with no iPad token at all, so it is indistinguishable from a
+   * Mac by user agent alone and lands here as desktop. Separating the two needs
+   * a client-side touch-points check; until then this is a deliberate
+   * under-count of tablets rather than a bug to hunt.
+   */
   return 'desktop';
 }
 
@@ -148,6 +175,21 @@ export class WebsiteAnalyticsRepository {
     try {
       const { data: view, error } = await this.supabase
         .from('website_page_views')
+        /*
+         * Every field the type declares, written.
+         *
+         * This list used to stop at `session_id`, so four columns the caller
+         * computed and passed were silently discarded on the way in: the three
+         * UTM parameters and `is_owner_view`. All four read as 0 non-null
+         * across every row ever recorded.
+         *
+         * `is_owner_view` mattered most. The track route works it out correctly
+         * and nothing ever stored it, so no visitor metric could exclude the
+         * owner — every page-view figure in the product counted the owner
+         * previewing their own site as an audience. An insert that names its
+         * columns by hand fails exactly this way: silently, and only for the
+         * fields somebody forgot.
+         */
         .insert({
           page_id: data.page_id,
           user_id: data.user_id,
@@ -157,7 +199,11 @@ export class WebsiteAnalyticsRepository {
           ip_hash: data.ip_hash || null,
           country_code: data.country_code || null,
           device_type: data.device_type || null,
-          session_id: data.session_id || null
+          session_id: data.session_id || null,
+          utm_source: data.utm_source || null,
+          utm_medium: data.utm_medium || null,
+          utm_campaign: data.utm_campaign || null,
+          is_owner_view: data.is_owner_view ?? false,
         })
         .select()
         .single();

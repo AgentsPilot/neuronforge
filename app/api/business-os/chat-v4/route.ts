@@ -46,12 +46,14 @@ import {
 } from '@/lib/business-os/bizql/render/AnswerRenderer';
 import {
   describeFilters,
+  ALTERNATIVE_KINDS,
   describePlan,
   isMoneyStep,
   type Alternative,
   type Understanding,
 } from '@/lib/business-os/bizql/render/describePlan';
 import { applyAlternative } from '@/lib/business-os/bizql/render/applyAlternative';
+import { defaultScopeFor } from '@/lib/business-os/bizql/defaultScope';
 import { explainEmptyTotal, siblingCounts } from '@/lib/business-os/bizql/render/siblingCounts';
 import { getVerifiedQuestions } from '@/lib/business-os/bizql/planner/VerifiedQuestions';
 import { getPlanCache, type CacheLayer } from '@/lib/business-os/bizql/cache/PlanCache';
@@ -66,6 +68,7 @@ import {
 import { executeMutate, requiresConfirmation } from '@/lib/business-os/bizql/mutate/MutateExecutor';
 import { MissingFieldsError } from '@/lib/business-os/bizql/types';
 import { checkBudget } from '@/lib/business-os/bizql/telemetry/ChatBudget';
+import { resolveBusinessTimezone } from '@/lib/business-os/businessDay';
 import {
   getConfirmationStore,
   readConfirmationReply,
@@ -243,7 +246,15 @@ const RequestSchema = z.object({
       stepId: z.string().min(1).max(8),
       field: z.string().min(1).max(64),
       value: z.string().min(1).max(64),
-      kind: z.enum(['enum', 'aggregate_field']),
+      /*
+       * Derived from the renderer's own list, never re-typed.
+       *
+       * This was `['enum','aggregate_field']` while the route itself built
+       * chips of kind `previous_filters` — so the one affordance offered for
+       * this system's most-documented ambiguity was rejected here, and every
+       * user who tapped it got "Invalid request".
+       */
+      kind: z.enum(ALTERNATIVE_KINDS),
       label: z.string().max(120).optional(),
     })
     .optional(),
@@ -394,15 +405,40 @@ async function handleChatTurn(
 
     // 3. Load presentation preferences. Language, currency and timezone drive
     //    the renderer, so no formatting is hardcoded per locale.
-    const profileResult = await businessProfileRepository.findByUserId(user.id);
+    /*
+     * Three independent reads, together.
+     *
+     * They were sequential, and the middle one read a column that does not
+     * exist. `business_profiles.timezone` has never been a column — so
+     * `profile?.timezone ?? 'UTC'` was not a fallback for the unusual case, it
+     * was the answer for EVERY business, on every turn. A business three hours
+     * ahead asking "how many bookings today?" in the evening was answered about
+     * yesterday, and the date machinery underneath is correct and tested, so
+     * the symptom looked like intermittent planner flakiness.
+     *
+     * The clock lives on `user_preferences`, and `resolveBusinessTimezone` is
+     * the same resolver the daily briefing uses — one business clock, rather
+     * than a second opinion in the chat.
+     *
+     * Note the currency line below: the identical phantom-column bug was found
+     * and fixed one field over, and this one was not.
+     */
+    const [profileResult, preferencesResult, currency] = await Promise.all([
+      businessProfileRepository.findByUserId(user.id),
+      supabaseServer
+        .from('user_preferences')
+        .select('timezone')
+        .eq('user_id', user.id)
+        .maybeSingle(),
+      resolveUserCurrency(supabaseServer, user.id),
+    ]);
+
     const profile = profileResult.data;
     const language = parsed.data.language ?? (profile?.language as 'en' | 'he' | 'es') ?? 'en';
     resolvedLanguage = language;
-    const timezone = profile?.timezone ?? 'UTC';
-    // Derived, not read off the profile: there is no currency column there, so
-    // `profile.currency` was always undefined and every sum in the chat rendered
-    // in dollars — including for a business invoicing in shekels.
-    const currency = await resolveUserCurrency(supabaseServer, user.id);
+    const { timezone } = resolveBusinessTimezone({
+      preferencesTimezone: preferencesResult.data?.timezone as string | null | undefined,
+    });
 
     // 3b. Budget. Checked BEFORE planning, because planning is the cost — and
     //     before the pending-write branch, so a user at their limit can still
@@ -1539,12 +1575,35 @@ async function handleChatTurn(
       }
     }
 
+    /*
+     * Did anything get hidden from this answer without being asked for?
+     *
+     * `defaultScope` justifies itself on three conditions, the second being
+     * "it is not hidden — describePlan says 'current versions only' in the line
+     * shown next to the answer". That line is only SENT under the conditions
+     * below, and a plain count satisfies none of them: no alternatives (they
+     * need an enum predicate), not empty, not corrected, one step, no money
+     * field. So the filter was applied and the disclosure suppressed — "how
+     * many quotes do I have?" answered 4 from a table holding 11, and two turns
+     * later a list showed more and the numbers did not reconcile.
+     *
+     * Asked of the same pure function the compiler and the answer line use, so
+     * a third opinion about what was hidden cannot appear.
+     */
+    const scopeHidden = readSteps.some((step) => {
+      const stepEntity = CATALOG.entities[(step as { entity?: string }).entity ?? ''];
+      return stepEntity
+        ? Boolean(defaultScopeFor(stepEntity, (step as { where?: never }).where))
+        : false;
+    });
+
     const understood =
       understanding &&
       (understanding.alternatives.length > 0 ||
         emptyResult ||
         Boolean(corrected) ||
         readSteps.length > 1 ||
+        scopeHidden ||
         readSteps.some(isMoneyStep))
         ? understanding
         : undefined;
@@ -1640,7 +1699,14 @@ async function handleChatTurn(
           primary?.op === 'find' && answer.rows.length > 0
             ? {
                 entity: primary.entity,
-                items: answer.rows.map((r) => ({ id: r.id, label: r.label })),
+                // `refs` travels with the row: the ids it points at, so a
+                // follow-up about its customer has the customer's id to use
+                // rather than the row's own. See RememberedRows.
+                items: answer.rows.map((r) => ({
+                  id: r.id,
+                  label: r.label,
+                  ...(r.refs ? { refs: r.refs } : {}),
+                })),
                 at: new Date().toISOString(),
               }
             : groupedSubject && groupedEntity

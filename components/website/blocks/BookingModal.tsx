@@ -197,13 +197,41 @@ export function BookingModal({
     // and must not be scrolled to.
     if (!isOpen || anchorTop === null) return;
 
-    // After paint, so the dialog has its final height to be centred on. The
-    // iframe's own body does not scroll, so this propagates to the editor's
-    // canvas — which is the scroller the viewer is actually using.
-    const frame = requestAnimationFrame(() => {
-      dialogRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    });
-    return () => cancelAnimationFrame(frame);
+    /*
+     * Centred after paint AND again whenever the dialog changes height.
+     *
+     * One `requestAnimationFrame` was not enough: the services list arrives
+     * from the network, so the first frame centres a nearly empty panel and the
+     * dialog then grows downward — past the bottom of what the reader can see,
+     * with its own footer and half the list beyond reach. The scroll position
+     * was correct for a dialog that no longer existed.
+     *
+     * A ResizeObserver catches every growth, including the step changes that
+     * resize it later. It only acts when the dialog is ACTUALLY out of view,
+     * because a dialog that already fits should not lurch about while somebody
+     * is reading it.
+     */
+    const bringIntoView = () => {
+      const el = dialogRef.current;
+      if (!el) return;
+
+      const box = el.getBoundingClientRect();
+      const viewport = window.innerHeight || document.documentElement.clientHeight;
+      const fullyVisible = box.top >= 0 && box.bottom <= viewport;
+      if (fullyVisible) return;
+
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    };
+
+    const frame = requestAnimationFrame(bringIntoView);
+
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(bringIntoView) : null;
+    if (observer && dialogRef.current) observer.observe(dialogRef.current);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
   }, [isOpen, anchorTop]);
 
   /*
@@ -304,16 +332,37 @@ export function BookingModal({
     }
   }, [onClose]);
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE SCROLL LOCK IS ONLY RIGHT FOR THE CENTRED DIALOG.
+   *
+   * Locking the page is correct when the dialog is `fixed`: it fills the
+   * viewport, so there is nothing behind worth scrolling and letting the page
+   * move under it feels broken.
+   *
+   * In the ANCHORED case it is the opposite. That dialog is `absolute`,
+   * positioned in the DOCUMENT beside whatever was clicked, because the preview
+   * renders in an auto-height iframe where `fixed` has no viewport to attach
+   * to. A 700px panel placed part way down a long page extends below what the
+   * reader can see — and locking the scroll takes away the only means of
+   * reaching the rest of it. The dialog opens, the services list is cut off
+   * mid-row, and nothing moves.
+   *
+   * So the lock follows the positioning: fixed dialog, locked page; anchored
+   * dialog, page still scrolls.
+   */
   useEffect(() => {
     if (isOpen) {
       document.addEventListener('keydown', handleEscape);
-      document.body.style.overflow = 'hidden';
+      if (anchorTop === null) {
+        document.body.style.overflow = 'hidden';
+      }
     }
     return () => {
       document.removeEventListener('keydown', handleEscape);
       document.body.style.overflow = '';
     };
-  }, [isOpen, handleEscape]);
+  }, [isOpen, handleEscape, anchorTop]);
 
   // Reset state when modal opens/closes
   useEffect(() => {
@@ -358,7 +407,23 @@ export function BookingModal({
             */
             className={
               anchorTop === null
-                ? 'fixed inset-4 md:inset-8 lg:inset-16 z-50 flex items-center justify-center'
+                /*
+                  ─────────────────────────────────────────────────────────────
+                  PADDING, NOT INSETS — THE PANEL MUST FIT ITS CONTAINER.
+
+                  This was `inset-4 md:inset-8 lg:inset-16`, which reserves up
+                  to 128px of height, while the panel below asked for a
+                  `minHeight` of `calc(100dvh - 2rem)` — only 32px less than the
+                  whole screen. The panel was therefore ~96px TALLER than the
+                  box holding it, and being centred it overflowed equally top
+                  and bottom: the footer sat below the viewport with the page
+                  behind it scroll-locked, so a client could not reach Continue
+                  and could not scroll to it either.
+
+                  `inset-0` with padding puts the reserve INSIDE the box, so
+                  `max-h-full` on the panel is a promise the container can keep.
+                */
+                ? 'fixed inset-0 z-50 flex items-center justify-center p-4 md:p-8'
                 : 'absolute z-50 flex justify-center px-4'
             }
             style={
@@ -414,9 +479,22 @@ export function BookingModal({
                   wrong at 300px on a desktop — it simply stops winning against
                   a screen that is smaller.
                 */
+                /*
+                  Bounded by the CONTAINER, not by the viewport.
+
+                  `100%` here is the padded box above, which already accounts
+                  for the margin the dialog wants from the screen edge. Sizing
+                  against `dvh` instead is what let the panel outgrow its own
+                  container — two rules measuring different things and no way
+                  for them to agree.
+
+                  The 500px floor is kept for roomy screens and yields to
+                  `100%` on short ones, so it can never push the footer out of
+                  reach.
+                */
                 height: anchorTop === null ? '80dvh' : 'auto',
-                maxHeight: anchorTop === null ? 'min(700px, calc(100dvh - 2rem))' : '700px',
-                minHeight: 'min(500px, calc(100dvh - 2rem))'
+                maxHeight: anchorTop === null ? 'min(700px, 100%)' : '700px',
+                minHeight: 'min(500px, 100%)'
               }}
             >
               {/* Sticky Header with Step Indicator */}

@@ -22,6 +22,15 @@ export interface CRMContact {
   tags: string[];
   custom_fields: Record<string, any>;
   source: string | null; // 'website_form', 'manual', 'import', 'booking', 'campaign'
+  /**
+   * How the contact was captured — UTM, referrer, which smart link, which page.
+   * Backed by `crm_contacts.source_metadata` (20260824_add_conversion_layer.sql).
+   *
+   * Declared on the INSERT type and not on this one, so every reader that
+   * selected it — `select('*')` returns it — had to cast or go without. The CRM
+   * card derives its origin chip from exactly this.
+   */
+  source_metadata?: Record<string, unknown> | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -53,7 +62,13 @@ export interface CRMContactUpdate {
   phone?: string | null;
   stage?: string;
   /** Where this contact came from. A real column, and the API already edits it. */
-  source?: string;
+  source?: string | null;
+  /**
+   * The capture attribution. Updatable because `upsertByEmail` carries it on to
+   * an existing contact — a returning client who arrives through a tagged link
+   * should update how they got here, not keep their first visit's answer.
+   */
+  source_metadata?: Record<string, unknown> | null;
   tags?: string[];
   custom_fields?: Record<string, any>;
   notes?: string | null;

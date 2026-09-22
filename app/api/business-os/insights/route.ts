@@ -15,7 +15,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { InsightRepository } from '@/lib/business-os/insight/repository';
-import { KernelTrigger } from '@/lib/business-os/insight/kernel';
+import { enqueueInsightActions } from '@/lib/business-os/insight/automation/InsightActionEnqueuer';
 import { ImpactProjector } from '@/lib/business-os/insight/projection';
 import { AutonomousWorkFeed } from '@/lib/business-os/insight/reporting';
 
@@ -203,7 +203,18 @@ export async function POST(request: NextRequest) {
 
     switch (params.action) {
       case 'run': {
-        // Trigger the paired process
+        /*
+         * Queue the work, do not call the kernel.
+         *
+         * This used to call `KernelTrigger.trigger()`, which ends at a throw —
+         * 'Kernel process is not implemented; refusing rather than reporting
+         * fabricated work'. The standing-automation path was moved onto the
+         * durable queue; this manual button was left behind, so "Handle it for
+         * me" returned an error every time it was pressed.
+         *
+         * Scope is unchanged and deliberate: THESE entities, from this insight,
+         * once. A standing rule is the `automate` action below.
+         */
         if (!insight.paired_process_id) {
           return NextResponse.json(
             { success: false, error: 'No action available for this insight' },
@@ -211,56 +222,98 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        const trigger = new KernelTrigger(supabaseServer);
-        const result = await trigger.trigger({
-          processId: insight.paired_process_id,
+        const queued = await enqueueInsightActions({
           userId: user.id,
-          triggeredBy: 'insight',
+          processId: insight.paired_process_id,
+          detectorId: insight.detector_id,
           insightId: insight.id,
+          detection: {
+            affectedEntityType: insight.affected_entity_type,
+            affectedEntityIds: insight.affected_entity_ids ?? [],
+          } as never,
           parameters: params.parameters || insight.process_parameters || {},
-          entityIds: insight.affected_entity_ids,
         });
 
-        if (result.status === 'failed') {
-          return NextResponse.json(
-            { success: false, error: result.error },
-            { status: 400 }
+        if (queued.skipped) {
+          /*
+           * A refusal the owner should see rather than a silent success. The
+           * enqueuer declines when a detector is wired to a process it cannot
+           * target, which is a wiring fault, not a quiet day.
+           */
+          requestLogger.warn(
+            { userId: user.id, insightId: insight.id, reason: queued.skipped },
+            'Insight action could not be queued'
           );
+          return NextResponse.json({ success: false, error: queued.skipped }, { status: 400 });
         }
 
-        // Mark insight as acted
-        await repository.markActed(insight.id, user.id, result.executionId);
+        await repository.markActed(insight.id, user.id);
 
         requestLogger.info(
-          { userId: user.id, insightId: insight.id, executionId: result.executionId },
-          'Insight action triggered'
+          { userId: user.id, insightId: insight.id, queued: queued.queued, duplicates: queued.duplicates },
+          'Insight action queued'
         );
 
         return NextResponse.json({
           success: true,
           data: {
-            executionId: result.executionId,
-            status: result.status,
-            summary: result.summary,
-            outcome: {
-              itemsProcessed: result.itemsProcessed,
-              itemsSucceeded: result.itemsSucceeded,
-              itemsFailed: result.itemsFailed,
-              valueImpact: result.valueImpact,
-            },
+            /*
+             * Reported as QUEUED, never as done. Nothing has been sent yet, and
+             * the dispatcher re-checks every row before it sends — an invoice
+             * paid in the meantime is skipped. Saying "sent" here would be the
+             * same invention this module has already had to remove once.
+             */
+            queued: queued.queued,
+            alreadyQueued: queued.duplicates,
+            status: 'queued',
           },
         });
       }
 
       case 'automate': {
-        // Create standing automation (Phase 4)
-        // For now, just return a placeholder
-        return NextResponse.json({
-          success: true,
-          data: {
-            message: 'Automation creation coming in Phase 4',
-          },
+        /*
+         * A standing rule, rather than one run over today's entities.
+         *
+         * Previously a placeholder that answered "coming in Phase 4" with
+         * success: true, so the UI showed the automation as created and nothing
+         * existed. `AutomationManager.runDueAutomations` already drains this
+         * table, and `journeyAnchors.runningAutomations` already counts it — the
+         * row was the only missing piece.
+         */
+        if (!insight.paired_process_id) {
+          return NextResponse.json(
+            { success: false, error: 'This insight has no process to automate' },
+            { status: 400 }
+          );
+        }
+
+        const created = await repository.createAutomation({
+          userId: user.id,
+          detectorId: insight.detector_id,
+          processId: insight.paired_process_id,
+          parameters: params.parameters || insight.process_parameters || {},
+          insightId: insight.id,
         });
+
+        if (created.error) {
+          requestLogger.error(
+            { err: created.error, userId: user.id, insightId: insight.id },
+            'Could not create the standing automation'
+          );
+          return NextResponse.json(
+            { success: false, error: 'Could not turn this on' },
+            { status: 500 }
+          );
+        }
+
+        await repository.markAutomated(insight.id, user.id);
+
+        requestLogger.info(
+          { userId: user.id, insightId: insight.id, detectorId: insight.detector_id },
+          'Standing automation created'
+        );
+
+        return NextResponse.json({ success: true, data: { automationId: created.data?.id } });
       }
 
       case 'snooze': {
@@ -299,8 +352,25 @@ export async function POST(request: NextRequest) {
       }
 
       case 'view': {
+        /*
+         * Two different questions, answered differently.
+         *
+         * HOW MANY TIMES has this been put in front of the owner — every time,
+         * because that is what the number means and what the card's "first time
+         * I've seen this" line reads. Detector cooldowns depend on it too.
+         *
+         * HAS IT BEEN SEEN AT ALL — once. `updateStatus` writes a row into
+         * `owner_insight_history`, and repeating that on every dashboard load
+         * would bury the actions worth counting (acted, dismissed, snoozed)
+         * under a view entry per page load. That history is the only thing that
+         * can ever answer "does anyone do anything about what we surface", so
+         * it must not be filled with noise.
+         */
         await repository.markSurfaced(insight.id, user.id);
-        await repository.updateStatus(insight.id, user.id, 'viewed');
+
+        if (insight.status === 'new') {
+          await repository.updateStatus(insight.id, user.id, 'viewed');
+        }
 
         return NextResponse.json({
           success: true,

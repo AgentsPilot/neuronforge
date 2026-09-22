@@ -26,8 +26,10 @@ import {
   AlertCircle,
   Settings,
   LogOut,
+  MailCheck,
 } from 'lucide-react';
 import { LeadNotificationToggles } from '@/components/business-os/settings/LeadNotificationToggles';
+import { MarketingConsentPanel } from '@/components/business-os/settings/MarketingConsentPanel';
 import { ErasureRequestContent } from '@/components/business-os/purge/DangerZonePanel';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
@@ -391,6 +393,62 @@ function BusinessOSSettingsContent() {
    * — it belongs to the marketing site, on its own origin.
    * ─────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * Give a best-effort network call a deadline it cannot outlive.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * Both calls below were `await`ed inside a try/catch, which catches a
+   * REJECTION and does nothing at all about a promise that simply never
+   * settles. A stalled request therefore left `loggingOut` true forever — and
+   * the dialog refuses to close while that is true — so a person who pressed
+   * log out sat on a spinner with no cancel, no escape and no way back.
+   *
+   * Resolves rather than rejects on timeout: every caller here is best-effort,
+   * and the only outcome that matters is that the browser ends up signed out
+   * and somewhere else.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  const withDeadline = async (work: Promise<unknown>, ms: number, what: string) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const deadline = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), ms);
+    });
+
+    try {
+      const outcome = await Promise.race([work.then(() => 'done' as const), deadline]);
+      if (outcome === 'timeout') {
+        logger.warn({ what, ms }, 'Logout step exceeded its deadline; continuing without it');
+      }
+    } catch (err) {
+      logger.warn({ err, what }, 'Logout step failed; continuing without it');
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+
+  /**
+   * Every key that holds a SESSION, whoever wrote it.
+   *
+   * The list below used to name `sb-auth-token` and `supabase.auth.token`, and
+   * neither is what Supabase actually writes: the real key carries the project
+   * ref (`sb-<ref>-auth-token`) and is chunked into `.0`, `.1`, … when the JWT
+   * is large. So a sign-out that failed or timed out left the session sitting
+   * in storage while the browser was sent to the login page — signed out in
+   * appearance only, and signed straight back in on return.
+   *
+   * Matched by shape rather than by a literal, so this holds in every
+   * environment and survives a project change.
+   */
+  const clearSessionKeys = (store: Storage) => {
+    const doomed: string[] = [];
+    for (let i = 0; i < store.length; i++) {
+      const key = store.key(i);
+      if (key && /^sb-.*-auth-token/.test(key)) doomed.push(key);
+    }
+    doomed.forEach((key) => store.removeItem(key));
+  };
+
   const handleLogout = async () => {
     setLoggingOut(true);
 
@@ -757,6 +815,25 @@ function BusinessOSSettingsContent() {
             {expandedSection === 'preferences' && (
               <div className="px-4 pb-4 space-y-4">
                 <LeadNotificationToggles />
+              </div>
+            )}
+          </div>
+
+          {/* Marketing consent */}
+          <div id="settings-section-consent">
+            <button
+              onClick={() => setExpandedSection(expandedSection === 'consent' ? null : 'consent')}
+              className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <MailCheck className="w-5 h-5 text-[var(--v2-text-muted)]" />
+                <span className="text-sm text-[var(--v2-text-primary)]">Marketing permission</span>
+              </div>
+              <ChevronRight className={`w-4 h-4 text-[var(--v2-text-muted)] transition-transform ${expandedSection === 'consent' ? 'rotate-90' : ''}`} />
+            </button>
+            {expandedSection === 'consent' && (
+              <div className="px-4 pb-4">
+                <MarketingConsentPanel />
               </div>
             )}
           </div>

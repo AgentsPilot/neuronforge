@@ -20,6 +20,15 @@ export type Channel =
   | 'linkedin'
   | 'youtube'
   | 'email'
+  /**
+   * A printed code, or anything else offline.
+   *
+   * Has no referrer and never can — which is the point. Without its own row a
+   * flyer's scans land in `direct` beside people who typed the address, and the
+   * owner cannot tell whether the print run did anything. Only ever set by a
+   * `?v=qr` share link; nothing infers it.
+   */
+  | 'qr'
   | 'referral'
   | 'direct';
 
@@ -66,6 +75,7 @@ const UTM_SOURCES: Record<string, Channel> = {
   email: 'email',
   newsletter: 'email',
   mailchimp: 'email',
+  qr: 'qr',
 };
 
 /**
@@ -146,6 +156,7 @@ export const CHANNEL_ORDER: Channel[] = [
   'linkedin',
   'youtube',
   'email',
+  'qr',
   'referral',
   'direct',
 ];

@@ -30,6 +30,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/insight-actions",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/cron/channel-metrics-sync",
       "schedule": "30 * * * *"
     },

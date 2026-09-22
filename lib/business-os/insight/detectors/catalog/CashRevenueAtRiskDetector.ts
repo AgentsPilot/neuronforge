@@ -38,6 +38,29 @@ const INSTALMENT_OUTSTANDING = new Set(['pending', 'scheduled', 'overdue', 'fail
  */
 const PROPOSAL_OPEN = new Set(['sent', 'pending', 'viewed']);
 
+/**
+ * How long money must have been sitting before it counts as AT RISK.
+ *
+ * Nothing is at risk the moment it is raised. This detector had no age filter
+ * at all, so an invoice created at 03:10 and paid at 03:56 produced a card
+ * reading "$500 needs attention" — money that was never late, for a business
+ * that already has `chase_overdue_invoices` to chase late invoices.
+ *
+ * Seven days matches `cash_ar_overdue`, so the two agree about when money
+ * stops being simply outstanding and starts being a problem.
+ */
+const AT_RISK_AFTER_DAYS = 7;
+
+/**
+ * How many separate things must be sitting there.
+ *
+ * The advisor is for patterns, not for facts already visible on the payments
+ * page and already handled by a chaser. One aged invoice is a row in a list;
+ * three are a cash-flow shape the owner has not looked at as a total — which is
+ * the whole reason this detector exists.
+ */
+const MIN_ITEMS = 3;
+
 /** Below this the total is not worth a card of its own. */
 const MIN_REPORTABLE = 1;
 
@@ -55,7 +78,7 @@ export class CashRevenueAtRiskDetector extends BaseDetector {
     thresholdType: 'absolute',
     threshold: 0,
     direction: 'above',
-    minSamples: 1,
+    minSamples: MIN_ITEMS,
 
     severityFn: (total: number, owedShare: number): InsightSeverity => {
       /*
@@ -94,22 +117,28 @@ export class CashRevenueAtRiskDetector extends BaseDetector {
       return null;
     }
 
+    const agedBefore = new Date(Date.now() - AT_RISK_AFTER_DAYS * 86_400_000).toISOString();
+
     const [invoicesResult, instalmentsResult, proposalsResult] = await Promise.all([
       this.supabase
         .from('payment_invoices')
         .select('id, amount, refunded_amount, currency, contact_id')
         .eq('user_id', userId)
-        .in('status', [...ISSUED_INVOICE_STATUSES]),
+        .in('status', [...ISSUED_INVOICE_STATUSES])
+        // Raised long enough ago to be a concern rather than a recent bill.
+        .lt('created_at', agedBefore),
 
       this.supabase
         .from('payment_plan_installments')
         .select('id, amount, currency, status, contact_id')
-        .eq('user_id', userId),
+        .eq('user_id', userId)
+        .lt('created_at', agedBefore),
 
       this.supabase
         .from('proposals')
         .select('id, total, currency, status, contact_id')
-        .eq('user_id', userId),
+        .eq('user_id', userId)
+        .lt('created_at', agedBefore),
     ]);
 
     /*
@@ -162,7 +191,14 @@ export class CashRevenueAtRiskDetector extends BaseDetector {
     const owed = invoiceOwed + instalmentOwed;
     const total = owed + quoted;
 
-    if (total < MIN_REPORTABLE || contacts.size === 0) {
+    /*
+     * A pattern, or nothing.
+     *
+     * One aged invoice is already on the payments page and already being chased;
+     * saying it again here is noise dressed as insight. Three or more is a shape
+     * the owner has not seen totalled, which is what this card is for.
+     */
+    if (total < MIN_REPORTABLE || contacts.size === 0 || entityIds.length < MIN_ITEMS) {
       this.logDetection(userId, null);
       return null;
     }

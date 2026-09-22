@@ -21,9 +21,27 @@ const detectors = new DetectorEngine({} as never).getDetectors();
 
 describe('detector ↔ process wiring', () => {
   it('registers at least the detectors we expect', () => {
-    // A guard on the guard: if this list ever came back empty the assertions
-    // below would all pass vacuously.
-    expect(detectors.length).toBeGreaterThanOrEqual(30);
+    /*
+     * A guard on the guard: if this list ever came back empty the assertions
+     * below would all pass vacuously.
+     *
+     * The floor was 30 and is now 25, because five detectors were deliberately
+     * removed rather than lost:
+     *
+     *   ret_package_ending      advised renewing a package, and the product has
+     *                           no renewal for a client's plan to be renewed into
+     *   cash_cards_expiring     reads saved_payment_methods, which is empty on
+     *                           every account — cards live at Stripe, not here
+     *   pricing_discount_abuse  looks for discounts, and there is no discount
+     *                           feature to produce any
+     *   web_mobile_issues       every query named a column that does not exist
+     *   web_page_underperform   four of its five queries did the same
+     *
+     * The last two are worth rebuilding: the analytics are real
+     * (website_page_views, smart_link_clicks), only the column names were wrong.
+     * Raise this floor again when they come back.
+     */
+    expect(detectors.length).toBeGreaterThanOrEqual(25);
   });
 
   it('never contradicts a detector about its own process', () => {

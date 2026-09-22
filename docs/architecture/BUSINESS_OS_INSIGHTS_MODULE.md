@@ -1,11 +1,11 @@
 # Business OS — Insights Module (as-merged into `main`)
 
-> **Last Updated**: 2026-09-17
+> **Last Updated**: 2026-09-18
 > **Verified against**: `main` @ `d3312431` (local == `origin/main`, 0 ahead / 0 behind)
 
 ## Overview
 
-The Insights module is the advisory intelligence layer of Business OS. On a cron cadence it computes metrics, runs a catalog of **28 detectors** over the owner's business data, correlates the signals that fire into higher-order stories, prioritizes them, persists them as `insights` rows with LLM-localized prose, and renders them on the `/business-os` dashboard.
+The Insights module is the advisory intelligence layer of Business OS. On a cron cadence it computes metrics, runs a catalog of **37 detectors** over the owner's business data, correlates the signals that fire into higher-order stories, prioritizes them, persists them as `insights` rows with LLM-localized prose, and renders them on the `/business-os` dashboard.
 
 This document is the **as-built map**, written from the code rather than from the design docs, because the design docs drifted: the last insight-specific doc was written 2026-08-12 and the module was substantially rebuilt between 2026-08-26 and 2026-09-07. It exists so a developer (human or agent) can start work on Insights without reading the subsystem cold and without walking into the [known hazards](#11-known-state--hazards).
 
@@ -57,9 +57,9 @@ Two unrelated subsystems in this repo are called "insights". Nearly every stale 
 | Path | Lines | Responsibility |
 |---|---|---|
 | `repository/InsightRepository.ts` | 2,583 | Persistence for `insights`, `owner_insight_history`, `business_health_summaries`, correlation results **plus** the three LLM calls that localize prose, and `getVectorMaturity()`. Those three calls record usage against the business analysed (`feature = business-os-insights`, `component` = `insight_content` / `correlated_insight` / `health_summary`, `session_id` = the detection `runId`, now required on the public methods), via `lib/business-os/llm/callCatalog.ts` |
-| `detectors/DetectorEngine.ts` | 366 | Registers and runs all 28 detectors for one user; invokes the correlation engine |
+| `detectors/DetectorEngine.ts` | 366 | Registers and runs all 37 detectors for one user; invokes the correlation engine |
 | `detectors/types.ts` | — | `DetectorDefinition`, `DetectionResult`, `Detector`, severity, guardrails, consent tiers |
-| `detectors/catalog/*.ts` | 28 files | One detector each; all extend `BaseDetector` |
+| `detectors/catalog/*.ts` | 37 files | One detector each; all extend `BaseDetector` |
 | `prioritizer/InsightPrioritizer.ts` | 384 | Weighted scoring (severity, money, recency, actionability, prefs), dedup, cooldowns |
 | `metrics/MetricsComputeService.ts` | 467 | Computes `derived_metrics` from `business_events` + module tables |
 | `metrics/BaselineCalculator.ts` | 287 | Historical baselines with minimum-sample guards and std-dev |
@@ -192,7 +192,7 @@ Three of these were routed through repositories by the G2 slice. **~42 self-read
    │                                                  │
    │  2. FOR EACH user, SERIALLY:            ← H5     │
    │     getUserLocale()                              │
-   │     DetectorEngine.runForUser()  → 28 detectors  │
+   │     DetectorEngine.runForUser()  → 37 detectors  │
    │     InsightPrioritizer.getTopInsights(…, 10)     │
    │     repository.createBatch()     → LLM prose     │
    │     repository.saveCorrelationResults()          │
@@ -328,7 +328,7 @@ Every item below was verified against `main` on 2026-09-11.
 |---|---|---|---|
 | **H1** | **`business_events` has no emitters.** `BusinessEventService` is imported by exactly one file (`MetricsComputeService`). No CRM, Scheduling, Payments or Website code emits | grep across `lib/`, `app/`, `components/` | Every event-sourced detector and most metrics compute over an **empty table**. Only detectors reading module tables directly fire on real data. **Step 3 (event-driven migration) is what lights this up, and it is HELD** pending an external-provider scoping decision |
 | **H2** | **Three detectors query a table or columns that do not exist**, to differing degrees: `WebMobileIssues` — **all four** queries fail (`websites` table does not exist, `website_page_views.visitor_id`, `scheduling_bookings.metadata`/`price`); `WebPageUnderperform` — four of five fail (`websites`, `website_page_views.page_path`, `website_pages.path` → real column is `slug`, `scheduling_bookings.source_url`), only its `crm_contacts` query is sound; `PricingDiscountAbuse` — only its `scheduling_bookings.metadata` half (`payment_transactions.metadata` **does** exist: right column, wrong table) | [phantom-column workplan § P3](/docs/workplans/business-os-phantom-column-remediation.md) | `WebMobileIssues` is guarded by an early `return null`, so it reports "nothing detected" for every user, every run. The other two return partial results that look valid. **Product decision required — rebuild or retire. Do not "fix" by deleting the phantom column**, because these detectors *use* the missing values |
-| **H3** | **`catalog/index.ts` exports 7 of 28 detectors.** `DetectorEngine` imports each detector directly and does not use the barrel | 28 registered / 28 files / 7 exported | Harmless today, actively misleading as a census. Every doc that says "5 detectors" derives from this |
+| **H3** | ~~**`catalog/index.ts` exports 7 of 28 detectors.**~~ **Closed 2026-09-18** — the barrel now exports every detector | 37 registered / 37 files / 37 exported | `DetectorEngine` still imports each detector directly and does not use the barrel, so the barrel remains decorative: **`new *Detector(` in `DetectorEngine.ts` is the only census that counts.** Adding an export without adding a registration still ships a detector that never runs |
 | **H4** | **The three insight crons fail OPEN.** A missing `CRON_SECRET` in production logs a warning and **returns `true`** | `insight-detect:83`, `insight-metrics:39`, `insight-automations:34` | These are public URLs; the bearer secret is the only thing distinguishing Vercel from an arbitrary caller. `payment-reminders` was deliberately hardened to fail **closed** with a comment explaining why — the insight crons never got the same treatment. **Copy the payments pattern** |
 | **H5** | **`insight-detect` loops users serially with LLM calls inside the loop** | `for (const userId of userIds)` | Vercel function timeout risk as the user base grows. No batching, no concurrency limit, no resume |
 | **H6** | **58 migrations from the reports/readiness merge are not applied.** The merge deliberately did not apply them and the decision is still open | [reports merge requirement](/docs/requirements/BUSINESS_OS_REPORTS_MERGE_REQUIREMENT.md) | Some 2026-09 insight code may be dark in production. **Never infer a column exists from a migration file** — run `npm run schema:check` |
@@ -382,5 +382,6 @@ They remain accurate about the **agent** insight system and are still the right 
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-09-18 | Smart links get detectors; landing pages stop being judged like home pages | The catalog read `website_pages` and `website_page_views` and **nothing at all** read `smart_links` or `smart_link_clicks`, so a link an owner actually shares was the one surface with no coverage. Added `web_link_dead_destination` (an active link whose destination cannot resolve for anyone else: loopback, RFC 1918, a placeholder domain — no network call, judged from the address) and `web_link_not_converting` (real clicks, no booking behind any of them, windowed from the date click→booking attribution began). Ran against live data on first build: **all three accounts holding a smart link had a broken destination**, 25 clicks in total to `localhost` or `example.invalid`. Separately, `web_page_no_conversions` was matching a home page on its slug, which never appears in its own root URL, so a converting home page read as converting nobody; home pages now match the site root, and landing pages carry a lower visitor floor (20 vs 40) and one severity step more, because the enquiry is the only thing they exist for. `web_missing_cta`'s `percentChange: 100` removed — same fabricated-statistic class as the earlier sweep. Detector count 28 → 37; H3 closed |
 | 2026-09-17 | LLM usage attribution | Insight LLM calls attributed to the business analysed, grouped by `runId` (Business OS LLM Call Attribution Layer 1). |
 | 2026-09-11 | Created | First as-built map of the Insights module, written from code at `main` @ `d3312431`. Establishes the §1 name-collision fence, documents the six insight tables missing from BUSINESS_OS_DATA_MODEL.md, maps the 2026-08-26→09-07 additions (correlation, journey timeline, funnel gap, vertical config, channel insights) that had no documentation, and records ten verified hazards. |

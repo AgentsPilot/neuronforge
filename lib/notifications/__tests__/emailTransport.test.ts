@@ -10,6 +10,13 @@ jest.mock('nodemailer', () => ({
   default: { createTransport: jest.fn(() => ({ sendMail: mockSendMail })) },
 }));
 
+// The consent gate. Mocked so these tests state what they are asserting: the
+// transport's behaviour given a verdict, not the repository's behaviour.
+const gateCheck = jest.fn(async () => ({ allowed: true }) as { allowed: boolean; reason?: string });
+jest.mock('@/lib/consent/marketingGate', () => ({
+  marketingGate: { check: (...args: unknown[]) => gateCheck(...(args as [])) },
+}));
+
 import { sendEmail, htmlToText } from '../emailTransport';
 
 const HTML =
@@ -45,7 +52,7 @@ describe('sendEmail — Resend path sends both html and text', () => {
     const fetchMock = jest.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '' });
     (global as any).fetch = fetchMock;
 
-    const result = await sendEmail({ to: ['u@example.com'], subject: 'Result', html: HTML });
+    const result = await sendEmail({ kind: 'transactional', to: ['u@example.com'], subject: 'Result', html: HTML });
 
     expect(result).toEqual({ sent: true, provider: 'resend' });
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
@@ -60,7 +67,7 @@ describe('sendEmail — Resend path sends both html and text', () => {
     const fetchMock = jest.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '' });
     (global as any).fetch = fetchMock;
 
-    await sendEmail({ to: ['u@example.com'], subject: 'Result', html: HTML, text: 'CUSTOM PLAINTEXT' });
+    await sendEmail({ kind: 'transactional', to: ['u@example.com'], subject: 'Result', html: HTML, text: 'CUSTOM PLAINTEXT' });
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.text).toBe('CUSTOM PLAINTEXT');
@@ -75,7 +82,7 @@ describe('sendEmail — nodemailer path sends both html and text', () => {
     process.env.GMAIL_CLIENT_SECRET = 'secret';
     process.env.GMAIL_REFRESH_TOKEN = 'refresh';
 
-    const result = await sendEmail({ to: ['u@example.com'], subject: 'Result', html: HTML });
+    const result = await sendEmail({ kind: 'transactional', to: ['u@example.com'], subject: 'Result', html: HTML });
 
     expect(result).toEqual({ sent: true, provider: 'gmail' });
     const arg = mockSendMail.mock.calls[0][0];
@@ -83,5 +90,89 @@ describe('sendEmail — nodemailer path sends both html and text', () => {
     expect(typeof arg.text).toBe('string');
     expect(arg.text.length).toBeGreaterThan(0);
     expect(arg.text).toContain('Calibration passed');
+  });
+});
+
+/**
+ * The consent gate.
+ *
+ * These assert on the TRANSPORT MOCKS, not just on the returned object. A gate
+ * that returns `blocked` while still handing the message to Resend would pass a
+ * return-value assertion and fail the only thing that matters.
+ */
+describe('sendEmail — the marketing consent gate', () => {
+  const MARKETING = {
+    kind: 'marketing' as const,
+    ownerUserId: 'owner-1',
+    to: ['client@example.com'],
+    subject: 'Come back',
+    html: HTML,
+  };
+
+  it('touches no transport when the recipient has not consented', async () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    const fetchMock = jest.fn();
+    (global as any).fetch = fetchMock;
+    gateCheck.mockResolvedValue({ allowed: false, reason: 'no_consent' });
+
+    const result = await sendEmail(MARKETING);
+
+    expect(result).toEqual({ sent: false, provider: 'none', blocked: 'no_consent' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockSendMail).not.toHaveBeenCalled();
+  });
+
+  it('refuses a marketing send addressed to more than one person', async () => {
+    // Consent is held per person, so a multi-recipient marketing send cannot be
+    // checked. It is refused rather than approximated — and the gate is never
+    // even asked.
+    process.env.RESEND_API_KEY = 're_test_key';
+    const fetchMock = jest.fn();
+    (global as any).fetch = fetchMock;
+
+    const result = await sendEmail({ ...MARKETING, to: ['a@example.com', 'b@example.com'] });
+
+    expect(result.blocked).toBe('multi_recipient');
+    expect(gateCheck).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('sends when consent is on record', async () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValue({ ok: true, status: 200, text: async () => '' });
+    (global as any).fetch = fetchMock;
+    gateCheck.mockResolvedValue({ allowed: true });
+
+    const result = await sendEmail(MARKETING);
+
+    expect(result.sent).toBe(true);
+    expect(result.blocked).toBeUndefined();
+    // Counted by endpoint: resolving the business sender also uses fetch, and
+    // asserting on the total would be measuring Supabase, not the gate.
+    const resendCalls = fetchMock.mock.calls.filter((c) => String(c[0]).includes('resend'));
+    expect(resendCalls).toHaveLength(1);
+  });
+
+  it('never asks the gate about a transactional send', async () => {
+    // The booking confirmation path must be untouched by any of this.
+    process.env.RESEND_API_KEY = 're_test_key';
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValue({ ok: true, status: 200, text: async () => '' });
+    (global as any).fetch = fetchMock;
+    gateCheck.mockResolvedValue({ allowed: false, reason: 'no_consent' });
+
+    const result = await sendEmail({
+      kind: 'transactional',
+      to: ['client@example.com'],
+      subject: 'Your booking is confirmed',
+      html: HTML,
+    });
+
+    expect(result.sent).toBe(true);
+    expect(gateCheck).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes('resend'))).toHaveLength(1);
   });
 });

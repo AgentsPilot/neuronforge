@@ -14,6 +14,7 @@ import { createHash } from 'crypto';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
 import { narrateBriefing, PROMPT_VERSION, type BriefingLanguage, type BriefingSource, type BusinessType } from './BriefingNarrator';
+import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
 import type { BriefingFacts } from './BriefingFactsService';
 import { bosBriefingGroupId } from '@/lib/business-os/llm/callCatalog';
 import { runAiAction, type AiTrigger } from '@/lib/business-os/llm/aiActionAudit';
@@ -44,7 +45,13 @@ export async function getBriefing(
   trigger: BriefingTrigger,
   businessType: BusinessType = {}
 ): Promise<StoredBriefing> {
-  const hash = hashFacts(facts, language, businessType);
+  /*
+   * The CONFIGURED model, not the one that ran: this is a cache key computed
+   * before any call, and it exists so that changing the area's model starts a
+   * new cache rather than serving yesterday's phrasing from the old one.
+   */
+  const { model: configuredModel } = await resolveBosLlmSettings('briefing', 'daily_narration');
+  const hash = hashFacts(facts, language, businessType, configuredModel);
 
   const cached = await readCached(userId, facts.day.date);
   if (cached && cached.facts_hash === hash) {
@@ -89,7 +96,20 @@ export async function getBriefing(
 export function hashFacts(
   facts: BriefingFacts,
   language: BriefingLanguage,
-  businessType: BusinessType = {}
+  businessType: BusinessType = {},
+  /*
+   * Passed in rather than read here.
+   *
+   * It used to come from `briefingModel()`, which read an env var — a model
+   * name written at a call site, which `check:bos-llm-literals` rejects now
+   * that the area row is the source of truth. The caller is async and resolves
+   * the settings anyway; this function stays synchronous, which is what keeps
+   * it cheap to test.
+   *
+   * Defaulted so the existing tests, which care about facts and language rather
+   * than models, need no change.
+   */
+  model: string = 'default'
 ): string {
   const { appointments, money, outlook } = facts;
 
@@ -102,6 +122,13 @@ export function hashFacts(
      * the next day, with nothing to indicate why.
      */
     prompt: PROMPT_VERSION,
+    /*
+     * The model is part of the key for the same reason the prompt is: it
+     * decides the words. Switching models would otherwise reach only users with
+     * no cached briefing yet, and everyone else would keep yesterday's model's
+     * phrasing until tomorrow with nothing to say why.
+     */
+    model,
     /*
      * The business type is part of the fingerprint because it now decides the
      * words. A trainer whose vertical is corrected from 'other' should not keep

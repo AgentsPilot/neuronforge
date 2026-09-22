@@ -218,6 +218,7 @@ export const publicMessages: Catalogue = {
     contactWith: 'Contact',
     getInTouch: 'Get in touch with us',
     poweredBy: 'Powered by AgentPilot',
+    privacyNotice: 'Privacy notice',
     noServices: 'This business has no services available to book online right now.',
 
     // ── Business information ──────────────────────────────────────────────
@@ -418,6 +419,7 @@ export const publicMessages: Catalogue = {
     contactWith: 'Contactar a',
     getInTouch: 'Ponte en contacto con nosotros',
     poweredBy: 'Desarrollado por AgentPilot',
+    privacyNotice: 'Aviso de privacidad',
     noServices: 'Este negocio no tiene servicios disponibles para reservar en línea ahora mismo.',
 
     contactDetails: 'Contacto',
@@ -611,6 +613,7 @@ export const publicMessages: Catalogue = {
     contactWith: 'יצירת קשר עם',
     getInTouch: 'נשמח לשמוע ממך',
     poweredBy: 'מופעל על ידי AgentPilot',
+    privacyNotice: 'הצהרת פרטיות',
     noServices: 'לעסק הזה אין כרגע שירותים שניתן להזמין אונליין.',
 
     contactDetails: 'יצירת קשר',

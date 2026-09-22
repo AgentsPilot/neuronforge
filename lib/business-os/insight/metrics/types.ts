@@ -24,7 +24,21 @@ export type AcquisitionMetricKey =
   | 'acquisition.page_conversion'
   | 'acquisition.mobile_conversion'
   | 'acquisition.missing_ctas'
-  | 'acquisition.incomplete_content';
+  | 'acquisition.incomplete_content'
+  /** Desktop conversion rate minus mobile, in percentage points. */
+  | 'acquisition.mobile_conversion_gap'
+  /** Enquiries per unique visitor, for one page. */
+  | 'acquisition.page_conversion_rate'
+  /**
+   * Bookings or enquiries per click, for one smart link.
+   *
+   * Distinct from `page_conversion_rate` in what it can claim: a page view and
+   * a contact are two events joined by a URL match, while a click and the
+   * booking behind it share a session id. This one is measured.
+   */
+  | 'acquisition.link_conversion_rate'
+  /** Active shared links whose destination cannot open on anyone else's device. */
+  | 'acquisition.broken_link_destinations';
 
 // Conversion metrics
 export type ConversionMetricKey =
@@ -34,7 +48,9 @@ export type ConversionMetricKey =
   | 'conversion.cold_leads_count'
   | 'conversion.pipeline_velocity'
   | 'conversion.overdue_tasks'
-  | 'conversion.source_performance';
+  | 'conversion.source_performance'
+  /** Share of ANSWERED quotes that were accepted. */
+  | 'conversion.quote_acceptance_rate';
 
 // Sales metrics
 export type SalesMetricKey =
@@ -58,7 +74,13 @@ export type CashFlowMetricKey =
   | 'cashflow.ar_aging'
   | 'cashflow.expiring_cards'
   | 'cashflow.refund_rate'
-  | 'cashflow.payout_status';
+  | 'cashflow.payout_status'
+  /** Completed work with no invoice and no payment against it. */
+  | 'cashflow.unbilled_work'
+  /** Money that actually arrived in a period, net of refunds. */
+  | 'cashflow.income_received'
+  /** The largest single client's share of everything received. */
+  | 'cashflow.client_concentration';
 
 // Retention metrics
 export type RetentionMetricKey =

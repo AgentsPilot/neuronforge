@@ -54,6 +54,21 @@ const MAX_ALTERNATIVES = 3;
  * rather than a rephrase — a user who has to guess which word to change usually
  * gives up instead.
  */
+/**
+ * Every kind of chip that can be offered, as VALUES rather than a type.
+ *
+ * The union used to live only in the type below, and the route's Zod schema
+ * re-listed it by hand — so `previous_filters` was declared here, implemented in
+ * `applyAlternative`, built by the route, and then rejected by the route's own
+ * input schema. The chip returned "Invalid request" to every user who tapped it.
+ *
+ * Exported as a const so the wire schema is DERIVED from this list. A fourth
+ * kind cannot now be added in one place and forgotten in the other.
+ */
+export const ALTERNATIVE_KINDS = ['enum', 'aggregate_field', 'previous_filters'] as const;
+
+export type AlternativeKind = (typeof ALTERNATIVE_KINDS)[number];
+
 export interface Alternative {
   /** What the chip says: the sibling value in the user's language. */
   label: string;
@@ -68,7 +83,7 @@ export interface Alternative {
    * it was about — the answer to "the total of the quotes" when the four
    * accepted ones were just listed.
    */
-  kind: 'enum' | 'aggregate_field' | 'previous_filters';
+  kind: AlternativeKind;
 }
 
 export interface Understanding {

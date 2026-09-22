@@ -10,48 +10,11 @@ import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { z } from 'zod';
+import { createServiceSchema } from '@/lib/validation/schedulingService';
+// One schema for create and update, so the two cannot drift apart again.
 
 const logger = createLogger({ module: 'SchedulingServicesAPI' });
 const auditTrail = AuditTrailService.getInstance();
-
-// Validation schema
-const createServiceSchema = z.object({
-  service_name: z.string().min(1),
-  /*
-   * Nullable, because clearing a description has to be expressible.
-   *
-   * `.optional()` alone accepts a string or nothing at all, and rejects `null`
-   * — so an owner who emptied the field sent `description: null`, Zod threw,
-   * and the WHOLE request was refused. The visible symptom was that the service
-   * NAME would not save: nothing in the payload saved, and the one field that
-   * failed was not the one being blamed.
-   */
-  description: z.string().nullable().optional(),
-  duration_minutes: z.number().min(5).max(10080).nullable().optional(), // Null for a product; up to 7 days for multi-day courses
-  // Two facts that decide this service's client journey. A product has no
-  // duration, and a free service is not collected at all — both arrive null.
-  is_scheduled: z.boolean().optional(),
-  collection: z.enum(['online', 'invoice']).nullable().optional(),
-  // The third: can a client buy this outright, or is it quoted per job?
-  // Absent means 'direct', matching the column default, so an older
-  // client that does not send it leaves the service unchanged.
-  sale_mode: z.enum(['direct', 'proposal']).optional(),
-  price: z.number().min(0).optional(),
-  currency: z.enum(['USD', 'EUR', 'ILS', 'GBP']).optional(),
-  buffer_minutes: z.number().min(0).max(120).optional(),
-  max_bookings_per_day: z.number().min(1).nullable().optional(),
-  advance_booking_days: z.number().min(0).optional(),
-  min_notice_hours: z.number().min(0).optional(),
-  availability: z.record(z.any()).optional(),
-  is_active: z.boolean().optional(),
-  status: z.enum(['draft', 'active']).optional(),
-  // Payment options
-  payment_type: z.enum(['full', 'installments']).optional(),
-  installment_count: z.number().min(1).max(24).optional(),
-  installment_frequency: z.enum(['weekly', 'biweekly', 'monthly', 'quarterly']).optional(),
-  first_payment_due: z.enum(['on_booking', 'days_after']).optional(),
-  first_payment_days: z.number().min(0).max(365).optional()
-});
 
 export async function POST(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();

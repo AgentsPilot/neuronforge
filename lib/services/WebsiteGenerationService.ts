@@ -1013,33 +1013,20 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
 
 
   /**
-   * Get a default icon for a service based on its name
+   * The icon a generated service card carries.
+   *
+   * One icon for every service, matching what `/api/website/blocks/services`
+   * serves on a live page — see the long note there for why guessing from the
+   * name was dropped. In short: the keyword list missed most real service names
+   * even with Hebrew in it (`קורס` was never in it), so a page ended up with one
+   * meaningful glyph beside a row of fallback stars, and the odd one out reads
+   * as a bug.
+   *
+   * Kept as a method rather than inlined so the day services carry an
+   * owner-chosen icon, there is one place to read it from.
    */
-  private getDefaultIconForService(serviceName: string): string {
-    const name = serviceName.toLowerCase();
-
-    // Common service type mappings
-    if (name.includes('consult') || name.includes('ייעוץ')) return 'MessageCircle';
-    if (name.includes('therap') || name.includes('טיפול')) return 'Heart';
-    if (name.includes('coach') || name.includes('אימון')) return 'Target';
-    if (name.includes('train') || name.includes('אימון גופני')) return 'Dumbbell';
-    if (name.includes('massage') || name.includes('עיסוי')) return 'Hand';
-    if (name.includes('yoga') || name.includes('יוגה')) return 'Flower2';
-    if (name.includes('photo') || name.includes('צילום')) return 'Camera';
-    if (name.includes('design') || name.includes('עיצוב')) return 'Palette';
-    if (name.includes('code') || name.includes('תכנות')) return 'Code';
-    if (name.includes('teach') || name.includes('לימוד') || name.includes('שיעור')) return 'BookOpen';
-    if (name.includes('music') || name.includes('מוזיקה')) return 'Music';
-    if (name.includes('hair') || name.includes('תספורת')) return 'Scissors';
-    if (name.includes('beauty') || name.includes('יופי')) return 'Sparkles';
-    if (name.includes('group') || name.includes('קבוצ')) return 'Users';
-    if (name.includes('business') || name.includes('עסק')) return 'Briefcase';
-    if (name.includes('law') || name.includes('משפט')) return 'Scale';
-    if (name.includes('health') || name.includes('בריאות')) return 'Stethoscope';
-    if (name.includes('finance') || name.includes('פיננס') || name.includes('חשבונ')) return 'Calculator';
-
-    // Default icon
-    return 'Star';
+  private getDefaultIconForService(_serviceName: string): string {
+    return 'Sparkles';
   }
 
   /**
@@ -1273,9 +1260,15 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
             // yet — which is also why the description is now asked for after
             // onboarding: it is the source text for this section, not decoration.
             const description = s.description?.trim() || written;
-            const icon = typeof serviceData === 'object'
-              ? serviceData?.icon
-              : this.getDefaultIconForService(s.service_name);
+            /*
+             * `||`, not a branch. The AI is not asked for a service icon — only
+             * for feature icons — so this was `undefined` on that path, and a
+             * card with no icon renders no icon TILE at all. Next to cards that
+             * have one, the row looks broken in a third way.
+             */
+            const icon =
+              (typeof serviceData === 'object' ? serviceData?.icon : undefined) ||
+              this.getDefaultIconForService(s.service_name);
             return {
               id: s.id,
               name: s.service_name,

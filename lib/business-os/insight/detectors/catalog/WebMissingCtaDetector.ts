@@ -171,7 +171,13 @@ export class WebMissingCtaDetector extends BaseDetector {
       currentValue: pagesWithoutCta.length,
       baselineValue: 0,
       thresholdValue: 0,
-      percentChange: 100,
+      /*
+       * Nothing changed by a hundred per cent. This counts pages that have no
+       * call to action; there is no before to compare it with, and the narrator
+       * reads this field straight out to the owner as a movement. Same
+       * fabricated-statistic fix already applied across the other detectors.
+       */
+      percentChange: 0,
       direction: 'above',
       affectedEntityType: 'page',
       affectedEntityIds: pagesWithoutCta.map((p) => p.id),

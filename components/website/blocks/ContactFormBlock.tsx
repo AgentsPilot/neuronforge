@@ -9,6 +9,8 @@ import 'react-phone-number-input/style.css';
 import type { BlockRendererProps, FormField } from './types';
 import type { Country } from 'react-phone-number-input';
 import { WebsiteCountrySelect } from './WebsiteCountrySelect';
+import { ConsentCheckbox } from '@/components/public/ConsentCheckbox';
+import { useConsentCopy, consentPayload } from '@/hooks/useConsentCopy';
 
 interface ContactFormContent {
   title?: string;
@@ -146,6 +148,14 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
   const [submitted, setSubmitted] = useState(false);
   const [phoneCountry, setPhoneCountry] = useState<Country>('US');
 
+  /*
+   * Marketing consent. Unticked, and it stays unticked unless the visitor acts.
+   * `null` copy means this business does not collect it, or the lookup failed —
+   * either way the checkbox is absent rather than unlabelled.
+   */
+  const consentCopy = useConsentCopy({ subdomain, userCode, locale });
+  const [consentGiven, setConsentGiven] = useState(false);
+
   const primaryColor = theme?.colors.primary || '#4F6EF7';
   const hasContactInfo = business_email || business_phone || business_address || business_hours;
 
@@ -193,7 +203,8 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
           phone: formData.phone,
           message: formData.message,
           service_interest: formData.subject || formData.service,
-          page_url: typeof window !== 'undefined' ? window.location.href : undefined
+          page_url: typeof window !== 'undefined' ? window.location.href : undefined,
+          consent: consentPayload(consentCopy, consentGiven)
         })
       });
 
@@ -441,6 +452,20 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
 
                 {errors._form && (
                   <p className="text-sm text-red-500 text-center">{errors._form}</p>
+                )}
+
+                {/*
+                  Above the button, below the fields — read before the decision
+                  to submit, not after it. Never validated, never required.
+                */}
+                {consentCopy && (
+                  <ConsentCheckbox
+                    copy={consentCopy}
+                    checked={consentGiven}
+                    onChange={setConsentGiven}
+                    disabled={submitting}
+                    isRTL={isRTL}
+                  />
                 )}
 
                 <button

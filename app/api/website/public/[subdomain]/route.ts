@@ -23,27 +23,9 @@ import { WebsiteContentRepository, WebsiteContent, SectionType } from '@/lib/rep
 import { SchedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { loadServicePaymentPlans, type ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 import { formatPrice } from '@/lib/website-builder/servicePrice';
+import { toServiceCard } from '@/lib/website-builder/serviceCard';
 
 const logger = createLogger({ module: 'PublicWebsiteAPI' });
-
-// Service icon mapping based on common service keywords
-function getServiceIcon(serviceName: string): string {
-  const name = serviceName.toLowerCase();
-  if (name.includes('consult') || name.includes('session') || name.includes('call')) return 'MessageCircle';
-  if (name.includes('coach') || name.includes('mentor')) return 'Target';
-  if (name.includes('therapy') || name.includes('counsel')) return 'Heart';
-  if (name.includes('class') || name.includes('workshop') || name.includes('course')) return 'GraduationCap';
-  if (name.includes('massage') || name.includes('spa') || name.includes('wellness')) return 'Sparkles';
-  if (name.includes('fitness') || name.includes('training') || name.includes('workout')) return 'Dumbbell';
-  if (name.includes('design') || name.includes('creative')) return 'Palette';
-  if (name.includes('photo') || name.includes('video')) return 'Camera';
-  if (name.includes('legal') || name.includes('law')) return 'Scale';
-  if (name.includes('finance') || name.includes('account') || name.includes('tax')) return 'Calculator';
-  if (name.includes('tech') || name.includes('development') || name.includes('code')) return 'Code';
-  if (name.includes('marketing') || name.includes('seo') || name.includes('ads')) return 'TrendingUp';
-  return 'Star';
-}
-
 
 // Map block_type to section name in website_content
 const BLOCK_TO_SECTION_MAP: Record<string, SectionType> = {
@@ -184,24 +166,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         ]);
         if (servicesResult.data && servicesResult.data.length > 0) {
           liveServices = servicesResult.data.map(s => ({
-            id: s.id,
-            name: s.service_name,
-            description: s.description || '',
-            icon: getServiceIcon(s.service_name),
-            price: s.price ? formatPrice(s.price, s.currency) : undefined,
-            priceRaw: s.price || undefined,
-            currency: s.currency,
-            duration: s.duration_minutes ? `${s.duration_minutes} min` : undefined,
-            durationMinutes: s.duration_minutes,
-            // The two facts the booking widget builds its journey from. Without
-            // them the website decided from the price alone and asked an
-            // invoiced client for a card.
-            is_scheduled: s.is_scheduled !== false,
-            collection: s.collection ?? null,
-            // The third: whether a client can buy this at all, or has to be
-            // quoted. Without it the page offers "Book now" on a service with
-            // no price and walks the client to a payment screen for nothing.
-            sale_mode: s.sale_mode || 'direct',
+            // The shared mapper: icon, price, journey facts. This route had its
+            // own copy of all three, which is how the same service showed a
+            // different icon here than in the editor.
+            ...toServiceCard(s),
             // Undefined where the business offers no plan, which is most of
             // them — the widgets then show a single price as they always have.
             paymentPlan: plansByService[s.id],

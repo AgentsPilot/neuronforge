@@ -34,6 +34,9 @@ import { ProviderFactory } from '@/lib/ai/providerFactory';
 import { buildBosCallContext } from '@/lib/business-os/llm/callCatalog';
 import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
 import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
+// Still ours: the stable-prompt-prefix switch below reads it. The provider and
+// model no longer come from here — that is `resolveBosLlmSettings` now.
+import { SystemConfigService } from '@/lib/services/SystemConfigService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { CATALOG, CATALOG_VERSION } from '@/lib/business-os/catalog';
 import { anchorizeInventedDates } from '../dates';
@@ -44,7 +47,7 @@ import {
   getVerifiedQuestions,
   renderExamplesForPrompt,
 } from './VerifiedQuestions';
-import { buildPlanTool, plannerSystemPrompt } from './planTool';
+import { buildPlanTool, plannerSystemPrompt, plannerVersion } from './planTool';
 import {
   guessRelevantEntities,
   renderCatalogForPrompt,
@@ -123,6 +126,7 @@ export interface PlanOutcome {
     cacheEntryId?: string;
   };
 }
+
 
 /**
  * Narrow raw tool arguments into our Query union, leaving real validation to
@@ -313,7 +317,40 @@ export class BizQLPlanner {
       }
     }
 
-    const entities = guessed.size > 0 ? [...guessed] : undefined;
+    /*
+     * Per-question scoping, or one stable prompt for this business.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * Scoping trims the catalog to what a keyword match thinks the question
+     * needs. It also changes the prompt on EVERY turn, and a prompt that
+     * changes cannot be cached — so the ~2,800-token tool schema sitting behind
+     * it is re-billed at full price every time, along with everything else.
+     *
+     * Measured on this catalog (tokens billed, cached input at half rate):
+     *
+     *   scoping hits           3,768/2 + 1,151 + 2,715  =  5,750
+     *   scoping misses         3,768/2 + 3,935 + 2,832  =  8,651
+     *   stable, fully cached  (3,768 + 3,935 + 2,832)/2 =  5,268
+     *
+     * The stable prompt beats scoping's BEST case and halves its worst, and
+     * production's median of 8,666 sent tokens says the miss case is the common
+     * one. It also removes a live source of inconsistency: the catalog shown to
+     * the planner currently depends on the previous turn's rows, so the same
+     * sentence scopes differently depending on what was on screen before.
+     *
+     * Behind a switch because the saving depends on the provider actually
+     * caching. `cached_input_tokens` is now recorded on every call, so this is
+     * a measurement rather than a belief — and if it does not hold, this flips
+     * back without a deploy.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const stablePrefix = await SystemConfigService.getBoolean(
+      supabaseServer,
+      'bizchat_stable_prompt_prefix',
+      true
+    );
+
+    const entities = stablePrefix ? undefined : guessed.size > 0 ? [...guessed] : undefined;
 
     // Writes are now expressible, so the planner must see which actions exist
     // and which of them require confirmation.
@@ -490,6 +527,18 @@ export class BizQLPlanner {
               messages,
               tools: [tool],
               tool_choice: 'required',
+              /*
+               * Route every planner call at the same cache.
+               *
+               * The prefix is identical across turns and across businesses, but
+               * requests still land on different machines, and a cache is per
+               * machine. This key asks the provider to keep them together.
+               *
+               * Stamped with `plannerVersion()` so a prompt change starts a new
+               * cache rather than contending with the old one — the same reason
+               * that hash is already in the plan-cache key.
+               */
+              prompt_cache_key: `bizchat-planner-${plannerVersion()}`,
               /*
                * Locked to 0 in the Layer 2 policy, and sent from the resolved
                * value so no temperature literal is left in this file (FR-15).

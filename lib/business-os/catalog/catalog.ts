@@ -399,6 +399,12 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
        * to them". Bulk is permitted because that scenario is the whole point —
        * but capped at 100, confirmed every time, and never reversible, which is
        * why the fan-out executor layers idempotency and a daily quota on top.
+       *
+       * The body here is whatever the OWNER types, which makes this the widest
+       * marketing path in the product. The cap is not what makes it safe: the
+       * consent gate is. `ForEachExecutor` drops recipients with no recorded
+       * opt-in before the preview, and `sendEmail` refuses them again at the
+       * transport. Raising or lowering this number changes reach, not lawfulness.
        */
       send: {
         labels: { en: 'send an email', he: 'שלח אימייל', es: 'enviar un correo' },
@@ -1671,6 +1677,34 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         type: 'datetime',
         format: 'date',
         labels: { en: 'intake form sent at', he: 'טופס קליטה נשלח', es: 'admisión enviada' },
+      },
+      /**
+       * What the client actually wrote, for the booking being discussed.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * DELIBERATELY ABSENT FROM `displayFields`.
+       *
+       * A form is a dozen questions. Listing five bookings would print sixty
+       * lines of somebody's medical history to answer "what's on this week".
+       * So it is fetched only when a step SELECTS it — "what did they put on
+       * their form?" — and `renderRow` shows selected fields alongside the
+       * display ones for exactly this case.
+       *
+       * READ-ONLY, AND THE ONLY SENSIBLE SETTING. These are the client's words,
+       * submitted through their own link; nothing reached through the chat has
+       * any business rewriting them.
+       *
+       * It cannot be FILTERED on, only shown: the compiler has no jsonb path
+       * predicates, so "who mentioned an injury" is still unanswerable. The
+       * answers are also free text, where an equality test would miss "bad
+       * knee" for "knee injury" — a search problem, not a query one.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      intake_responses: {
+        column: 'intake_responses',
+        type: 'json',
+        format: 'intake',
+        labels: { en: 'intake answers', he: 'תשובות טופס קליטה', es: 'respuestas de admisión' },
       },
       notes: {
         column: 'notes',
@@ -4152,118 +4186,7 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
   // ===========================================================================
   // AUTOMATIONS — the agents the owner built, and whether they are working
   // ===========================================================================
-  agents: {
-    table: 'agents',
-    meaning: 'the automations this business has set up — the definitions, not their runs',
-    labels: {
-      one: { en: 'automation', he: 'אוטומציה', es: 'automatización' },
-      many: { en: 'automations', he: 'אוטומציות', es: 'automatizaciones' },
-    },
-    userScope: { kind: 'column', column: 'user_id' },
-    labelField: 'name',
-    displayFields: ['name', 'status', 'last_run'],
-    searchableFields: ['name', 'description'],
-    defaultLimit: 50,
-    maxLimit: 200,
 
-    fields: {
-      id: { column: 'id', type: 'uuid', labels: { en: 'ID' } },
-      name: {
-        column: 'agent_name',
-        type: 'string',
-        labels: { en: 'name', he: 'שם', es: 'nombre' },
-      },
-      description: {
-        column: 'description',
-        type: 'string',
-        labels: { en: 'description', he: 'תיאור', es: 'descripción' },
-      },
-      status: {
-        column: 'status',
-        type: 'string',
-        labels: { en: 'status', he: 'סטטוס', es: 'estado' },
-      },
-      last_run: {
-        column: 'last_run',
-        type: 'datetime',
-        format: 'datetime',
-        labels: { en: 'last run', he: 'ריצה אחרונה', es: 'última ejecución' },
-      },
-      next_run: {
-        column: 'next_run',
-        type: 'datetime',
-        format: 'datetime',
-        labels: { en: 'next run', he: 'ריצה הבאה', es: 'próxima ejecución' },
-      },
-      created_at: {
-        column: 'created_at',
-        type: 'datetime',
-        format: 'date',
-        labels: { en: 'created', he: 'נוצר', es: 'creado' },
-      },
-    },
-
-    relations: {
-      runs: { target: 'agent_runs', cardinality: 'many', via: { column: 'agent_id', side: 'remote' }, labels: { en: 'runs' } },
-    },
-  },
-
-  agent_runs: {
-    table: 'agent_executions',
-    meaning: 'every time an automation actually ran, and whether it succeeded',
-    labels: {
-      one: { en: 'automation run', he: 'ריצת אוטומציה', es: 'ejecución' },
-      many: { en: 'automation runs', he: 'ריצות אוטומציה', es: 'ejecuciones' },
-    },
-    userScope: { kind: 'column', column: 'user_id' },
-    labelField: 'started_at',
-    displayFields: ['started_at', 'status', 'duration_ms'],
-    displayRelations: ['agent'],
-    defaultLimit: 50,
-    maxLimit: 500,
-
-    fields: {
-      id: { column: 'id', type: 'uuid', labels: { en: 'ID' } },
-      agent_id: { column: 'agent_id', type: 'uuid', labels: { en: 'automation' }, references: 'agents' },
-      status: {
-        column: 'status',
-        type: 'string',
-        labels: { en: 'status', he: 'סטטוס', es: 'estado' },
-      },
-      started_at: {
-        column: 'started_at',
-        type: 'datetime',
-        format: 'datetime',
-        labels: { en: 'started', he: 'התחיל', es: 'iniciada' },
-      },
-      completed_at: {
-        column: 'completed_at',
-        type: 'datetime',
-        format: 'datetime',
-        labels: { en: 'finished', he: 'הסתיים', es: 'finalizada' },
-      },
-      duration_ms: {
-        column: 'execution_duration_ms',
-        type: 'number',
-        labels: { en: 'duration (ms)', he: 'משך (מ״ש)', es: 'duración (ms)' },
-      },
-      error_message: {
-        column: 'error_message',
-        type: 'string',
-        labels: { en: 'error', he: 'שגיאה', es: 'error' },
-      },
-      created_at: {
-        column: 'created_at',
-        type: 'datetime',
-        format: 'date',
-        labels: { en: 'created', he: 'נוצר', es: 'creado' },
-      },
-    },
-
-    relations: {
-      agent: { target: 'agents', cardinality: 'one', via: { column: 'agent_id', side: 'local' }, labels: { en: 'automation' } },
-    },
-  },
 
   // ===========================================================================
   // EMAIL DELIVERY

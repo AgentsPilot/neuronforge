@@ -15,6 +15,7 @@ import { WebsitePageRepository, WebsitePageUpdate } from '@/lib/repositories/Web
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
 import { WebsiteContentRepository } from '@/lib/repositories/WebsiteContentRepository';
 import { z } from 'zod';
+import { bustSiteCache } from '@/lib/website-builder/siteCache';
 import {
   HERO_LAYOUTS,
   SERVICES_LAYOUTS,
@@ -216,6 +217,9 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       await claimBusinessSubdomain(user.id, validated.subdomain);
     }
 
+    // The visitor-facing page just changed: title, theme, slug or subdomain.
+    bustSiteCache(result.data?.subdomain);
+
     return NextResponse.json({ success: true, page: result.data });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -264,6 +268,16 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     const pageRepo = new WebsitePageRepository(supabaseServer);
 
+    /*
+     * Read the subdomain BEFORE the row goes.
+     *
+     * The cache is keyed on it, and after a hard delete there is nothing left
+     * to read it from — the cached page would then be served from a site that
+     * no longer exists until the TTL ran out.
+     */
+    const doomed = await pageRepo.findById(id, user.id);
+    const subdomain = doomed.data?.subdomain ?? null;
+
     if (mode === 'permanent') {
       // Hard delete - for pages with no activity
       const result = await pageRepo.delete(id, user.id);
@@ -293,12 +307,20 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         // The page is already gone; say the content survived rather than
         // reporting a clean delete that was not one.
         requestLogger.error({ err: purge.error, userId: user.id }, 'Page deleted but content purge failed');
+
+        // The page is gone even though the copy survived, so this early return
+        // still has to stop the cached page being served.
+        bustSiteCache(subdomain);
+
         return NextResponse.json(
           { success: true, mode, contentPurged: false, warning: 'Website deleted, but your saved text could not be removed' }
         );
       }
       requestLogger.info({ userId: user.id, pageId: id }, 'Purged website content');
     }
+
+    // Deleted or archived, the public page must stop being served either way.
+    bustSiteCache(subdomain);
 
     return NextResponse.json({ success: true, mode, contentPurged: purgeContent });
   } catch (error) {

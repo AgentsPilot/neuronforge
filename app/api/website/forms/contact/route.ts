@@ -17,6 +17,12 @@ import { z } from 'zod';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { notifyOwnerOfLead } from '@/lib/services/LeadAlertService';
 import { buildAttributionFromRequest } from '@/lib/utils/attribution';
+import { resolveCapturePageType } from '@/lib/business-os/capturePageType';
+import { ConsentInputSchema } from '@/lib/validation/consent';
+import { recordConsent } from '@/lib/consent/recordConsent';
+import { beginDoubleOptIn } from '@/lib/consent/doubleOptIn';
+import { businessSubscriberRepository } from '@/lib/repositories/BusinessSubscriberRepository';
+
 
 const logger = createLogger({ module: 'WebsiteContactFormAPI' });
 
@@ -25,13 +31,29 @@ const logger = createLogger({ module: 'WebsiteContactFormAPI' });
 const ContactFormSchema = z.object({
   subdomain: z.string().optional(),
   userCode: z.string().optional(),
-  name: z.string().min(1, 'Name is required').max(200),
+  /*
+   * OPTIONAL, because the newsletter surfaces genuinely have no name to give.
+   * They used to invent one from the address — `offir.omer@…` became a contact
+   * called "offir.omer" — which put fabricated personal data in the CRM and
+   * made it indistinguishable from a name someone actually typed.
+   * `first_name` is nullable; an unnamed contact is honest.
+   */
+  name: z.string().max(200).optional(),
   email: z.string().email('Invalid email address'),
   phone: z.string().optional(),
   message: z.string().min(1, 'Message is required').max(5000),
   service_interest: z.string().optional(),
   referral_source: z.string().optional(),
-  consent_marketing: z.boolean().optional().default(false),
+  /** Which form this came from, where it is not the general contact form. */
+  source: z.enum(['website_form', 'newsletter']).optional(),
+  /*
+   * Marketing consent now lives in `marketing_consent_events`, which records
+   * the wording, the method and the moment. The boolean that used to sit here
+   * went into a JSONB blob with none of that, was never sent by any UI, and is
+   * `false` on every row that has it. A second, weaker copy of an authoritative
+   * record is guaranteed to drift, so it is gone rather than kept in sync.
+   */
+  consent: ConsentInputSchema,
   page_url: z.string().optional()
 }).refine(data => data.subdomain || data.userCode, {
   message: 'Either subdomain or userCode is required'
@@ -62,6 +84,17 @@ export async function POST(request: NextRequest) {
       pageUrl: data.page_url,
       generateSessionId: true
     });
+
+    /*
+     * Which KIND of page this was, recorded now rather than inferred later.
+     * A landing page is only distinguishable by matching the path against the
+     * owner's landing slugs, and the CRM cannot do that per contact it draws.
+     * Enrichment only: a failure here leaves the contact grouped under Website.
+     */
+    const capturePageType = await resolveCapturePageType(data.subdomain, data.page_url);
+    if (capturePageType) {
+      attribution.page_type = capturePageType;
+    }
 
     let ownerId: string;
 
@@ -103,6 +136,51 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * COMPATIBILITY SHIM — delete once no stale bundles remain in the wild.
+     *
+     * Newsletter signups now post to `/api/public/newsletter/subscribe`. A
+     * visitor holding the previous JavaScript bundle still posts HERE with
+     * `source: 'newsletter'`, and the two obvious responses are both bad:
+     * rejecting it loses the address silently, because the form shows its
+     * thank-you either way; accepting it as an enquiry recreates the exact bug
+     * this work removes — a subscriber filed as a lead and chased for a message
+     * they never sent.
+     *
+     * So it is routed to the subscriber path and returns before any contact
+     * exists.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    if (data.source === 'newsletter') {
+      const { error: subscribeError } = await businessSubscriberRepository.subscribe({
+        userId: ownerId,
+        email: data.email,
+        name: data.name?.trim() || null,
+        source: 'newsletter',
+        attribution: { ...attribution } as Record<string, unknown>,
+      });
+
+      if (subscribeError) {
+        requestLogger.error({ err: subscribeError, ownerId }, 'Legacy newsletter signup failed');
+        return NextResponse.json(
+          { success: false, error: 'Could not complete the signup' },
+          { status: 500 }
+        );
+      }
+
+      void beginDoubleOptIn({
+        userId: ownerId,
+        contactId: null,
+        email: data.email,
+        sourceSurface: 'newsletter',
+        locale: data.consent?.statement_locale,
+      });
+
+      requestLogger.info({ ownerId }, 'Newsletter signup received on the legacy endpoint');
+      return NextResponse.json({ success: true, message: 'Thank you for subscribing.' });
+    }
+
     // Get user's first pipeline stage (or fallback to 'lead')
     const { data: pipelineStages } = await supabaseServer
       .from('crm_pipeline_stages')
@@ -111,8 +189,17 @@ export async function POST(request: NextRequest) {
       .order('position', { ascending: true })
       .limit(1);
 
+    /*
+     * A newsletter signup does NOT arrive here any more.
+     *
+     * It posts to `/api/public/newsletter/subscribe`, which writes
+     * `business_subscribers` and creates no contact at all. This endpoint is
+     * for enquiries again: everything below treats the sender as somebody
+     * waiting for a reply, which is exactly what a subscriber is not.
+     */
     const initialStage = pipelineStages?.[0]?.stage_key || 'lead';
-    requestLogger.debug({ initialStage, ownerId }, 'Using pipeline stage for new contact');
+
+    requestLogger.debug({ initialStage, ownerId }, 'Resolved pipeline stage for new contact');
 
     // Check if contact already exists
     const { data: existingContact } = await supabaseServer
@@ -131,8 +218,7 @@ export async function POST(request: NextRequest) {
         ...(existingContact.custom_fields || {}),
         last_website_message: data.message,
         last_website_contact: new Date().toISOString(),
-        service_interest: data.service_interest || existingContact.custom_fields?.service_interest,
-        consent_marketing: data.consent_marketing
+        service_interest: data.service_interest || existingContact.custom_fields?.service_interest
       };
 
       const { error: updateError } = await supabaseServer
@@ -152,9 +238,15 @@ export async function POST(request: NextRequest) {
       contactId = existingContact.id;
       requestLogger.info({ contactId }, 'Contact updated');
     } else {
-      // Parse name into first_name and last_name
-      const nameParts = data.name.trim().split(/\s+/);
-      const firstName = nameParts[0] || data.name;
+      /*
+       * Parse the name into first and last — and leave BOTH null when there is
+       * none. A newsletter signup gives an address and nothing else, and the
+       * column is nullable precisely so an unnamed contact can be stored as
+       * one. The CRM shows the address; the owner sees what they actually have.
+       */
+      const trimmedName = data.name?.trim();
+      const nameParts = trimmedName ? trimmedName.split(/\s+/) : [];
+      const firstName = nameParts[0] ?? null;
       const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : null;
 
       // Create new contact with attribution
@@ -166,14 +258,15 @@ export async function POST(request: NextRequest) {
           last_name: lastName,
           email: data.email,
           phone: data.phone || null,
-          source: 'website_form',
+          // A subscriber is not an enquiry, and the owner should be able to
+          // tell them apart without reading the message text.
+          source: data.source ?? 'website_form',
           stage: initialStage,  // Use user's first pipeline stage
           source_metadata: attribution as unknown as Record<string, unknown>,  // Store full attribution data
           custom_fields: {
             first_website_message: data.message,
             service_interest: data.service_interest,
             referral_source: data.referral_source,
-            consent_marketing: data.consent_marketing,
             page_url: data.page_url
           }
         })
@@ -228,12 +321,37 @@ export async function POST(request: NextRequest) {
     }
 
     // Send appropriate email based on whether contact is new or returning (non-blocking)
+    /*
+     * A display name for the emails and the owner alert. The address is the
+     * fallback, and only HERE — it is how to address someone in a sentence,
+     * not a value written into the name column.
+     */
+    const displayName = data.name?.trim() || data.email;
+
     const emailData = {
-      name: data.name,
+      name: displayName,
       email: data.email,
       message: data.message,
       serviceInterest: data.service_interest
     };
+
+    /*
+     * Marketing consent, where the visitor gave it.
+     *
+     * Deliberately after the contact exists and deliberately non-blocking: a
+     * failure here must lose a consent record, never a lead. `recordConsent`
+     * swallows its own errors for the same reason, and an untouched checkbox
+     * writes nothing at all rather than recording a withdrawal.
+     */
+    void recordConsent({
+      userId: ownerId,
+      contactId,
+      email: data.email,
+      consent: data.consent,
+      sourceSurface: 'website_form',
+      sourcePageUrl: data.page_url ?? null,
+      attribution,
+    });
 
     /*
      * Tell the OWNER. This is the step both of these routes claimed to do in
@@ -248,7 +366,7 @@ export async function POST(request: NextRequest) {
       ownerId,
       contactId,
       kind: 'enquiry',
-      contactName: data.name,
+      contactName: displayName,
       contactEmail: data.email,
       phone: data.phone,
       message: data.message,

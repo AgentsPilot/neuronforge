@@ -59,6 +59,62 @@ export interface OperationalAutomation {
   /** The queue row kind that carries it out. */
   kind: 'invite' | 'chase';
 
+  /**
+   * Which system actually does the work once the owner has said yes.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `lead_responses` — this registry's own queue, swept by
+   *   `LeadResponseDispatchService`. The default, and what `delayHours` times.
+   *
+   * `payment_reminders` — `PaymentReminderService`, on its own schedule. The
+   *   switch is still this one; the sending is not.
+   *
+   * WHY THE SECOND VALUE EXISTS
+   *
+   * Invoice chasing was built twice. This registry sent once at 72 hours past
+   * due; `PaymentReminderService` had been sending on days 1, 3 and 7 past due
+   * since long before, gated on a different column that nobody was ever asked
+   * about. Day three fired both. They dedupe in different tables, so neither
+   * could see the other, and the client got two emails from one business about
+   * one invoice.
+   *
+   * Keeping the card and withdrawing the duplicate send was the choice: the
+   * owner is asked once, in the advisor, and one system sends. The alternative
+   * — deleting the card — would have left a chaser running that nobody had
+   * agreed to, which is the state that caused this.
+   *
+   * `delayHours` is not used for these. The other system owns the timing.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  carriedOutBy?: 'payment_reminders';
+
+  /**
+   * What must already be true of the business before this is worth offering.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Named here as a fact rather than resolved here as a query: this module is
+   * pure data, imported by both the advisor and the dispatcher, and a
+   * repository call in it would drag the database into every import of the
+   * registry. `automationApplies` turns each name into an answer.
+   *
+   * WHY IT EXISTS
+   *
+   * The advisor offered all three to every business, and "Remind clients about
+   * their form" was being put to businesses with no form. Two of the five
+   * accounts in the database are in that state — one with only a draft form,
+   * one with no intake settings and no form at all — so no form has ever
+   * reached a client and none would if they said yes.
+   *
+   * That is worse than a useless card. It is a request for permission to do
+   * something that cannot happen, and every one the owner says yes to and sees
+   * nothing come of teaches them that saying yes here means nothing.
+   *
+   * `undefined` means it always applies — every business can receive an
+   * enquiry, so nothing gates the reply.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  requires?: 'intake_reaches_client';
+
   /** i18n keys. The copy lives with the other copy, not here. */
   labelKey: string;
   hintKey: string;
@@ -81,10 +137,16 @@ export const OPERATIONAL_AUTOMATIONS: OperationalAutomation[] = [
     id: 'chase_invoices',
     column: 'chase_invoices_enabled',
     gapId: 'invoice_unpaid',
-    // Three days past due. Sooner reads as distrust of somebody who may simply
-    // not have opened their email yet.
+    /*
+     * Unused, and left in place as the record of what this used to do.
+     *
+     * The send was withdrawn to `PaymentReminderService`, which chases on days
+     * 1, 3 and 7 past due — `payment_overdue_reminder_days`, which the owner can
+     * change. This 72-hour send landed on top of that schedule's day three.
+     */
     delayHours: 72,
     kind: 'chase',
+    carriedOutBy: 'payment_reminders',
     labelKey: 'automation.chase_invoices',
     hintKey: 'automation.chase_invoices_hint',
   },
@@ -97,6 +159,8 @@ export const OPERATIONAL_AUTOMATIONS: OperationalAutomation[] = [
     // than that and still has time to be useful.
     delayHours: 24,
     kind: 'chase',
+    // Nothing to chase if no form reaches the client in the first place.
+    requires: 'intake_reaches_client',
     labelKey: 'automation.chase_intake',
     hintKey: 'automation.chase_intake_hint',
   },

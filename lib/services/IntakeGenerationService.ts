@@ -115,6 +115,53 @@ export interface GenerateIntakeResult {
   error?: string;
 }
 
+/**
+ * One service, as the prompt sees it — including the terms already settled.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A trainer's generated form came back asking "How long would you like each
+ * training session to be?" — a question the catalogue already answers, and one
+ * the client cannot answer, because the length is the business's decision and
+ * was printed on the page they booked from.
+ *
+ * The cause was here: a service used to render as name + description only, so
+ * the model saw a session with no stated length and filled what looked like a
+ * gap. It was reasoning correctly from what it had been shown. Duration and
+ * price are both on the row — `listAll` selects `*` — and were simply dropped
+ * before the prompt was built.
+ *
+ * Exported so this is testable. A prompt that silently stops mentioning a field
+ * looks exactly like one that never did, and the only symptom is a question
+ * nobody notices is redundant until a client is confused by it.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function describeServiceForIntake(service: Record<string, unknown>): string {
+  const name = service.service_name as string;
+  const description = (service.description as string) || '';
+  const scheduled =
+    service.is_scheduled === false
+      ? ' (no appointment time — sold as a product or course)'
+      : '';
+
+  // Phrased as terms rather than fields, so the RULES section can point at them
+  // as things already decided rather than data the model might restate.
+  const terms: string[] = [];
+
+  const minutes = service.duration_minutes as number | null;
+  if (typeof minutes === 'number' && minutes > 0) {
+    terms.push(`runs ${minutes} minutes`);
+  }
+
+  const price = service.price as number | null;
+  if (typeof price === 'number') {
+    terms.push(price > 0 ? `costs ${price} ${(service.currency as string) || ''}`.trim() : 'free');
+  }
+
+  const settled = terms.length ? ` — already set: ${terms.join(', ')}` : '';
+
+  return `- ${name}${scheduled}${settled}${description ? `: ${description.slice(0, 200)}` : ''}`;
+}
+
 export class IntakeGenerationService {
   /**
    * Generate a draft intake for a business.
@@ -398,14 +445,7 @@ export class IntakeGenerationService {
     const knowledge = intakeKnowledgeFor(vertical);
 
     const serviceLines = services.length
-      ? services
-          .map(service => {
-            const name = service.service_name as string;
-            const description = (service.description as string) || '';
-            const scheduled = service.is_scheduled === false ? ' (no appointment time — sold as a product or course)' : '';
-            return `- ${name}${scheduled}${description ? `: ${description.slice(0, 200)}` : ''}`;
-          })
-          .join('\n')
+      ? services.map(describeServiceForIntake).join('\n')
       : '- (no services recorded)';
 
     const restriction = knowledge.neverAsk.length
@@ -445,6 +485,17 @@ RULES
   and not a way to learn everything about the client.
 - Do not ask for anything already known from the booking: name, email, phone,
   which service, or when. They booked; the business has all of that.
+- Do not ask about the TERMS OF THE SERVICE ITSELF — how long it runs, what it
+  costs, how or when to pay, how many sessions are included. Those are the
+  business's decisions, they are listed above under WHAT THEY SELL, and the
+  client already saw them when they booked. Asking implies they are still open
+  to negotiation, and the answer would be ignored anyway.
+- Every question must be one the business can ACT ON. Do not ask for consent or
+  a preference the platform cannot honour — no opting in to newsletters, tips,
+  marketing or promotional email, no choosing a reminder channel, no picking how
+  they hear from the business. A "yes" that nothing acts on is worse than not
+  asking: the client expects something, the business believes it has permission,
+  and neither is true.
 - Write in the business's own language, and in the words their clients would use.
 - Base the questions on what THIS business actually sells. Two businesses in the
   same trade should not get the same form.

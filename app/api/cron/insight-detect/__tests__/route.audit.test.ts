@@ -74,6 +74,10 @@ jest.mock('@/lib/business-os/insight/repository', () => ({
   InsightRepository: jest.fn().mockImplementation(() => ({
     createBatch: (...a: unknown[]) => mockCreateBatch(...a),
     findActive: async () => ({ data: [] }),
+    // The stale-insight sweep the route runs for every business, after the
+    // audited action. Absent, it threw for every user and the run reported
+    // three errors where the test had arranged exactly one.
+    resolveStaleInsights: async () => ({ data: 0 }),
   })),
 }));
 jest.mock('@/lib/business-os/insight/correlation', () => ({

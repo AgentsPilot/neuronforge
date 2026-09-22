@@ -55,6 +55,35 @@ export interface ReminderConfig {
   overdueDays: number[]; // Days after due date to send overdue reminders
   channels: ReminderChannel[];
   defaultChannel: ReminderChannel;
+
+  /**
+   * May we write to this business's clients about money they owe?
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * `business_profiles.chase_invoices_enabled` — the answer the owner gave the
+   * advisor's "Chase unpaid invoices" card, and now the only switch on the
+   * overdue path.
+   *
+   * SEPARATE FROM `enabled`, DELIBERATELY. A reminder sent BEFORE the due date
+   * is a courtesy: here is what is coming, on this day. A reminder sent AFTER
+   * it says you are late. The first needs no permission and ships on; the
+   * second is written in the owner's name to their client about a debt, and the
+   * platform asks first.
+   *
+   * WHY THE SWITCH MOVED HERE
+   *
+   * There were two invoice chasers with two unrelated switches. This service
+   * sent on days 1, 3 and 7 past due and asked nobody; the advisor's own sweep
+   * sent once at 72 hours past due, gated on this column. They collided exactly
+   * on day three — same invoice, same client, two emails, neither path aware of
+   * the other, because they dedupe in different tables.
+   *
+   * The advisor's send was withdrawn and its switch given to this schedule, so
+   * the card's promise and what actually happens are the same thing. See
+   * `OperationalAutomation.carriedOutBy`.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  chaseOverdue: boolean;
 }
 
 export interface ScheduleReminderParams {
@@ -89,7 +118,16 @@ const DEFAULT_REMINDER_CONFIG: ReminderConfig = {
   daysBefore: [3, 1], // 3 days and 1 day before
   overdueDays: [1, 3, 7], // 1, 3, and 7 days after due
   channels: ['email'],
-  defaultChannel: 'email'
+  defaultChannel: 'email',
+  /*
+   * Off when the profile cannot be read.
+   *
+   * Every other default here is generous because the cost of guessing wrong is
+   * a reminder somebody did not need. The cost of guessing wrong on this one is
+   * writing to a stranger's client about a debt without the owner having agreed
+   * — so this default is the one that does nothing.
+   */
+  chaseOverdue: false
 };
 
 // ==================== SERVICE ====================
@@ -114,10 +152,30 @@ export class PaymentReminderService {
   ): Promise<PaymentReminderServiceResult<PaymentReminder>> {
     try {
       const config = await this.getUserReminderConfig(userId);
-      if (!config.enabled) {
+
+      /*
+       * Which switch applies depends on which side of the due date this is.
+       *
+       * A past-due chase answers to `chase_invoices_enabled` ALONE, not to both
+       * switches. If it needed `payment_reminder_enabled` as well, a business
+       * that turned pre-due reminders off in settings would have the advisor
+       * card still reading "Working on its own" while nothing was sent — the
+       * card stating something it cannot know, which is the exact defect this
+       * work exists to remove.
+       *
+       * So: before the date, `enabled`. After it, `chaseOverdue`. One switch
+       * each, and each is the one the owner was actually shown.
+       */
+      const permitted = params.reminderType === 'overdue' ? config.chaseOverdue : config.enabled;
+
+      if (!permitted) {
         return {
           data: null,
-          error: new Error('Payment reminders are disabled')
+          error: new Error(
+            params.reminderType === 'overdue'
+              ? 'Chasing unpaid invoices has not been turned on'
+              : 'Payment reminders are disabled'
+          )
         };
       }
 
@@ -769,6 +827,16 @@ export class PaymentReminderService {
           // Get user's overdue reminder days
           const config = await this.getUserReminderConfig(invoice.user_id);
 
+          /*
+           * Has this business agreed to us chasing on its behalf?
+           *
+           * Asked before the day-of-the-month arithmetic, because the question
+           * is not "is today a reminder day" but "may we write to this client
+           * about a debt at all". A business that has not said yes is skipped
+           * whatever the calendar says. See `ReminderConfig.chaseOverdue`.
+           */
+          if (!config.chaseOverdue) continue;
+
           // Check if we should send an overdue reminder
           if (config.overdueDays.includes(overdueDays)) {
             // Check if we haven't already sent one for this day (cross-user cron dedup)
@@ -822,6 +890,10 @@ export class PaymentReminderService {
           const overdueDays = Math.floor((Date.now() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
 
           const config = await this.getUserReminderConfig(installment.user_id);
+
+          // Same consent, same reason: a late instalment is money owed, and the
+          // client hears about it in the owner's name.
+          if (!config.chaseOverdue) continue;
 
           if (config.overdueDays.includes(overdueDays)) {
             const { data: existingReminder } = await this.reminderRepo.findRecentByInstallment(
@@ -882,7 +954,7 @@ export class PaymentReminderService {
     try {
       const { data: profile } = await this.supabase
         .from('business_profiles')
-        .select('payment_reminder_enabled, payment_reminder_days_before, payment_overdue_reminder_days, payment_reminder_channels')
+        .select('payment_reminder_enabled, payment_reminder_days_before, payment_overdue_reminder_days, payment_reminder_channels, chase_invoices_enabled')
         .eq('user_id', userId)
         .single();
 
@@ -892,7 +964,9 @@ export class PaymentReminderService {
           daysBefore: profile.payment_reminder_days_before || DEFAULT_REMINDER_CONFIG.daysBefore,
           overdueDays: profile.payment_overdue_reminder_days || DEFAULT_REMINDER_CONFIG.overdueDays,
           channels: profile.payment_reminder_channels || DEFAULT_REMINDER_CONFIG.channels,
-          defaultChannel: (profile.payment_reminder_channels?.[0] as ReminderChannel) || DEFAULT_REMINDER_CONFIG.defaultChannel
+          defaultChannel: (profile.payment_reminder_channels?.[0] as ReminderChannel) || DEFAULT_REMINDER_CONFIG.defaultChannel,
+          // `?? false` rather than `?? default`: an absent column is not consent.
+          chaseOverdue: profile.chase_invoices_enabled ?? false
         };
       }
 

@@ -27,7 +27,7 @@
 
 import { createLogger } from '@/lib/logger';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
-import { paymentPlanRepository } from '@/lib/repositories/PaymentPlanRepository';
+import { paymentPlanRepository, type PaymentPlanInstallmentInsert } from '@/lib/repositories/PaymentPlanRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import {
   dueDateFromTerms,
@@ -149,7 +149,10 @@ export async function applyAcceptance(proposal: Proposal): Promise<AcceptanceRes
   }));
 
   const { data: stageRows, error: stageError } =
-    await paymentPlanRepository.createInstallments(rows);
+    // Annotated at the call rather than on `rows`: the object literal infers
+    // `trigger` and `status` as plain strings, and the repository's type names
+    // the exact unions the column accepts.
+    await paymentPlanRepository.createInstallments(rows as PaymentPlanInstallmentInsert[]);
   if (stageError) {
     logger.error({ err: stageError, proposalId: proposal.id, planId }, 'Could not create the stages');
     return { invoiceId: null, planId, dueNow: 0 };
@@ -267,7 +270,10 @@ async function createPlan(
     });
 
     if (error) throw error;
-    return data.id as string;
+    // The repository returns `data: null` alongside an error, so reaching here
+    // means it is set; TypeScript cannot see that through the result shape.
+    if (!data) throw new Error('Payment plan was created but returned no row');
+    return data.id;
   } catch (error) {
     logger.error({ err: error, proposalId: proposal.id }, 'Failed to create the payment plan');
     return null;

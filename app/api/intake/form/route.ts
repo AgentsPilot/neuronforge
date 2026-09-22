@@ -35,7 +35,16 @@ const logger = createLogger({ module: 'IntakeFormAPI' });
 
 const OptionSchema = z.object({
   id: z.string().min(1),
-  label: z.string().min(1).max(200),
+  /*
+   * Blank is allowed HERE and refused at publish, the same bargain the form
+   * itself makes two blocks down.
+   *
+   * Adding an answer creates an empty row for the owner to type into, and the
+   * editor writes through on every change. A `min(1)` here would reject that
+   * whole save — every later edit failing with a 400 because of a row the owner
+   * was halfway through filling in.
+   */
+  label: z.string().max(200),
 });
 
 const QuestionSchema = z.object({
@@ -45,6 +54,13 @@ const QuestionSchema = z.object({
   type: z.enum(INTAKE_QUESTION_TYPES),
   required: z.boolean(),
   options: z.array(OptionSchema).max(20).optional(),
+  /*
+   * Zod STRIPS unknown keys, so a field missing here does not error — it
+   * silently disappears on the way to the database. The owner toggles "Other",
+   * the panel reports saved, and the flag is gone. Any new question field has
+   * to be added here or it does not exist.
+   */
+  allowOther: z.boolean().optional(),
   maxFiles: z.number().int().positive().max(10).optional(),
   showIf: z
     .object({

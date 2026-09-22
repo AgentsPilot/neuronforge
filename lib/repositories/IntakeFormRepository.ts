@@ -225,6 +225,25 @@ export class IntakeFormRepository {
         return { data: null, error: new Error('An intake form needs at least one question') };
       }
 
+      /*
+       * A blank answer is allowed while editing and refused here.
+       *
+       * Adding an answer creates an empty row to type into, so the draft holds
+       * blanks in the ordinary course of editing. Published, that same row is a
+       * button with no words on it — the client sees a gap they can click and
+       * cannot read, and whatever they pick is stored as an empty string.
+       */
+      const blank = draft.data.questions.find(question =>
+        (question.options ?? []).some(option => !option.label.trim())
+      );
+
+      if (blank) {
+        return {
+          data: null,
+          error: new Error(`"${blank.label}" has an answer with no words in it`),
+        };
+      }
+
       const { error: archiveError } = await this.supabase
         .from('business_intake_forms')
         .update({ status: 'archived' })

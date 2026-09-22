@@ -6,9 +6,9 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { revalidateTag } from 'next/cache';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
+import { bustSiteCache } from '@/lib/website-builder/siteCache';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 import { WebsiteBlockRepository, WebsiteBlockUpdate, BlockType } from '@/lib/repositories/WebsiteBlockRepository';
@@ -131,7 +131,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     // Revalidate the public website cache if page has a subdomain
     if (pageResult.data.subdomain) {
       try {
-        revalidateTag(`website-${pageResult.data.subdomain}`);
+        bustSiteCache(pageResult.data.subdomain);
       } catch (revalidateError) {
         requestLogger.warn({ err: revalidateError }, 'Failed to revalidate cache');
       }
@@ -229,7 +229,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     // Revalidate the public website cache if page has a subdomain
     if (pageResult.data.subdomain) {
       try {
-        revalidateTag(`website-${pageResult.data.subdomain}`);
+        bustSiteCache(pageResult.data.subdomain);
       } catch (revalidateError) {
         requestLogger.warn({ err: revalidateError }, 'Failed to revalidate cache');
       }

@@ -120,6 +120,7 @@ DECLARE
     'channel_connections',
     'channel_metrics_daily',
     'derived_metrics',
+    'insight_actions',
     'insight_automations',
     'insight_outcomes',
     'insights',
@@ -145,7 +146,15 @@ DECLARE
     'business_chat_conversation',
     'business_chat_plan_cache',
     'business_chat_saved_plans',
-    'business_chat_verified_questions'
+    'business_chat_verified_questions',
+    -- Marketing consent SETTINGS only. The events and the state they project
+    -- are user-owned and deliberately outlive the business, exactly as
+    -- email_unsubscribes does: a teardown must not resume emailing people who
+    -- opted out, nor lose the evidence of what the others agreed to.
+    'marketing_consent_settings',
+    -- The business's newsletter audience. The consent DECISIONS those people
+    -- made are user-owned and outlive the business; the roster does not.
+    'business_subscribers'
   ];
 BEGIN
   FOREACH target IN ARRAY business_owned LOOP

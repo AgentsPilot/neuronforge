@@ -10,6 +10,7 @@ export { NotesSection } from './NotesSection';
 export { SessionsSection } from './SessionsSection';
 export { TasksSection } from './TasksSection';
 export { ActivitySection } from './ActivitySection';
+export { ConsentSection } from './ConsentSection';
 export { FilesTab } from './FilesTab';
 
 // Types

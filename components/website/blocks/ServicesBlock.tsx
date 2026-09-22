@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { resolveBlockLayout } from '@/lib/website-builder/pageTheme';
 import {
@@ -15,6 +16,7 @@ import {
 import type { BlockRendererProps, ServiceItem, FlowStep, SelectedServiceData } from './types';
 import { getBlockTranslation } from '@/lib/i18n/website-block-translations';
 import { journeySteps, isQuoted } from '@/lib/business-os/clientJourney';
+import { blockServiceIcon, servicePriceLabel } from '@/lib/website-builder/serviceCard';
 
 // Map icon names to Lucide components
 const ICON_REGISTRY: Record<string, LucideIcon> = {
@@ -31,6 +33,7 @@ const ICON_REGISTRY: Record<string, LucideIcon> = {
 const isLucideIconName = (icon: string): boolean => {
   return icon in ICON_REGISTRY;
 };
+
 
 // Service icon component that renders either Lucide icon or emoji
 interface ServiceIconProps {
@@ -61,6 +64,140 @@ function ServiceIcon({ icon, className, primaryColor = '#4F6EF7', secondaryColor
 
   // Fallback to emoji rendering
   return <span className={`text-${size === 'sm' ? '2xl' : size === 'lg' ? '4xl' : '3xl'}`}>{icon}</span>;
+}
+
+/**
+ * A service description, clipped to keep a row of cards the same height.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY CLIPPED, AND WHY NOT SIMPLY TRUNCATED
+ *
+ * Descriptions are written by the business and their lengths have nothing in
+ * common: one service says "aaa" and the next carries three paragraphs about
+ * ADHD. Rendered in full, the long one stretches its card to several screens
+ * while its neighbours sit a few lines tall, and the grid stops reading as a
+ * set of comparable things.
+ *
+ * But a course description is not decoration — it is the case for buying the
+ * course, and a client who cannot read it cannot decide. So the text is clipped
+ * with a way to open it, never cut off for good. The toggle appears ONLY when
+ * the text is actually longer than the clamp, measured after render rather than
+ * guessed from a character count: a Hebrew paragraph and an English one of the
+ * same length occupy different numbers of lines, and the font is the tenant's.
+ *
+ * `line-clamp` rather than a substring, so nothing is cut mid-word and the
+ * full text stays in the DOM for anyone reading with a screen reader or
+ * searching the page.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function ServiceDescription({
+  text,
+  lines,
+  className,
+  style,
+  moreLabel,
+  lessLabel,
+  linkColor,
+}: {
+  text: string;
+  /** How many lines survive the clip. Card layouts differ; the value does not. */
+  lines: number;
+  className?: string;
+  style?: React.CSSProperties;
+  moreLabel: string;
+  lessLabel: string;
+  linkColor: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  /** The height the clamp produced, so opening can hold exactly that. */
+  const [clampedHeight, setClampedHeight] = useState<number | null>(null);
+  const ref = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    /*
+     * ONLY WHILE CLAMPED.
+     *
+     * Expanded, the clamp is gone and the element grows to fit its text, so
+     * `scrollHeight > clientHeight` is false by construction. Measuring then
+     * set `overflows` to false and the "Show less" button removed itself the
+     * instant it was needed — leaving the reader expanded with no way back.
+     *
+     * Returning early keeps the previous answer, which is still the true one:
+     * whether this text is longer than the clamp does not change by opening it.
+     */
+    if (expanded) return;
+
+    const measure = () => {
+      setOverflows(el.scrollHeight > el.clientHeight + 1);
+      setClampedHeight(el.clientHeight);
+    };
+
+    measure();
+
+    /*
+     * Re-measured on resize because the answer genuinely changes: the same
+     * paragraph needs four lines on a phone and two on a desktop, so a toggle
+     * decided once at mount is wrong for anybody who rotates their phone.
+     */
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [text, lines, expanded]);
+
+  return (
+    <>
+      {/*
+        THE BOX NEVER CHANGES SIZE.
+        
+        Expanding used to remove the clamp and let the paragraph grow, which
+        grew the card — and because the grid uses `auto-rows-fr`, every card in
+        the row grew with it and the page jumped under the reader's cursor. The
+        button they had just pressed moved out from under them.
+        
+        So opening does not make the box taller; it makes it scrollable. The
+        text is all there and reachable, the card keeps its height, and nothing
+        below moves. `maxHeight` is pinned to the height the clamp produced,
+        measured rather than guessed, because a line is whatever the tenant's
+        font makes it.
+      */}
+      <p
+        ref={ref}
+        className={className}
+        style={{
+          ...style,
+          ...(expanded
+            ? {
+                maxHeight: clampedHeight ? `${clampedHeight}px` : undefined,
+                overflowY: 'auto',
+              }
+            : {
+                display: '-webkit-box',
+                WebkitBoxOrient: 'vertical',
+                WebkitLineClamp: lines,
+                overflow: 'hidden',
+              }),
+        }}
+      >
+        {text}
+      </p>
+
+      {/* Absent when everything already fits, so short cards gain no clutter. */}
+      {overflows && (
+        <button
+          type="button"
+          onClick={() => setExpanded(v => !v)}
+          className="mt-1 text-sm font-medium underline-offset-2 hover:underline"
+          style={{ color: linkColor, fontFamily: 'var(--ap-font-body)' }}
+        >
+          {expanded ? lessLabel : moreLabel}
+        </button>
+      )}
+    </>
+  );
 }
 
 interface ServiceItemWithRawData extends ServiceItem {
@@ -137,6 +274,16 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
   const t = (key: string, section: 'services' | 'common' = 'services') =>
     getBlockTranslation(section, key, locale);
 
+  /*
+   * One place, so five card layouts cannot drift into five different clip
+   * lengths, five labels and five link colours.
+   */
+  const descriptionProps = {
+    moreLabel: t('readMore'),
+    lessLabel: t('readLess'),
+    linkColor: 'var(--ap-primary, currentColor)',
+  };
+
   const journeyLabel = (service: ServiceItemWithRawData): string | null => {
     // A card with neither fact is from a page written before services carried
     // them. Saying nothing is better than guessing at the journey.
@@ -183,11 +330,25 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
   const ctaFor = (service: ServiceItemWithRawData): string =>
     isQuoted(service.sale_mode) ? (REQUEST_CTA[locale] || REQUEST_CTA.en) : ctaText;
 
-  /** What stands in for a price the business has not set. */
+  /**
+   * What the card says where a price goes.
+   *
+   * Three answers, and every one of them is a sentence rather than a blank:
+   *
+   *   quoted   nobody has priced the job — "Price on request"
+   *   free     priced, at zero — the word, not "$0", which reads as a bug
+   *   priced   the figure
+   *
+   * Free used to fall through to `null` and the card showed nothing at all, so
+   * a free intro call sat beside priced services looking like the page had
+   * failed to load half of it. `priceRaw === 0` is what distinguishes it from a
+   * service nobody has priced; see the note where the API preserves the zero.
+   */
   const priceFor = (service: ServiceItemWithRawData): string | null =>
-    isQuoted(service.sale_mode)
-      ? (PRICE_ON_REQUEST[locale] || PRICE_ON_REQUEST.en)
-      : (service.price || null);
+    servicePriceLabel(service, {
+      free: t('free', 'common'),
+      onRequest: PRICE_ON_REQUEST[locale] || PRICE_ON_REQUEST.en,
+    });
 
   // Format duration with translation
   const formatDuration = (service: ServiceItemWithRawData): string | null => {
@@ -245,6 +406,17 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
   // Services come pre-filtered (active only) from the blocks-with-content API
   // Just filter out any hidden services (user customization)
   const services = staticServices.filter(s => !s.hidden);
+
+  /*
+   * One icon for every card in this block, voted for by the service names.
+   * See `blockServiceIcon`: a trainer's page gets a dumbbell on all of them,
+   * including the services whose own names say nothing.
+   *
+   * Declared HERE, below `services`. `const` is not hoisted, so computing this
+   * further up — where the other per-block values sit — throws a ReferenceError
+   * at render and blanks the page, and nothing in a typecheck sees it.
+   */
+  const serviceIcon = blockServiceIcon(services);
 
   const columns = styles?.columns || 3;
   const primaryColor = theme?.colors.primary || '#4F6EF7';
@@ -494,16 +666,18 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                     </h3>
 
                     {service.description && (
-                      <p
-                        className="mt-2 max-w-prose"
-                        style={{
-                          fontFamily: 'var(--ap-font-body)',
-                          fontSize: 'var(--ap-scale-body)',
-                          color: 'var(--ap-text-muted)',
-                        }}
-                      >
-                        {service.description}
-                      </p>
+                      <div className="mt-2 max-w-prose">
+                        <ServiceDescription
+                          {...descriptionProps}
+                          text={service.description}
+                          lines={3}
+                          style={{
+                            fontFamily: 'var(--ap-font-body)',
+                            fontSize: 'var(--ap-scale-body)',
+                            color: 'var(--ap-text-muted)',
+                          }}
+                        />
+                      </div>
                     )}
 
                     {duration && (
@@ -591,7 +765,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                 />
 
                 {/* Icon with gradient background */}
-                {service.icon && (
+                {serviceIcon && (
                   <motion.div
                     whileHover={{ scale: 1.1, rotate: 5 }}
                     transition={{ type: "spring", stiffness: 400 }}
@@ -607,7 +781,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                         background: `radial-gradient(circle at center, ${primaryColor}30 0%, transparent 70%)`
                       }}
                     />
-                    <ServiceIcon icon={service.icon} primaryColor={primaryColor} size="lg" />
+                    <ServiceIcon icon={serviceIcon} primaryColor={primaryColor} size="lg" />
                   </motion.div>
                 )}
 
@@ -621,15 +795,19 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   {service.name}
                 </h3>
 
-                <p
-                  className="text-base leading-relaxed mb-6"
-                  style={{
-                    fontFamily: 'var(--ap-font-body)',
-                    color: isDark ? '#9ca3af' : '#6b7280'
-                  }}
-                >
-                  {service.description}
-                </p>
+                <div
+                  className="mb-6">
+                  <ServiceDescription
+                    {...descriptionProps}
+                    text={service.description}
+                    lines={5}
+                    className="text-base leading-relaxed"
+                    style={{
+                      fontFamily: 'var(--ap-font-body)',
+                      color: isDark ? '#9ca3af' : '#6b7280'
+                    }}
+                  />
+                </div>
 
                 {/* Features list */}
                 {service.features && service.features.length > 0 && (
@@ -643,9 +821,22 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   </ul>
                 )}
 
-                {/* Price and duration */}
-                {(service.price || service.duration) && (
-                  <div className="flex items-center justify-between pt-6 border-t" style={{ borderColor: isDark ? 'rgba(75, 85, 99, 0.4)' : 'rgba(229, 231, 235, 0.8)' }}>
+                {/*
+                  Guarded on what will actually be RENDERED, not on the raw
+                  fields.
+                  
+                  This tested `service.price || service.duration` — the
+                  formatted strings off the row. A free service has neither: its
+                  price is deliberately absent (so no card says "$0") and its
+                  length arrives as `durationMinutes`, a number. So the whole
+                  row was skipped and "Free" never appeared, on the one card
+                  that most needed to say something.
+                  
+                  `priceFor` and `formatDuration` are what the spans below
+                  print, so they are what decides whether there is a row.
+                */}
+                {(priceFor(service) || formatDuration(service)) && (
+                  <div className="mt-auto flex items-center justify-between pt-6 border-t" style={{ borderColor: isDark ? 'rgba(75, 85, 99, 0.4)' : 'rgba(229, 231, 235, 0.8)' }}>
                     {priceFor(service) && (
                       <span
                         className="text-2xl font-bold"
@@ -776,14 +967,14 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   style={{ backgroundColor: primaryColor }}
                 />
 
-                {service.icon && (
+                {serviceIcon && (
                   <div
                     className="apc-icon flex-shrink-0 w-14 h-14 rounded-xl flex items-center justify-center"
                     style={{
                       background: `linear-gradient(135deg, ${primaryColor}15 0%, ${secondaryColor}25 100%)`
                     }}
                   >
-                    <ServiceIcon icon={service.icon} primaryColor={primaryColor} size="md" />
+                    <ServiceIcon icon={serviceIcon} primaryColor={primaryColor} size="md" />
                   </div>
                 )}
 
@@ -797,15 +988,16 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   >
                     {service.name}
                   </h3>
-                  <p
+                  <ServiceDescription
+                    {...descriptionProps}
+                    text={service.description}
+                    lines={2}
                     className="text-sm leading-relaxed"
                     style={{
                       fontFamily: 'var(--ap-font-body)',
                       color: isDark ? '#9ca3af' : '#6b7280'
                     }}
-                  >
-                    {service.description}
-                  </p>
+                  />
                 </div>
 
                 <div className="flex-shrink-0 flex items-center gap-4">
@@ -898,14 +1090,14 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                 />
 
                 <div className="p-8 flex-1 flex flex-col">
-                  {service.icon && (
+                  {serviceIcon && (
                     <div
                       className="apc-icon w-16 h-16 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300"
                       style={{
                         background: `linear-gradient(135deg, ${primaryColor}15 0%, ${secondaryColor}25 100%)`
                       }}
                     >
-                      <ServiceIcon icon={service.icon} primaryColor={primaryColor} size="lg" />
+                      <ServiceIcon icon={serviceIcon} primaryColor={primaryColor} size="lg" />
                     </div>
                   )}
 
@@ -928,15 +1120,19 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                     descriptions actually run to — and a longer one simply grows
                     the row, which every card now matches.
                   */}
-                  <p
-                    className="text-sm leading-relaxed mb-6 min-h-[2.5rem]"
-                    style={{
-                      fontFamily: 'var(--ap-font-body)',
-                      color: isDark ? '#9ca3af' : '#6b7280'
-                    }}
-                  >
-                    {service.description}
-                  </p>
+                  <div
+                    className="mb-6">
+                    <ServiceDescription
+                      {...descriptionProps}
+                      text={service.description}
+                      lines={4}
+                      className="text-sm leading-relaxed min-h-[2.5rem]"
+                      style={{
+                        fontFamily: 'var(--ap-font-body)',
+                        color: isDark ? '#9ca3af' : '#6b7280'
+                      }}
+                    />
+                  </div>
 
                   {/*
                     Price and duration, each shown when it exists.
@@ -950,7 +1146,18 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                     both or neither, so the button below stays level across the
                     grid.
                   */}
-                  <div className="flex items-baseline gap-1 mb-6 min-h-[2.75rem]">
+                  {/*
+                    `mt-auto` HERE, not on the button below.
+                    
+                    The button was the only thing pinned to the bottom, so the
+                    price sat immediately under a description whose height
+                    varies per service — and the figures landed at a different
+                    height on every card in the row. Pinning the PRICE puts it
+                    at a fixed distance from the card's bottom edge, and the
+                    button, which has a fixed height, follows it. Both line up
+                    across the row.
+                  */}
+                  <div className="mt-auto flex items-baseline gap-1 mb-6 min-h-[2.75rem]">
                     {priceFor(service) && (
                       <span
                         /*
@@ -975,10 +1182,8 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                     )}
                   </div>
 
-                  {/* CTA Button — `mt-auto` pins it to the bottom of the
-                      column, so it is level across the row whatever the copy
-                      above it ran to. */}
-                  <div className="mt-auto">
+                  {/* Directly under the pinned price row above. */}
+                  <div>
                   {hasBookingFlow && (
                     isPreview && onOpenBooking && service.id ? (
                       <button
@@ -1150,12 +1355,12 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                     className="apc-panel group p-6 rounded-2xl border backdrop-blur-xl transition-all"
                     style={getCardStyle()}
                   >
-                    {service.icon && (
+                    {serviceIcon && (
                       <div
                         className="apc-icon w-12 h-12 rounded-xl flex items-center justify-center mb-4"
                         style={{ backgroundColor: `${primaryColor}15` }}
                       >
-                        <ServiceIcon icon={service.icon} primaryColor={primaryColor} size="md" />
+                        <ServiceIcon icon={serviceIcon} primaryColor={primaryColor} size="md" />
                       </div>
                     )}
                     <h4
@@ -1167,15 +1372,18 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                     >
                       {service.name}
                     </h4>
-                    <p
-                      className="text-sm mb-4"
-                      style={{
-                        fontFamily: 'var(--ap-font-body)',
-                        color: isDark ? '#9ca3af' : '#6b7280'
-                      }}
-                    >
-                      {service.description}
-                    </p>
+                    <div className="mb-4">
+                      <ServiceDescription
+                        {...descriptionProps}
+                        text={service.description}
+                        lines={4}
+                        className="text-sm"
+                        style={{
+                          fontFamily: 'var(--ap-font-body)',
+                          color: isDark ? '#9ca3af' : '#6b7280'
+                        }}
+                      />
+                    </div>
                     {priceFor(service) && (
                       <span className="font-bold" style={{ color: primaryColor }}>
                         {priceFor(service)}

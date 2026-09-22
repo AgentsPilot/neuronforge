@@ -21,6 +21,7 @@ import { toast } from 'sonner';
 
 // Import modular sections
 import { ClientDetailsSection } from './ClientDetailsSection';
+import type { ContactSourceMetadata } from '@/components/crm/contactSources';
 import { NotesSection } from './NotesSection';
 import { SessionsSection } from './SessionsSection';
 import { TasksSection } from './TasksSection';
@@ -31,6 +32,7 @@ import { FormSubmissionsSection } from './FormSubmissionsSection';
 import { PaymentManagementModal } from './PaymentManagementModal';
 import { ProposalBuilderModal } from './ProposalBuilderModal';
 import { PaymentsSection } from './PaymentsSection';
+import { ConsentSection } from './ConsentSection';
 import { InvoiceModal } from '@/components/payments/InvoiceModal';
 
 import type {
@@ -2466,6 +2468,9 @@ export function CRMContactDrawerV2({
               {/* Details Section - collapsed by default */}
               <ClientDetailsSection
                 formData={formData}
+                // Read-only: what the chip is derived from and what the line
+                // under it says. The drawer never writes it back.
+                sourceMetadata={contact?.source_metadata as ContactSourceMetadata | null}
                 setFormData={setFormData}
                 stages={stages}
                 t={t}
@@ -2592,6 +2597,11 @@ export function CRMContactDrawerV2({
                    drawer can refresh the timeline, so it is told. */
                 onMoneyChanged={() => fetchSessions(contact.id, { silent: true })}
               />
+
+              {/* Marketing consent — why this person is or is not reachable.
+                  Without it the send gate reads as the platform quietly not
+                  working. */}
+              <ConsentSection contactId={contact.id} isRTL={isRTL} />
 
               {/* Website Form Submissions Section */}
               <FormSubmissionsSection

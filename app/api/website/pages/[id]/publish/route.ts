@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
+import { bustSiteCache } from '@/lib/website-builder/siteCache';
 import {
   publishPage,
   unpublishPage,
@@ -103,6 +104,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         { status: 500 }
       );
     }
+
+    // Going live is the change that matters most: the cached copy is of a page
+    // that was not being served at all.
+    bustSiteCache(result.data!.subdomain);
 
     return NextResponse.json({
       success: true,

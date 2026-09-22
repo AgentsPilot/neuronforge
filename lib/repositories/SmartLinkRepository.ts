@@ -473,23 +473,37 @@ export class SmartLinkRepository {
         throw clickError;
       }
 
-      // Update the smart link's conversion count and revenue
-      const updates: Record<string, unknown> = {
-        conversion_count: this.supabase.rpc('increment', { x: 1 }),
-        updated_at: new Date().toISOString()
-      };
+      /*
+       * Counted, not incremented.
+       *
+       * This used to assign `this.supabase.rpc('increment', { x: 1 })` as the
+       * COLUMN VALUE — a query builder object where a number belongs, which is
+       * not an increment and cannot become one. It never showed up because
+       * nothing called this method until the booking flow was wired to it; the
+       * moment it ran, it would have written nonsense into a counter the
+       * dashboard reads.
+       *
+       * Recounting is one extra query and is always right, including after a
+       * replay, a backfill or a row deleted by hand. The clicks table is the
+       * source of truth; this column is a convenience over it and should never
+       * disagree with it.
+       */
+      const { count: converted } = await this.supabase
+        .from('smart_link_clicks')
+        .select('id', { count: 'exact', head: true })
+        .eq('smart_link_id', click.smart_link_id)
+        .eq('converted', true);
+
+      await this.supabase
+        .from('smart_links')
+        .update({ conversion_count: converted ?? 0, updated_at: new Date().toISOString() })
+        .eq('id', click.smart_link_id);
 
       if (revenueAmountCents) {
-        // Use raw SQL increment for revenue
         await this.supabase.rpc('increment_revenue', {
           link_id: click.smart_link_id,
           amount: revenueAmountCents
         });
-      } else {
-        await this.supabase
-          .from('smart_links')
-          .update({ conversion_count: this.supabase.rpc('increment', { x: 1 }) })
-          .eq('id', click.smart_link_id);
       }
 
       logger.info({ sessionId, smartLinkId: click.smart_link_id, conversionType }, 'Conversion marked');

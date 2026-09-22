@@ -495,12 +495,38 @@ export interface UnmatchedFilter {
   entity: string;
   /** What the user called it, verbatim. */
   value: string;
+  /**
+   * How the row was looked for. Absent means by name — the original case.
+   *
+   * `'id'` is a lookup the USER never phrased: the planner carried an id over
+   * from the previous turn. It reports the same fact — nothing matched — but it
+   * must not be worded like a name, because the value is a uuid and quoting it
+   * back ("No contact found matching 5a64ed7a-…") reads as a fault in the
+   * product rather than an answer.
+   */
+  by?: 'id';
 }
 
 export interface FindResult {
   op: 'find';
   entity: string;
   rows: QueryRow[];
+  /**
+   * How many rows matched the filter, not how many are on this page.
+   *
+   * Absent for an entity that dedupes, where the stored-row count is not the
+   * count the reader was shown. `{sN.count}` reads this first and falls back to
+   * the page length only when it is genuinely unavailable.
+   */
+  total?: number;
+  /**
+   * The fields this step asked for by name, when it named any.
+   *
+   * Reported so the renderer can show a field that is deliberately absent from
+   * `displayFields` — an intake form, say — on the turn that asked for it, and
+   * only then.
+   */
+  select?: string[];
   /** Repeated rows collapsed by the entity's dedupe key. Reported, not hidden. */
   collapsed?: number;
   /** True when `limit` truncated the result — never hidden from the caller. */
@@ -606,6 +632,14 @@ export interface ForEachResult {
   items: Array<{ id: string; target?: string; ok: boolean; error?: string }>;
   /** Set when the caller asked for more than the catalog permits. */
   cappedAt?: number;
+  /**
+   * Recipients dropped because they never agreed to marketing email.
+   *
+   * Counted inside `skipped`, and reported separately because it is the one
+   * exclusion the owner can do something about — and the one that otherwise
+   * reads as the feature being broken.
+   */
+  withheldForConsent?: number;
 }
 
 export type QueryResult = FindResult | ComputeResult | MutateResult | ForEachResult;
@@ -681,6 +715,15 @@ export interface QueryContext {
   _enumCache?: Map<string, Map<string, string[]>>;
   /** Values found in rows that no configured option accounts for. */
   _enumOrphans?: Array<{ field: string; values: string[] }>;
+  /**
+   * Whether anything OTHER than an identifying name narrowed this query.
+   *
+   * A name filter that returns nothing means "no such person" only when the
+   * name was the sole thing asked. Sitting here beside `_enumOrphans` because
+   * both are facts the compiler learns while running and the result shape needs
+   * on the way out.
+   */
+  _narrowedByOthers?: boolean;
 
   /**
    * Internal. This user's raw values for a data-driven field, used to build a

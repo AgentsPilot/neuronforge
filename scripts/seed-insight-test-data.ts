@@ -1978,7 +1978,6 @@ async function seedData(userId: string) {
   console.log('\n  Cash Flow:');
   console.log('    • cash_ar_overdue: 5 invoices overdue 7-30 days');
   console.log('    • cash_ar_aging: 7 invoices in aging buckets (3 @ 30-60d, 2 @ 60-90d, 2 @ 90+d)');
-  console.log('    • cash_cards_expiring: 6 cards expiring this month');
   console.log('    • cash_refund_pattern: 6 refunds (4 full + 2 partial)');
   console.log('    • cash_payment_issues: 5 failed + 3 pending payments');
   console.log('    • cash_payout_blocked: Stripe payouts disabled');
@@ -2001,10 +2000,8 @@ async function seedData(userId: string) {
   console.log('\n  Acquisition/Website:');
   console.log('    • acq_traffic_drop: ~36% decrease week-over-week');
   console.log('    • acq_low_conversion: ~3.5% overall (mobile 1.5%)');
-  console.log('    • web_mobile_issues: Mobile 1.5% vs Desktop 5%');
 
   console.log('\n  Pricing:');
-  console.log('    • pricing_discount_abuse: 8 transactions with discounts');
   console.log('    • pricing_intro_offer_stuck: 5 intro bookings, low conversion');
 
   console.log('\n  Sales:');

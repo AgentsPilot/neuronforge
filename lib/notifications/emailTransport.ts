@@ -16,6 +16,7 @@ import { createLogger } from '@/lib/logger';
 // D12: htmlToText now lives in ONE shared util. Re-exported below so existing
 // callers (and the D9 test importing it from here) keep working unchanged.
 import { htmlToText } from '@/lib/email/htmlToText';
+import { marketingGate, type MarketingBlockReason } from '@/lib/consent/marketingGate';
 
 export { htmlToText };
 
@@ -32,7 +33,35 @@ export interface EmailAttachment {
   contentType: string;
 }
 
-export interface SendEmailParams {
+/**
+ * What kind of message this is, in the sense the law cares about.
+ *
+ * Required, with no default, and that is the whole design. This is the only
+ * email transport in the product, so a new call site that forgets to say which
+ * kind it is fails to COMPILE — rather than sending an ungated marketing email
+ * and being discovered afterwards.
+ *
+ * `transactional` is anything the recipient's own action asked for: booking
+ * confirmations, reminders, invoices, receipts, refunds, proposals, a reply to
+ * an enquiry. No consent needed, and nothing about these changed.
+ *
+ * `marketing` is anything sent because the business wanted to reach them:
+ * follow-up nudges to lapsed clients, owner-written broadcasts, automated
+ * solicitations on a timer. These go through `marketingGate`.
+ *
+ * `ownerUserId` is required on marketing because consent is per business —
+ * there is no way to ask the question without knowing whose list it is.
+ */
+export type EmailKind =
+  | { kind: 'transactional' }
+  | {
+      kind: 'marketing';
+      ownerUserId: string;
+      /** For the audit line only. The address is the key consent is held against. */
+      contactId?: string | null;
+    };
+
+export interface SendEmailBase {
   to: string[];
   subject: string;
   html: string;
@@ -66,10 +95,21 @@ export interface SendEmailParams {
   attachments?: EmailAttachment[];
 }
 
+export type SendEmailParams = SendEmailBase & EmailKind;
+
 export interface SendEmailResult {
   sent: boolean;
   provider: 'resend' | 'smtp' | 'gmail' | 'none';
   error?: string;
+  /**
+   * Refused before any transport was touched.
+   *
+   * NOT a delivery failure, and callers must not treat it as one. A blocked
+   * send is a final decision — retrying it produces the same answer, so a
+   * caller that throws here will have its queue row retried forever. Close the
+   * row as skipped instead.
+   */
+  blocked?: MarketingBlockReason | 'multi_recipient';
 }
 
 /**
@@ -306,6 +346,43 @@ async function resolveSender(
 
 export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
   const errors: string[] = [];
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * The consent gate. Before any transport, before the sender is even resolved.
+   *
+   * Transactional mail returns from this block untouched — the check below is
+   * the only thing that happens to it, and it is a single comparison. Bookings,
+   * invoices, receipts, refunds and proposals behave exactly as they did.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (p.kind === 'marketing') {
+    // Consent is held per person. A marketing send that names several
+    // recipients cannot be checked, so it is refused rather than approximated.
+    // Every current caller sends to one address, so this costs nothing today
+    // and closes the hole where a future one batches.
+    if (p.to.length !== 1) {
+      logger.warn(
+        { ownerUserId: p.ownerUserId, recipientCount: p.to.length },
+        'Refused a marketing send addressed to more than one recipient'
+      );
+      return { sent: false, provider: 'none', blocked: 'multi_recipient' };
+    }
+
+    const verdict = await marketingGate.check(p.ownerUserId, p.to[0]);
+    if (!verdict.allowed) {
+      logger.warn(
+        {
+          ownerUserId: p.ownerUserId,
+          contactId: p.contactId ?? null,
+          reason: verdict.reason,
+          subject: p.subject?.substring(0, 50),
+        },
+        'Refused a marketing send'
+      );
+      return { sent: false, provider: 'none', blocked: verdict.reason };
+    }
+  }
 
   // Log email send attempt with attachment info
   logger.info({

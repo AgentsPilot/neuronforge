@@ -16,28 +16,11 @@ import { loadServicePaymentPlans, type ServicePaymentPlan } from '@/lib/business
 import { supabaseServer } from '@/lib/supabaseServer';
 import { SchedulingServiceRepository, type SchedulingService } from '@/lib/repositories/SchedulingRepository';
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
+import { toServiceCard } from '@/lib/website-builder/serviceCard';
 
 const logger = createLogger({ module: 'WebsiteBlockServicesAPI' });
 
-// Service icon mapping based on common service keywords
-function getServiceIcon(serviceName: string): string {
-  const name = serviceName.toLowerCase();
-
-  if (name.includes('consult') || name.includes('session') || name.includes('call')) return 'MessageCircle';
-  if (name.includes('coach') || name.includes('mentor')) return 'Target';
-  if (name.includes('therapy') || name.includes('counsel')) return 'Heart';
-  if (name.includes('class') || name.includes('workshop') || name.includes('course')) return 'GraduationCap';
-  if (name.includes('massage') || name.includes('spa') || name.includes('wellness')) return 'Sparkles';
-  if (name.includes('fitness') || name.includes('training') || name.includes('workout')) return 'Dumbbell';
-  if (name.includes('design') || name.includes('creative')) return 'Palette';
-  if (name.includes('photo') || name.includes('video')) return 'Camera';
-  if (name.includes('legal') || name.includes('law')) return 'Scale';
-  if (name.includes('finance') || name.includes('account') || name.includes('tax')) return 'Calculator';
-  if (name.includes('tech') || name.includes('development') || name.includes('code')) return 'Code';
-  if (name.includes('marketing') || name.includes('seo') || name.includes('ads')) return 'TrendingUp';
-
-  return 'Star';
-}
+// Icon, price and journey facts all come from the shared mapper below.
 
 // Format price for display
 function formatPrice(price: number, currency: string = 'USD'): string {
@@ -75,29 +58,17 @@ function transformServiceForBlock(
   service: SchedulingService,
   plansByService: Record<string, ServicePaymentPlan> = {}
 ): BlockService {
-  // Ensure currency is always a valid 3-char code
-  const currency = service.currency && service.currency.length === 3 ? service.currency : 'USD';
   return {
-    id: service.id,
-    name: service.service_name,
-    description: service.description || '',
-    icon: getServiceIcon(service.service_name),
-    price: service.price ? formatPrice(service.price, currency) : undefined,
-    priceRaw: service.price || undefined,
-    currency,
-    duration: service.duration_minutes ? `${service.duration_minutes} min` : undefined,
-    durationMinutes: service.duration_minutes,
-    isActive: service.is_active,
-    // Carried so the public page can describe each service's own journey.
-    is_scheduled: service.is_scheduled !== false,
-    collection: service.collection ?? null,
-    // And whether it is bought or quoted, which decides the price line and the
-    // button's words. Absent, a quoted service reads as 'direct' and shows an
-    // empty space where "Price on request" belongs.
-    sale_mode: service.sale_mode || 'direct',
-    // Carried for the same reason: the payment step describes what the client
-    // is agreeing to, and that includes the split when there is one.
-    paymentPlan: plansByService[service.id]
+    /*
+     * The shared mapper. This function had its own copy of the icon rule, the
+     * price formatting and the journey facts — and its copy of the icon rule
+     * had already drifted from the public route's, so the editor could show a
+     * different icon than the live page for the same service.
+     */
+    ...toServiceCard(service),
+    // Carried for the payment step, which describes what the client is
+    // agreeing to — and that includes the split when there is one.
+    paymentPlan: plansByService[service.id],
   };
 }
 

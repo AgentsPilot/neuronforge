@@ -199,12 +199,24 @@ function scopedFrom(
   supabase: SupabaseClient,
   entity: ResolvedEntity,
   columns: string[],
-  userId: string
+  userId: string,
+  /**
+   * Ask for the total matching rows alongside the page.
+   *
+   * PostgREST returns it as a header on the SAME request, so this is not a
+   * second round trip — and without it `{sN.count}` rendered `rows.length`,
+   * which is the page size. A business with 80 unpaid invoices was told it had
+   * 50, followed by a separate line about the LIST being shortened that reads
+   * as being about the list, not the number.
+   */
+  withCount = false
 ): Builder {
   const embed = userScopeEmbed(entity);
   const select = [...(columns.length ? columns : ['id']), ...(embed ? [embed] : [])].join(',');
 
-  const builder = supabase.from(entity.table).select(select) as unknown as Builder;
+  const builder = supabase
+    .from(entity.table)
+    .select(select, withCount ? { count: 'exact' } : undefined) as unknown as Builder;
 
   return applyUserScope(builder, entity, userId);
 }
@@ -288,21 +300,35 @@ function recordIdentifyingFilter(
   op: string,
   rawValue: QueryValue | undefined,
   ctx: QueryContext
-): void {
+): boolean {
   const candidates = (ctx as CompileContext)._candidates;
-  if (!candidates) return;
+  if (!candidates) return false;
 
-  if (op !== 'eq' && op !== 'contains' && op !== 'starts_with') return;
-  if (typeof rawValue !== 'string' || rawValue.trim().length < 2) return;
+  if (op !== 'eq' && op !== 'contains' && op !== 'starts_with') return false;
+  if (typeof rawValue !== 'string' || rawValue.trim().length < 2) return false;
   // An id is not a name; the foreign-key repair covers those.
-  if (UUID_PATTERN.test(rawValue)) return;
+  if (UUID_PATTERN.test(rawValue)) return false;
 
   const labelKeys = Array.isArray(entity.labelField) ? entity.labelField : [entity.labelField];
   const identifying = new Set([...labelKeys, ...(entity.searchableFields ?? [])]);
 
   if (identifying.has(field.key)) {
     candidates.push({ entity: entity.key, value: rawValue });
+    return true;
   }
+
+  return false;
+}
+
+/**
+ * Something other than a name narrowed this query, so emptiness is ambiguous.
+ *
+ * Deliberately counts a date range, a status, a null check — anything the user
+ * asked for beyond the name itself. It does NOT count the tenant scope, which
+ * is applied to every query and is nobody's choice.
+ */
+function markOtherNarrowing(ctx: QueryContext): void {
+  (ctx as CompileContext)._narrowedByOthers = true;
 }
 
 
@@ -317,9 +343,24 @@ function recordIdentifyingFilter(
 function reportUnmatched(
   definite: UnmatchedFilter[],
   candidates: UnmatchedFilter[],
-  isEmpty: boolean
+  isEmpty: boolean,
+  narrowedByOthers = false
 ): { unmatched?: UnmatchedFilter[] } {
-  const all = [...definite, ...(isEmpty ? candidates : [])];
+  /*
+   * A candidate is promoted only when the name was the ONLY thing asked.
+   *
+   * Emptiness alone used to be enough, with no regard for the other predicates
+   * in the same query — so "how much did Ofir pay me in August" answered "no
+   * contact found matching 'Ofir'" for a real client who happened to pay
+   * nothing that month, and the owner concluded the record was missing.
+   *
+   * Declining to claim it is the conservative direction: the answer falls back
+   * to an honest empty result instead of a confident falsehood about who
+   * exists. `definite` entries are unaffected — those come from a sub-query
+   * that genuinely found nothing, so they are known rather than inferred.
+   */
+  const promotable = isEmpty && !narrowedByOthers ? candidates : [];
+  const all = [...definite, ...promotable];
   if (all.length === 0) return {};
 
   // The same name can be filtered in more than one place in one query.
@@ -648,6 +689,7 @@ function applyFieldPredicate(
   const column = field.column;
 
   if (VALUELESS_OPS.has(op)) {
+    markOtherNarrowing(ctx);
     return op === 'is_null' ? builder.is(column, null) : builder.not(column, 'is', null);
   }
 
@@ -657,7 +699,9 @@ function applyFieldPredicate(
     ]);
   }
 
-  recordIdentifyingFilter(entity, field, op, rawValue, ctx);
+  if (!recordIdentifyingFilter(entity, field, op, rawValue, ctx)) {
+    markOtherNarrowing(ctx);
+  }
 
   let value = resolveValue(entity, field, rawValue, ctx);
 
@@ -1204,7 +1248,13 @@ export async function compileAndRunFind(
   const candidates: UnmatchedFilter[] = [];
   ctx = { ...ctx, _unmatched: unmatched, _candidates: candidates } as CompileContext;
 
-  let builder = scopedFrom(supabase, entity, [buildSelect(entity, query)], ctx.userId);
+  /*
+   * The count is requested only where a page can hide rows — an entity that
+   * dedupes reports a DB count that disagrees with what the reader is shown, so
+   * it is deliberately left to fall back to the row length there.
+   */
+  const wantsTotal = !entity.dedupeBy;
+  let builder = scopedFrom(supabase, entity, [buildSelect(entity, query)], ctx.userId, wantsTotal);
 
   // Scope embedded child rows explicitly as well.
   //
@@ -1266,7 +1316,9 @@ export async function compileAndRunFind(
     builder = builder.limit(fetchSize);
   }
 
-  const { data, error } = await builder;
+  const { data, error, count: matchedTotal } = (await builder) as unknown as {
+    data: unknown; error: unknown; count: number | null;
+  };
   if (error) throw error;
 
   let rows = (data ?? []) as QueryRow[];
@@ -1303,14 +1355,51 @@ export async function compileAndRunFind(
     'BizQL find executed'
   );
 
+  /*
+   * A lookup by id that found nothing is a MISS, not a count of zero.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The same reasoning as the named-filter case above, for the ids the planner
+   * carries over from the previous turn rather than the names a user types.
+   *
+   * Asked "did this customer pay?" straight after a booking was listed, the
+   * planner filtered `contacts` by the id it had been shown — which was the
+   * BOOKING's id, the only one conversation memory carries. The query was valid
+   * and matched nothing, and the answer rendered as "contacts: 0". The customer
+   * had in fact paid, and the turn before had said so.
+   *
+   * Zero rows from an id equality can only mean the id does not belong to this
+   * entity. There is no question to which that is the honest answer "none", so
+   * it is reported as unmatched and the renderer says it could not find the row.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (rows.length === 0) {
+    const idField = entity.fields.id ? 'id' : null;
+    for (const predicate of (query.where ?? [])) {
+      if (!isFieldPredicate(predicate)) continue;
+      if (predicate.field !== idField || predicate.op !== 'eq') continue;
+      if (typeof predicate.value !== 'string') continue;
+      unmatched.push({ entity: query.entity, value: predicate.value, by: 'id' });
+    }
+  }
+
   return {
     op: 'find',
     entity: query.entity,
     rows: truncated ? rows.slice(0, limit) : rows,
     truncated,
     limit,
+    /*
+     * How many rows MATCHED, as opposed to how many are being shown.
+     *
+     * Only when it can be trusted: a deduped entity's stored-row count is not
+     * the count the reader was shown, and reporting it would trade one wrong
+     * number for another.
+     */
+    ...(wantsTotal && typeof matchedTotal === 'number' ? { total: matchedTotal } : {}),
+    ...(query.select?.length ? { select: query.select } : {}),
     ...(collapsed > 0 ? { collapsed } : {}),
-    ...(reportUnmatched(unmatched, candidates, rows.length === 0)),
+    ...(reportUnmatched(unmatched, candidates, rows.length === 0, ctx._narrowedByOthers)),
     ...(ctx._enumOrphans?.length ? { unclassified: ctx._enumOrphans } : {}),
   };
 }
@@ -1799,7 +1888,7 @@ export async function compileAndRunCompute(
       value: null,
       groups,
       approximate,
-      ...(reportUnmatched(unmatched, candidates, groups.length === 0)),
+      ...(reportUnmatched(unmatched, candidates, groups.length === 0, ctx._narrowedByOthers)),
       ...(ctx._enumOrphans?.length ? { unclassified: ctx._enumOrphans } : {}),
     };
   }
@@ -1825,7 +1914,7 @@ export async function compileAndRunCompute(
       agg: { fn, field: aggFieldKey, distinct: true },
       value: distinct.size,
       approximate,
-      ...(reportUnmatched(unmatched, candidates, distinct.size === 0)),
+      ...(reportUnmatched(unmatched, candidates, distinct.size === 0, ctx._narrowedByOthers)),
     };
   }
 
@@ -1845,7 +1934,7 @@ export async function compileAndRunCompute(
       value: distinct.size,
       approximate,
       collapsed: scanned.length - distinct.size,
-      ...(reportUnmatched(unmatched, candidates, distinct.size === 0)),
+      ...(reportUnmatched(unmatched, candidates, distinct.size === 0, ctx._narrowedByOthers)),
     };
   }
 
@@ -1858,7 +1947,7 @@ export async function compileAndRunCompute(
     // `scanned.length`, never the aggregate's value: a sum of genuine zeroes is
     // 0 over real rows, and calling that "no such thing" would be the mirror of
     // the bug being fixed.
-    ...(reportUnmatched(unmatched, candidates, scanned.length === 0)),
+    ...(reportUnmatched(unmatched, candidates, scanned.length === 0, ctx._narrowedByOthers)),
   };
 }
 

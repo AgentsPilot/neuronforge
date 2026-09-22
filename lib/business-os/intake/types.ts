@@ -87,6 +87,19 @@ export interface IntakeQuestion {
   required: boolean;
   /** Present for `single_choice` and `multi_choice`, meaningless otherwise. */
   options?: IntakeQuestionOption[];
+  /**
+   * Offer a free-text "Other" alongside the options.
+   *
+   * No list an owner writes survives contact with every client. A fitness level
+   * of Beginner / Intermediate / Advanced has no row for "returning after an
+   * injury", and without an escape that client picks a box that misdescribes
+   * them — the business then prepares from an answer nobody meant.
+   *
+   * Only meaningful for choice questions. The typed text is stored as the
+   * answer itself, exactly like a chosen option's label, so whoever reads the
+   * submission later needs to know nothing about this flag.
+   */
+  allowOther?: boolean;
   /** For `file`. Absent means one. */
   maxFiles?: number;
   showIf?: IntakeQuestionCondition;
@@ -149,6 +162,17 @@ export function isIntakeQuestionType(value: unknown): value is IntakeQuestionTyp
 export function questionTakesOptions(type: IntakeQuestionType): boolean {
   return type === 'single_choice' || type === 'multi_choice';
 }
+
+/**
+ * The fewest options a choice question can be left with.
+ *
+ * One option is not a choice — it is a question with a single button, which a
+ * client cannot answer in any way that carries information. Nothing would catch
+ * it either: the form renders, the page works, and the answer is always the
+ * same. So removal stops here rather than letting an owner delete their way
+ * into an unanswerable question.
+ */
+export const MIN_CHOICE_OPTIONS = 2;
 
 /**
  * The questions a client should actually be shown, given what they have

@@ -202,14 +202,23 @@ function BusinessOSContent() {
         .then(data => {
           setGaps(data?.success ? data.gaps : []);
           /*
-           * Only the undecided reach the card. Approved is a setting and
-           * declined is an answer; the advisor exists to ask open questions.
+           * ALL of them reach the card, decided or not.
+           *
+           * This used to keep only the undecided, on the reasoning that an
+           * approved automation is a setting and the advisor asks open
+           * questions. The consequence was one-way: approving something removed
+           * it from the only place it appeared, so an owner who turned on
+           * invoice chasing had nowhere to turn it off again, and nowhere to see
+           * that it was running at all.
+           *
+           * The card now renders the three states — running, turned down, not
+           * yet answered — so the page can stay an honest list of what the
+           * platform will do on the business's behalf rather than a queue of
+           * questions that empties and never refills.
            */
           setAutomations(
             data?.success
-              ? ((data.automations ?? []) as Array<
-                  OperationalItem & { enabled: boolean; declined: boolean }
-                >).filter(entry => !entry.enabled && !entry.declined)
+              ? ((data.automations ?? []) as OperationalItem[])
               : []
           );
         })

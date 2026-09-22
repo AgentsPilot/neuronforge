@@ -388,30 +388,15 @@ export class InsightCorrelationEngine {
         es: `${count} páginas sin llamadas a la acción${impact}`,
         he: `${count} עמודים ללא קריאה לפעולה${impact}`,
       },
-      web_page_underperform: {
-        en: `${count} pages with zero conversions${impact}`,
-        es: `${count} páginas sin conversiones${impact}`,
-        he: `${count} עמודים ללא המרות${impact}`,
-      },
       cash_ar_aging: {
         en: `invoices aging into 60+ day buckets${impact}`,
         es: `facturas envejeciendo a más de 60 días${impact}`,
         he: `חשבוניות מזדקנות מעבר ל-60 יום${impact}`,
       },
-      cash_cards_expiring: {
-        en: `${count} customer cards expiring soon${impact}`,
-        es: `${count} tarjetas de clientes por vencer${impact}`,
-        he: `${count} כרטיסי לקוחות פגים בקרוב${impact}`,
-      },
       cash_refund_pattern: {
         en: `refund rate is ${value}%${impact}`,
         es: `tasa de reembolso es ${value}%${impact}`,
         he: `שיעור ההחזרים הוא ${value}%${impact}`,
-      },
-      pricing_discount_abuse: {
-        en: `${value}% of transactions are discounted${impact}`,
-        es: `${value}% de transacciones con descuento${impact}`,
-        he: `${value}% מהעסקאות בהנחה${impact}`,
       },
       pricing_intro_offer_stuck: {
         en: `only ${value}% of intro users convert to full price${impact}`,

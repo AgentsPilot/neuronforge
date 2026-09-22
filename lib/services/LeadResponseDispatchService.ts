@@ -39,6 +39,7 @@ import { createLogger, type Logger } from '@/lib/logger';
 import { leadResponseRepository, type LeadResponse } from '@/lib/repositories/LeadResponseRepository';
 import { sendBookingLink } from '@/lib/services/LeadBookingLinkService';
 import { OPERATIONAL_AUTOMATIONS } from '@/lib/business-os/gaps/automations';
+import { automationApplies } from '@/lib/business-os/gaps/automationApplies';
 import { findGaps } from '@/lib/business-os/gaps/findGaps';
 import { sendInvoice } from '@/lib/services/InvoiceDeliveryService';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
@@ -49,6 +50,19 @@ const logger = createLogger({ service: 'LeadResponseDispatchService' });
 const LEASE_SECONDS = 90;
 const MAX_ATTEMPTS = 3;
 const BATCH = 25;
+
+/**
+ * What happened to one queued row.
+ *
+ * `reason` is the small closed set you group by; `detail` is the sentence that
+ * explains this one row, present only where there is something to say. See
+ * `LeadResponseRepository.markSkipped`.
+ */
+interface DispatchOutcome {
+  sent: boolean;
+  reason?: string;
+  detail?: string;
+}
 
 export interface DispatchResult {
   reaped: number;
@@ -84,7 +98,7 @@ export async function dispatchLeadResponses(): Promise<DispatchResult> {
         await leadResponseRepository.markSent(row.id);
         result.sent += 1;
       } else {
-        await leadResponseRepository.markSkipped(row.id, outcome.reason || 'unknown');
+        await leadResponseRepository.markSkipped(row.id, outcome.reason || 'unknown', outcome.detail);
         result.skipped += 1;
       }
     } catch (err) {
@@ -96,7 +110,7 @@ export async function dispatchLeadResponses(): Promise<DispatchResult> {
   return result;
 }
 
-async function dispatchOne(row: LeadResponse): Promise<{ sent: boolean; reason?: string }> {
+async function dispatchOne(row: LeadResponse): Promise<DispatchOutcome> {
   const log = logger.child({ id: row.id, userId: row.user_id, contactId: row.contact_id, kind: row.kind });
 
   /*
@@ -127,6 +141,19 @@ async function dispatchOne(row: LeadResponse): Promise<{ sent: boolean; reason?:
     return { sent: false, reason: 'not_approved' };
   }
 
+  /*
+   * And can it still be done at all?
+   *
+   * Asked here as well as at enqueue because this is the choke point: a row
+   * queued while an intake form was published must not send after it has been
+   * withdrawn, and the queue has no idea that happened. Permission and
+   * possibility are two different questions and both are asked at the moment of
+   * sending.
+   */
+  if (!(await automationApplies(row.user_id, automation))) {
+    return { sent: false, reason: 'no_longer_applicable' };
+  }
+
   if (row.kind === 'invoice_chase') return chaseInvoice(row, log);
   if (row.kind === 'intake_chase') return chaseIntake(row, log);
   return inviteOrChaseLead(row, log);
@@ -142,7 +169,7 @@ async function dispatchOne(row: LeadResponse): Promise<{ sent: boolean; reason?:
 async function inviteOrChaseLead(
   row: LeadResponse,
   log: Logger
-): Promise<{ sent: boolean; reason?: string }> {
+): Promise<DispatchOutcome> {
   /*
    * Have they since booked?
    *
@@ -158,6 +185,32 @@ async function inviteOrChaseLead(
 
   if (bookings && bookings.length > 0) {
     return { sent: false, reason: 'already_booked' };
+  }
+
+  /*
+   * Has the owner already answered this person themselves?
+   *
+   * The header above has always promised this check and never had it: only
+   * `already_booked` was enforced. The gap is the likely case rather than the
+   * exotic one — an attentive owner sees the alert, writes back within the
+   * fifteen-minute window, and the platform then sends its own invitation on
+   * top of a real reply the client has already had.
+   *
+   * `auto_logged = false` is what separates a person writing from the platform
+   * writing: every automated touch this codebase makes sets it true, and the
+   * manual activity endpoint sets it false.
+   */
+  const { data: ownerReplies } = await supabaseServer
+    .from('crm_activities')
+    .select('id')
+    .eq('user_id', row.user_id)
+    .eq('contact_id', row.contact_id)
+    .eq('auto_logged', false)
+    .gte('activity_date', row.created_at)
+    .limit(1);
+
+  if (ownerReplies && ownerReplies.length > 0) {
+    return { sent: false, reason: 'already_replied' };
   }
 
   /*
@@ -181,6 +234,8 @@ async function inviteOrChaseLead(
   const outcome = await sendBookingLink(row.contact_id, row.user_id, {
     serviceId: row.service_id,
     reminder: row.kind === 'chase',
+    // A queue sent this, not a person. Solicitation, so it needs consent.
+    trigger: 'automated',
   });
 
   if (!outcome.ok) {
@@ -219,7 +274,7 @@ async function inviteOrChaseLead(
 async function chaseInvoice(
   row: LeadResponse,
   log: Logger
-): Promise<{ sent: boolean; reason?: string }> {
+): Promise<DispatchOutcome> {
   if (!row.entity_id) return { sent: false, reason: 'no_invoice' };
 
   // Scoped re-read: the invoice must still be this business's and still owed.
@@ -237,8 +292,13 @@ async function chaseInvoice(
 
   const { error } = await sendInvoice({ invoiceId: row.entity_id, userId: row.user_id });
   if (error) {
-    log.info({ err: error }, 'Invoice chase not sent');
-    return { sent: false, reason: 'send_failed' };
+    /*
+     * `error`, not `info`. A chase the owner approved and the platform then
+     * failed to deliver is not routine, and logging it at info put it below the
+     * level production keeps.
+     */
+    log.error({ err: error, invoiceId: row.entity_id }, 'Invoice chase not sent');
+    return { sent: false, reason: 'send_failed', detail: error.message };
   }
 
   return { sent: true };
@@ -253,7 +313,7 @@ async function chaseInvoice(
 async function chaseIntake(
   row: LeadResponse,
   log: Logger
-): Promise<{ sent: boolean; reason?: string }> {
+): Promise<DispatchOutcome> {
   if (!row.entity_id) return { sent: false, reason: 'no_booking' };
 
   const { data: booking } = await supabaseServer
@@ -275,8 +335,10 @@ async function chaseIntake(
   });
 
   if (!outcome.sent) {
-    log.info({ error: outcome.error }, 'Intake chase not sent');
-    return { sent: false, reason: 'send_failed' };
+    // Same as the invoice chase: an approved send that failed is an error, and
+    // the reason it failed travels with the row.
+    log.error({ error: outcome.error, bookingId: row.entity_id }, 'Intake chase not sent');
+    return { sent: false, reason: 'send_failed', detail: outcome.error };
   }
 
   return { sent: true };
@@ -285,13 +347,22 @@ async function chaseIntake(
 /**
  * Two days.
  *
+ * FIVE days, not two.
+ *
+ * Two was too soon. By then the person has already had a welcome email and an
+ * invitation, and a third message inside 48 hours reads as pressure from a
+ * business they have spoken to once. Five leaves room for somebody who is
+ * simply busy, and it spaces the whole sequence: enquiry and invitation on day
+ * zero, chase on day five, and the insight nudge — if it comes at all — a week
+ * after that rather than on its heels.
+ *
  * Long enough that they have had a proper chance to act, short enough that the
  * business is still the one they wrote to. One chase, never a sequence: a
  * second reminder for something somebody has decided against reads as nagging,
  * and the owner can always write themselves. Same doctrine as
  * `IntakeReminderService`.
  */
-const CHASE_AFTER_MS = 2 * 24 * 60 * 60 * 1000;
+const CHASE_AFTER_MS = 5 * 24 * 60 * 60 * 1000;
 
 /**
  * Find what the approved automations would act on, and queue it.
@@ -311,6 +382,15 @@ async function enqueueApprovedChases(): Promise<number> {
     // told, so it has its own clock and is not swept for here.
     if (automation.kind === 'invite') continue;
 
+    /*
+     * Somebody else sends this one.
+     *
+     * The invoice chase is carried out by `PaymentReminderService` on its own
+     * schedule; this registry holds only the owner's answer. Queuing here as
+     * well is what produced two emails on day three past due.
+     */
+    if (automation.carriedOutBy) continue;
+
     const { data: approved, error } = await supabaseServer
       .from('business_profiles')
       .select('user_id')
@@ -326,6 +406,16 @@ async function enqueueApprovedChases(): Promise<number> {
       const userId = row.user_id as string;
 
       try {
+        /*
+         * Said yes once is not the same as still able to.
+         *
+         * An owner can approve the intake chase and later unpublish the form,
+         * and the column would still say yes. Asking again here means the
+         * sweep stops writing to clients about a form that no longer reaches
+         * them, without anyone having to remember to clear the column.
+         */
+        if (!(await automationApplies(userId, automation))) continue;
+
         const gaps = await findGaps(userId, { only: [automation.gapId], named: SWEEP_PER_BUSINESS });
         const items = gaps.flatMap(gap => gap.items);
 

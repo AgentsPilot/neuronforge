@@ -28,26 +28,11 @@ import { WebsiteContentRepository, WebsiteContent, SectionType } from '@/lib/rep
 import { SchedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { loadServicePaymentPlans, type ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 import { formatPrice } from '@/lib/website-builder/servicePrice';
+import { toServiceCard } from '@/lib/website-builder/serviceCard';
 
 const logger = createLogger({ module: 'BlocksWithContentAPI' });
 
 // Service icon mapping based on common service keywords
-function getServiceIcon(serviceName: string): string {
-  const name = serviceName.toLowerCase();
-  if (name.includes('consult') || name.includes('session') || name.includes('call')) return 'MessageCircle';
-  if (name.includes('coach') || name.includes('mentor')) return 'Target';
-  if (name.includes('therapy') || name.includes('counsel')) return 'Heart';
-  if (name.includes('class') || name.includes('workshop') || name.includes('course')) return 'GraduationCap';
-  if (name.includes('massage') || name.includes('spa') || name.includes('wellness')) return 'Sparkles';
-  if (name.includes('fitness') || name.includes('training') || name.includes('workout')) return 'Dumbbell';
-  if (name.includes('design') || name.includes('creative')) return 'Palette';
-  if (name.includes('photo') || name.includes('video')) return 'Camera';
-  if (name.includes('legal') || name.includes('law')) return 'Scale';
-  if (name.includes('finance') || name.includes('account') || name.includes('tax')) return 'Calculator';
-  if (name.includes('tech') || name.includes('development') || name.includes('code')) return 'Code';
-  if (name.includes('marketing') || name.includes('seo') || name.includes('ads')) return 'TrendingUp';
-  return 'Star';
-}
 
 
 // Map block_type to section name in website_content
@@ -254,42 +239,16 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const [servicesResult, plansByService] = settled.value;
         if (servicesResult.data && servicesResult.data.length > 0) {
           liveServices = servicesResult.data.map(s => ({
-            id: s.id,
-            name: s.service_name,
-            description: s.description || '',
-            icon: getServiceIcon(s.service_name),
-            price: s.price ? formatPrice(s.price, s.currency) : undefined,
-            priceRaw: s.price || undefined,
-            currency: s.currency,
-            duration: s.duration_minutes ? `${s.duration_minutes} min` : undefined,
-            durationMinutes: s.duration_minutes,
             /*
-             * The two facts that decide this service's journey.
-             *
-             * They were missing here while the PUBLIC route already carried
-             * them, so the editor and the live site computed different
-             * journeys from the same services. Worse than merely absent:
-             * `journeySteps` reads an undefined `is_scheduled` as "yes" and an
-             * undefined `collection` as "takes a card", so every service in the
-             * editor looked like a paid appointment — including a free product.
-             *
-             * This mapping replaces the stored block content wholesale, so
-             * dropping them here also discarded the facts generation had
-             * written into the block.
+             * The shared mapper. This block previously carried its own copy of
+             * the icon rule, the price formatting and the journey facts — the
+             * FIFTH copy in the codebase — and its copy dropped a zero price
+             * with `||`, so the preview showed no price at all on a free
+             * service while the live route showed one. Divergence between five
+             * copies of one mapping is what made a fix land four times without
+             * changing the page anybody was looking at.
              */
-            is_scheduled: s.is_scheduled !== false,
-            collection: s.collection ?? null,
-            /*
-             * Whether this service is bought or quoted.
-             *
-             * The PUBLIC route already carried it and this one did not, so a
-             * quoted service showed "Price on request" on the live site and a
-             * blank space in the editor — `ServicesBlock` reads `sale_mode` to
-             * decide both the price line and the button's words, and an absent
-             * value reads as 'direct'. Same divergence, and the same fix, as
-             * `is_scheduled` and `collection` above.
-             */
-            sale_mode: s.sale_mode || 'direct',
+            ...toServiceCard(s),
             // Undefined where the business offers no plan, which is most of
             // them — the widgets then show a single price as they always have.
             paymentPlan: plansByService[s.id],
@@ -661,6 +620,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       { pageId, userId: user.id, blockCount: normalizedBlocks.length, isLandingPage },
       isLandingPage ? 'Fetched blocks for landing page (no central content merge)' : 'Fetched blocks with central content'
     );
+
 
     return NextResponse.json({
       success: true,

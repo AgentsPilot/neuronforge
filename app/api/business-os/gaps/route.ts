@@ -44,6 +44,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { findGaps, ownerGaps } from '@/lib/business-os/gaps/findGaps';
 import { OPERATIONAL_AUTOMATIONS } from '@/lib/business-os/gaps/automations';
+import { applicableAutomations } from '@/lib/business-os/gaps/automationApplies';
 import { leadResponseRepository } from '@/lib/repositories/LeadResponseRepository';
 
 const logger = createLogger({ module: 'BusinessGapsAPI' });
@@ -99,7 +100,16 @@ async function operationalAutomations(
 
   const waitingByGap = new Map(all.map(gap => [gap.id, gap.count]));
 
-  return OPERATIONAL_AUTOMATIONS.map(automation => ({
+  /*
+   * Only what this business could use.
+   *
+   * "Remind clients about their form" was being offered to businesses with no
+   * published form, where saying yes would have produced nothing — a request
+   * for permission to do something that cannot happen. See `automationApplies`.
+   */
+  const applicable = await applicableAutomations(userId, OPERATIONAL_AUTOMATIONS);
+
+  return applicable.map(automation => ({
     id: automation.id,
     enabled: Boolean(approvals[automation.column]),
     declined: declined.has(automation.id),

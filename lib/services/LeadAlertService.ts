@@ -187,6 +187,7 @@ export async function notifyOwnerOfLead(input: LeadAlertInput): Promise<LeadAler
      * lookup that is already warm.
      */
     const result = await sendEmail({
+      kind: 'transactional',
       to: [ownerEmail],
       subject,
       html,

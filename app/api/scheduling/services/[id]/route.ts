@@ -17,48 +17,11 @@ import {
   unpublishServiceReferences,
 } from '@/lib/services/ServiceReferenceService';
 import { z } from 'zod';
+import { updateServiceSchema } from '@/lib/validation/schedulingService';
+// One schema for create and update, so the two cannot drift apart again.
 
 const logger = createLogger({ module: 'SchedulingServiceAPI' });
 const auditTrail = AuditTrailService.getInstance();
-
-// Validation schema for updates
-const updateServiceSchema = z.object({
-  service_name: z.string().min(1).optional(),
-  /*
-   * Nullable, because clearing a description has to be expressible.
-   *
-   * `.optional()` alone accepts a string or nothing at all, and rejects `null`
-   * — so an owner who emptied the field sent `description: null`, Zod threw,
-   * and the WHOLE request was refused. The visible symptom was that the service
-   * NAME would not save: nothing in the payload saved, and the one field that
-   * failed was not the one being blamed.
-   */
-  description: z.string().nullable().optional(),
-  duration_minutes: z.number().min(5).max(10080).nullable().optional(), // Null for a product
-  // Two facts that decide this service's client journey. A product has no
-  // duration, and a free service is not collected at all — both arrive null.
-  is_scheduled: z.boolean().optional(),
-  collection: z.enum(['online', 'invoice']).nullable().optional(),
-  // The third: can a client buy this outright, or is it quoted per job?
-  // Absent means 'direct', matching the column default, so an older
-  // client that does not send it leaves the service unchanged.
-  sale_mode: z.enum(['direct', 'proposal']).optional(),
-  price: z.number().min(0).nullable().optional(),
-  currency: z.enum(['USD', 'EUR', 'ILS', 'GBP']).optional(),
-  buffer_minutes: z.number().min(0).max(1440).optional(), // Max 24 hours
-  max_bookings_per_day: z.number().min(1).nullable().optional(),
-  advance_booking_days: z.number().min(0).optional(),
-  min_notice_hours: z.number().min(0).optional(),
-  availability: z.record(z.any()).optional(),
-  is_active: z.boolean().optional(),
-  status: z.enum(['draft', 'active', 'inactive']).optional(),
-  // Payment options
-  payment_type: z.enum(['full', 'installments']).optional(),
-  installment_count: z.number().min(1).max(24).nullable().optional(),
-  installment_frequency: z.enum(['weekly', 'biweekly', 'monthly', 'quarterly']).nullable().optional(),
-  first_payment_due: z.enum(['on_booking', 'days_after']).nullable().optional(),
-  first_payment_days: z.number().min(0).max(365).nullable().optional()
-});
 
 export async function GET(
   request: NextRequest,

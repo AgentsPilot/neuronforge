@@ -35,6 +35,8 @@ import { LandingPageWizard, type LandingPageWizardResult } from '@/components/bu
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
 import { getTranslatedTemplateName, getTranslatedVertical, getTranslatedBrandVoice } from '@/lib/website-builder/templateLabels';
+import { ShareMenu } from '@/components/business-os/ShareMenu';
+import { ShareGuide } from '@/components/business-os/ShareGuide';
 
 const logger = createLogger({ module: 'WebsitePage' });
 
@@ -311,6 +313,12 @@ const LABELS = {
     tab_templates: 'Templates',
     status_draft: 'Draft',
     status_live: 'Live',
+    status_inactive: 'Inactive',
+    type_landing_page: 'Landing Page',
+    type_contact_link: 'Contact Smart Link',
+    type_services_link: 'Services Smart Link',
+    type_payment_link: 'Payment Smart Link',
+    type_smart_link: 'Smart Link',
     status_coming_soon: 'Coming Soon',
     publish: 'Publish',
     unpublish: 'Unpublish',
@@ -490,6 +498,12 @@ const LABELS = {
     tab_templates: 'Plantillas',
     status_draft: 'Borrador',
     status_live: 'Publicado',
+    status_inactive: 'Inactivo',
+    type_landing_page: 'Página de Destino',
+    type_contact_link: 'Enlace de Contacto',
+    type_services_link: 'Enlace de Servicios',
+    type_payment_link: 'Enlace de Pago',
+    type_smart_link: 'Enlace Inteligente',
     status_coming_soon: 'Próximamente',
     publish: 'Publicar',
     unpublish: 'Despublicar',
@@ -669,6 +683,12 @@ const LABELS = {
     tab_templates: 'תבניות',
     status_draft: 'טיוטה',
     status_live: 'פעיל',
+    status_inactive: 'כבוי',
+    type_landing_page: 'דף נחיתה',
+    type_contact_link: 'קישור ליצירת קשר',
+    type_services_link: 'קישור לשירותים',
+    type_payment_link: 'קישור לתשלום',
+    type_smart_link: 'קישור חכם',
     status_coming_soon: 'בקרוב',
     publish: 'פרסם',
     unpublish: 'הסר מפרסום',
@@ -1027,6 +1047,7 @@ export default function WebsiteManagementPage() {
 
   /** Honour the system setting rather than animating at everyone. */
   const prefersReducedMotion = useReducedMotion();
+
   /**
    * The template matched to this business, from /api/website/templates.
    *
@@ -3603,9 +3624,20 @@ export default function WebsiteManagementPage() {
 
         {rows.map(row => (
           <div key={row.label} className="flex items-baseline gap-3 text-sm">
-            <span className="w-20 shrink-0 text-[var(--v2-text-muted)]">{row.label}</span>
+            {/*
+              Wide enough for the longest label, and never allowed to wrap.
+              ───────────────────────────────────────────────────────────────
+              This was `w-20` — 80px — while "Business name" needs about 95,
+              so the label that matters most broke across two lines and sat
+              beside a value on one, which reads as two different rows.
+
+              Sized for English because it is the longest of the three here;
+              the value beside it is what gives way, since an address is
+              expected to run on and a field name is not.
+            */}
+            <span className="w-28 shrink-0 whitespace-nowrap text-[var(--v2-text-muted)]">{row.label}</span>
             <span
-              className={row.value ? 'text-[var(--v2-text-primary)]' : 'text-[var(--v2-text-muted)] italic'}
+              className={`min-w-0 break-words ${row.value ? 'text-[var(--v2-text-primary)]' : 'text-[var(--v2-text-muted)] italic'}`}
               dir={row.ltr && row.value ? 'ltr' : undefined}
             >
               {row.value || missing}
@@ -4024,8 +4056,20 @@ export default function WebsiteManagementPage() {
           </div>
         </div>
 
-        {/* Combined Landing Pages & Smart Links List */}
-        <div className="space-y-3">
+        {/*
+          Combined Landing Pages & Smart Links, as CARDS.
+          ─────────────────────────────────────────────────────────────────────
+          Full-width rows made every entry look alike and read as a settings
+          table: the name, the address and the figures ran along one line, so
+          scanning for "my booking link" meant reading left to right through
+          each row in turn. These are things the owner hands out — a card per
+          one is the shape that matches how they think about them.
+
+          Two columns from `lg`, one below it. Not three: the address and the
+          view counts need the width, and a third column turns both back into
+          the cramped line this replaces.
+        */}
+        <div className="flex flex-col gap-2.5">
           {/* Smart Links */}
           {/*
             Every link, whatever its state.
@@ -4125,38 +4169,114 @@ export default function WebsiteManagementPage() {
                   mid-word while the figures beside it had nowhere to go. The
                   direction swap only applies once there are two columns to
                   swap. */}
-              <div className={`flex flex-col sm:flex-row items-stretch sm:items-start gap-4 ${language === 'he' ? '' : 'sm:flex-row-reverse'}`}>
-              <div className="flex-1 min-w-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              {/*
+                Stacked, always.
+                ─────────────────────────────────────────────────────────────
+                This was two columns from `sm` with the stats leading. Inside a
+                card that is half the page wide, two columns leaves neither
+                enough room — the link's own address wrapped mid-word while the
+                figures beside it had nowhere to go. The card gives the vertical
+                space the row never had, so the direction swap is gone with it:
+                there is only one column to order.
+              */}
+              {/*
+                One row: who it is, how it is doing, what you can do with it.
+                ─────────────────────────────────────────────────────────────
+                The figures sit in fixed columns at the end, so they line up
+                down the page and compare at a glance — the thing a grid of
+                cards cannot do, because each card starts its numbers wherever
+                its name happens to end.
+
+                Stacked below `lg`, where there is not width for three groups.
+              */}
+              <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+              {/*
+                Identity: a FIXED column, not a flexible one.
+                ─────────────────────────────────────────────────────────────
+                A flexible column is as wide as its longest name, so one link
+                called "Contact Form" and another called "Autumn campaign for
+                returning clients" push the figures beside them to different
+                places and the columns stop lining up. Fixed width and a
+                truncating name keep every row identical whatever it is called.
+              */}
+              <div className="min-w-0 lg:w-[260px] shrink-0">
                 <div className="flex items-center gap-4">
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${!link.is_active ? 'opacity-50' : ''}`} style={{ backgroundColor: '#4F6EF720' }}>
                     <Link2 className="w-5 h-5" style={{ color: '#4F6EF7' }} />
                   </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <p className={`font-medium ${!link.is_active ? 'text-[var(--v2-text-muted)] line-through' : 'text-[var(--v2-text-primary)]'}`}>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <p className={`truncate font-medium ${!link.is_active ? 'text-[var(--v2-text-muted)] line-through' : 'text-[var(--v2-text-primary)]'}`}>
                         {link.name === 'Contact Form'
                           ? (language === 'he' ? 'טופס יצירת קשר' : language === 'es' ? 'Formulario de Contacto' : 'Contact Form')
                           : (link.name || (language === 'he' ? 'קישור חכם' : 'Smart Link'))}
                       </p>
-                      {link.is_active ? (
-                        <span className="px-2 py-0.5 text-xs font-medium rounded" style={{ backgroundColor: '#4F6EF720', color: '#4F6EF7' }}>
-                          {language === 'he' ? 'קישור חכם' : language === 'es' ? 'Smart Link' : 'Smart Link'}
-                        </span>
-                      ) : (
-                        <span className="px-2 py-0.5 text-xs font-medium rounded bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">
-                          {language === 'he' ? 'לא פעיל' : language === 'es' ? 'Inactivo' : 'Inactive'}
-                        </span>
-                      )}
+                      {/*
+                        Live or not — the same badge the landing pages carry.
+                        ─────────────────────────────────────────────────────
+                        This used to say "Smart Link" when active and
+                        "Inactive" when not, so the badge meant two different
+                        KINDS of thing depending on its state: a type when the
+                        news was good, a status when it was not. An owner
+                        scanning the list could not tell at a glance which links
+                        were actually working, because half the rows answered a
+                        question nobody asked.
+
+                        The type is already carried by the icon and its colour.
+                        What the badge is for is whether this link does anything
+                        when somebody opens it — and it now says that in the
+                        same colours as the landing page rows it sits beside.
+
+                        "Inactive" rather than "Draft", though: a landing page
+                        can be drafted and never published, while a smart link
+                        exists and was switched OFF. Same badge, same amber,
+                        different word, because they are different facts.
+                      */}
+                      <span
+                        className={`shrink-0 whitespace-nowrap px-2 py-0.5 text-xs font-medium rounded ${
+                          link.is_active
+                            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                            : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                        }`}
+                      >
+                        {link.is_active ? labels.status_live : labels.status_inactive}
+                      </span>
                     </div>
                     <div className="flex items-center gap-3 mt-1" dir="ltr">
-                      <span className={`text-xs font-mono ${!link.is_active ? 'text-[var(--v2-text-muted)] line-through' : 'text-[var(--v2-text-muted)]'}`}>
+                      <span className={`truncate text-xs font-mono ${!link.is_active ? 'text-[var(--v2-text-muted)] line-through' : 'text-[var(--v2-text-muted)]'}`}>
                         /go/{link.code}
                       </span>
                     </div>
+                    {/*
+                      What kind of thing this is, in words.
+                      ─────────────────────────────────────────────────────
+                      The type badge went so the title would stop wrapping,
+                      which left only the icon's colour to say whether a row is
+                      a smart link or a landing page — a distinction nobody can
+                      make from a blue square unless they already know.
+
+                      Said precisely rather than generically: "Services" and
+                      "Contact" are the two an owner actually has, and which
+                      one a link is decides what they should write beside it
+                      when they share it.
+                    */}
+                    <p className="truncate text-[11px] text-[var(--v2-text-muted)] mt-0.5">
+                      {link.destination_type === 'form'
+                        ? labels.type_contact_link
+                        : link.destination_type === 'booking'
+                          ? labels.type_services_link
+                          : link.destination_type === 'payment'
+                            ? labels.type_payment_link
+                            : labels.type_smart_link}
+                    </p>
                   </div>
                 </div>
+              </div>
 
-                <div className="flex items-center gap-2">
+              {/* ACTIONS — moved out of the identity column and pushed to the
+                  end of the row, so every row's controls sit in one place
+                  rather than under a name of unpredictable length. */}
+              <div className="flex items-center gap-2 shrink-0 lg:ms-auto lg:order-last">
                   {/* Activate/Deactivate toggle */}
                   {!link.is_active ? (
                     <button
@@ -4264,16 +4384,62 @@ export default function WebsiteManagementPage() {
                           <PenLine className="h-4 w-4" />
                         </button>
                       )}
-                      <button
-                        onClick={() => {
-                          const url = `${window.location.origin}/go/${link.code}`;
-                          navigator.clipboard.writeText(url);
-                        }}
-                        className="p-1.5 text-[var(--v2-text-muted)] hover:text-[#4F6EF7] transition-colors"
-                        title={language === 'he' ? 'העתק' : language === 'es' ? 'Copiar' : 'Copy'}
-                      >
-                        <Copy className="h-4 w-4" />
-                      </button>
+                      {/*
+                        Share, not a bare copy glyph.
+                        ─────────────────────────────────────────────────────
+                        Copying gave a link and learned nothing. The menu asks
+                        where it is going — in the owner's words, never
+                        "UTM" — and tags it, which is the only way a WhatsApp
+                        or QR-code lead can be attributed at all: neither sends
+                        a referrer. "Just copy the link" is still one click in.
+                      */}
+                      {/*
+                        Only while the link is switched ON.
+                        ───────────────────────────────────────────────────
+                        An inactive smart link does not resolve — `/go/[code]`
+                        answers with the unavailable page. Sharing one sends a
+                        client to a dead end, and the badge beside this says
+                        "Inactive" while the button offered to hand it out.
+                      */}
+                      {/*
+                        The guide's hint, on every live smart link.
+                        ─────────────────────────────────────────────────────
+                        It was on the first one only, which put it on whichever
+                        link the API happened to return first — the contact
+                        form, as it turned out, while the booking link beside it
+                        had nothing. Both are links the owner shares, and both
+                        deserve the explanation.
+
+                        `kind` decides the wording inside: a contact form shared
+                        with "Book a time with me" reads as a different product.
+                        Once read it retires for all of them, since the lesson
+                        is the same one.
+
+                        `=== true` because `useReducedMotion` answers null until
+                        it has asked the browser, and the guide wants a yes or a
+                        no.
+                      */}
+                      {link.is_active && (
+                        <ShareGuide
+                          language={language}
+                          isRTL={language === 'he'}
+                          shareDomain={subdomain ? `${subdomain}.agentpilot.io` : undefined}
+                          kind={link.destination_type === 'form' ? 'form' : 'booking'}
+                          code={link.code}
+                          prefersReducedMotion={prefersReducedMotion === true}
+                        />
+                      )}
+                      {link.is_active && (
+                      <ShareMenu
+                        target={{ kind: 'smart_link', code: link.code }}
+                        title={link.name === 'Contact Form'
+                          ? (language === 'he' ? 'טופס יצירת קשר' : language === 'es' ? 'Formulario de Contacto' : 'Contact Form')
+                          : (link.name || 'Smart Link')}
+                        language={language}
+                        isRTL={language === 'he'}
+                        compact
+                      />
+                      )}
                       <a
                         href={`/go/${link.code}`}
                         target="_blank"
@@ -4298,45 +4464,52 @@ export default function WebsiteManagementPage() {
                       </button>
                     </>
                   )}
-                </div>
               </div>
 
               {/*
-                The numbers, as a card at the end of the row — the left in Hebrew, the
-                right in English — matching where the website keeps its own stats
-                card. They were a full-width strip under a rule, which read as
-                part of the link rather than as a reading of it.
+                The figures, in fixed columns at the end of the row.
+                ─────────────────────────────────────────────────────────────
+                They were a bordered card holding four grey tiles — three
+                nested surfaces for four small numbers, and most of the visual
+                weight on the page. The border, the tiles and the heading are
+                gone; the numbers sit on the row itself.
+
+                Each column is a fixed width so the figures align DOWN the
+                page. That alignment is the whole argument for a row over a
+                card: a reader comparing two links reads one column, not two
+                card interiors.
               */}
-              <div
-                className="flex-shrink-0 self-start p-3 bg-[var(--v2-surface)] border border-[var(--v2-border)]"
-                style={{ borderRadius: 'var(--v2-radius-card)' }}
-              >
-                {/* Headed the same as the website's own stats card, in the same
-                    words — a reader moving between them should not have to work
-                    out that they are the same kind of thing. */}
-                <h3 className="text-[10px] font-medium text-[var(--v2-text-muted)] uppercase tracking-wider mb-2">
-                  {labels.page_views}
-                </h3>
-                <div className="flex gap-2">
-                  <div className="text-center px-2.5 py-1.5 bg-[var(--v2-bg)] rounded-lg min-w-[4rem]">
-                    <p className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums leading-tight">{link.click_count}</p>
-                    <p className="text-[10px] text-[var(--v2-text-muted)] whitespace-nowrap">{language === 'he' ? 'קליקים' : language === 'es' ? 'Clics' : 'Clicks'}</p>
+              <div className="flex items-center justify-center gap-2 rounded-xl border border-[var(--v2-border)] bg-[var(--v2-surface)] p-2 shrink-0">
+                {([
+                  { value: link.click_count, label: language === 'he' ? 'קליקים' : language === 'es' ? 'Clics' : 'Clicks', muted: false },
+                  { value: link.conversion_count, label: language === 'he' ? 'המרות' : language === 'es' ? 'Conversiones' : 'Conversions', muted: false },
+                  { value: link.unique_visitors ?? 0, label: labels.unique_visitors, muted: false },
+                  {
+                    value: link.click_count > 0 ? `${((link.conversion_count / link.click_count) * 100).toFixed(0)}%` : '—',
+                    label: language === 'he' ? 'אחוז המרה' : language === 'es' ? 'Tasa' : 'Rate',
+                    /* Muted at zero: a rate of 0% is the absence of a reading,
+                       not a reading of zero, and bolding it gives it weight it
+                       has not earned. */
+                    muted: link.click_count === 0,
+                  },
+                ] as const).map(stat => (
+                  <div
+                    key={stat.label}
+                    /* Every tile the SAME width, and the label clipped rather
+                       than allowed to widen it. "Conversions" and "Rate" differ
+                       by four characters; left to themselves they would give
+                       each row a different rhythm and the columns would stop
+                       lining up down the page. */
+                    className="w-[74px] shrink-0 rounded-lg bg-[var(--v2-bg)] px-1 py-1.5 text-center"
+                  >
+                    <p className={`text-[15px] font-semibold tabular-nums leading-tight ${stat.muted ? 'text-[var(--v2-text-muted)]' : 'text-[var(--v2-text-primary)]'}`}>
+                      {stat.value}
+                    </p>
+                    <p className="truncate text-[10px] text-[var(--v2-text-muted)]" title={stat.label}>
+                      {stat.label}
+                    </p>
                   </div>
-                  <div className="text-center px-2.5 py-1.5 bg-[var(--v2-bg)] rounded-lg min-w-[4rem]">
-                    <p className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums leading-tight">{link.conversion_count}</p>
-                    <p className="text-[10px] text-[var(--v2-text-muted)] whitespace-nowrap">{language === 'he' ? 'המרות' : language === 'es' ? 'Conversiones' : 'Conversions'}</p>
-                  </div>
-                  <div className="text-center px-2.5 py-1.5 bg-[var(--v2-bg)] rounded-lg min-w-[4rem]">
-                    <p className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums leading-tight">{link.click_count > 0 ? `${((link.conversion_count / link.click_count) * 100).toFixed(0)}%` : '—'}</p>
-                    <p className="text-[10px] text-[var(--v2-text-muted)] whitespace-nowrap">{language === 'he' ? 'אחוז המרה' : language === 'es' ? 'Tasa' : 'Rate'}</p>
-                  </div>
-                </div>
-                {/* Unique visitors, under a rule — the same summary line the
-                    website's stats card carries, so the two read alike. */}
-                <div className="mt-2 pt-2 border-t border-[var(--v2-border)] flex justify-between items-center gap-4">
-                  <span className="text-[10px] text-[var(--v2-text-muted)]">{labels.unique_visitors}</span>
-                  <span className="text-sm font-semibold text-[var(--v2-text-primary)] tabular-nums">{link.unique_visitors ?? 0}</span>
-                </div>
+                ))}
               </div>
               </div>
             </div>
@@ -4348,7 +4521,7 @@ export default function WebsiteManagementPage() {
               key={p.id}
               /* `flex` so the stats card below sits at the END of the row —
                  the left in Hebrew — rather than under it. */
-              className={`p-4 bg-[var(--v2-bg)] rounded-lg border flex flex-col sm:flex-row items-stretch sm:items-start gap-4 transition-shadow ${
+              className={`p-4 bg-[var(--v2-bg)] rounded-lg border flex flex-col lg:flex-row lg:items-center gap-4 transition-shadow ${
                 /* A drafted landing page, while the notice is asking for one to
                    be published. Every draft is marked rather than a guessed
                    "best" one: the notice says a landing page would do it, and
@@ -4356,44 +4529,41 @@ export default function WebsiteManagementPage() {
                 presenceGuidance.state === 'publish_landing' && p.status !== 'live'
                   ? `border-[#4F6EF7] ring-2 ring-[#4F6EF7]/30 ${prefersReducedMotion ? '' : 'ap-attention '}`
                   : 'border-[var(--v2-border)] '
-              }${
-                /* Stacked on a phone; the direction swap only applies once
-                   there are two columns to swap.
-
-                   The stats lead, in whichever direction the reader is going:
-                   the left in English and Spanish, the right in Hebrew — the
-                   side each language starts from.
-
-                   Chosen rather than inherited: the document is hardcoded
-                   dir="ltr" (app/layout.tsx) and RTL is handled per component,
-                   so flex start/end never mirrors on its own. The DOM order is
-                   content-then-stats, so reversing is what puts the stats on
-                   the left. */
-                language === 'he' ? '' : 'sm:flex-row-reverse'
               }`}
             >
-              <div className="flex-1 min-w-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              {/* A FIXED column, the same width as the smart-link rows, so the
+                  two kinds of entry line up with each other down the page. */}
+              <div className="min-w-0 lg:w-[260px] shrink-0">
                 <div className="flex items-center gap-4">
                   <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: '#22C58B20' }}>
                     <FileText className="w-5 h-5" style={{ color: '#22C58B' }} />
                   </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <p className="font-medium text-[var(--v2-text-primary)]">
+                  <div className="min-w-0">
+                    {/*
+                      The "Landing Page" badge is gone.
+                      ───────────────────────────────────────────────────────
+                      It sat beside the title inside a 260px column that also
+                      had to hold the icon, so the title got about 110px and
+                      both wrapped to two lines.
+
+                      It was saying what the green document icon already says —
+                      the smart-link rows carry no "Smart Link" badge either,
+                      because their blue link icon does that job. What the badge
+                      row is FOR is the status, and that one stays.
+                    */}
+                    {/* Title and status on ONE line, address beneath — the
+                        shape the smart-link rows use. The two lists sit in the
+                        same card and were reading as two different products
+                        because their identity blocks were built differently.
+
+                        It fits now only because the "Landing Page" badge went:
+                        the title truncates and the status never does. */}
+                    <div className="flex items-center gap-2 min-w-0">
+                      <p className="truncate font-medium text-[var(--v2-text-primary)]" title={p.title}>
                         {p.title}
                       </p>
-                      <span className="px-2 py-0.5 text-xs font-medium rounded" style={{ backgroundColor: '#22C58B20', color: '#22C58B' }}>
-                        {language === 'he' ? 'דף נחיתה' : language === 'es' ? 'Landing Page' : 'Landing Page'}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 mt-1" dir="ltr">
-                      {p.slug && (
-                        <span className="text-xs text-[var(--v2-text-muted)] font-mono">
-                          /{p.slug}
-                        </span>
-                      )}
                       <span
-                        className={`px-2 py-0.5 text-xs font-medium rounded ${
+                        className={`shrink-0 whitespace-nowrap px-2 py-0.5 text-xs font-medium rounded ${
                           p.status === 'live'
                             ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
                             : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
@@ -4402,10 +4572,26 @@ export default function WebsiteManagementPage() {
                         {p.status === 'live' ? labels.status_live : labels.status_draft}
                       </span>
                     </div>
+                    {p.slug && (
+                      <div className="flex items-center gap-2 mt-1 min-w-0" dir="ltr">
+                        <span className="truncate text-xs text-[var(--v2-text-muted)] font-mono">
+                          /{p.slug}
+                        </span>
+                      </div>
+                    )}
+                    {/* The same line the smart-link rows carry, for the same
+                        reason: the icon's colour is not a label. */}
+                    <p className="truncate text-[11px] text-[var(--v2-text-muted)] mt-0.5">
+                      {labels.type_landing_page}
+                    </p>
                   </div>
                 </div>
+              </div>
 
-                <div className="flex items-center gap-2">
+              {/* ACTIONS — at the end of the row, like the smart-link rows, so
+                  every entry's controls sit in the same place whatever its name
+                  or address happens to be. */}
+              <div className="flex items-center gap-2 shrink-0 lg:ms-auto lg:order-last">
                 {/* Sized and weighted like the smart-link row's actions below —
                     the two lists sit in one card and had two different button
                     scales, so a landing page's Edit read as the heavier thing. */}
@@ -4448,6 +4634,21 @@ export default function WebsiteManagementPage() {
                 >
                   <Eye className="h-4 w-4" />
                 </button>
+                {/* Share, on a published landing page only.
+                    A draft has no public address to tag, and offering to share
+                    one would hand out a link that 404s. */}
+                {p.status === 'live' && subdomain && (
+                  <ShareMenu
+                    /* `{subdomain}.agentpilot.io/{slug}` — the route that
+                       actually serves it (app/site/[subdomain]/[slug]), not the
+                       internal /website-preview/{id} the eye icon opens. */
+                    target={{ kind: 'page', url: `https://${subdomain}.agentpilot.io/${p.slug}` }}
+                    title={p.title}
+                    language={language}
+                    isRTL={language === 'he'}
+                    compact
+                  />
+                )}
                 <button
                   onClick={() => handleDeletePageClick(p.id, p.title)}
                   disabled={checkingActivity}
@@ -4461,41 +4662,26 @@ export default function WebsiteManagementPage() {
                   )}
                 </button>
               </div>
-            </div>
 
-              {/*
-                The same stats card as the smart links above, for the same reason.
-              */}
-              <div
-                className="flex-shrink-0 self-start p-3 bg-[var(--v2-surface)] border border-[var(--v2-border)]"
-                style={{ borderRadius: 'var(--v2-radius-card)' }}
-              >
-                {/* Headed the same as the website's own stats card, in the same
-                    words — a reader moving between them should not have to work
-                    out that they are the same kind of thing. */}
-                <h3 className="text-[10px] font-medium text-[var(--v2-text-muted)] uppercase tracking-wider mb-2">
-                  {labels.page_views}
-                </h3>
-                <div className="flex gap-2">
-                  <div className="text-center px-2.5 py-1.5 bg-[var(--v2-bg)] rounded-lg min-w-[4rem]">
-                    <p className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums leading-tight">{landingPagesAnalytics[p.id]?.visitors_today ?? 0}</p>
-                    <p className="text-[10px] text-[var(--v2-text-muted)] whitespace-nowrap">{labels.visitors_today}</p>
+              {/* The same four tiles in the same card as the smart-link rows:
+                  two different kinds of entry, read together, so they must
+                  measure the same. */}
+              <div className="flex items-center justify-center gap-2 rounded-xl border border-[var(--v2-border)] bg-[var(--v2-surface)] p-2 shrink-0">
+                {([
+                  { value: landingPagesAnalytics[p.id]?.visitors_today ?? 0, label: labels.visitors_today, muted: (landingPagesAnalytics[p.id]?.visitors_today ?? 0) === 0 },
+                  { value: landingPagesAnalytics[p.id]?.visitors_30d ?? 0, label: labels.visitors_30d, muted: false },
+                  { value: landingPagesAnalytics[p.id]?.unique_visitors ?? 0, label: labels.unique_visitors, muted: false },
+                  { value: landingPagesAnalytics[p.id]?.total_views ?? 0, label: labels.total_views, muted: false },
+                ] as const).map(stat => (
+                  <div key={stat.label} className="w-[74px] shrink-0 rounded-lg bg-[var(--v2-bg)] px-1 py-1.5 text-center">
+                    <p className={`text-[15px] font-semibold tabular-nums leading-tight ${stat.muted ? 'text-[var(--v2-text-muted)]' : 'text-[var(--v2-text-primary)]'}`}>
+                      {stat.value}
+                    </p>
+                    <p className="truncate text-[10px] text-[var(--v2-text-muted)]" title={stat.label}>
+                      {stat.label}
+                    </p>
                   </div>
-                  <div className="text-center px-2.5 py-1.5 bg-[var(--v2-bg)] rounded-lg min-w-[4rem]">
-                    <p className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums leading-tight">{landingPagesAnalytics[p.id]?.visitors_30d ?? 0}</p>
-                    <p className="text-[10px] text-[var(--v2-text-muted)] whitespace-nowrap">{labels.visitors_30d}</p>
-                  </div>
-                  <div className="text-center px-2.5 py-1.5 bg-[var(--v2-bg)] rounded-lg min-w-[4rem]">
-                    <p className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums leading-tight">{landingPagesAnalytics[p.id]?.total_views ?? 0}</p>
-                    <p className="text-[10px] text-[var(--v2-text-muted)] whitespace-nowrap">{labels.total_views}</p>
-                  </div>
-                </div>
-                {/* Unique visitors, under a rule — the same summary line the
-                    website's stats card carries, so the two read alike. */}
-                <div className="mt-2 pt-2 border-t border-[var(--v2-border)] flex justify-between items-center gap-4">
-                  <span className="text-[10px] text-[var(--v2-text-muted)]">{labels.unique_visitors}</span>
-                  <span className="text-sm font-semibold text-[var(--v2-text-primary)] tabular-nums">{landingPagesAnalytics[p.id]?.unique_visitors ?? 0}</span>
-                </div>
+                ))}
               </div>
             </div>
           ))}
@@ -5003,16 +5189,28 @@ export default function WebsiteManagementPage() {
                         <span className="flex-1 min-w-0 break-all text-[var(--v2-text-secondary)] text-sm font-mono">
                           {page.subdomain}.agentpilot.io
                         </span>
-                        <button
-                          onClick={copyLink}
-                          className="p-2 hover:bg-[var(--v2-surface)] rounded transition-colors"
-                        >
-                          {linkCopied ? (
-                            <Check className="w-4 h-4 text-green-500" />
-                          ) : (
-                            <Copy className="w-4 h-4 text-[var(--v2-text-muted)]" />
-                          )}
-                        </button>
+                        {/*
+                          Only once the site is LIVE.
+                          ───────────────────────────────────────────────────
+                          The address exists as soon as a subdomain is claimed,
+                          but a drafted site does not answer at it. Offering to
+                          share one hands the owner a link to give a client
+                          that goes nowhere — and they would not find out until
+                          the client told them.
+
+                          The address itself still shows, because knowing what
+                          it WILL be is useful while the site is being built.
+                          Sharing it is not.
+                        */}
+                        {page.status === 'live' && (
+                        <ShareMenu
+                          target={{ kind: 'page', url: `https://${page.subdomain}.agentpilot.io` }}
+                          title={page.title || `${page.subdomain}.agentpilot.io`}
+                          language={language}
+                          isRTL={language === 'he'}
+                          compact
+                        />
+                        )}
                       </div>
                     )}
 

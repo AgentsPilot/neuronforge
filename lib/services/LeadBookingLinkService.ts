@@ -60,6 +60,23 @@ export interface SendBookingLinkOptions {
   serviceId?: string | null;
   /** The two-day chase rather than the first invitation. */
   reminder?: boolean;
+  /**
+   * Who decided to send this. Required, because the same email is two different
+   * things depending on the answer.
+   *
+   * `owner` — a person clicked Send in the CRM, in reply to an enquiry. That is
+   * a solicited response and it is transactional.
+   *
+   * `automated` — the lead-response queue sent it on a timer. Nobody asked for
+   * it at the moment it went out, so it is a solicitation and needs consent.
+   *
+   * There is a real argument that an automated invite minutes after someone
+   * submitted an enquiry is still a reply to THEM — they asked to be contacted.
+   * The two-day chase to someone who ignored it is much weaker ground. Both are
+   * gated here, which is the strict reading; loosening the invite is a
+   * one-line change at the caller if that is ever the decision.
+   */
+  trigger: 'owner' | 'automated';
 }
 
 function normaliseLocale(value: unknown): Locale | null {
@@ -71,7 +88,9 @@ function normaliseLocale(value: unknown): Locale | null {
 export async function sendBookingLink(
   contactId: string,
   userId: string,
-  options: SendBookingLinkOptions = {}
+  // No default: `trigger` is the whole point, and a default would pick one of
+  // the two answers on the caller's behalf.
+  options: SendBookingLinkOptions
 ): Promise<SendBookingLinkOutcome> {
   const log = logger.child({ contactId, userId, reminder: Boolean(options.reminder) });
 
@@ -177,11 +196,20 @@ export async function sendBookingLink(
   });
 
   const result = await sendEmail({
+    ...(options.trigger === 'automated'
+      ? { kind: 'marketing' as const, ownerUserId: userId, contactId }
+      : { kind: 'transactional' as const, ownerUserId: userId }),
     to: [contact.email],
     subject,
     html,
-    ownerUserId: userId,
   });
+
+  if (result.blocked) {
+    // Not a failure to deliver. Nobody agreed to be solicited on a timer, and
+    // trying again tomorrow gets the same answer.
+    log.info({ blocked: result.blocked, contactId }, 'Automated booking link withheld');
+    return { ok: false, reason: 'send_failed', detail: `not sent: ${result.blocked}` };
+  }
 
   if (!result.sent) {
     log.warn({ error: result.error }, 'Booking link failed to send');

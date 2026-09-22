@@ -225,6 +225,7 @@ export async function sendProposal(
   });
 
   await sendEmail({
+    kind: 'transactional',
     to: [contact.email],
     subject,
     html,

@@ -55,6 +55,7 @@ jest.mock('../BriefingNarrator', () => ({
 }));
 
 import { getBriefing, hashFacts } from '../BriefingStore';
+import { bosLlmCodeDefaults } from '@/lib/business-os/llm/modelSettings';
 import type { BriefingFacts } from '../BriefingFactsService';
 import { BaseAIProvider } from '@/lib/ai/providers/baseProvider';
 import type { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
@@ -180,7 +181,15 @@ describe('getBriefing — one AI audit entry per narration (FR-11, AC-10)', () =
 
   it('a cached briefing makes no call and writes no entry', async () => {
     narrationMakes({ source: 'llm' });
-    mockCached = { facts_hash: hashFacts(FACTS, 'en', {}), narrative: 'cached words', source: 'llm' };
+    /*
+     * The model is part of the fingerprint, so the expected key has to be built
+     * the way `getBriefing` builds it — from the resolved setting, which this
+     * suite pins to the code defaults above. Omitting it silently misses the
+     * cache and the assertion below reads as a caching bug rather than a key
+     * built two different ways.
+     */
+    const { model } = bosLlmCodeDefaults('briefing', 'daily_narration');
+    mockCached = { facts_hash: hashFacts(FACTS, 'en', {}, model), narrative: 'cached words', source: 'llm' };
     const briefing = await getBriefing(OWNER, FACTS, 'en', 'user');
     expect(briefing.narrative).toBe('cached words');
     expect(mockNarrate).not.toHaveBeenCalled();

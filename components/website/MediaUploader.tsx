@@ -7,9 +7,10 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Upload, X, Loader2, ImageIcon, AlertCircle, Check, Sparkles } from 'lucide-react';
+import { Upload, X, Loader2, ImageIcon, AlertCircle, Check, Sparkles, Trash2, RefreshCw } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { MediaLibraryPicker } from '@/components/website/MediaLibraryPicker';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ module: 'MediaUploader' });
@@ -65,6 +66,8 @@ export function MediaUploader({
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [generateOpen, setGenerateOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /** Looking at the picture, as opposed to choosing one. */
+  const [previewOpen, setPreviewOpen] = useState(false);
   const { t } = useLanguage();
 
   const maxSizeBytes = maxSizeMB * 1024 * 1024;
@@ -191,7 +194,25 @@ export function MediaUploader({
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
-        onClick={() => !disabled && fileInputRef.current?.click()}
+        /*
+          ─────────────────────────────────────────────────────────────────────
+          A FILLED BOX AND AN EMPTY BOX ARE DIFFERENT QUESTIONS.
+
+          Both used to open the file picker. So an owner who had just generated
+          an image and wanted a proper look at it — the thing you do FIRST, the
+          picture is 56px in a section editor — got a system file dialog
+          instead, and the only way out was Cancel.
+
+          Empty box: pick a file, which is the only thing it could mean.
+          Filled box: show me the picture. Replacing it is still one click, from
+          inside the preview, where it reads as a deliberate act rather than the
+          accidental result of wanting to see something.
+        */
+        onClick={() => {
+          if (disabled) return;
+          if (isValidImageUrl && !imageLoadError) setPreviewOpen(true);
+          else fileInputRef.current?.click();
+        }}
       >
         {isValidImageUrl && !imageLoadError ? (
           // Image Preview
@@ -353,6 +374,65 @@ export function MediaUploader({
           <span className="truncate">{value}</span>
         </div>
       )}
+
+      {/*
+        The picture, at a size somebody can actually judge.
+
+        The editor shows it in a box a few dozen pixels wide, which is enough to
+        confirm that AN image is there and not enough to decide whether it is the
+        RIGHT one — the question an owner has immediately after generating it.
+
+        Replace and Remove live here rather than only on the thumbnail, because
+        this is where the decision gets made: having looked at it properly is
+        exactly when somebody knows they want a different one.
+      */}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="w-[calc(100%-2rem)] sm:max-w-3xl bg-[var(--v2-surface)]">
+          <DialogHeader>
+            <DialogTitle className="text-base text-[var(--v2-text-primary)]">
+              {t('media.upload.preview_title')}
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* `contain`, not `cover`: this is the one place the whole picture
+              must be visible, including whatever the section's crop hides. */}
+          <div className="flex max-h-[60dvh] items-center justify-center overflow-hidden rounded-lg bg-[var(--v2-bg)]">
+            <img
+              src={value}
+              alt={t('media.upload.uploaded_alt')}
+              className="max-h-[60dvh] w-auto max-w-full object-contain"
+              onError={() => setImageLoadError(true)}
+            />
+          </div>
+
+          {!disabled && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPreviewOpen(false);
+                  fileInputRef.current?.click();
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--v2-border)] px-3 py-1.5 text-sm text-[var(--v2-text-secondary)] transition-colors hover:border-[#4F6EF7] hover:text-[#4F6EF7]"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                {t('media.upload.replace')}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPreviewOpen(false);
+                  handleRemove();
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--v2-border)] px-3 py-1.5 text-sm text-[var(--v2-text-secondary)] transition-colors hover:border-red-500 hover:text-red-500"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {t('media.upload.remove')}
+              </button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -15,10 +15,19 @@ import { PageViewTracker } from '@/components/website/PageViewTracker';
 import { PublicThemeStyle } from '@/components/public/PublicThemeStyle';
 import { PublicFontLinks } from '@/components/public/PublicFontLinks';
 import { DEFAULT_PUBLIC_THEME } from '@/lib/branding/theme';
+import { siteFetchOptions } from '@/lib/website-builder/siteCache';
 
-// Force dynamic rendering - no caching at page level
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
+/*
+ * Cached, and tagged so an edit can throw it away — see lib/website-builder/
+ * siteCache.ts for why the previous `force-dynamic` + `revalidate = 0` was what
+ * BROKE invalidation rather than working around it.
+ *
+ * A LITERAL, not the shared constant. Next reads route-segment config by static
+ * analysis before any module is evaluated, so an imported value fails the build
+ * with "Invalid revalidate value". The duplication is forced; the test in
+ * lib/website-builder/__tests__/siteCache.test.ts is what stops it drifting.
+ */
+export const revalidate = 60; // must equal SITE_CACHE_TTL_SECONDS
 
 interface PageProps {
   params: Promise<{ subdomain: string }>;
@@ -43,15 +52,10 @@ async function getWebsiteData(subdomain: string): Promise<WebsiteData | null> {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
   try {
-    // Always use no-store to ensure fresh data after reordering/editing
-    // Cache invalidation via revalidateTag wasn't working reliably
-    const response = await fetch(`${baseUrl}/api/website/public/${subdomain}`, {
-      cache: 'no-store',
-      headers: {
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache'
-      }
-    });
+    const response = await fetch(
+      `${baseUrl}/api/website/public/${subdomain}`,
+      siteFetchOptions(subdomain)
+    );
 
     if (!response.ok) {
       return null;

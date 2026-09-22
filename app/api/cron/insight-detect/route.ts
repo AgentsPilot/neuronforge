@@ -119,6 +119,8 @@ interface DetectionStats {
   usersProcessed: number;
   detectorsRun: number;
   detectionsFound: number;
+  /** Open insights closed because their condition no longer holds. */
+  insightsResolved: number;
   insightsCreated: number;
   correlatedInsightsCreated: number;
   healthSummariesCreated: number;
@@ -149,6 +151,7 @@ export async function GET(request: NextRequest) {
       usersProcessed: 0,
       detectorsRun: 0,
       detectionsFound: 0,
+      insightsResolved: 0,
       insightsCreated: 0,
       correlatedInsightsCreated: 0,
       healthSummariesCreated: 0,
@@ -213,6 +216,14 @@ export async function GET(request: NextRequest) {
          * catch below, which logs it and moves on to the next business (WC-8). A
          * business with no detections makes no call and writes no entry.
          */
+        /*
+         * Declared out here so the sweep below can see it. `detections` itself
+         * lives inside the audited action, and the sweep deliberately does not
+         * — a database cleanup is not AI work and must not mark the run's LLM
+         * calls as failed.
+         */
+        let ranDetectorIds: string[] = [];
+
         await runAiAction(
           { area: 'insights', actionType: 'insight_run', groupId: runId, trigger: 'scheduled', accountId: userId, correlationId },
           async () => {
@@ -221,6 +232,7 @@ export async function GET(request: NextRequest) {
 
             // Run all detectors
             const detections = await detectorEngine.runForUser(userId);
+            ranDetectorIds = detections.map(d => d.detectorId);
             // Detectors whose vector is dark are skipped, so count what ran.
             stats.detectorsRun += detectorEngine.getLastEvaluatedCount();
 
@@ -287,6 +299,28 @@ export async function GET(request: NextRequest) {
             stats.usersProcessed++;
           }
         );
+
+        /*
+         * Close what is no longer true.
+         *
+         * Runs for EVERY user, including those with no detections at all —
+         * which is the case that matters most. A business whose last open
+         * insight has just resolved produces an empty detection list, and if
+         * the sweep sat inside `if (detections.length > 0)` that card would
+         * stay on the dashboard for ever.
+         *
+         * After the insights are written, so a detector that fired again this
+         * run has already refreshed its row and is not swept by its own pass.
+         *
+         * OUTSIDE the audited action, deliberately. `runAiAction` writes one
+         * entry describing the AI work, and this is a database sweep with no
+         * model call in it. Inside, a failed sweep would report the run's LLM
+         * calls as FAILED when every one of them succeeded — an audit entry
+         * that says the wrong thing about the thing it exists to describe.
+         * The loop's own catch still counts an error here and carries on.
+         */
+        const resolved = await repository.resolveStaleInsights(userId, ranDetectorIds);
+        if (resolved.data) stats.insightsResolved += resolved.data;
 
       } catch (error) {
         requestLogger.error(

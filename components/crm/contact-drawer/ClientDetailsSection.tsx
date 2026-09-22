@@ -33,18 +33,24 @@ function formatToE164(phone: string | undefined, country: Country): string | und
 }
 import type { ContactFormData, CRMPipelineStage } from './types';
 
-const SOURCE_OPTIONS = [
-  { value: 'google', labelKey: 'crm.source.google', icon: SearchIcon },
-  { value: 'facebook', labelKey: 'crm.source.facebook', icon: Facebook },
-  { value: 'instagram', labelKey: 'crm.source.instagram', icon: MessageCircle },
-  { value: 'website', labelKey: 'crm.source.website', icon: Globe },
-  { value: 'referral', labelKey: 'crm.source.referral', icon: UsersIcon },
-  { value: 'phone_call', labelKey: 'crm.source.phone_call', icon: PhoneIcon },
-  { value: 'in_person', labelKey: 'crm.source.in_person', icon: User }
-];
+// One list for every surface that shows a contact's source — see
+// components/crm/contactSources.ts. Written out here and in CRMContactModal
+// before, and neither copy knew about the values capture writes.
+import {
+  CONTACT_ORIGINS,
+  contactOrigin,
+  originOption,
+  type ContactSourceMetadata,
+} from '@/components/crm/contactSources';
 
 interface ClientDetailsSectionProps {
   formData: ContactFormData;
+  /**
+   * How this contact was captured — which smart link, which page, a booking or
+   * a form. Read-only: it is what the chip is DERIVED from and what the
+   * breakdown line under it says, never something the drawer writes.
+   */
+  sourceMetadata?: ContactSourceMetadata | null;
   setFormData: React.Dispatch<React.SetStateAction<ContactFormData>>;
   stages: CRMPipelineStage[];
   t: (key: string) => string;
@@ -56,6 +62,7 @@ interface ClientDetailsSectionProps {
 
 export function ClientDetailsSection({
   formData,
+  sourceMetadata,
   setFormData,
   stages,
   t,
@@ -201,25 +208,67 @@ export function ClientDetailsSection({
             {t('crm.modal.how_found')}
           </Label>
           <div className="flex flex-wrap gap-2">
-            {SOURCE_OPTIONS.map(source => {
-              const Icon = source.icon;
+            {/*
+              The chip is the GROUP — Website, not "Website Booking". Which page
+              or which smart link is the line underneath, because with several
+              landing pages the group alone is not an answer.
+
+              Derived rather than compared to `formData.source` directly: a
+              contact captured as `website_booking` has to light the Website
+              chip, and before this nothing matched it and every chip sat dark.
+            */}
+            {CONTACT_ORIGINS.map(origin => {
+              const Icon = origin.icon;
+              const selected = contactOrigin(formData.source, sourceMetadata)?.group === origin.value;
               return (
                 <button
-                  key={source.value}
+                  key={origin.value}
                   type="button"
-                  onClick={() => setFormData(prev => ({ ...prev, source: source.value }))}
+                  onClick={() => setFormData(prev => ({ ...prev, source: origin.value }))}
                   className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border transition-all rounded-full ${
-                    formData.source === source.value
+                    selected
                       ? 'border-[#8B5CF6] bg-[#8B5CF6]/10 text-[#8B5CF6]'
                       : 'border-[var(--v2-border)] bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:border-[#8B5CF6]/50'
                   }`}
                 >
                   <Icon className="h-3.5 w-3.5" />
-                  {t(source.labelKey)}
+                  {t(origin.labelKey)}
                 </button>
               );
             })}
           </div>
+          {/*
+            The line underneath: which property captured them, and — when a UTM
+            tag is what decided the chip — that tag verbatim.
+
+            The tag is the owner's receipt. They shared a link with UTM on it,
+            and this is that link coming back with a client attached; without it
+            there is no way to tell a tagged share that worked from one that was
+            never clicked.
+          */}
+          {(() => {
+            const origin = contactOrigin(formData.source, sourceMetadata);
+            if (!origin) return null;
+
+            const parts: string[] = [];
+
+            // The surface, but only when it is not already the chip — otherwise
+            // the line just repeats the word above it.
+            if (origin.surface && origin.surface !== origin.group) {
+              const option = originOption(origin.surface);
+              if (option) parts.push(t(option.labelKey));
+            }
+            const detail = origin.detailText ?? (origin.detailKey ? t(origin.detailKey) : null);
+            if (detail) parts.push(detail);
+            if (origin.utm) parts.push(origin.utm);
+
+            if (parts.length === 0) return null;
+            return (
+              <p className="mt-2 text-xs text-[var(--v2-text-muted)] text-start">
+                {parts.join(' · ')}
+              </p>
+            );
+          })()}
         </div>
 
         {/* Tags */}

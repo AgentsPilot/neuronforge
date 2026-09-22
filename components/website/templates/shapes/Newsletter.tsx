@@ -13,6 +13,8 @@
 
 import { useState } from 'react';
 import type { BlockRendererProps } from '@/components/website/blocks/types';
+import { useConsentCopy } from '@/hooks/useConsentCopy';
+import { ALREADY_SUBSCRIBED, CONFIRM_PROMPT } from '@/lib/consent/confirmPrompt';
 
 interface NewsletterShape {
   title?: string;
@@ -29,24 +31,38 @@ export function NewsletterSection({
   className,
   subdomain,
   userCode,
+  locale,
 }: BlockRendererProps) {
   const c = content as NewsletterShape;
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
+  /** Set where the address was already confirmed, so no email is coming. */
+  const [already, setAlready] = useState(false);
   const [sending, setSending] = useState(false);
 
   /*
-   * The address has to go somewhere.
+   * NO CHECKBOX HERE, deliberately.
    *
-   * This showed a thank-you and discarded the email — there is no subscriber
-   * table anywhere in the platform, so every signup was a lead the owner never
-   * heard about. That is worse than having no signup box at all: the visitor
-   * believes they have made contact.
+   * This form has one field and one button, and its entire purpose is to join a
+   * marketing list. A tick alongside would be a tick next to nothing else —
+   * there is no bundling to unbundle, and pressing Subscribe IS the affirmative
+   * act. So the statement is rendered as visible text above the button.
    *
-   * It posts to the same endpoint the contact form uses, which creates the CRM
-   * contact, records where the visitor came from, and raises the owner's lead
-   * alert. The message says plainly what it was, so the owner is not reading a
-   * sentence nobody wrote.
+   * SUBMITTING DOES NOT SUBSCRIBE ANYONE. What a checkbox could never establish
+   * is whether the address belongs to the person typing it, and that is the
+   * real risk on a form like this: anyone can enter anyone. So the submission
+   * starts a double opt-in — the route emails the address, and consent is
+   * recorded only when the link in it is clicked.
+   */
+  const consentCopy = useConsentCopy({ subdomain, userCode, locale });
+
+  /*
+   * The address goes to the business's own subscriber list.
+   *
+   * Not the contact endpoint, which it used to post to for want of anywhere
+   * else: landing there made a subscriber a CRM contact, and a contact is
+   * something the chasers act on. A subscriber is an audience. They become a
+   * contact when they book, or when the owner moves them.
    */
   const submit = async () => {
     const address = email.trim();
@@ -54,18 +70,20 @@ export function NewsletterSection({
 
     setSending(true);
     try {
-      await fetch('/api/website/forms/contact', {
+      const response = await fetch('/api/public/newsletter/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           subdomain,
           userCode,
-          // The endpoint requires a name; the address is the only one given.
-          name: address.split('@')[0],
           email: address,
-          message: 'Newsletter signup',
+          locale,
+          page_url: typeof window !== 'undefined' ? window.location.href : undefined,
         }),
       });
+
+      const json = await response.json().catch(() => null);
+      if (json?.data?.alreadySubscribed) setAlready(true);
     } finally {
       // Shown either way. A failed request is not something the visitor can act
       // on, and telling them so invites a second submission of the same address.
@@ -87,7 +105,19 @@ export function NewsletterSection({
       </div>
 
       {sent ? (
-        <p className="apc-lede">{c.success_message ?? 'Thank you.'}</p>
+        /*
+         * NOT the owner's `success_message`.
+         *
+         * Nobody is subscribed yet: an email has gone out asking this address
+         * to confirm. "Thank you for subscribing" here would be a lie, and the
+         * kind that costs subscribers — somebody told they are done does not
+         * go looking for a confirmation email.
+         */
+        <p className="apc-lede">
+          {already
+            ? ALREADY_SUBSCRIBED[locale] ?? ALREADY_SUBSCRIBED.en
+            : CONFIRM_PROMPT[locale] ?? CONFIRM_PROMPT.en}
+        </p>
       ) : (
         <form
           className="apc-signup"
@@ -110,6 +140,28 @@ export function NewsletterSection({
             {c.button_text ?? 'Subscribe'}
           </button>
         </form>
+      )}
+
+      {/*
+        The statement, as text rather than as a label on a box. Placed under the
+        form so it is visible before someone presses Subscribe, and restated in
+        the confirmation email and on the page that completes it.
+      */}
+      {!sent && consentCopy && (
+        <p
+          className="apc-lede"
+          style={{ fontSize: '0.8125rem', marginBlockStart: '0.6rem', opacity: 0.8 }}
+        >
+          {consentCopy.text}
+          {consentCopy.privacyPolicyUrl && (
+            <>
+              {' '}
+              <a href={consentCopy.privacyPolicyUrl} target="_blank" rel="noopener noreferrer">
+                Privacy notice
+              </a>
+            </>
+          )}
+        </p>
       )}
     </section>
   );

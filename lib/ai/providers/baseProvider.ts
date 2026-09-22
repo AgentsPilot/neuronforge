@@ -80,7 +80,20 @@ export abstract class BaseAIProvider {
     model: string,
     endpoint: string,
     apiCall: () => Promise<T>,
-    extractMetrics: (result: T) => { inputTokens: number; outputTokens: number; cost: number; responseSize?: number }
+    extractMetrics: (result: T) => {
+      inputTokens: number;
+      outputTokens: number;
+      cost: number;
+      responseSize?: number;
+      /**
+       * Prompt tokens the provider served from ITS cache, where it says so.
+       *
+       * Optional because not every provider reports it. Carried into the call's
+       * metadata rather than a new column, so measuring cache behaviour needs
+       * no migration.
+       */
+      cachedInputTokens?: number;
+    }
   ): Promise<T> {
     const startTime = Date.now();
     const callId = this.generateCallId();
@@ -126,7 +139,19 @@ export abstract class BaseAIProvider {
         latency_ms: Date.now() - startTime,
         response_size_bytes: metrics.responseSize,
         success: true,
+        // From main: the caller says what kind of request this was, rather
+        // than every call being recorded as a chat.
         request_type: context.requestType ?? 'chat',
+        /*
+         * What the provider served from cache, recorded on the call itself.
+         *
+         * `input_tokens` is what was SENT; this is how many of those were
+         * already warm. Without both numbers side by side the prompt-cache hit
+         * rate is unknowable, and work done to raise it is unverifiable.
+         */
+        ...(metrics.cachedInputTokens
+          ? { metadata: { cached_input_tokens: metrics.cachedInputTokens } }
+          : {}),
         // Activity tracking fields
         activity_type: context.activity_type,
         activity_name: context.activity_name,

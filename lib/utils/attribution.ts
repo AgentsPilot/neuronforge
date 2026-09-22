@@ -183,6 +183,13 @@ export function getClientIP(headers: Headers): string | null {
  */
 export interface AttributionWithTracking extends LeadSourceMetadata {
   ip_hash?: string;
+  /**
+   * Which kind of page the lead came from, resolved from the site's own page
+   * records after the request is parsed. Declared here so the capture routes can
+   * assign it without casting the object to a bare record — a cast TypeScript
+   * rejects outright now that these routes are in the Business OS LLM gate's scope.
+   */
+  page_type?: string;
 }
 
 /**
@@ -203,11 +210,34 @@ export function buildAttributionFromRequest(
   const url = new URL(request.url);
   const headers = request.headers;
 
-  // Extract UTM params from URL
-  const utmParams = extractUTMParams(url);
-
   // Extract referrer
   const refererInfo = extractReferrer(headers.get('referer'));
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE TAGS ARE ON THE PAGE, NOT ON THIS REQUEST.
+   *
+   * This read UTMs from `request.url` alone. For `/go/[code]` that is right —
+   * the visitor's browser is literally at that URL. For every other caller it
+   * cannot work: they are API routes, and the request is a POST to
+   * `/api/website/booking/create`, which carries no query string of its own.
+   * The visitor's tagged address arrives only as the `referer` header.
+   *
+   * So a lead that came in on
+   *   /c/fny614/book?utm_source=instagram&utm_medium=social
+   * was stored with `utm_source: null` and fell back to referrer sniffing — on
+   * a same-site referrer, which resolves to `direct`. Every contact in
+   * production had null UTMs for this reason, and the tagging that produced
+   * them looked broken when it was working.
+   *
+   * The request's own URL still wins where it has one: `/go/[code]` appends
+   * the smart link's parameters to ITS url, and those are more specific than
+   * whatever page the click came from.
+   */
+  const utmParams = {
+    ...(refererInfo.referrer_url ? extractUTMParams(refererInfo.referrer_url) : {}),
+    ...extractUTMParams(url),
+  };
 
   // Detect device
   const userAgent = headers.get('user-agent');
