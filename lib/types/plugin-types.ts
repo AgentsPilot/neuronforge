@@ -1,5 +1,9 @@
 // lib/types/plugin-types.ts
 
+// Type-only import: the wire type lives with the sanitiser that mints it, and a
+// type-only import cannot create a runtime cycle with lib/plugins.
+import type { ClientSafeAuthConfig } from '@/lib/plugins/sanitize-plugin-definition';
+
 import type { Domain, Capability } from '../agentkit/v6/semantic-plan/types/intent-schema-types'
 
 // Core plugin definition structure (loaded from JSON files)
@@ -370,7 +374,14 @@ export interface PluginInfo {
   context: string;
   version: string;
   auth_type: string;
-  auth_config: PluginAuthConfig;
+  /**
+   * SECURITY: the wire type, NOT the server-side PluginAuthConfig. Typing this as
+   * PluginAuthConfig is what made the platform's OAuth client secrets part of the
+   * public contract. ClientSafeAuthConfig is branded, so only sanitizeAuthConfig()
+   * can produce a value assignable here — assigning a raw definition auth_config is
+   * now a compile error rather than a silent leak.
+   */
+  auth_config: ClientSafeAuthConfig;
   actions: string[];
   action_count: number;
   isSystem?: boolean; // Flag for system plugins (no user OAuth required)

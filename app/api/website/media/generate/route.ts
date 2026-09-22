@@ -12,6 +12,8 @@ import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { generateImage, generationAllowance } from '@/lib/services/GeneratedImageService';
+import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
+import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
 
 const logger = createLogger({ module: 'WebsiteMediaGenerateAPI' });
 
@@ -38,11 +40,29 @@ export async function POST(request: NextRequest) {
 
     const validated = GenerateSchema.parse(await request.json());
 
-    const result = await generateImage(
-      user.id,
-      validated.prompt,
-      validated.aspect,
-      validated.section ?? 'custom'
+    /*
+     * One grouping id per owner request, minted here — the only entry point —
+     * and logged with the correlation id, so the image's ledger row can be tied
+     * back to this request. The account is the session user; nothing about
+     * attribution is read from the body (Layer 1.5 FR-11, FR-12).
+     */
+    const groupId = newBosGroupId();
+    requestLogger.info({ userId: user.id, groupId, section: validated.section }, 'Image generation requested');
+
+    // One AI action, one audit entry (Layer 3, FR-15). A reuse-cache hit, a
+    // refusal or the daily cap makes no provider call, so it writes none.
+    const result = await runAiAction(
+      { area: 'images', actionType: 'image_generation', groupId, trigger: 'user', accountId: user.id, correlationId },
+      async (h) => {
+        const outcome = await generateImage(
+          { userId: user.id, groupId },
+          validated.prompt,
+          validated.aspect,
+          validated.section ?? 'custom'
+        );
+        if (!outcome.ok && outcome.reason === 'failed') h.markFailed('image_failed');
+        return outcome;
+      }
     );
 
     if (!result.ok) {

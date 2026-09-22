@@ -26,6 +26,10 @@ import { DEFAULT_ARCHETYPE } from '@/lib/website-builder/archetypes';
 import { recipeFor, orderByRecipe, recommendArchetypeId } from '@/lib/website-builder/recipes';
 import { imageForSection, imagesForSection } from '@/lib/services/StockImageService';
 import { getProviderFactory } from '@/lib/ai/providerFactory';
+import { buildBosCallContext, type BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
+import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
+import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
+import { AI_UNAVAILABLE_WEBSITE_WRITING } from '@/lib/business-os/llm/aiUnavailableMessages';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsiteContentRepository } from '@/lib/repositories/WebsiteContentRepository';
 import { z } from 'zod';
@@ -71,6 +75,12 @@ interface GeneratedContent {
   source: ContentSource;
   /** Why the fallback was used, when it was. */
   reason?: string;
+  /**
+   * The website area is switched off (Layer 2 FR-14). Distinct from any other
+   * fallback: the caller decides between starter copy and refusing, which is
+   * what `onAiDisabled` selects.
+   */
+  disabled?: true;
 }
 
 interface WebsiteContent {
@@ -165,6 +175,11 @@ export class WebsiteGenerationService {
    * one and overruling the choice with the model's colours.
    */
   async generateWebsite(userId: string, options: {
+    /**
+     * Usage grouping id of the owner action this generation belongs to,
+     * minted by the entry point. Required so usage is never recorded without one.
+     */
+    groupId: string;
     /** Fill this page instead of creating one. Its blocks are replaced. */
     pageId?: string;
     /** The owner's chosen template. Its theme wins over the model's. */
@@ -182,11 +197,30 @@ export class WebsiteGenerationService {
      * come from the business.
      */
     focus?: { title: string; description?: string };
-  } = {}): Promise<{
+    /**
+     * What to do when the website area's AI is switched off (Layer 2 FR-14,
+     * RC-W3). ONE check point: it is decided inside `callLLM`, where the
+     * settings are resolved, so there is no pre-check that could race a cache
+     * refill between the check and the call.
+     *
+     *   'fallback' — finish the build with the static starter copy, exactly as
+     *                an LLM failure already does. The onboarding build, where
+     *                a site with plain words beats no site at all.
+     *   'fail'     — write nothing and report `ai_unavailable`, for the
+     *                surfaces that can tell the owner and let them retry:
+     *                generate-from-profile and the chat mutate path, both
+     *                wired in Step 3 with the owner-facing message.
+     *
+     * Since Step 3 `full_site` is switchable, so both branches are live.
+     */
+    onAiDisabled?: 'fallback' | 'fail';
+  }): Promise<{
     success: boolean;
     homepageId?: string;
     blocksCreated?: number;
     error?: string;
+    /** Set only when generation was refused because the area is off. */
+    code?: 'ai_unavailable';
     /**
      * Whether the copy came from the model or from the static fallback.
      *
@@ -237,7 +271,37 @@ export class WebsiteGenerationService {
         Array.isArray((existingContent.data?.testimonials as { items?: unknown[] } | undefined)?.items) &&
         ((existingContent.data?.testimonials as { items?: unknown[] }).items?.length ?? 0) > 0;
 
-      const generated = await this.callLLM(profile, services, hasRealTestimonials, options.focus);
+      const generated = await this.callLLM(
+        { userId, groupId: options.groupId },
+        profile,
+        services,
+        hasRealTestimonials,
+        options.focus
+      );
+
+      /*
+       * Nothing has been written yet — the profile and services reads above are
+       * reads — so refusing here leaves the site exactly as it was.
+       */
+      if (generated.disabled && options.onAiDisabled === 'fail') {
+        logger.info({ userId, reason: 'disabled' }, 'Website generation refused: the website area AI is switched off');
+        /*
+         * F-11: the refusal carries an `error` as well as a `code`.
+         *
+         * Every other unsuccessful return from this method sets `error`, so a
+         * caller that logs or shows `result.error` — and several do — printed
+         * `undefined` for this one and turned a clear refusal into a blank.
+         * The sentence is the English one; a surface with its own translations
+         * switches on `code` and ignores this.
+         */
+        return {
+          success: false,
+          code: 'ai_unavailable',
+          error: AI_UNAVAILABLE_WEBSITE_WRITING.en,
+          contentSource: 'fallback',
+        };
+      }
+
       const websiteContent = generated.content;
 
       // 3. Use user_code as subdomain (or generate one if missing)
@@ -524,6 +588,7 @@ export class WebsiteGenerationService {
    * Call LLM to generate website content
    */
   private async callLLM(
+    owner: BosLlmOwner,
     profile: any,
     services: any[],
     hasRealTestimonials = false,
@@ -539,19 +604,38 @@ export class WebsiteGenerationService {
       es: 'Eres un redactor profesional de sitios web. Genera contenido atractivo, claro y optimizado para SEO. Todo el contenido debe estar en español - incluyendo los títulos de las secciones, descripciones, preguntas y respuestas, testimonios y el texto de los botones.',
     };
 
+    // Model, temperature and the on/off switch come from the website area row
+    // (Layer 2 FR-12). This is the ONE place the switch is read for this call.
+    const settings = await resolveBosLlmSettings('website', 'full_site');
+    if (!settings.enabled) {
+      logger.info({ userId: profile.user_id, language, reason: 'disabled' }, 'Website copywriting AI is switched off');
+      return {
+        content: this.getFallbackContent(profile, services),
+        source: 'fallback',
+        reason: 'disabled',
+        disabled: true,
+      };
+    }
+
     try {
       const factory = getProviderFactory();
 
-      // Use the factory's complete() method directly (not getProvider)
-      const response = await factory.complete({
-        model: 'gpt-4o',
+      // Use the factory's complete() method directly (not getProvider).
+      // Built inside the attempt so a retry carries the model that ran (FR-11).
+      const { result: response } = await withModelFallback(settings, (model) => factory.complete({
+        model,
         messages: [
           { role: 'system', content: systemPrompts[language] || systemPrompts.en },
           { role: 'user', content: prompt }
         ],
         response_format: { type: 'json_object' },
-        temperature: 0.7,
-      });
+        ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+      }, buildBosCallContext({
+        userId: owner.userId,
+        area: 'website',
+        callName: 'full_site',
+        groupId: owner.groupId,
+      })));
 
       const parsed = WebsiteContentSchema.safeParse(JSON.parse(response.content));
 

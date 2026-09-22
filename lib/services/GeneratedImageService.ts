@@ -30,22 +30,170 @@ import 'server-only';
  * @module lib/services/GeneratedImageService
  */
 
-import OpenAI from 'openai';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
 import { userMediaRepository } from '@/lib/repositories/UserMediaRepository';
+import {
+  systemConfigRepository,
+  IMAGE_GENERATION_CONFIG_DEFAULTS,
+  IMAGE_FALLBACK_PRICING,
+  type ImageGenerationConfig,
+} from '@/lib/repositories/SystemConfigRepository';
+import { ProviderFactory } from '@/lib/ai/providerFactory';
+import type {
+  ImageGenerationParams,
+  ImagePriceResolver,
+  ReportedImageQuality,
+} from '@/lib/ai/providers/openaiProvider';
+import { buildBosCallContext, type BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
+import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
+import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
 import type { ImageAspect } from '@/lib/services/StockImageService';
 
 const logger = createLogger({ service: 'GeneratedImageService' });
 
 const BUCKET = 'website-images';
 
-/** The sizes the model offers, mapped to the crops the archetypes ask for. */
-const SIZE_BY_ASPECT: Record<ImageAspect, '1024x1024' | '1536x1024' | '1024x1536'> = {
-  wide: '1536x1024',
-  portrait: '1024x1536',
-  square: '1024x1024',
-};
+/*
+ * The aspect → size map and the quality come from configuration
+ * (`SystemConfigRepository.getImageGenerationConfig`), with documented
+ * defaults there. Since Layer 2 the MODEL and the on/off switch come from the
+ * `images` area row instead, through `resolveBosLlmSettings` (FR-12) — the
+ * seed copied `image_generation_model` into it, and the policy's default is
+ * still `IMAGE_GENERATION_CONFIG_DEFAULTS.model`, referenced rather than
+ * copied. OpenAI is the only image provider today; a second one would need a
+ * capability interface and config-driven selection (F-15), not a provider key
+ * that accepts exactly one value.
+ */
+
+/** Sizes the image model accepts. A configured size outside these falls back to the default. */
+const IMAGE_SIZES: ReadonlyArray<ImageGenerationParams['size']> = ['1024x1024', '1536x1024', '1024x1536'];
+
+/**
+ * Qualities that may be requested. `auto` (the default) lets the provider
+ * choose; every image is priced by the quality the provider REPORTS it used,
+ * so `auto` needs no price of its own.
+ */
+const IMAGE_QUALITIES: ReadonlyArray<ImageGenerationParams['quality']> = ['auto', 'low', 'medium', 'high'];
+
+/**
+ * The quality an image is priced at when the provider does not report one.
+ * `high` is the most expensive level, so the recorded price is an upper bound
+ * rather than an understatement (user decision CR-1, option C, 2026-09-18).
+ */
+export const UNREPORTED_QUALITY_PRICED_AS = 'high';
+
+function isImageSize(value: string): value is ImageGenerationParams['size'] {
+  return (IMAGE_SIZES as readonly string[]).includes(value);
+}
+
+function isImageQuality(value: string): value is ImageGenerationParams['quality'] {
+  return (IMAGE_QUALITIES as readonly string[]).includes(value);
+}
+
+export type ImagePriceSource = 'config' | 'fallback' | 'unpriced';
+
+/**
+ * The per-image dollar price (Layer 1.5 FR-13): configuration, then the
+ * documented fallback map, then 0 with an error log. The row is written in
+ * every case — spend is never dropped — but an image must never be recorded at
+ * $0 silently.
+ */
+export function resolveImagePrice(
+  pricesUsd: Readonly<Record<string, number>>,
+  model: string,
+  size: string,
+  quality: string
+): { usdPerImage: number; source: ImagePriceSource } {
+  const key = `${model}:${size}:${quality}`;
+  const configured = pricesUsd[key];
+  if (typeof configured === 'number' && Number.isFinite(configured) && configured > 0) {
+    return { usdPerImage: configured, source: 'config' };
+  }
+  const fallback = IMAGE_FALLBACK_PRICING[key];
+  if (typeof fallback === 'number') return { usdPerImage: fallback, source: 'fallback' };
+
+  // Names the three parts of the key only — never the prompt.
+  logger.error({ model, size, quality }, 'No price for this image model, size and quality; recording $0');
+  return { usdPerImage: 0, source: 'unpriced' };
+}
+
+/** What one generated image was priced at, and on what basis. */
+export interface ImagePricing {
+  usdPerImage: number;
+  source: ImagePriceSource;
+  /** The quality the price is keyed on: the reported one, or UNREPORTED_QUALITY_PRICED_AS. */
+  pricedQuality: string;
+  qualityReported: boolean;
+}
+
+/**
+ * The resolver handed to the provider (user decision CR-1, option C): prices
+ * the image AFTER the call from the quality the provider reports it used,
+ * keyed on model + size + that quality, with `resolveImagePrice`'s precedence.
+ * No reported quality → priced at UNREPORTED_QUALITY_PRICED_AS, with a warning.
+ * A requested quality other than `auto` that differs from the reported one is
+ * logged; the price follows what was reported.
+ *
+ * `last()` returns what was priced, for the service's own log line. Never
+ * throws: a throw inside the provider's tracking would turn a paid-for image
+ * into a failure row.
+ */
+export function imagePriceResolver(
+  pricesUsd: Readonly<Record<string, number>>,
+  model: string,
+  size: string,
+  requestedQuality: string
+): { priceFor: ImagePriceResolver; last: () => ImagePricing | null } {
+  let last: ImagePricing | null = null;
+
+  const priceFor: ImagePriceResolver = (reported: ReportedImageQuality) => {
+    try {
+      const qualityReported = typeof reported === 'string' && reported.length > 0;
+      const pricedQuality = qualityReported ? reported : UNREPORTED_QUALITY_PRICED_AS;
+
+      if (!qualityReported) {
+        logger.warn(
+          { model, size, requestedQuality, pricedAs: pricedQuality },
+          'Provider reported no image quality; pricing the image at the highest level'
+        );
+      } else if (requestedQuality !== 'auto' && reported !== requestedQuality) {
+        logger.warn(
+          { model, size, requestedQuality, reportedQuality: reported },
+          'Image generated at a different quality than requested; priced by the reported quality'
+        );
+      }
+
+      const { usdPerImage, source } = resolveImagePrice(pricesUsd, model, size, pricedQuality);
+      last = { usdPerImage, source, pricedQuality, qualityReported };
+      return usdPerImage;
+    } catch (error) {
+      logger.error({ err: error, model, size }, 'Could not price a generated image; recording $0');
+      return 0;
+    }
+  };
+
+  return { priceFor, last: () => last };
+}
+
+/**
+ * The size and quality actually sent: the configured values when the model
+ * accepts them, else the documented defaults. Null only if the defaults
+ * themselves are unusable, which is a code error.
+ */
+function effectiveRequest(
+  config: ImageGenerationConfig,
+  aspect: ImageAspect
+): { size: ImageGenerationParams['size']; quality: ImageGenerationParams['quality'] } | null {
+  const size = [config.sizes[aspect], IMAGE_GENERATION_CONFIG_DEFAULTS.sizes[aspect]].find(isImageSize);
+  const quality = [config.quality, IMAGE_GENERATION_CONFIG_DEFAULTS.quality].find(isImageQuality);
+  if (!size || !quality) return null;
+
+  if (size !== config.sizes[aspect] || quality !== config.quality) {
+    logger.warn({ aspect }, 'Configured image size or quality is not supported; using the default');
+  }
+  return { size, quality };
+}
 
 /**
  * What the model is asked for, whatever the owner typed.
@@ -124,16 +272,24 @@ export type GenerateImageOutcome = ({ ok: true } & GenerateImageResult) | Genera
  * Never throws: the caller is a button in an editor, and every outcome here is
  * something the owner can act on — try a different description, or use one of
  * the pictures they already have.
+ *
+ * Every image actually generated writes ONE usage-ledger row (Layer 1.5 FR-9):
+ * the owner's account, the `images` area, zero tokens and the per-image cost.
+ * Nothing refused before the provider call writes a row; a failed provider call
+ * writes a failure row; a paid-for image keeps its row even if storing it fails.
  */
 export async function generateImage(
-  userId: string,
+  /** The business account and the grouping id of the request that asked. Required (FR-11). */
+  owner: BosLlmOwner,
   prompt: string,
   aspect: ImageAspect,
   section: string
 ): Promise<GenerateImageOutcome> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    logger.debug('No OPENAI_API_KEY; image generation is unavailable');
+  const userId = owner.userId;
+
+  // Asked of the factory rather than read in order to build a client (FR-9e).
+  if (!ProviderFactory.isProviderAvailable('openai')) {
+    logger.debug('No OpenAI provider configured; image generation is unavailable');
     return { ok: false, reason: 'unavailable' };
   }
 
@@ -160,6 +316,28 @@ export async function generateImage(
   if (existing) return { ok: true, url: existing.public_url, description: existing.description ?? prompt };
 
   /*
+   * Image generation switched off (Layer 2 FR-14).
+   *
+   * AFTER the reuse check and before the daily count, for the same reason the
+   * count is (RC-W4, N-4): handing back a picture this business already has
+   * costs nothing and is not an AI call, so switching the area off must not
+   * take their own library away from them.
+   *
+   * The outcome is the EXISTING `unavailable` reason — the one a missing
+   * provider already returns — which the picker already renders as
+   * "Image generation is not available right now" in all three languages
+   * (Q-6). No new wording, and no new branch anywhere downstream.
+   */
+  const settings = await resolveBosLlmSettings('images', 'image_generation');
+  if (!settings.enabled) {
+    logger.info(
+      { userId, area: 'images', call: 'image_generation', reason: 'disabled' },
+      'Image generation is switched off'
+    );
+    return { ok: false, reason: 'unavailable' };
+  }
+
+  /*
    * Only now, with a real generation about to be billed, is the day counted.
    *
    * A count that cannot be read refuses rather than allows. The alternative —
@@ -183,17 +361,57 @@ export async function generateImage(
   }
 
   try {
-    const openai = new OpenAI({ apiKey });
-    const response = await openai.images.generate({
-      model: 'gpt-image-1',
-      prompt: `${prompt}. ${STYLE}`,
-      size: SIZE_BY_ASPECT[aspect],
-      n: 1,
+    const config = await systemConfigRepository.getImageGenerationConfig();
+    const request = effectiveRequest(config, aspect);
+    if (!request) {
+      logger.error({ aspect }, 'No usable image size or quality, even from the defaults');
+      return { ok: false, reason: 'failed' };
+    }
+    const { size, quality } = request;
+
+    const context = buildBosCallContext({
+      userId,
+      area: 'images',
+      callName: 'image_generation',
+      groupId: owner.groupId,
+    });
+
+    /*
+     * The model comes from the `images` area row (Layer 2 FR-12). The seed
+     * copied `image_generation_model` into it; `config` still supplies the
+     * sizes, the quality and the prices, which are not model settings.
+     *
+     * RC-W4 — the price resolver is built INSIDE the attempt, from the SAME
+     * `model` the request carries. Both halves matter:
+     *
+     *  - built outside, a retry onto the code default would price the image as
+     *    the model that was refused;
+     *  - keyed on `config.model` instead of the resolved one, an operator who
+     *    switches the image model would have every image priced as the old
+     *    model — or, since the price table is keyed by model name, at $0, with
+     *    the spend silently vanishing from the ledger.
+     *
+     * The price is still resolved AFTER the call, at the quality the provider
+     * reports (Layer 1.5 D-7); only the key follows the model that ran.
+     */
+    const { result: { response, priced } } = await withModelFallback(settings, async (model) => {
+      const pricing = imagePriceResolver(config.pricesUsd, model, size, quality);
+
+      // The provider records the ledger row, success or failure, before this
+      // returns or throws. n is always 1: one row per image (WC-3).
+      const generated = await ProviderFactory.getOpenAI().generateImage(
+        { model, prompt: `${prompt}. ${STYLE}`, size, quality, n: 1 },
+        context,
+        pricing.priceFor
+      );
+
+      return { response: generated, priced: pricing.last() };
     });
 
     const b64 = response.data?.[0]?.b64_json;
     if (!b64) {
-      logger.warn({ userId, section }, 'Image generation returned nothing');
+      // Billed all the same, so its priced row stays (FR-9c).
+      logger.warn({ userId, section, groupId: owner.groupId }, 'Image generation returned nothing');
       return { ok: false, reason: 'failed' };
     }
 
@@ -231,12 +449,22 @@ export async function generateImage(
      * whoever is looking at an unexpected invoice.
      */
     logger.info(
-      { userId, section, aspect, generatedToday: usedToday + 1, dailyLimit: DAILY_GENERATION_LIMIT },
+      {
+        userId,
+        section,
+        aspect,
+        groupId: owner.groupId,
+        priceSource: priced?.source,
+        pricedQuality: priced?.pricedQuality,
+        usdPerImage: priced?.usdPerImage,
+        generatedToday: usedToday + 1,
+        dailyLimit: DAILY_GENERATION_LIMIT,
+      },
       'Generated a picture for a business'
     );
     return { ok: true, url: data.publicUrl, description: prompt };
   } catch (error) {
-    logger.error({ err: error, userId, section }, 'Could not generate a picture');
+    logger.error({ err: error, userId, section, groupId: owner.groupId }, 'Could not generate a picture');
     return { ok: false, reason: 'failed' };
   }
 }

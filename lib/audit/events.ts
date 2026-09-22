@@ -105,8 +105,26 @@ export const AUDIT_EVENTS = {
   // DATA EVENTS (GDPR compliance)
   // ==========================================
   DATA_EXPORTED: 'DATA_EXPORTED', // User data export
+  // The owner's own data download from the V2 security settings. Distinct from
+  // DATA_EXPORTED, which is the server-side GDPR export.
+  USER_DATA_EXPORTED: 'USER_DATA_EXPORTED',
   DATA_DELETED: 'DATA_DELETED', // Right to erasure
   DATA_ANONYMIZED: 'DATA_ANONYMIZED', // PII anonymization
+  // Business OS purge (Reset / Purge of one business's data). Distinct from
+  // DATA_DELETED: that is account-level erasure, whereas a business Reset
+  // deliberately keeps the login, the profile and the configuration. Conflating
+  // them would make an audit query for "erasure requests" return test resets.
+  BUSINESS_DATA_PURGED: 'BUSINESS_DATA_PURGED',
+  // Written for REFUSED runs too (FR-20, AC-18). A refused purge is the more
+  // interesting event to have on record: it is the one where something was
+  // wrong, and the one someone may later ask about.
+  BUSINESS_DATA_PURGE_BLOCKED: 'BUSINESS_DATA_PURGE_BLOCKED',
+  // Business OS AI activity (Layer 3): one entry per AI action or background
+  // job, summarising its LLM calls. Written by the server only; a browser can
+  // never write one (lib/audit/requestSchemas.ts) and owners never read one
+  // (AuditTrailRepository.listOwnerEntries). Entity type 'ai_action'.
+  BUSINESS_AI_ACTION_COMPLETED: 'BUSINESS_AI_ACTION_COMPLETED',
+  BUSINESS_AI_ACTION_FAILED: 'BUSINESS_AI_ACTION_FAILED',
   DATA_ACCESSED: 'DATA_ACCESSED', // Who accessed what data
   CONSENT_GRANTED: 'CONSENT_GRANTED',
   CONSENT_REVOKED: 'CONSENT_REVOKED',
@@ -149,6 +167,7 @@ export const AUDIT_EVENTS = {
   AI_PRICING_UPDATED: 'AI_PRICING_UPDATED',
   AI_PRICING_DELETED: 'AI_PRICING_DELETED',
   AI_PRICING_SYNCED: 'AI_PRICING_SYNCED', // Synced from external source
+  AI_PRICING_ZERO_SET: 'AI_PRICING_ZERO_SET', // A price was saved as $0 — usage of that model is billed at nothing
 
   // ==========================================
   // MEMORY SYSTEM EVENTS
@@ -187,6 +206,15 @@ export const AUDIT_EVENTS = {
   PILOT_DISABLED: 'PILOT_DISABLED', // Pilot disabled - execution blocked
   PILOT_CONFIG_UPDATED: 'PILOT_CONFIG_UPDATED', // Pilot settings changed
   PILOT_STRUCTURAL_REPAIR_APPLIED: 'PILOT_STRUCTURAL_REPAIR_APPLIED', // Pre-execution auto-repair fired — indicates a generator bug
+
+  // Subscription and boost-pack billing (the Stripe routes)
+  SUBSCRIPTION_CHECKOUT_INITIATED: 'SUBSCRIPTION_CHECKOUT_INITIATED',
+  BOOST_PACK_CHECKOUT_INITIATED: 'BOOST_PACK_CHECKOUT_INITIATED',
+  SUBSCRIPTION_CANCELED: 'SUBSCRIPTION_CANCELED',
+  SUBSCRIPTION_REACTIVATED: 'SUBSCRIPTION_REACTIVATED',
+  CUSTOMER_PORTAL_ACCESSED: 'CUSTOMER_PORTAL_ACCESSED',
+  // One-time free-tier grant at onboarding (S-6 fix). Written only on an actual grant.
+  FREE_TIER_ALLOCATED: 'FREE_TIER_ALLOCATED',
 
   // Business OS money
   PAYMENT_REFUNDED: 'PAYMENT_REFUNDED',
@@ -359,6 +387,22 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['SOC2'],
     description: 'User logged in',
   },
+  // Registered for Layer 3 step 0 (WC-12): the client write routes now take
+  // severity and flags from here, so these carry exactly what the logout
+  // buttons sent before.
+  [AUDIT_EVENTS.USER_LOGOUT]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'User logged out',
+  },
+  // The V2 security tab sent severity 'medium', which the table's severity
+  // CHECK rejects: every such row failed its whole batch and none was stored.
+  // 'warning' is the valid level between the two it was presumably meant as.
+  [AUDIT_EVENTS.USER_DATA_EXPORTED]: {
+    severity: 'warning',
+    complianceFlags: ['GDPR', 'CCPA'],
+    description: 'User downloaded their own data from settings',
+  },
   [AUDIT_EVENTS.USER_LOGIN_FAILED]: {
     severity: 'warning',
     complianceFlags: ['SOC2'],
@@ -464,6 +508,28 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'critical',
     complianceFlags: ['GDPR', 'SOC2'],
     description: 'User data deleted (GDPR Article 17)',
+  },
+  [AUDIT_EVENTS.BUSINESS_DATA_PURGED]: {
+    severity: 'critical',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: 'Business data reset or purged (irreversible; pre-purge snapshot recorded)',
+  },
+  // Layer 3. Severity comes only from here (the emitter never passes one), and
+  // neither is critical: these are kept for the default retention, not seven years.
+  [AUDIT_EVENTS.BUSINESS_AI_ACTION_COMPLETED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS AI action completed (its LLM calls summarised)',
+  },
+  [AUDIT_EVENTS.BUSINESS_AI_ACTION_FAILED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS AI action failed after making at least one LLM call',
+  },
+  [AUDIT_EVENTS.BUSINESS_DATA_PURGE_BLOCKED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Business data reset or purge refused before any data was touched',
   },
   [AUDIT_EVENTS.DATA_ANONYMIZED]: {
     severity: 'critical',
@@ -684,6 +750,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['SOC2'],
     description: 'AI model pricing synced from external source',
   },
+  // Critical, like AI_PRICING_DELETED: the revenue effect is comparable — every
+  // call to a zero-priced model is billed at $0 until someone notices.
+  [AUDIT_EVENTS.AI_PRICING_ZERO_SET]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2'],
+    description: 'AI model price set to zero (usage billed at $0)',
+  },
 
   // Workflow Pilot events
   [AUDIT_EVENTS.PILOT_EXECUTION_STARTED]: {
@@ -807,6 +880,42 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'An invoice was marked paid manually',
+  },
+
+  // Subscription billing. Registered for Layer 3 step 0 (WC-12) with exactly the
+  // severity and flags the Stripe routes sent before, including FINANCIAL, so
+  // their stored rows do not change.
+  [AUDIT_EVENTS.SUBSCRIPTION_CHECKOUT_INITIATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2', 'FINANCIAL'],
+    description: 'Subscription checkout started',
+  },
+  [AUDIT_EVENTS.BOOST_PACK_CHECKOUT_INITIATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2', 'FINANCIAL'],
+    description: 'Boost pack checkout started',
+  },
+  [AUDIT_EVENTS.SUBSCRIPTION_CANCELED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2', 'FINANCIAL'],
+    description: 'Subscription set to cancel at period end',
+  },
+  [AUDIT_EVENTS.SUBSCRIPTION_REACTIVATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2', 'FINANCIAL'],
+    description: 'Subscription reactivated',
+  },
+  [AUDIT_EVENTS.CUSTOMER_PORTAL_ACCESSED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Stripe customer portal opened',
+  },
+  // Free credits and quotas granted once, at onboarding. Same severity and flags
+  // as the Stripe billing events: it changes an account's credit balance.
+  [AUDIT_EVENTS.FREE_TIER_ALLOCATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2', 'FINANCIAL'],
+    description: 'Free-tier credits and quotas granted',
   },
 };
 

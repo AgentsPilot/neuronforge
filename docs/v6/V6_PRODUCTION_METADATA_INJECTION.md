@@ -47,7 +47,7 @@ This document explains how the V6 semantic pipeline dynamically injects **only r
 │   Input: resolved_user_inputs → Output: {query, max_results}    │
 │ ✓ inferActionName() - Find best read action from plugin schema  │
 │   Input: gmail plugin → Output: "search_messages"               │
-│ ✓ Fetch real data from /api/v6/fetch-plugin-data                │
+│ ✓ Fetch real data server-side via PluginExecuterV2 (see note)  │
 │   Result: data_source_metadata (headers, sample_rows)           │
 └──────────────────────┬──────────────────────────────────────────┘
                        │
@@ -315,7 +315,10 @@ actionName = inferActionName("gmail", availablePlugins)
 // Result: "search_messages"
 
 // 4. Fetch real data
-data_source_metadata = await fetch('/api/v6/fetch-plugin-data', {
+// /api/v6/fetch-plugin-data was DELETED 2026-09-21 (unauthenticated plugin
+// execution against any account). Fetch server-side via PluginExecuterV2, or
+// from the browser via POST /api/plugins/execute.
+data_source_metadata = await fetchPluginDataServerSide({
   userId,
   pluginName: "gmail",
   actionName: "search_messages",

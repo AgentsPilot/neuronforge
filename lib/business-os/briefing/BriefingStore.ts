@@ -13,8 +13,14 @@
 import { createHash } from 'crypto';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
-import { narrateBriefing, briefingModel, PROMPT_VERSION, type BriefingLanguage, type BriefingSource, type BusinessType } from './BriefingNarrator';
+import { narrateBriefing, PROMPT_VERSION, type BriefingLanguage, type BriefingSource, type BusinessType } from './BriefingNarrator';
+import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
 import type { BriefingFacts } from './BriefingFactsService';
+import { bosBriefingGroupId } from '@/lib/business-os/llm/callCatalog';
+import { runAiAction, type AiTrigger } from '@/lib/business-os/llm/aiActionAudit';
+
+/** Who asked for the briefing: the daily email job, or the owner on My Day (FR-11, RC-8). */
+export type BriefingTrigger = Extract<AiTrigger, 'scheduled' | 'user'>;
 
 const logger = createLogger({ service: 'BriefingStore' });
 
@@ -35,9 +41,17 @@ export async function getBriefing(
   userId: string,
   facts: BriefingFacts,
   language: BriefingLanguage,
+  /** Required, so the scheduled path and the My Day path cannot be confused (RC-8, WC-3). */
+  trigger: BriefingTrigger,
   businessType: BusinessType = {}
 ): Promise<StoredBriefing> {
-  const hash = hashFacts(facts, language, businessType);
+  /*
+   * The CONFIGURED model, not the one that ran: this is a cache key computed
+   * before any call, and it exists so that changing the area's model starts a
+   * new cache rather than serving yesterday's phrasing from the old one.
+   */
+  const { model: configuredModel } = await resolveBosLlmSettings('briefing', 'daily_narration');
+  const hash = hashFacts(facts, language, businessType, configuredModel);
 
   const cached = await readCached(userId, facts.day.date);
   if (cached && cached.facts_hash === hash) {
@@ -48,7 +62,23 @@ export async function getBriefing(
     };
   }
 
-  const narration = await narrateBriefing(facts, language, userId, businessType);
+  // One narration, one AI action and audit entry, grouped by the briefing's
+  // day (Layer 3, FR-11). A quiet day or a cached briefing makes no call, so it
+  // writes none; a same-day re-narration writes a second entry in the same group.
+  const narration = await runAiAction(
+    {
+      area: 'briefing',
+      actionType: 'briefing_narration',
+      groupId: bosBriefingGroupId(userId, facts.day.date),
+      trigger,
+      accountId: userId,
+    },
+    async (h) => {
+      const narrated = await narrateBriefing(facts, language, userId, businessType);
+      if (narrated.source === 'fallback') h.markFailed('briefing_fallback');
+      return narrated;
+    }
+  );
 
   // Written after the fact so a storage outage cannot stop the card rendering.
   await writeCached(userId, facts, language, hash, narration.narrative, narration.source);
@@ -66,7 +96,20 @@ export async function getBriefing(
 export function hashFacts(
   facts: BriefingFacts,
   language: BriefingLanguage,
-  businessType: BusinessType = {}
+  businessType: BusinessType = {},
+  /*
+   * Passed in rather than read here.
+   *
+   * It used to come from `briefingModel()`, which read an env var — a model
+   * name written at a call site, which `check:bos-llm-literals` rejects now
+   * that the area row is the source of truth. The caller is async and resolves
+   * the settings anyway; this function stays synchronous, which is what keeps
+   * it cheap to test.
+   *
+   * Defaulted so the existing tests, which care about facts and language rather
+   * than models, need no change.
+   */
+  model: string = 'default'
 ): string {
   const { appointments, money, outlook } = facts;
 
@@ -85,7 +128,7 @@ export function hashFacts(
      * no cached briefing yet, and everyone else would keep yesterday's model's
      * phrasing until tomorrow with nothing to say why.
      */
-    model: briefingModel(),
+    model,
     /*
      * The business type is part of the fingerprint because it now decides the
      * words. A trainer whose vertical is corrected from 'other' should not keep

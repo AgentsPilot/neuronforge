@@ -13,6 +13,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { WebsiteGenerationService } from '@/lib/services/WebsiteGenerationService';
+import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
+import { runAiAction, markGenerationResult } from '@/lib/business-os/llm/aiActionAudit';
+import { AI_UNAVAILABLE_WEBSITE_WRITING } from '@/lib/business-os/llm/aiUnavailableMessages';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'WebsiteGenerationAPI' });
@@ -71,11 +74,51 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    requestLogger.info({ userId, pageId, templateId }, 'Starting website generation');
+    // One usage group per generation request; never taken from the request.
+    const groupId = newBosGroupId();
+    requestLogger.info({ userId, pageId, templateId, groupId }, 'Starting website generation');
 
-    // 4. Generate website
+    // 4. Generate website for the signed-in account (checked equal above)
     const generationService = new WebsiteGenerationService();
-    const result = await generationService.generateWebsite(userId, { pageId, templateId });
+    // One AI action, one audit entry (Layer 3, FR-12). Never awaited on the audit.
+    const result = await runAiAction(
+      { area: 'website', actionType: 'website_full_site', groupId, trigger: 'user', accountId: user.id, correlationId },
+      async (h) => {
+        /*
+         * `'fail'` (RC-W3): this surface can tell the owner. Unlike the
+         * onboarding build — where a site written in plain words beats no site
+         * — someone pressing "generate from profile" already has a page, so
+         * overwriting it with generic starter copy would be a destructive
+         * answer to a request we are refusing. There is no separate pre-check:
+         * the switch is read once, inside the service, where the settings are
+         * resolved, so nothing can change between checking and calling.
+         */
+        const generated = await generationService.generateWebsite(user.id, {
+          groupId,
+          pageId,
+          templateId,
+          onAiDisabled: 'fail',
+        });
+        markGenerationResult(h, generated);
+        return generated;
+      }
+    );
+
+    /*
+     * Switched off (Layer 2 FR-14). HTTP **200** with a code, not a 500: an
+     * operator turned the feature off, nothing failed, and NOTHING WAS
+     * WRITTEN — the refusal returns before the first write, so the owner's page
+     * is exactly as it was. The English sentence rides along for any caller
+     * that has no label map; the website page prefers its own translation.
+     */
+    if (!result.success && result.code === 'ai_unavailable') {
+      requestLogger.info({ userId, pageId, reason: 'disabled' }, 'Website generation refused: website AI is switched off');
+      return NextResponse.json({
+        success: false,
+        code: 'ai_unavailable',
+        error: AI_UNAVAILABLE_WEBSITE_WRITING.en,
+      });
+    }
 
     if (!result.success) {
       requestLogger.error({ userId, error: result.error }, 'Website generation failed');

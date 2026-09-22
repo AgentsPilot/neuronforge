@@ -15,6 +15,15 @@
 import { getProviderFactory } from '@/lib/ai/providerFactory';
 import { createLogger } from '@/lib/logger';
 import {
+  buildBosCallContext,
+  isUuid,
+  newBosGroupId,
+  type BosLlmCallName,
+  type BosLlmOwner,
+} from '@/lib/business-os/llm/callCatalog';
+import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
+import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
+import {
   OnboardingConfigurationService,
   onboardingConfigurationService,
   ExtractedData,
@@ -30,6 +39,43 @@ import {
 } from './OnboardingConfigurationService';
 
 const logger = createLogger({ service: 'OnboardingConversationManager' });
+
+/**
+ * The adjustment intents the preview prompt allows (PREVIEW_ADJUSTMENT_PROMPT).
+ * The intent is whatever the model returned, so only one of these is logged at
+ * info as a label; anything else is model text and goes to debug (CR-3).
+ */
+const KNOWN_ADJUSTMENT_INTENTS: ReadonlySet<string> = new Set([
+  'add_capability',
+  'remove_capability',
+  'modify_services',
+  'modify_pipeline',
+  'change_payment_mode',
+  'restart',
+  'confirm',
+]);
+
+/** Info-safe fields for a model-returned intent: the label if known, else its length. */
+function intentFields(intent: unknown): { intent: string } | { intentLength: number } {
+  return typeof intent === 'string' && KNOWN_ADJUSTMENT_INTENTS.has(intent)
+    ? { intent }
+    : { intentLength: String(intent ?? '').length };
+}
+
+/**
+ * Logs an extractor failure. A JSON SyntaxError's message quotes the start of
+ * the model's output, which is derived owner text, so it gets only its name at
+ * error and the full error at debug (D-OI8, CR-2). Any other error, e.g. from
+ * the provider, keeps its full detail at error.
+ */
+function logExtractionFailure(error: unknown, message: string): void {
+  if (error instanceof SyntaxError) {
+    logger.error({ errName: error.name }, message);
+    logger.debug({ err: error }, `${message}: parse error detail`);
+    return;
+  }
+  logger.error({ err: error }, message);
+}
 
 // ============================================================
 // TYPES
@@ -143,7 +189,22 @@ export interface OnboardingState {
   language: Language;
   pendingQuestion?: string;
   validationErrors?: string[];
+  /**
+   * Groups every LLM call of ONE onboarding conversation in the usage ledger
+   * (Layer 1.5 FR-4). Minted by `getInitialState`, so a restart is a new group.
+   *
+   * Deliberately NOT named `conversationId`: the chat route's request schema
+   * accepts a client-supplied `conversationId` that it ignores, and attribution
+   * must never come from the request body.
+   *
+   * Optional here only because a snapshot saved before Layer 1.5 has none;
+   * `ensureAttributionGroupId` backfills it on resume.
+   */
+  attributionGroupId?: string;
 }
+
+/** A state guaranteed to carry its grouping id, so no caller needs a `!` (WC-1). */
+export type AttributedOnboardingState = OnboardingState & { attributionGroupId: string };
 
 // ============================================================
 // EXTRACTION PROMPTS
@@ -449,6 +510,32 @@ function needsAPrice(service: { price?: number | null; sale_mode?: 'direct' | 'p
   return service.price === null || service.price === undefined;
 }
 
+/** Words and phrases that mean "no charge", in each onboarding language. Matched whole, lowercased. */
+const FREE_PRICE_WORDS = [
+  'free', 'no charge', 'free of charge',
+  'חינם', 'בחינם', 'ללא תשלום', 'בלי תשלום', 'ללא עלות',
+  'gratis', 'gratuito', 'gratuita', 'sin costo', 'sin cargo',
+];
+
+/** Free only as the entire reply — inside a sentence they hedge ("nothing fixed yet"). */
+const FREE_WHOLE_REPLIES = ['nothing', 'nada'];
+
+/** Currency words stripped before the number is read, bounded like whole words (see `containsWholeWord`). */
+const PRICE_CURRENCY_WORDS =
+  /(?<![\p{L}\p{N}])(?:שקלים|שקל|ש"ח|שח|nis|ils|usd|eur|dollars|dollar|euros|euro)(?![\p{L}\p{N}])/gu;
+
+/**
+ * Whether `word` appears in `text` as a whole word or phrase.
+ *
+ * Unicode-aware: `\b` treats Hebrew letters as non-word characters, so it
+ * cannot bound a Hebrew word. A letter or digit on either side disqualifies
+ * the match — "freelance" does not contain "free", "100" does not contain "0".
+ */
+function containsWholeWord(text: string, word: string): boolean {
+  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'u').test(text);
+}
+
 export class OnboardingConversationManager {
   private configService: OnboardingConfigurationService;
 
@@ -460,7 +547,12 @@ export class OnboardingConversationManager {
    * Process a user message and update the onboarding state
    */
   async processUserMessage(
-    userId: string,
+    /**
+     * Who this turn's LLM calls are recorded against: the signed-in owner's
+     * account and this conversation's grouping id. Required, so a missing
+     * account or group is a compile error (Layer 1.5 FR-3).
+     */
+    owner: BosLlmOwner,
     message: string,
     currentState: OnboardingState,
     /**
@@ -480,10 +572,14 @@ export class OnboardingConversationManager {
     updatedState: OnboardingState;
     showPreview?: boolean;
   }> {
-    logger.debug({ userId, currentStep: currentState.currentStep, message }, 'Processing user message');
+    // Never the owner's raw text, at any level (OI-7): its length is enough to debug with.
+    logger.debug(
+      { userId: owner.userId, groupId: owner.groupId, currentStep: currentState.currentStep, messageLength: message.length },
+      'Processing user message'
+    );
 
     // Update state based on current step
-    const updatedState = await this.updateStateFromMessage(currentState, message, submittedServices);
+    const updatedState = await this.updateStateFromMessage(owner, currentState, message, submittedServices);
 
     // Generate next question or response
     const { response, suggestions, showPreview, multiSelect } = await this.getNextResponse(updatedState);
@@ -506,6 +602,7 @@ export class OnboardingConversationManager {
    * Update state based on user message using deep LLM extraction
    */
   private async updateStateFromMessage(
+    owner: BosLlmOwner,
     state: OnboardingState,
     message: string,
     /** The services form's own rows, when this turn came from it. */
@@ -518,8 +615,11 @@ export class OnboardingConversationManager {
         { oldStep: state.currentStep },
         'Detected old onboarding step, resetting to language_selection'
       );
+      // A reset is a new conversation, so its calls go under the fresh group.
+      const fresh = this.getInitialState(state.language || 'en');
       return this.updateStateFromMessage(
-        this.getInitialState(state.language || 'en'),
+        { userId: owner.userId, groupId: fresh.attributionGroupId },
+        fresh,
         message
       );
     }
@@ -558,16 +658,22 @@ export class OnboardingConversationManager {
           language: updatedState.language,
         };
 
-        logger.info({ companyName: name }, 'Business name given');
+        // The name is the owner's raw text (it is the whole message), so only its length is logged (OI-7).
+        logger.info({ userId: owner.userId, groupId: owner.groupId, nameLength: name.length }, 'Business name given');
         updatedState.currentStep = 'business_story';
         break;
       }
 
       case 'business_story':
         // Deep extraction of business context
-        logger.info({ message }, 'Extracting business story from message');
-        const businessStory = await this.extractBusinessStory(message);
-        logger.info({ businessStory }, 'Business story extracted');
+        logger.info(
+          { userId: owner.userId, groupId: owner.groupId, step: 'business_story', messageLength: message.length },
+          'Extracting business story from message'
+        );
+        const businessStory = await this.extractBusinessStory(message, owner);
+        // The extraction paraphrases what the owner typed: debug only, so it
+        // shows locally and never in production, which runs at info (OI-8).
+        logger.debug({ businessStory }, 'Business story extracted');
 
         // Their own words win over the model's paraphrase.
         //
@@ -605,7 +711,7 @@ export class OnboardingConversationManager {
 
       case 'client_workflow':
         // Extract services and workflow
-        const clientWorkflow = await this.extractClientWorkflow(message);
+        const clientWorkflow = await this.extractClientWorkflow(message, owner);
 
         // One of the three offered answers is not a matter of interpretation.
         const chosenModel = this.pricingModelFromChip(message);
@@ -667,7 +773,10 @@ export class OnboardingConversationManager {
             break;
           }
           // If we couldn't extract a price, ask again (fall through to normal flow)
-          logger.warn({ message }, 'Could not extract price from message');
+          logger.warn(
+            { userId: owner.userId, groupId: owner.groupId, step: 'service_details', messageLength: message.length },
+            'Could not extract price from message'
+          );
         }
 
         // Check if user just said "that's all" to the "more services?" question
@@ -699,7 +808,7 @@ export class OnboardingConversationManager {
          */
         const serviceDetails = submittedServices?.length
           ? { services: submittedServices }
-          : await this.extractClientWorkflow(message);
+          : await this.extractClientWorkflow(message, owner);
 
         // Get existing services or start fresh
         const existingServices = updatedState.collectedData.clientWorkflow?.services || [];
@@ -741,7 +850,9 @@ export class OnboardingConversationManager {
         if (servicesMissingPrice.length > 0) {
           // Need to ask for price
           updatedState.pendingQuestion = 'need_price';
-          logger.info({ servicesMissingPrice: servicesMissingPrice.map(s => s.name) }, 'Services missing price');
+          // A count only: service names are what the owner typed on the form, or
+          // the model's paraphrase of it (CR-1).
+          logger.info({ servicesMissingPriceCount: servicesMissingPrice.length }, 'Services missing price');
           break;
         }
 
@@ -819,8 +930,13 @@ export class OnboardingConversationManager {
 
       case 'preview_adjustment':
         // Handle adjustment request
-        const adjustment = await this.extractAdjustmentIntent(message);
-        logger.info({ adjustment }, 'Adjustment intent extracted');
+        // Recorded under the current group even when the intent is a restart:
+        // this call belongs to the conversation that is ending.
+        const adjustment = await this.extractAdjustmentIntent(message, owner);
+        // The intent is a label; its details are the owner's request as the
+        // model read it, so they go to debug only (OI-8).
+        logger.info(intentFields(adjustment.intent), 'Adjustment intent extracted');
+        logger.debug({ adjustment }, 'Adjustment intent extracted: details');
 
         if (adjustment.intent === 'confirm') {
           updatedState.currentStep = 'building';
@@ -943,21 +1059,30 @@ export class OnboardingConversationManager {
   /**
    * Extract business story using LLM
    */
-  private async extractBusinessStory(message: string): Promise<BusinessStoryExtraction> {
+  private async extractBusinessStory(message: string, owner: BosLlmOwner): Promise<BusinessStoryExtraction> {
     const factory = getProviderFactory();
+    const context = this.callContext(owner, 'business_story_extraction');
+    /*
+     * Onboarding cannot be switched off (DEC-5, user BQ-1), so `enabled` is
+     * always true here; only the model comes from configuration (FR-12). The
+     * temperature is sent ONLY if one is resolved — these four have always sent
+     * none, and the area row seeds `null` to keep it that way (FR-4).
+     */
+    const settings = await resolveBosLlmSettings('onboarding', 'business_story_extraction');
 
     try {
-      const response = await factory.complete({
-        model: 'gpt-4o',
+      const { result: response } = await withModelFallback(settings, (model) => factory.complete({
+        model,
         messages: [
           { role: 'system', content: BUSINESS_STORY_SYSTEM_PROMPT },
           { role: 'user', content: message },
         ],
         response_format: { type: 'json_object' },
-      });
+        ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+      }, context));
 
       const extracted = JSON.parse(response.content);
-      logger.info({ extracted }, 'Extracted business story');
+      logger.debug({ extracted }, 'Extracted business story'); // derived owner text: debug only (OI-8)
 
       return {
         company_name: extracted.company_name || undefined,
@@ -973,7 +1098,7 @@ export class OnboardingConversationManager {
         needs_booking: extracted.needs_booking ?? undefined,
       };
     } catch (error) {
-      logger.error({ err: error }, 'Business story extraction failed');
+      logExtractionFailure(error, 'Business story extraction failed');
       // Return defaults
       return {
         vertical: 'other',
@@ -988,21 +1113,30 @@ export class OnboardingConversationManager {
   /**
    * Extract client workflow using LLM
    */
-  private async extractClientWorkflow(message: string): Promise<ClientWorkflowExtraction> {
+  private async extractClientWorkflow(message: string, owner: BosLlmOwner): Promise<ClientWorkflowExtraction> {
     const factory = getProviderFactory();
+    const context = this.callContext(owner, 'client_workflow_extraction');
+    /*
+     * Onboarding cannot be switched off (DEC-5, user BQ-1), so `enabled` is
+     * always true here; only the model comes from configuration (FR-12). The
+     * temperature is sent ONLY if one is resolved — these four have always sent
+     * none, and the area row seeds `null` to keep it that way (FR-4).
+     */
+    const settings = await resolveBosLlmSettings('onboarding', 'client_workflow_extraction');
 
     try {
-      const response = await factory.complete({
-        model: 'gpt-4o',
+      const { result: response } = await withModelFallback(settings, (model) => factory.complete({
+        model,
         messages: [
           { role: 'system', content: CLIENT_WORKFLOW_SYSTEM_PROMPT },
           { role: 'user', content: message },
         ],
         response_format: { type: 'json_object' },
-      });
+        ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+      }, context));
 
       const extracted = JSON.parse(response.content);
-      logger.info({ extracted }, 'Extracted client workflow');
+      logger.debug({ extracted }, 'Extracted client workflow'); // derived owner text: debug only (OI-8)
 
       return {
         services: extracted.services || [],
@@ -1012,7 +1146,7 @@ export class OnboardingConversationManager {
         needs_more_details: extracted.needs_more_details ?? false,
       };
     } catch (error) {
-      logger.error({ err: error }, 'Client workflow extraction failed');
+      logExtractionFailure(error, 'Client workflow extraction failed');
       return {
         services: [],
         pricing_model: 'fixed',
@@ -1083,28 +1217,42 @@ export class OnboardingConversationManager {
       needs_channel_insights: needsChannels,
     };
 
-    logger.info({ message, result }, 'Extracted client acquisition from multi-select');
+    logger.info({ result, messageLength: message.length }, 'Extracted client acquisition from multi-select');
     return result;
   }
 
   /**
    * Extract client tracking info using LLM (Q5: How do you track clients?)
    */
-  private async extractClientTracking(message: string): Promise<ClientTrackingExtraction> {
+  /*
+   * UNREACHABLE as of 2026-09-17: nothing calls this — its step is retired (see
+   * `case 'client_tracking'`). Attributed anyway, and covered by unit tests, so
+   * it is correct if it is ever re-wired (KI-D, F-12).
+   */
+  private async extractClientTracking(message: string, owner: BosLlmOwner): Promise<ClientTrackingExtraction> {
     const factory = getProviderFactory();
+    const context = this.callContext(owner, 'client_tracking_extraction');
+    /*
+     * Onboarding cannot be switched off (DEC-5, user BQ-1), so `enabled` is
+     * always true here; only the model comes from configuration (FR-12). The
+     * temperature is sent ONLY if one is resolved — these four have always sent
+     * none, and the area row seeds `null` to keep it that way (FR-4).
+     */
+    const settings = await resolveBosLlmSettings('onboarding', 'client_tracking_extraction');
 
     try {
-      const response = await factory.complete({
-        model: 'gpt-4o',
+      const { result: response } = await withModelFallback(settings, (model) => factory.complete({
+        model,
         messages: [
           { role: 'system', content: CLIENT_TRACKING_SYSTEM_PROMPT },
           { role: 'user', content: message },
         ],
         response_format: { type: 'json_object' },
-      });
+        ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+      }, context));
 
       const extracted = JSON.parse(response.content);
-      logger.info({ extracted }, 'Extracted client tracking');
+      logger.debug({ extracted }, 'Extracted client tracking'); // derived owner text: debug only (OI-8)
 
       return {
         current_method: extracted.current_method || 'nothing',
@@ -1116,7 +1264,7 @@ export class OnboardingConversationManager {
         needs_pipeline: extracted.needs_pipeline ?? false,
       };
     } catch (error) {
-      logger.error({ err: error }, 'Client tracking extraction failed');
+      logExtractionFailure(error, 'Client tracking extraction failed');
       return {
         current_method: 'nothing',
         current_tools: [],
@@ -1355,58 +1503,83 @@ export class OnboardingConversationManager {
     return 'client_acquisition';
   }
 
+  /**
+   * The price in a reply to "what does X cost?", 0 for an explicit "free",
+   * null when there is no price in it.
+   *
+   * "Free" is a whole word or phrase, never a substring: the list used to hold
+   * '0' and was matched with `includes`, so "100", "250 ILS" and "₪1,200" were
+   * all recorded as free, and "freelance rate 90" matched 'free'. A bare zero
+   * counts as free only when it is the whole reply, currency aside ("0", "$0").
+   *
+   * Logs lengths and the parsed value only — never the owner's text (OI-7).
+   */
   private extractPriceFromMessage(message: string): number | null {
     const trimmed = message.trim();
+    const lower = trimmed.toLowerCase();
 
-    // Check for explicit "free" indicators
-    const freePatterns = ['free', 'חינם', 'gratis', '0', 'nothing', 'no charge', 'בחינם', 'ללא תשלום'];
-    if (freePatterns.some(p => trimmed.toLowerCase() === p || trimmed.toLowerCase().includes(p))) {
+    // Remove currency symbols and common currency words to extract the number.
+    // `\b` does not see Hebrew letters as word characters, so the edges are
+    // Unicode-aware lookarounds instead.
+    const cleanedMessage = lower
+      .replace(/[₪$€]/g, ' ')
+      .replace(PRICE_CURRENCY_WORDS, ' ')
+      .trim();
+
+    if (/^0+(?:\.0+)?$/.test(cleanedMessage)
+      || FREE_WHOLE_REPLIES.includes(cleanedMessage.replace(/[.!]+$/, ''))
+      || FREE_PRICE_WORDS.some(word => containsWholeWord(lower, word))) {
+      logger.info({ messageLength: trimmed.length, extracted: 0 }, 'Extracted free price from message');
       return 0;
     }
 
-    // Remove currency symbols and common currency words to extract the number
-    // Supports: ₪, $, €, שקל, שקלים, dollar, dollars, euro, euros, NIS, ILS, USD, EUR
-    const cleanedMessage = trimmed
-      .replace(/[₪$€]/g, '')
-      .replace(/\b(שקל|שקלים|ש"ח|שח|nis|ils|usd|eur|dollar|dollars|euro|euros)\b/gi, '')
-      .trim();
-
-    // Try to find a number in the cleaned message
-    // Match integers or decimals (e.g., 100, 99.99, 1,500)
-    const numberMatch = cleanedMessage.match(/[\d,]+(?:\.\d+)?/);
+    // Integers or decimals, with thousands separators (100, 99.99, 1,500).
+    // Starts on a digit so a stray comma is never taken as the number.
+    const numberMatch = cleanedMessage.match(/\d[\d,]*(?:\.\d+)?/);
     if (numberMatch) {
-      // Remove commas and parse as float
       const parsed = parseFloat(numberMatch[0].replace(/,/g, ''));
       if (!isNaN(parsed) && parsed >= 0) {
-        logger.info({ message, extracted: parsed }, 'Extracted price from message');
+        logger.info({ messageLength: trimmed.length, extracted: parsed }, 'Extracted price from message');
         return parsed;
       }
     }
 
-    logger.warn({ message }, 'Could not extract numeric price from message');
+    logger.warn({ messageLength: trimmed.length }, 'Could not extract numeric price from message');
     return null;
   }
 
   /**
    * Extract adjustment intent from user message
    */
-  private async extractAdjustmentIntent(message: string): Promise<{ intent: string; details: string }> {
+  private async extractAdjustmentIntent(
+    message: string,
+    owner: BosLlmOwner
+  ): Promise<{ intent: string; details: string }> {
     const factory = getProviderFactory();
+    const context = this.callContext(owner, 'adjustment_intent_extraction');
+    /*
+     * Onboarding cannot be switched off (DEC-5, user BQ-1), so `enabled` is
+     * always true here; only the model comes from configuration (FR-12). The
+     * temperature is sent ONLY if one is resolved — these four have always sent
+     * none, and the area row seeds `null` to keep it that way (FR-4).
+     */
+    const settings = await resolveBosLlmSettings('onboarding', 'adjustment_intent_extraction');
 
     try {
-      const response = await factory.complete({
-        model: 'gpt-4o',
+      const { result: response } = await withModelFallback(settings, (model) => factory.complete({
+        model,
         messages: [
           { role: 'system', content: PREVIEW_ADJUSTMENT_PROMPT },
           { role: 'user', content: message },
         ],
         response_format: { type: 'json_object' },
-      });
+        ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+      }, context));
 
       const extracted = JSON.parse(response.content);
       return extracted;
     } catch (error) {
-      logger.error({ err: error }, 'Adjustment intent extraction failed');
+      logExtractionFailure(error, 'Adjustment intent extraction failed');
       return { intent: 'confirm', details: '' };
     }
   }
@@ -1496,21 +1669,23 @@ export class OnboardingConversationManager {
 
       case 'modify_services':
         // For now, just log - future: allow adding/editing services
-        logger.info({ details }, 'Service modification requested (not yet implemented)');
+        // `details` is the owner's request as the model read it: debug only (OI-8).
+        logger.debug({ details }, 'Service modification requested (not yet implemented)');
         break;
 
       case 'modify_pipeline':
         // For now, just log - future: allow editing pipeline stages
-        logger.info({ details }, 'Pipeline modification requested (not yet implemented)');
+        logger.debug({ details }, 'Pipeline modification requested (not yet implemented)');
         break;
 
       case 'change_payment_mode':
         // For now, just log - future: allow changing payment mode
-        logger.info({ details }, 'Payment mode change requested (not yet implemented)');
+        logger.debug({ details }, 'Payment mode change requested (not yet implemented)');
         break;
 
       default:
-        logger.info({ intent: adjustment.intent, details }, 'Unknown adjustment intent');
+        logger.info({ ...intentFields(adjustment.intent), detailsLength: details.length }, 'Unknown adjustment intent');
+        logger.debug({ intent: adjustment.intent, details }, 'Unknown adjustment intent: details');
     }
   }
 
@@ -1976,12 +2151,43 @@ export class OnboardingConversationManager {
   /**
    * Get initial state for a new conversation
    */
-  getInitialState(language: Language = 'en'): OnboardingState {
+  getInitialState(language: Language = 'en'): AttributedOnboardingState {
     return {
       currentStep: 'language_selection',
       collectedData: {},
       language,
+      attributionGroupId: newBosGroupId(),
     };
+  }
+
+  /**
+   * Give a state restored from a snapshot saved before Layer 1.5 its grouping
+   * id, so a resumed conversation never records a call without one (FR-4c).
+   * Idempotent: a state that already has a valid group keeps it. A stored value
+   * that is not a UUID is replaced, because the ledger would drop it and
+   * silently ungroup the whole conversation (SA CR-3). Pure — the caller must
+   * use the RETURNED state.
+   */
+  ensureAttributionGroupId(state: OnboardingState): AttributedOnboardingState {
+    if (isUuid(state.attributionGroupId)) {
+      return { ...state, attributionGroupId: state.attributionGroupId };
+    }
+    const attributionGroupId = newBosGroupId();
+    logger.info({ attributionGroupId }, 'Backfilled the grouping id of a resumed onboarding conversation');
+    return { ...state, attributionGroupId };
+  }
+
+  /**
+   * The ledger context for one onboarding LLM call: the owner's account, the
+   * `onboarding` area, a catalog call name and this conversation's group.
+   */
+  private callContext(owner: BosLlmOwner, callName: BosLlmCallName<'onboarding'>) {
+    return buildBosCallContext({
+      userId: owner.userId,
+      area: 'onboarding',
+      callName,
+      groupId: owner.groupId,
+    });
   }
 
   /**

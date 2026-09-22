@@ -6,12 +6,44 @@
  *
  * This endpoint is designed for the V6 declarative test page to validate
  * that compiled workflows are executable with real plugins.
+ *
+ * ── ADMIN ONLY, and that is not over-caution ──────────────────────────────
+ * The caller supplies `workflow` — arbitrary PILOT DSL — which this route executes
+ * server-side through `WorkflowPilot` with a service-role Supabase client. That is a
+ * remote code-execution surface in the shape of a test harness: an attacker-authored
+ * multi-step program of plugin calls, LLM steps and control flow, run by the platform's
+ * own engine.
+ *
+ * Until 2026-09-21 it was completely unauthenticated, and it took the account to run as
+ * from `body.user_id`. A plain session gate would only have converted "anyone on the
+ * internet" into "anyone who signed up", which is not a meaningful bound on arbitrary
+ * server-side execution — so identity comes from `requireAdmin()` and the workflow always
+ * runs as the calling admin. `scripts/qa-v6-execution-layer.ts` is our own script, so the
+ * admin requirement costs nothing.
+ *
+ * Also removed in the same change; all three were parts of one bug:
+ *   - `body.user_id` in every form. It is no longer read; the session is the only source.
+ *   - The email-resolution branch, which called `supabase.auth.admin.listUsers()`
+ *     unpaginated (so it only ever saw the first 50 accounts) to map an arbitrary email
+ *     to a UUID.
+ *   - The `00000000-0000-0000-0000-000000000000` fallback, which meant a FAILED or
+ *     unmatched lookup still executed the workflow instead of refusing. Nothing here
+ *     falls back any more: no admin, no execution.
+ *
+ * Middleware does not authenticate `/api/*` (middleware.ts:83), so this gate is the only
+ * thing in front of the handler.
+ *
+ * See docs/workplans/IDENTITY_SWEEP_WORKPLAN.md § Slice 0.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabaseServer'
 import { WorkflowPilot } from '@/lib/pilot/WorkflowPilot'
+import { requireAdmin } from '@/lib/admin/requireAdminRoute'
+import { createLogger } from '@/lib/logger'
 import { randomUUID } from 'crypto'
+
+const logger = createLogger({ module: 'API', route: '/api/v6/execute-test' })
 
 // ============================================================================
 // Types
@@ -20,7 +52,6 @@ import { randomUUID } from 'crypto'
 interface ExecuteTestRequest {
   workflow: any[]
   plugins_required: string[]
-  user_id?: string
   workflow_name?: string
   input_variables?: Record<string, any>
 }
@@ -46,15 +77,33 @@ interface ExecuteTestResponse {
 // ============================================================================
 
 export async function POST(request: NextRequest) {
-  console.log('[V6-TEST-EXEC] Test execution request received')
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID()
+  const requestLogger = logger.child({ correlationId })
 
   const startTime = Date.now()
 
   try {
+    // Gate BEFORE request.json(). Parsing an attacker-authored workflow body is work we
+    // should not do for an unauthenticated caller.
+    const gate = await requireAdmin(requestLogger)
+    if (gate instanceof NextResponse) return gate
+    const { user } = gate
+
+    // The workflow always runs as the calling admin. There is no "run as" parameter, and
+    // there must never be one on this route.
+    const userId = user.id
+
     // Parse request body
     const body: ExecuteTestRequest = await request.json()
-    console.log('[V6-TEST-EXEC] Workflow steps:', body.workflow?.length)
-    console.log('[V6-TEST-EXEC] Plugins required:', body.plugins_required)
+
+    requestLogger.info(
+      {
+        adminUserId: userId,
+        stepCount: body.workflow?.length,
+        pluginCount: body.plugins_required?.length
+      },
+      'V6 test execution requested'
+    )
 
     // Validate request
     if (!body.workflow || !Array.isArray(body.workflow) || body.workflow.length === 0) {
@@ -67,44 +116,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Create Supabase client (admin client for user lookup)
     const supabase = createServerSupabaseClient()
-
-    // Resolve user ID - handle both UUID and email formats
-    let userId: string
-
-    if (!body.user_id || body.user_id === 'test-user') {
-      // Default test user - use a fixed UUID for testing
-      userId = '00000000-0000-0000-0000-000000000000'
-      console.log('[V6-TEST-EXEC] Using default test user UUID')
-    } else if (body.user_id.includes('@')) {
-      // Email provided - look up the user UUID from Supabase Auth
-      console.log('[V6-TEST-EXEC] Looking up user by email:', body.user_id)
-
-      // Use Supabase Admin API to query auth.users
-      const { data: { users }, error } = await supabase.auth.admin.listUsers()
-
-      if (error) {
-        console.error('[V6-TEST-EXEC] Failed to list users:', error)
-        // Fallback: use default test UUID if lookup fails
-        userId = '00000000-0000-0000-0000-000000000000'
-        console.log('[V6-TEST-EXEC] Lookup failed, using default test UUID')
-      } else {
-        const user = users.find(u => u.email === body.user_id)
-        if (user) {
-          userId = user.id
-          console.log('[V6-TEST-EXEC] Resolved user UUID:', userId)
-        } else {
-          // User not found - use default test UUID
-          userId = '00000000-0000-0000-0000-000000000000'
-          console.log('[V6-TEST-EXEC] User not found, using default test UUID')
-        }
-      }
-    } else {
-      // Assume it's already a UUID
-      userId = body.user_id
-      console.log('[V6-TEST-EXEC] Using provided user UUID:', userId)
-    }
 
     // Create temporary in-memory agent for execution
     // Use valid UUID format for agent ID (required by workflow_executions table)
@@ -123,14 +135,11 @@ export async function POST(request: NextRequest) {
       updated_at: new Date().toISOString()
     }
 
-    console.log('[V6-TEST-EXEC] Created temporary agent:', temporaryAgent.id)
-
     // Initialize WorkflowPilot
     const pilot = new WorkflowPilot(supabase)
 
-    // Execute workflow
-    console.log('[V6-TEST-EXEC] Starting workflow execution...')
-
+    // Execute. `input_variables` and the workflow body are caller data and are never
+    // logged — only their shape (counts, ids) is.
     const executionResult = await pilot.execute(
       temporaryAgent,
       userId,
@@ -143,9 +152,17 @@ export async function POST(request: NextRequest) {
 
     const executionTime = Date.now() - startTime
 
-    console.log('[V6-TEST-EXEC] Execution complete in', executionTime, 'ms')
-    console.log('[V6-TEST-EXEC] Success:', executionResult.success)
-    console.log('[V6-TEST-EXEC] Steps completed:', executionResult.stepsCompleted)
+    requestLogger.info(
+      {
+        adminUserId: userId,
+        temporaryAgentId: temporaryAgent.id,
+        durationMs: executionTime,
+        success: executionResult.success,
+        stepsCompleted: executionResult.stepsCompleted,
+        stepsFailed: executionResult.stepsFailed
+      },
+      'V6 test execution complete'
+    )
 
     // Return result
     if (executionResult.success) {
@@ -176,7 +193,7 @@ export async function POST(request: NextRequest) {
       )
     }
   } catch (error) {
-    console.error('[V6-TEST-EXEC] Execution error:', error)
+    requestLogger.error({ err: error }, 'V6 test execution failed')
 
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
 
@@ -198,6 +215,10 @@ export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, {
     status: 200,
     headers: {
+      // Retained as-is from before the gate was added: changing CORS is a separate
+      // decision with its own blast radius. It grants nothing by itself — a browser
+      // will not attach cookies to a cross-origin request under `*`, so a cross-site
+      // caller cannot satisfy requireAdmin().
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization'

@@ -7,6 +7,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { WebsiteAIContentService } from '@/lib/services/WebsiteAIContentService';
+import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
+import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'EnhanceTestimonialAPI' });
@@ -29,16 +31,40 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const validated = EnhanceTestimonialSchema.parse(body);
 
-    requestLogger.info({ userId: user.id, language: validated.language }, 'Enhancing testimonial');
+    // One usage group per enhancement request; never taken from the request.
+    const groupId = newBosGroupId();
+    requestLogger.info({ userId: user.id, language: validated.language, groupId }, 'Enhancing testimonial');
 
     const aiService = new WebsiteAIContentService();
-    const enhancedQuote = await aiService.enhanceTestimonial(validated.quote, validated.language);
+    // One AI action, one audit entry (Layer 3, FR-12).
+    const enhanced = await runAiAction(
+      { area: 'website', actionType: 'website_testimonial_enhance', groupId, trigger: 'user', accountId: user.id },
+      () =>
+        aiService.enhanceTestimonial(validated.quote, validated.language, {
+          userId: user.id,
+          groupId,
+        })
+    );
+
+    // Switched off (Layer 2 FR-14): HTTP 200 with a code, not a 5xx — see the
+    // regenerate route for why. The owner's quote is returned untouched.
+    if (!enhanced.ok) {
+      requestLogger.info(
+        { userId: user.id, reason: 'disabled' },
+        'Testimonial enhancement refused: website AI writing is switched off'
+      );
+      return NextResponse.json({
+        success: false,
+        code: enhanced.code,
+        originalQuote: validated.quote
+      });
+    }
 
     requestLogger.info({ userId: user.id }, 'Testimonial enhanced successfully');
 
     return NextResponse.json({
       success: true,
-      enhancedQuote,
+      enhancedQuote: enhanced.text,
       originalQuote: validated.quote
     });
   } catch (error) {

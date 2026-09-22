@@ -2,9 +2,14 @@
 // API route to create Stripe checkout session for custom credit purchases or boost packs
 
 import { NextRequest, NextResponse } from 'next/server';
+import { AuditTrail as auditTrail } from '@/lib/services/AuditTrailService';
+import { createLogger } from '@/lib/logger';
 import { createServerClient } from '@supabase/ssr';
+import { supabaseServer } from '@/lib/supabaseServer';
 import { cookies } from 'next/headers';
 import { getStripeService } from '@/lib/stripe/StripeService';
+
+const logger = createLogger({ module: 'StripeCreateCheckoutAPI' });
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,14 +30,10 @@ export async function POST(request: NextRequest) {
     // Get authenticated user
     const { data: { user }, error: authError } = await supabase.auth.getUser();
 
-    console.log('👤 [Stripe Checkout] Auth check:', {
-      hasUser: !!user,
-      userId: user?.id,
-      error: authError?.message
-    });
+    logger.debug({ hasUser: !!user, userId: user?.id, hasAuthError: !!authError }, 'Stripe checkout auth check');
 
     if (authError || !user) {
-      console.error('❌ [Stripe Checkout] Auth failed:', authError);
+      logger.error({ err: authError }, 'Stripe checkout auth failed');
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -88,7 +89,15 @@ export async function POST(request: NextRequest) {
       }
 
       session = await stripeService.createCustomCreditSubscription({
-        supabase,
+        // P0-FT-RLS (W-4): this reaches StripeService.getOrCreateCustomer, which
+        // UPDATEs/INSERTs `user_subscriptions` to persist `stripe_customer_id`.
+        // That table no longer accepts writes from `anon`/`authenticated`
+        // (supabase/migrations/20261001_user_subscriptions_write_lockdown.sql), and
+        // neither result is checked, so with the cookie client it would fail 42501
+        // in silence: a paying user with no row would never be credited. `userId`
+        // below comes from the verified session and every statement inside is
+        // `.eq('user_id', userId)`.
+        supabase: supabaseServer,
         userId: user.id,
         email: user.email!,
         name: userName,
@@ -98,27 +107,24 @@ export async function POST(request: NextRequest) {
       });
 
       // AUDIT TRAIL: Log subscription checkout initiated
-      await fetch(`${baseUrl}/api/audit/log`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-user-id': user.id
-        },
-        body: JSON.stringify({
+      // In-process, not an HTTP call to /api/audit/log: that route now takes the
+      // account from the session, which a server-to-server fetch does not carry.
+      // Severity and flags come from EVENT_METADATA, set to exactly what this
+      // route sent before (Layer 3 step 0, Q-1, WC-12). Not awaited.
+      void auditTrail
+        .log({
           action: 'SUBSCRIPTION_CHECKOUT_INITIATED',
           entityType: 'subscription',
           entityId: session.id,
-          userId: user.id,
           resourceName: `${pilotCredits.toLocaleString()} Pilot Credits/month`,
           details: {
             pilot_credits: pilotCredits,
             session_id: session.id,
             timestamp: new Date().toISOString()
           },
-          severity: 'info',
-          complianceFlags: ['SOC2', 'FINANCIAL']
+          userId: user.id,
         })
-      });
+        .catch((err: unknown) => logger.error({ err, userId: user.id }, 'Audit entry could not be queued'));
 
     } else if (purchaseType === 'boost_pack') {
       // One-time boost pack purchase
@@ -130,7 +136,8 @@ export async function POST(request: NextRequest) {
       }
 
       session = await stripeService.createBoostPackCheckout({
-        supabase,
+        // P0-FT-RLS (W-4): same `getOrCreateCustomer` write path as above.
+        supabase: supabaseServer,
         userId: user.id,
         email: user.email!,
         name: userName,
@@ -140,27 +147,24 @@ export async function POST(request: NextRequest) {
       });
 
       // AUDIT TRAIL: Log boost pack checkout initiated
-      await fetch(`${baseUrl}/api/audit/log`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-user-id': user.id
-        },
-        body: JSON.stringify({
+      // In-process, not an HTTP call to /api/audit/log: that route now takes the
+      // account from the session, which a server-to-server fetch does not carry.
+      // Severity and flags come from EVENT_METADATA, set to exactly what this
+      // route sent before (Layer 3 step 0, Q-1, WC-12). Not awaited.
+      void auditTrail
+        .log({
           action: 'BOOST_PACK_CHECKOUT_INITIATED',
           entityType: 'boost_pack',
           entityId: boostPackId,
-          userId: user.id,
           resourceName: 'Boost Pack Purchase',
           details: {
             boost_pack_id: boostPackId,
             session_id: session.id,
             timestamp: new Date().toISOString()
           },
-          severity: 'info',
-          complianceFlags: ['SOC2', 'FINANCIAL']
+          userId: user.id,
         })
-      });
+        .catch((err: unknown) => logger.error({ err, userId: user.id }, 'Audit entry could not be queued'));
     }
 
     return NextResponse.json({
@@ -169,7 +173,7 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('Error creating checkout session:', error);
+    logger.error({ err: error }, 'Creating the checkout session failed');
     return NextResponse.json(
       { error: error.message || 'Failed to create checkout session' },
       { status: 500 }

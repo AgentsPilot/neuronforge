@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
+import { clientLogger } from '@/lib/logger/client'
 import Link from 'next/link'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
 import AgentHistoryBlock from '@/components/dashboard/AgentHistoryBlock'
@@ -401,24 +402,15 @@ export default function AgentPage() {
   }
 
   const fetchShareRewardStatus = async () => {
+    // Reads the customer-facing projection, not `/api/admin/reward-config`.
+    // That admin route is now gated, and it returns the whole reward ruleset —
+    // amounts, eligibility thresholds, anti-abuse caps — which a customer page
+    // has no business receiving. This one returns a single boolean.
     try {
-      const response = await fetch('/api/admin/reward-config')
+      const response = await fetch('/api/rewards/agent-sharing')
       const result = await response.json()
 
-      if (!result.success || !result.rewards) {
-        setShareRewardActive(false)
-        return
-      }
-
-      const shareReward = result.rewards.find((r: any) => r.reward_key === 'agent_sharing')
-
-      if (!shareReward) {
-        setShareRewardActive(false)
-        return
-      }
-
-      const isActive = shareReward.is_active ?? false
-      setShareRewardActive(isActive)
+      setShareRewardActive(result?.data?.isActive === true)
     } catch (error) {
       console.error('Error fetching share reward config:', error)
       setShareRewardActive(false)
@@ -807,10 +799,17 @@ export default function AgentPage() {
         setShowSuccessNotification(true)
         setTimeout(() => setShowSuccessNotification(false), 5000)
       } else {
-        setCreditsAwarded(0)
+        // P0-FT-RLS (SA RC9-7): do not celebrate a zero-credit reward. The reward
+        // upsert writes `user_subscriptions` from the browser, which the lock-down
+        // migration blocks (supabase/migrations/20261001_user_subscriptions_write_lockdown.sql).
+        // The share succeeded and RewardService returns before writing any ledger
+        // row, so the reward can be back-filled later.
         setQualityScoreAwarded(Math.round(finalScore.overall_score))
-        setShowSuccessNotification(true)
-        setTimeout(() => setShowSuccessNotification(false), 5000)
+        clientLogger.error(
+          { err: new Error(rewardResult.error || rewardResult.message), agentId: agent.id },
+          'Agent shared but the sharing reward could not be applied'
+        )
+        alert('Agent shared. The credit reward could not be applied right now and will be credited later.')
       }
 
       setHasBeenShared(true)

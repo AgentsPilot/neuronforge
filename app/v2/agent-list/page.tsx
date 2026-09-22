@@ -7,7 +7,7 @@ import React, { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
-import { useMoveToCalibrationAfterCreation } from '@/lib/utils/featureFlags'
+import { isMoveToCalibrationAfterCreationEnabled } from '@/lib/utils/featureFlags'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import { ModernHelpDialog } from '@/components/v2/ModernHelpDialog'
 import {
@@ -164,7 +164,7 @@ const ToastNotification = ({
 export default function V2AgentListPage() {
   const router = useRouter()
   const { user } = useAuth()
-  const calibrationGateOn = useMoveToCalibrationAfterCreation()
+  const calibrationGateOn = isMoveToCalibrationAfterCreationEnabled()
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')

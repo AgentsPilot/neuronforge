@@ -1,23 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 
 const logger = createLogger({ module: 'AdminUsersAPI' });
 
+/*
+ * ⚠️ This route is SCHEDULED FOR DELETION (slice 7, BQ-2 option B).
+ *
+ * It manages the admin list in `system_settings_config.admin_users` — a store
+ * that does NOT grant admin access. `AdminAccessService` reads the `admin_users`
+ * TABLE. So an operator who "adds an admin" here gets silence, while until this
+ * commit any signed-in customer could perform the write.
+ *
+ * Gating it does not make it work. It stops a customer writing to it. Reviewers
+ * should know they are gating a lie for a slice or two; slice 7 removes it.
+ */
+
 // GET - Fetch all admin users
+//
+// NOTE: this GET is NOT a read. When the list is empty it UPSERTS the caller in
+// as `super_admin` with the service role (the "bootstrap" branch below), so
+// before this gate any signed-in customer who arrived first wrote themselves
+// into the config through a GET. That is why it is gated in the write slice
+// rather than the read slice (workplan finding N-1).
 export async function GET(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
   try {
-    const user = await getUser();
-    if (!user) {
-      return NextResponse.json(
-        { success: false, error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+    const { user } = gate;
 
     requestLogger.info({ userId: user.id }, 'Fetching admin users');
 
@@ -132,13 +148,11 @@ export async function POST(request: NextRequest) {
   const requestLogger = logger.child({ correlationId });
 
   try {
-    const user = await getUser();
-    if (!user) {
-      return NextResponse.json(
-        { success: false, error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+    // Admin gate. Must precede the body parse (FR-5) — before this commit any
+    // signed-in customer could add or remove entries in the admin list.
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+    const { user } = gate;
 
     const body = await request.json();
     const { action, email, role, userId } = body;

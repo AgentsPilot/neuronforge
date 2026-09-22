@@ -134,7 +134,16 @@ export class StateManager {
     providedExecutionId?: string,
     runMode?: 'calibration' | 'production'  // Separate from execution_type (manual/scheduled)
   ): Promise<string> {
-    // Check execution quota before creating the execution
+    // Check execution quota before creating the execution.
+    // P0-FT-RLS (SA RC9-8): `this.supabase` is whatever the caller passed —
+    // usually the *user-cookie* client (run-agent, run-agent-sandbox, calibrate).
+    // `user_subscriptions` no longer accepts writes from `anon`/`authenticated`
+    // (supabase/migrations/20261001_user_subscriptions_write_lockdown.sql), so only
+    // ExecutionService methods that read, or that write through the SECURITY
+    // DEFINER `increment_executions_used` RPC (recordExecution), may be called
+    // here. Never call the quota-writing methods (applyExecutionQuotaBasedOnTokens,
+    // updateExecutionQuota) from this instance — they issue a plain UPDATE and
+    // would fail 42501.
     const executionService = new ExecutionService(this.supabase);
 
     try {

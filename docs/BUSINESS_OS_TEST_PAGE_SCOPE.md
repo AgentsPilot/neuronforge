@@ -1,6 +1,6 @@
 # Business OS Test Page — Scope & Functionality
 
-> **Last Updated**: 2026-08-09
+> **Last Updated**: 2026-09-18
 
 **Location:** `app/test-business-os/page.tsx`
 **Route:** `/test-business-os`
@@ -18,7 +18,7 @@ The Business OS Test Page is a multi-tabbed harness for exercising Business OS A
 
 Because every `/api/business-os/*` (and `/api/onboarding/*`) route authenticates via `getUser()`, this page acts as whoever you are currently authenticated as, and the current-user panel shows exactly which account that is. This removes the "typed userId vs. session user" mismatch that the Form Tester on `/test-plugins-v2` has to manage.
 
-This document describes the page as it exists today (shared chrome + the Account Setup helper + a placeholder Overview tab) and is intended to grow **one section per feature tab** as tabs are added.
+This document describes the page as it exists today: the shared chrome, the Account Setup helper, and four tabs (**Overview**, **Modules**, **Danger Zone**, **LLM Usage**). It grows **one section per feature tab** as tabs are added. The Danger Zone tab is not yet documented here (follow-up F-5).
 
 ## Table of Contents
 
@@ -29,8 +29,9 @@ This document describes the page as it exists today (shared chrome + the Account
   - [Last API Response viewer](#last-api-response-viewer)
   - [Debug Logs panel](#debug-logs-panel)
 - [Tabs](#tabs)
-  - [Tab: Overview (placeholder)](#tab-overview-placeholder)
+  - [Tab: Overview](#tab-overview)
   - [Tab: Modules](#tab-modules)
+  - [Tab: LLM Usage](#tab-llm-usage)
 - [Adding a New Tab](#adding-a-new-tab)
 - [Technical Architecture](#technical-architecture)
 - [Related Documentation](#related-documentation)
@@ -96,11 +97,11 @@ A convenience helper to bootstrap the prerequisites most Business OS features ne
 
 Feature tabs are added over time; each will be documented here as its own subsection following the same structure as the Test Plugins V2 doc (**Purpose / Features / API Endpoints Used / Use Cases**).
 
-### Tab: Overview (placeholder)
+The tabs today are **Overview**, **Modules**, **Danger Zone** and **LLM Usage**. Danger Zone (business data reset and purge preview) is not yet documented in this file (follow-up F-5).
 
-The only tab wired up today. It explains the shared shell and confirms no feature tabs are connected yet. It exists so the page renders meaningfully before the first real tab is built.
+### Tab: Overview
 
-_(Feature tabs will be inserted above/around this section as they are implemented.)_
+The default tab. It explains the shared shell and hosts the Current User panel and the Account Setup helper.
 
 ### Tab: Modules
 
@@ -133,6 +134,133 @@ _(Feature tabs will be inserted above/around this section as they are implemente
 - Confirm no double-logging: after `create_contact`, inspect the contact's `crm_activities` — exactly one `contact_created` (the trigger's), none added by the executor. The same delegate-only rule holds for Scheduling (booking → CRM activity via T1/T2) and Payments (succeeded payment → CRM activity via T3, invoice paid via T4).
 
 **Per-module user docs:** [crm-plugin.md](/docs/plugins/crm-plugin.md) · [scheduling-plugin.md](/docs/plugins/scheduling-plugin.md) · [payments-plugin.md](/docs/plugins/payments-plugin.md) · [intake-plugin.md](/docs/plugins/intake-plugin.md) · [website-plugin.md](/docs/plugins/website-plugin.md).
+
+### Tab: LLM Usage
+
+**Purpose:** lets a **platform admin** confirm, without SQL, that Business OS AI calls are recorded against the right business with the right area (`feature`), call name (`component`) and grouping id (`session_id`). It is the first UI of the admin LLM usage report (Layer 1.1, [requirement](/docs/requirements/BUSINESS_OS_LLM_USAGE_VERIFICATION_LAYER1_1_REQUIREMENT.md)).
+
+The tab is read-only:
+- it writes nothing, other than `AdminAccessService`'s own admin binding;
+- it makes no LLM call;
+- it emits no audit event.
+
+> **Admins only.** Both APIs check admin rights on the server through `AdminAccessService` (the `admin_users` table), never the user-writable profile role. The page being internal is not the protection. A non-admin sees "Admins only" and no data.
+
+> **Exception to the session model.** Every other tab acts as the logged-in session user. This tab **reads another business's** usage-ledger metadata. That's allowed for three reasons:
+> - it is read-only;
+> - it returns no prompts, payloads, error messages or emails;
+> - the server checks admin rights on every request.
+
+**Features:**
+- **Business selector:**
+  - Search business profiles by company name. At most 50 results are shown. `%`, `_` and `\` in the search match literally; a `*` acts as a wildcard.
+  - **My account** selects your own account.
+  - **Paste an account id** for an account with no business profile.
+  - A platform account (the all-zero id, or `SYSTEM_ADMIN_USER_ID`) can't be the selected business: the tab warns, and the API answers 400.
+- **Start time:**
+  - A date-time in your local zone; the default is 1 hour ago.
+  - **Start now** sets it to the current moment.
+  - At most 7 days back, with 60 s of clock skew allowed.
+  - The server fixes the window end at the moment it receives the request, and shows it.
+- **Refresh** and **auto-refresh** (off by default; every 10, 30 or 60 s):
+  - Requests never overlap.
+  - Auto-refresh pauses while the browser tab is hidden.
+  - It stops when you change the business or start time; the next manual Refresh resumes it.
+  - It turns off on any failed request, and stops when you leave the tab.
+- **Status summary:**
+  - Shows the business, the window, and the **platform account ids checked**, so an environment mismatch is visible.
+  - Shows a status per check, always with a text label:
+    - **Pass**;
+    - **Fail**;
+    - **Incomplete**: the check couldn't read all rows; never shown as Pass;
+    - **Info**: informational, or no data;
+    - **Not checked**: no refresh yet.
+  - A warning appears if `SYSTEM_ADMIN_USER_ID` is set but isn't a UUID; only the all-zero id is then checked.
+- **Debug Logs:** manual refreshes and every error are logged. Successful automatic refreshes are not.
+
+**The checks:**
+
+| Check | What it shows | Pass rule |
+|---|---|---|
+| 1. Calls | The business's Business OS calls in the window (`feature` starting `business-os`, or a legacy value): time, area, call name, grouping id, tokens, estimated cost, success | Fail if any row has a legacy label, an unknown area (e.g. `business-os-webiste`), a call name not in the catalog for its area, or no grouping id. Two exemptions: the chat cache-hit row (`BizQLPlanCache`) is exempt from the call-name flag only; the excluded chat v1 intent parser is exempt from both. Info when there are no calls |
+| 2. Nothing on the platform account | Business OS rows on the platform account ids, **platform-wide** (a mis-attributed call has lost its account), with a feature × call-name breakdown | Pass only when the exact count is 0 |
+| 3. No legacy labels | (a) legacy feature values on the business and on the platform account; (b) the shared helper's default label `onboarding` / `simple-complete` on the business (a mislabelled call); (c) that label on the platform account, with up to 50 timestamps | Fail for (a) or (b). (c) is **Info only**. Since Layer 1.5 the onboarding conversation records against the owner, so **no live caller should write this label**: any row is worth investigating (a website, intake or onboarding call that lost its context). It stays Info until an observation period has passed (follow-up F-7). A `generate-prompt-ideas` row (feature `onboarding`, a different call name, a real user) never matches: the check looks for the label pair |
+| 4. Grouped by action | One row per grouping id: area (or "mixed"), call names in order with repeat counts, tokens, cost, first and last time. Ungrouped calls are listed separately | Fail if an ungrouped call isn't exempt. Insight runs share one grouping id across businesses, and only this business's calls are counted. A missing plan-cache store embedding (Layer 1 KI-2) is not a failure |
+| 5. Usage card view | The owner usage card's own computation (the `business_os_usage_summary` function, falling back to rows): categories, calls, tokens, credits, and the feature values that fall into `other` | Fail if an observed Business OS value maps to `other`. Info with no usage |
+| Area totals | Calls, tokens and estimated cost per area — including separate **`onboarding`** and **`images`** lines (Layer 1.5) — plus a "legacy" line and, when present, an "unknown area" line. A note under the table explains image rows | Informational |
+
+**Caps and completeness:**
+- **Pass/Fail comes from all rows read:** one paged read of up to **5,000** Business OS calls, plus exact counts.
+- **Only the display is capped:** 500 calls, 500 groups, 500 platform breakdown rows and 50 timestamps. Each capped list shows a warning.
+- **Over 5,000 calls:** if the business has more than 5,000 Business OS calls in the window, Checks 1, 3 and 4 and the area totals show **Incomplete**, with "more than 5,000 Business OS calls in this window; narrow the start time".
+- **Read failures:** a read that fails shows its check as **Fail** with a safe message. The other checks still show.
+
+**Onboarding and AI image rows (Layer 1.5):**
+
+Layer 1.5 ([requirement](/docs/requirements/BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md)) adds two areas. Both appear in every check and in the area totals with no change to any check's rules.
+
+| Area (`feature`) | Call names (`component`) | Grouping id | Notes |
+|---|---|---|---|
+| `onboarding` (`business-os-onboarding`) | `business_story_extraction`, `client_workflow_extraction`, `adjustment_intent_extraction`; `client_tracking_extraction` exists in the catalog but **can't fire** (KI-D) | One per onboarding conversation; a restart starts a new one | Recorded on the **new owner's** account. At most three call types appear in a session; `client_workflow_extraction` can appear **twice** in one group (Check 4 shows `×2`), which is expected, not a duplicate |
+| `images` (`business-os-images`) | `image_generation` | The website editor request that asked for the image | One row per image **generated**. **0 tokens is expected**: an image is priced per image, not per token, so its dollar cost shows on the `images` line and it adds **no credits** anywhere. A repeated identical request is served from the image library and writes **no** row (KI-B): the ledger counts generations, not requests. A failed generation writes a row with 0 tokens, `$0.0000` and `Success: no` |
+
+How a zero-token image row reads:
+- **Check 1:** `0` tokens and its cost, e.g. `$0.2500 (estimated)`; no flags.
+- **Check 5:** the `images` category shows `no (no tokens)` for "shown on card": the owner's card hides a category with no tokens. Its calls are still counted.
+- **Area totals:** `images · N calls · 0 tokens · $X`.
+- The owner's usage card: no credit, allowance, ring or `remaining` figure moves because of an image. Only the call count rises, and the card doesn't show it.
+
+> **Mid-rollout:** because the area totals list every catalog area, the `onboarding` and `images` lines appear (with zeros) as soon as the catalog ships, before any row is written. That is expected.
+
+**Check 5 window caveat:**
+- Check 5 uses the start time you chose but has an **open end**, because the card's database function has no end bound.
+- The owner's card itself uses fixed ranges (24 hours to 90 days), so its figures match Check 5 only when the windows match.
+- Estimated costs inherit Layer 1's known pricing gaps.
+
+**API endpoints used (new, admin-only):**
+- `GET /api/admin/business-os/llm-usage/businesses?search=<text>`: business ids and company names (no emails), plus the platform account ids.
+- `GET /api/admin/business-os/llm-usage?accountId=<uuid>&since=<ISO 8601>&trigger=manual|auto`: the report.
+- **Both routes:**
+  - Order of checks: 401 signed out → 403 not an admin → 400 invalid input.
+  - Server logs are `info` for manual requests and `debug` for automatic ones, and never contain business names.
+
+**Components:**
+- `components/test-business-os/llm-usage/LlmUsageVerification.tsx`, with `BusinessPicker`, `WindowControls`, `StatusSummary` and `CheckPanels`;
+- `hooks/useLlmUsageAutoRefresh.ts` and `hooks/llmUsageRefreshMachine.ts`.
+
+The tab imports only types from server modules. All labels and statuses are computed on the server.
+
+**Use case: verify a test session (NON-PRODUCTION ENVIRONMENT ONLY)**
+
+> **Before you start:**
+> - The insight run step spends LLM tokens for **every active business** in the environment and permanently adds usage rows.
+> - Check 2 is platform-wide, so other activity in the same project during the window can show up there.
+> - The dev server's `SYSTEM_ADMIN_USER_ID` and `CRON_SECRET` must match the project being tested.
+
+1. As an admin, open **LLM Usage**, select the test business and click **Start now**. Optionally turn on auto-refresh.
+2. As the test business, in another browser, run these flows:
+   - a chat question twice (a cache miss, then a hit);
+   - the daily briefing;
+   - a full website generation;
+   - a landing page;
+   - a testimonial enhance;
+   - an intake form generation and a question inference;
+   - a public enquiry (lead);
+   - an insight run;
+   - *(Layer 1.5)* an onboarding conversation as a **new** owner, and an AI image generated from the website editor, then the same image request again.
+3. Click **Refresh**. Expect:
+   - Check 1 lists the calls with correct areas and call names, and no flags.
+   - Check 2 is Pass.
+   - Check 3 is Pass, and (c) shows zero helper-label rows for the window.
+   - Check 4 shows one group per action.
+   - Check 5 is Pass.
+   - The area totals match Check 1, with the onboarding calls on the `onboarding` line and the image cost on the `images` line (the repeated image adds no row).
+4. Optionally compare with the Layer 1 ledger queries ([workplan §6.4](/docs/workplans/BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_WORKPLAN.md)), using the **same start and end** shown in the status summary.
+
+**Other use cases:**
+- Confirm a non-admin gets "Admins only".
+- Paste the all-zero id and confirm the platform-account message.
+- Hide the browser tab and confirm auto-refresh pauses.
 
 ---
 
@@ -231,3 +359,5 @@ Could not run a live session/DB. The following need a manual pass on `/test-busi
 | 2026-08-09 | Modules tab | Added the **Modules** tab: a schema-driven tester for internal Business OS modules (`visibility: 'business_os'` plugins; CRM first), running as the session user. Reuses existing endpoints only (Option A — no new APIs): `available?includeBusinessOs=true` (now returns `visibility`), `action-schema`, `execute`. New component `components/test-business-os/BosModuleTester.tsx`. |
 | 2026-08-09 | Chrome layout | Moved the **Current User** panel and **Account Setup** helper to render on the **Overview tab only** (previously always-visible chrome) — they are one-time account setup, not repeated per feature tab. The **Last API Response** viewer and **Debug Logs** remain always-visible. |
 | 2026-08-10 | Scheduling + Payments modules | The Modules tab now also lists **Scheduling** and **Payments** (both `visibility: business_os`) — no page changes required; the module list is data-driven. Updated the Modules section, use cases (Scheduling/Payments flows + delegate-only trigger notes), and linked the per-module user docs. |
+| 2026-09-17 | LLM Usage tab (Layer 1.1) | Added the **Tab: LLM Usage** section: admin-only, read-only attribution checks for one business (five checks, statuses including Incomplete, display caps and the 5,000-row ceiling, Check 5 open-end caveat, the business-selection exception to the session model, and a non-production "verify a test session" use case). Corrected the stale "only tab" statements to list Overview, Modules, Danger Zone and LLM Usage; documenting Danger Zone is follow-up F-5. |
+| 2026-09-18 | LLM Usage tab: Layer 1.5 areas | Documented the two new areas, `onboarding` and `images`: their call names (at most three onboarding call types fire, KI-D; `client_workflow_extraction` can appear ×2 in one group), how a zero-token image row reads in Check 1, Check 5 and the area totals, the images note under the area totals, the reuse cache writing no row (KI-B), and the mid-rollout zero lines. Check 3(c) text updated: no live caller should write the helper label any more; still Info (F-7). The verify-a-session use case gains an onboarding run and an image generation. |

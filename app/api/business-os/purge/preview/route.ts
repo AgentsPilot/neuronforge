@@ -60,7 +60,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
+    // E-2: a malformed JSON body is invalid input — a 400, not a 500. Unguarded,
+    // `request.json()` throws a SyntaxError that falls through to the generic
+    // handler and reports an internal server error for what is a client mistake.
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { success: false, error: 'Invalid input', details: 'Request body is not valid JSON' },
+        { status: 400 },
+      );
+    }
     const validated = previewSchema.parse(body);
 
     // Server-side authorisation (T30 / C-15 / C-22). The UI's decision to

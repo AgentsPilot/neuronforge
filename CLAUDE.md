@@ -1,6 +1,6 @@
 # CLAUDE.md — Project Context for AgentPilot
 
-> **Last Updated**: 2026-04-07  
+> **Last Updated**: 2026-09-21  
 > This file is the project's root context document and is exempt from the standard docs ToC requirement.
 
 ## Overview
@@ -225,7 +225,7 @@ Every open item must have exactly **one authoritative source** (WEAK_POINTS for 
 | Never expose internal error details to client in production | Use `process.env.NODE_ENV === 'development'` guard already in API pattern |
 | No secrets or API keys in code — environment variables only | RM must check before every commit |
 | Input sanitised via Zod before use | Never trust client-supplied data |
-| Admin authz via `AdminAccessService` — **never** `profiles.role` | `profiles.role` is user-writable (self-promotion) and overloaded with onboarding personas; the `admin_users` table is the only trusted admin signal. See [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md) |
+| Admin authz: routes and pages gate with `requireAdmin` / `requireAdminPage` — **never** `profiles.role` | `profiles.role` is user-writable (self-promotion) and overloaded with onboarding personas. Source of truth is the `admin_users` table via `AdminAccessService`; the SQL-side predicate is `public.is_platform_admin()`. A direct `AdminAccessService` call inside a `route.ts` **fails the CI guard**. See [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md) |
 
 ---
 
@@ -486,30 +486,38 @@ Feature flags control experimental features and gradual rollouts. See `/docs/fea
 ### Usage
 
 ```typescript
-import { useV6AgentGeneration, useV6ReviewMode, useThreadBasedAgentCreation } from '@/lib/utils/featureFlags';
+import { isV6AgentGenerationEnabled, isV6ReviewModeEnabled, isThreadBasedAgentCreationEnabled } from '@/lib/utils/featureFlags';
 
 // Client-side checks
-if (useV6AgentGeneration()) {
+if (isV6AgentGenerationEnabled()) {
   // Use V6 5-phase pipeline
 }
 
-if (useV6ReviewMode()) {
+if (isV6ReviewModeEnabled()) {
   // Use split API flow with review UI (default: true)
 }
 
-if (useThreadBasedAgentCreation()) {
+if (isThreadBasedAgentCreationEnabled()) {
   // Use thread-based agent creation
 }
 ```
+
+> ⚠️ **Never name a flag reader `use…`.** These are plain functions that read
+> `process.env`, not React hooks. `react-hooks/rules-of-hooks` keys off the
+> *identifier*, so a `use`-prefixed plain function makes every call site a lint
+> error and — worse — tells the next reader that hook rules apply when they do
+> not. Seven of these were misnamed and produced 11 of the 14 violations fixed
+> in `docs/workplans/REACT_HOOKS_RULES_VIOLATIONS_WORKPLAN.md`. Use
+> `is…Enabled`. `npm run lint:hooks` enforces this.
 
 ### Key Flags
 
 | Flag | Function | Purpose |
 |------|----------|---------|
-| `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` | `useV6AgentGeneration()` | Enable V6 semantic pipeline |
-| `NEXT_PUBLIC_USE_V6_REVIEW_MODE` | `useV6ReviewMode()` | Enable 2-step API flow with user review (default: true) |
-| `NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION` | `useThreadBasedAgentCreation()` | Enable thread-based creation |
-| `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` | `useNewAgentCreationUI()` | Enable new conversational UI |
+| `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` | `isV6AgentGenerationEnabled()` | Enable V6 semantic pipeline |
+| `NEXT_PUBLIC_USE_V6_REVIEW_MODE` | `isV6ReviewModeEnabled()` | Enable 2-step API flow with user review (default: true) |
+| `NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION` | `isThreadBasedAgentCreationEnabled()` | Enable thread-based creation |
+| `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` | `isNewAgentCreationUIEnabled()` | Enable new conversational UI |
 
 **Note:** `NEXT_PUBLIC_` prefix required for client-side access. Database-based flags for orchestration are managed via `/api/admin/orchestration-config`.
 
@@ -646,22 +654,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 |---|---|---|
 | Unit | Jest | Pure functions, hooks, utilities, Zod schemas |
 | Integration | Jest + Supabase test client | API routes, repositories, service logic |
-| E2E | Playwright | Critical user journeys (agent creation, plugin connection, execution) |
+| E2E | **Not set up yet** | Playwright is not installed: no config, no `e2e/` folder, no `test:e2e` script. Critical user journeys are verified manually by QA for now. |
 
-**File location:** Co-located (`*.test.ts`) for unit tests, `__tests__/` for integration, `e2e/` for Playwright.
+**File location:** Co-located (`*.test.ts`) for unit tests, `__tests__/` for integration.
 
 **Coverage expectations:**
 - New API routes: integration test covering happy path + auth failure + invalid input
 - New repositories: unit test for each method
-- New UI flows: Playwright test for the critical path
+- New UI flows: until E2E exists, QA records a manual check of the critical path in the workplan's QA report. A source-level Jest guard can back it up where one fits (e.g. `lib/__tests__/system-initializer-removed.guard.test.ts`).
 
 **Before any code is committed:** QA agent must confirm at minimum the happy path and one failure path are tested.
+
+> Adding Playwright (or any E2E tool) is a new tooling pattern and needs SA review first.
 
 ### Commands
 
 ```bash
-npm test           # Run Jest tests
-npm run test:e2e   # Run Playwright tests
+npm test                     # Run the full Jest suite (jest.config.js ignores .claude/ worktrees)
+npm test -- path/to/tests    # Run a subset (any extra Jest args after --)
+npm run test:plugins         # Plugin tests only (tests/plugins/)
 ```
 
 ---
@@ -759,6 +770,7 @@ npm run lint       # ESLint
 | [BUSINESS_OS_TEST_PAGE_SCOPE.md](/docs/BUSINESS_OS_TEST_PAGE_SCOPE.md) | Business OS test page scope (`/test-business-os`) — session-based harness; grows one section per tab | 2026-08-09 |
 | [BUSINESS_OS_EVENT_DRIVEN_MIGRATION_PLAN.md](/docs/architecture/BUSINESS_OS_EVENT_DRIVEN_MIGRATION_PLAN.md) §8.1 | **Canonical durable-queue claim pattern** (batched `FOR UPDATE SKIP LOCKED` claim RPC → provably-dead reaper → dead-letter → idempotency). **Building or fixing ANY background job / cron that drains a table (reminders, retries, automation executions, event reactions, sends)? Use the `durable-queue-drain` skill**, which operationalizes §8.1. First application: payment queue-drain (PR #27). | 2026-08-14 |
 | [CLAUDE.md § Security Rules](#security-rules-non-negotiable) | **Cross-tenant isolation on service-role paths.** **Building or reviewing an internal plugin op / executor, a `supabaseServer` write, or a reaction/cron that acts on a row by a caller-supplied id? Use the `tenant-isolation-guard` skill.** A `.eq('user_id')` repo alone does NOT stop cross-tenant writes when a trigger, upsert, or injected field defeats the scope — apply the ownership pre-check + explicit field allow-list (the M1/G3 pattern). Worked examples: Payments M1, Website G3, Intake M1. | 2026-08-14 |
+| [BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_REQUIREMENT.md) (+ Layers 1.1, 1.5, **2 (model settings)**, the logging clean-up and the Layer 3 audit-trail requirement) | **Business OS LLM call standards.** **Adding, changing or reviewing an LLM/AI call, embedding, image generation or AI feature in Business OS (`lib/business-os/**`, `app/api/business-os/**`, the Website/Intake/Onboarding/LeadAlert/GeneratedImage services and their routes)? Use the `bos-llm-call-standards` skill.** Not for the agents side (`lib/agentkit/**`, `lib/pilot/**`). Every call is catalogued (`lib/business-os/llm/callCatalog.ts`), attributed to a server-side account (never the platform account), grouped by one id per action, cost-tracked through `callWithTracking`, and never logs owner text; `npm run typecheck:bos-llm` is the CI gate. Every AI action writes one audit entry through `runAiAction` (`lib/business-os/llm/aiActionAudit.ts`), never awaited; that module is server-only, so run `next build`. **Layer 2 (2026-09-21): a call site never writes its own model or temperature** — it resolves them (`resolveBosLlmSettings`) from its area's `system_settings_config` row, inside `withModelFallback`, and honours `enabled: false`. Defaults live only in `lib/business-os/llm/modelSettingsPolicy.ts`, and **`npm run check:bos-llm-literals` (a second step in the same CI job) fails on a model or temperature literal** — though that job is **not a required status check**, so a red run warns, it does not block a merge. Operators change a setting with `npm run bos:llm-settings` — see [BUSINESS_OS_LLM_MODEL_SETTINGS_RUNBOOK.md](/docs/runbooks/BUSINESS_OS_LLM_MODEL_SETTINGS_RUNBOOK.md), which also records that the kill switch **fails open**. | 2026-09-21 |
 | [BUSINESS_OS_INSIGHTS_MODULE.md](/docs/architecture/BUSINESS_OS_INSIGHTS_MODULE.md) | **As-built map of the Business OS Insights module** — detectors, correlation, metrics/baselines, vectors & maturity, crons, channel insights, the six insight tables missing from the data model, and ten verified hazards. **Developing anything under `lib/business-os/insight/**`, `app/api/business-os/insights/**`, or `app/api/cron/insight-*`? Use the `business-os-insights` skill**, which fronts this doc. ⚠️ Two unrelated systems in this repo are called "insights" — the seven root `docs/INSIGHT_*.md` files (except `INSIGHT_SYSTEM_PLAN.md`) describe the **other** one and must not be read as requirements. | 2026-09-11 |
 | [REPOSITORY_STRATEGY.md](/docs/REPOSITORY_STRATEGY.md) | Repository pattern guidelines and architecture | 2026-01-15 |
 | [SYSTEM_LOGGING_GUIDELINES.md](/docs/SYSTEM_LOGGING_GUIDELINES.md) | Pino logging standards and best practices | 2025-11-28 |
@@ -766,7 +778,7 @@ npm run lint       # ESLint
 | [PLUGIN_GENERATION_WORKFLOW.md](/docs/PLUGIN_GENERATION_WORKFLOW.md) | Interactive plugin generation guide for Claude Code | not tracked |
 | [AI_PROVIDER_MODELS.md](/docs/AI_PROVIDER_MODELS.md) | Complete LLM provider/model catalogue with token limits and pricing | 2026-04-08 |
 | [EFFORT_ESTIMATOR.md](/docs/EFFORT_ESTIMATOR.md) | Effort Estimator feature design doc — work-savings estimation via SMB persona simulation. Architecture, trigger points, persona simulation, model resolution, retry/async, deprecation strategy, failure semantics, v1 limitations. | 2026-06-11 |
-| [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md) | How platform admins are identified: the `admin_users` source of truth, `AdminAccessService`/`AdminUserRepository`, env/SQL bootstrap, runtime resolution flow, and open follow-ups. **Read before any admin-authz work — never use `profiles.role`.** | 2026-07-01 |
+| [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md) | How platform admins are identified: the `admin_users` source of truth, `AdminAccessService`/`AdminUserRepository`, env/SQL bootstrap, runtime resolution flow, and open follow-ups. **Read before any admin-authz work — never use `profiles.role`.**<br><br>**Adding or reviewing an `/api/admin/*` route, an `/admin` page, or any code that decides whether a caller is a platform admin? The one gate is `requireAdmin` (`lib/admin/requireAdminRoute.ts`)** — the first statement in the handler, with nothing above it touching a request body, the DB, a queue or an outbound message. It owns the 401/403 split and fails closed. **Never `profiles.role` (user-writable), never `app_metadata.role`, never a hand-rolled `AdminAccessService` call inside a route.** The SQL-side predicate is `public.is_platform_admin()`: two enforcement mechanisms over **one** source of truth (`admin_users`), deliberately not unified. CI **enforces** this via `.github/workflows/admin-authz-guard.yml`: **`Admin authz surface guard` is a required status check on `main`** (`enforce_admins`, `strict`), so a red guard **blocks the merge**. ✅ **As of 2026-09-21 every one of the 72 admin handlers requires an admin, and all 21 `/admin` pages are guarded on the server** (by inheritance from `app/admin/layout.tsx` — a new page is protected before you write it). ⚠️ But **7 handlers still hand-roll their own check** rather than calling `requireAdmin` (slice 4, parked), so "one way" is the standard, not yet the codebase; and admin routes remain **gated, not isolated** (service-role clients bypassing RLS and the repository layer). See [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md) § What is NOT true. | 2026-09-20 |
 
 ---
 
@@ -775,3 +787,5 @@ npm run lint       # ESLint
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-04-07 | Resolved merge conflicts | Merged 13 conflicts between comprehensive (agent team, design principles, security, testing, deprecated) and lean branches. Kept comprehensive version with additional Code Quality gotcha entries from lean branch. |
+| 2026-09-19 | Corrected Testing section | E2E/Playwright is documented as not set up yet (it was never installed, and `npm run test:e2e` did not exist). `npm test` now exists and runs Jest; `jest.config.js` ignores `.claude/` worktrees. Adding E2E needs SA review. |
+| 2026-09-21 | Business OS LLM Layer 2 recorded | The Business OS LLM row now covers Layer 2 (model settings per area): call sites resolve provider, model, temperature and on/off from eight `system_settings_config` rows rather than writing them, `npm run check:bos-llm-literals` enforces it in the existing `bos-llm-typecheck` job, and the operator runbook is linked — including the fail-open kill switch |

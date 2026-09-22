@@ -13,8 +13,10 @@
  */
 
 import { ProviderFactory } from '@/lib/ai/providerFactory';
-import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider';
 import { createLogger } from '@/lib/logger';
+import { bosBriefingGroupId, buildBosCallContext } from '@/lib/business-os/llm/callCatalog';
+import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
+import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
 import type { BriefingFacts } from './BriefingFactsService';
 
 const logger = createLogger({ service: 'BriefingNarrator' });
@@ -24,6 +26,14 @@ export type BriefingSource = 'llm' | 'fallback';
 export interface Narration {
   narrative: string;
   source: BriefingSource;
+  /**
+   * The model that produced it, present only when one did.
+   *
+   * The model that RAN, which is the fallback's whenever a configured model
+   * was refused — a stored briefing naming the model that was asked for but
+   * never answered is the failure FR-13 exists to prevent.
+   */
+  model?: string;
 }
 
 export type BriefingLanguage = 'en' | 'es' | 'he';
@@ -81,12 +91,29 @@ const LANGUAGE_NAMES: Record<BriefingLanguage, string> = {
 export async function narrateBriefing(
   facts: BriefingFacts,
   language: BriefingLanguage = 'en',
-  userId?: string,
+  /** Required: the briefing's usage belongs to this business, never to a placeholder account. */
+  userId: string,
   businessType: BusinessType = {}
 ): Promise<Narration> {
   if (facts.isQuiet) {
     // Nothing to phrase. Spending a model call to say "nothing today" is the
     // one case where the templates are strictly better.
+    return { narrative: composeFallback(facts, language), source: 'fallback' };
+  }
+
+  // Deterministic per business and business-local day, so re-narrations the
+  // same day (after the facts change) share one group.
+  const groupId = bosBriefingGroupId(userId, facts.day.date);
+
+  // Model, temperature and the on/off switch come from the briefing area row
+  // (Layer 2 FR-12). Off is the same deterministic composer an outage uses:
+  // the card still reads, in plainer prose.
+  const settings = await resolveBosLlmSettings('briefing', 'daily_narration');
+  if (!settings.enabled) {
+    logger.info(
+      { date: facts.day.date, reason: 'disabled' },
+      'Briefing narration AI is switched off; using the deterministic composer'
+    );
     return { narrative: composeFallback(facts, language), source: 'fallback' };
   }
 
@@ -103,29 +130,22 @@ export async function narrateBriefing(
      * throws every time and the route has been serving its hardcoded fallback
      * copy since it was written.
      */
-    const completion = await provider.chatCompletion(
-      {
-        model: briefingModel(),
-        messages: [{ role: 'user', content: buildPrompt(facts, language, businessType) }],
-        /*
-         * Zero, not merely low.
-         *
-         * The comment here used to say "the same facts should read the same
-         * way twice" while setting 0.3, which does not deliver that: three
-         * runs over one unchanged day produced two different briefings, and
-         * one of them invented a line. This is reporting — there is no
-         * sentence worth varying, and every variation is a chance to state
-         * something the facts do not support.
-         */
-        temperature: 0,
-        max_tokens: 320,
-      },
-      {
-        userId: userId ?? 'unknown',
-        feature: 'business-os',
-        component: 'daily-briefing',
-        activity_type: 'narration',
-      }
+    // Built inside the attempt so a retry carries the model that ran (FR-11).
+    const { result: completion, modelUsed } = await withModelFallback(settings, (model) =>
+      provider.chatCompletion(
+        {
+          model,
+          messages: [{ role: 'user', content: buildPrompt(facts, language, businessType) }],
+          // Low, deliberately. This is reporting, not writing — the same facts
+          // should read the same way twice.
+          ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+          max_tokens: 320,
+        },
+        buildBosCallContext(
+          { userId, area: 'briefing', callName: 'daily_narration', groupId },
+          { activity_type: 'narration' }
+        )
+      )
     );
 
     const narrative = cleanNarrative(completion.choices[0]?.message?.content ?? '');
@@ -151,9 +171,19 @@ export async function narrateBriefing(
       return { narrative: composeFallback(facts, language), source: 'fallback' };
     }
 
-    return { narrative, source: 'llm' };
+    /*
+     * `modelUsed`, not the configured model (FR-13).
+     *
+     * `BriefingStore` records this against the stored briefing, and the value
+     * that matters is the one that PRODUCED the text — which is the fallback's
+     * model whenever a configured model was refused.
+     */
+    return { narrative, source: 'llm', model: modelUsed };
   } catch (error) {
-    logger.warn({ err: error, date: facts.day.date }, 'Narration failed; using the deterministic composer');
+    logger.warn(
+      { err: error, date: facts.day.date, groupId },
+      'Narration failed; using the deterministic composer'
+    );
     return { narrative: composeFallback(facts, language), source: 'fallback' };
   }
 }
@@ -198,9 +228,6 @@ export const PROMPT_VERSION = 9;
  * Overridable by env so it can be rolled back without a deploy, per the
  * project rule that model choice is configuration rather than a constant.
  */
-export function briefingModel(): string {
-  return process.env.BUSINESS_OS_BRIEFING_MODEL || OPENAI_MODELS.GPT_41;
-}
 
 /**
  * Exported for comparison harnesses that measure one prompt across models.
@@ -847,13 +874,8 @@ function formatDay(dateLocal: string, language: BriefingLanguage): string {
   }
 }
 
-/** Split a narration into the lines the card renders. */
-export function briefingLines(narrative: string): string[] {
-  return narrative
-    .split('\n')
-    .map(line => line.replace(/^\s*[-•*\d.]+\s*/, '').trim())
-    .filter(Boolean);
-}
+/** Split a narration into the lines the card renders. Lives in `./briefingLines` so the browser can import it. */
+export { briefingLines } from './briefingLines';
 
 /** Shared by the prompt and the fallback so both render money identically. */
 export function formatMoney(amount: number, currency: string): string {

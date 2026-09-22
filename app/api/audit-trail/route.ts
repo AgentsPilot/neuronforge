@@ -1,112 +1,21 @@
 // app/api/audit-trail/route.ts
-// API endpoint for audit trail operations
+// Audit trail write endpoint for the browser (one caller: the settings plugins tab).
+//
+// POST shares the /api/audit/log handler: the account is the session user, never
+// the body's `userId` (Layer 3 step 0, FR-22).
+//
+// The GET handler was removed in Layer 3 step 0. It read any account's audit log
+// from a `?userId=` query parameter with no login, it had no caller, and it had
+// not worked for some time (it passed two arguments to a one-argument query and
+// read `.length` off a result object).
 
-import { NextRequest, NextResponse } from 'next/server';
-import { AuditTrail } from '@/lib/services/AuditTrailService';
+import { NextRequest } from 'next/server';
+import { handleClientAuditWrite } from '@/lib/audit/clientAuditWrite';
 
-// POST /api/audit-trail
-// Log an audit trail event from client-side
 // Force dynamic rendering
-export const dynamic = 'force-dynamic'
+export const dynamic = 'force-dynamic';
 
+// POST /api/audit-trail - Log an audit trail event for the signed-in user
 export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const {
-      action,
-      entityType,
-      entityId,
-      resourceName,
-      userId,
-      details,
-      severity,
-      complianceFlags
-    } = body;
-
-    // Validate required fields
-    if (!action || !entityType || !userId) {
-      return NextResponse.json({
-        success: false,
-        error: 'Missing required fields',
-        message: 'action, entityType, and userId are required'
-      }, { status: 400 });
-    }
-
-    console.log(`DEBUG: Logging audit trail event: ${action} for user ${userId}`);
-
-    // Log the audit trail event
-    await AuditTrail.log({
-      action,
-      entityType,
-      entityId,
-      resourceName,
-      userId,
-      request, // Pass request for IP/user-agent extraction
-      details,
-      severity,
-      complianceFlags
-    });
-
-    return NextResponse.json({
-      success: true,
-      message: 'Audit trail logged successfully'
-    });
-
-  } catch (error: any) {
-    console.error('DEBUG: Error logging audit trail:', error);
-
-    return NextResponse.json({
-      success: false,
-      error: 'Failed to log audit trail',
-      message: error.message
-    }, { status: 500 });
-  }
-}
-
-// GET /api/audit-trail?userId={userId}&limit={limit}&offset={offset}
-// Retrieve audit trail events for a user
-export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const userId = searchParams.get('userId');
-    const limit = parseInt(searchParams.get('limit') || '50');
-    const offset = parseInt(searchParams.get('offset') || '0');
-    const action = searchParams.get('action');
-    const entityType = searchParams.get('entityType');
-
-    if (!userId) {
-      return NextResponse.json({
-        success: false,
-        error: 'Missing required parameters',
-        message: 'userId is required'
-      }, { status: 400 });
-    }
-
-    console.log(`DEBUG: Fetching audit trail for user ${userId}`);
-
-    // Build query filters
-    const filters: any = { userId };
-    if (action) filters.action = action;
-    if (entityType) filters.entityType = entityType;
-
-    // Get audit trail events
-    const events = await AuditTrail.query(filters, { limit, offset });
-
-    return NextResponse.json({
-      success: true,
-      events,
-      count: events.length,
-      limit,
-      offset
-    });
-
-  } catch (error: any) {
-    console.error('DEBUG: Error fetching audit trail:', error);
-
-    return NextResponse.json({
-      success: false,
-      error: 'Failed to fetch audit trail',
-      message: error.message
-    }, { status: 500 });
-  }
+  return handleClientAuditWrite(request, '/api/audit-trail');
 }

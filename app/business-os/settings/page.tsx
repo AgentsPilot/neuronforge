@@ -4,6 +4,7 @@ import React, { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
 import { supabase } from '@/lib/supabaseClient';
+import { signOutUser } from '@/lib/client/auth-actions';
 import {
   ArrowLeft,
   Loader2,
@@ -452,75 +453,20 @@ function BusinessOSSettingsContent() {
     setLoggingOut(true);
 
     /*
-     * Leaving is the ONE guaranteed outcome.
+     * Points 1 and 2 above are `signOutUser`, shared with the other sign-out
+     * controls in the app. The audit entry (written before the sign-out, while
+     * there is still a session to attribute it to), the global scope and the
+     * person-scoped storage clearing all live there now — the key list in
+     * particular, because a second copy of it here drifts the moment a key is
+     * added and silently starts leaking one person's state to the next.
      *
-     * Everything below is best-effort with a deadline; the navigation is in a
-     * finally so that no future step — a throw, an added await, a storage API
-     * that refuses — can strand somebody in a dialog that will not close.
+     * Nothing it does can trap someone in a session they asked to leave: a
+     * failed audit write or a failed server sign-out is logged inside and the
+     * local state is cleared regardless.
      */
-    try {
-
-    // Best-effort, and before the sign-out: afterwards there is no session to
-    // attribute it to. A failed audit entry must never trap someone in a
-    // session they asked to leave — and neither must a slow one, which is what
-    // the deadline is for.
-    try {
-      if (user?.id) {
-        await withDeadline(fetch('/api/audit/log', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-user-id': user.id },
-          body: JSON.stringify({
-            action: 'USER_LOGOUT',
-            entityType: 'user',
-            entityId: user.id,
-            userId: user.id,
-            resourceName: user.email || 'User',
-            details: { method: 'settings', scope: 'global' },
-            severity: 'info',
-            complianceFlags: ['SOC2'],
-          }),
-        }), 2000, 'audit');
-      }
-    } catch (err) {
-      logger.warn({ err }, 'Logout audit failed (non-blocking)');
-    }
-
-    /*
-     * Ending the session everywhere is worth waiting for — but not forever.
-     *
-     * `scope: 'global'` revokes every device's session server-side, which is
-     * the slowest thing on this path and the one most likely to stall. Past the
-     * deadline the local clear below is what makes this browser safe, and the
-     * server session expires on its own.
-     */
-    await withDeadline(
-      supabase.auth.signOut({ scope: 'global' }),
-      5000,
-      'global sign-out'
-    );
-
-    try {
-      // Everything that belongs to a PERSON. `app-theme` and `v2-theme-mode`
-      // are left alone on purpose.
-      [
-        'onboarding_completed', 'onboarding_data', 'onboarding_goal',
-        'onboarding_mode', 'onboarding_build_complete', 'onboarding_build_settled',
-        'user_profile', 'user_domain',
-        'business-os-language', 'business-os-currency',
-        'agent_builder_session_key', 'agent_builder_user_view_preference',
-        'helpBotContext', 'helpBotOpen',
-      ].forEach(key => {
-        localStorage.removeItem(key);
-        sessionStorage.removeItem(key);
-      });
-      sessionStorage.removeItem('onboarding_preview_data');
-
-      // The session itself, by shape rather than by a guessed name. This is
-      // what actually signs the browser out when the call above could not.
-      clearSessionKeys(localStorage);
-      clearSessionKeys(sessionStorage);
-    } catch {
-      // Private mode, or storage disabled. The sign-out above is what matters.
+    const result = await signOutUser({ scope: 'global', user, method: 'settings' });
+    if (!result.ok) {
+      logger.error({ err: result.error }, 'Global sign-out failed — cleared locally regardless');
     }
 
     /*
@@ -532,15 +478,13 @@ function BusinessOSSettingsContent() {
      * neither guess is right. All three are inlined at build time, so this is a
      * plain string by the time it runs.
      */
-    } finally {
-      const marketingUrl =
-        process.env.NEXT_PUBLIC_MARKETING_URL ||
-        (process.env.NODE_ENV === 'development'
-          ? 'http://localhost:3001'
-          : 'https://agentspilot.com');
+    const marketingUrl =
+      process.env.NEXT_PUBLIC_MARKETING_URL ||
+      (process.env.NODE_ENV === 'development'
+        ? 'http://localhost:3001'
+        : 'https://agentspilot.com');
 
-      window.location.href = `${marketingUrl}/login`;
-    }
+    window.location.href = `${marketingUrl}/login`;
   };
 
   /*

@@ -30,9 +30,10 @@
  */
 
 import { createLogger } from '@/lib/logger';
-import { ProviderFactory, PROVIDERS, type ProviderName } from '@/lib/ai/providerFactory';
-import { SystemConfigService } from '@/lib/services/SystemConfigService';
-import { supabaseServer } from '@/lib/supabaseServer';
+import { ProviderFactory } from '@/lib/ai/providerFactory';
+import { buildBosCallContext } from '@/lib/business-os/llm/callCatalog';
+import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
+import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
 import { buildAnalysisPayload, type AnalysisPayload } from './payload';
 import type { QueryResult } from '../types';
 
@@ -85,39 +86,17 @@ RULES
 
 Reply with the sentence alone.`;
 
-/** Off is instant and needs no deploy — the same retreat L2 semantic caching took. */
-async function enabled(): Promise<boolean> {
-  return SystemConfigService.getBoolean(supabaseServer, 'bizchat_analysis_enabled', true);
-}
-
-async function resolveModel(): Promise<string> {
-  return SystemConfigService.getString(supabaseServer, 'bizchat_analysis_model', 'gpt-4o-mini');
-}
-
-/**
- * Which provider serves the analysis pass.
+/*
+ * Off is instant and needs no deploy — the same retreat L2 semantic caching
+ * took. Since Layer 2 the switch and the model both live in the `chat` area
+ * row (FR-12); the old `bizchat_analysis_enabled` / `bizchat_analysis_model`
+ * keys were copied into it by the seed migration and nothing reads them any
+ * more.
  *
- * The model was config-driven and the provider was the literal `'openai'` at
- * the call site — the same split the planner carried. Validated against the
- * factory's own list rather than cast, so a typo in a settings row degrades to
- * the default instead of throwing mid-answer.
+ * This is the PER-CALL switch, and it is not the chat kill switch: with it off
+ * chat still answers, using the planner's own sentence. Switching the whole
+ * chat area off is enforced at route entry, before anything here runs.
  */
-async function resolveProvider(): Promise<ProviderName> {
-  const configured = await SystemConfigService.getString(
-    supabaseServer,
-    'bizchat_analysis_provider',
-    PROVIDERS.OPENAI
-  );
-
-  const known = Object.values(PROVIDERS) as string[];
-  if (known.includes(configured)) return configured as ProviderName;
-
-  logger.warn(
-    { configured, using: PROVIDERS.OPENAI },
-    'bizchat_analysis_provider names an unknown provider; using the default'
-  );
-  return PROVIDERS.OPENAI;
-}
 
 export interface AnalysisRequest {
   question: string;
@@ -139,33 +118,42 @@ export interface AnalysisRequest {
  */
 export async function analyse(request: AnalysisRequest): Promise<string | null> {
   try {
-    if (!(await enabled())) return null;
+    const settings = await resolveBosLlmSettings('chat', 'analysis');
+    if (!settings.enabled) {
+      logger.info(
+        { area: 'chat', call: 'analysis', reason: 'disabled' },
+        'Analysis is switched off; keeping the planner sentence'
+      );
+      return null;
+    }
 
     const payload = buildAnalysisPayload(request);
     if (payload.steps.length === 0) return null;
 
-    const model = await resolveModel();
-
-    const response = await ProviderFactory.getProvider(await resolveProvider()).chatCompletion(
-      {
-        model,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: JSON.stringify(payload) },
-        ],
-        temperature: 0,
-        // The planner's repetition collapse under greedy decoding applies to any
-        // call with a long instruction prompt. See Planner.ts for the measurement.
-        frequency_penalty: 0.3,
-        max_tokens: 300,
-      } as never,
-      {
-        userId: request.userId,
-        feature: 'business-os-chat',
+    // Built inside the attempt, so a retry on the code default carries the
+    // model it is retrying on rather than the one that was refused (RC-W4).
+    const { result: response } = await withModelFallback(settings, (model) =>
+      ProviderFactory.getProvider(settings.provider).chatCompletion(
+        {
+          model,
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: JSON.stringify(payload) },
+          ],
+          ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+          // The planner's repetition collapse under greedy decoding applies to any
+          // call with a long instruction prompt. See Planner.ts for the measurement.
+          frequency_penalty: 0.3,
+          max_tokens: 300,
+        } as never,
         // Separable from planning, the way repair calls already are.
-        component: 'BizQLAnalysis',
-        sessionId: request.turnId,
-      } as never
+        buildBosCallContext({
+          userId: request.userId,
+          area: 'chat',
+          callName: 'analysis',
+          groupId: request.turnId,
+        }) as never
+      )
     );
 
     const text = (

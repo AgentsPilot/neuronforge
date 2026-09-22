@@ -25,6 +25,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { SystemConfigService } from '@/lib/services/SystemConfigService';
 import { EmbeddingService } from '@/lib/services/EmbeddingService';
+import { buildBosCallContext, toEmbeddingAttribution } from '@/lib/business-os/llm/callCatalog';
 import { CATALOG_VERSION } from '@/lib/business-os/catalog';
 import type { Plan } from '../planner/Planner';
 import { plannerVersion } from '../planner/planTool';
@@ -223,11 +224,17 @@ export class PlanCache {
       );
       // Attributed to the chat, not the help bot. The embedding is spent
       // answering THIS question and belongs on this turn's bill.
-      const { embedding, tokens } = await embeddingService.generateEmbedding(normalized, {
-        userId,
-        feature: 'business-os-chat',
-        turnId,
-      });
+      const { embedding, tokens } = await embeddingService.generateEmbedding(
+        normalized,
+        toEmbeddingAttribution(
+          buildBosCallContext({
+            userId,
+            area: 'chat',
+            callName: 'plan_cache_lookup_embedding',
+            groupId: turnId,
+          })
+        )
+      );
 
       const { data, error } = await supabaseServer.rpc(
         'search_business_chat_plans_semantic',
@@ -286,10 +293,12 @@ export class PlanCache {
     userId: string;
     plan: Plan;
     model?: string;
+    /** Groups the store embedding's cost with the turn that produced the plan. */
+    turnId?: string;
   }): Promise<void> {
     if (cacheUnavailable) return;
 
-    const { normalized, literals, language, userId, plan, model } = args;
+    const { normalized, literals, language, userId, plan, model, turnId } = args;
 
     /*
      * A plan naming a specific day is not reusable, and caching it is a bug with
@@ -330,7 +339,20 @@ export class PlanCache {
       let embedding: number[] | null = null;
       try {
         const service = new EmbeddingService(process.env.OPENAI_API_KEY!, supabaseServer);
-        embedding = (await service.generateEmbedding(normalized)).embedding;
+        // Attributed to the chat turn, not the help bot default.
+        embedding = (
+          await service.generateEmbedding(
+            normalized,
+            toEmbeddingAttribution(
+              buildBosCallContext({
+                userId,
+                area: 'chat',
+                callName: 'plan_cache_store_embedding',
+                groupId: turnId,
+              })
+            )
+          )
+        ).embedding;
       } catch (err) {
         // An entry without an embedding still serves L1, which is the cheaper
         // and more common path anyway.

@@ -35,6 +35,9 @@ import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import { createLogger } from '@/lib/logger';
 import { getProviderFactory } from '@/lib/ai/providerFactory';
+import { buildBosCallContext, type BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
+import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
+import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { intakeFormRepository } from '@/lib/repositories/IntakeFormRepository';
@@ -52,8 +55,6 @@ import {
 } from '@/lib/business-os/intake/verticalKnowledge';
 
 const logger = createLogger({ service: 'IntakeGenerationService' });
-
-const MODEL = 'gpt-4o';
 
 /**
  * How many questions a form may have.
@@ -169,9 +170,14 @@ export class IntakeGenerationService {
    * edited it, and regeneration is a deliberate act rather than a side effect
    * of opening a screen.
    */
+  /**
+   * @param opts.groupId The grouping id of the owner action this generation
+   *   belongs to, minted by the entry point. Required so usage is never
+   *   recorded without one.
+   */
   async generateIntakeForm(
     userId: string,
-    opts: { regenerate?: boolean } = {}
+    opts: { groupId: string; regenerate?: boolean }
   ): Promise<GenerateIntakeResult> {
     try {
       const existing = await intakeFormRepository.getDraft(userId);
@@ -194,6 +200,7 @@ export class IntakeGenerationService {
       const serviceList = services ?? [];
 
       const generated = await this.callLLM(
+        { userId, groupId: opts.groupId },
         profile as unknown as Record<string, unknown>,
         serviceList as unknown as Record<string, unknown>[]
       );
@@ -241,7 +248,9 @@ export class IntakeGenerationService {
 
       const saved = await intakeFormRepository.saveDraft(userId, questions, {
         source: generated.source,
-        model: generated.source === 'llm' ? MODEL : undefined,
+        // The model that actually ran, which after an FR-11 retry is the code
+        // default rather than the configured one (FR-13).
+        model: generated.source === 'llm' ? generated.model : undefined,
         vertical: profile.vertical,
         subVertical: profile.sub_vertical,
         serviceIds: serviceList.map(service => service.id),
@@ -281,9 +290,10 @@ export class IntakeGenerationService {
   }
 
   private async callLLM(
+    owner: BosLlmOwner,
     profile: Record<string, unknown>,
     services: ReadonlyArray<Record<string, unknown>>
-  ): Promise<{ questions: IntakeQuestion[]; source: 'llm' | 'fallback'; reason?: string }> {
+  ): Promise<{ questions: IntakeQuestion[]; source: 'llm' | 'fallback'; reason?: string; model?: string }> {
     const language = (profile.language as string) || 'en';
 
     const systemPrompts: Record<string, string> = {
@@ -292,18 +302,34 @@ export class IntakeGenerationService {
       es: 'Diseñas formularios de admisión breves que un negocio envía a un cliente tras la reserva. Escribe cada pregunta en español. Responde solo con JSON.',
     };
 
+    // Model, temperature and the on/off switch come from the intake area row
+    // (Layer 2 FR-12). Off is the deterministic starter form: three open
+    // questions the owner can edit, which is what a model failure already gives.
+    const settings = await resolveBosLlmSettings('intake', 'form_generation');
+    if (!settings.enabled) {
+      logger.info({ language, reason: 'disabled' }, 'Intake generation AI is switched off; using the starter form');
+      return { questions: this.fallbackQuestions(profile), source: 'fallback', reason: 'disabled' };
+    }
+
     try {
-      const response = await getProviderFactory().complete({
-        model: MODEL,
-        messages: [
-          { role: 'system', content: systemPrompts[language] || systemPrompts.en },
-          { role: 'user', content: this.buildPrompt(profile, services) },
-        ],
-        response_format: { type: 'json_object' },
-        // Lower than the website copywriter's 0.7: this is an operational form,
-        // and inventiveness in what a client is asked is not a virtue.
-        temperature: 0.3,
-      });
+      const { result: response, modelUsed } = await withModelFallback(settings, (model) =>
+        getProviderFactory().complete({
+          model,
+          messages: [
+            { role: 'system', content: systemPrompts[language] || systemPrompts.en },
+            { role: 'user', content: this.buildPrompt(profile, services) },
+          ],
+          response_format: { type: 'json_object' },
+          // Lower than the website copywriter's 0.7: this is an operational form,
+          // and inventiveness in what a client is asked is not a virtue.
+          ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+        }, buildBosCallContext({
+          userId: owner.userId,
+          area: 'intake',
+          callName: 'form_generation',
+          groupId: owner.groupId,
+        }))
+      );
 
       const parsed = GeneratedFormSchema.safeParse(JSON.parse(response.content));
 
@@ -317,7 +343,7 @@ export class IntakeGenerationService {
         };
       }
 
-      return { questions: this.toQuestions(parsed.data.questions), source: 'llm' };
+      return { questions: this.toQuestions(parsed.data.questions), source: 'llm', model: modelUsed };
     } catch (error) {
       logger.error({ err: error }, 'Intake generation LLM call failed');
       return {

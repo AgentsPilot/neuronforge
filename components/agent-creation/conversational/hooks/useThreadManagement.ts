@@ -8,7 +8,7 @@
  */
 
 import { useRef, useCallback } from 'react';
-import { useThreadBasedAgentCreation } from '@/lib/utils/featureFlags';
+import { isThreadBasedAgentCreationEnabled } from '@/lib/utils/featureFlags';
 import type {
   InitThreadResponse,
   ThreadResumeResponse,
@@ -52,7 +52,7 @@ interface ProcessMessageResponse {
 
 export function useThreadManagement() {
   const threadId = useRef<string | null>(null);
-  const useThreadFlow = useThreadBasedAgentCreation();
+  const useThreadFlow = isThreadBasedAgentCreationEnabled();
 
   /**
    * Initialize a new OpenAI thread with system prompt

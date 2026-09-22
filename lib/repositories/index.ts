@@ -10,6 +10,7 @@ export { ConfigRepository, configRepository } from './ConfigRepository';
 export { MemoryRepository, memoryRepository } from './MemoryRepository';
 export { PluginConnectionRepository, pluginConnectionRepository } from './PluginConnectionRepository';
 export { SystemConfigRepository, systemConfigRepository } from './SystemConfigRepository';
+export { AiModelPricingRepository, aiModelPricingRepository } from './AiModelPricingRepository';
 export { AgentConfigurationRepository, agentConfigurationRepository } from './AgentConfigurationRepository';
 export { AgentStatsRepository, agentStatsRepository } from './AgentStatsRepository';
 export { AgentLogsRepository, agentLogsRepository } from './AgentLogsRepository';
@@ -40,6 +41,20 @@ export type {
   CreateWorkflowGroupInput,
   UpdateWorkflowGroupInput,
 } from './WorkflowGroupRepository';
+// Row types live in the repository file: `TokenUsage` in ./types is an unrelated
+// execution-token type (Layer 1.1 workplan Q-9).
+export { TokenUsageRepository, tokenUsageRepository } from './TokenUsageRepository';
+// S-6 free-tier grant (docs/workplans/ALLOCATE_FREE_TIER_S6_FIX_WORKPLAN.md)
+export { UserSubscriptionRepository, userSubscriptionRepository } from './UserSubscriptionRepository';
+export type {
+  LedgerCallRow,
+  LedgerLabelRow,
+  LedgerSummaryRow,
+  TokenUsageFeatureFilter,
+  TokenUsageMatch,
+  TokenUsageWindow,
+  UsageSummaryRpcRow,
+} from './TokenUsageRepository';
 
 // Types
 export type {
@@ -66,6 +81,18 @@ export type {
   RewardConfig,
   // Plugin connection types
   UpsertPluginConnectionInput,
+  // User subscription (free-tier grant) types
+  UserSubscriptionGrantState,
+  FreeTierNewRowValues,
+  FreeTierNewRow,
+  FreeTierGrantPatch,
+  FreeTierInsertOutcome,
+  FreeTierUpdateOutcome,
+  // AI model pricing types
+  AiModelPricing,
+  CreateAiModelPricingInput,
+  AiModelPricingSyncEntry,
+  AiModelPricingSyncResult,
 } from './types';
 
 export { AgentStatusEnum, STATUS_TRANSITIONS } from './types';

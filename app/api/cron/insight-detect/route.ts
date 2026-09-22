@@ -46,6 +46,7 @@ import { DetectorEngine } from '@/lib/business-os/insight/detectors';
 import { InsightPrioritizer } from '@/lib/business-os/insight/prioritizer';
 import { InsightRepository } from '@/lib/business-os/insight/repository';
 import { getCorrelationEngine } from '@/lib/business-os/insight/correlation';
+import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
 
 const logger = createLogger({ module: 'InsightDetectCron' });
 
@@ -207,73 +208,97 @@ export async function GET(request: NextRequest) {
     // Process each user
     for (const userId of userIds) {
       try {
-        // Get user's locale preferences for localized content
-        const userLocale = await getUserLocale(userId);
+        /*
+         * One AI action per business per run (Layer 3, FR-10, D-3): its insight,
+         * correlated-insight and health-summary calls share the run's group and
+         * become ONE entry, on the platform actor, trigger `scheduled`. A throw is
+         * recorded as that business's FAILED entry and rethrown unchanged to the
+         * catch below, which logs it and moves on to the next business (WC-8). A
+         * business with no detections makes no call and writes no entry.
+         */
+        /*
+         * Declared out here so the sweep below can see it. `detections` itself
+         * lives inside the audited action, and the sweep deliberately does not
+         * — a database cleanup is not AI work and must not mark the run's LLM
+         * calls as failed.
+         */
+        let ranDetectorIds: string[] = [];
 
-        // Run all detectors
-        const detections = await detectorEngine.runForUser(userId);
-        // Detectors whose vector is dark are skipped, so count what ran.
-        stats.detectorsRun += detectorEngine.getLastEvaluatedCount();
+        await runAiAction(
+          { area: 'insights', actionType: 'insight_run', groupId: runId, trigger: 'scheduled', accountId: userId, correlationId },
+          async () => {
+            // Get user's locale preferences for localized content
+            const userLocale = await getUserLocale(userId);
 
-        if (detections.length > 0) {
-          stats.detectionsFound += detections.length;
+            // Run all detectors
+            const detections = await detectorEngine.runForUser(userId);
+            ranDetectorIds = detections.map(d => d.detectorId);
+            // Detectors whose vector is dark are skipped, so count what ran.
+            stats.detectorsRun += detectorEngine.getLastEvaluatedCount();
 
-          // Set locale for this user before correlating
-          correlationEngine.setLocale(userLocale);
+            if (detections.length > 0) {
+              stats.detectionsFound += detections.length;
 
-          // Run correlation engine to find connected patterns
-          const correlationSummary = correlationEngine.correlate(detections);
-          stats.patternsMatched += correlationSummary.patternsMatched;
+              // Set locale for this user before correlating
+              correlationEngine.setLocale(userLocale);
 
-          // Map to track detector -> insight ID for linking
-          const detectorToInsightId = new Map<string, string>();
+              // Run correlation engine to find connected patterns
+              const correlationSummary = correlationEngine.correlate(detections);
+              stats.patternsMatched += correlationSummary.patternsMatched;
 
-          // Prioritize ALL detections (both correlated and standalone)
-          const prioritized = await prioritizer.getTopInsights(userId, detections, 10);
+              // Map to track detector -> insight ID for linking
+              const detectorToInsightId = new Map<string, string>();
 
-          // Store individual insights first
-          const result = await repository.createBatch(userId, prioritized, runId);
+              // Prioritize ALL detections (both correlated and standalone)
+              const prioritized = await prioritizer.getTopInsights(userId, detections, 10);
 
-          if (result.data) {
-            stats.insightsCreated += result.data.length;
+              // Store individual insights first
+              const result = await repository.createBatch(userId, prioritized, runId);
 
-            // Build detector -> insight ID mapping
-            for (const insight of result.data) {
-              detectorToInsightId.set(insight.detector_id, insight.id);
-            }
-          }
+              if (result.data) {
+                stats.insightsCreated += result.data.length;
 
-          // If we have correlated insights, save them with health summary
-          if (correlationSummary.correlatedInsights.length > 0) {
-            const correlationResult = await repository.saveCorrelationResults(
-              userId,
-              correlationSummary,
-              detectorToInsightId,
-              runId
-            );
+                // Build detector -> insight ID mapping
+                for (const insight of result.data) {
+                  detectorToInsightId.set(insight.detector_id, insight.id);
+                }
+              }
 
-            if (correlationResult.data) {
-              stats.correlatedInsightsCreated += correlationResult.data.correlatedInsights.length;
-              if (correlationResult.data.healthSummary) {
-                stats.healthSummariesCreated++;
+              // If we have correlated insights, save them with health summary
+              if (correlationSummary.correlatedInsights.length > 0) {
+                const correlationResult = await repository.saveCorrelationResults(
+                  userId,
+                  correlationSummary,
+                  detectorToInsightId,
+                  runId
+                );
+
+                if (correlationResult.data) {
+                  stats.correlatedInsightsCreated += correlationResult.data.correlatedInsights.length;
+                  if (correlationResult.data.healthSummary) {
+                    stats.healthSummariesCreated++;
+                  }
+                }
+              } else {
+                // No correlations but we might still want a health summary
+                const { data: allInsights } = await repository.findActive(userId, 50);
+                if (allInsights && allInsights.length > 0) {
+                  const healthResult = await repository.createOrUpdateHealthSummary(
+                    userId,
+                    correlationSummary,
+                    allInsights,
+                    runId
+                  );
+                  if (healthResult.data) {
+                    stats.healthSummariesCreated++;
+                  }
+                }
               }
             }
-          } else {
-            // No correlations but we might still want a health summary
-            const { data: allInsights } = await repository.findActive(userId, 50);
-            if (allInsights && allInsights.length > 0) {
-              const healthResult = await repository.createOrUpdateHealthSummary(
-                userId,
-                correlationSummary,
-                allInsights,
-                runId
-              );
-              if (healthResult.data) {
-                stats.healthSummariesCreated++;
-              }
-            }
+
+            stats.usersProcessed++;
           }
-        }
+        );
 
         /*
          * Close what is no longer true.
@@ -284,17 +309,18 @@ export async function GET(request: NextRequest) {
          * the sweep sat inside `if (detections.length > 0)` that card would
          * stay on the dashboard for ever.
          *
-         * Placed after the insights are written so a detector that fired again
-         * this run has already refreshed its row and is not swept by its own
-         * pass.
+         * After the insights are written, so a detector that fired again this
+         * run has already refreshed its row and is not swept by its own pass.
+         *
+         * OUTSIDE the audited action, deliberately. `runAiAction` writes one
+         * entry describing the AI work, and this is a database sweep with no
+         * model call in it. Inside, a failed sweep would report the run's LLM
+         * calls as FAILED when every one of them succeeded — an audit entry
+         * that says the wrong thing about the thing it exists to describe.
+         * The loop's own catch still counts an error here and carries on.
          */
-        const resolved = await repository.resolveStaleInsights(
-          userId,
-          detections.map(d => d.detectorId)
-        );
+        const resolved = await repository.resolveStaleInsights(userId, ranDetectorIds);
         if (resolved.data) stats.insightsResolved += resolved.data;
-
-        stats.usersProcessed++;
 
       } catch (error) {
         requestLogger.error(

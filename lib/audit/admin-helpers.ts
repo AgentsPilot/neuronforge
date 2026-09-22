@@ -259,6 +259,43 @@ export async function logAIPricingDeleted(
 }
 
 /**
+ * Log a price saved as $0 (user decision, 2026-09-20: a zero price stays allowed,
+ * but it must be loud and attributable).
+ *
+ * This is written IN ADDITION to the normal AI_PRICING_UPDATED / AI_PRICING_CREATED
+ * entry, so a revenue-affecting zero can be found without reading every pricing
+ * change. It carries the acting admin's user id.
+ */
+export async function logAIPricingZeroCost(
+  userId: string | null,
+  pricingId: string,
+  data: {
+    provider: string;
+    model_name: string;
+    input_cost_per_token: number;
+    output_cost_per_token: number;
+    source: 'update' | 'create';
+  }
+): Promise<void> {
+  await auditLog({
+    userId,
+    action: AUDIT_EVENTS.AI_PRICING_ZERO_SET,
+    entityType: 'ai_pricing',
+    entityId: pricingId,
+    resourceName: `${data.provider}/${data.model_name}`,
+    details: {
+      provider: data.provider,
+      model_name: data.model_name,
+      input_cost_per_token: data.input_cost_per_token,
+      output_cost_per_token: data.output_cost_per_token,
+      source: data.source,
+      timestamp: new Date().toISOString(),
+    },
+    severity: 'critical',
+  });
+}
+
+/**
  * Log AI pricing sync from external source
  */
 export async function logAIPricingSynced(

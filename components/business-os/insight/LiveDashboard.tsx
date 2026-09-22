@@ -30,7 +30,7 @@ import { DailyBriefingCard } from './DailyBriefingCard';
 import { NeedsYouCard, type GapView } from './NeedsYouCard';
 import { ClientReachJourney } from './ClientReachJourney';
 import type { OperationalItem } from './InsightAdvisorCard';
-import { briefingLines } from '@/lib/business-os/briefing/BriefingNarrator';
+import { briefingLines } from '@/lib/business-os/briefing/briefingLines';
 import { InsightAdvisorCard } from './InsightAdvisorCard';
 
 // ===========================

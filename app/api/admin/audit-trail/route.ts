@@ -3,6 +3,9 @@
 
 import { NextResponse, NextRequest } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { getUser } from '@/lib/auth';
+import { AdminAccessService } from '@/lib/services/AdminAccessService';
+import { createLogger } from '@/lib/logger';
 
 // Initialize service role client for admin operations
 const supabaseServiceRole = createClient(
@@ -10,12 +13,35 @@ const supabaseServiceRole = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+const logger = createLogger({ module: 'AdminAuditTrailAPI' });
+const ROUTE = '/api/admin/audit-trail';
+
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 // GET - Fetch audit trail logs with filters
 export async function GET(request: NextRequest) {
   try {
+    // Admin only (Layer 3 step 0, Q-3). Middleware does not protect /api, and
+    // this route reads every account's audit rows with the service role, so it
+    // gates itself: 401 signed out, 403 not an admin. Admin identity comes from
+    // AdminAccessService (the admin_users table), never a user-writable role.
+    const adminUser = await getUser();
+    if (!adminUser) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+    let isAdmin = false;
+    try {
+      isAdmin = await AdminAccessService.getInstance().isAdmin({ id: adminUser.id, email: adminUser.email });
+    } catch (err) {
+      // Fail closed: an admin check that cannot answer is a "no".
+      logger.error({ err, userId: adminUser.id }, 'Admin check threw; denying access');
+    }
+    if (!isAdmin) {
+      logger.warn({ userId: adminUser.id, route: ROUTE }, 'Non-admin attempted to read audit data');
+      return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 });
+    }
+
     // TODO: Add admin role check here
     const searchParams = request.nextUrl.searchParams;
 
@@ -32,17 +58,10 @@ export async function GET(request: NextRequest) {
     // Calculate offset for pagination
     const offset = (page - 1) * pageSize;
 
-    console.log('🔍 [Audit Trail] Fetching logs with filters:', {
-      action,
-      severity,
-      entityType,
-      dateFrom,
-      dateTo,
-      search,
-      page,
-      pageSize,
-      offset
-    });
+    logger.debug(
+      { adminUserId: adminUser.id, action, severity, entityType, dateFrom, dateTo, hasSearch: !!search, page, pageSize, offset },
+      'Fetching audit logs with filters'
+    );
 
     // Build query - get ALL audit records with count
     let query = supabaseServiceRole
@@ -85,7 +104,7 @@ export async function GET(request: NextRequest) {
     const { data: logs, error, count } = await query;
 
     if (error) {
-      console.error('❌ [Audit Trail] Error fetching logs:', error);
+      logger.error({ err: error }, 'Fetching audit logs failed');
       return NextResponse.json({
         success: false,
         error: 'Failed to fetch audit logs: ' + error.message
@@ -147,7 +166,7 @@ export async function GET(request: NextRequest) {
       users: log.user_id ? usersMap[log.user_id] : null
     }));
 
-    console.log(`✅ [Audit Trail] Found ${logsWithUsers.length} logs on page ${page} (searched in JSONB: ${search ? 'yes' : 'no'})`);
+    logger.debug({ count: logsWithUsers.length, page, searched: !!search }, 'Audit logs fetched');
 
     // Calculate pagination metadata
     const totalCount = count || 0;
@@ -168,7 +187,7 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('❌ [Audit Trail] Exception:', error);
+    logger.error({ err: error }, 'Admin audit-trail request failed');
     return NextResponse.json({
       success: false,
       error: error.message || 'Internal server error'

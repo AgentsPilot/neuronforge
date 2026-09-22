@@ -16,6 +16,10 @@ import { SupabaseClient } from '@supabase/supabase-js'
 import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory'
 import type { CallContext } from '@/lib/ai/providers/baseProvider'
 import { SystemConfigService } from './SystemConfigService'
+import { createLogger } from '@/lib/logger'
+import { platformAccountId } from '@/lib/platformAccount'
+
+const logger = createLogger({ service: 'EmbeddingService' })
 
 interface EmbeddingResult {
   embedding: number[]
@@ -40,7 +44,7 @@ interface BatchEmbeddingResult {
  * intent. Read at call time, not module scope, so a late-loading env still applies.
  */
 function systemUserId(): string {
-  return process.env.SYSTEM_ADMIN_USER_ID || '00000000-0000-0000-0000-000000000000'
+  return platformAccountId()
 }
 
 export class EmbeddingService {
@@ -94,11 +98,12 @@ export class EmbeddingService {
    *   OS chat's plan cache also calls it, and without this every one of those
    *   embeddings was billed to `helpbot` — understating chat cost and
    *   overstating the help bot's. Usage data is only useful if it lands where
-   *   the cost is incurred.
+   *   the cost is incurred. `callName` names the specific call (recorded as
+   *   `component`) so two calls from one feature can be told apart.
    */
   async generateEmbedding(
     text: string,
-    attribution?: { userId?: string; feature?: string; turnId?: string }
+    attribution?: { userId?: string; feature?: string; turnId?: string; callName?: string }
   ): Promise<EmbeddingResult> {
     const normalizedText = this.normalizeText(text)
 
@@ -115,7 +120,7 @@ export class EmbeddingService {
       const context: CallContext = {
         userId: attribution?.userId ?? systemUserId(),
         feature: attribution?.feature ?? 'helpbot',
-        component: 'EmbeddingService',
+        component: attribution?.callName ?? 'EmbeddingService',
         category: 'embedding_generation',
         activity_type: 'embedding',
         activity_name: 'generate_embedding',
@@ -138,7 +143,7 @@ export class EmbeddingService {
         model,
       }
     } catch (error: any) {
-      console.error('[EmbeddingService] Error generating embedding:', error)
+      logger.error({ err: error }, 'Error generating embedding')
       throw new Error(`Failed to generate embedding: ${error.message}`)
     }
   }
@@ -194,7 +199,7 @@ export class EmbeddingService {
         model,
       }
     } catch (error: any) {
-      console.error('[EmbeddingService] Error generating batch embeddings:', error)
+      logger.error({ err: error, count: texts.length }, 'Error generating batch embeddings')
       throw new Error(`Failed to generate batch embeddings: ${error.message}`)
     }
   }
@@ -228,9 +233,9 @@ export class EmbeddingService {
         throw new Error(`Failed to update cache embedding: ${updateError.message}`)
       }
 
-      console.log(`[EmbeddingService] Generated embedding for cache ${cacheId} (${result.tokens} tokens, $${result.cost.toFixed(6)})`)
+      logger.info({ cacheId, tokens: result.tokens, costUsd: result.cost }, 'Generated embedding for cache entry')
     } catch (error: any) {
-      console.error('[EmbeddingService] Error in generateAndStoreCacheEmbedding:', error)
+      logger.error({ err: error, cacheId }, 'Error in generateAndStoreCacheEmbedding')
       throw error
     }
   }
@@ -267,9 +272,9 @@ export class EmbeddingService {
         throw new Error(`Failed to update FAQ embedding: ${updateError.message}`)
       }
 
-      console.log(`[EmbeddingService] Generated embedding for FAQ ${articleId} (${result.tokens} tokens, $${result.cost.toFixed(6)})`)
+      logger.info({ articleId, tokens: result.tokens, costUsd: result.cost }, 'Generated embedding for FAQ article')
     } catch (error: any) {
-      console.error('[EmbeddingService] Error in generateAndStoreFAQEmbedding:', error)
+      logger.error({ err: error, articleId }, 'Error in generateAndStoreFAQEmbedding')
       throw error
     }
   }
@@ -291,11 +296,11 @@ export class EmbeddingService {
       }
 
       if (!cacheEntries || cacheEntries.length === 0) {
-        console.log('[EmbeddingService] No cache entries need embeddings')
+        logger.info('No cache entries need embeddings')
         return { processed: 0, totalCost: 0 }
       }
 
-      console.log(`[EmbeddingService] Backfilling embeddings for ${cacheEntries.length} cache entries...`)
+      logger.info({ count: cacheEntries.length }, 'Backfilling embeddings for cache entries')
 
       // Generate embeddings in batch
       const questions = cacheEntries.map((entry) => entry.question)
@@ -309,18 +314,18 @@ export class EmbeddingService {
           .eq('id', cacheEntries[i].id)
 
         if (updateError) {
-          console.error(`[EmbeddingService] Failed to update cache ${cacheEntries[i].id}:`, updateError)
+          logger.error({ err: updateError, cacheId: cacheEntries[i].id }, 'Failed to update cache embedding')
         }
       }
 
-      console.log(`[EmbeddingService] Backfill complete: ${cacheEntries.length} embeddings generated ($${batchResult.totalCost.toFixed(6)})`)
+      logger.info({ count: cacheEntries.length, costUsd: batchResult.totalCost }, 'Cache embedding backfill complete')
 
       return {
         processed: cacheEntries.length,
         totalCost: batchResult.totalCost,
       }
     } catch (error: any) {
-      console.error('[EmbeddingService] Error in backfillCacheEmbeddings:', error)
+      logger.error({ err: error }, 'Error in backfillCacheEmbeddings')
       throw error
     }
   }
@@ -341,11 +346,11 @@ export class EmbeddingService {
       }
 
       if (!articles || articles.length === 0) {
-        console.log('[EmbeddingService] No FAQ articles need embeddings')
+        logger.info('No FAQ articles need embeddings')
         return { processed: 0, totalCost: 0 }
       }
 
-      console.log(`[EmbeddingService] Backfilling embeddings for ${articles.length} FAQ articles...`)
+      logger.info({ count: articles.length }, 'Backfilling embeddings for FAQ articles')
 
       // Generate embeddings in batch
       const texts = articles.map((article) => `${article.topic}\n\n${article.body}`)
@@ -359,18 +364,18 @@ export class EmbeddingService {
           .eq('id', articles[i].id)
 
         if (updateError) {
-          console.error(`[EmbeddingService] Failed to update FAQ ${articles[i].id}:`, updateError)
+          logger.error({ err: updateError, articleId: articles[i].id }, 'Failed to update FAQ embedding')
         }
       }
 
-      console.log(`[EmbeddingService] Backfill complete: ${articles.length} embeddings generated ($${batchResult.totalCost.toFixed(6)})`)
+      logger.info({ count: articles.length, costUsd: batchResult.totalCost }, 'FAQ embedding backfill complete')
 
       return {
         processed: articles.length,
         totalCost: batchResult.totalCost,
       }
     } catch (error: any) {
-      console.error('[EmbeddingService] Error in backfillFAQEmbeddings:', error)
+      logger.error({ err: error }, 'Error in backfillFAQEmbeddings')
       throw error
     }
   }

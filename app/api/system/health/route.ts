@@ -1,69 +1,32 @@
 // app/api/system/health/route.ts
 
-export async function GET() {
-  try {
-    const health = {
-      success: true,
-      timestamp: new Date().toISOString(),
-      details: {
-        api: true,
-        database: false,
-        environment: {
-          hasSupabaseUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
-          hasSupabaseKey: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-        }
-      }
-    }
+import { NextResponse } from 'next/server'
 
-    // Test database connection safely
-    try {
-      const { supabaseServer } = await import('@/lib/supabaseServer')
-      
-      if (!supabaseServer || typeof supabaseServer.from !== 'function') {
-        throw new Error('Supabase client not properly initialized')
-      }
+/**
+ * GET /api/system/health — static liveness probe.
+ *
+ * It answers one question: is the app serving requests? It deliberately does
+ * no more (SA Q6, finding F5):
+ *   - No DB query. The previous version ran a service-role `agents` select for
+ *     anonymous callers, returned the raw DB error text and reported which env
+ *     vars were set. It also returned 200 even when that check failed, so no
+ *     status-code monitor ever got a DB signal from it.
+ *   - No input, so there is nothing to validate with Zod.
+ *   - No logging, so there is no correlationId either. Nothing here can fail,
+ *     and logging every probe would only be noise (SA Q-C). This is intentional;
+ *     please don't "fix" it.
+ *
+ * The body uses the standard `{ success, data }` envelope (SA Q-B), which also
+ * keeps the top-level `success: true` key the old body had.
+ */
 
-      // Simple connectivity test
-      const { error } = await supabaseServer
-        .from('agents')
-        .select('id')
-        .limit(1)
+// Without this, Next 14 renders a request-independent GET once at build time
+// and `timestamp` would be frozen, so the probe would lie about liveness.
+export const dynamic = 'force-dynamic'
 
-      if (error) {
-        throw new Error(`Database query failed: ${error.message}`)
-      }
-
-      health.details.database = true
-
-    } catch (dbError) {
-      health.success = false
-      health.details.database = false
-      
-      return Response.json({
-        ...health,
-        error: `Database health check failed: ${dbError instanceof Error ? dbError.message : 'Unknown error'}`
-      })
-    }
-
-    return Response.json(health)
-
-  } catch (error) {
-    console.error('❌ Health check API error:', error)
-    
-    return Response.json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error occurred',
-      timestamp: new Date().toISOString(),
-      details: {
-        api: false,
-        database: false,
-        environment: {
-          hasSupabaseUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
-          hasSupabaseKey: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-        }
-      }
-    }, { 
-      status: 500 
-    })
-  }
+export function GET() {
+  return NextResponse.json({
+    success: true,
+    data: { status: 'ok', timestamp: new Date().toISOString() },
+  })
 }

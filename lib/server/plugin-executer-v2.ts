@@ -60,8 +60,9 @@ export class PluginExecuterV2 {
     'linkedin': LinkedInPluginExecutor,
     'airtable': AirtablePluginExecutor,
     'document-extractor': DocumentExtractorPluginExecutor,
-    // INTERIM DUPLICATION - see the note on corePluginFiles in plugin-manager-v2.ts.
-    // `business-os` (BizQL-backed, discoverable) and the five internal plugins below
+    // INTERIM DUPLICATION - see the note on the `business-os` entry of PLUGIN_PROFILES
+    // in lib/server/plugin-profile.ts.
+    // `business-os` (BizQL-backed, discoverable) and the four internal plugins below
     // (repository-backed, hidden from discovery) are two surfaces over the same tables,
     // built in parallel and kept side by side on purpose. They have distinct consumers
     // and do not contend. Decision owed - see D9 / Q2-Q4 in
@@ -120,6 +121,18 @@ export class PluginExecuterV2 {
 
   // Unified execute method - routes to appropriate plugin executor
   async execute(userId: string, pluginName: string, actionName: string, parameters: any): Promise<ExecutionResult> {
+    // Profile gate first: a registered plugin outside the active profile is a
+    // configuration choice, not a bug, so it gets its own stable non-throwing result
+    // and never reaches executor construction or the execution log below.
+    const notEnabledMessage = this.getNotEnabledMessage(pluginName);
+    if (notEnabledMessage) {
+      logger.warn(
+        { userId, pluginKey: pluginName, profile: this.pluginManager.getActiveProfile().name, actionName },
+        'Plugin not enabled in active profile'
+      );
+      return { success: false, error: 'plugin_not_enabled', message: notEnabledMessage };
+    }
+
     logger.info({ userId, pluginName, actionName }, 'Executing plugin action');
 
     try {
@@ -139,6 +152,23 @@ export class PluginExecuterV2 {
         message: error.message || 'Unknown error occurred during execution'
       };
     }
+  }
+
+  // Returns the not-enabled message for a registered plugin outside the manager's
+  // active profile, or null when the call should proceed. Unregistered keys return
+  // null on purpose so they keep today's "executor not found" execution_error: that
+  // one is a real bug, this one is a deployment choice. The manager's profile (not
+  // the resolver) is used so executor and manager always agree on the loaded set.
+  private getNotEnabledMessage(pluginName: string): string | null {
+    // hasOwnProperty, not `in`, so prototype names like `constructor` don't count as registered.
+    if (!Object.prototype.hasOwnProperty.call(PluginExecuterV2.executorRegistry, pluginName)) {
+      return null;
+    }
+    const profile = this.pluginManager.getActiveProfile();
+    if (profile.pluginKeys.includes(pluginName)) {
+      return null;
+    }
+    return `Plugin '${pluginName}' is not enabled in the '${profile.name}' plugin profile`;
   }
 
   // Lazy instantiation: Get existing executor or create new one
@@ -173,6 +203,16 @@ export class PluginExecuterV2 {
     connection: any,
     options: { page?: number; limit?: number; [key: string]: any }
   ): Promise<{ value: string; label: string; description?: string; icon?: string; group?: string }[]> {
+    // Same profile gate as execute(); this method's contract is throw-on-failure.
+    const notEnabledMessage = this.getNotEnabledMessage(pluginName);
+    if (notEnabledMessage) {
+      logger.warn(
+        { pluginKey: pluginName, profile: this.pluginManager.getActiveProfile().name },
+        'Plugin not enabled in active profile'
+      );
+      throw new Error(notEnabledMessage);
+    }
+
     const executor = this.getOrCreateExecutor(pluginName);
 
     // Check if the method exists on the executor

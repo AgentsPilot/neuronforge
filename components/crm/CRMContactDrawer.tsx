@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   X, Plus, Mail, User, Bot, Globe, Facebook, Search as SearchIcon,
   Users as UsersIcon, Phone as PhoneIcon, MessageCircle, Trash2,
-  Calendar, CreditCard, Clock, FileText, AlertCircle, Check,
+  Calendar, CreditCard, Clock, File, FileText, AlertCircle, Check,
   Upload, Download, Eye, MoreVertical, FolderOpen, UserX, Send,
   StickyNote, Video, CheckSquare, Circle, Flag, ClipboardList,
   ChevronDown, ChevronUp, Edit2, ArrowUpDown

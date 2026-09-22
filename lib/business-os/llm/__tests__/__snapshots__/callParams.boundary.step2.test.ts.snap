@@ -1,0 +1,528 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) briefing/daily_narration 1`] = `
+[
+  [
+    {
+      "max_tokens": 320,
+      "messages": [
+        {
+          "content": "sha256:e2215780db21d6079d975196bc7edf7ace99f46c1c501185628db8be685e9c50 (len 5155)",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o-mini",
+      "temperature": 0.3,
+    },
+    {
+      "activity_type": "narration",
+      "component": "daily_narration",
+      "feature": "business-os-briefing",
+      "sessionId": "<briefing-group>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) insights/correlated_insight 1`] = `
+[
+  [
+    {
+      "max_tokens": 400,
+      "messages": [
+        {
+          "content": "sha256:b7d7e45a2b3c2520af7947ed43f6ed6711a1a22e8feb0d44a268f409b03ea2a1 (len 1614)",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o-mini",
+      "temperature": 0.4,
+    },
+    {
+      "component": "correlated_insight",
+      "feature": "business-os-insights",
+      "sessionId": "<run>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) insights/health_summary 1`] = `
+[
+  [
+    {
+      "max_tokens": 800,
+      "messages": [
+        {
+          "content": "sha256:7dac59c4c1d7ce15b0b9cb47856a9fe379f115b5fc24c998d3bd239d6f588c94 (len 1247)",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o-mini",
+      "temperature": 0.5,
+    },
+    {
+      "component": "health_summary",
+      "feature": "business-os-insights",
+      "sessionId": "<run>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) insights/insight_content 1`] = `
+[
+  [
+    {
+      "max_tokens": 300,
+      "messages": [
+        {
+          "content": "sha256:16561ac2222fdd38d623e465ef912cb8fbc897f0e2c9bd5692d7c1997c8e47b6 (len 1073)",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o-mini",
+      "temperature": 0.3,
+    },
+    {
+      "component": "insight_content",
+      "feature": "business-os-insights",
+      "sessionId": "<run>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) intake/form_generation 1`] = `
+[
+  [
+    {
+      "messages": [
+        {
+          "content": "You design short intake forms that a service business sends a client after they book. Write every question in English. Reply with JSON only.",
+          "role": "system",
+        },
+        {
+          "content": "sha256:b39243b61fa0e5ba272fa4336de72cb3b3c38ac57471d4a77a5c6649b77f965f (len 2576)",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o",
+      "response_format": {
+        "type": "json_object",
+      },
+      "temperature": 0.3,
+    },
+    {
+      "component": "form_generation",
+      "feature": "business-os-intake",
+      "sessionId": "<group>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) intake/question_inference 1`] = `
+[
+  [
+    {
+      "messages": [
+        {
+          "content": "You turn a business owner's rough note into one clean intake question. Reply with JSON only.",
+          "role": "system",
+        },
+        {
+          "content": "sha256:c56f685363d15c0efe9f03f874b108c08c76643173f24c4534c8f2d466aac131 (len 720)",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o-mini",
+      "response_format": {
+        "type": "json_object",
+      },
+      "temperature": 0.2,
+    },
+    {
+      "component": "question_inference",
+      "feature": "business-os-intake",
+      "sessionId": "<uuid>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) leads/reply_recommendation 1`] = `
+[
+  [
+    {
+      "max_tokens": 200,
+      "messages": [
+        {
+          "content": "sha256:00972a9633496fb4bff860b9bfe4d89614631bc942d8f7c960986da008919406 (len 562)",
+          "role": "system",
+        },
+        {
+          "content": "{
+  "theyWrote": "Do you do evenings?",
+  "options": [
+    {
+      "label": "Personal training"
+    }
+  ]
+}",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o-mini",
+      "response_format": {
+        "type": "json_object",
+      },
+      "temperature": 0.2,
+    },
+    {
+      "component": "reply_recommendation",
+      "feature": "business-os-leads",
+      "sessionId": "<group>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) onboarding/adjustment_intent_extraction 1`] = `
+[
+  [
+    {
+      "messages": [
+        {
+          "content": "sha256:73fdfb921c9454d1268d18012e48cbcdbf0a1fb1f0c3a60e990c9e6c9e9d951b (len 819)",
+          "role": "system",
+        },
+        {
+          "content": "change the price",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o",
+      "response_format": {
+        "type": "json_object",
+      },
+    },
+    {
+      "component": "adjustment_intent_extraction",
+      "feature": "business-os-onboarding",
+      "sessionId": "<group>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) onboarding/business_story_extraction 1`] = `
+[
+  [
+    {
+      "messages": [
+        {
+          "content": "sha256:78fd48d23a7bccce8bc1933e4f9fc03df26aafeb3ba23fcc65269a136ec18baa (len 3433)",
+          "role": "system",
+        },
+        {
+          "content": "I train people",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o",
+      "response_format": {
+        "type": "json_object",
+      },
+    },
+    {
+      "component": "business_story_extraction",
+      "feature": "business-os-onboarding",
+      "sessionId": "<group>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) onboarding/client_tracking_extraction 1`] = `
+[
+  [
+    {
+      "messages": [
+        {
+          "content": "sha256:9a9b6642834df289b597e2ef3abab4d1732605d1828bd11d720154eaabeaed18 (len 2626)",
+          "role": "system",
+        },
+        {
+          "content": "A spreadsheet",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o",
+      "response_format": {
+        "type": "json_object",
+      },
+    },
+    {
+      "component": "client_tracking_extraction",
+      "feature": "business-os-onboarding",
+      "sessionId": "<group>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) onboarding/client_workflow_extraction 1`] = `
+[
+  [
+    {
+      "messages": [
+        {
+          "content": "sha256:52009233086d8af47594616f670bec4ed610625f217e65873149479192be0bca (len 7781)",
+          "role": "system",
+        },
+        {
+          "content": "They book and pay up front",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o",
+      "response_format": {
+        "type": "json_object",
+      },
+    },
+    {
+      "component": "client_workflow_extraction",
+      "feature": "business-os-onboarding",
+      "sessionId": "<group>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) website/about_content 1`] = `
+[
+  [
+    {
+      "max_tokens": 300,
+      "messages": [
+        {
+          "content": "sha256:44f413c377723fc6c6613ed339d1d20198205e7d424ce299bef6371cd9045cbc (len 268)",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o-mini",
+      "temperature": 0.7,
+    },
+    {
+      "component": "about_content",
+      "feature": "business-os-website",
+      "sessionId": "<group>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) website/faq_content 1`] = `
+[
+  [
+    {
+      "max_tokens": 600,
+      "messages": [
+        {
+          "content": "sha256:4d5f1a5012e1fd63a5c64151b357c7593011f0adac913cd11f06a79df0973330 (len 279)",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o-mini",
+      "temperature": 0.7,
+    },
+    {
+      "component": "faq_content",
+      "feature": "business-os-website",
+      "sessionId": "<group>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) website/features_content 1`] = `
+[
+  [
+    {
+      "max_tokens": 500,
+      "messages": [
+        {
+          "content": "sha256:965f518f46b89a77f34da57637d557f5c3f612b3a852e435832ca5c5d9fb1571 (len 362)",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o-mini",
+      "temperature": 0.7,
+    },
+    {
+      "component": "features_content",
+      "feature": "business-os-website",
+      "sessionId": "<group>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) website/field_regenerate 1`] = `
+[
+  [
+    {
+      "max_tokens": 300,
+      "messages": [
+        {
+          "content": "You are a professional website copywriter. Generate concise, engaging content.",
+          "role": "system",
+        },
+        {
+          "content": "Generate a compelling headline (max 10 words) for the hero section of a fitness business website.
+Company: Studio
+Language: English
+
+Return ONLY the text, no quotes or formatting.",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o-mini",
+      "temperature": 0.7,
+    },
+    {
+      "component": "field_regenerate",
+      "feature": "business-os-website",
+      "sessionId": "<group>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) website/full_site 1`] = `
+[
+  [
+    {
+      "messages": [
+        {
+          "content": "You are a professional website copywriter. Generate compelling, clear, and SEO-optimized website content in English — every field, including section headings and button labels.",
+          "role": "system",
+        },
+        {
+          "content": "sha256:7c2e7b823a32e13dee42a9815d5c9bc90d8c1b776924d3d2a1cac0504818c793 (len 3771)",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o",
+      "response_format": {
+        "type": "json_object",
+      },
+      "temperature": 0.7,
+    },
+    {
+      "component": "full_site",
+      "feature": "business-os-website",
+      "sessionId": "<group>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) website/hero_content 1`] = `
+[
+  [
+    {
+      "max_tokens": 200,
+      "messages": [
+        {
+          "content": "sha256:81f4108d3b37bdce44de20c4128278cfc5b928a42cee241b67da2f151b75ff6d (len 319)",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o-mini",
+      "temperature": 0.7,
+    },
+    {
+      "component": "hero_content",
+      "feature": "business-os-website",
+      "sessionId": "<group>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) website/landing_page 1`] = `
+[
+  [
+    {
+      "messages": [
+        {
+          "content": "sha256:157fb551e82c4a1f37aa72b15e0efbcabaddee0203d47931e3cf997dd1c3c9f4 (len 829)",
+          "role": "system",
+        },
+        {
+          "content": "sha256:726ec0a874164d48cf562826356aaafd5ff27570031c3ddbe3a8c2471f39294d (len 5202)",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o",
+      "response_format": {
+        "type": "json_object",
+      },
+      "temperature": 0.7,
+    },
+    {
+      "component": "landing_page",
+      "feature": "business-os-website",
+      "sessionId": "<uuid>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) website/testimonial_enhance 1`] = `
+[
+  [
+    {
+      "max_tokens": 200,
+      "messages": [
+        {
+          "content": "You are a professional editor who polishes customer testimonials.",
+          "role": "system",
+        },
+        {
+          "content": "sha256:609eef80c4e707ac66d26cc51be2bc432cd22934da843c6852272c3c6ec017b9 (len 310)",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o-mini",
+      "temperature": 0.5,
+    },
+    {
+      "component": "testimonial_enhance",
+      "feature": "business-os-website",
+      "sessionId": "<group>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;

@@ -2,8 +2,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 
+import { requireAdmin } from '@/lib/admin/requireAdminRoute';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'StorageTiersAdminAPI' });
 export async function GET() {
+  // No request object on this handler, so the correlation id is generated
+  // rather than propagated.
+  const requestLogger = logger.child({ correlationId: crypto.randomUUID() });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
     const { data: configs, error } = await supabaseAdmin
       .from('ais_system_config')
       .select('config_key, config_value, description, updated_at')
@@ -19,7 +32,15 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
     const body = await request.json();
     const { minTokens, storageMB } = body;
 
@@ -50,7 +71,15 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
     const body = await request.json();
     const { configKey, storageMB } = body;
 
@@ -78,7 +107,15 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
     const { searchParams } = new URL(request.url);
     const configKey = searchParams.get('configKey');
 

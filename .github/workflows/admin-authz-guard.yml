@@ -1,0 +1,182 @@
+# Admin Authorization Surface Guard
+#
+# Runs lib/admin/__tests__/admin-authz-surface.guard.test.ts, the repo-wide
+# static scan that fails when an admin surface ships without its guard:
+#   R1  an /api/admin route handler that does not use `requireAdmin`
+#   R2  ANY route.ts that imports AdminAccessService directly
+#   R3  a route.ts under app/admin/** (route handlers bypass layouts)
+#   R4  an access decision keyed on a `role` value (profiles.role is user-writable)
+#   R5  a migration adding an RLS policy that references profiles.role
+#   R6  app/admin/layout.tsx without its server-side page guard
+#
+# ── NO `paths:` FILTER, ON PURPOSE ─────────────────────────────────────────
+# This is the whole reason the job exists as its own workflow.
+#
+# `plugin-tests.yml` is path-filtered to lib/server/**, lib/plugins/** and
+# tests/plugins/**. A new file at `app/api/admin/new-thing/route.ts` — exactly
+# the change this guard exists to catch — matches none of those, so a filtered
+# workflow would be DEFEATED BY THE CHANGE IT GUARDS. It would go green by not
+# running.
+#
+# Neither existing workflow runs `npm test` either (`plugin-tests.yml` runs the
+# plugin suites; `bos-llm-typecheck.yml` runs a scoped tsc), so this guard has
+# nowhere else to attach. `bos-llm-typecheck.yml` made the same no-filter
+# choice deliberately and documents it in its own header.
+#
+# Do not add a `paths:` filter here. The guard is a few seconds of static file
+# reading; the cost of running it on every PR is far below the cost of the hole
+# it closes.
+#
+# The scope step below is NOT that filter. The guard scans app/, lib/,
+# components/, hooks/ and supabase/migrations + 'supabase/SQL Scripts', and the
+# skip rule covers only docs/, root-level *.md, scripts/ and .claude/ - none of
+# which the guard reads (the rule anchors `scripts/` at the repo root, so
+# 'supabase/SQL Scripts' never matches it). A new admin route, the change this
+# guard exists to catch, can never be classified as skippable. The job also
+# still runs and still reports on every PR, so it remains requireable.
+#
+# ── ⚠️ THIS IS NOT A BUILD GATE UNTIL IT IS A REQUIRED STATUS CHECK ────────
+# A red workflow blocks nothing by itself. Until the repository owner performs
+# the manual step below, an unguarded admin route can still be merged with a
+# red tick next to it. Nobody but the repo owner can do this — it is a GitHub
+# setting, not a file in any diff.
+#
+#   1. Open a PR (or push) so this workflow RUNS AT LEAST ONCE. GitHub only
+#      offers check names it has actually seen.
+#   2. Settings → Branches → branch protection rule for `main`
+#      → "Require status checks to pass before merging"
+#   3. Search for and select:   Admin authz surface guard
+#
+#      ⚠️ That is the JOB name (see `jobs.admin-authz-guard.name` below), NOT
+#      the workflow name "Admin Authz Guard" at the top of this file. A required
+#      status check matches the JOB. Searching for the workflow name finds
+#      nothing, which is exactly the wrong moment to conclude "it isn't there".
+#
+#   4. PROVE IT: open a throwaway PR adding an ungated admin route and confirm
+#      the PR is BLOCKED FROM MERGING — not merely showing a red tick. Those are
+#      different states, and only the first one is a gate. Close the PR after.
+#
+# Renaming the job below silently un-gates the repository — the protection rule
+# keeps waiting for a check that no longer reports. If you rename it, update the
+# branch protection rule in the same change.
+#
+# ── ⚠️ RED ON A PR THAT HAS NOTHING TO DO WITH ADMIN AUTHZ? ────────────────
+# You have probably not broken anything. Read this before reaching for a skip.
+#
+# The exemption caps in the guard are asserted by EQUALITY, not "<=", so a cap
+# cannot quietly drift above reality after a route is gated and leave room
+# nobody signed for. The consequence — by design, but genuinely surprising the
+# first time you meet it — is that this check is sensitive to OTHER BRANCHES:
+#
+#   someone gates an admin route and deletes its exemption but does not lower
+#   the cap  ->  this job goes red on `main` for EVERYONE, including PRs that
+#                never touched admin code.
+#
+# The fix is never to raise the cap back up, and never to skip the job:
+#
+#   * an exemption was REMOVED (a route got gated) -> lower that list's cap by
+#     the same number, in the same commit. That is the ratchet rule.
+#   * an exemption was ADDED -> the cap must be raised deliberately and
+#     justified in the PR body, which is exactly the moment this check exists
+#     to create.
+#
+# The failing test names the rule, prints both numbers, and carries the ratchet
+# instruction in its output.
+#
+# ── What a green run does and does not mean ────────────────────────────────
+# GREEN means: no NEW ungated admin surface was added, and no exemption was
+# added without someone raising a cap and signing for it in the PR body.
+#
+# GREEN does NOT mean the admin surface is HARDENED. As of 2026-09-21 all 72
+# admin handlers require an admin and all 21 /admin pages are guarded — but 7
+# handlers still hand-roll their own check instead of calling requireAdmin
+# (slice 4, parked), and most admin routes still use a service-role client
+# directly, bypassing RLS and the repository layer. Gated, not isolated.
+# See docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md § What is NOT true.
+#
+# See docs/workplans/admin-authz-unification.md (slices 1 and 6).
+
+name: Admin Authz Guard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only: the job checks out and runs one Jest file.
+permissions:
+  contents: read
+
+# A newer push to the same branch supersedes a running check.
+concurrency:
+  group: admin-authz-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  # ⚠️ Renaming this job un-gates `main` if it is a required status check.
+  admin-authz-guard:
+    name: Admin authz surface guard
+    runs-on: ubuntu-latest
+    # The scan is seconds; fail fast if install or something else hangs.
+    timeout-minutes: 15
+    steps:
+      # fetch-depth 2 so HEAD^ resolves. On a merge landing on main HEAD^ is
+      # the previous main tip; on a pull_request (refs/pull/N/merge) HEAD^1 is
+      # the base tip. Either way HEAD^..HEAD is the whole change under review.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      # The guard reads app/, lib/, components/, hooks/ and the SQL migration
+      # dirs. A change confined to docs/, scripts/ or .claude/ touches none.
+      #
+      # This is NOT a `paths:` filter. The job still runs on every PR and
+      # always reports a conclusion, so it stays safe to make a required
+      # status check - a `paths:` filter would leave the check pending
+      # forever and block the merge. The rule itself lives in
+      # .github/ci/non-deploying-change.sh (shared with vercel.json's
+      # ignoreCommand) and fails open: anything it cannot classify builds.
+      - name: Can this change affect an admin surface?
+        id: scope
+        env:
+          # Measure the WHOLE push, not just its last commit. At fetch-depth 2
+          # this sha resolves only when it IS HEAD^ - a single commit, which is
+          # what a squash or merge landing on main looks like. A bigger push
+          # (rebase-merge, merge queue batch, direct multi-commit push) cannot
+          # resolve it, and the script fails open to BUILD. Empty on
+          # pull_request, where the script's HEAD^ default is already the base
+          # tip of the merge ref.
+          BASE: ${{ github.event_name == 'push' && github.event.before || '' }}
+        run: |
+          if bash .github/ci/non-deploying-change.sh "$BASE"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: steps.scope.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        if: steps.scope.outputs.skip != 'true'
+        run: npm ci
+
+      - name: Run the admin authz surface guard
+        if: steps.scope.outputs.skip != 'true'
+        run: npm run test:authz-guard
+
+      - name: Note the skip in the run summary
+        if: steps.scope.outputs.skip == 'true'
+        run: |
+          echo "Skipped: every changed file is documentation, scripts or" >> "$GITHUB_STEP_SUMMARY"
+          echo "Claude Code config, so it cannot reach an environment." >> "$GITHUB_STEP_SUMMARY"
+          echo "Rule: .github/ci/non-deploying-change.sh" >> "$GITHUB_STEP_SUMMARY"

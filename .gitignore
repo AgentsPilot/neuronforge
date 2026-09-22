@@ -65,3 +65,8 @@ dev.log
 # Throwaway probe scripts. `scripts/tmp-audit.ts` hardcoded a live Stripe
 # account id; nothing named tmp- is meant to outlive the debugging session.
 scripts/tmp-*.ts
+
+# Claude Code scratch worktrees: full checkouts of this repo. Committing one
+# would also hand .github/ci/non-deploying-change.sh a tree of code sitting
+# under a path it treats as non-deploying.
+.claude/worktrees/

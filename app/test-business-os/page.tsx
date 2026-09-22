@@ -34,9 +34,11 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '@/components/UserProvider';
 import { BosModuleTester, type BosModule } from '@/components/test-business-os/BosModuleTester';
+import { TestAuthPanel } from '@/components/test-business-os/TestAuthPanel';
 import type { ActionSchema } from '@/lib/plugins/tester/tester-types';
 import type { ExecutionResult } from '@/lib/types/plugin-types';
 import { PurgeDangerZone } from '@/components/business-os/purge/PurgeDangerZone';
+import { LlmUsageVerification } from '@/components/test-business-os/llm-usage/LlmUsageVerification';
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
 // Add tabs here. The first real tab will replace/extend this list.
@@ -44,6 +46,7 @@ const TABS = [
   { id: 'overview', label: 'Overview' },
   { id: 'modules', label: 'Modules' },
   { id: 'danger-zone', label: 'Danger Zone' },
+  { id: 'llm-usage', label: 'LLM Usage' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -274,34 +277,18 @@ export default function TestBusinessOSPage() {
         ))}
       </div>
 
-      {/* Current User + Account Setup live on the Overview tab only — they are
-          account-level setup, not repeated on every feature tab. Seed a profile from
-          Overview, then switch to a feature tab (e.g. Modules) to use it. */}
+      {/* Session + Account Setup live on the Overview tab only — they are
+          account-level setup, not repeated on every feature tab. Sign in and seed a
+          profile from Overview, then switch to a feature tab (e.g. Modules). */}
       {activeTab === 'overview' && (
         <>
-      {/* Current User (session) panel */}
-      <div style={panelStyle}>
-        <h2 style={{ marginTop: 0 }}>Current User (session)</h2>
-        {authLoading ? (
-          <div style={{ color: '#666' }}>Loading session…</div>
-        ) : user ? (
-          <div style={{ fontSize: '14px' }}>
-            <div>
-              <span style={{ color: '#666' }}>User ID:</span>{' '}
-              <strong>{user.id}</strong>
-            </div>
-            <div>
-              <span style={{ color: '#666' }}>Email:</span>{' '}
-              <strong>{user.email || '(none)'}</strong>
-            </div>
-          </div>
-        ) : (
-          <div style={{ color: '#dc3545' }}>
-            Not signed in. Log in to the app first — Business OS APIs require an
-            authenticated session.
-          </div>
-        )}
-      </div>
+      {/* Session: who you are, and sign in / out without leaving the harness. */}
+      <TestAuthPanel
+        user={user}
+        authLoading={authLoading}
+        onLog={addDebugLog}
+        panelStyle={panelStyle}
+      />
 
       {/* Account setup: seed profile + CRM pipeline stages */}
       <div style={panelStyle}>
@@ -456,15 +443,39 @@ export default function TestBusinessOSPage() {
         </div>
       )}
 
-      {/* Tab: Danger Zone — dry-run purge preview (T22, preview-only slice) */}
+      {/* Tab: Danger Zone — purge preview and the Reset commit (T22, slice 2).
+          Deliberately makes NO claim about whether deletion is possible. That
+          claim lives in exactly one place — the banner inside PurgeDangerZone —
+          and is driven by the server's own probe. Static copy here said "this
+          build has no delete capability at all" and silently became false in
+          slice 2, above a button that deletes; restating the state in a second
+          place is how the two drift. */}
       {activeTab === 'danger-zone' && (
         <div style={{ padding: '15px', border: '1px solid #ccc', borderRadius: '5px', marginBottom: '20px' }}>
           <h2 style={{ marginTop: 0 }}>Danger Zone — Business Data Reset &amp; Purge</h2>
           <p style={{ fontSize: '13px', color: '#666' }}>
-            Counts what a Reset or Purge <strong>would</strong> delete for the signed-in
-            account. This build has no delete capability at all — see the banner below.
+            Previews what a Reset or Purge would delete for the signed-in account, and — for
+            Reset — can carry it out. <strong>Read the banner below</strong> for whether Reset is
+            currently live.
           </p>
           <PurgeDangerZone onLog={addDebugLog} onResponse={setLastResponse} />
+        </div>
+      )}
+
+      {/* Tab: LLM Usage — admin-only, read-only attribution checks for one
+          business (Layer 1.1). The one tab that reads a business other than the
+          session user's; the server enforces admin rights on every request. It
+          logs manual refreshes and errors to the shared Debug Logs, but not
+          each successful auto-refresh. */}
+      {activeTab === 'llm-usage' && (
+        <div style={panelStyle}>
+          <h2 style={{ marginTop: 0 }}>LLM Usage — Business OS AI call attribution</h2>
+          <LlmUsageVerification
+            sessionUserId={user?.id ?? null}
+            authLoading={authLoading}
+            onLog={addDebugLog}
+            onResponse={setLastResponse}
+          />
         </div>
       )}
 

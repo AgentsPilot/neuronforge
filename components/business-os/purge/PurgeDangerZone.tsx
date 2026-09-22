@@ -3,11 +3,12 @@
 /**
  * T22 (dry-run slice) — the internal Danger Zone on /test-business-os.
  *
- * ⚠️ PREVIEW ONLY. There is no commit route in this build, so there is no
- * button here that can delete anything. That is stated on screen rather than
- * only in a report, because the thing this UI most needs to avoid is looking
- * finished: a preview that reads as complete is how someone later assumes the
- * destructive path is equally complete.
+ * ⚠️ SLICE 2: THIS PAGE CAN DELETE DATA. The preview is still read-only, but a
+ * Reset commit button now exists behind a typed confirmation. It deletes nothing
+ * until `purge_business_data` is applied — until then the server refuses before
+ * writing anything — but the banner says so plainly rather than leaving a stale
+ * "nothing will be deleted" beside a delete button. A reassuring banner that has
+ * quietly become false is worse than no banner at all.
  *
  * Two display rules, both deliberate:
  *   1. A count that could not be read renders as **unknown**, never as 0. Zero
@@ -40,11 +41,36 @@ interface PreviewResult {
   durationMs: number;
 }
 
+type CommitOutcome =
+  | {
+      status: 'completed';
+      correlationId: string;
+      snapshotPath: string;
+      rows: { total: number; byTable: Record<string, number> };
+      storage: Array<{ bucket: string; deleted: number; failed: Array<{ path: string; reason: string }> }>;
+      residue: string[];
+      committedAt: string;
+      durationMs: number;
+    }
+  | {
+      status: 'refused';
+      correlationId: string;
+      reason: string;
+      message: string;
+      snapshotWritten: boolean;
+      rowsDeleted: 0;
+    };
+
 interface AccessState {
   allowed: boolean;
   reason: string;
   userId?: string;
   email?: string | null;
+  /**
+   * Whether Reset can ACTUALLY delete right now, from the server's own probe.
+   * true = LIVE · false = function not applied · null/undefined = unknown.
+   */
+  resetLive?: boolean | null;
 }
 
 const box: React.CSSProperties = {
@@ -79,6 +105,12 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<PreviewResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // ── Reset commit (slice 2) ──────────────────────────────────────────────
+  const [confirmText, setConfirmText] = useState('');
+  const [committing, setCommitting] = useState(false);
+  const [commitOutcome, setCommitOutcome] = useState<CommitOutcome | null>(null);
+  const [commitError, setCommitError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -164,6 +196,56 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
     }
   }, [level, options, onLog, onResponse]);
 
+  const runReset = async () => {
+    setCommitting(true);
+    setCommitError(null);
+    setCommitOutcome(null);
+    onLog?.('info', 'RESET requested — POST /api/business-os/purge/commit (typed confirmation supplied)');
+
+    try {
+      const res = await fetch('/api/business-os/purge/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ level: 'reset', confirmText }),
+      });
+      const json = await res.json();
+      onResponse?.(json);
+
+      if (!res.ok || !json.success) {
+        const msg = json?.error || `Request failed (${res.status})`;
+        setCommitError(msg);
+        onLog?.('error', `Reset rejected (${res.status}): ${msg}`);
+        return;
+      }
+
+      const outcome = json.data as CommitOutcome;
+      setCommitOutcome(outcome);
+
+      if (outcome.status === 'completed') {
+        onLog?.(
+          'success',
+          `RESET COMPLETED · ${outcome.rows.total} rows deleted · snapshot ${outcome.snapshotPath} · correlationId=${outcome.correlationId}`,
+        );
+        for (const r of outcome.residue) onLog?.('error', `Storage residue: ${r}`);
+        // The counts shown are now pre-reset and wrong. Clear them rather than
+        // leave a table of numbers that describes data which no longer exists.
+        setResult(null);
+        setConfirmText('');
+      } else {
+        onLog?.(
+          'info',
+          `Reset refused (${outcome.reason}) · snapshotWritten=${outcome.snapshotWritten} · rowsDeleted=0 · ${outcome.message}`,
+        );
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setCommitError(msg);
+      onLog?.('error', `Reset threw: ${msg}`);
+    } finally {
+      setCommitting(false);
+    }
+  };
+
   if (access === null) {
     return <p style={{ color: '#666' }}>Checking access…</p>;
   }
@@ -187,21 +269,49 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
   return (
     <div>
       {/* ── The banner that must be unmistakable ───────────────────────── */}
-      <div
-        style={{
-          ...box,
-          borderColor: '#0d6efd',
-          background: '#eef5ff',
-          borderWidth: 2,
-        }}
-      >
-        <h3 style={{ margin: '0 0 6px' }}>🔍 PREVIEW ONLY — nothing will be deleted</h3>
+      <div style={{ ...box, borderColor: '#dc3545', background: '#fff5f5', borderWidth: 2 }}>
+        <h3 style={{ margin: '0 0 6px' }}>⚠️ This page can DELETE data</h3>
         <p style={{ margin: 0, fontSize: 14 }}>
-          This build has <strong>no commit route and no delete capability</strong>. It counts
-          the rows a Reset or Purge <em>would</em> remove and shows what it could not verify.
-          There is no button here that can remove data, because the destructive RPC has not
-          been written or applied.
+          <strong>Preview</strong> is read-only and changes nothing. <strong>Reset</strong> (offered
+          after a Reset preview) permanently deletes this business&apos;s CRM, scheduling, payment,
+          website and insight data, behind a typed confirmation. A verified snapshot is written
+          first. <strong>There is no undo.</strong>
         </p>
+        {/*
+          M-4: driven by the server's live probe, never by a hard-coded sentence.
+          The earlier fixed text ("the server refuses Reset — expected") was true
+          until the migration was applied and silently false afterwards, beside a
+          button that by then deleted. This cannot drift from ResetService,
+          because it asks the same question.
+        */}
+        {access.resetLive === true && (
+          <p
+            role="alert"
+            style={{
+              margin: '8px 0 0',
+              padding: 8,
+              fontSize: 14,
+              fontWeight: 700,
+              background: '#dc3545',
+              color: 'white',
+              borderRadius: 4,
+            }}
+          >
+            ⚠️ Reset is LIVE — it will delete data.
+          </p>
+        )}
+        {access.resetLive === false && (
+          <p style={{ margin: '6px 0 0', fontSize: 13 }}>
+            Reset is currently <strong>refused — the destructive function is not applied</strong>.
+            Pressing Reset will be rejected by the server before anything is written.
+          </p>
+        )}
+        {(access.resetLive === null || access.resetLive === undefined) && (
+          <p style={{ margin: '6px 0 0', fontSize: 13, color: '#b8860b' }}>
+            <strong>Could not determine whether Reset is live.</strong> Treat it as live: the server
+            re-checks before deleting and refuses if it cannot confirm.
+          </p>
+        )}
       </div>
 
       {/* ── Whose data, stated before anything else ────────────────────── */}
@@ -384,7 +494,85 @@ export function PurgeDangerZone({ onLog, onResponse }: PurgeDangerZoneProps = {}
               ))}
             </ul>
           </div>
+
+          {result.level === 'reset' && (
+            <div style={{ ...box, borderColor: '#dc3545', borderWidth: 2 }}>
+              <h4 style={{ margin: '0 0 8px', color: '#b02a37' }}>Reset this business</h4>
+              <p style={{ margin: '0 0 8px', fontSize: 14 }}>
+                Permanently deletes the {result.totals.rows.toLocaleString()} rows counted above for{' '}
+                <code>{access.email ?? access.userId}</code>. A verified snapshot is written first.{' '}
+                <strong>There is no undo.</strong>
+              </p>
+              <label htmlFor="purge-confirm" style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>
+                Type the <strong>business name</strong> (or, if the business has none, the{' '}
+                <strong>account email</strong>) to confirm:
+              </label>
+              <input
+                id="purge-confirm"
+                type="text"
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                autoComplete="off"
+                style={{ width: '100%', padding: 6, marginBottom: 8, fontFamily: 'monospace' }}
+              />
+              <button
+                onClick={runReset}
+                disabled={committing || confirmText.trim().length === 0}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 4,
+                  border: '1px solid #dc3545',
+                  background: committing || !confirmText.trim() ? '#ccc' : '#dc3545',
+                  color: 'white',
+                  fontWeight: 600,
+                  cursor: committing || !confirmText.trim() ? 'default' : 'pointer',
+                }}
+              >
+                {committing ? 'Resetting…' : 'Reset — delete permanently'}
+              </button>
+            </div>
+          )}
         </>
+      )}
+
+      {commitError && (
+        <div role="alert" style={{ ...box, borderColor: '#f5c6cb', background: '#fff5f5' }}>
+          <strong>Reset rejected:</strong> {commitError}
+        </div>
+      )}
+
+      {commitOutcome && commitOutcome.status === 'refused' && (
+        <div role="alert" style={{ ...box, borderColor: '#ffc107', background: '#fffbe6' }}>
+          <strong>Reset refused — {commitOutcome.reason}</strong>
+          <p style={{ margin: '6px 0 0', fontSize: 14 }}>{commitOutcome.message}</p>
+          <p style={{ margin: '6px 0 0', fontSize: 13 }}>
+            Rows deleted: <strong>0</strong> · Snapshot written:{' '}
+            <strong>{commitOutcome.snapshotWritten ? 'yes' : 'no'}</strong> · correlation{' '}
+            <code>{commitOutcome.correlationId.slice(0, 8)}</code>
+          </p>
+        </div>
+      )}
+
+      {commitOutcome && commitOutcome.status === 'completed' && (
+        <div role="status" style={{ ...box, borderColor: '#198754', background: '#f0fff4' }}>
+          <strong>Reset completed.</strong>
+          <p style={{ margin: '6px 0 0', fontSize: 14 }}>
+            {commitOutcome.rows.total.toLocaleString()} rows deleted in {commitOutcome.durationMs}ms.
+            Snapshot: <code>{commitOutcome.snapshotPath}</code>
+          </p>
+          {commitOutcome.residue.length > 0 && (
+            <>
+              <p style={{ margin: '6px 0 2px', fontSize: 13, fontWeight: 600, color: '#b02a37' }}>
+                The rows are gone, but some files could not be removed:
+              </p>
+              <ul style={{ margin: 0, paddingLeft: 20, fontSize: 12 }}>
+                {commitOutcome.residue.map((r, i) => (
+                  <li key={i}>{r}</li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
       )}
     </div>
   );

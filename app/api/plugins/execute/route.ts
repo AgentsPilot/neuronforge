@@ -8,12 +8,14 @@
 // user's OAuth credentials. See
 // docs/workplans/BUSINESS_OS_PLUGIN_ROUTE_IDENTITY_HARDENING_WORKPLAN.md.
 //
-// The GET handler is deliberately left public: it returns plugin/action METADATA only,
-// no user data, consistent with the metadata-only invariant documented in
-// app/api/plugins/action-schema/route.ts.
+// IDENTITY (GET): a session is required. The handler returns plugin/action METADATA
+// only — no user data and no secrets — but anonymously it enumerated the entire
+// registry (every plugin key and action name), which is free reconnaissance and is not
+// public information. Same rule as GET /api/plugins/available.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { getUser } from '@/lib/auth';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 import { PluginExecuterV2 } from '@/lib/server/plugin-executer-v2';
 import { resolveActingUserIdentity } from '@/lib/server/route-identity';
@@ -135,6 +137,16 @@ export async function GET(request: NextRequest) {
   const requestLogger = logger.child({ correlationId });
 
   try {
+    // Authenticate — the registry is not public information (see header comment).
+    const user = await getUser();
+    if (!user) {
+      // Session-dependent denial: no shared cache may store and replay it (QA-2, F11 rule).
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401, headers: { 'Cache-Control': 'private, no-store', Vary: 'Cookie' } }
+      );
+    }
+
     const { searchParams } = new URL(request.url);
     const parsed = CatalogueQuerySchema.safeParse({
       plugin: searchParams.get('plugin') ?? undefined,

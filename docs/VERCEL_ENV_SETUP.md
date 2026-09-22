@@ -28,6 +28,35 @@ These are **absolutely required** for the app to work:
 - `/api/admin/messages`
 - `/api/admin/token-usage`
 
+### 🔑 `ADMIN_EMAILS` — platform admin bootstrap (read before gating admin routes)
+
+| Variable | Purpose | Format | Which environments |
+|----------|---------|--------|--------------------|
+| `ADMIN_EMAILS` | **Pre-seed safety net for platform admin access.** An email listed here is treated as a platform admin **at runtime** even if the `admin_users` database seed has not run in that environment — so the first operator is never locked out. | Comma, semicolon **or** whitespace separated. Case-insensitive (lower-cased on parse). Example: `owner@example.com,ops@example.com` | **Every environment you deploy to** (Development, Preview, Production) — **unless** you have confirmed the `admin_users` seed is applied there with `is_active = true`. |
+
+**The authoritative source is the `admin_users` table**, seeded by `supabase/migrations/20260701_seed_admin_users.sql` (or `scripts/seed-admin-users.ts`). `ADMIN_EMAILS` is a bootstrap fallback, not the source of truth. Resolution order in `AdminAccessService.isAdmin()`: (1) `admin_users` row bound to the `user_id`; (2) `admin_users` row matching the email — which then **self-heals** by binding the `user_id`; (3) `ADMIN_EMAILS`.
+
+> #### ⚠️ `ADMIN_EMAILS` is app-side only — it is INVISIBLE to the database
+>
+> Postgres has no access to the environment, so the SQL-side admin predicate **`public.is_platform_admin()`** implements only paths (1) and (2) — never the `ADMIN_EMAILS` fallback and never the self-heal write.
+>
+> **Consequence:** *an admin who exists only in `ADMIN_EMAILS` and has never made an API call passes every app-code check and fails every RLS policy.* It presents as "the admin UI works but the table comes back empty".
+>
+> **The fix is not to teach the database about the env var.** It is to apply the `admin_users` seed in that environment. `ADMIN_EMAILS` is a bootstrap, and an admin who relies on it permanently is half an admin.
+>
+> See [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md) and the admin-authz requirement's FR-16.
+
+**Verifying an environment** — both checks, both read-only:
+
+```sql
+-- 1. Is the seed applied here? Expect >= 1 row with is_active = true.
+SELECT email, user_id, is_active FROM admin_users;
+```
+
+2. In Vercel → Settings → Environment Variables, confirm `ADMIN_EMAILS` exists for that environment.
+
+**If neither holds, admin access in that environment is denied to everyone** once the admin routes are gated — including the owner.
+
 ### ⚡ High Priority Variables (Strongly Recommended)
 
 Required for core features like scheduling and OAuth:
@@ -36,6 +65,7 @@ Required for core features like scheduling and OAuth:
 |----------|---------|----------------|
 | `REDIS_URL` | Agent queue system (BullMQ) | `.env.local` line 42 |
 | `CRON_SECRET` | Secure cron endpoints | `.env.local` line 51 |
+| `ADMIN_EMAILS` | Platform admin bootstrap allow-list — **see the section above** | `.env.local`; set per environment in Vercel |
 | `GOOGLE_CLIENT_ID` | Google OAuth | `.env.local` line 15 |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth | `.env.local` line 16 |
 
@@ -180,7 +210,7 @@ vercel env add GOOGLE_CLIENT_SECRET production
 
 4. **Test Specific Routes**
    ```
-   - Test: https://neuronforge-kohl.vercel.app/api/system/health
+   - Test: https://neuronforge-kohl.vercel.app/api/system/health (liveness only: confirms the app is serving; it no longer tests the DB or env vars)
    - Test: https://neuronforge-kohl.vercel.app/admin
    - Check browser console for specific errors
    ```

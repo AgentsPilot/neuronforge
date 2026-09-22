@@ -1,4 +1,5 @@
 {
+  "ignoreCommand": "bash .github/ci/non-deploying-change.sh",
   "crons": [
     {
       "path": "/api/run-scheduled-agents",

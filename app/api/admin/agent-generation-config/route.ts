@@ -4,6 +4,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
+import { requireAdmin } from '@/lib/admin/requireAdminRoute';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'AgentGenerationConfigAdminAPI' });
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -19,7 +23,16 @@ export const revalidate = 0;
  * Fetch agent generation configuration settings
  */
 export async function GET() {
+  // No request object on this handler, so the correlation id is generated
+  // rather than propagated.
+  const requestLogger = logger.child({ correlationId: crypto.randomUUID() });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
     // Fetch configuration from system_settings_config
     const { data: settings, error } = await supabase
       .from('system_settings_config')
@@ -114,7 +127,15 @@ export async function GET() {
  * Update agent generation configuration settings
  */
 export async function PUT(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
     const body = await request.json();
     const { config } = body;
 

@@ -14,9 +14,10 @@
  * suggesting. The owner knows the question; the type is our problem.
  *
  * Nothing here is trusted blindly: the answer is a SUGGESTION the review screen
- * shows, and the owner can change the type before it is added. `gpt-4o-mini`,
- * following the codebase's convention of the small model for single-field
- * inference and the large one for whole artefacts.
+ * shows, and the owner can change the type before it is added. The model is the
+ * intake area row's (Layer 2), which today configures a small model for this
+ * single-field inference and a larger one for whole artefacts — a settings
+ * choice now, not a convention this file follows.
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * @module app/api/intake/form/infer-question
@@ -28,6 +29,10 @@ import { randomUUID } from 'crypto';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { getProviderFactory } from '@/lib/ai/providerFactory';
+import { buildBosCallContext, newBosGroupId, type BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
+import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
+import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
+import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { INTAKE_QUESTION_TYPES, isIntakeQuestionType } from '@/lib/business-os/intake/types';
 import { stripForbiddenQuestions } from '@/lib/business-os/intake/verticalKnowledge';
@@ -62,7 +67,15 @@ export async function POST(request: NextRequest) {
     const { data: profile } = await businessProfileRepository.findByUserId(user.id);
     const language = profile?.language || 'en';
 
-    const inferred = await infer(text, language);
+    // One group per inference request; never taken from the request.
+    const groupId = newBosGroupId();
+    requestLogger.info({ userId: user.id, groupId }, 'Inferring intake question');
+
+    // One AI action, one audit entry (Layer 3, FR-12).
+    const inferred = await runAiAction(
+      { area: 'intake', actionType: 'intake_question_inference', groupId, trigger: 'user', accountId: user.id },
+      () => infer(text, language, { userId: user.id, groupId })
+    );
 
     /*
      * The same filter the generator runs. An owner typing "ask about their
@@ -104,7 +117,8 @@ export async function POST(request: NextRequest) {
  */
 async function infer(
   text: string,
-  language: string
+  language: string,
+  owner: BosLlmOwner
 ): Promise<{
   id: string;
   label: string;
@@ -119,9 +133,19 @@ async function infer(
     required: false,
   };
 
+  // Model, temperature and the on/off switch come from the intake area row
+  // (Layer 2 FR-12). Off gives the owner their own note as a free-text
+  // question — a usable question, which is what a model failure already does.
+  const settings = await resolveBosLlmSettings('intake', 'question_inference');
+  if (!settings.enabled) {
+    logger.info({ reason: 'disabled' }, 'Question inference AI is switched off; using the note as written');
+    return fallback;
+  }
+
   try {
-    const response = await getProviderFactory().complete({
-      model: 'gpt-4o-mini',
+    // Built inside the attempt, so a retry carries the model that ran (FR-11).
+    const { result: response } = await withModelFallback(settings, (model) => getProviderFactory().complete({
+      model,
       messages: [
         {
           role: 'system',
@@ -150,8 +174,13 @@ Only mark it required if the business plainly cannot proceed without it.
         },
       ],
       response_format: { type: 'json_object' },
-      temperature: 0.2,
-    });
+      ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+    }, buildBosCallContext({
+      userId: owner.userId,
+      area: 'intake',
+      callName: 'question_inference',
+      groupId: owner.groupId,
+    })));
 
     const parsed = InferredSchema.safeParse(JSON.parse(response.content));
     if (!parsed.success) return fallback;

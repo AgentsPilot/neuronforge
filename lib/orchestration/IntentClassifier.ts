@@ -17,6 +17,10 @@ import type {
   IIntentClassifier,
 } from './types';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
+import { platformAccountId } from '@/lib/platformAccount';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'IntentClassifier' });
 
 export class IntentClassifier implements IIntentClassifier {
   private supabase: SupabaseClient;
@@ -56,7 +60,7 @@ export class IntentClassifier implements IIntentClassifier {
       // Check cache first
       const cached = this.classificationCache.get(cacheKey);
       if (cached) {
-        console.log(`[IntentClassifier] Cache hit for step classification`);
+        logger.debug('Cache hit for step classification');
         return cached;
       }
 
@@ -77,7 +81,7 @@ export class IntentClassifier implements IIntentClassifier {
           reasoning: 'Step has explicit input and prompt - using generic generate handler'
         };
         this.classificationCache.set(cacheKey, explicitResult);
-        console.log(`[IntentClassifier] Step has explicit input+prompt, classified as "generate" (bypassing intent analysis)`);
+        logger.debug({ intent: 'generate', method: 'explicit' }, 'Step has explicit input and prompt; classified without intent analysis');
         return explicitResult;
       }
 
@@ -86,8 +90,9 @@ export class IntentClassifier implements IIntentClassifier {
       if (quickCheck && quickCheck.confidence >= 0.9) {
         this.classificationCache.set(cacheKey, quickCheck);
         const elapsed = Date.now() - startTime;
-        console.log(
-          `[IntentClassifier] Quick classified as "${quickCheck.intent}" in ${elapsed}ms`
+        logger.debug(
+          { intent: quickCheck.intent, confidence: quickCheck.confidence, elapsedMs: elapsed, method: 'pattern' },
+          'Step classified by pattern'
         );
         return quickCheck;
       }
@@ -105,13 +110,14 @@ export class IntentClassifier implements IIntentClassifier {
       this.classificationCache.set(cacheKey, classification);
 
       const elapsed = Date.now() - startTime;
-      console.log(
-        `[IntentClassifier] LLM classified as "${classification.intent}" (${(classification.confidence * 100).toFixed(0)}% confidence) in ${elapsed}ms`
+      logger.info(
+        { intent: classification.intent, confidence: classification.confidence, elapsedMs: elapsed, method: 'llm' },
+        'Step classified by LLM'
       );
 
       return classification;
     } catch (error) {
-      console.error('[IntentClassifier] Classification error:', error);
+      logger.error({ err: error }, 'Classification failed; falling back to generate');
       // Fallback to 'generate' intent on error
       return {
         intent: 'generate',
@@ -176,7 +182,7 @@ Respond with ONLY valid JSON, no additional text.`;
 
     try {
       // Use system admin user ID for orchestration overhead tracking
-      const SYSTEM_USER_ID = process.env.SYSTEM_ADMIN_USER_ID || '00000000-0000-0000-0000-000000000000';
+      const SYSTEM_USER_ID = platformAccountId();
 
       const completion = await provider.chatCompletion(
         {
@@ -223,7 +229,7 @@ Respond with ONLY valid JSON, no additional text.`;
         reasoning: parsed.reasoning || 'LLM classification',
       };
     } catch (error) {
-      console.error('[IntentClassifier] LLM classification failed:', error);
+      logger.error({ err: error }, 'LLM classification failed; falling back to pattern check');
       // Fallback to pattern-based if LLM fails
       const fallback = this.quickPatternCheck(prompt, stepType, pluginKey);
       return fallback || {
@@ -406,8 +412,9 @@ Respond with ONLY valid JSON, no additional text.`;
         .single();
 
       if (error || !data) {
-        console.warn(
-          '[IntentClassifier] Could not fetch confidence threshold, using default 0.7'
+        logger.warn(
+          { err: error, fallbackThreshold: 0.7 },
+          'Could not fetch confidence threshold; using the default'
         );
         this.confidenceThreshold = 0.7;
         return 0.7;
@@ -416,7 +423,7 @@ Respond with ONLY valid JSON, no additional text.`;
       this.confidenceThreshold = parseFloat(data.value);
       return this.confidenceThreshold;
     } catch (error) {
-      console.error('[IntentClassifier] Error fetching confidence threshold:', error);
+      logger.error({ err: error, fallbackThreshold: 0.7 }, 'Error fetching confidence threshold; using the default');
       this.confidenceThreshold = 0.7;
       return 0.7;
     }
@@ -442,8 +449,13 @@ Respond with ONLY valid JSON, no additional text.`;
     }
 
     const elapsed = Date.now() - startTime;
-    console.log(
-      `[IntentClassifier] Batch classified ${steps.length} steps in ${elapsed}ms (${(elapsed / steps.length).toFixed(1)}ms avg per step)`
+    logger.info(
+      {
+        stepCount: steps.length,
+        elapsedMs: elapsed,
+        avgMsPerStep: steps.length > 0 ? Math.round((elapsed / steps.length) * 10) / 10 : 0,
+      },
+      'Batch classified'
     );
 
     return results;
@@ -471,7 +483,7 @@ Respond with ONLY valid JSON, no additional text.`;
    */
   clearCache(): void {
     this.classificationCache.clear();
-    console.log('[IntentClassifier] Cache cleared');
+    logger.info('Classification cache cleared');
   }
 
   /**
@@ -610,7 +622,7 @@ Respond with ONLY valid JSON, no additional text.`;
         tier: 2,
       };
     } catch (error) {
-      console.error('[IntentClassifier] Validation failed:', error);
+      logger.error({ err: error }, 'Validation failed; returning the primary classification');
       // On error, return primary without verification
       return {
         primary,
@@ -695,7 +707,7 @@ Respond with ONLY valid JSON, no additional text.`;
 
     try {
       const provider = ProviderFactory.getProvider('anthropic');
-      const SYSTEM_USER_ID = process.env.SYSTEM_ADMIN_USER_ID || '00000000-0000-0000-0000-000000000000';
+      const SYSTEM_USER_ID = platformAccountId();
 
       const completion = await provider.chatCompletion(
         {
@@ -740,7 +752,7 @@ Respond with ONLY valid JSON, no additional text.`;
         reasoning: parsed.reasoning || 'Enhanced classification with workflow context',
       };
     } catch (error) {
-      console.error('[IntentClassifier] Enhanced classification failed:', error);
+      logger.error({ err: error }, 'Enhanced classification failed; falling back to LLM classification');
       // Fall back to regular LLM classification
       return this.classifyWithLLM(
         prompt,
@@ -803,8 +815,9 @@ Respond with ONLY valid JSON, no additional text.`;
         ambiguity = this.detectAmbiguity(prompt, stepType, pluginKey);
 
         if (ambiguity.isAmbiguous && ambiguity.recommendation === 'escalate') {
-          console.warn(
-            `[IntentClassifier] Ambiguous step detected with ${ambiguity.conflictingIntents.length} conflicting intents`
+          logger.warn(
+            { conflictingIntentCount: ambiguity.conflictingIntents.length },
+            'Ambiguous step detected'
           );
         }
       }
@@ -813,7 +826,7 @@ Respond with ONLY valid JSON, no additional text.`;
       if (quickCheck && quickCheck.confidence >= thresholds.tier1MinConfidence) {
         // Check if ambiguity suggests we should escalate anyway
         if (ambiguity?.isAmbiguous && ambiguity.recommendation !== 'use_primary') {
-          console.log('[IntentClassifier] Pattern match found but ambiguity detected, escalating to LLM');
+          logger.info('Pattern match ambiguous; escalating to LLM');
         } else {
           const latency = Date.now() - startTime;
 
@@ -850,9 +863,7 @@ Respond with ONLY valid JSON, no additional text.`;
         validation = await this.validateClassification(llmClassification, step, thresholds);
 
         if (validation.needsEscalation) {
-          console.log(
-            `[IntentClassifier] Validation detected disagreement, escalating to enhanced classification`
-          );
+          logger.info('Validation disagreed; escalating to enhanced classification');
 
           // Escalate to Tier 3 (enhanced with context)
           const enhancedClassification = await this.classifyWithContext(step, context);
@@ -896,7 +907,7 @@ Respond with ONLY valid JSON, no additional text.`;
         ambiguity,
       };
     } catch (error) {
-      console.error('[IntentClassifier] Bulletproof classification failed:', error);
+      logger.error({ err: error }, 'Bulletproof classification failed; falling back to generate');
 
       // Ultimate fallback: return 'generate' intent
       const latency = Date.now() - startTime;

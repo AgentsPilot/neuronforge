@@ -4,6 +4,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
+import { requireAdmin } from '@/lib/admin/requireAdminRoute';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'BoostPacksAdminAPI' });
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -11,7 +15,15 @@ const supabaseAdmin = createClient(
 
 // GET - Fetch all boost packs
 export async function GET(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
     const { data, error } = await supabaseAdmin
       .from('boost_packs')
       .select('*')
@@ -41,7 +53,15 @@ export async function GET(request: NextRequest) {
 
 // POST - Create new boost pack
 export async function POST(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
     const body = await request.json();
 
     const {
@@ -109,7 +129,15 @@ export async function POST(request: NextRequest) {
 
 // PUT - Update boost pack
 export async function PUT(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
     const body = await request.json();
 
     const {
@@ -179,7 +207,15 @@ export async function PUT(request: NextRequest) {
 
 // DELETE - Delete boost pack
 export async function DELETE(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
     const body = await request.json();
     const { id } = body;
 

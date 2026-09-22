@@ -1,23 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 
 const logger = createLogger({ module: 'PlatformUsersAPI' });
 
 // GET - Fetch all platform users (for admin user selection)
+//
+// Until this gate the handler required only a SIGNED-IN user, so any customer
+// could enumerate every platform user. `requireAdmin` replaces that weaker
+// check outright — there is deliberately no second, lesser path left behind.
 export async function GET(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
   try {
-    const user = await getUser();
-    if (!user) {
-      return NextResponse.json(
-        { success: false, error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+    const { user } = gate;
 
     const searchQuery = request.nextUrl.searchParams.get('search') || '';
 

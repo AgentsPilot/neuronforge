@@ -1,6 +1,10 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 import { EmbeddingService } from '@/lib/services/EmbeddingService'
+import { requireAdmin } from '@/lib/admin/requireAdminRoute'
+import { createLogger } from '@/lib/logger'
+
+const logger = createLogger({ module: 'BackfillEmbeddingsAdminAPI' })
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -14,7 +18,15 @@ export const dynamic = 'force-dynamic'
  * Backfill embeddings for existing support_cache and help_articles
  */
 export async function POST(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID()
+  const requestLogger = logger.child({ correlationId })
+
   try {
+    // Admin gate. This route kicks off a bulk background job, so the check must
+    // precede the body parse and every service call (FR-5).
+    const gate = await requireAdmin(requestLogger)
+    if (gate instanceof NextResponse) return gate
+
     const { target, limit } = await request.json()
 
     if (!['cache', 'faq', 'both'].includes(target)) {
@@ -89,7 +101,16 @@ export async function POST(request: NextRequest) {
  * Get status of embeddings backfill
  */
 export async function GET() {
+  // No request object on this handler, so the correlation id is generated
+  // rather than propagated.
+  const requestLogger = logger.child({ correlationId: crypto.randomUUID() })
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger)
+    if (gate instanceof NextResponse) return gate
+
     // Count cache entries without embeddings
     const { count: cacheWithoutEmbeddings, error: cacheError } = await supabase
       .from('support_cache')

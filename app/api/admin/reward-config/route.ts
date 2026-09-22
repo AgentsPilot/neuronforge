@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { requireAdmin } from '@/lib/admin/requireAdminRoute';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'RewardConfigAdminAPI' });
 import {
   logRewardConfigCreated,
   logRewardConfigUpdated,
@@ -17,7 +21,15 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export async function GET(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID()
+  const requestLogger = logger.child({ correlationId })
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger)
+    if (gate instanceof NextResponse) return gate
+
     console.log('🔍 [GET] Fetching reward configs with settings...');
     console.log('🔍 [GET] Request URL:', request.url);
     console.log('🔍 [GET] Timestamp:', new Date().toISOString());
@@ -105,7 +117,15 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const correlationId = req.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
     const body = await req.json();
     const { action, rewardId, updates, settings } = body;
 

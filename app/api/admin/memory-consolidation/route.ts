@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { MemoryConsolidationScheduler } from '@/lib/memory/MemoryConsolidationScheduler';
 
+import { requireAdmin } from '@/lib/admin/requireAdminRoute';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'MemoryConsolidationAdminAPI' });
 // Initialize Supabase client with Service Role Key
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -16,7 +20,16 @@ let globalScheduler: MemoryConsolidationScheduler | null = null;
  * Get consolidation scheduler status
  */
 export async function GET() {
+  // No request object on this handler, so the correlation id is generated
+  // rather than propagated.
+  const requestLogger = logger.child({ correlationId: crypto.randomUUID() });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
 
     return NextResponse.json({
       success: true,
@@ -46,7 +59,15 @@ export async function GET() {
  * Body: { action: 'start' | 'stop' | 'trigger' }
  */
 export async function POST(request: Request) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
     const { action } = await request.json();
 
     if (!action || !['start', 'stop', 'trigger'].includes(action)) {

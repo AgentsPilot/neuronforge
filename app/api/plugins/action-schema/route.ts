@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 
@@ -12,13 +13,18 @@ import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
  * `capability`, `idempotent`, `output_schema`.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * METADATA-ONLY INVARIANT (SA decision Q1 — CR3):
- *   This endpoint is intentionally UNAUTHENTICATED. It returns ONLY plugin-definition
- *   metadata sourced from the static definition JSON — NEVER any user data, plugin
- *   connections, or OAuth tokens. It is a strict superset of what the already-
- *   unauthenticated `GET /api/plugins/execute?plugin=X` exposes today. If this
- *   endpoint is ever extended to return anything user-scoped, authentication
- *   (getUser / AdminAccessService) MUST be revisited before doing so.
+ * METADATA-ONLY INVARIANT (SA decision Q1 — CR3), AS AMENDED (F12):
+ *   This endpoint returns ONLY plugin-definition metadata sourced from the static
+ *   definition JSON — NEVER any user data, plugin connections, or OAuth tokens. That
+ *   part still holds, and it is why the response body needs no projection.
+ *   It is no longer UNAUTHENTICATED. The original justification — "a strict superset
+ *   of the already-unauthenticated GET /api/plugins/execute" — died when that GET was
+ *   gated (F10), and this route exposes MORE than it did (every action's parameter and
+ *   output schema). Leaving it open made F10 symbolic: an attacker simply enumerated
+ *   the registry here instead. A session is now required, same shape as
+ *   GET /api/plugins/available and GET /api/plugins/execute.
+ *   If this endpoint is ever extended to return anything user-scoped, the authz level
+ *   (getUser vs AdminAccessService) MUST be revisited again.
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * F1 compliance: Zod-validated query, Pino createLogger + correlationId, standard
@@ -37,6 +43,16 @@ export async function GET(request: NextRequest) {
   const requestLogger = logger.child({ correlationId });
 
   try {
+    // Authenticate — the registry is not public information (see header comment).
+    const user = await getUser();
+    if (!user) {
+      // Session-dependent denial: no shared cache may store and replay it (QA-2, F11 rule).
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401, headers: { 'Cache-Control': 'private, no-store', Vary: 'Cookie' } }
+      );
+    }
+
     const { searchParams } = new URL(request.url);
     const parsed = querySchema.safeParse({
       plugin: searchParams.get('plugin') ?? undefined,

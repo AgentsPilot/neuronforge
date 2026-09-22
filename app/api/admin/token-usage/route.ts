@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
+import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 
 const logger = createLogger({ module: 'TokenUsageAPI' });
 
@@ -14,7 +15,15 @@ const supabase = createClient(
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
     const { searchParams } = new URL(request.url);
     const filter = searchParams.get('filter') || 'all';
     const provider = searchParams.get('provider') || 'all';
@@ -191,7 +200,20 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// Health check endpoint
+// Health check endpoint.
+//
+// Gated like everything else under /api/admin. It reads nothing and returns an
+// empty 200, so it leaks no data — but an ungated 200 here CONFIRMS TO AN
+// ANONYMOUS PROBER that this admin route exists, which is exactly what
+// NFR-Security forbids of a denial response. Finding E-4: the original census
+// grepped five verbs and never saw these HEAD handlers; the CI guard did.
 export async function HEAD() {
+  // No request object on this handler, so the correlation id is generated
+  // rather than propagated.
+  const requestLogger = logger.child({ correlationId: crypto.randomUUID() });
+
+  const gate = await requireAdmin(requestLogger);
+  if (gate instanceof NextResponse) return gate;
+
   return new NextResponse(null, { status: 200 });
 }

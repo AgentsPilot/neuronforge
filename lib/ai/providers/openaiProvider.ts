@@ -4,6 +4,9 @@ import { BaseAIProvider, CallContext } from './baseProvider';
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 import { calculateCostSync } from '@/lib/ai/pricing';
 import { getModelMaxOutputTokens } from '../context-limits';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ service: 'OpenAIProvider' });
 
 /**
  * OpenAI model name constants
@@ -43,6 +46,84 @@ export const OPENAI_MODELS = {
 
 export type OpenAIModelName = typeof OPENAI_MODELS[keyof typeof OPENAI_MODELS];
 
+/**
+ * The ledger `request_type` of an image generation call. Named once so the call
+ * and its tests cannot drift. A global endpoint-kind dimension, like
+ * 'thread_create' below — not the Business OS call name, which goes in
+ * `component`.
+ */
+export const IMAGE_GENERATION_REQUEST_TYPE = 'image_generation';
+
+/** What an image generation call asks for. */
+export interface ImageGenerationParams {
+  model: string;
+  prompt: string;
+  size: NonNullable<OpenAI.Images.ImageGenerateParamsNonStreaming['size']>;
+  quality: NonNullable<OpenAI.Images.ImageGenerateParamsNonStreaming['quality']>;
+  /**
+   * Must be 1. The ledger records ONE row per call, so a row priced for n
+   * images would break "one ledger row per generated image". Supporting n > 1
+   * means writing one row per image first.
+   */
+  n: 1;
+}
+
+/** The quality the provider reports it actually used, when it reports one. */
+export type ReportedImageQuality = OpenAI.Images.ImagesResponse['quality'];
+
+/**
+ * Prices ONE generated image, in USD, from the quality the provider reports it
+ * used. Called after the call returns, inside the usage tracking, so the ledger
+ * row carries the price of what was really generated (a request for `auto`
+ * cannot be priced before the call). Supplied by the caller, so no pricing
+ * policy lives in the provider layer. Must not throw.
+ */
+export type ImagePriceResolver = (reportedQuality: ReportedImageQuality) => number;
+
+/**
+ * Does this model take `max_completion_tokens` instead of `max_tokens`?
+ *
+ * The provider renames the parameter for these families before sending the
+ * request. Exported at module scope (the private method below delegates to it,
+ * unchanged) because callers outside the provider need the same answer without
+ * constructing one: Business OS Layer 2 refuses to configure a model that
+ * rejects sampling parameters but is NOT in this list, because such a model
+ * would be sent `max_tokens` and fail with a 400 on every call (RC-W5).
+ *
+ * @see rejectsSamplingParameters — a different, overlapping family test
+ */
+export function usesMaxCompletionTokens(model: string): boolean {
+  return (
+    model.startsWith('gpt-5') ||
+    model.startsWith('gpt-4.1') ||
+    model.startsWith('o3') ||
+    model.startsWith('o4')
+  );
+}
+
+/**
+ * Does this model reject sampling parameters (`temperature`,
+ * `frequency_penalty`, …) with a 400?
+ *
+ * The reasoning families accept only their default sampling settings. The
+ * refusal is a plain 400, NOT a model-not-found error, so the Layer 2 retry
+ * (`withModelFallback`) would not catch it — which is why a call that sends a
+ * sampling parameter refuses such a model outright instead (FR-7, RC-11).
+ *
+ * Deliberately NOT the same family as `usesMaxCompletionTokens`: `gpt-4.1` is
+ * fine with `temperature`, and `o1` predates `max_completion_tokens`. Keep both
+ * lists code-owned and tested; a wrong answer here is a rare 400, never silent
+ * mispricing.
+ */
+export function rejectsSamplingParameters(model: string): boolean {
+  return (
+    model.startsWith('gpt-5') ||
+    model.startsWith('o1') ||
+    model.startsWith('o3') ||
+    model.startsWith('o4')
+  );
+}
+
 export class OpenAIProvider extends BaseAIProvider {
   private openai: OpenAI;
 
@@ -77,12 +158,12 @@ export class OpenAIProvider extends BaseAIProvider {
    */
   static getInstance(aiAnalytics: AIAnalyticsService): OpenAIProvider {
     if (!process.env.OPENAI_API_KEY) {
-      console.error('❌ Missing OpenAI API key');
+      logger.error('OpenAI API key not configured');
       throw new Error('OpenAI API key not configured', { cause: 400 } as any);
     }
 
     if (!aiAnalytics) {
-      console.error('❌ AI Analytics service not provided');
+      logger.error('AI analytics service not provided');
       throw new Error('AI Analytics service not initialized', { cause: 500 } as any);
     }
 
@@ -92,15 +173,14 @@ export class OpenAIProvider extends BaseAIProvider {
 
   /**
    * Check if a model uses max_completion_tokens instead of max_tokens.
-   * Newer models (GPT-5.x, GPT-4.1, o-series) use the new parameter name.
+   *
+   * Delegates to the module-level function of the same name, so the request
+   * building here and the Business OS Layer 2 model guardrail can never give
+   * different answers (RC-W5). Behaviour is byte-identical to the previous
+   * inline implementation.
    */
   private usesMaxCompletionTokens(model: string): boolean {
-    return (
-      model.startsWith('gpt-5') ||
-      model.startsWith('gpt-4.1') ||
-      model.startsWith('o3') ||
-      model.startsWith('o4')
-    );
+    return usesMaxCompletionTokens(model);
   }
 
   async chatCompletion(
@@ -190,6 +270,52 @@ export class OpenAIProvider extends BaseAIProvider {
         responseSize: 0,
       })
     ) as Promise<OpenAI.Embeddings.CreateEmbeddingResponse>;
+  }
+
+  /**
+   * Generate an image, recorded in the usage ledger like every other call.
+   *
+   * An image has no tokens, and recording it as some number of tokens would be
+   * a false figure in the column credits are computed from, so the row carries
+   * zero input and output tokens and a per-image dollar cost.
+   *
+   * The cost comes from `priceFor(response.quality)`: `callWithTracking` calls
+   * the metrics function with the response BEFORE it writes the ledger row, so
+   * the quality the provider reports reaches `cost_usd` directly.
+   *
+   * A thrown call writes the standard failure row (zero tokens, zero cost) and
+   * re-throws.
+   */
+  async generateImage(
+    params: ImageGenerationParams,
+    context: CallContext,
+    priceFor: ImagePriceResolver
+  ): Promise<OpenAI.Images.ImagesResponse> {
+    // Enforced at runtime too: `n` can arrive from an untyped caller.
+    if (params.n !== 1) {
+      throw new Error('generateImage records one ledger row per call, so n must be 1');
+    }
+
+    return this.callWithTracking(
+      { ...context, requestType: IMAGE_GENERATION_REQUEST_TYPE },
+      'openai',
+      params.model,
+      'images/generate',
+      () =>
+        this.openai.images.generate({
+          model: params.model,
+          prompt: params.prompt,
+          size: params.size,
+          quality: params.quality,
+          n: params.n,
+        }),
+      (result: OpenAI.Images.ImagesResponse) => ({
+        inputTokens: 0,
+        outputTokens: 0,
+        cost: priceFor(result.quality) * params.n,
+        responseSize: 0,
+      })
+    );
   }
 
   async chatCompletionJson<T>(
@@ -323,7 +449,7 @@ export class OpenAIProvider extends BaseAIProvider {
       // @ts-ignore - Using correct delete method
       await this.openai.beta.threads.delete(threadId);
     } catch (error: any) {
-      console.error(`⚠️ Failed to delete thread ${threadId}:`, error.message);
+      logger.error({ err: error, threadId }, 'Failed to delete thread');
       // Don't throw - deletion failures shouldn't break the flow
     }
   }
@@ -355,7 +481,7 @@ export class OpenAIProvider extends BaseAIProvider {
       return thread;
     } catch (error: any) {
       // Cleanup: delete the thread since we couldn't inject the prompt
-      console.error('❌ Failed to inject system prompt, cleaning up thread:', error.message);
+      logger.error({ err: error, threadId: thread.id }, 'Failed to inject system prompt; deleting the thread');
       await this.deleteThread(thread.id);
 
       throw new Error(`Failed to inject system prompt into thread: ${error.message}`);

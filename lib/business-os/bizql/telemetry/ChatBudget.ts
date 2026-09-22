@@ -43,6 +43,7 @@
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { SystemConfigService } from '@/lib/services/SystemConfigService';
+import { BOS_CHAT_FEATURE } from '@/lib/business-os/llm/callCatalog';
 
 const logger = createLogger({ module: 'BizQLChatBudget' });
 
@@ -158,7 +159,7 @@ export async function checkBudget(userId: string): Promise<BudgetState> {
     const { data, error } = await supabaseServer
       .from('token_usage')
       .select('session_id, input_tokens, output_tokens')
-      .eq('feature', 'business-os-chat')
+      .eq('feature', BOS_CHAT_FEATURE)
       .eq('user_id', userId)
       .gte('created_at', startOfUtcDay())
       .limit(20000);
