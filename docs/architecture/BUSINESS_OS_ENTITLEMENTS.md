@@ -1,6 +1,6 @@
 # Business OS entitlements
 
-> **Last Updated**: 2026-09-23
+> **Last Updated**: 2026-09-24
 
 ## Overview
 
@@ -52,11 +52,13 @@ The paid tiers differ in exactly **two** ways: chat (the eight `chat.*` capabili
 
 > **The credit numbers are a first pass.** 250 / 500 / 1,000 / 2,000 are decisions, not measurements. Slice 3 resets them from the shadow report — the setup-AI measurement (S1-T15) sizes the trial total, observed usage sizes the rest. Treat them as "chosen to start with", not as policy.
 
-> ### ⚠️ "Essentials has no chat" is not enforceable yet
+> ### ⚠️ "Essentials has no chat" is configured, and not yet enforced
 >
-> Turning off the eight `chat.*` capabilities does **not** close the chat surface. Under the configured read rule (`domain_group`), an Essentials owner's chat question about their own contacts maps to `crm.core` — which Essentials has — so it would be allowed. Only capabilities named `chat.*` would be refused.
+> Withholding the eight per-operation `chat.*` capabilities does **not** close the chat surface. Every chat operation maps to the capability of the **domain it touches**, so an Essentials owner reading — or writing — their own contacts through chat resolves to `crm.core`, which Essentials has, and chat answers and acts.
 >
-> Closing it needs a gate on the **surface** (may this account enter chat at all?), which is Slice 2 work. No value in `tierMatrix.ts` can express it. `productionConfig.test.ts` asserts the gap in both directions so it cannot be forgotten, and it is why shadow mode still records reads under **both** readings of Q-B1: that dual recording is the measurement that decides which behaviour Essentials gets.
+> The config half is fixed: **`chat.access`** (FR-46) is a capability in its own right, off for Essentials and on for Autopilot, and it is the whole commercial difference stated once. **Nothing reads it yet.** Slice 2 gates the chat entry point on it, **once per turn**, before any per-capability check, and refuses as `not_entitled` with the wording specified in FR-46c — a normal assistant message naming Autopilot, with both plan names read from `presentation`.
+>
+> `productionConfig.test.ts` asserts the gap in both directions, which is what proves the gate is still needed: a `false` in the matrix changes nothing until something reads it. It is also why shadow records reads under **both** readings of Q-B1 — that dual recording is the measurement that decides which behaviour Essentials gets.
 
 Eyal's draft matrix still lives in `__fixtures__/exampleTierMatrix.ts`. It is a **test fixture** — three invented tiers with invented names and prices — kept because the mechanism tests (moving a capability between plans, grandfathering, drift) need a matrix that can be mutated freely, and the shipped one cannot be.
 
@@ -153,7 +155,7 @@ Cross-instance staleness is bounded at 30 s: an admin change invalidates the loc
 | **G-1** | The service-role key is rotated, the old key revoked and verified. Blocks all of Slice 4 and `enforce` |
 | **G-2** | The CI checks that are advisory today are required |
 | **UD-2** | At least one tier configured — otherwise `enforce` self-downgrades. ✅ met on 2026-09-23 |
-| **Chat surface gate** | Essentials is sold without chat, but the capability values alone do not close the chat surface (see above). Slice 2 must gate the surface, or Essentials gets chat in all but name |
+| **Chat surface gate (FR-46)** | `chat.access` is configured (off for Essentials) but nothing reads it. Slice 2 must gate the chat entry point on it, once per turn, or Essentials has chat in all but name — for writes as well as reads |
 | **Missing-plan-row check** | `findTenantsMissingPlanRow` must become an exhaustive SQL anti-join first. Today it scans accounts with a business profile; under enforcement a missing row denies a real customer |
 | **Launch operation** | `launch_champion_existing` makes every account without an in-force tier an open-ended champion (U-2, UD-3, UD-4). Slice 1 ships the **dry run**; execution is Slice 2 |
 | **Trim list** | The shadow report's no-end-date list flags accounts that never created a business profile — onboarding-only champions to trim before enforcement |
@@ -196,4 +198,5 @@ Two rules worth knowing before using them:
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-09-22 | Created | Slice 1 as built: catalog/config, resolver, plan records, shadow mode, report and the admin surface (workplan §4, S1-T16) |
+| 2026-09-24 | `chat.access` added (FR-46) | The chat SURFACE as its own capability, off for Essentials and on for Autopilot: the per-operation `chat.*` groups cannot express "this plan has no chat", for writes as well as reads. Ships in the catalog (38 capabilities) and both tier rows; the gate itself is Slice 2 |
 | 2026-09-23 | The four plans configured | `basic`/`pro` as tiers with names and prices, `trial`/`champion` as cohorts pointing at `basic`; UD-2 now met; the chat-surface gap recorded as a Slice 2 gate (workplan §4.32) |
