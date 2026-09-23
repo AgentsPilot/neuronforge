@@ -69,7 +69,11 @@ describe('the mapping is total', () => {
     const pluginActions = Object.keys((businessOsPlugin as { actions: Record<string, unknown> }).actions);
     const derived = OPERATIONS.map(([entity, op]) => `${op === 'compute' ? 'aggregate' : op}_${entity}`);
 
-    expect(pluginActions).toHaveLength(107);
+    // 103 since the agent-platform entities left the chat catalog on main
+    // (2026-09-23). The number is deliberately hard-coded: it is the tripwire
+    // that says "the planner surface changed" rather than something that
+    // quietly follows the catalog wherever it goes.
+    expect(pluginActions).toHaveLength(103);
     expect(pluginActions.filter((action) => !derived.includes(action))).toEqual([]);
     expect(derived.filter((action) => !pluginActions.includes(action))).toEqual([]);
   });
@@ -110,12 +114,19 @@ describe('the judgements the mapping encodes', () => {
     expect(capabilityForOp('contacts', 'send')).toBe('chat.email');
   });
 
-  it('keeps the agent platform out of Business OS gating (B-8)', () => {
-    const agents = capabilityForOp('agents', 'find');
-    expect(isUngated(agents!)).toBe(true);
-    // Even a write-shaped op stays ungated: the whole entity belongs to the
-    // other product.
-    expect(isUngated(capabilityForOp('agent_runs', 'compute')!)).toBe(true);
+  it('never gates anything that belongs to the agent platform (B-8)', () => {
+    // `agents` and `agent_runs` were removed from the chat catalog on main, so
+    // this can no longer assert "they resolve to ungated" — there is nothing to
+    // resolve. It asserts the rule that outlives them instead: no entity in the
+    // map is an agent-platform entity, so a Business OS plan cannot gate one.
+    //
+    // If chat ever offers them again, `classifies every entity, with nothing
+    // stale` fails until somebody classifies them, and B-8 says the answer.
+    const agentPlatform = Object.keys(ENTITY_DOMAIN).filter((entity) => /^agents?(_|$)|^agent_runs$/.test(entity));
+    expect(agentPlatform).toEqual([]);
+
+    // Non-vacuity: the map is not simply empty.
+    expect(Object.keys(ENTITY_DOMAIN).length).toBeGreaterThan(10);
   });
 
   it('charges aggregations to reporting under either read rule', () => {

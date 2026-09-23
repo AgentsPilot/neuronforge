@@ -118,14 +118,20 @@ describe('what is NOT a capability request', () => {
     expect(gaps).toHaveLength(1);
   });
 
-  it('a deliberately ungated entity is a gap with its reason, and grants nothing', () => {
-    // B-8: the agent platform is not a Business OS sale. Showing an owner their
-    // own agent runs must never be gated by a Business OS plan.
+  it('an agent-platform entity grants nothing, and is visible as a gap (B-8)', () => {
+    // `agents` and `agent_runs` left the chat catalog on main (2026-09-23), so
+    // they are no longer classified at all. The rule B-8 protects still holds
+    // and is what this asserts: an agent-platform step produces NO capability
+    // request, so no Business OS plan can gate it.
+    //
+    // It is now an `unmapped_entity` gap rather than an `ungated` one. That is
+    // the right signal: if chat ever offers the agent platform again, the gap
+    // is loud (FR-8 treats it as a defect) until someone classifies it, and
+    // `chatActionMap.invariant.test.ts` fails at the same time.
     const { requests, gaps } = capabilitiesForPlan(plan([{ id: 's1', op: 'find', entity: 'agents' }]));
 
     expect(requests).toEqual([]);
-    expect(gaps[0]).toMatchObject({ reason: 'ungated' });
-    expect(gaps[0].note).toContain('B-8');
+    expect(gaps[0]).toMatchObject({ entity: 'agents', reason: 'unmapped_entity' });
   });
 
   it('an action override wins over the entity default', () => {

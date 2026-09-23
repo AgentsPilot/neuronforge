@@ -78,11 +78,17 @@ export const ENTITY_DOMAIN: Readonly<Record<string, ChatMapping>> = {
   // Email
   emails: 'chat.email',
 
-  // The agent platform. Gating these would couple the two products, which B-8
-  // forbids: a Business OS subscription grants nothing on the agent platform and
-  // vice versa. Showing an owner their own agent runs is not a Business OS sale.
-  agents: { ungated: 'agent platform, B-8' },
-  agent_runs: { ungated: 'agent platform, B-8' },
+  // ── The agent platform is NOT in the chat catalog any more ───────────────
+  // `agents` and `agent_runs` were classified here as deliberately ungated
+  // (B-8: a Business OS subscription grants nothing on the agent platform, and
+  // vice versa). They were removed from the chat catalog on main, so the
+  // invariant test — which walks the LIVE catalog — started failing on an
+  // entity that no longer exists to gate.
+  //
+  // Removed rather than kept "just in case": an entry for an entity the planner
+  // cannot produce is a claim nobody can check. If chat ever offers the agent
+  // platform again, the same test will fail until it is classified, and B-8
+  // says what the answer should be.
 };
 
 /**
