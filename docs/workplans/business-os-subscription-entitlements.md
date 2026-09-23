@@ -1944,6 +1944,77 @@ SA approved §4.32 and §4.33 and cleared them for QA (§13.9), confirming the r
 
 **One more pre-existing defect cleared while here.** The same wrong rule name (`@typescript-eslint/no-var-requires`, which does not exist in this config, instead of `no-require-imports`) appeared in **four** Slice 1 test files - `mode.test.ts`, `adminOps.test.ts`, `routes.test.ts` and `shadow.test.ts` - so eight `require()` calls were erroring and eight disable directives were dead. All are one-token corrections; `shadow.test.ts` is the only one this branch would not otherwise have touched, and it is included because the alternative is a module whose lint is still red for a typo.
 
+### 4.35 QA fixes applied (2026-09-24) - A-2, A-3, A-4, B-2, and the baseline measured
+
+QA passed (§14.13) with one open empirical question and four fixable findings. All four are closed. Implementation stays uncommitted.
+
+#### A-2 (Med) - semicolons inside `--` comments. QA was right, and it was worse than reported.
+
+QA found twelve across the four scripts. Scanning the **six** files (the migrations are in the guard now) found **31**: preflight 6, checker 3, verify 8, rollback 3, migration 9, backfill 2. Eight had prose after them, and several were commented-out SQL ending in a terminator (`-- LIMIT 20;`), which is the worst shape of all - a splitter blind to comments reads it as a real boundary.
+
+**All 31 rephrased**, never merely deleted: prose semicolons became full stops or commas, and a semicolon that only terminated a commented-out snippet was dropped, because a comment runs nothing.
+
+This is now the **first** rule of the guard, and it is stated first in the header too, because it needs no theory: a `;` in a comment is a boundary to any splitter that does not parse comments. The apostrophe/string-semicolon pair remains as the second mechanism. The header no longer claims to know which one the editor did - it says both ingredients are removed and why that is the right response to a parser nobody can inspect.
+
+**What my own splitter model reports afterwards** (quote-tracking, comment-blind - the model in the guard's header):
+
+| File | Fragments | Fragments starting mid-prose |
+|---|---|---|
+| `preflight-...` | **3** | **0** |
+| `check-...` | **2** | **0** |
+| `verify-...` | 281 | **0** |
+| `rollback-...` | 26 | **0** |
+| `20261005_...` | 57 | **0** |
+| `20261005b_...` | 7 | **0** |
+
+Preflight is **3, not 1**, and that is correct: the file genuinely contains two statements (`SET default_transaction_read_only = on;` and the one big `WITH ... SELECT;`), plus a trailing comments-only fragment after the final semicolon, which is an empty query. **The number that matters is the second column.** Before this round preflight cut into 4 fragments, 3 of them prose-leading, one beginning with the bare word `a` - the user's exact error. That is now zero, in every file.
+
+The large counts for `verify-`, `rollback-` and the migrations come entirely from `$$` function bodies, which a comment-blind, dollar-blind model cuts at every internal semicolon. The real editor plainly does understand `$$` - those two migrations applied cleanly - which is one more reason the model is a lower bound on safety, not a simulation of the editor.
+
+#### A-3 and A-4 (Low) - the guard's own parser
+
+Rewritten as **one stateful scan of the whole file** instead of a scan per line:
+
+- **A-3:** a string literal may span lines. A per-line parser reads its second line as code, and a `--` inside it as the start of a comment - so it would report the opposite of the truth on exactly the construct most likely to hide a violation. There is a test with a two-line literal containing both `--` and `;`.
+- **A-4:** the scanner understands `$tag$` dollar quoting, **and recurses into the body**, because that is where most of the comments in the two migrations live - a rule that stopped at the `$$` would be blind to the lines that matter most. It also reports anything left unterminated (string, dollar quote, nested block comment), and a separate rule asserts dollar-tag parity, so an odd `$$` is named rather than swallowed.
+
+The guard is now **43 tests over six files**: five rules per file (comment semicolon, comment apostrophe, string semicolon, string `--`, everything closed, dollar parity) plus a guard-on-guard block with the real offending lines as the negative control, a positive control that legitimate SQL punctuation is NOT flagged, and the A-3/A-4 parser tests.
+
+#### B-2 (Low) - the write direction is asserted now
+
+`capabilityForOp('contacts', 'create')` is `crm.core` under **both** readings, and Essentials has `crm.core`, so an Essentials owner could have the assistant **change** their data. The new test pins it, together with the fact that no config value can change it - both readings agree on a write, so unlike the read half there is no read-rule lever at all. Only the FR-46 surface gate closes it.
+
+#### The typecheck baseline, measured instead of inferred
+
+QA was right to stop me refreshing it on a story. The base tree was measured directly - the branch's production files and test files restored to `HEAD`, full typecheck, then restored:
+
+| Tree | Diagnostics | `lib/repositories` |
+|---|---|---|
+| Base (`HEAD`, no tier work) | **2,029** | 2 |
+| Base production config + this branch's tests | 2,043 | 2 |
+| **This branch, complete** | **2,029** | 2 |
+
+So **this change set is net zero**, and the baseline for the branch is **2,029** because that is what the base measures - not because something here removed a diagnostic. The `-1` against the 2,030 recorded in §4.31 predates this branch, and so does the `lib/repositories` control moving from 3 to 2: `CRMContactRepository.ts` is clean at the base commit with the tier work absent, so the "3" in §13.9 and in the component-1 notes is stale. **SA's attribution of the `-1` to the `never` diagnostic is not supported** - it would have had to show up in the second row above, and it does not.
+
+#### B-1 (proposal only, not implemented) - `enforce` needs a second key
+
+QA's point stands: until 2026-09-23 the UD-2 gate meant an operator could set `BOS_ENTITLEMENTS_MODE=enforce` and get shadow anyway. Now that a tier is configured, **one environment variable on one Vercel project is the only thing between production and live enforcement**, while G-1 (the leaked service-role key) is still open and Slice 2 has not wired a single call site.
+
+**Proposal:** `enforce` additionally requires `BOS_ENTITLEMENTS_ENFORCE_CONFIRM` to equal a literal that names what is being done (e.g. `i-have-read-the-switch-on-checklist`). Anything else logs at `error` and downgrades to `shadow`, exactly as UD-2 did. Cost: about fifteen lines in `mode.ts`, three tests, one runbook line, and two variables to set on the day instead of one.
+
+**Worth it, with a caveat.** The value is not that it is hard to type two variables - it is that **no single edit, and no accidental copy of an env block between projects, can switch enforcement on**, which is the realistic failure. It is also the cheapest possible substitute for the safety UD-2 used to provide for free, and it can be deleted the day Slice 2 ships with its own switch-on checklist. The caveat: it protects against an accident, not against an operator who means it, and it must not become a reason to skip the real switch-on gates (G-1, the exhaustive missing-plan-row check, the launch operation). **SA and the user decide; I have not implemented it.**
+
+#### Re-verified
+
+| Check | Result |
+|---|---|
+| `npm run test:bos-entitlements` scope | **49 suites, 935 tests, 0 failures** |
+| That scope plus admin entitlement routes and `scripts/__tests__` | **53 suites, 1,102 tests, 0 failures** |
+| The SQL paste guard alone | **43 tests over 6 files** |
+| `npm run test:authz-guard` | **74 passed** |
+| Typecheck, the verified method | **2,029**, equal to the measured base, 0 x TS2688, 0 in entitlements |
+| ESLint over the three touched trees, `console.*` | clean / 0 |
+
 ---
 
 ## 5. Slice 2: Enforcement (outline; G-3: the addendum restates each WC as tasks + tests)

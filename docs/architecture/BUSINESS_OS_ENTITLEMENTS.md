@@ -191,6 +191,8 @@ Two rules worth knowing before using them:
 | What does setup cost in AI actions? | `shadow-report?…&includeSetupAi=true` — sized against p90 with headroom (B-12) |
 | Applying it all | [BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md](/docs/BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md) |
 
+> **Editing any of these SQL files?** `scripts/__tests__/entitlementSqlScripts.guard.test.ts` forbids, in all four scripts **and both migrations**: a semicolon or an apostrophe inside a `--` comment, a semicolon or a `--` inside a string literal, and anything left unterminated. They are not style rules — the Supabase SQL editor splits a pasted file with a parser that does not understand comments, and each of those is a false statement boundary. One of them produced `ERROR: 42P01: relation "a" does not exist` on 2026-09-23. **Rephrase; never just delete the punctuation.**
+
 ---
 
 ## Change History
