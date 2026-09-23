@@ -8,6 +8,22 @@ import {
   Download, RefreshCw, FileText, Database, TrendingUp,
   LogIn, LogOut, UserPlus, UserCog, Bot, Play, Trash2, Settings
 } from 'lucide-react';
+import {
+  AI_ACTION_ENTITY_TYPE,
+  buildActionFilterGroups,
+  buildEntityTypeFilterOptions,
+} from '@/lib/audit/filterOptions';
+import { createLogger } from '@/lib/logger';
+
+// Structured logging works in a client component: lib/logger.ts configures
+// Pino's `browser: { asObject: true }` transport, and the sibling admin page
+// app/admin/users/page.tsx already calls createLogger at module scope the same way.
+const logger = createLogger({ module: 'AdminAuditTrailPage' });
+
+// Derived once from the audit catalogues (FR-A3): a newly registered event or
+// entity type becomes selectable here with no change to this file.
+const ACTION_FILTER_GROUPS = buildActionFilterGroups();
+const ENTITY_TYPE_FILTER_OPTIONS = buildEntityTypeFilterOptions();
 
 interface AuditLogEntry {
   id: string;
@@ -36,6 +52,95 @@ interface FilterState {
   entityType: string;
 }
 
+/**
+ * The closed set of `AiAuditDetails` fields this screen renders (FR-A5 / AC-A5):
+ * exactly what lib/business-os/llm/aiActionAudit.ts records, minus nothing this
+ * criterion names and plus nothing it does not.
+ *
+ * An allow-list by construction — never a wholesale dump of the details object,
+ * which a guard test asserts — so a key added to `AiAuditDetails` later cannot
+ * reach an admin screen without a review. Every field is optional because a
+ * stored row is JSON read back from the database, not a compile-time value.
+ */
+interface AiActionDetailsView {
+  area?: string;
+  actionType?: string;
+  trigger?: string;
+  outcome?: string;
+  errorCode?: string;
+  callCount?: number;
+  failedCallCount?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  estimatedCostUsd?: number;
+  callNames?: string[];
+  models?: string[];
+  groupId?: string;
+}
+
+const asText = (value?: string): string | undefined =>
+  typeof value === 'string' && value.length > 0 ? value : undefined;
+
+const asCount = (value?: number): string | undefined =>
+  typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : undefined;
+
+const asList = (value?: string[]): string | undefined =>
+  Array.isArray(value) && value.length > 0 ? value.filter((v) => typeof v === 'string').join(', ') : undefined;
+
+/** Costs are stored rounded to a micro-dollar, so six decimals is the stored precision. */
+const asUsd = (value?: number): string | undefined =>
+  typeof value === 'number' && Number.isFinite(value) ? `$${value.toFixed(6)}` : undefined;
+
+function AiDetailValue({ label, value }: { label: string; value?: string }) {
+  if (value === undefined) return null;
+  return (
+    <div className="bg-slate-800/30 rounded-lg p-3">
+      <div className="text-xs text-slate-400 mb-1">{label}</div>
+      <div className="text-sm text-slate-200 break-words">{value}</div>
+    </div>
+  );
+}
+
+/**
+ * A Business OS AI action's recorded fields as labelled values (FR-A5).
+ *
+ * Pure presentation over an already-stored, already-safe closed shape: no fetch
+ * and no ledger read. A per-call cost breakdown is Gap B's drill-down (FR-B2),
+ * not this.
+ */
+function AiActionDetails({ details }: { details: AiActionDetailsView }) {
+  const outcome = asText(details.outcome);
+  const errorCode = asText(details.errorCode);
+
+  return (
+    <div className="bg-slate-800/50 rounded-lg p-4">
+      <h4 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+        <Bot className="w-4 h-4" />
+        AI Action Details
+      </h4>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <AiDetailValue label="Area" value={asText(details.area)} />
+        <AiDetailValue label="Action Type" value={asText(details.actionType)} />
+        <AiDetailValue label="Trigger" value={asText(details.trigger)} />
+        <AiDetailValue
+          label="Outcome"
+          value={outcome && errorCode ? `${outcome} (${errorCode})` : outcome}
+        />
+        <AiDetailValue label="Calls" value={asCount(details.callCount)} />
+        <AiDetailValue label="Failed Calls" value={asCount(details.failedCallCount)} />
+        <AiDetailValue label="Input Tokens" value={asCount(details.inputTokens)} />
+        <AiDetailValue label="Output Tokens" value={asCount(details.outputTokens)} />
+        <AiDetailValue label="Total Tokens" value={asCount(details.totalTokens)} />
+        <AiDetailValue label="Estimated Cost" value={asUsd(details.estimatedCostUsd)} />
+        <AiDetailValue label="Calls Made" value={asList(details.callNames)} />
+        <AiDetailValue label="Models" value={asList(details.models)} />
+        <AiDetailValue label="Grouping ID" value={asText(details.groupId)} />
+      </div>
+    </div>
+  );
+}
+
 export default function AuditTrailPage() {
   const { user } = useAuth();
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
@@ -59,6 +164,15 @@ export default function AuditTrailPage() {
     entityType: 'all'
   });
 
+  /**
+   * The single definition of "a search is active". Used both to decide whether
+   * to send `search` and to decide whether the totals below may be shown, so
+   * the request and the count line can never disagree: a whitespace-only term
+   * used to be sent (and filtered on) while the page still displayed the
+   * unfiltered "Showing N of M".
+   */
+  const isSearchActive = filters.searchTerm.trim().length > 0;
+
   const fetchLogs = async () => {
     try {
       setLoading(true);
@@ -70,7 +184,7 @@ export default function AuditTrailPage() {
       if (filters.entityType !== 'all') params.append('entity_type', filters.entityType);
       if (filters.dateFrom) params.append('date_from', filters.dateFrom);
       if (filters.dateTo) params.append('date_to', filters.dateTo);
-      if (filters.searchTerm) params.append('search', filters.searchTerm);
+      if (isSearchActive) params.append('search', filters.searchTerm);
       params.append('page', currentPage.toString());
       params.append('page_size', pageSize.toString());
 
@@ -87,7 +201,7 @@ export default function AuditTrailPage() {
       }
     } catch (err) {
       setError('Failed to fetch audit logs');
-      console.error(err);
+      logger.error({ err }, 'Failed to fetch audit logs');
     } finally {
       setLoading(false);
     }
@@ -286,27 +400,18 @@ export default function AuditTrailPage() {
                 onChange={(e) => setFilters({ ...filters, action: e.target.value })}
                 className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
+                {/* "all" is a UI sentinel, not a catalogue value — every other
+                    option comes from AUDIT_EVENTS via buildActionFilterGroups() */}
                 <option value="all">All Actions</option>
-                <optgroup label="AIS Events">
-                  <option value="AIS_SCORE_CALCULATED">AIS: Score Calculated</option>
-                  <option value="AIS_SCORE_UPDATED">AIS: Score Updated</option>
-                  <option value="AIS_SCORE_RECALCULATED">AIS: Score Recalculated</option>
-                  <option value="AIS_NORMALIZATION_REFRESH_STARTED">AIS: Refresh Started</option>
-                  <option value="AIS_NORMALIZATION_REFRESH_COMPLETED">AIS: Refresh Completed</option>
-                  <option value="AIS_SCORES_BULK_RECALCULATED">AIS: Bulk Recalculated</option>
-                </optgroup>
-                <optgroup label="User Events">
-                  <option value="USER_LOGIN">User: Login</option>
-                  <option value="USER_LOGOUT">User: Logout</option>
-                  <option value="USER_CREATED">User: Created</option>
-                  <option value="USER_UPDATED">User: Updated</option>
-                </optgroup>
-                <optgroup label="Agent Events">
-                  <option value="AGENT_CREATED">Agent: Created</option>
-                  <option value="AGENT_UPDATED">Agent: Updated</option>
-                  <option value="AGENT_DELETED">Agent: Deleted</option>
-                  <option value="AGENT_EXECUTED">Agent: Executed</option>
-                </optgroup>
+                {ACTION_FILTER_GROUPS.map((group) => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.options.map((option) => (
+                      <option key={option.value} value={option.value} title={option.description}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
               </select>
             </div>
 
@@ -355,9 +460,13 @@ export default function AuditTrailPage() {
                 onChange={(e) => setFilters({ ...filters, entityType: e.target.value })}
                 className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
+                {/* As above: only the sentinel is hardcoded; the rest is AUDIT_ENTITY_TYPES */}
                 <option value="all">All Entities</option>
-                <option value="agent">Agent</option>
-                <option value="system">System</option>
+                {ENTITY_TYPE_FILTER_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
@@ -393,12 +502,41 @@ export default function AuditTrailPage() {
         <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
           <div className="flex items-center justify-between">
             {/* Left: Results Count */}
+            {/* The route's total is the UNFILTERED count, and the free-text
+                search is applied in memory to one page of rows (route.ts:96-98,
+                :172). So with a search term active, "X of Y" is false in both
+                halves — say what is actually true instead (FR-A4b). The page
+                number itself is honest (it is the real offset page); only the
+                page *count* is derived from the unfiltered total.
+
+                Every place that would PRINT that count is therefore branched on
+                isSearchActive — here and in the pager's own "Page n of m" label
+                below (:575). What stays deliberately unbranched is the pager's
+                BEHAVIOUR: First/Previous/Next/Last and their enable/disable
+                logic still run off pagination.totalPages, because they page the
+                underlying unfiltered stream, which is what the route actually
+                does. Making them describe a filtered set needs the filtered
+                count, i.e. the separately tracked search fix (Non-Goal 2). The
+                exemption covers the buttons, not the number they sit beside. */}
             <div className="text-sm text-slate-400">
-              Showing {pagination.showing} of {pagination.total} audit logs
-              {pagination.totalPages > 1 && (
-                <span className="ml-2 text-slate-500">
-                  (Page {currentPage} of {pagination.totalPages})
-                </span>
+              {isSearchActive ? (
+                <>
+                  Showing {pagination.showing} matches on this page
+                  <span className="ml-2 text-slate-500">(Page {currentPage})</span>
+                  <div className="text-xs text-slate-500 mt-1">
+                    Search scans only the current page of results. Use the Action, Entity Type,
+                    Severity and date filters for complete results.
+                  </div>
+                </>
+              ) : (
+                <>
+                  Showing {pagination.showing} of {pagination.total} audit logs
+                  {pagination.totalPages > 1 && (
+                    <span className="ml-2 text-slate-500">
+                      (Page {currentPage} of {pagination.totalPages})
+                    </span>
+                  )}
+                </>
               )}
             </div>
 
@@ -431,8 +569,12 @@ export default function AuditTrailPage() {
                     >
                       Previous
                     </button>
+                    {/* Label only — see the note above the results count. The
+                        buttons either side keep using pagination.totalPages. */}
                     <span className="text-sm text-slate-400 min-w-[100px] text-center">
-                      Page {currentPage} of {pagination.totalPages}
+                      {isSearchActive
+                        ? `Page ${currentPage}`
+                        : `Page ${currentPage} of ${pagination.totalPages}`}
                     </span>
                     <button
                       onClick={() => setCurrentPage(prev => Math.min(pagination.totalPages, prev + 1))}
@@ -570,6 +712,15 @@ export default function AuditTrailPage() {
                         </div>
                       )}
                     </div>
+
+                    {/* Business OS AI action details (FR-A5). Detected by entity
+                        type, not by the action prefix, so _COMPLETED and _FAILED
+                        take the same path. The generic dump below is suppressed
+                        for these rows — without that, an AI entry would render
+                        the labelled values AND the raw key/value list underneath. */}
+                    {log.entity_type === AI_ACTION_ENTITY_TYPE && log.details && (
+                      <AiActionDetails details={log.details as AiActionDetailsView} />
+                    )}
 
                     {/* Score Changes (for AIS_SCORE_UPDATED) */}
                     {log.action === 'AIS_SCORE_UPDATED' && log.changes && (
@@ -784,8 +935,10 @@ export default function AuditTrailPage() {
                       </div>
                     )}
 
-                    {/* Generic Details (for other event types) */}
-                    {log.details && !log.action.startsWith('AIS_') && (
+                    {/* Generic Details (for other event types). AI entries are
+                        excluded: AiActionDetails above already renders them as
+                        labelled values, and this dump is what FR-A5 replaces. */}
+                    {log.details && !log.action.startsWith('AIS_') && log.entity_type !== AI_ACTION_ENTITY_TYPE && (
                       <div className="bg-slate-800/50 rounded-lg p-4">
                         <h4 className="text-sm font-semibold text-slate-300 mb-3">Event Details</h4>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
