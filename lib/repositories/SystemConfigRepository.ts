@@ -254,13 +254,28 @@ export class SystemConfigRepository {
   }
 
   /**
-   * Upsert a config value
+   * Upsert a config value.
+   *
+   * `opts.actorId` (optional) records WHO changed the row in the existing
+   * `updated_by` column, which nothing populated before. It is an options
+   * object rather than a fifth positional string so it cannot be passed by
+   * accident where `description` was meant.
+   *
+   * Omit it and the behaviour is exactly what it was: `updated_by` is not
+   * written at all, so an actor-less caller (the Step 0 admin route, the
+   * operator script) never blanks an attribution somebody else recorded.
+   *
+   * `updated_by` is a `uuid` with a foreign key to the platform's user
+   * relation (verified live 2026-09-22), so an id that relation does not hold
+   * fails the WHOLE write, not just the attribution. Callers pass an
+   * authenticated user id.
    */
   async set(
     key: string,
     value: any,
     category?: string,
-    description?: string
+    description?: string,
+    opts?: { actorId?: string | null }
   ): Promise<AgentRepositoryResult<SystemSettingsConfig>> {
     const methodLogger = this.logger.child({ method: 'set', key });
     const startTime = Date.now();
@@ -269,11 +284,20 @@ export class SystemConfigRepository {
       // First check if exists
       const { data: existing } = await this.getByKey(key);
 
+      const actorId = opts?.actorId ?? null;
+      const now = new Date().toISOString();
+
       if (existing) {
         // Update existing
         const { data, error } = await this.supabase
           .from('system_settings_config')
-          .update({ value, updated_at: new Date().toISOString() })
+          .update({
+            value,
+            updated_at: now,
+            // Spread, not `updated_by: actorId`: writing null when no actor was
+            // supplied would ERASE an attribution a previous save recorded.
+            ...(actorId ? { updated_by: actorId } : {}),
+          })
           .eq('key', key)
           .select()
           .single();
@@ -293,7 +317,14 @@ export class SystemConfigRepository {
             key,
             value,
             category: inferredCategory,
-            description: description || `Configuration for ${key}`
+            description: description || `Configuration for ${key}`,
+            // R-5: the insert branch wrote NEITHER of these, so the first save
+            // of an area whose row had been deleted — the "running on code
+            // defaults" state the screen renders — would have carried no
+            // attribution at all. `updated_at` is set explicitly rather than
+            // left to the column default so both branches have one source.
+            updated_at: now,
+            ...(actorId ? { updated_by: actorId } : {}),
           })
           .select()
           .single();

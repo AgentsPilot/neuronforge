@@ -194,21 +194,26 @@ export interface LiteralScopeInclusion {
 }
 
 /**
- * EMPTY ON PURPOSE, and it must stay empty until an entry's file exists.
+ * An entry and the file it names land in the SAME change, never in two.
  *
- * An inclusion entry CANNOT ship ahead of the file it names. `staleInclusions`
- * (in check-bos-llm-literals.ts) treats an entry whose target is not in scope
- * as a hard failure - correctly, because that is precisely the rot it was
- * built to catch, and it cannot distinguish "renamed away" from "not written
- * yet". So an entry and the file it covers land in the SAME change, never in
- * two.
+ * `staleInclusions` (in check-bos-llm-literals.ts) treats an entry whose
+ * target is not in scope as a hard failure - correctly, because that is
+ * precisely the rot it was built to catch, and it cannot distinguish "renamed
+ * away" from "not written yet". The gate change shipped this list EMPTY for
+ * exactly that reason; this entry arrives with the route it covers.
  *
- * The machinery below is fully exercised regardless: `literalScope` and
- * `staleInclusions` both take the list as an injectable argument, so the
- * gate's own suite proves the cap, the staleness failure and the monotonicity
- * property against a fixture instead of waiting for a real entry.
+ * The machinery does not depend on this list being populated: `literalScope`
+ * and `staleInclusions` both take it as an injectable argument, so the gate's
+ * own suite proves the cap, the staleness failure and the monotonicity
+ * property against a fixture as well as against the real entry below.
  */
-export const LITERAL_SCOPE_INCLUSIONS: ReadonlyArray<LiteralScopeInclusion> = [];
+export const LITERAL_SCOPE_INCLUSIONS: ReadonlyArray<LiteralScopeInclusion> = [
+  {
+    file: 'app/api/admin/business-os/llm-settings/route.ts',
+    reason:
+      'Business OS LLM model-settings admin route: reaches the catalog through adminSettingsView, so the direct-import rule misses it, but it serves the model picker and must never write a model id.',
+  },
+];
 
 export function literalScope(
   graph: Map<string, FileImports>,
