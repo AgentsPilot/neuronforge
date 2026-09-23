@@ -1,6 +1,6 @@
 # Workplan: Business OS Subscription & Entitlements Module
 
-> **Last Updated**: 2026-09-22
+> **Last Updated**: 2026-09-23
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md), committed on this branch (`df5cc116`), including B-13 to B-15, FR-43 to FR-45, AC-36/AC-37, the pending items P-1/P-2, and §21 SA Review with WC-1 to WC-22.
@@ -8,9 +8,11 @@
 **Status:** **Rev 3** — revised for the merge of `main` into this branch (`92580639`), the **user-approved component breakdown** (§4.0), and **three user-confirmed additions** (§1.5: tier expiry, the three-step decision contract, the plan-state reset op). Rev 2 was **SA-cleared for Slice 1 implementation** with conditions R2-1 to R2-4 (§13.1), which are folded into the tasks here. **Waiting for the SA re-check listed in §0** before implementation starts. No implementation code has been written.
 **Branch:** `feature/business-os-entitlements`, created from `origin/main` at `94f9cfcd` (WC-1), with `main` merged in at `92580639` (2026-09-21). Dev created the branch on TL's instruction. The Dev role normally leaves branch creation to RM, and this deviation is recorded here for RM.
 
+**Current branch:** `feature/business-os-entitlement-tiers`, from `origin/main` after PR #93 merged (546807d7). It carries §4.32 (the four plans configured) and §4.33 (the SQL scripts made paste-safe), and nothing else.
+
 ## Overview
 
-Business OS has no commercial gating today. This workplan builds the **infrastructure** for subscriptions and entitlements in the four slices of the requirement (§16): a capability catalog, a tier-matrix *mechanism*, cohorts, a pure resolver with a three-step decision contract, per-account plan rows, admin operations, and a shadow-mode usage and "what would be gated" report. Under the user's scope change, **production config ships with no commercial tiers**. Eyal's example matrix exists only as a test fixture. Champions get every capability, and every existing account becomes a champion at rollout. Slice 1 is planned in full, ships as **five separate PRs** (§4.0), sits behind a server-only flag, and changes nothing customers see. Slices 2 to 4 (enforcement, metering, billing) are outlined, and each gets an SA-reviewed addendum that restates its WCs as tasks and tests (G-3). Every WC, RC and addition is traced in §9.
+Business OS has no commercial gating today. This workplan builds the **infrastructure** for subscriptions and entitlements in the four slices of the requirement (§16): a capability catalog, a tier-matrix *mechanism*, cohorts, a pure resolver with a three-step decision contract, per-account plan rows, admin operations, and a shadow-mode usage and "what would be gated" report. Slice 1 shipped with **no commercial tiers** in production config, by design. **That changed on 2026-09-23** (§4.32): production now ships two tiers — Essentials and Autopilot — and the `trial` and `champion` cohorts point at Essentials. Eyal's example matrix remains a test fixture. Every existing account is still a champion, and nothing is enforced. Slice 1 is planned in full, ships as **five separate PRs** (§4.0), sits behind a server-only flag, and changes nothing customers see. Slices 2 to 4 (enforcement, metering, billing) are outlined, and each gets an SA-reviewed addendum that restates its WCs as tasks and tests (G-3). Every WC, RC and addition is traced in §9.
 
 ---
 
@@ -1797,6 +1799,117 @@ The three Low findings from §14.12, plus the free one. Implementation stays unc
 | `npm run lint:hooks` / `console.*` | clean / 0 |
 
 **Slice 1 is code-complete.** Next is the user's review and the PR to main — not Slice 2.
+
+### 4.32 The four plans configured (2026-09-23) - the first real tier matrix
+
+The user's decision, taken after PR #93 merged and both migrations were applied to production. Implementation is **uncommitted**, on `feature/business-os-entitlement-tiers`, branched from current `origin/main`.
+
+| Internal | Customer-facing | Chat | AI actions | Ends | Price |
+|---|---|---|---|---|---|
+| `trial` | Test Flight | no | 250 (one-off **total**) | 14 days, or credits exhausted | $0 |
+| `champion` | Founding Partner | no | 1,000 / month | never (an admin may set a date) | $0 |
+| `basic` | Essentials | no | 500 / month | while paid | $79 |
+| `pro` | Autopilot | **yes** | 2,000 / month | while paid | $129 |
+
+**Only `basic` and `pro` are tiers.** `trial` and `champion` are cohorts with `base: { tier: 'basic' }`, so they inherit Essentials rather than enumerating their own capabilities and drifting from it.
+
+#### What the config now says
+
+| File | Change |
+|---|---|
+| `config/tierMatrix.ts` | `TIER_ORDER = ['basic', 'pro']`. One `BASE` row - every `available` capability at its maximum, every `not_built` one withheld - then `basic = BASE` with the eight `chat.*` off, and `pro = BASE` with `ai.actions: { perMonth: 2000 }`. New `presentation` block: name per locale and monthly price. The file header carries the four-plan table and the add-a-tier procedure. |
+| `config/cohorts.ts` | Both cohorts `{ all: true }` -> `{ tier: 'basic' }`, each with `labels`. `champion` 1,000/month, `trial` 250 total, both marked FIRST PASS. Champion's doc comment spells out the **one-line flip** to `{ tier: 'pro' }` for when chat is ready for design partners. |
+| `types.ts` | `TierPresentation { labels; monthlyPriceUsd }`, `TierMatrixShape.presentation`, `CohortConfigShape.labels`. |
+| `schema.ts` | `presentation` validated (record over the tier names, `.strict()`, non-negative integer price) and cross-checked **both ways** - a tier with no presentation entry, and a presentation entry naming a tier that is not configured. `labelsSchema` defined once and reused three times. |
+| `__fixtures__/exampleTierMatrix.ts` | A `presentation` block with deliberately non-production names and prices, so a fixture failure never reads as a pricing statement. |
+
+Everything that exists is in **both** paid tiers; nothing `not_built` is in either. The only differences are the eight `chat.*` capabilities and `ai.actions` - asserted exactly, as a set of nine keys, so a third difference fails the suite.
+
+#### The credit numbers are a first pass
+
+250 / 500 / 1,000 / 2,000 are decisions, not measurements, and are marked FIRST PASS in both config files. Slice 3 resets them from the shadow report: the setup-AI measurement (S1-T15) sizes the trial total (B-12), observed usage sizes the rest. Nothing meters anything until then, so no account is blocked by a number nobody has counted.
+
+#### The finding: "Essentials has no chat" is not expressible today
+
+Turning the eight `chat.*` capabilities off **does not close the chat surface**. Under the configured read rule (`domain_group`), an Essentials owner's chat question about their own contacts maps to `crm.core` - which Essentials has - so it resolves to `allowed`. Only capabilities literally named `chat.*` are refused.
+
+This is an **enforcement gap, not a config one**: no value in `tierMatrix.ts` can close it. Slice 2 must gate the **surface** (may this account enter chat at all?). Two tests in `productionConfig.test.ts` pin the gap in both directions, and the warning lives on the `basic` row itself, where the next person to change it will read it.
+
+#### Q-B1 is settled as pricing and live as enforcement
+
+Q-B1 asked whether a **lower plan** may ask chat questions about the areas it includes. There is no lower plan: chat is all-or-nothing. So the pricing question is moot - and the read rule turns out to be the lever that decides the gap above. Under `domain_group` Essentials' chat reads are allowed; under `read_only_plans_need_search` they are refused.
+
+**Nothing was simplified away.** The dual recording in shadow mode is the only measurement that can answer it, so it stays, and the reasoning is now recorded in `chatActionMap.ts` rather than left implicit.
+
+#### What changed now that a tier exists
+
+Until today, "no tiers configured" was the *only* production behaviour, and several paths existed solely to handle it. Each was re-checked and its test rewritten so the **mechanism** is still covered with an emptied config while the **shipped** behaviour is asserted as it now is:
+
+| Path | Before | Now |
+|---|---|---|
+| `mode.ts` / UD-2 | `enforce` self-downgraded to `shadow`, at `error` | Passes through to `enforce`. The downgrade is still tested via `jest.isolateModules` and an empty `TIER_ORDER`. A third test records that this gate is **not** what makes `enforce` safe - Slice 2, Slice 4 and G-1 are |
+| `adminOps.assign_tier` | 400 `no_tiers_configured` always | Assigns a real tier. The refusal keeps its test with `{ ...readCodeConfig(), tierOrder: [] }`, and a new test covers what was unreachable before: the body schema now **enumerates** the real tiers, so `champion` or `growth` is a 400 at the boundary (Q-13) |
+| `report.asTier` | `no_tiers_configured` | Replays against `basic` and names the chat losses; `crm.core` is correctly not a loss. The error path keeps its test with an emptied config |
+| `POST /launch` real run | 409 `launch_preconditions_unmet` | 501 `not_implemented_until_slice_2` - the precondition is met, so the refusal moves one line down. **It still writes nothing**, which is what the test asserts |
+| Drift snapshot | `tiers: {}` - the histories were the whole guard | Regenerated: 2 tiers x every capability. The suite now also proves a **lowered value in the shipped matrix** is caught, not only in the fixture |
+| `resolver.lowestTierFor` | Always `null` | `pro` for chat, `basic` for everything else, `null` for `not_built` - so an upgrade prompt has something true to say |
+| `decide.test.ts` | Cohorts derived `{ all: true }` | The suite points the cohorts at the fixture's middle row, because production's `basic` lands on the fixture's deliberately thin `basic` and step a would refuse before the state overlay ran. The change is in the test, not the code |
+
+Enforcement remains blocked on Slice 4 and G-1, and the `trial` cohort has **nothing assigned to it** - no signup path writes it yet.
+
+#### Also in this branch: the chat-map drift that was red on `main`
+
+The entitlements CI job had been red since 546807d7 (`chatActionMap.invariant.test.ts`). While Slice 1 was open, `agents` and `agent_runs` left the Business OS chat catalog on `main`, taking the planner surface from 107 actions to 103.
+
+The same fix landed on `main` in parallel as PR #99 (b4481293), arrived at independently. This branch therefore **matches `main`** on `chatActionMap.ts` (the `ENTITY_DOMAIN` block) and on `chatActionMap.invariant.test.ts` byte for byte, keeps `main`'s B-8 test in `planCapabilities.test.ts`, and adds two of its own: that **nothing** in the shipped map is classified `ungated`, and that the `ungated` branch itself still behaves (via `jest.isolateModules`, faking only the classification, never the code under test). The hard-coded count of 103 stays as the tripwire that caught it, with a comment saying where the number comes from.
+
+**Why it reached `main`:** the entitlements job is not a required status check (**G-2**, a repo setting - the user's / Offir's to change), so a stale branch merged green-ish.
+
+#### Verified
+
+| Check | Result |
+|---|---|
+| `npm run test:bos-entitlements` scope, reconciled against current `origin/main` | **49 suites, 930 tests, 0 failures** (main's own run on the same scope: 49 / 915) |
+| That scope **plus** the admin entitlement routes and `scripts/__tests__` | **53 suites, 1,072 tests, 0 failures** |
+| `npm run test:authz-guard` | **74 passed**, no new exemption |
+| Typecheck, the verified method | **2,029** - one **below** the 2,030 baseline, 0 x TS2688, **0** in `lib/business-os/entitlements` and 0 under `app/api/admin/business-os`. The -1 is in the safe direction and not attributable to a file in this change set; the narrowed `TIER_MATRIX` type (from an empty `tiers` object to two named rows) is the likely cause |
+| ESLint on every changed file + `lint:hooks` scope | clean. Fixed while here: three `eslint-disable` directives in `mode.test.ts` named a rule that does not exist in this config (`no-var-requires`, not `no-require-imports`), so the `require()` calls were erroring anyway - two of the three pre-date this branch |
+| `console.*` in the touch set | 0 |
+
+**One pre-existing lint error left alone**, in a file this branch touches: `config/cohorts.ts:33`, `export interface CohortConfig extends CohortConfigShape<...> {}` trips `@typescript-eslint/no-empty-object-type`. It is on `main`, the fix is a one-line change to a type alias, and it is a different decision (interfaces stay open to merging) - flagged for SA rather than taken silently.
+
+---
+
+### 4.33 The four SQL scripts made paste-safe (2026-09-23) - and a guard
+
+**What happened.** The user pasted `preflight-bos-entitlements-migration.sql` into the Supabase SQL editor and got `ERROR: 42P01: relation "a" does not exist`; the checker gave `relation "it" does not exist`. Neither word is an identifier in either file - both are English prose from the comments.
+
+**Root cause, tested rather than assumed.** The editor's client-side splitter tracks string literals but not `--` comments:
+
+1. An apostrophe in a comment (`the backfill's FK`) looks like the start of a literal and **inverts** the parser's idea of what is quoted.
+2. With that inversion, a semicolon that is genuinely **inside** a string literal now looks like a statement terminator.
+3. The one big `SELECT` is cut there; the tail fragment starts mid-query, and a prose word lands where a relation name is expected.
+
+The hypothesis handed to me was the apostrophes alone. **That is not sufficient**, and the evidence is in this repo: the two migrations that applied cleanly on the same day contain 20 and 5 comment apostrophes (14 and 5 odd-parity lines between them) and 2 string semicolons. Neither ingredient is fatal alone - it is the **combination**, and which of the two comes first. That is luck, and not a thing to leave to luck in a file whose only job is to be pasted into that editor.
+
+**The fix** - rephrase, never delete the letter (`the backfills FK` is a typo the next person corrects straight back into a bug):
+
+| Script | Comment apostrophes rephrased | Semicolons removed from literals |
+|---|---|---|
+| `preflight-...` | 7 | 3 |
+| `check-...` | 2 | 7 |
+| `verify-...` | 16 | 4 |
+| `rollback-...` | 8, including the arming instruction, which had **both** a quote and a semicolon inside one comment | - |
+
+**It would have caught this before the user did.** The two rules were replayed over the pre-fix copies of both files: `preflight-...` had **7** comment apostrophes and **3** string semicolons - including the exact pair at L230/L282 that produced `relation "a"` - and `check-...` had **2** and **8**. Both files fail the guard as they stood when the user pasted them.
+
+**The guard** - `scripts/__tests__/entitlementSqlScripts.guard.test.ts`, 18 tests. Four rules per file: no apostrophe in a `--` comment, no semicolon inside a string literal, no `--` inside a string literal (a regex-based comment stripper would eat the closing quote), and balanced quotes over the whole file. Its helpers parse the **correct** way - a `--` inside a string is not a comment - so the rules mean what they say. It also guards itself: four non-trivial files, and a negative control built from the two real offending lines from 2026-09-23.
+
+**Also folded in**, since the user needs the checker again for section 4.20 step 8:
+
+- The `counts` CTE now reports the raw sizes (`business_profiles`, `onboarding_conversations`, `auth.users`) the ad-hoc queries were being used for.
+- A new row 55 `B5 no plan rows without a tenant`, WARN when `plan_rows > tenants`.
+- Row 30 names both prefixes explicitly: the **triggers** are `business_os_plan_on_onboarding` / `business_os_plan_on_profile`; the **functions** they call are `business_os_plan_fact_*`. Searching `pg_trigger` for the function prefix finds nothing, which reads like a failed migration and is not one. The runbook says the same under step 6b.
 
 ---
 

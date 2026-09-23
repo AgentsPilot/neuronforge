@@ -102,6 +102,13 @@ Two rows to understand before you see them: **row 54** counts accounts that sign
 
 Dashboard → **Logs** → **Postgres Logs**, search for `business_os_plan_fact_`. **Expect nothing.**
 
+> **Two different names, one mechanism.** The **triggers** are called
+> `business_os_plan_on_onboarding` and `business_os_plan_on_profile`; the
+> **functions** they call are `business_os_plan_fact_onboarding` and
+> `business_os_plan_fact_profile`. Search the *log* for `business_os_plan_fact_`
+> (the function writes the warning) and search *pg_trigger* for
+> `business_os_plan_on_` (the trigger is what is bound to the table).
+
 This matters because the new triggers are built to fail *quietly* rather than break a customer's signup — so the log is the only place a problem would show. If there are entries, read them and ask; nobody's data was lost.
 
 ### 7. Report
