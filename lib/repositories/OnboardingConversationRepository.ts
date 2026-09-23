@@ -222,6 +222,39 @@ export class OnboardingConversationRepository {
     }
   }
 
+  /**
+   * When the FIRST message in this account's onboarding chat was written.
+   *
+   * `null` when there is no transcript at all.
+   *
+   * This is the moment a person started setting up their business, which is the
+   * default start of the Business OS trial clock (entitlements config
+   * `trial.clockStartsAt`). The plan row normally records it via a trigger the
+   * first time a message is inserted; this method exists for the repair path —
+   * an admin creating the plan row an account never got — so the recovered row
+   * carries the true fact rather than "now".
+   *
+   * Ascending order, not `MIN(created_at)`: PostgREST aggregates are disabled on
+   * this project, so the aggregate would have to happen in the client anyway.
+   */
+  async getFirstMessageAt(userId: string): Promise<OnboardingConversationRepositoryResult<string | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('onboarding_conversations')
+        .select('created_at')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: true })
+        .limit(1);
+
+      if (error) throw error;
+
+      return { data: data?.[0]?.created_at ?? null, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to read the first onboarding message timestamp');
+      return { data: null, error: error as Error };
+    }
+  }
+
   async clearConversation(userId: string): Promise<OnboardingConversationRepositoryResult<boolean>> {
     try {
       logger.info({ userId }, 'Clearing onboarding conversation');

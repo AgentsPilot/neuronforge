@@ -140,6 +140,27 @@ export const AUDIT_EVENTS = {
   SYSTEM_MAINTENANCE_ENDED: 'SYSTEM_MAINTENANCE_ENDED',
 
   // ==========================================
+  // BUSINESS OS ENTITLEMENTS (admin-only)
+  // ==========================================
+  // Every one of these is an admin changing what an account is entitled to, so
+  // each carries the actor, the reason and the before/after plan row. They are
+  // the only write path to the entitlement tables (workplan §4.12, WC-7).
+  BOS_ENTITLEMENT_PLAN_ROW_ENSURED: 'BOS_ENTITLEMENT_PLAN_ROW_ENSURED',
+  BOS_ENTITLEMENT_COHORT_SET: 'BOS_ENTITLEMENT_COHORT_SET',
+  BOS_ENTITLEMENT_EXPIRY_SET: 'BOS_ENTITLEMENT_EXPIRY_SET',
+  BOS_ENTITLEMENT_TIER_ASSIGNED: 'BOS_ENTITLEMENT_TIER_ASSIGNED',
+  BOS_ENTITLEMENT_OVERRIDE_ADDED: 'BOS_ENTITLEMENT_OVERRIDE_ADDED',
+  BOS_ENTITLEMENT_OVERRIDE_ENDED: 'BOS_ENTITLEMENT_OVERRIDE_ENDED',
+  // A-3: wipe and recreate the plan state. The entry carries the account's
+  // before-state, including every override that was ENDED by the reset — M-2
+  // makes the RPC end them (`ended_at`, `ended_by_admin_id`, `ended_reason`)
+  // rather than delete any, so the rows are still there; this is the
+  // before-state in one place rather than the last copy of it.
+  BOS_ENTITLEMENT_PLAN_STATE_RESET: 'BOS_ENTITLEMENT_PLAN_STATE_RESET',
+  // R2-1: the multi-account launch operation. Slice 1 ships the dry run.
+  BOS_ENTITLEMENT_LAUNCH_DRY_RUN: 'BOS_ENTITLEMENT_LAUNCH_DRY_RUN',
+
+  // ==========================================
   // AIS (AGENT INTENSITY SYSTEM) EVENTS
   // ==========================================
   AIS_SCORE_CALCULATED: 'AIS_SCORE_CALCULATED', // Initial calculation
