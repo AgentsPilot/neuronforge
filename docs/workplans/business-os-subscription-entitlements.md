@@ -2838,6 +2838,95 @@ Every condition I set in earlier rounds is present and behaves as specified:
 3. **Nothing about the product has changed.** The feature is off, no plan exists, and no customer sees anything different.
 4. **The two things still waiting on you** are the production apply, and rotating the database key before enforcement is ever switched on. The second is the one that matters most: until it is done, the guarantee that only the server can change what an account is entitled to does not really hold.
 
+### 13.9 SA Code Review — the SQL paste fix and the four plans
+
+**Reviewed by SA — 2026-09-24** (branch `feature/business-os-entitlement-tiers`, uncommitted; docs at `a4a69bbd`; Slice 1 merged via PR #93 and applied to production)
+**Status:** ✅ **APPROVED — CLEARED FOR QA.** One **required** item (**T-1**), which is a requirement/documentation fix rather than a code change, and four low ones. The code is sound.
+
+**What SA ran:** `npm run test:bos-entitlements` — **49 suites, 930 tests, 0 failures**; the new `entitlementSqlScripts.guard.test.ts` — **18 passing**; `npm run lint:hooks` — clean.
+
+---
+
+#### A. The SQL scripts
+
+**Dev's root cause is correct, and more precise than my earlier hypothesis.** I reasoned it through independently and it holds — and, importantly, it explains the *specific* errors the user saw rather than just the class:
+
+1. A naive splitter that tracks `'` but does not understand `--` sees the apostrophe in `the backfill's READ cost` and flips into "inside a string".
+2. While inverted, real statement-ending semicolons are **ignored**, so statements merge rather than split — harmless on its own.
+3. The next genuine opening quote flips it back to "outside a string" — now inverted *against* reality: it believes it is outside a literal while actually inside one.
+4. A semicolon **inside** that literal now reads as a terminator, cutting the statement mid-sentence. The next fragment begins with whatever English word followed the semicolon.
+
+That last step is the corroboration: `relation "a"` and `relation "it"` are exactly what Postgres reports when a fragment starts with a bare English word. **Both conditions are necessary**, which is why the two migrations — comment apostrophes, but no string semicolon after an inversion — pasted without complaint. Confirmed.
+
+**The four guard rules are correct and can fail.** `splitComment` mirrors the *correct* parse (a `--` only starts a comment outside a string), which is what makes "this comment contains an apostrophe" a true statement rather than a guess; `stringLiterals` handles `''` escaping. The negative control uses the **two real offending lines from 2026-09-23** and a legitimate line that must not be flagged — so the guard is proven to fire on the shapes that broke and stay quiet on the shape that did not. Dev's replay over the pre-fix copies (preflight 7+3, checker 2+8) is the right evidence.
+
+The rules are stricter than strictly necessary — forbidding *either* condition would break the chain — and that is the right call: we do not control or get to inspect the editor's splitter, so removing both ingredients is the honest response.
+
+**The rephrasings preserve meaning.** I read the diff: semicolons inside literals became commas or full stops, and `a user''s own INSERT` became `an INSERT by the owner`. No predicate, threshold, count or status changed. The checker additions are sound: raw sizes in `counts` give the week-later run its denominators, row 30 naming both the trigger prefix and the function prefix removes a real ambiguity when reading the grid, and **row 55 (B5)** is a genuine new check — the complement of B1, catching plan rows that belong to no tenant, correctly a WARN rather than a FAIL.
+
+---
+
+#### B. The chat-surface gap — **confirmed, and wider than reported**
+
+**Dev is right, and the finding is understated.** Under the configured `domain_group` reading, `ENTITY_DOMAIN` is the default *for every operation on an entity, reads included*. So on Essentials:
+
+- `contacts.find` → `crm.core` → **allowed** (Dev's case), and equally
+- `contacts.create`, `tasks.update`, `pages.*`, `insights.find` → `crm.core` / `website.ai_site` / `insights.checks` → **allowed**.
+
+An Essentials owner can therefore not only *ask* chat about their data — they can **change it through chat**. Turning off the eight `chat.*` capabilities cannot close a surface those eight never collectively represented.
+
+**Why the config cannot express it.** `chat.*` is not one thing. Four entries are feature areas that happen to be reachable through chat (`invoice_control`, `scheduling`, `quotes`, `email`), three are chat *modalities* (`search`, `reporting`, `bulk`), and one is marketing. **No capability means "may use the chat surface at all".** That capability does not exist, so no combination of values can withhold it. The assertion in `productionConfig.test.ts` — in both directions, with the honest comment that this test should change when the gate lands — is the right way to hold the gap until it is closed.
+
+**What Slice 2 must do, precisely.** This is the whole $50/month difference between the two paid plans, so it is a commercial requirement:
+
+| # | Requirement |
+|---|---|
+| 1 | **Add one catalog capability** — `chat.access`, boolean, `available`, audience `owner`, `atLimit: 'none'`. `basic: false`, `pro: true`. The entire commercial difference, expressed once, in config. |
+| 2 | **Gate the chat surface on it once per turn**, at the entry point in `chat-v4` where the shadow hook sits, **before** any per-capability check. Per-step gating would make the refusal depend on which entity the planner happened to choose. |
+| 3 | **The refusal is `not_entitled` carrying `lowestTier: 'pro'`**, and chat **explains** it in the owner's language rather than erroring (FR-17 / AC-9). This is the customer-visible half of the price difference and must be specified, not improvised. |
+| 4 | **Keep the per-capability map.** It still decides what an *Autopilot* account may do inside chat, and it feeds the report and, later, metering. |
+| 5 | **Shadow must record the surface decision**, or the report cannot say how many accounts would lose chat entirely — which is exactly the number that justifies the price. |
+| 6 | It is stated as an FR in the requirement (BA), not only as a test comment. **T-1.** |
+
+**Dev's decision not to simplify away the dual read-rule recording: agreed.** Q-B1 is moot *as pricing* — no plan is sold on "search" any more — but the read rule still decides which capability a read maps to, which decides what an Autopilot account is refused once enforcement is on, and what happens inside chat for any tier that has access. One extra column preserves the ability to settle that with data instead of opinion. Keeping it is the cheaper mistake.
+
+---
+
+#### C. The rest
+
+| Item | Verdict |
+|---|---|
+| Four tiers, BASE ± nine keys | ✅ The `BASE` + "subtract the eight `chat.*`, change the allowance" shape makes the difference between plans readable at a glance, and the nine-key diff test **names the exact keys**, so a tenth difference or a missing one fails. Non-vacuous. |
+| `presentation` block | ✅ Sound, and the loader rejecting a tier with no entry is the right invariant. See T-5. |
+| Cohorts `{ all: true }` → `{ tier: 'basic' }` | ✅ Correct now that a tier exists: cohorts can no longer drift from the plan they are meant to mirror, and the test pins it. |
+| `mode.ts` UD-2 passthrough | ✅ `enforce` is no longer self-downgraded now a tier is configured — which is the gate working as designed, not a weakening. **G-1 and G-2 still bind**, and neither is met. |
+| `adminOps.assign_tier`, `report.asTier`, `lowestTierFor`, regenerated snapshot, `decide.test.ts` cohort change | ✅ All follow mechanically from a tier existing; the snapshot diff is the record of the decision. |
+| Two `jest.isolateModules` mocks | ✅ Acceptable: test-only, scoped, and each documents that it fakes the **classification** and not the behaviour. |
+| The now-unreachable `ungated` branch | ✅ **Keep it.** The type, the gap reason and the invariant are the only expression of B-8's answer if chat ever re-lists the agent platform, and `planCapabilities.test.ts` proves the behaviour with a synthetic entity — so it is not vacuous despite nothing real being classified that way. |
+| Typecheck 2,029 vs baseline 2,030 | ✅ Expected: a `never`-related diagnostic disappeared when `TIER_ORDER` stopped being empty. Refresh the baseline so the gate does not sit permanently one below (low, housekeeping). |
+| `config/cohorts.ts:33` `no-empty-object-type` | **Call: fix it.** `export interface CohortConfig extends CohortConfigShape<CohortExplicitValues> {}` is a legitimate "name a specialisation" pattern, but the modern idiom is a type alias, which clears the error with no behaviour change. It is pre-existing, but this branch already edits the file. **T-4.** |
+
+---
+
+#### Required and low fixes
+
+| # | Fix | Priority |
+|---|---|---|
+| **T-1** | **Write the chat-surface gap into the requirement as an FR, and into the Slice 2 addendum with the six points above.** It currently lives in a test comment and a workplan note. It is the entire difference between the two paid plans, so it must be a requirement someone can be held to — not a discovery the next person makes. | **Required** (BA + the Slice 2 addendum; not code) |
+| T-2 | Row 55's `what_to_do` should name the benign cause: a tenant who reset their onboarding transcript and has no business profile yet drops out of the "tenants" union while keeping their plan row. Without it the user chases a phantom on the week-later run. | Low |
+| T-3 | Extend the SQL guard's `SCRIPTS` list to the two entitlement migrations — they carry comment apostrophes today and are one string-semicolon away from the same failure — or to any file the runbook tells someone to paste. | Low |
+| T-4 | `cohorts.ts:33` → type alias. | Low |
+| T-5 | Note in `presentation` that the plan names are brand names, deliberately identical across en/he/es — otherwise the next reader files it as a missing translation. | Low |
+
+---
+
+#### For the user
+
+1. **The paste failures are understood and fixed, and the fix is now enforced.** The cause was a comment apostrophe plus a semicolon inside a sentence — together, not separately — which is why the two migrations went in fine while the check scripts broke. A test now refuses any of these four files that could break the same way, and it is proven against the exact lines that failed on your screen.
+2. **The two plans are not yet different in the way you are selling them.** Essentials and Autopilot currently differ by nine settings, but switching off the chat features does **not** actually stop an Essentials customer using chat — they can still ask about, and change, their contacts, tasks, website and insights through it. Nothing is enforced yet, so no customer is affected today, but **this is the whole £/$50 difference between your two paid plans** and it needs one small addition before enforcement is switched on. I have written exactly what that is.
+3. **Nothing else about the product changed.** No tier is enforced, and the feature remains off.
+4. **Still waiting on you, unchanged:** rotating the database key before enforcement is ever switched on, and making the CI checks required.
+
 ## 14. QA Testing Report
 
 ### 14.1 Component 1 (plan records + migration) — QA, 2026-09-21
@@ -3708,3 +3797,4 @@ _RM to populate._
 | 2026-09-22 | SA code review of component 5: APPROVED for QA — Slice 1 code-complete (SA) | Added §13.8. Ran `test:bos-entitlements` (48 suites / 912 tests), `test:authz-guard` (74, no new exemption) and `lint:hooks` — all green; confirmed all five §13.7 fixes landed. Authorization verified independently rather than from test names: the gate is the first statement in all four handlers with the `try` opening after it (so no error path precedes it), no route imports AdminAccessService, and walking `app/api/admin/**` myself found 47 route files against the census 44 — the three new ones are in the guard's scanned set and its assertion is a floor, not an equality, so they are counted rather than excluded. Noted that the audit entry records the target as `userId` and the admin as `actorId`, and that `actorId` is a real persisted column — better than the workplan's original shape. Every write-op condition verified (R2-2, RC-4/A-1, R2-3 — the projection replicates paired-expiry clearing and uses `tierInForce`, so an expired tier is not a basis — Q-15, Q-6/M-3/M-4, C3-2 grant refused but revoke allowed, RC-10, A-3's four guards, WC-7 flush-before-response asserted as an order); tenant isolation follows the M1/G3 pattern end to end. The vacuity class Dev self-reported is structurally closed: 16 refusal assertions name their error code, none asserts a bare `ok: false`. All four of Dev's calls endorsed (501 for a real launch run, `isTest` decided first in the guard, adminOps EXEMPT, additive audit events). The architecture doc is workable for someone adding a tier in six months. Slice 1 exit: code-complete, every criterion not requiring a database met; three open purely by dependency (the production apply, a week of shadow, the PR's first CI run) plus the deliberately replaced probe criterion. Low: C5-1 add the not_built rule to the doc's add-a-tier step, C5-2 drop the silent `AUDIT_EVENTS` fallback. The CLAUDE.md row is now present on disk, so §4.30.5's awaiting-the-user note is stale. |
 | 2026-09-22 | QA of component 5 (admin ops + docs) and Slice 1 exit: PASS (QA) | Added §14.12. Ran it all: **48 suites / 912 tests** in the CI scope and **56 / 1,077** with the admin routes, audit and admin guards; authz guard 74 with no new exemption; lint clean; 0 `console.*`/`any`; typecheck at the unchanged **2,030** baseline with **0** in entitlements and **0** under `app/api/admin/business-os`. **Authorization verified by my own walk**: four handlers, four literal `requireAdmin(` calls with the `try` opening after and nothing above but a logger argument; `find` counts **47** admin route files of which **40** are gated (the 7 that are not are the documented parked ones) and the guard's census is a floor, so the new routes are counted; the 401/403/throwing-check tests assert **no repository call and no audit entry**, not just the status; the audit actor is genuinely persisted (`AuditTrailService:123,128` → `actor_id`, selected in `AuditTrailRepository:30,36`); and a non-admin can learn nothing, because the gate precedes every read so 404/409 distinctions are admin-only. **Dev's self-reported vacuous-refusal class is genuinely fixed** — 16 refusals, 16 specific error codes, several also asserting the write never happened; the unknown-tier case now lives in Zod enums built from config. `wouldLeaveNoBasis` correctly replicates the paired-expiry clearing and treats an expired tier as no basis; C3-2 refuses a granting override on a `not_built` capability while still allowing revoke; WC-7's log→flush→respond **order** is asserted. Three Low findings: **QA-1** the audit field is named `deletedOverrides` and two comments say the rows are "GONE", but since M-2 the reset **ends** them and never deletes — three artefacts contradict the code in the record read during an incident; **QA-2** SA's C5-2 (`AUDIT_EVENTS[...] ?? action` fallback) is still open and no test asserts every emitted action is registered; **QA-3** SA's C5-1 is still open — the add-a-tier procedure still never mentions the `not_built` rule that will stop the next person. The CLAUDE.md row was checked claim by claim and is accurate; §4.30.5's "awaiting the user" line is stale. **Slice 1 exit: code-complete** — four criteria met, one (the probe suite) knowingly replaced with S-8(i) left argued rather than demonstrated, two pending the apply and the PR's first CI run. §14.12.5 carries the definitive unproven list for the PR description, with **G-1 (key rotation)** as the only security dependency on it. |
 | 2026-09-22 | QA fixes QA-1 to QA-3 + the audit nit — Slice 1 ready for the user's review (Dev) | §4.31. **QA-3 (SA C5-1):** the `not_built` rule is now **step 3 of the add-a-tier procedure**, with a boxed subsection giving what counts as granting on every shape (including `'purchasable'` on an add-on and `purchasable: true` on a zero quantity), the **verbatim error message**, and the two fixes in the order they are usually right — it rejected eight capabilities in Eyal's draft the first time it ran, so it belongs where someone following the steps will hit it rather than two sections away. **QA-1:** `deletedOverrides` → **`endedOverrides`**, with both comments and the audit-event description corrected — since M-2 the reset **ends** overrides and contains no `DELETE` (the Jest guard asserts it), so three artefacts were describing the opposite of the code in the record someone reads during an incident. **QA-2 (SA C5-2):** two tests make the `AUDIT_EVENTS[…] ?? action` fallback unreachable — a source sweep over every `'BOS_ENTITLEMENT_*'` literal (matching the plain-string form too, since three reach `writePatch` as an argument and a sweep that missed those would have been vacuous, with `Set(actions).size === 7` as the non-vacuity leg) plus an executed leg running all seven op variants. The fallback stays, documented: a row named oddly beats no row. **Nit:** the 403 and throwing-admin cases now assert the audit is empty too. **§4.30.5 retitled ✅ APPLIED** — the user approved the CLAUDE.md row and TL added it. **55 suites / 1,054 tests green**; authz guard 74, no new exemption; typecheck 2,030 — unchanged baseline, 0 in entitlements and 0 under `app/api/admin/business-os`; hooks lint clean; 0 `console.*`. **Slice 1 is code-complete; next is the user's review and the PR to main.** Code uncommitted. |
+| 2026-09-24 | SA code review of the SQL paste fix and the four plans: APPROVED for QA (SA) | Added §13.9. Ran `test:bos-entitlements` (49 suites / 930 tests), the new SQL guard (18) and `lint:hooks` — all green. Confirmed the root cause independently: a comment apostrophe inverts a naive splitter, real semicolons are then ignored, the next genuine quote re-inverts it, and a semicolon INSIDE a literal cuts the statement mid-sentence — which is exactly why the errors were `relation "a"` and `relation "it"`, and why the migrations survived. Both conditions are necessary; the guard forbidding both is the right response to a splitter we cannot inspect. Rephrasings verified meaning-preserving; row 55, row 30 and the raw sizes endorsed. **Chat-surface gap CONFIRMED and wider than reported:** under `domain_group` the entity domain is the default for every operation, so an Essentials owner can not only ask chat about contacts/tasks/website/insights but CHANGE them through it — no capability means "may use chat at all", so no combination of values can withhold it. Slice 2 must add one `chat.access` capability, gate the surface once per turn before per-capability checks, refuse as `not_entitled` with `lowestTier: pro` and have chat explain it, keep the per-capability map, and record the surface decision in shadow. Dev's decision to keep the dual read-rule recording endorsed (moot as pricing, live as enforcement). Required: T-1 write the gap into the requirement as an FR and into the Slice 2 addendum — it is the entire difference between the two paid plans and currently lives only in a test comment. Low: T-2 name the benign cause in row 55, T-3 extend the SQL guard to the migrations, T-4 cohorts.ts:33 type alias, T-5 mark the plan names as deliberately untranslated. Keep the unreachable `ungated` branch; the isolateModules mocks are acceptable; the typecheck sitting one below baseline is expected and the baseline should be refreshed. |
