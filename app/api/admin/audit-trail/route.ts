@@ -6,6 +6,7 @@ import { createClient } from '@supabase/supabase-js';
 import { getUser } from '@/lib/auth';
 import { AdminAccessService } from '@/lib/services/AdminAccessService';
 import { createLogger } from '@/lib/logger';
+import { AdminAuditTrailQuerySchema, firstIssueMessage } from '@/lib/audit/requestSchemas';
 
 // Initialize service role client for admin operations
 const supabaseServiceRole = createClient(
@@ -42,18 +43,42 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 });
     }
 
-    // TODO: Add admin role check here
-    const searchParams = request.nextUrl.searchParams;
+    // Validate the query string AFTER the gate above and BEFORE any read, so an
+    // unauthenticated or non-admin caller gets 401/403 and never learns what
+    // this route validates. Keep it in that order.
+    const parsed = AdminAuditTrailQuerySchema.safeParse(
+      Object.fromEntries(request.nextUrl.searchParams)
+    );
+    if (!parsed.success) {
+      logger.warn(
+        { adminUserId: adminUser.id, route: ROUTE, issue: firstIssueMessage(parsed.error) },
+        'Rejected an invalid audit query'
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Invalid query parameters',
+          details: process.env.NODE_ENV === 'development' ? firstIssueMessage(parsed.error) : undefined,
+        },
+        { status: 400 }
+      );
+    }
 
-    // Get filter parameters
-    const action = searchParams.get('action');
-    const severity = searchParams.get('severity');
-    const entityType = searchParams.get('entity_type');
-    const dateFrom = searchParams.get('date_from');
-    const dateTo = searchParams.get('date_to');
-    const search = searchParams.get('search');
-    const page = parseInt(searchParams.get('page') || '1');
-    const pageSize = parseInt(searchParams.get('page_size') || '50');
+    // Filter parameters. The schema maps the UI's "all" sentinel to undefined for
+    // the three dropdown filters only — `search` and the two dates are free text,
+    // where "all" is a legitimate value — maps '' to undefined everywhere, and
+    // guarantees page/page_size are positive integers (parseInt('abc') used to
+    // reach .range(NaN, NaN) and 500).
+    const {
+      action,
+      severity,
+      entity_type: entityType,
+      date_from: dateFrom,
+      date_to: dateTo,
+      search,
+      page,
+      page_size: pageSize,
+    } = parsed.data;
 
     // Calculate offset for pagination
     const offset = (page - 1) * pageSize;
@@ -68,16 +93,17 @@ export async function GET(request: NextRequest) {
       .from('audit_trail')
       .select('*', { count: 'exact' });
 
-    // Apply filters
-    if (action && action !== 'all') {
+    // Apply filters (the dropdowns' "all", and "" anywhere, already became
+    // undefined in the schema)
+    if (action) {
       query = query.eq('action', action);
     }
 
-    if (severity && severity !== 'all') {
+    if (severity) {
       query = query.eq('severity', severity);
     }
 
-    if (entityType && entityType !== 'all') {
+    if (entityType) {
       query = query.eq('entity_type', entityType);
     }
 
@@ -105,9 +131,11 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       logger.error({ err: error }, 'Fetching audit logs failed');
+      // The detail stays in the server log; only development sees it in the body.
       return NextResponse.json({
         success: false,
-        error: 'Failed to fetch audit logs: ' + error.message
+        error: 'Failed to fetch audit logs',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
       }, { status: 500 });
     }
 
@@ -186,11 +214,13 @@ export async function GET(request: NextRequest) {
       }
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error({ err: error }, 'Admin audit-trail request failed');
     return NextResponse.json({
       success: false,
-      error: error.message || 'Internal server error'
+      error: 'Internal server error',
+      details:
+        process.env.NODE_ENV === 'development' && error instanceof Error ? error.message : undefined
     }, { status: 500 });
   }
 }

@@ -59,6 +59,102 @@ export const AuditReadQuerySchema = z.object({
 export type AuditReadQuery = z.infer<typeof AuditReadQuerySchema>;
 
 /**
+ * The first issue's message, for the development-only `details` field.
+ *
+ * Local on purpose. The equivalent helper lives in
+ * lib/business-os/usage/llmUsageVerification.ts, and that module value-imports
+ * ./usageCategories and ./usageSummary — so importing it here would make this
+ * generic audit module (reached from AuditTrailRepository) depend on Business
+ * OS, the exact coupling the Layer 1.1 RC-7 import ban exists to prevent. That
+ * ban is asserted on TokenUsageRepository's own source, so this chain would not
+ * trip it; that makes it easier to do, not more acceptable.
+ */
+export function firstIssueMessage(error: z.ZodError): string {
+  return error.issues[0]?.message ?? 'Invalid query';
+}
+
+/**
+ * "No filter" for the three DROPDOWN parameters only (action, severity,
+ * entity_type). There, 'all' is the UI's own sentinel — the `<option
+ * value="all">` each select opens on — and can never be a real column value,
+ * so mapping it to undefined is safe.
+ *
+ * Do NOT reuse this for free text. See optionalFreeText below.
+ */
+const optionalFilter = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((v) => (v === '' || v === 'all' || v === null ? undefined : v), schema.optional());
+
+/**
+ * "No filter" for the FREE-TEXT parameters (search, date_from, date_to): only
+ * an empty string or null means absent. Every other string passes through.
+ *
+ * Split from optionalFilter deliberately. The 'all' sentinel belongs to the
+ * dropdowns; applying it here made `?search=all` — a plausible search in a
+ * compliance browser, where "all" appears inside action and resource names —
+ * parse as "no search at all". The route's `if (search)` then skipped the
+ * in-memory filter while the page still rendered "Showing N matches on this
+ * page" over the unfiltered rows: exactly the dishonest count FR-A4b exists to
+ * remove. Pinned by lib/audit/__tests__/adminAuditTrailQuerySchema.test.ts.
+ */
+const optionalFreeText = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((v) => (v === '' || v === null ? undefined : v), schema.optional());
+
+/**
+ * A date filter exactly as the page sends it.
+ *
+ * NOT z.string().datetime(). The page's inputs are `type="datetime-local"`
+ * (page.tsx:332, :343), which emit `2026-09-01T10:00` — no seconds, no zone —
+ * and .datetime() rejects that, silently killing both date filters.
+ *
+ * It validates and passes the ORIGINAL STRING THROUGH UNCHANGED. Do not
+ * normalise to ISO or to UTC: `created_at` is timestamptz and the route hands
+ * this value straight to .gte()/.lte() (route.ts:84-90), so an offsetless value
+ * is resolved by the server's timezone today. "Helpfully" normalising it here
+ * would shift every existing date filter by that offset, while a test that only
+ * asserts a 200 stayed green.
+ */
+const dateFilter = z
+  .string()
+  .max(64)
+  .refine((v) => Number.isFinite(Date.parse(v)), 'Not a valid date or time');
+
+/**
+ * The admin page fetches at most 20 rows; the cap exists to bound the route's
+ * search path, which asks the database for pageSize x 5 (route.ts:98).
+ */
+const MAX_ADMIN_PAGE_SIZE = 200;
+const MAX_SEARCH_CHARS = 200;
+
+/**
+ * GET /api/admin/audit-trail.
+ *
+ * The eight parameters the route reads, under the names the route reads them by
+ * (route.ts:48-56) — snake_case, NOT the camelCase of AuditReadQuerySchema
+ * above. Copying that shape would silently drop entity_type, date_from, date_to
+ * and page_size: an absent optional key parses clean and the filter just stops
+ * working.
+ *
+ * `action` and `entity_type` stay permissive identifiers rather than
+ * AUDIT_EVENTS / AUDIT_ENTITY_TYPES enums, per the read/write asymmetry
+ * documented at the top of this file: a read filter is not a security boundary,
+ * and the live table holds values that were never registered. An enum here
+ * would make previously-reachable rows unreachable in a compliance browser.
+ * `severity` is different and stays an enum — the column's values are a closed
+ * three-value union.
+ */
+export const AdminAuditTrailQuerySchema = z.object({
+  action: optionalFilter(z.string().regex(IDENTIFIER)),
+  severity: optionalFilter(z.enum(['info', 'warning', 'critical'])),
+  entity_type: optionalFilter(z.string().regex(IDENTIFIER)),
+  date_from: optionalFreeText(dateFilter),
+  date_to: optionalFreeText(dateFilter),
+  search: optionalFreeText(z.string().max(MAX_SEARCH_CHARS)),
+  page: positiveInt(1),
+  page_size: positiveInt(50, MAX_ADMIN_PAGE_SIZE),
+});
+export type AdminAuditTrailQuery = z.infer<typeof AdminAuditTrailQuerySchema>;
+
+/**
  * The only events a browser may write (SA CR-1). Exactly what the surveyed
  * callers send (workplan §13.5); everything else in AUDIT_EVENTS is written by
  * server code, where it happens. Without this list a signed-in owner could put
