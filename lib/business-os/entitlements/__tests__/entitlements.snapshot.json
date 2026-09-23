@@ -1,0 +1,38 @@
+{
+  "generated": "2026-09-22",
+  "matrixVersion": 1,
+  "tiers": {},
+  "removals": [],
+  "histories": {
+    "trial": {
+      "duration": [
+        {
+          "effectiveFrom": "2026-09-22T00:00:00.000Z",
+          "days": 14
+        }
+      ],
+      "grace": [
+        {
+          "effectiveFrom": "2026-09-22T00:00:00.000Z",
+          "days": 7
+        }
+      ]
+    },
+    "champion": {
+      "grace": [
+        {
+          "effectiveFrom": "2026-09-22T00:00:00.000Z",
+          "days": 30
+        }
+      ]
+    },
+    "subscription": {
+      "grace": [
+        {
+          "effectiveFrom": "2026-09-22T00:00:00.000Z",
+          "days": 7
+        }
+      ]
+    }
+  }
+}
