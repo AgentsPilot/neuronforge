@@ -1888,13 +1888,15 @@ The same fix landed on `main` in parallel as PR #99 (b4481293), arrived at indep
 
 **What happened.** The user pasted `preflight-bos-entitlements-migration.sql` into the Supabase SQL editor and got `ERROR: 42P01: relation "a" does not exist`; the checker gave `relation "it" does not exist`. Neither word is an identifier in either file - both are English prose from the comments.
 
-**Root cause, tested rather than assumed.** The editor's client-side splitter tracks string literals but not `--` comments:
+> ⚠️ **RETRACTED 2026-09-24. The mechanism below is DISPROVEN** — see §4.37. The user pasted a two-line file containing both ingredients into the same editor and it ran. Everything in this section about apostrophes and string semicolons is a hypothesis that turned out to be wrong; the rephrasings and the guard are kept as hygiene, not as a fix. What the files actually hit is an open question.
+
+**Root cause, tested rather than assumed — and later disproven.** The hypothesis was that the editor's client-side splitter tracks string literals but not `--` comments:
 
 1. An apostrophe in a comment (`the backfill's FK`) looks like the start of a literal and **inverts** the parser's idea of what is quoted.
 2. With that inversion, a semicolon that is genuinely **inside** a string literal now looks like a statement terminator.
 3. The one big `SELECT` is cut there; the tail fragment starts mid-query, and a prose word lands where a relation name is expected.
 
-The hypothesis handed to me was the apostrophes alone. **That is not sufficient**, and the evidence is in this repo: the two migrations that applied cleanly on the same day contain 20 and 5 comment apostrophes (14 and 5 odd-parity lines between them) and 2 string semicolons. Neither ingredient is fatal alone - it is the **combination**, and which of the two comes first. That is luck, and not a thing to leave to luck in a file whose only job is to be pasted into that editor.
+The hypothesis handed to me was the apostrophes alone. **That is not sufficient** — and as of §4.37 the two-ingredient version is not correct either. The evidence in this repo that the apostrophes alone are not enough still stands: the two migrations that applied cleanly on the same day contain 20 and 5 comment apostrophes (14 and 5 odd-parity lines between them) and 2 string semicolons. Neither ingredient is fatal alone - it is the **combination**, and which of the two comes first. That is luck, and not a thing to leave to luck in a file whose only job is to be pasted into that editor.
 
 **The fix** - rephrase, never delete the letter (`the backfills FK` is a typo the next person corrects straight back into a bug):
 
@@ -1947,6 +1949,8 @@ SA approved §4.32 and §4.33 and cleared them for QA (§13.9), confirming the r
 ### 4.35 QA fixes applied (2026-09-24) - A-2, A-3, A-4, B-2, and the baseline measured
 
 QA passed (§14.13) with one open empirical question and four fixable findings. All four are closed. Implementation stays uncommitted.
+
+> ⚠️ **The reasoning in this section is superseded by §4.37.** The comment-semicolon rule was the right hygiene and QA was right that it was live, but it is **not** the explanation of the failure either: the fixed pre-flight failed again, and the probe then disproved the whole quote-tracking mechanism. Read the fragment counts below as "the model we had at the time", not as a diagnosis.
 
 #### A-2 (Med) - semicolons inside `--` comments. QA was right, and it was worse than reported.
 
@@ -2061,9 +2065,43 @@ Every check keeps its predicate, its threshold and its PASS/WARN/FAIL semantics.
 
 It now says what it is and is not, in its own header: **hygiene rules that remove known hazards, not a proof that a file will paste.** Two failed pastes are named in it. A fifth rule forbids `--` comments in the three pasted scripts, and a sixth asserts each of them is split into at least three statements. **49 tests.**
 
-#### Still open
+#### The probe came back, and it changes nothing here
 
-The empirical probe (a two-line paste with a comment apostrophe and a string semicolon) is with the user. **Nothing in this section depends on its answer** - a file with no comments and no punctuation in its strings is unaffected either way - which is why it was not waited for.
+The empirical probe (a two-line paste with a comment apostrophe and a string semicolon) **ran successfully** - see §4.37. It disproves the mechanism §4.33 proposed, and it leaves the cause an open question. **Nothing in this section depends on that**, which is why it was not waited for: a file with no comments and no punctuation in its strings is unaffected either way.
+
+### 4.37 The probe: what is now RULED OUT, and what is still open (2026-09-24)
+
+The user ran this in the same Supabase SQL editor that had failed twice on our files:
+
+```sql
+-- comment with an apostrophe: the editor's parser
+select 'semi ; inside a string' as a_test, 1 as n;
+```
+
+**It ran and returned its row.**
+
+#### Ruled out - do not re-run this experiment
+
+| Hypothesis | Status |
+|---|---|
+| An apostrophe in a `--` comment flips the editor's quote state | **DISPROVEN.** Present in the probe, which ran |
+| A semicolon inside a string literal is read as a statement terminator | **DISPROVEN.** Present in the probe, which ran |
+| The two together are what cut our files | **DISPROVEN.** Both were in the probe, in that order, in one file |
+| A semicolon inside a `--` comment (QA A-2) | **Not tested by the probe, and not the explanation either** - removing all 31 did not make the pre-flight paste |
+
+So §4.33's mechanism and §4.35's fragment model are **retracted as explanations**. Both sections now carry a retraction note. The rules they produced are kept as **hygiene**: a semicolon inside a comment is a bad idea whatever the editor does with it, and it costs nothing to forbid.
+
+#### Still open, and honestly recorded as such
+
+**We do not know what the editor did to those files.** Two failing tokens are all the evidence there is: `a` in the pre-flight and `it` in the checker, both ordinary English words from our own prose. A fragment therefore began **mid-comment** in both files. Nothing known explains why, and the parser cannot be inspected from here.
+
+**What was done instead of a diagnosis** (§4.36): the three pasted scripts contain no comments, no prose in any string, no single-letter aliases and no `aclexplode`, and each is several small standalone statements. That is not a theory about the parser - it is giving it nothing to misparse.
+
+#### The sharper signal next time
+
+**All prose is now out of the three pasted scripts.** If a paste fails again it cannot be prose that a fragment starts in, because there is none: the only English left in those files is inside short label strings like `3 of 3 tables present`. A recurrence therefore points at a **construct** - a CTE, a `FILTER`, a `VALUES` list, `to_regclass`, a `$$` body - and the failing token will name it. That is a much sharper signal than `a`, and it is the reason the rewrite is worth having even if it turns out the files now paste cleanly.
+
+If block 1 of the new checker runs, the practical problem is solved and the cause stays an open question. If it does not, the next step is bisecting that one block, not another theory.
 
 ---
 

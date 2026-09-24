@@ -163,7 +163,9 @@ No rush and no incident: nothing reads these tables. Open `scripts/rollback-bos-
 
 ## Why the scripts are boring
 
-On 2026-09-23, and again on 2026-09-24 after a first round of fixes, pasting these files into the Supabase SQL editor failed with `ERROR: 42P01: relation "a" does not exist`. Every plain single-statement query we handed the operator ran first time; every elaborate file of ours failed. We cannot inspect the editor's parser, so we stopped trying to satisfy it and **stopped giving it anything to misparse**:
+On 2026-09-23, and again on 2026-09-24 after a first round of fixes, pasting these files into the Supabase SQL editor failed with `ERROR: 42P01: relation "a" does not exist`. Every plain single-statement query we handed the operator ran first time; every elaborate file of ours failed.
+
+**We do not know why, and we stopped guessing.** The best theory — that an apostrophe in a comment plus a semicolon inside a string confuses the editor's statement splitter — was tested directly on 2026-09-24 and **disproven**: a two-line file containing both ran fine. So we cannot inspect the parser and cannot predict it, and the answer was to **stop giving it anything to misparse**:
 
 | Rule | Why |
 |---|---|
