@@ -345,6 +345,27 @@ const R6_PARKED: ReadonlyArray<Exemption> = [
 ];
 const R6_PERMANENT: ReadonlyArray<Exemption> = [];
 
+/**
+ * R8 — every render entry point under `app/admin/**` is a client component.
+ *
+ * Numbered 8, not 7, ON PURPOSE. **R7 is reserved** for the parked inverted
+ * rule described in this file's header ("is everything that BEHAVES like an
+ * admin route gated, wherever it lives?"). Re-using the number would retire a
+ * documented parked decision by accident, and the next reader would find R7 in
+ * the header and no R7 in the code.
+ */
+const R8_PARKED: ReadonlyArray<Exemption> = [
+  /*
+   * EMPTY, and it has to stay that way for the rule to mean anything.
+   *
+   * `app/admin/layout.tsx` is NOT exempted here — it is excluded by the rule
+   * itself, because R6 REQUIRES it to be a Server Component. An exemption and
+   * a structural exclusion are different things and are kept different: the
+   * exclusion is one named path in the rule body, visible at the point of use.
+   */
+];
+const R8_PERMANENT: ReadonlyArray<Exemption> = [];
+
 // ── Hard caps ─────────────────────────────────────────────────────────────
 //
 // Derived from the tree on 2026-09-20 and asserted below. See THE RATCHET RULE
@@ -356,6 +377,7 @@ const CAPS = {
   R4: { parked: 2, permanent: 0 },
   R5: { parked: 0, permanent: 0 },
   R6: { parked: 0, permanent: 0 },
+  R8: { parked: 0, permanent: 0 },
 } as const;
 
 const RULE_LISTS = {
@@ -365,6 +387,7 @@ const RULE_LISTS = {
   R4: { parked: R4_PARKED, permanent: R4_PERMANENT },
   R5: { parked: R5_PARKED, permanent: R5_PERMANENT },
   R6: { parked: R6_PARKED, permanent: R6_PERMANENT },
+  R8: { parked: R8_PARKED, permanent: R8_PERMANENT },
 } as const;
 
 const R1_ALLOW = [...R1_PARKED, ...R1_PERMANENT];
@@ -373,6 +396,7 @@ const R3_ALLOW = [...R3_PARKED, ...R3_PERMANENT];
 const R4_ALLOW = [...R4_PARKED, ...R4_PERMANENT];
 const R5_ALLOW = [...R5_PARKED, ...R5_PERMANENT];
 const R6_ALLOW = [...R6_PARKED, ...R6_PERMANENT];
+const R8_ALLOW = [...R8_PARKED, ...R8_PERMANENT];
 
 const ALL_EXEMPTIONS = [
   ...R1_ALLOW,
@@ -381,6 +405,7 @@ const ALL_EXEMPTIONS = [
   ...R4_ALLOW,
   ...R5_ALLOW,
   ...R6_ALLOW,
+  ...R8_ALLOW,
 ];
 
 const R1_ALLOWED = new Set(R1_ALLOW.map((e) => e.id));
@@ -389,6 +414,7 @@ const R3_ALLOWED = new Set(R3_ALLOW.map((e) => e.id));
 const R4_ALLOWED = new Set(R4_ALLOW.map((e) => e.id));
 const R5_ALLOWED = new Set(R5_ALLOW.map((e) => e.id));
 const R6_ALLOWED = new Set(R6_ALLOW.map((e) => e.id));
+const R8_ALLOWED = new Set(R8_ALLOW.map((e) => e.id));
 
 // ───────────────────────────────────────────────────────────────────────────
 // Scanning primitives
@@ -802,10 +828,32 @@ const SCANNED: ScannedTs[] = TS_FILES.filter((f) => rel(f) !== SELF).map((f) => 
 const ROUTE_FILES = SCANNED.filter((s) => ROUTE_FILE_RE.test(s.file));
 const ADMIN_API_ROUTES = ROUTE_FILES.filter((s) => s.file.startsWith('app/api/admin/'));
 
-// ── The `/admin` page tree ─────────────────────────────────────────────────
+// ── R8 inputs — the `/admin` page tree's render entry points ───────────────
 
 /** The one file R6 requires to be a Server Component: the guard itself. */
 const ADMIN_GUARD_LAYOUT = 'app/admin/layout.tsx';
+
+/**
+ * Every file Next.js will RENDER ON THE SERVER for a URL under `/admin`.
+ *
+ * Not just `page.tsx`. A nested `app/admin/foo/layout.tsx` renders INSIDE the
+ * segment the header bypass skips, so a Server Component there would leak
+ * exactly as a server page would. `template`, `default`, `loading`, `error` and
+ * `not-found` are in the list for the same reason — none exists today, which is
+ * precisely when a rule is cheap to write and expensive to retrofit.
+ */
+const ADMIN_RENDER_ENTRY_RE =
+  /\/(page|layout|template|default|loading|error|not-found|global-error)\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/;
+
+const ADMIN_RENDER_ENTRIES = SCANNED.filter(
+  (s) => s.file.startsWith('app/admin/') && ADMIN_RENDER_ENTRY_RE.test(s.file)
+);
+
+const ADMIN_PAGES = ADMIN_RENDER_ENTRIES.filter((s) => /\/page\.[a-z]+$/.test(s.file));
+
+/** An `async` default export — the shape of a Server Component that awaits data. */
+const ASYNC_DEFAULT_EXPORT =
+  /export\s+default\s+async\s+(?:function|\(|[A-Za-z_$])|export\s+default\s+async\s*\([^)]*\)\s*=>/;
 
 const SQL_FILES = SQL_SCAN_ROOTS.flatMap((r) => walk(path.join(REPO_ROOT, r), /\.sql$/)).map((f) => ({
   file: rel(f),
@@ -1743,6 +1791,144 @@ describe('repo-wide guard: the admin authorization surface', () => {
     });
   });
 
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe('R8 — every /admin render entry point is a client component (OI-21)', () => {
+    /*
+     * ── The exploit this rule contains ─────────────────────────────────────
+     * Measured 2026-09-24. An UNAUTHENTICATED request carrying a crafted
+     * `Next-Router-State-Tree` header, claiming it is already inside `/admin`,
+     * returns 200 with no redirect (see OI-21 for the exact curl). React
+     * re-uses the cached layout segment, so `app/admin/layout.tsx` is not
+     * re-rendered and `requireAdminPage()` NEVER RUNS. The caller does not have
+     * to have entered the subtree — it only has to SAY it did, in a header it
+     * controls. R6 is therefore a check that can be skipped, not a boundary.
+     *
+     * Nothing leaks today, and the reason is two properties:
+     *
+     *   1. every `/admin` render entry point is `'use client'`, so no admin page
+     *      has server-rendered data in its payload to leak;  ← ASSERTED HERE
+     *   2. every `/api/admin/*` handler requires an admin, which is the actual
+     *      security boundary.                                 ← R1 asserts this
+     *
+     * Property 1 was hand-verified across 22 pages and asserted NOWHERE. The day
+     * one admin page becomes a Server Component, or fetches on the server, it
+     * breaks — silently, with every check still green. This rule turns that into
+     * a red required check.
+     *
+     * ── If this is failing on your PR ──────────────────────────────────────
+     * You have added a server-rendered file under `app/admin/`. Do not exempt
+     * it. Either add `'use client'` and fetch through an admin API route (which
+     * R1 gates), or close the header bypass properly — a middleware check on the
+     * `/admin` path prefix runs before routing and cannot be skipped by a router
+     * header. Exempting it re-opens an already-demonstrated unauthenticated
+     * request.
+     *
+     * Tracked as OI-21 in docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md.
+     */
+    const OI21 =
+      'OI-21: a crafted Next-Router-State-Tree header returns 200 for an /admin URL with ' +
+      'requireAdminPage() never running (demonstrated unauthenticated, no cookies). That is ' +
+      'harmless ONLY because no /admin render entry point is server-rendered UNGUARDED, so there ' +
+      'is no server-fetched data in the payload to disclose. TWO WAYS TO FIX IT, both accepted by ' +
+      'this rule: (1) add `use client` and fetch through a requireAdmin-gated API route, or ' +
+      '(2) keep it a Server Component and `await requireAdminPage()` as this component’s OWN ' +
+      'FIRST statement — option 2 is immune to the bypass, because the crafted header re-uses the ' +
+      'cached /admin LAYOUT segment and never skips the page’s own render. Note the guard must be ' +
+      'the FIRST statement: a guard that runs after a repository read is still an offender. ' +
+      'Do not exempt the file.';
+
+    it('the scan sees EVERY render entry point that exists on disk', () => {
+      /*
+       * The anti-vacuity check, expressed as the PROPERTY rather than as a
+       * count. It used to be `>= 22`, which was that day's exact census — so
+       * deleting or relocating a single admin page turned a REQUIRED check red
+       * for a change that had nothing wrong with it. A count floor cannot tell
+       * "the tree shrank legitimately" from "the scanner stopped finding
+       * things", and only the second is a defect.
+       *
+       * What actually matters is that the scanner's view equals the
+       * filesystem's, so nothing can hide from the rule, plus a floor of ONE so
+       * a renamed directory cannot make the rule vacuous.
+       */
+      const onDisk = walk(path.join(REPO_ROOT, 'app', 'admin'), CODE_EXT)
+        .map(rel)
+        .filter((f) => ADMIN_RENDER_ENTRY_RE.test(f))
+        .sort();
+
+      expect(ADMIN_RENDER_ENTRIES.map((s) => s.file).sort()).toEqual(onDisk);
+      expect(onDisk).toContain(ADMIN_GUARD_LAYOUT);
+      expect(ADMIN_PAGES.length).toBeGreaterThan(0);
+    });
+
+    /*
+     * ── The one server-rendered shape this rule must ACCEPT ────────────────
+     * A page that awaits `requireAdminPage()` as its OWN first statement is
+     * IMMUNE to the bypass: the crafted header makes React re-use the cached
+     * `/admin` LAYOUT segment, and nothing about it skips the PAGE's render. So
+     * such a page cannot be rendered past its own guard.
+     *
+     * Rejecting it would have made this rule forbid the safest thing an author
+     * could write, and push them towards the client-component shape whose
+     * safety depends on a property held somewhere else entirely. That is the
+     * wrong incentive for a required check to create.
+     *
+     * Not an exemption and not allow-listed: it is the rule's second accepting
+     * clause, computed from the file, and it uses the SAME first-statement
+     * verdict R6 uses — so all ten disabling shapes apply to it too. A page
+     * that only LOOKS self-guarding is still an offender.
+     */
+    const isServerRendered = (s: (typeof ADMIN_RENDER_ENTRIES)[number]) =>
+      s.file !== ADMIN_GUARD_LAYOUT && !R8_ALLOWED.has(s.file) && !s.isClient;
+
+    const selfGuards = (file: string) =>
+      guardsItselfFirst(fs.readFileSync(path.join(REPO_ROOT, file), 'utf-8'), stripComments);
+
+    it('every render entry point under app/admin is a client component, or guards itself', () => {
+      const offenders = ADMIN_RENDER_ENTRIES.filter(
+        (s) =>
+          // The guard layout itself MUST be a Server Component — R6 requires it,
+          // and it renders no data of its own. A structural exclusion at the
+          // point of use, deliberately NOT an allow-list entry: the two are
+          // different things and conflating them is how an exemption starts
+          // looking architectural.
+          isServerRendered(s) && !selfGuards(s.file)
+      ).map((s) => `${s.file} — server-rendered file in the /admin page tree. ${OI21}`);
+
+      expect(offenders).toEqual([]);
+    });
+
+    it('no render entry point under app/admin awaits on the server unguarded', () => {
+      // The same property from the other side: an `async` component is the shape
+      // that awaits server data. Independent of the `use client` check, so
+      // deleting the directive AND adding an await fails twice, not once — and
+      // subject to the same self-guarding clause, since a page that awaits its
+      // own guard first is exactly what we want an author to write.
+      const offenders = ADMIN_RENDER_ENTRIES.filter(
+        (s) => isServerRendered(s) && ASYNC_DEFAULT_EXPORT.test(s.code) && !selfGuards(s.file)
+      ).map((s) => `${s.file} — async default export (a Server Component that awaits). ${OI21}`);
+
+      expect(offenders).toEqual([]);
+    });
+
+    it('a self-guarding server page is ACCEPTED, and a lookalike is not', () => {
+      // Proved on fixtures, because no such page exists in the tree today — so
+      // the accepting clause is pinned before someone relies on it.
+      expect(guardsItselfFirst(SELF_GUARDING_SERVER_PAGE, stripComments)).toBe(true);
+
+      for (const variant of DISABLED_ADMIN_LAYOUTS) {
+        expect({ name: variant.name, accepted: guardsItselfFirst(variant.source, stripComments) }).toEqual(
+          { name: variant.name, accepted: false }
+        );
+      }
+    });
+
+    it('R8 is genuinely zero — nothing is exempted from it', () => {
+      // Worth its own assertion: "green" here must mean the tree is clean, not
+      // that the offenders were allow-listed.
+      expect(R8_PARKED.length + R8_PERMANENT.length).toBe(0);
+    });
+  });
 });
 
 /**
