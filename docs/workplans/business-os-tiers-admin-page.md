@@ -108,7 +108,7 @@ No `assign_tier`, no `set_cohort`, no launch. Those ops exist and are audited; t
 
 | Check | Result |
 |---|---|
-| Affected scope (`entitlements`, `api/admin/business-os`, both admin screens, authz guard, scripts, migrations) | **43 suites, 1,217 tests**, 0 failures (after both QA rounds) |
+| Affected scope (`entitlements`, `api/admin/business-os`, both admin screens, authz guard, scripts, migrations) | **43 suites, 1,222 tests**, 0 failures (after three QA rounds) |
 | New tests | 72 (view 17, route 6, render 12, source guard 37 — `it.each` over 6 files — nav 6, minus overlap) |
 | `test:authz-guard` | **74 passed**, no new exemption: the new route calls `requireAdmin` as its first statement |
 | Typecheck, the verified method | **2,077 on this branch, and 0 in any file this change creates or touches.** The branch base is higher than the 2,029 I reported on the tier branch because `main` was merged in before this branch started — those ~48 are `main`'s own, already present in the base commit |
@@ -188,6 +188,62 @@ The page said *"nothing asks"* about ten capabilities **that do not exist**, thr
 | Affected scope | **43 suites, 1,217 tests**, 0 failures |
 | Typecheck, the verified method | **2,077** — the branch base — **0** in any file this change touches |
 | ESLint (screen, entitlement routes, entitlements module) | clean |
+
+### QA round 3 — R3-1: the exemption was a denylist, and a gate walked through it
+
+QA attacked the eight closures and cleared seven. The eighth is the one this screen's whole R-1 mechanism rests on.
+
+**The reproduction, run here before fixing anything.** QA added to `app/api/business-os/chat-v4/route.ts` an import of `resolveEntitlements` and a function called `qaChatSurfaceGate` — a plausible FR-46 surface gate, with **no capability literal anywhere**. All **16** enforcement tests stayed green, and the admin screen would have gone on saying "no gate yet" for `chat.access` after the gate shipped. Three rules and not one of them saw it:
+
+| Rule | Why it missed |
+|---|---|
+| The quoted-literal scan | The gate writes no capability id |
+| The import rule (NEW-5) | chat-v4 is already an exempt importer |
+| The claim-check | A **denylist** of `decide(`, `.check(`, `requireEntitlement`, `withEntitlement` — and the call was called `qaChatSurfaceGate` |
+
+**A denylist has to predict the name somebody will choose.** That is the defect, and it is not fixable by lengthening the list.
+
+#### The fix: an allow-list of imported SYMBOLS, for every exemption
+
+A gate must reach the resolver **through some imported symbol**. So each exempt importer now declares exactly what it may import, and the suite asserts set equality:
+
+| File | May import |
+|---|---|
+| `chat-v4/route.ts` | `shadowChatPlan` — the one symbol that cannot refuse anything |
+| `entitlements/plans/route.ts` | `buildAdminPlansView` |
+| `entitlements/accounts/[accountId]/route.ts` | the ten it uses, named |
+| `entitlements/launch/route.ts` | `getEntitlementConfig` |
+| `entitlements/shadow-report/route.ts` | `buildShadowReport`, `getEntitlementMode` |
+
+**Verified by reproducing QA's mutation against the new rule:** it fails immediately, naming the file and the extra symbol, and the mutation was reverted afterwards (`chat-v4/route.ts` is byte-identical to `HEAD`). The reader itself has a non-vacuity test, because a symbol reader that silently returned `[]` would make every one of those assertions pass on a file full of gates.
+
+**The other exemptions had the same shape** — they were `why` strings, which are declarations, not checks. All five are now checked the same way. Adding an import to any of them fails this suite until a human says which kind it is.
+
+#### NEW-6 remainder, and the hunt for a third
+
+The two tails QA named compared **two local literals** and could not fail. Deleted: the by-value tests above them already catch both mutations, and the case now proves that by mutating the **subject** (`trial.onboardingStartedAt` is the instant, `basic.planVersion` is the matrix version) rather than the expectation.
+
+I then scanned every test file in this branch's three trees for the class — a negated assertion whose both sides are locally built with no call into the subject. **26 files, 32 negated assertions, no third instance**: every other one reads real source, a real payload or a real resolution.
+
+#### Minor
+
+The error-code extractor is quote-agnostic now (`'`, `"` and backtick, with a backreference so the quotes must match).
+
+#### Not ours, and worth its own task
+
+`app/api/business-os/chat-v4/__tests__/route.audit.test.ts` **kills the Jest worker**: a mock throws `profile read failed for OWNER-TEXT-MARKER-c1 cancel` outside any assertion, so the process exits rather than the test failing. It is byte-identical to `HEAD`, introduced by `8809ffd2` which is an ancestor of `origin/main` — **inherited, not this branch's**.
+
+It matters more than an unrelated red test usually would: that file is the home of the FR-46 gate, and therefore of the exemption the whole self-clearing mechanism now rests on. **Recommend a separate task** — it is a different area (BOS LLM audit), it needs whoever owns that suite, and folding it in here would mix an unrelated fix into a page review. What this branch does instead is make the *source-level* rule cover that file, which does not depend on its test suite running.
+
+#### Re-verified
+
+| Check | Result |
+|---|---|
+| Affected scope | **43 suites, 1,222 tests**, 0 failures |
+| Enforcement-point suite | 21 tests, and QA's mutation now fails it |
+| Typecheck, the verified method | **2,077** — the branch base — **0** in any file this change touches |
+| ESLint (screen, entitlement routes, entitlements module) | clean |
+| `chat-v4/route.ts` | byte-identical to `HEAD` — the mutation left no trace |
 
 ## SA Review Notes
 
