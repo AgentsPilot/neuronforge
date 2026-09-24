@@ -2219,6 +2219,53 @@ SA's transferable lesson from the privilege defect is now stated once, in §4.38
 | Full affected scope | **54 suites, 1,142 tests**, 0 failures |
 | Typecheck, the verified method | **2,029**, equal to the measured base |
 
+### 4.40 QA fixes applied (2026-09-24) - QA-1, QA-2, QA-3
+
+QA passed round 8 (§14.14) with no High and three Low. All three fixed.
+
+#### QA-3 - the runbook told the operator the wrong grid size
+
+`BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md` said block 2 returns `BLOCK 2 VERDICT` **+ 10 rows**. It returns **9**. That table is what the user reads on ~1 Oct to tell whether a grid came back SHORT, and a wrong number there turns a truncated result into a normal-looking one - worse than no number at all.
+
+Counted from the file, every block:
+
+| Block | Rows | = verdict + checks |
+|---|---|---|
+| 1 | **7** | 1 + 6 (A1, A2, A3, A4, A4b, A10) |
+| 2 | **10** | 1 + 9 (A8, A6, A7, A5 x2, A10, owners, A9, A11) |
+| 3 | **10** | 1 + 9 (B1-B5, Q5, counts, trigger rows, read-only) |
+
+The table now gives the arithmetic rather than a bare number, and a note says **counts are rows, not passes** - the user's field run reported 6 / 8+INFO / 6, which are status tallies, and block 1 legitimately returned 6 rows that day because A4b was added afterwards.
+
+**It cannot drift again:** a new test derives all three counts from the SQL and asserts the runbook line for each block contains that number. It counts `SELECT <n>` rows by their trailing comma, which is what tells a row apart from the line-leading `SELECT 1` inside an `EXISTS` - an earlier version of the counter read that as a row, and there is now a test pinning the distinction.
+
+#### QA-1 - the pin was one-way. Chosen: make it two-way, not just honest.
+
+QA was right: `expect(checker).toContain("acl_text LIKE '%anon=%'")` proves the SQL still says what it said. It proves **nothing** about whether the TypeScript beside it still means the same thing, so editing the two regexes alone left every assertion passing.
+
+**I took the two-way version** rather than the honest comment, because it is not fragile - it removes the second copy instead of documenting it. The four `LIKE` patterns, the `substring` pattern and the privilege letters are now **extracted from the checker at run time**, with a small `likeToRegExp` translator (the one piece of logic this file owns, with its own tests). Edit the SQL and the test changes with it; there is nothing left to keep in step by hand.
+
+Two guards make the extraction non-vacuous: one asserts exactly what was extracted (`['%anon=%', '%authenticated=%', '=%', '% =%']`, `service_role=([a-zA-Z*]*)`, `['d','D']`, `['r','a','w']`), and the letters are de-duplicated because every predicate appears twice in the SQL by construction - once in the `CASE`, once in the `FILTER`.
+
+**Demonstrated rather than claimed:** weakening the SQL from `LIKE '%anon=%'` to `LIKE '%anon=r%'` - exactly the change that would have made A4 pass on the real database - turns **two** tests red, including the behavioural one. Under the old one-way pin it turned none. The file was restored immediately afterwards.
+
+#### QA-2 - the ACL fixtures are transcriptions, and now say so
+
+Both are labelled inline. `ACL_NOW` is what the user reported from production; `ACL_AFTER` is one step further removed - what the migration *should* leave behind, derived by hand from what it revokes, never observed. The note says what the fixtures do prove (**that the predicates discriminate**, answering differently before and after) and what they do not (that the database is in either state). The thing that reads the real ACL is check A4, run by the operator - which is the §4.38 rule applied to this file: verify the resulting permissions, not the statement that sets them.
+
+#### On the workplan sweep
+
+QA is right that its in-progress §14 edits were carried into `3190dc37` and `3e30789a`. Nothing was lost - both are additive sections in a file we both append to - but it is my `git add <file>` that did it. **From here I stage hunks** (`git add -p`, or a path-scoped add after checking `git diff` for someone else's work) whenever the workplan is open for concurrent editing.
+
+#### Re-verified
+
+| Check | Result |
+|---|---|
+| Full affected scope | **54 suites, 1,148 tests**, 0 failures |
+| Migration guards plus the SQL paste guard | **224 tests** |
+| Typecheck, the verified method | **2,029**, equal to the measured base |
+| ESLint over both test trees | clean |
+
 ---
 
 ## 5. Slice 2: Enforcement (outline; G-3: the addendum restates each WC as tasks + tests)

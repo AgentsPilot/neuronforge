@@ -97,12 +97,15 @@ New query tab → paste the whole of `supabase/migrations/20261005b_business_os_
 
 `scripts/check-bos-entitlements-migration.sql` is **four separate statements**, and it is meant to be run **one block at a time**. Open the file and copy the blocks in order — each is separated by a blank line and starts with `SET` or `WITH`:
 
-| Block | Starts with | What it answers | Grid |
+| Block | Starts with | What it answers | Rows in the grid |
 |---|---|---|---|
 | 0 | `SET default_transaction_read_only = on;` | Makes the rest of this tab refuse writes | no output |
-| 1 | `WITH plan_tables(table_name) AS (` | Do the three tables exist, is RLS on, can a client role touch them, can `service_role` delete | `BLOCK 1 VERDICT` + 6 rows |
-| 2 | `WITH entitlement_functions AS (` | The four functions, the two triggers, the three CHECK constraints | `BLOCK 2 VERDICT` + 10 rows |
-| 3 | `WITH tenants AS (` | The data the backfill produced, and the counts for the PR | `BLOCK 3 VERDICT` + 9 rows |
+| 1 | `WITH plan_tables(table_name) AS (` | Do the three tables exist, is RLS on, can a client role touch them, can `service_role` delete | **7** = 1 `BLOCK 1 VERDICT` + 6 checks (A1, A2, A3, A4, A4b, A10) |
+| 2 | `WITH entitlement_functions AS (` | The four functions, the two triggers, the three CHECK constraints | **10** = 1 `BLOCK 2 VERDICT` + 9 checks (A8, A6, A7, A5 ×2, A10, owners, A9, A11) |
+| 3 | `WITH tenants AS (` | The data the backfill produced, and the counts for the PR | **10** = 1 `BLOCK 3 VERDICT` + 9 checks (B1–B5, Q5, counts, trigger rows, read-only) |
+
+> **Counts are rows, not passes.** A short grid means a block did not finish; a grid of the right length with `FAIL` in it means a check did its job. Block 1 returned **6** rows before 2026-09-24 — A4b was added that day, which is the seventh.
+
 
 You can also paste the whole file at once; the editor will show only the **last** grid, which is why running them one at a time is the recommended way. **Each block is self-contained** — if one fails you still have the others, and you know exactly which one to report.
 
