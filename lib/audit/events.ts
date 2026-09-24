@@ -32,6 +32,13 @@ export const AUDIT_EVENTS = {
   AGENT_RUN_STARTED: 'AGENT_RUN_STARTED',
   AGENT_RUN_COMPLETED: 'AGENT_RUN_COMPLETED',
   AGENT_RUN_FAILED: 'AGENT_RUN_FAILED',
+  // Written live by app/api/run-agent/route.ts and stored in audit_trail, but
+  // never registered here — so it was reachable only because the admin page
+  // hardcoded it. Registered so the catalogue-driven filter (Gap A, FR-A3)
+  // still offers it. Its metadata below is deliberately identical to the
+  // getEventMetadata() fallback it has been written under (severity 'info', no
+  // compliance flags), so already-stored rows and new ones stay the same (WC-12).
+  AGENT_EXECUTED: 'AGENT_EXECUTED',
   AGENT_SCHEMA_UPDATED: 'AGENT_SCHEMA_UPDATED', // input/output schema changes
   AGENT_CONFIG_SAVED: 'AGENT_CONFIG_SAVED', // input values saved/updated
   EFFORT_ESTIMATE_GENERATED: 'EFFORT_ESTIMATE_GENERATED', // Effort Estimator wrote agent_config.roi_estimate
@@ -138,6 +145,27 @@ export const AUDIT_EVENTS = {
   SYSTEM_CONFIG_CHANGED: 'SYSTEM_CONFIG_CHANGED',
   SYSTEM_MAINTENANCE_STARTED: 'SYSTEM_MAINTENANCE_STARTED',
   SYSTEM_MAINTENANCE_ENDED: 'SYSTEM_MAINTENANCE_ENDED',
+
+  // ==========================================
+  // BUSINESS OS ENTITLEMENTS (admin-only)
+  // ==========================================
+  // Every one of these is an admin changing what an account is entitled to, so
+  // each carries the actor, the reason and the before/after plan row. They are
+  // the only write path to the entitlement tables (workplan §4.12, WC-7).
+  BOS_ENTITLEMENT_PLAN_ROW_ENSURED: 'BOS_ENTITLEMENT_PLAN_ROW_ENSURED',
+  BOS_ENTITLEMENT_COHORT_SET: 'BOS_ENTITLEMENT_COHORT_SET',
+  BOS_ENTITLEMENT_EXPIRY_SET: 'BOS_ENTITLEMENT_EXPIRY_SET',
+  BOS_ENTITLEMENT_TIER_ASSIGNED: 'BOS_ENTITLEMENT_TIER_ASSIGNED',
+  BOS_ENTITLEMENT_OVERRIDE_ADDED: 'BOS_ENTITLEMENT_OVERRIDE_ADDED',
+  BOS_ENTITLEMENT_OVERRIDE_ENDED: 'BOS_ENTITLEMENT_OVERRIDE_ENDED',
+  // A-3: wipe and recreate the plan state. The entry carries the account's
+  // before-state, including every override that was ENDED by the reset — M-2
+  // makes the RPC end them (`ended_at`, `ended_by_admin_id`, `ended_reason`)
+  // rather than delete any, so the rows are still there; this is the
+  // before-state in one place rather than the last copy of it.
+  BOS_ENTITLEMENT_PLAN_STATE_RESET: 'BOS_ENTITLEMENT_PLAN_STATE_RESET',
+  // R2-1: the multi-account launch operation. Slice 1 ships the dry run.
+  BOS_ENTITLEMENT_LAUNCH_DRY_RUN: 'BOS_ENTITLEMENT_LAUNCH_DRY_RUN',
 
   // ==========================================
   // AIS (AGENT INTENSITY SYSTEM) EVENTS
@@ -291,6 +319,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'Calibration rewrote a stored workflow field name to the plugin\'s real spelling (Item 7 in-place field-fidelity correction)',
+  },
+  [AUDIT_EVENTS.AGENT_EXECUTED]: {
+    // No complianceFlags on purpose: this event has always been written through
+    // the getEventMetadata() fallback (severity 'info', no flags), and metadata
+    // is what decides both when the caller does not pass them.
+    severity: 'info',
+    description: 'Agent executed',
   },
   [AUDIT_EVENTS.AGENT_RUN_STARTED]: {
     severity: 'info',

@@ -304,6 +304,88 @@ export async function refreshPricingCache(): Promise<void> {
   await loadPricingFromDatabase();
 }
 
+/** One priced model, in the same units the cache holds (cost per 1000 tokens). */
+export interface PricedModel {
+  provider: string;
+  model: string;
+  /** Cost per 1,000 input tokens — NOT per token, despite the column name. */
+  inputPer1kTokens: number;
+  /** Cost per 1,000 output tokens. 0 for input-only models (embeddings). */
+  outputPer1kTokens: number;
+  /** Where the price came from, so a caller can say so. */
+  source: 'database' | 'fallback';
+}
+
+/**
+ * Every model this module can price, for a picker.
+ *
+ * Deliberately UNFILTERED: it reports what `getPricingInternal` would serve,
+ * database rows and in-code fallback entries alike, and leaves every policy
+ * decision to the caller. Business OS's "input > 0 AND output > 0" rule lives
+ * with the guardrail that owns it (`lib/business-os/llm/modelOptions.ts`), not
+ * here — this module must not grow a second opinion about which models are
+ * acceptable.
+ *
+ * Why the fallback entries are included: `getPricingInternal` serves them on a
+ * cache miss, so a picker built from the database alone would omit models the
+ * validator WOULD accept, teaching an operator that a usable model is refused.
+ *
+ * Loads through the same TTL path as every other read, so a warm instance does
+ * no database work. `cacheAgeMs` is returned because the list is advisory: a
+ * newly priced model can be absent for up to `cacheTtlMs`.
+ */
+export async function listPricedModels(): Promise<{
+  models: PricedModel[];
+  cacheAgeMs: number;
+  cacheTtlMs: number;
+}> {
+  // Same refresh rule as getPricingInternal, so the list and the lookup can
+  // never be served from different snapshots within one request.
+  const cacheAge = Date.now() - cacheLastUpdated;
+  if (cacheAge > CACHE_TTL_MS || pricingCache.size === 0) {
+    await loadPricingFromDatabase();
+  }
+
+  const models: PricedModel[] = [];
+  const seen = new Set<string>();
+
+  for (const [key, price] of Array.from(pricingCache.entries())) {
+    const separator = key.indexOf(':');
+    const provider = key.slice(0, separator);
+    const model = key.slice(separator + 1);
+    seen.add(key);
+    models.push({
+      provider,
+      model,
+      inputPer1kTokens: price.input,
+      outputPer1kTokens: price.output,
+      source: 'database',
+    });
+  }
+
+  for (const [provider, entries] of Object.entries(FALLBACK_PRICING)) {
+    for (const [model, price] of Object.entries(entries as Record<string, PricingInfo>)) {
+      // The database wins, exactly as the lookup does.
+      if (seen.has(`${provider}:${model}`)) continue;
+      models.push({
+        provider,
+        model,
+        inputPer1kTokens: price.input,
+        outputPer1kTokens: price.output,
+        source: 'fallback',
+      });
+    }
+  }
+
+  models.sort((a, b) => a.provider.localeCompare(b.provider) || a.model.localeCompare(b.model));
+
+  return {
+    models,
+    cacheAgeMs: Date.now() - cacheLastUpdated,
+    cacheTtlMs: CACHE_TTL_MS,
+  };
+}
+
 /**
  * Get cache statistics for monitoring
  */

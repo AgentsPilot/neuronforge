@@ -146,6 +146,19 @@ export const USER_OWNED_TABLES: Record<string, string> = {
     'it would lose every suppression they encode.',
 
   user_preferences: 'Theme, sidebar, default model. The person\'s settings, not the business\'s.',
+
+  business_os_account_plans:
+    'The commercial relationship with the account: tier, cohort, trial and grace dates. ' +
+    'Deliberately NOT business-owned even though the name says business_os — if deleting a ' +
+    'business took the plan with it, "start over" would also mean "get another free trial".',
+
+  business_os_entitlement_overrides:
+    'What an admin granted or revoked for this account, and why. Evidence about the ' +
+    'platform\'s dealings with the person, which has to outlive any one business.',
+
+  business_os_entitlement_shadow_events:
+    'Counters of what the entitlement resolver would have decided. Platform observability ' +
+    'about the product, not data the owner entered about their clients.',
   profiles: 'Account level.',
   plugin_connections: 'Account level — the user\'s own third-party credentials.',
   admin_users: 'Platform authorization.',

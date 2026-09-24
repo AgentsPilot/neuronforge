@@ -165,10 +165,67 @@ export function buildImportGraph(
  * blanketed ~400 others for ever, including the backfill or seeding script
  * somebody writes next year - and the exemption list is the gate's blast
  * radius, so it has to be readable.
+ *
+ * INCLUSIONS are the mirror image of the gate's `EXEMPTIONS` — see below.
  */
-export function literalScope(graph: Map<string, FileImports>): string[] {
+
+/**
+ * Files named INTO the literal check that the direct-import rule would miss.
+ *
+ * Why this exists rather than a transitive scope: the admin settings route
+ * reaches the catalog one hop away (through `adminSettingsView`), so the
+ * direct-import rule leaves it out — on a file that serves the model picker,
+ * which is exactly where a model literal would be tempting. A TRANSITIVE scope
+ * was considered and rejected: `modelSettings` has enough importers that 42
+ * files would become hundreds, and a gate that goes red on unrelated code is a
+ * gate that gets exempted.
+ *
+ * So scope only ever GROWS here, one named file at a time, each with its
+ * reason — the same discipline as `EXEMPTIONS`, and printed by `--list` the
+ * same way.
+ *
+ * A source test is NOT an acceptable substitute, for three reasons: its
+ * assertions are a hand-enumerated subset of the AST rules, its file list does
+ * not follow the code, and jest is not a required check on this repository.
+ */
+export interface LiteralScopeInclusion {
+  file: string;
+  reason: string;
+}
+
+/**
+ * An entry and the file it names land in the SAME change, never in two.
+ *
+ * `staleInclusions` (in check-bos-llm-literals.ts) treats an entry whose
+ * target is not in scope as a hard failure - correctly, because that is
+ * precisely the rot it was built to catch, and it cannot distinguish "renamed
+ * away" from "not written yet". The gate change shipped this list EMPTY for
+ * exactly that reason; this entry arrives with the route it covers.
+ *
+ * The machinery does not depend on this list being populated: `literalScope`
+ * and `staleInclusions` both take it as an injectable argument, so the gate's
+ * own suite proves the cap, the staleness failure and the monotonicity
+ * property against a fixture as well as against the real entry below.
+ */
+export const LITERAL_SCOPE_INCLUSIONS: ReadonlyArray<LiteralScopeInclusion> = [
+  {
+    file: 'app/api/admin/business-os/llm-settings/route.ts',
+    reason:
+      'Business OS LLM model-settings admin route: reaches the catalog through adminSettingsView, so the direct-import rule misses it, but it serves the model picker and must never write a model id.',
+  },
+];
+
+export function literalScope(
+  graph: Map<string, FileImports>,
+  inclusions: ReadonlyArray<LiteralScopeInclusion> = LITERAL_SCOPE_INCLUSIONS
+): string[] {
+  const included = new Set(inclusions.map((entry) => entry.file));
+
   return [...graph.entries()]
-    .filter(([rel, imports]) => !isTestFile(rel) && (rel === CATALOG || imports.imports.has(CATALOG)))
+    .filter(
+      ([rel, imports]) =>
+        !isTestFile(rel) && (rel === CATALOG || imports.imports.has(CATALOG) || included.has(rel))
+    )
     .map(([rel]) => rel)
     .sort((a, b) => a.localeCompare(b));
 }

@@ -41,7 +41,7 @@ exports[`T3-S: the request each Step 3 call site puts on the wire (AC-2) chat/pl
           "role": "system",
         },
         {
-          "content": "Today is 2026-09-21.
+          "content": "Today is <date>.
 Answer in language: en
 
 Request: show my contacts",

@@ -430,6 +430,70 @@ export class TokenUsageRepository {
     }
   }
 
+  /**
+   * How much of ONE feature every account completed in a window — the SECOND
+   * deliberate all-accounts read in this repository, and named so.
+   *
+   * Callers: the Business OS LLM model-settings admin screen's ledger check
+   * (`app/api/admin/business-os/llm-settings/ledger/route.ts`), which is
+   * `requireAdmin`-gated before any read. Never call it from an owner-facing
+   * path.
+   *
+   * Returns TWO FACTS AND NO MORE — how many rows, and the newest one's
+   * timestamp. No per-account breakdown, no owner text, no cost. Cost was
+   * deliberately dropped: PostgREST cannot sum without an RPC, so it would have
+   * to be a capped page summed in code, and a cost figure that is silently
+   * short — rendered, of all places, during a cost incident — is worse than no
+   * figure at all.
+   *
+   * The question it answers ("is this platform-wide switch holding?") has no
+   * per-tenant answer, which is why it is unscoped; two integers expose no
+   * tenant data.
+   *
+   * Logged at info, not debug: it is a cross-tenant read.
+   */
+  async summariseFeatureAllAccountsInWindow(
+    window: TokenUsageWindow,
+    feature: string
+  ): Promise<RepositoryResult<{ count: number; latestAt: string | null }>> {
+    const method = 'summariseFeatureAllAccountsInWindow';
+    try {
+      this.assertWindow(window);
+      this.assertFeatures([feature], false);
+
+      const startIso = window.start.toISOString();
+      const endIso = window.end.toISOString();
+
+      const { count, error: countError } = await this.supabase
+        .from('token_usage')
+        .select(TOKEN_USAGE_COLUMNS.count, { count: 'exact', head: true })
+        .eq('feature', feature)
+        .gte('created_at', startIso)
+        .lte('created_at', endIso);
+      if (countError) throw countError;
+
+      const { data, error: latestError } = await this.supabase
+        .from('token_usage')
+        .select('created_at')
+        .eq('feature', feature)
+        .gte('created_at', startIso)
+        .lte('created_at', endIso)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (latestError) throw latestError;
+
+      const latestAt = (data?.[0] as { created_at?: string } | undefined)?.created_at ?? null;
+
+      this.logger.info(
+        { method, feature, count: count ?? 0 },
+        'Feature usage summarised across all accounts'
+      );
+      return { data: { count: count ?? 0, latestAt }, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
+
   private assertChatRead(window: TokenUsageWindow, feature: string, opts: { pageSize: number; ceiling: number }): void {
     this.assertWindow(window);
     this.assertFeatures([feature], false);

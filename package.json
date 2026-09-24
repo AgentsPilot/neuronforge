@@ -17,6 +17,8 @@
     "lint": "next lint",
     "test": "jest",
     "test:authz-guard": "jest lib/admin/__tests__/admin-authz-surface.guard.test.ts --ci",
+    "test:bos-entitlements": "jest lib/business-os/entitlements lib/repositories/__tests__ supabase/migrations/__tests__ lib/business-os/purge/__tests__/descriptors.invariant.test.ts lib/business-os/__tests__/businessOwnedTables.test.ts --ci",
+    "entitlements:snapshot": "tsx scripts/write-entitlements-snapshot.ts",
     "lint:hooks": "eslint app lib components hooks --no-config-lookup --no-inline-config --config eslint.hooks.config.mjs --max-warnings 0",
     "schema:check": "tsx scripts/schema-check.ts",
     "insight:dry-run": "tsx --env-file=.env.local scripts/insight-dry-run.ts",

@@ -367,6 +367,20 @@ const EXCLUDED: PurgeDescriptor[] = [
   // §8.11 Token accounting
   never('token_usage', U, 'Token accounting.'),
 
+  // §8.13 Business OS entitlements (subscription module, component 1)
+  //
+  // These are `never` for a reason that is the opposite of the usual one. They
+  // ARE about this business — but a Reset that removed them would hand the
+  // account a fresh trial, which is a commercial loophole, not a start-over.
+  // They are keyed to auth.users, NOT cascaded from business_profiles, so
+  // neither Reset nor Purge can reach them by accident either.
+  never('business_os_account_plans', U,
+    'Entitlement state (tier, cohort, expiries). Deleting it would restart the trial clock — a Reset must not be a way to get another free period. Keyed to auth.users, not business_profiles.'),
+  never('business_os_entitlement_overrides', U,
+    'The durable record of what an admin granted or revoked, and why. Support evidence; also never deleted by the admin reset, which ends rows instead.'),
+  never('business_os_entitlement_shadow_events', U,
+    'Aggregated "what would have been gated" counters. Platform observability about the product, not the owner\'s business data.'),
+
   // §8.12 Account configuration and unowned tables
   never('notification_settings', U, 'Account configuration that survives the business.'),
   never('security_settings', U, 'Account configuration that survives the business.'),

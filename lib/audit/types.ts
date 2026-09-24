@@ -1,7 +1,7 @@
 // /lib/audit/types.ts
 // TypeScript types for enterprise audit trail system
 
-import { NextRequest } from 'next/server';
+import type { NextRequest } from 'next/server';
 
 /**
  * Severity levels for audit events
@@ -68,6 +68,10 @@ export const AUDIT_ENTITY_TYPES = [
   // was enforced; registered so their stored rows stay exactly as they were, and
   // so AI_PRICING_ZERO_SET (Layer 2 Step 0) type-checks like its siblings.
   'ai_pricing',
+  // One account's Business OS entitlement state: the plan row, its cohort, its
+  // tier and its overrides. Written only by the admin entitlement routes
+  // (workplan §4.12); the entity id is the account id.
+  'business_os_account_plan',
 ] as const;
 
 export type EntityType = (typeof AUDIT_ENTITY_TYPES)[number];

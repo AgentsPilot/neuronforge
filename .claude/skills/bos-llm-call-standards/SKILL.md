@@ -44,7 +44,7 @@ Use this whenever a Business OS feature **calls a model**: chat, embeddings, ima
 - **Services take a `BosLlmOwner` (`{ userId, groupId }`)** from their caller and pass it down to every call. A required owner parameter makes a missing account a compile error.
 - **Never target the platform account.** `lib/platformAccount.ts` is where the tracker lands a call with no valid account. That is a bug signal, not a destination (`isPlatformAccount` in the catalog).
 - **Service-role writes by a caller-supplied id** → use the `tenant-isolation-guard` skill.
-- **A new route** → the `new-api-route` skill, with one caveat: its admin-only variation (`.claude/skills/new-api-route/SKILL.md:118`, `app_metadata.role`) is stale (Layer 1.1 F-4). Admin checks use `AdminAccessService`, per CLAUDE.md § Security Rules.
+- **A new route** → the `new-api-route` skill. Its admin-only variation is now correct: admin routes use the canonical `requireAdmin` gate (`lib/admin/requireAdminRoute.ts`) as their first statement — never `app_metadata.role` (the stale Layer 1.1 F-4 instruction) and never `profiles.role`, per CLAUDE.md § Security Rules.
 
 ## Standard 3: Grouping (one id per user action or job)
 
