@@ -381,6 +381,16 @@ export const CAPABILITIES_SCHEMA: Record<string, CapabilityDefinition> = {
             requiredFields: ['id'],
             payload: { is_active: false },
           },
+          /*
+           * Both carry `status: 'active'`, and both mean the same thing —
+           * make this bookable. The executor decides whether that is a publish
+           * or an un-pause by reading where the service actually is.
+           *
+           * `activate` used to send `is_active: true` alone. A service is
+           * bookable only when `is_active` AND `status = 'active'`, so that
+           * left a draft on `draft` and a paused service on `inactive`: the
+           * action reported success and changed nothing a client could see.
+           */
           activate: {
             type: 'activate',
             description: 'Make service visible to clients for booking',
@@ -389,7 +399,7 @@ export const CAPABILITIES_SCHEMA: Record<string, CapabilityDefinition> = {
             operation: 'mutation',
             dbOperation: 'update',
             requiredFields: ['id'],
-            payload: { is_active: true },
+            payload: { is_active: true, status: 'active' },
           },
           publish: {
             type: 'publish',

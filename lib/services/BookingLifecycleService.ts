@@ -546,12 +546,15 @@ export async function createBooking(
     /*
      * `manual`, because the OWNER asked for this one.
      *
-     * `send_after_booking` answers a different question — "send it for me
-     * automatically, for bookings clients make themselves". A business that
-     * sends intake by hand has that switch off, and reading it here refused
-     * the exact act the toggle in the booking dialog exists to perform: the
-     * owner ticked "send intake form", the booking confirmation arrived, and
-     * the intake email was silently skipped.
+     * It no longer changes whether the send is permitted — that is the same
+     * question for everyone, and `send_after_booking` has not gated it for some
+     * time. It records WHO asked.
+     *
+     * Kept because the history is the reason the dialog toggle exists: this
+     * once consulted `send_after_booking`, so a business that sends intake by
+     * hand — and therefore has that switch off — ticked "send intake form",
+     * watched the booking confirmation arrive, and had the intake email
+     * silently skipped.
      *
      * The client-booking routes (`website/booking/create`, `finalize`) stay
      * automatic — nobody is present there to press anything.

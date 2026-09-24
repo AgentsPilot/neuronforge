@@ -95,6 +95,18 @@ export interface RenderedAnswer {
    * already looks for "this number has a caveat".
    */
   unclassified?: Array<{ field: string; values: string[] }>;
+  /**
+   * Money totals that span more than one currency, per step that produced one.
+   *
+   * Sits beside `approximate` and `unclassified` because it is the same kind of
+   * fact: the number in `text` is not the whole answer. There is no FX rate
+   * anywhere in the platform, so a mixed total cannot be added into one figure
+   * — the step's `value` is the LARGEST currency's total alone, and a caller
+   * that shows it without this is under-reporting.
+   *
+   * Empty for the single-currency business, which is nearly all of them.
+   */
+  currencyBreakdown?: Array<{ currency: string; value: number }>;
 }
 
 // =============================================================================
@@ -820,6 +832,26 @@ export function renderAnswer(
     return [...byField.entries()].map(([field, values]) => ({ field, values: [...values] }));
   })();
 
+  /*
+   * Money totals that span more than one currency.
+   *
+   * Merged across steps the way `unclassified` is: two steps summing the same
+   * mixed set should tell the reader once. Totals for the same currency ADD —
+   * that is the one addition the platform can honestly do.
+   */
+  const mixedCurrency = (() => {
+    const byCurrency = new Map<string, number>();
+    for (const r of results) {
+      for (const entry of (r as { currencyBreakdown?: Array<{ currency: string; value: number }> })
+        .currencyBreakdown ?? []) {
+        byCurrency.set(entry.currency, (byCurrency.get(entry.currency) ?? 0) + entry.value);
+      }
+    }
+    return [...byCurrency.entries()]
+      .map(([currency, value]) => ({ currency, value }))
+      .sort((a, b) => b.value - a.value);
+  })();
+
   return {
     text: unmatched.length
       ? unmatchedText(unmatched, ctx)
@@ -837,6 +869,7 @@ export function renderAnswer(
     ),
     ...(unmatched.length > 0 ? { unmatched } : {}),
     ...(unclassified.length > 0 ? { unclassified } : {}),
+    ...(mixedCurrency.length > 0 ? { currencyBreakdown: mixedCurrency } : {}),
   };
 }
 

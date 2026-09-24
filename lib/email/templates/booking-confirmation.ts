@@ -389,6 +389,90 @@ export function generateBookingCancellationEmail(data: {
 }
 
 /**
+ * The appointment a client did not attend, and an open door back.
+ *
+ * Modelled on the cancellation email, with two deliberate differences: the
+ * appointment is NOT struck through — nothing was called off, they simply were
+ * not there — and it carries no reason row, because the business does not know
+ * the reason and guessing at it in writing is the failure this template exists
+ * to avoid. See `missedAppointment` in the translations for the tone rules.
+ */
+export function generateMissedAppointmentEmail(data: {
+  clientName: string;
+  serviceName: string;
+  dateTime: Date;
+  timezone: string;
+  bookAgainUrl?: string;
+  branding: BrandingData;
+  locale?: Locale;
+}): {
+  subject: string;
+  html: string;
+} {
+  const locale = data.locale || 'en';
+  const formattedDate = formatEmailDate(data.dateTime, data.timezone, { locale });
+  const t = emailTranslations.missedAppointment;
+  const tIntake = emailTranslations.intake;
+
+  const brandingWithLocale = { ...data.branding, locale };
+  const c = emailPalette(brandingWithLocale);
+  /*
+   * `info`, not `danger`. The cancellation email uses the alarm palette because
+   * something was called off; nothing was, here. Red would say "you did
+   * something wrong" in colour, which is exactly what the wording avoids.
+   */
+  const missed = emailTone('info', brandingWithLocale);
+
+  const dateParts = formattedDate.split(locale === 'he' ? ' בשעה ' : ' at ');
+  const dateStr = dateParts[0] || formattedDate;
+  const timeStr = dateParts[1] || '';
+
+  const content = `
+    <!-- Greeting -->
+    <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: ${c.ink};">
+      ${t.greeting[locale]}
+    </h2>
+    <p style="margin: 0 0 24px; font-size: 15px; color: ${c.inkMuted};">
+      ${t.intro[locale](data.clientName)}
+    </p>
+
+    <!-- The appointment. Not struck through: it was not cancelled. -->
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 24px; background-color: ${missed.bg}; border-radius: ${c.radius}; border: 1px solid ${missed.border};">
+      <tr>
+        <td style="padding: 24px;">
+          <h3 style="margin: 0 0 16px; font-size: 18px; font-weight: 600; color: ${missed.text};">
+            ${data.serviceName}
+          </h3>
+
+          ${emailDetailsTable([
+            emailDetailRow(tIntake.dateLabel[locale], dateStr, brandingWithLocale),
+            timeStr ? emailDetailRow(tIntake.timeLabel[locale], timeStr, brandingWithLocale) : ''
+          ].filter(Boolean), brandingWithLocale)}
+        </td>
+      </tr>
+    </table>
+
+    ${data.bookAgainUrl ? `
+    <!-- A way back in -->
+    <p style="margin: 0 0 16px; font-size: 14px; color: ${c.inkMuted};">
+      ${t.bookAgainPrompt[locale]}
+    </p>
+    ${emailButton(t.bookAgain[locale], data.bookAgainUrl, { branding: data.branding })}
+    ` : ''}
+
+    <!-- An explicit way to say "this was wrong", because it may have been. -->
+    <p style="margin: 24px 0 0; font-size: 13px; color: ${c.inkFaint}; line-height: 1.5;">
+      ${t.questions[locale](data.branding.businessName)}
+    </p>
+  `;
+
+  return {
+    subject: t.subject[locale](data.serviceName),
+    html: wrapInBrandedTemplate(content, brandingWithLocale)
+  };
+}
+
+/**
  * Generate booking rescheduled email
  */
 export function generateBookingRescheduledEmail(data: {

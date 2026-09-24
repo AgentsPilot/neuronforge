@@ -111,9 +111,27 @@ const provider = new FakeProvider({ trackAICall: async () => undefined } as unkn
 
 let savedPlatform: string | undefined;
 
+/**
+ * The cron authenticates now.
+ *
+ * It used to treat a missing `CRON_SECRET` as "let everyone in" — a public URL
+ * with no gate — and these tests called it bare. All four insight crons were
+ * moved to fail closed on 2026-09-23, so the request has to carry the bearer
+ * token the way Vercel sends it.
+ */
+const CRON_SECRET = 'test-cron-secret';
+
+/** A request signed the way a Vercel cron invocation is. */
+function cronRequest() {
+  return new NextRequest('http://localhost/api/cron/insight-detect', {
+    headers: { authorization: `Bearer ${CRON_SECRET}` },
+  });
+}
+
 beforeEach(() => {
   mockAuditLog.mockReset();
   mockAuditLog.mockResolvedValue(undefined);
+  process.env.CRON_SECRET = CRON_SECRET;
   savedPlatform = process.env.SYSTEM_ADMIN_USER_ID;
   process.env.SYSTEM_ADMIN_USER_ID = PLATFORM;
   resetPlatformActorForTests();
@@ -144,7 +162,7 @@ afterEach(() => {
 
 describe('insight-detect — one AI audit entry per business per run', () => {
   it('writes one entry per business that made a call, sharing the run id, on the platform actor', async () => {
-    const res = await GET(new NextRequest('http://localhost/api/cron/insight-detect'));
+    const res = await GET(cronRequest());
     expect(res.status).toBe(200);
 
     const entries = mockAuditLog.mock.calls.map((c) => c[0]);
@@ -170,7 +188,7 @@ describe('insight-detect — one AI audit entry per business per run', () => {
   });
 
   it('a business that throws after its call gets exactly one FAILED entry, and the loop continues (WC-8)', async () => {
-    const res = await GET(new NextRequest('http://localhost/api/cron/insight-detect'));
+    const res = await GET(cronRequest());
     const body = await res.json();
 
     const entries = mockAuditLog.mock.calls.map((c) => c[0]);

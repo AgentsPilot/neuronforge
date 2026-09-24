@@ -9,9 +9,14 @@
  */
 
 import { createLogger } from '@/lib/logger';
+import {
+  generateMeetingReminderEmail,
+  generateOwnerMeetingReminderEmail,
+} from '@/lib/email/templates/meeting-reminder';
 import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
 import { activitySentence, activityMoment, activityRecord } from '@/lib/business-os/activityText';
 import { BOOKING_LINK_ACTIVITY } from '@/lib/services/LeadBookingLinkService';
+import { formatCurrency } from '@/lib/email/templates/base-template';
 import { sendEmail, SendEmailResult } from '@/lib/notifications/emailTransport';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
@@ -22,7 +27,7 @@ import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository'
 // The same source `/book/manage/[token]/intake` reads, so the email asking for
 // an intake form and the page it links to cannot disagree about whether one exists.
 import { intakeRepository } from '@/lib/repositories/IntakeRepository';
-import { generateBookingConfirmationEmail, generateBookingCancellationEmail, generateBookingRescheduledEmail, generateICSContent } from '@/lib/email/templates/booking-confirmation';
+import { generateBookingConfirmationEmail, generateBookingCancellationEmail, generateBookingRescheduledEmail, generateMissedAppointmentEmail, generateICSContent } from '@/lib/email/templates/booking-confirmation';
 import { resolveIntakeForSending } from '@/lib/business-os/intake/resolveIntake';
 import { generateInvoiceEmail } from '@/lib/email/templates/invoice';
 import { generatePaymentReceiptEmail } from '@/lib/email/templates/payment-receipt';
@@ -39,9 +44,45 @@ import * as jwt from 'jsonwebtoken';
 
 const logger = createLogger({ service: 'BookingEmailService' });
 
-// JWT secret for booking manage tokens
-const BOOKING_TOKEN_SECRET = process.env.BOOKING_TOKEN_SECRET || process.env.NEXTAUTH_SECRET || 'fallback-secret-change-in-prod';
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || '';
+
+/**
+ * What signs a booking manage link.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * FATAL WHEN UNSET, and read lazily so it is the send that fails rather than
+ * the import of this module.
+ *
+ * It used to end `|| 'fallback-secret-change-in-prod'`. The token IS the
+ * authorisation on `/book/manage/[token]` — it is what tells cancel and
+ * reschedule which booking the caller may act on — so in any environment where
+ * neither variable was set, every one of those links was signed with a string
+ * printed in this repository. Anyone reading the source could mint a token for
+ * any booking id and cancel a stranger's appointment.
+ *
+ * A link that cannot be signed is an email that does not go out, which is
+ * strictly better than one that anybody can forge. `lib/consent/confirmToken.ts`
+ * reached the same conclusion for the same reason; this matches it.
+ *
+ * `NEXTAUTH_SECRET` remains as a fallback only because it is what production
+ * has been signing with — dropping it would invalidate every link already in a
+ * client's inbox. It is NOT an auth secret: nothing in this app authenticates
+ * with NextAuth, and it survives purely as the value these three token systems
+ * inherited. Set `BOOKING_TOKEN_SECRET` explicitly and the fallback stops
+ * mattering.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function bookingTokenSecret(): string {
+  const configured = process.env.BOOKING_TOKEN_SECRET || process.env.NEXTAUTH_SECRET;
+
+  if (!configured) {
+    throw new Error(
+      'BOOKING_TOKEN_SECRET (or NEXTAUTH_SECRET) must be set to sign booking management links'
+    );
+  }
+
+  return configured;
+}
 
 // Token expiry for booking management links (30 days)
 const TOKEN_EXPIRY_DAYS = 30;
@@ -57,17 +98,70 @@ interface EmailResult {
 function generateBookingToken(bookingId: string, email: string): string {
   return jwt.sign(
     { bookingId, email },
-    BOOKING_TOKEN_SECRET,
+    bookingTokenSecret(),
     { expiresIn: `${TOKEN_EXPIRY_DAYS}d` }
   );
+}
+
+/**
+ * The reschedule link, or nothing at all.
+ *
+ * Both reasons to have no link are handled here rather than at the call site:
+ * no `APP_URL` configured, and no secret to sign with. Neither is a reason to
+ * withhold the reminder itself.
+ */
+function manageUrlFor(
+  bookingId: string,
+  clientEmail: string,
+  log: { warn: (ctx: Record<string, unknown>, msg: string) => void }
+): string | null {
+  if (!APP_URL) return null;
+
+  try {
+    return `${APP_URL}/book/manage/${generateBookingToken(bookingId, clientEmail)}/reschedule`;
+  } catch (err) {
+    log.warn({ err, bookingId }, 'Could not sign a manage link; sending the reminder without one');
+    return null;
+  }
+}
+
+/**
+ * What is still owed on a booking, written in its own currency.
+ *
+ * Null unless payment is genuinely outstanding AND there is an amount to name.
+ * A currency-less number is worse than silence: the owner cannot tell 120
+ * shekels from 120 dollars, and the platform holds no exchange rate that could
+ * resolve it for them.
+ */
+function outstandingOnBooking(booking: {
+  payment_status?: string | null;
+  payment_amount?: unknown;
+  payment_currency?: string | null;
+}): string | null {
+  if (booking.payment_status !== 'pending') return null;
+
+  const amount = Number(booking.payment_amount);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+
+  return formatCurrency(amount, booking.payment_currency || 'USD');
 }
 
 /**
  * Verify and decode a booking management token
  */
 export function verifyBookingToken(token: string): { bookingId: string; email: string } | null {
+  /*
+   * Resolved OUTSIDE the try on purpose.
+   *
+   * A missing secret and a forged token are different failures and must not
+   * produce the same answer. Inside the try, the throw would be swallowed and
+   * returned as `null` — so a misconfigured deployment would tell every real
+   * client their valid link was invalid, and nothing would say why.
+   */
+  const secret = bookingTokenSecret();
+
   try {
-    const decoded = jwt.verify(token, BOOKING_TOKEN_SECRET) as { bookingId: string; email: string };
+    const decoded = jwt.verify(token, secret) as { bookingId: string; email: string };
     return decoded;
   } catch {
     return null;
@@ -276,9 +370,20 @@ async function logEmailSend(params: {
   }
 
   try {
-    // Map provider to the expected type (resend or sendgrid)
-    // 'gmail' and 'gmail-plugin' are not in the enum so we default to 'resend'
-    const provider = result.provider === 'resend' ? 'resend' : 'resend';
+    /*
+     * The transport that actually sent it.
+     *
+     * This was `result.provider === 'resend' ? 'resend' : 'resend'` — a ternary
+     * whose two branches are the same value, so every row claimed Resend
+     * whatever had really sent the mail. An SMTP or Gmail send was recorded as
+     * Resend, and the column became unable to hold a fact.
+     *
+     * It cost a real investigation: 63 rows all reading `resend` were taken as
+     * proof the platform was on Resend, while its API key is configured
+     * nowhere — meaning those sends went out over one of the other two
+     * transports and nothing in the database could say which.
+     */
+    const provider = result.provider;
 
     await emailSendRepository.create({
       user_id: userId,
@@ -289,7 +394,16 @@ async function logEmailSend(params: {
       status: result.sent ? 'sent' : 'failed',
       sent_at: result.sent ? new Date().toISOString() : null,
       provider,
-      provider_message_id: null,
+      /*
+       * The provider's own id, not null.
+       *
+       * This was hardcoded `null` while the transport discarded Resend's
+       * response body entirely, so no row on the platform had one — and
+       * without it a delivery webhook has no way to find the send an event
+       * belongs to. `opened_at` and `clicked_at` were columns nothing could
+       * ever write.
+       */
+      provider_message_id: result.providerMessageId ?? null,
       error_message: result.error || null,
       sequence_id: null,
       sequence_step_id: null,
@@ -870,6 +984,121 @@ export class BookingEmailService {
   }
 
   /**
+   * Invite a client back after an appointment they did not attend.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * NEVER SENT AUTOMATICALLY. The no-show route sends this only when the owner
+   * ticks the box on the confirmation dialog, because the owner knows what the
+   * system cannot: whether the person rang ahead, is unwell, or actually did
+   * turn up and the status was a slip.
+   *
+   * The copy carries no blame and never says "no-show" — that is the owner's
+   * internal label, and to the reader it is an accusation. See
+   * `missedAppointment` in the email translations.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  static async sendMissedAppointmentEmail(
+    bookingId: string,
+    userId: string
+  ): Promise<EmailResult> {
+    const requestLogger = logger.child({ bookingId, userId, action: 'sendMissedAppointmentEmail' });
+
+    try {
+      const locale = await getBusinessLocale(userId);
+
+      const bookingResult = await schedulingBookingRepository.findById(bookingId, userId);
+      if (bookingResult.error || !bookingResult.data) {
+        requestLogger.error({ err: bookingResult.error }, 'Booking not found');
+        return { sent: false, error: 'Booking not found' };
+      }
+      const booking = bookingResult.data;
+
+      // Same guard as the cancellation email: `client_email` can be an empty
+      // string when the joined contact has no address, and sending to [''] is
+      // a failure somewhere in the transport rather than here.
+      const clientEmail = booking.client_email?.trim();
+      if (!clientEmail) {
+        requestLogger.warn({ bookingId }, 'No client email on this booking; nothing sent');
+        return { sent: false, error: 'No client email' };
+      }
+
+      /*
+       * An appointment with no time was never attended or missed — it was an
+       * order. "We missed you" about a course purchase is nonsense, so there is
+       * nothing to send.
+       */
+      if (!booking.start_time) {
+        requestLogger.info({ bookingId }, 'Booking has no scheduled time; no missed-appointment email');
+        return { sent: false, error: 'Booking has no scheduled time' };
+      }
+
+      const serviceResult = await schedulingServiceRepository.findById(booking.service_id, userId);
+      if (serviceResult.error || !serviceResult.data) {
+        requestLogger.error({ err: serviceResult.error }, 'Service not found');
+        return { sent: false, error: 'Service not found' };
+      }
+      const service = serviceResult.data;
+
+      const profileResult = await businessProfileRepository.findByUserId(userId);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
+
+      // The whole point of the email. Without somewhere to book, it is only a
+      // note telling someone they were absent — so there is nothing to send.
+      const bookAgainUrl = await resolveBookingUrl(userId, profileResult.data);
+      if (!bookAgainUrl) {
+        requestLogger.info({ bookingId }, 'No booking page to point at; no missed-appointment email');
+        return { sent: false, error: 'No booking url' };
+      }
+
+      const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
+
+      const { subject, html } = generateMissedAppointmentEmail({
+        clientName,
+        serviceName: service.service_name,
+        dateTime: new Date(booking.start_time),
+        timezone: await getBusinessTimezone(userId, booking.timezone),
+        bookAgainUrl,
+        branding,
+        locale
+      });
+
+      /*
+       * `transactional`. It concerns an appointment this person booked, and it
+       * goes to them whether or not they ever accepted marketing — the same
+       * basis as the cancellation email beside it. An invitation to a client
+       * who never booked anything would be marketing and would need consent.
+       */
+      const result = await sendEmail({
+        kind: 'transactional',
+        to: [clientEmail],
+        subject,
+        html,
+        ownerUserId: userId
+      });
+
+      if (result.sent) {
+        requestLogger.info({ provider: result.provider }, 'Missed-appointment email sent');
+      } else {
+        requestLogger.warn({ error: result.error }, 'Failed to send missed-appointment email');
+      }
+
+      logEmailSend({
+        userId,
+        contactId: booking.contact_id,
+        toEmail: clientEmail,
+        subject,
+        bodyHtml: html,
+        result
+      }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
+
+      return { sent: result.sent, error: result.error };
+    } catch (error) {
+      requestLogger.error({ err: error }, 'Error sending missed-appointment email');
+      return { sent: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  }
+
+  /**
    * Send rescheduled booking email
    * Called from: reschedule API
    */
@@ -1212,6 +1441,241 @@ export class BookingEmailService {
     }
   }
 
+
+  /**
+   * The reminder before an appointment, to whoever the owner asked for.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Two audiences, sent independently. A client address that bounces must not
+   * cost the owner their own heads-up, and an owner with no address on file
+   * must not stop the client being reminded — so each is attempted on its own
+   * and the result reports `sent: true` if either landed.
+   *
+   * The owner's copy carries what can still be FIXED before the appointment:
+   * an intake form that never came back, and money that has not arrived. Those
+   * are the two things a reminder can usefully change, and neither is visible
+   * on the client's version.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  static async sendMeetingReminder(
+    bookingId: string,
+    userId: string,
+    options: { notifyClient: boolean; notifyOwner: boolean }
+  ): Promise<{ sent: boolean; error?: string }> {
+    const requestLogger = logger.child({ bookingId, userId, action: 'sendMeetingReminder' });
+
+    try {
+      const locale = await getBusinessLocale(userId);
+
+      const bookingResult = await schedulingBookingRepository.findById(bookingId, userId);
+      if (bookingResult.error || !bookingResult.data) {
+        return { sent: false, error: 'Booking not found' };
+      }
+      const booking = bookingResult.data;
+
+      const startsAt = booking.start_time ? new Date(booking.start_time) : null;
+      if (!startsAt || Number.isNaN(startsAt.getTime())) {
+        return { sent: false, error: 'Booking has no start time' };
+      }
+
+      const serviceResult = booking.service_id
+        ? await schedulingServiceRepository.findById(booking.service_id, userId)
+        : { data: null, error: null };
+
+      const profileResult = await businessProfileRepository.findByUserId(userId);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
+
+      const profile = profileResult.data as Record<string, unknown> | null;
+      const businessName =
+        (profile?.company_name as string) || (profile?.invoice_company_name as string) || 'your appointment';
+      const serviceName = serviceResult.data?.service_name ?? 'appointment';
+      const timezone = (booking as { timezone?: string }).timezone ?? 'UTC';
+
+      /*
+       * Who this is about.
+       *
+       * Built from the fields `findById` DERIVES off the joined contact —
+       * `scheduling_bookings` holds no name of its own, only `contact_id`. An
+       * earlier version read `booking.client_name`, which is not a column and
+       * is not derived either, so it was always undefined: every client
+       * reminder opened "Hi there," and the owner's heads-up, whose entire job
+       * is to lead with WHO is coming, announced that "there" was booked in.
+       */
+      const clientEmail = booking.client_email?.trim() || null;
+      const clientName =
+        [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ').trim() ||
+        clientEmail ||
+        'there';
+
+      const results: boolean[] = [];
+      const failures: string[] = [];
+
+      if (options.notifyClient) {
+        if (!clientEmail) {
+          failures.push('no client email');
+        } else {
+          const { subject, html } = generateMeetingReminderEmail({
+            clientName,
+            businessName,
+            serviceName,
+            startsAt,
+            timezone,
+            /*
+             * Minted here, the way every other booking email mints it — there
+             * is no `manage_url` column, and reading one meant the reminder
+             * carried no reschedule link at all. That link is the reason this
+             * email is a service rather than a nag: a client who cannot easily
+             * move an appointment does not move it, they miss it.
+             *
+             * A link that cannot be signed degrades to no link, not to no
+             * reminder. `generateBookingToken` is deliberately fatal when the
+             * signing secret is missing, and letting that escape would take
+             * the OWNER's copy down with the client's — two audiences that are
+             * independent everywhere else in this method. The template renders
+             * without the button; "you have an appointment tomorrow" is still
+             * worth sending.
+             */
+            manageUrl: manageUrlFor(booking.id, clientEmail, requestLogger),
+            branding,
+            locale,
+          });
+
+          const outcome = await sendEmail({
+            to: [clientEmail],
+            subject,
+            html,
+            /*
+             * Transactional. A reminder about an appointment the recipient
+             * booked themselves is not marketing, and gating it on consent
+             * would mean the people most likely to forget are the ones never
+             * reminded.
+             */
+            kind: 'transactional',
+            /*
+             * WHO IT IS FROM, and where a reply goes.
+             *
+             * Without this the reminder left as "NeuronForge
+             * <notifications@…>" — a company the client has never heard of,
+             * about an appointment with their physiotherapist — and a reply
+             * reached the platform's own inbox rather than the business.
+             * `resolveSender` turns this id into the business's name on the
+             * envelope and the owner's address in Reply-To. Every other
+             * booking email passes it; these two did not.
+             */
+            ownerUserId: userId,
+          });
+
+          results.push(outcome.sent);
+          if (!outcome.sent) failures.push(`client: ${outcome.error ?? outcome.blocked ?? 'not sent'}`);
+
+          /*
+           * Recorded, like every other client-facing send.
+           *
+           * Without this the reminder exists nowhere afterwards: no row in
+           * `email_sends`, so no `provider_message_id`, so the delivery webhook
+           * has nothing to match an open against. Open tracking would be wired
+           * end to end and still report nothing for the one automation it was
+           * built to measure.
+           */
+          logEmailSend({
+            userId,
+            contactId: booking.contact_id ?? null,
+            toEmail: clientEmail,
+            subject,
+            bodyHtml: html,
+            result: outcome,
+          }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
+        }
+      }
+
+      if (options.notifyOwner) {
+        /*
+         * The owner's account address, the way `LeadAlertService` resolves it.
+         * `business_profiles.email` is the business's public contact address
+         * and is often a shared inbox nobody watches; the account address is
+         * the one they actually read.
+         */
+        const authUser = await supabaseServer.auth.admin.getUserById(userId);
+        const ownerEmail = authUser.data?.user?.email;
+        if (!ownerEmail) {
+          failures.push('no owner email');
+        } else {
+          const { subject, html } = generateOwnerMeetingReminderEmail({
+            clientName,
+            clientEmail: booking.client_email ?? null,
+            businessName,
+            serviceName,
+            startsAt,
+            timezone,
+            branding,
+            locale,
+            outstanding: {
+              // Both read off the booking itself rather than queried, so the
+              // owner's copy costs no extra round trip.
+
+              /*
+               * Missing means ASKED FOR AND NOT RETURNED.
+               *
+               * `intake_completed_at` alone is null for every booking of every
+               * business that does not collect intake at all, so flagging on it
+               * would have told a barber their client's form had not come back
+               * when no form was ever sent. `intake_sent_at` is what makes it
+               * an outstanding thing rather than an absent one.
+               */
+              intakeMissing:
+                !!(booking as { intake_sent_at?: string | null }).intake_sent_at &&
+                !(booking as { intake_completed_at?: string | null }).intake_completed_at,
+
+              /*
+               * With its currency, from the booking's own column.
+               *
+               * A bare "120 is still outstanding" is the fabrication class this
+               * module keeps producing: the platform has no single currency,
+               * and a business in Israel may bill a US client in dollars.
+               */
+              paymentDue: outstandingOnBooking(booking),
+            },
+          });
+
+          // To the owner's own account address, about their own diary. Still
+          // sent as the business, so it sits with the rest of their own mail
+          // rather than looking like a notice from a third party.
+          const outcome = await sendEmail({
+            to: [ownerEmail],
+            subject,
+            html,
+            kind: 'transactional',
+            ownerUserId: userId,
+          });
+
+          results.push(outcome.sent);
+          if (!outcome.sent) failures.push(`owner: ${outcome.error ?? outcome.blocked ?? 'not sent'}`);
+
+          // Logged against the same contact the appointment is with: the row
+          // is about that booking, whoever the copy went to.
+          logEmailSend({
+            userId,
+            contactId: booking.contact_id ?? null,
+            toEmail: ownerEmail,
+            subject,
+            bodyHtml: html,
+            result: outcome,
+          }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
+        }
+      }
+
+      const sent = results.some(Boolean);
+      if (!sent) {
+        requestLogger.warn({ failures }, 'Meeting reminder reached nobody');
+      }
+
+      return sent ? { sent: true } : { sent: false, error: failures.join('; ') || 'nobody to notify' };
+    } catch (error) {
+      requestLogger.error({ err: error }, 'Meeting reminder failed');
+      return { sent: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
   /**
    * Send intake form request after booking confirmation
    * Called from: /api/website/booking/create, /api/scheduling/bookings
@@ -1221,12 +1685,15 @@ export class BookingEmailService {
     userId: string,
     options?: {
       /**
-       * The owner pressed Send on this booking.
+       * The owner pressed Send on this booking, rather than a client's own
+       * booking triggering it.
        *
-       * A manual send must NOT consult `send_after_booking`. That switch means
-       * "send it for me automatically", and its off state means "I will send it
-       * myself" — so reading it here refused the exact act it exists to allow,
-       * and the endpoint answered 500.
+       * It no longer decides whether the send is PERMITTED: that is the same
+       * question for both, and `send_after_booking` stopped gating it. What it
+       * still carries is who asked, which is why the toggle in the booking
+       * dialog exists at all — a booking the owner enters is often a phone
+       * call, a backfill, or a client of ten years, and none of those should be
+       * emailed a questionnaire unprompted.
        */
       manual?: boolean;
       /**
@@ -1299,17 +1766,19 @@ export class BookingEmailService {
        * template chosen.
        */
       /*
-       * Two different questions, and which one applies depends on who asked.
+       * ONE QUESTION, WHOEVER ASKED: does the business have a form to send?
        *
-       * AUTOMATIC (after a booking): does the business want this sent for it?
-       * That is `send_after_booking`, and an off switch means do not send.
+       * This used to pass `forClient: !manual`, on the basis that an automatic
+       * send additionally required `send_after_booking`. That has not been true
+       * since the flag stopped being a gate, and `intakeBlockReason` never read
+       * the argument in any case — so the distinction cost a parameter and
+       * bought nothing.
        *
-       * MANUAL (the owner pressed Send): does the business have a form at all?
-       * The off switch means "I will send it myself" — which is this. Reading
-       * `send_after_booking` here refused the act it exists to permit.
+       * `options.manual` still matters, but for WHEN and for what the message
+       * says, not for whether it may go: a booking a client made sends on its
+       * own, and one the owner entered sends when they ask.
        */
       const { form, blocked } = await resolveIntakeForSending(userId, {
-        forClient: !options?.manual,
         /*
          * The service decides whether there is anything to ask.
          *

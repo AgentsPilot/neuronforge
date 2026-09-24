@@ -55,6 +55,24 @@ export interface BookingPaymentState {
 const SETTLED = new Set(['succeeded', 'refunded']);
 
 /**
+ * Did this TRANSACTION's money actually arrive?
+ *
+ * Exported because the two money tables do not share a vocabulary and nothing
+ * said so out loud: `payment_invoices.status` reaches `'paid'`, while
+ * `payment_transactions.status` reaches `'succeeded'`. Code that knows one
+ * table and reaches for the other writes `status === 'paid'`, matches nothing,
+ * and gets a silent empty answer rather than an error.
+ *
+ * That is exactly how the contact drawer's payment step lost its date: it
+ * looked for a `'paid'` transaction, every transaction on the account is
+ * `'succeeded'`, so the step had no timestamp and the journey filed a payment
+ * already taken under "Upcoming".
+ */
+export function transactionMoneyArrived(status: string | null | undefined): boolean {
+  return !!status && SETTLED.has(status);
+}
+
+/**
  * Rounded to the cent because these are sums of decimals.
  *
  * Without it `200 - 66.67 - 66.67 - 66.66` leaves 0.000000000004 and the booking

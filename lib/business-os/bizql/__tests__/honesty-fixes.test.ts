@@ -145,3 +145,82 @@ describe('the correction chip', () => {
     }
   });
 });
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A TOTAL ACROSS TWO CURRENCIES IS NOT A TOTAL
+ *
+ * The same shape as the four above: the compiler knew each row's currency and
+ * threw it away, then added the amounts. A business pricing US clients in
+ * dollars from Israel — the case the whole per-service currency design exists
+ * to support — asked "how much did I earn" and was told 300 + 300 = 600, in no
+ * currency at all. Plausible, well-formed, and wrong.
+ *
+ * There is no FX rate anywhere in the platform, so the honest answer is per
+ * currency. `value` stays the largest one's own total so every existing caller
+ * keeps working; `currencyBreakdown` is what says it is not the whole.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('a money total spanning more than one currency', () => {
+  const mixed = (over: Record<string, unknown> = {}): QueryResult =>
+    ({
+      op: 'compute',
+      entity: 'payment_transactions',
+      agg: { fn: 'sum', field: 'amount' },
+      value: 500,
+      currency: 'USD',
+      currencyBreakdown: [
+        { currency: 'USD', value: 500 },
+        { currency: 'ILS', value: 300 },
+      ],
+      approximate: false,
+      ...over,
+    }) as unknown as QueryResult;
+
+  it('carries the breakdown to the caller instead of dropping it', () => {
+    const answer = renderAnswer('You earned {s1.value}', [{ id: 's1' }], [mixed()], {
+      language: 'en',
+    });
+
+    expect(answer.currencyBreakdown).toEqual([
+      { currency: 'USD', value: 500 },
+      { currency: 'ILS', value: 300 },
+    ]);
+  });
+
+  it('says nothing at all for the ordinary single-currency business', () => {
+    // The common path must be untouched — a caveat that fires always is noise,
+    // and a caller cannot use its presence as a signal if it is always present.
+    const single = mixed({ currencyBreakdown: undefined, currency: 'ILS' });
+    const answer = renderAnswer('You earned {s1.value}', [{ id: 's1' }], [single], {
+      language: 'en',
+    });
+
+    expect(answer.currencyBreakdown).toBeUndefined();
+  });
+
+  it('adds same-currency totals across steps, and only those', () => {
+    // Two steps over the same mixed set: the reader needs the fact once. USD
+    // adds to USD — the one addition that is honest — and ILS stays separate.
+    const answer = renderAnswer(
+      '{s1.value} and {s2.value}',
+      [{ id: 's1' }, { id: 's2' }],
+      [
+        mixed(),
+        mixed({
+          currencyBreakdown: [
+            { currency: 'USD', value: 100 },
+            { currency: 'GBP', value: 50 },
+          ],
+        }),
+      ],
+      { language: 'en' }
+    );
+
+    expect(answer.currencyBreakdown).toEqual([
+      { currency: 'USD', value: 600 },
+      { currency: 'ILS', value: 300 },
+      { currency: 'GBP', value: 50 },
+    ]);
+  });
+});

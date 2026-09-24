@@ -6,6 +6,8 @@
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
+import type { BookingStatus } from '@/lib/business-os/bookingStatus';
+import { SLOT_HOLDING_STATUSES } from '@/lib/business-os/bookingStatus';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ service: 'SchedulingRepository' });
@@ -77,6 +79,15 @@ export interface SchedulingService {
   first_payment_days: number;
   created_at: string;
   updated_at: string;
+  /**
+   * Whether this service's currency is frozen because it has been sold.
+   *
+   * Computed by the list route, not stored: the authority is
+   * `service_currency_lock` (20261008), and duplicating it in a column would
+   * give the two something to disagree about. Absent on rows that did not come
+   * from that route, which correctly reads as "not known to be locked".
+   */
+  currency_locked?: boolean;
 }
 
 export interface SchedulingServiceInsert {
@@ -150,7 +161,7 @@ export interface SchedulingBooking {
   start_time: string;
   end_time: string;
   timezone: string;
-  status: 'confirmed' | 'cancelled' | 'completed' | 'no_show';
+  status: BookingStatus;
   cancellation_reason: string | null;
   payment_status: 'pending' | 'paid' | 'refunded';
   payment_id: string | null;
@@ -198,7 +209,7 @@ export interface SchedulingBookingInsert {
   start_time: string;
   end_time: string;
   timezone?: string;
-  status?: 'confirmed' | 'cancelled' | 'completed' | 'no_show';
+  status?: BookingStatus;
   payment_status?: 'pending' | 'paid' | 'refunded';
   notes?: string | null;
   internal_notes?: string | null;
@@ -206,7 +217,7 @@ export interface SchedulingBookingInsert {
 }
 
 export interface SchedulingBookingUpdate {
-  status?: 'confirmed' | 'cancelled' | 'completed' | 'no_show';
+  status?: BookingStatus;
   cancellation_reason?: string | null;
   payment_status?: 'pending' | 'paid' | 'refunded';
   payment_id?: string | null;
@@ -532,6 +543,53 @@ export class SchedulingServiceRepository {
     try {
       logger.info({ serviceId: id, userId }, 'Updating scheduling service');
 
+      /*
+       * A general update may not publish.
+       *
+       * `publish()` is not just a status write — it is guarded by
+       * `.eq('status', 'draft')`, and its callers add a description check and
+       * the journey-readiness gate before reaching it. None of that is reached
+       * by writing `status: 'active'` here, and every one of those checks
+       * exists because a client saw something that should not have been shown.
+       *
+       * This was live: the Settings pause switch wrote
+       * `status: newActiveState ? 'active' : 'inactive'` on every flip, so
+       * switching a draft off and on again published it, reviewed by nobody.
+       * That call site is fixed, but it is one of four writers — the chat
+       * executor and the plugin executor update services too, and a rule
+       * enforced in one of them is a rule the others do not know about. Same
+       * reasoning as the currency triggers in 20261008.
+       *
+       * Deliberately NOT refused: 'active' → 'inactive' (pausing), 'inactive'
+       * → 'active' (un-pausing, which is the only path back and has no
+       * publish route of its own), and 'active' → 'draft' (editing a live
+       * service, which is how it returns for review).
+       */
+      if (updates.status === 'active') {
+        const { data: current, error: readError } = await this.supabase
+          .from('scheduling_services')
+          .select('status')
+          .eq('id', id)
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        if (readError) throw readError;
+
+        if (current?.status === 'draft') {
+          logger.warn(
+            { serviceId: id, userId },
+            'Refused to publish a draft through update() — use publish()'
+          );
+          return {
+            data: null,
+            error: new Error(
+              'Cannot activate a draft service through an update. Publish it instead, ' +
+              'so the description check and readiness gate are applied.'
+            ),
+          };
+        }
+      }
+
       const { data, error } = await this.supabase
         .from('scheduling_services')
         .update(updates)
@@ -726,7 +784,18 @@ export class SchedulingBookingRepository {
         .from('scheduling_bookings')
         .select('*')
         .eq('user_id', userId)
-        .in('status', ['confirmed', 'completed']) // Only check active bookings
+        /*
+         * Every status that still holds its time — see `SLOT_HOLDING_STATUSES`.
+         *
+         * This read `['confirmed', 'completed']`, so a PENDING booking was
+         * invisible to the owner's own double-booking check: a client who had
+         * booked a paid service and not yet paid, or who was waiting on a
+         * quote, could have their slot filled by the owner with no warning.
+         *
+         * `no_show` and `cancelled` are correctly absent: those meetings are
+         * not happening, so their time is free to sell again.
+         */
+        .in('status', SLOT_HOLDING_STATUSES)
         .lt('start_time', endTime)
         .gt('end_time', startTime);
 
@@ -806,7 +875,7 @@ export class SchedulingBookingRepository {
             phone
           ),
           invoice:payment_invoices!payment_invoices_booking_id_fkey(id, status, amount, paid_at, due_date, sent_at, refunded_amount, refund_status, refunded_at),
-          payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, status, invoice_id)
+          payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, status, invoice_id, paid_at)
         `)
         .eq('id', id)
         .eq('user_id', userId)
@@ -950,7 +1019,7 @@ export class SchedulingBookingRepository {
           contact:crm_contacts(first_name, last_name, email, phone),
           service:scheduling_services(service_name, price, currency, payment_type, installment_count, installment_frequency, sale_mode),
           invoice:payment_invoices!payment_invoices_booking_id_fkey(id, status, amount, paid_at, due_date, sent_at, refunded_amount, refund_status, refunded_at),
-          payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, status, invoice_id)
+          payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, status, invoice_id, paid_at)
         `)
         .eq('user_id', userId);
 

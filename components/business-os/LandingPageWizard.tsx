@@ -15,7 +15,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { configTabForGap } from '@/lib/business-os/journeyReadiness';
+import { gapFixAction } from '@/lib/business-os/journeyGapFix';
 import { publicSiteDisplayHost } from '@/lib/utils/origins';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -412,6 +412,7 @@ const LABELS = {
     step1_subtitle: 'Choose which service this landing page promotes',
     loading_services: 'Loading services...',
     fix_availability: 'Set working hours',
+    fix_timezone: 'Set your timezone',
     fix_invoicing: 'Complete invoice details',
     no_services: 'No services yet',
     no_services_desc: 'Create your first service to get started',
@@ -509,6 +510,7 @@ const LABELS = {
     step1_subtitle: 'Elige qué servicio promueve esta landing page',
     loading_services: 'Cargando servicios...',
     fix_availability: 'Configurar horario',
+    fix_timezone: 'Configura tu zona horaria',
     fix_invoicing: 'Completar datos de factura',
     no_services: 'Sin servicios aún',
     no_services_desc: 'Crea tu primer servicio para comenzar',
@@ -603,6 +605,7 @@ const LABELS = {
     step1_subtitle: 'בחר איזה שירות דף הנחיתה מקדם',
     loading_services: 'טוען שירותים...',
     fix_availability: 'הגדר שעות פעילות',
+    fix_timezone: 'הגדירו אזור זמן',
     fix_invoicing: 'השלם פרטי חשבונית',
     no_services: 'אין שירותים עדיין',
     no_services_desc: 'צור את השירות הראשון שלך כדי להתחיל',
@@ -2057,7 +2060,7 @@ export function LandingPageWizard({
                     <button
                       type="button"
                       onClick={() =>
-                        openConfiguration(configTabForGap(gap.kind), {
+                        openConfiguration(gapFixAction(gap.kind).tab, {
                           /*
                             Ask again once they come back.
 
@@ -2076,7 +2079,11 @@ export function LandingPageWizard({
                       className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#4F6EF7] hover:bg-[#3B5AE5] transition-colors"
                       style={{ borderRadius: 'var(--v2-radius-button)' }}
                     >
-                      {isInvoicing ? labels.fix_invoicing : labels.fix_availability}
+                      {gap.kind === 'invoicing'
+                        ? labels.fix_invoicing
+                        : gap.kind === 'timezone'
+                          ? labels.fix_timezone
+                          : labels.fix_availability}
                       <ArrowRight className={`w-3.5 h-3.5 ${language === 'he' ? 'rotate-180' : ''}`} />
                     </button>
                   </div>

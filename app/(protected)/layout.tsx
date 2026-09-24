@@ -355,11 +355,16 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
        * trusts that copy, which is how a person who signed out could be handed
        * straight back into the app.
        */
-      window.location.href = marketingLogoutUrl()
+      /*
+       * `replace`, not `href`: `href` pushes, leaving the page they just signed
+       * out of in history immediately behind the login page, one tap of Back
+       * away. `SessionRecheckOnRestore` covers the deeper entries.
+       */
+      window.location.replace(marketingLogoutUrl())
 
     } catch (error) {
       clientLogger.error({ err: error }, 'Unexpected sign-out failure — redirecting anyway')
-      window.location.href = marketingLogoutUrl()
+      window.location.replace(marketingLogoutUrl())
     }
   }, [user])
 

@@ -40,6 +40,10 @@ export { CashClientConcentrationDetector } from './CashClientConcentrationDetect
 export { ConvQuoteAcceptanceDropDetector } from './ConvQuoteAcceptanceDropDetector';
 export { WebMobileConversionGapDetector } from './WebMobileConversionGapDetector';
 export { WebPageNoConversionsDetector } from './WebPageNoConversionsDetector';
+export { RetPackageEndingDetector } from './RetPackageEndingDetector';
+export { RetRescheduleChurnDetector } from './RetRescheduleChurnDetector';
+export { CashCardsExpiringDetector } from './CashCardsExpiringDetector';
+export { PricingDiscountAbuseDetector } from './PricingDiscountAbuseDetector';
 export { WebLinkNotConvertingDetector } from './WebLinkNotConvertingDetector';
 export { WebLinkDeadDestinationDetector } from './WebLinkDeadDestinationDetector';
 export { ConvNoNextStepDetector } from './ConvNoNextStepDetector';

@@ -1,6 +1,7 @@
 // Shared types for CRM Contact Drawer components
 
 import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
+import type { BookingStatus } from '@/lib/business-os/bookingStatus';
 import type { IntakeQuestion } from '@/lib/business-os/intake/types';
 import type { CRMActivity } from '@/lib/repositories/CRMActivityRepository';
 import type { CRMPipelineStage } from '@/lib/repositories/CRMPipelineStagesRepository';
@@ -45,7 +46,7 @@ export interface Appointment {
   start_time: string | null;  // null for product purchases (no time slot)
   end_time: string | null;    // null for product purchases (no time slot)
   timezone?: string;
-  status: 'confirmed' | 'cancelled' | 'completed' | 'no_show';
+  status: BookingStatus;
   payment_status?: 'pending' | 'paid' | 'refunded';  // Payment status from booking
   payment_id?: string;        // Transaction ID for refunds
   notes?: string;
@@ -243,7 +244,7 @@ export interface BookingJourneyData {
 
   // Booking metadata
   createdAt: string;
-  status: 'confirmed' | 'cancelled' | 'completed' | 'no_show';
+  status: BookingStatus;
   notes?: string;
 }
 

@@ -80,7 +80,7 @@ const REPORTS_COLOR = '#22C58B';
 const DUE_DATE_PRESETS_BASE = PAYMENT_TERMS_PRESETS;
 
 export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, contactEmail }: Props) {
-  const { currencyCode, availableCurrencies, t, isRTL } = useLanguage();
+  const { currencyCode, businessCurrency, availableCurrencies, t, isRTL } = useLanguage();
   const { openConfiguration } = useConfigurationDialog();
 
   /*
@@ -165,23 +165,55 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
   const [activeServiceDropdown, setActiveServiceDropdown] = useState<number | null>(null);
   const [serviceSearch, setServiceSearch] = useState('');
 
-  /*
-   * The currency THIS invoice is in.
-   *
-   * Seeded from the business's default, because that is what nearly every
-   * invoice will be — but it is a property of the invoice, not of the business.
-   * A client abroad is billed in their currency, and until now the dialog
-   * printed the default as a fixed label and sent it regardless.
-   *
-   * Changing it RELABELS, it does not convert: 400 stays 400. There is no rate
-   * here and inventing one would silently restate what someone is being
-   * charged, so the numbers are left exactly as typed.
-   */
-  const [invoiceCurrency, setInvoiceCurrency] = useState<CurrencyCode>(currencyCode);
 
   const [lineItems, setLineItems] = useState<LineItem[]>([
     { description: '', quantity: 1, unit_price: 0, total: 0 }
   ]);
+
+  /*
+   * What this invoice is denominated in. Derived, never picked.
+   *
+   * The SERVICE on the invoice decides it where there is one:
+   * `scheduling_services.currency` is the authority for what a client is
+   * charged, precisely so a business in Israel can price a US client in
+   * dollars. An invoice that disagrees with the service the client booked is
+   * wrong no matter which of the two the owner meant.
+   *
+   * This dialog used to offer all four as a free choice, independent of the
+   * lines beneath it. Changing a currency RELABELS, it does not convert: pick a
+   * service priced at 300 USD, switch the invoice to GBP, and the client is
+   * billed £300 — a figure nobody typed and no rate produced. There is no FX
+   * rate anywhere in the platform to produce one.
+   *
+   * Then the business's own currency, then the display currency for a business
+   * that has not stated one. `currencyCode` is last for a reason: it is backed
+   * by localStorage, and this value is written to `payment_invoices.currency`
+   * and onto the PDF and the email the client receives. A device whose display
+   * preference said shekels used to raise a shekel invoice for a business that
+   * trades in dollars, permanently, with nothing anywhere reporting a problem.
+   *
+   * Derived rather than held in state because the old state was seeded from the
+   * business currency once and then reset to the DISPLAY currency on every
+   * reopen — so the careful seeding above was undone by the next click.
+   */
+  const { code: invoiceCurrency, fromService: currencyFromService } = useMemo(() => {
+    const serviceLine = lineItems.find(item => item.service_id);
+    const service = serviceLine
+      ? services.find(s => s.id === serviceLine.service_id)
+      : undefined;
+
+    // Guarded against a service carrying a currency this UI has no entry for,
+    // which would otherwise render an undefined symbol.
+    const svcCurrency = service?.currency as CurrencyCode | undefined;
+    if (svcCurrency && svcCurrency in availableCurrencies) {
+      return { code: svcCurrency, fromService: true };
+    }
+
+    return {
+      code: (businessCurrency ?? currencyCode) as CurrencyCode,
+      fromService: false,
+    };
+  }, [lineItems, services, businessCurrency, currencyCode, availableCurrencies]);
 
   const [formData, setFormData] = useState({
     contact_id: contactId || '',
@@ -237,7 +269,8 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
       // Reset line items
       setLineItems([{ description: '', quantity: 1, unit_price: 0, total: 0 }]);
       setDueDatePreset('net30');
-      setInvoiceCurrency(currencyCode);
+      // No currency to reset — it is derived from the service on the invoice,
+      // and clearing the line items above already returns it to the default.
 
       /*
        * Everything this form needs, asked for when it is opened.
@@ -672,33 +705,21 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
             <bdi>{formatCurrency(formData.amount)}</bdi>
           </div>
 
-          {/* Four currencies, so segments rather than another dropdown — the
-              same control the refund dialog uses for a short exclusive choice,
-              and one that shows all the options without being opened. */}
-          <div
-            className="mt-3 inline-flex gap-1 bg-[var(--v2-surface-hover)] p-1"
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-            role="radiogroup"
-            aria-label={t('invoice.currency') || 'Currency'}
-          >
-            {(Object.keys(availableCurrencies) as CurrencyCode[]).map(code => (
-              <button
-                key={code}
-                type="button"
-                role="radio"
-                aria-checked={invoiceCurrency === code}
-                onClick={() => setInvoiceCurrency(code)}
-                className={`px-2.5 py-1 text-[12px] transition-colors ${
-                  invoiceCurrency === code
-                    ? 'bg-[var(--v2-bg)] font-medium text-[var(--v2-text-primary)] shadow-sm'
-                    : 'text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
-                }`}
-                style={{ borderRadius: 'calc(var(--v2-radius-button) - 2px)' }}
-              >
-                {availableCurrencies[code].symbol} {code}
-              </button>
-            ))}
-          </div>
+          {/* Stated under the total it denominates, not offered beside it.
+              Where the amount came from a service, this says so — the owner can
+              see WHY the invoice is in dollars rather than being left to wonder
+              whether they chose it. */}
+          <p className="mt-2 text-[12px] text-[var(--v2-text-secondary)]">
+            <span className="text-[var(--v2-text-primary)]">
+              {availableCurrencies[invoiceCurrency].symbol} {invoiceCurrency}
+            </span>
+            {currencyFromService && (
+              <span className="text-[var(--v2-text-muted)]">
+                {' · '}
+                {t('invoice.currency_from_service') || 'set by the service on this invoice'}
+              </span>
+            )}
+          </p>
         </div>
 
           {/* Scrollable Content */}

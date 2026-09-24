@@ -28,7 +28,13 @@ const PaymentIntentSchema = z.object({
   /** A smart link identifies its business by short code, not subdomain. */
   user_code: z.string().optional(),
   amount: z.number().positive('Amount must be positive'),
-  currency: z.enum(['USD', 'EUR', 'GBP', 'ILS']).default('USD'),
+  /*
+   * Optional and WITHOUT a default — see the identical note in
+   * `website/checkout`. A default made "said dollars" and "said nothing"
+   * indistinguishable, so a silent caller charged dollars for a service priced
+   * in shekels.
+   */
+  currency: z.enum(['USD', 'EUR', 'GBP', 'ILS']).optional(),
   description: z.string().min(1).max(500),
   customer_email: z.string().email().optional(),
   booking_id: z.string().uuid().optional(),
@@ -145,6 +151,7 @@ export async function POST(request: NextRequest) {
      * ─────────────────────────────────────────────────────────────────────
      */
     let planTerms: PlanTerms | null = null;
+    let serviceCurrency: string | null = null;
 
     if (data.service_id) {
       const { data: planService } = await supabaseServer
@@ -154,10 +161,14 @@ export async function POST(request: NextRequest) {
         .eq('user_id', ownerId)
         .maybeSingle();
 
+      // For EVERY service, not only a plan — the installment branch already
+      // honoured it while the ordinary charge below took the request's default.
+      serviceCurrency = planService?.currency?.toUpperCase() ?? null;
+
       if (planService && isInstallmentPlan(planService)) {
         planTerms = {
           totalAmount: Number(planService.price),
-          currency: (planService.currency || data.currency).toUpperCase(),
+          currency: serviceCurrency || data.currency || 'USD',
           installmentCount: planService.installment_count ?? 1,
           frequency: (planService.installment_frequency || 'monthly') as PlanFrequency,
           firstPaymentDue: (planService.first_payment_due || 'on_booking') as 'on_booking' | 'days_after',
@@ -165,6 +176,35 @@ export async function POST(request: NextRequest) {
         };
       }
     }
+
+    /*
+     * The service, then what the caller explicitly asked for, then the
+     * business's own default, then USD. Same order and same reasoning as
+     * `website/checkout` — the two halves of one payment must not disagree
+     * about what is being charged.
+     */
+    /*
+     * Typed `string` from the outset, and the fallback branches on the SOURCES
+     * rather than on the variable.
+     *
+     * Written as `let x = a || b || null` it carried `string | null`, and the
+     * use sites sit inside the object literal handed to Stripe — past an
+     * `await`, where the narrowing the `if` established does not reach. Asking
+     * whether the two sources were absent says the same thing without ever
+     * admitting a null.
+     */
+    let currencyForCharge: string = serviceCurrency || data.currency || 'USD';
+
+    if (!serviceCurrency && !data.currency) {
+      const { data: profile } = await supabaseServer
+        .from('business_profiles')
+        .select('currency')
+        .eq('user_id', ownerId)
+        .maybeSingle();
+
+      currencyForCharge = profile?.currency?.toUpperCase() || 'USD';
+    }
+
 
     if (planTerms && stripeAccountId) {
       /*
@@ -345,7 +385,7 @@ export async function POST(request: NextRequest) {
 
     const paymentIntentData: Stripe.PaymentIntentCreateParams = {
       amount: Math.round(data.amount * 100), // Convert to cents
-      currency: data.currency.toLowerCase(),
+      currency: currencyForCharge.toLowerCase(),
       description: data.description,
       receipt_email: data.customer_email,
       automatic_payment_methods: {
@@ -439,7 +479,7 @@ export async function POST(request: NextRequest) {
       {
         paymentIntentId: paymentIntent.id,
         amount: data.amount,
-        currency: data.currency,
+        currency: currencyForCharge,
         usedConnectAccount,
         stripeAccountId: usedConnectAccount ? stripeAccountId : 'platform'
       },

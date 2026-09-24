@@ -39,11 +39,7 @@ import {
   ResultSetTooLargeError,
   type QueryResult,
 } from '@/lib/business-os/bizql/types';
-import {
-  labelForRow,
-  renderAnswer,
-  type RenderedAnswer,
-} from '@/lib/business-os/bizql/render/AnswerRenderer';
+import { renderAnswer, type RenderedAnswer } from '@/lib/business-os/bizql/render/AnswerRenderer';
 import {
   describeFilters,
   ALTERNATIVE_KINDS,
@@ -79,15 +75,24 @@ import {
 } from '@/lib/business-os/bizql/mutate/PendingFillStore';
 import { analyse } from '@/lib/business-os/bizql/analyse/AnalysisService';
 import { executeForEach } from '@/lib/business-os/bizql/mutate/ForEachExecutor';
-import { applyFrozenWrites } from '@/lib/business-os/bizql/mutate/applyWrites';
+import {
+  applyClaimedMutate,
+  applyFrozenWrites,
+} from '@/lib/business-os/bizql/mutate/applyWrites';
 import { resolveEmailBranding } from '@/lib/email/branding';
 import {
-  hasDescribedReferences,
-  needsTargetResolution,
-  resolveDescribedReferences,
-  resolveMutateTarget,
-  withResolvedTarget,
-} from '@/lib/business-os/bizql/mutate/resolveTarget';
+  pinChoice,
+  resolveWrites,
+  type ResolvedWrite,
+  type StepNames,
+  type WriteResolution,
+} from '@/lib/business-os/bizql/mutate/resolveWrites';
+import {
+  getPendingChoiceStore,
+  readChoiceReply,
+  shouldGiveUp,
+  type PendingChoice,
+} from '@/lib/business-os/bizql/mutate/PendingChoiceStore';
 import type {
   FindQuery,
   FindResult,
@@ -258,6 +263,21 @@ const RequestSchema = z.object({
       label: z.string().max(120).optional(),
     })
     .optional(),
+  /**
+   * A tap on one of the rows offered in answer to "which one?".
+   *
+   * Tiny for the same reason `alternative` is: the client names WHICH row, never
+   * what to do with it. The write it pins into is the one this server parked for
+   * this user, and `rowId` is accepted only if it is one of the candidate ids
+   * that server showed — so a posted id cannot reach a row the user was never
+   * offered.
+   */
+  pick: z
+    .object({
+      choiceId: z.string().uuid(),
+      rowId: z.string().min(1).max(64),
+    })
+    .optional(),
 });
 
 interface ChatV4Response {
@@ -295,7 +315,22 @@ interface ChatV4Response {
    * dictionary; a message written here would need one string per language per
    * outcome, which is the pattern this stack replaced.
    */
-  choice?: { kind: 'none' | 'ambiguous'; entity: string; total: number };
+  choice?: {
+    kind: 'none' | 'ambiguous';
+    entity: string;
+    total: number;
+    /**
+     * Present ONLY when the write was parked and a pick will resume it.
+     *
+     * Its absence is meaningful: it says this question costs the write, which is
+     * what `kind: 'none'` still means — there is nothing to pick from.
+     */
+    choiceId?: string;
+    /** Positionally aligned with `answer.rows`. The only ids a pick may name. */
+    options?: Array<{ id: string; label: string }>;
+    /** True when this is a re-ask after a reply that matched no candidate. */
+    retry?: boolean;
+  };
   /**
    * How much of today's allowance is left.
    *
@@ -401,7 +436,7 @@ async function handleChatTurn(
         { status: 400 }
       );
     }
-    const { message, alternative } = parsed.data;
+    const { message, alternative, pick } = parsed.data;
 
     // 3. Load presentation preferences. Language, currency and timezone drive
     //    the renderer, so no formatting is hardcoded per locale.
@@ -456,6 +491,529 @@ async function handleChatTurn(
     };
 
     const confirmations = getConfirmationStore();
+    const choices = getPendingChoiceStore();
+
+    /**
+     * Ask which row was meant, and park the write while the user answers.
+     *
+     * Both halves matter. The FACTS go to the client, which owns the wording —
+     * unchanged, and the reason there is still no sentence written here. What is
+     * new is that the write itself is kept: before this, the resolved command was
+     * dropped and the user's "the second one" was planned from scratch as a fresh
+     * request, which is how answering a question could change what it was a
+     * question about.
+     *
+     * `none` is deliberately NOT parked. There are no candidates to pick from, so
+     * parking would leave the user inside a question they cannot answer, and the
+     * store refuses it anyway.
+     */
+    const askChoice = async (
+      resolution: Extract<WriteResolution, { status: 'choice' }>,
+      args: {
+        sources: FindQuery[];
+        answerText?: string;
+        utterance: string;
+        debug?: ChatV4Response['debug'];
+        /** Set when this is a re-ask after a reply that matched no candidate. */
+        retry?: boolean;
+        attempts?: number;
+        onAsked?: (question: string) => Promise<void>;
+      }
+    ): Promise<NextResponse<ChatV4Response>> => {
+      const rendered = renderAnswer(
+        undefined,
+        [{ id: 'r', op: 'find', entity: resolution.entity } as FindQuery],
+        [
+          {
+            op: 'find',
+            entity: resolution.entity,
+            rows: resolution.rows,
+            truncated: false,
+          } as FindResult,
+        ],
+        { language, timezone, currency }
+      );
+
+      let parked: PendingChoice | undefined;
+
+      if (resolution.kind === 'ambiguous' && resolution.candidates.length > 0) {
+        parked = await choices.park({
+          userId: user.id,
+          entity: resolution.entity,
+          kind: resolution.kind,
+          total: resolution.total,
+          candidates: resolution.candidates,
+          slot: resolution.slot,
+          steps: resolution.steps,
+          names: resolution.names,
+          sources: args.sources,
+          answerText: args.answerText,
+          utterance: args.utterance,
+          language,
+          attempts: args.attempts,
+        });
+      }
+
+      // Recorded for the same reason the `clarification` branch does it: the
+      // transcript should show a question was asked. The parked choice above is
+      // what actually resolves the next turn — this is only the record.
+      await args.onAsked?.(`asked which ${resolution.entity}`);
+
+      return NextResponse.json({
+        success: true,
+        answer: { ...rendered, text: '' },
+        choice: {
+          kind: resolution.kind,
+          entity: resolution.entity,
+          total: resolution.total,
+          choiceId: parked?.choiceId,
+          options: parked?.candidates.map((c) => ({ id: c.id, label: c.label })),
+          retry: args.retry,
+        },
+        budget: budgetPayload,
+        debug: args.debug,
+      });
+    };
+
+    /**
+     * Preview a fully-resolved write, then park it for a yes or apply it.
+     *
+     * Called from two places that must behave identically: the turn that planned
+     * the write, and the turn that finished resolving it after the user said
+     * which row they meant. Anything decided here — the confirmation policy, the
+     * missing-field question, the fan-out freeze — has to be the same on both, or
+     * a write would be safer depending only on whether it needed a question.
+     *
+     * Takes `sources` and `answerText` rather than reading them off a plan: a
+     * resume turn never had one.
+     */
+    const completeWrites = async (args: {
+      /** The planner's own steps — the confirmation policy is read off these. */
+      writes: Array<MutateQuery | ForEachQuery>;
+      resolved: ResolvedWrite[];
+      /** The find steps a `for_each.over` names. */
+      sources: FindQuery[];
+      answerText?: string;
+      utterance: string;
+      debug?: ChatV4Response['debug'];
+      onAsked?: (question: string) => Promise<void>;
+      /**
+       * The approval this write belongs to, when there is one — a parked choice
+       * the user just answered.
+       *
+       * Its presence is what makes the direct-apply branch deduplicable. On the
+       * turn that PLANNED the write there is no such id and deliberately no
+       * substitute: the only per-request id is the turn id, which differs
+       * between two submissions and so would protect nothing, and keying on the
+       * message would stop a user legitimately saying "mark it done" twice.
+       */
+      planId?: string;
+    }): Promise<NextResponse<ChatV4Response>> => {
+      const previews: string[] = [];
+      const frozenRows: Record<string, QueryRow[]> = {};
+
+      for (const { step, targetName, referenceNames } of args.resolved) {
+        if (step.op === 'for_each') {
+          // Resolve the target rows NOW and freeze them. The user must confirm a
+          // concrete set of people, not a query that might match a different set
+          // by the time they say yes.
+          const source = args.sources.find((s) => s.id === step.over);
+          if (!source) {
+            throw new BizQLValidationError([
+              `for_each 'over' must reference an earlier find step; '${step.over}' is not one.`,
+            ]);
+          }
+
+          const rows = await runBusinessQuery(source, {
+            userId: user.id,
+            timezone,
+            consumer: 'chat',
+          });
+          if (rows.op !== 'find') continue;
+
+          frozenRows[step.id ?? ''] = rows.rows;
+
+          const preview = await executeForEach(
+            step,
+            rows.rows,
+            { userId: user.id, timezone, consumer: 'chat' },
+            { planId: 'preview', dryRun: true, language }
+          );
+
+          previews.push(
+            recipientSummary(
+              preview.attempted,
+              preview.items.map((i) => i.target ?? i.id),
+              language
+            )
+          );
+          continue;
+        }
+
+        // Dry run validates and describes without touching anything.
+        try {
+          const result = await executeMutate(
+            step,
+            { userId: user.id, timezone, consumer: 'chat' },
+            { dryRun: true, language, targetName, referenceNames, utterance: args.utterance }
+          );
+          previews.push(result.preview ?? `${step.entity}.${step.action}`);
+        } catch (err) {
+          // "add a new service" is a reasonable thing to say — it just does not
+          // yet contain a name or a duration. Asking is the correct outcome, and
+          // deciding it here rather than in the prompt is what makes it happen
+          // every time instead of most of the time.
+          if (!(err instanceof MissingFieldsError)) throw err;
+
+          // Labelled from the catalog, in the user's language, so the client
+          // needs one framing sentence rather than a string per field.
+          const wanted = describeFields(err.entity, err.fields, language);
+
+          /*
+           * Park the write. This branch used to return `needs` and keep NOTHING
+           * — not the question, not even the turn — which is the whole bug: the
+           * user's answer came back as a fresh request and was planned instead
+           * of filled. See PendingFillStore for why context in the prompt was
+           * not enough to fix it.
+           *
+           * `step` is the right thing to park rather than the planner's original:
+           * its target and references are already resolved, so finishing the
+           * write later cannot re-resolve "דויד המלך" onto a different contact.
+           */
+          if (step.op === 'mutate') {
+            await getPendingFillStore().park({
+              userId: user.id,
+              step,
+              remaining: wanted,
+              utterance: args.utterance,
+              language,
+              targetName,
+              referenceNames,
+            });
+          }
+
+          // Recorded for the same reason the `clarification` branch does it:
+          // the transcript should show that a question was asked. The fill above
+          // is what actually resolves the next turn.
+          await args.onAsked?.(`asked for: ${wanted.map((f) => f.label).join(', ')}`);
+
+          return NextResponse.json({
+            success: true,
+            answer: {
+              text: '',
+              rows: [],
+              entity: err.entity,
+              truncated: false,
+              approximate: false,
+              collapsed: 0,
+            },
+            needs: {
+              entity: err.entity,
+              action: err.action,
+              fields: wanted,
+            },
+            budget: budgetPayload,
+            debug: args.debug,
+          });
+        }
+      }
+
+      // Fan-out ALWAYS confirms, whatever the action's own policy says. Acting
+      // on many rows at once is categorically different from acting on one.
+      const needsConfirmation =
+        args.writes.some((s) => s.op === 'for_each') ||
+        args.writes.some((s) => s.op === 'mutate' && requiresConfirmation(s));
+
+      if (needsConfirmation) {
+        const parked = await confirmations.park({
+          userId: user.id,
+          steps: args.resolved.map((r) => r.step),
+          preview: previews,
+          utterance: args.utterance,
+          language,
+          frozenRows,
+          // Positionally aligned with `steps` above — same array, same order.
+          names: args.resolved.map((r) => ({
+            targetName: r.targetName,
+            referenceNames: r.referenceNames,
+          })),
+        });
+
+        return NextResponse.json({
+          success: true,
+          confirmation: {
+            id: parked.confirmationId,
+            // Empty rather than an English fallback: the client asks in the
+            // reader's language. A hardcoded sentence here is how a Hebrew
+            // conversation ended with "Confirm this change?" in it.
+            message: args.answerText || '',
+            preview: previews,
+            canAttach: acceptsAttachment(
+              args.writes as Array<{ entity: string; action: string }>
+            ),
+          },
+          budget: budgetPayload,
+          debug: args.debug,
+        });
+      }
+
+      // Low-risk and explicitly targeted: apply directly. Only single mutates
+      // reach here — fan-out always went through confirmation above.
+      //
+      // Iterates the RESOLVED writes, not the originals. Iterating `writes` here
+      // would hand the executor a target it had already refused to accept
+      // unresolved, so every low-risk update naming its row — "change Yael's
+      // phone number" — would have thrown after the preview had just succeeded.
+      const applied: string[] = [];
+      const actionResults: QueryResult[] = [];
+      const actionSteps: Array<{ id?: string }> = [];
+
+      for (const [index, { step, targetName, referenceNames }] of args.resolved.entries()) {
+        if (step.op === 'for_each') continue;
+
+        const ctx = { userId: user.id, timezone, consumer: 'chat' as const };
+        const options = { language, targetName, referenceNames, utterance: args.utterance };
+
+        /*
+         * Claimed when the write answers something the user approved, so a
+         * double-tapped chip cannot apply it twice. Unclaimed on the planning
+         * turn, where there is no id that two submissions would share — see
+         * `planId` above.
+         *
+         * A READ action is never claimed. It changes nothing, so there is no
+         * duplicate to prevent, and claiming one would make asking the same
+         * question twice answer only the first time.
+         */
+        const isRead = CATALOG.entities[step.entity]?.actions?.[step.action]?.risk === 'read';
+
+        if (args.planId && !isRead) {
+          const claimed = await applyClaimedMutate({
+            step,
+            ctx,
+            planId: args.planId,
+            stepId: step.id ?? `s${index}`,
+            options,
+          });
+          applied.push(claimed.preview);
+          actionSteps.push({ id: step.id });
+          continue;
+        }
+
+        const result = await executeMutate(step, ctx, options);
+        applied.push(result.preview ?? `${step.entity}.${step.action}`);
+        actionResults.push(result as QueryResult);
+        actionSteps.push({ id: step.id });
+      }
+
+      /*
+       * A READ action answers a question; it does not confirm a change.
+       *
+       * Everything here previously ended as "בוצע — <the parameters it was
+       * given>", which for `open_time` meant the user asked how many hours were
+       * free tomorrow and was told, in effect, that a date had been supplied.
+       * The figures were fetched and then thrown away.
+       *
+       * So when nothing was actually changed, the planner's own sentence is
+       * rendered against the action's result — `{s1.result.freeMinutes}` and its
+       * siblings, declared in the catalog under `returns`. Falls back to the
+       * confirmation line if the sentence does not resolve, which is the same
+       * rule every other answer follows.
+       */
+      const isReadOnly = args.resolved.every(
+        ({ step }) =>
+          step.op === 'mutate' &&
+          CATALOG.entities[step.entity]?.actions?.[step.action]?.risk === 'read'
+      );
+
+      /*
+       * Audited, like the confirmed path at the top of this file.
+       *
+       * This branch applied records with no audit entry at all, which was
+       * survivable only because a write that reaches it is low-risk AND was
+       * named outright. Neither is a reason for it to be invisible: "who
+       * changed this, and when" is a question about the record, not about how
+       * dangerous the change was thought to be. Skipped for a read action,
+       * which changed nothing to ask about.
+       */
+      if (!isReadOnly && applied.length > 0) {
+        auditTrail
+          .log({
+            action: 'BUSINESS_CHAT_WRITE',
+            userId: user.id,
+            entityType: 'system',
+            entityId: turnId,
+            resourceName: args.resolved
+              .map((r) => `${r.step.entity}.${r.step.action}`)
+              .join(','),
+            severity: 'warning',
+            request,
+          })
+          .catch((err) => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
+      }
+
+      if (isReadOnly && args.answerText) {
+        const rendered = renderAnswer(args.answerText, actionSteps, actionResults, {
+          language,
+          currency,
+          timezone,
+        });
+
+        if (rendered.text) {
+          return NextResponse.json({
+            success: true,
+            answer: rendered,
+            budget: budgetPayload,
+            debug: args.debug,
+          });
+        }
+      }
+
+      return NextResponse.json({
+        success: true,
+        answer: {
+          text: `${writeDone(language)} — ${applied.join('; ')}.`,
+          rows: [],
+          truncated: false,
+          approximate: false,
+          collapsed: 0,
+        },
+        budget: budgetPayload,
+        debug: args.debug,
+      });
+    };
+
+    /*
+     * 4a-0. A question about WHICH ROW takes precedence over everything, for the
+     *       same reason a half-filled write does: mid-write, the next message is
+     *       an answer.
+     *
+     * Before this branch existed, the resolved write was thrown away with the
+     * question and "the second one" was planned as a brand new request. That is
+     * the same class of bug PendingFillStore describes one field over, and it
+     * cost more here: the re-plan could land on a different action or a different
+     * value, and for any action whose risk is low enough to skip the confirmation
+     * card, apply it without the user seeing what changed.
+     *
+     * Ordered before the fill and the confirmation because the three are stages
+     * of ONE write — choice, then fill, then yes — and `command_sessions` holds
+     * exactly one active session per user, so only one of them can ever be set.
+     */
+    const pendingChoice = await choices.take(user.id);
+
+    if (pendingChoice) {
+      const reply = isCancelMessage(message)
+        ? ({ kind: 'cancel' } as const)
+        : pick && pick.choiceId === pendingChoice.choiceId
+          ? // A tap. The id is checked against the list the server itself showed,
+            // so a posted row id cannot reach a row the user was never offered.
+            pendingChoice.candidates.some((c) => c.id === pick.rowId)
+            ? ({ kind: 'pick', id: pick.rowId } as const)
+            : ({ kind: 'none' } as const)
+          : readChoiceReply(message, pendingChoice.candidates);
+
+      if (reply.kind === 'cancel') {
+        await choices.clear(user.id);
+        return NextResponse.json({
+          success: true,
+          answer: {
+            text: writeCancelled(language),
+            rows: [],
+            truncated: false,
+            approximate: false,
+            collapsed: 0,
+          },
+          budget: budgetPayload,
+        });
+      }
+
+      if (reply.kind === 'none') {
+        /*
+         * Neither a row nor a cancellation.
+         *
+         * Re-ask once with the SAME candidates — never a fresh query, because
+         * the rows must not move under someone who is halfway through choosing
+         * between them — then let go. Staying parked forever traps a user who
+         * changed the subject; dropping out immediately discards the write on
+         * any phrasing the matcher merely failed to parse, which is the bug
+         * this branch exists to remove. Two turns is the compromise.
+         */
+        if (shouldGiveUp(pendingChoice.attempts)) {
+          await choices.clear(user.id);
+          requestLogger.info(
+            { userId: user.id, choiceId: pendingChoice.choiceId },
+            'Choice abandoned after two unmatched replies; planning the message instead'
+          );
+        } else {
+          return askChoice(
+            {
+              status: 'choice',
+              kind: pendingChoice.kind,
+              entity: pendingChoice.entity,
+              total: pendingChoice.total,
+              rows: [],
+              candidates: pendingChoice.candidates,
+              slot: pendingChoice.slot,
+              steps: pendingChoice.steps,
+              names: pendingChoice.names,
+            },
+            {
+              sources: pendingChoice.sources,
+              answerText: pendingChoice.answerText,
+              utterance: pendingChoice.utterance,
+              retry: true,
+              attempts: pendingChoice.attempts + 1,
+            }
+          );
+        }
+      }
+
+      if (reply.kind === 'pick') {
+        // Cleared BEFORE anything is applied, so a double-tapped chip finds
+        // nothing parked rather than resolving the same write twice. That is a
+        // mitigation, not idempotency — a single mutate still takes no claim in
+        // the action log.
+        await choices.clear(user.id);
+
+        const pinned = pinChoice(pendingChoice.steps, pendingChoice.slot, reply.id);
+        const picked = pendingChoice.candidates.find((c) => c.id === reply.id);
+
+        // The label the user chose is part of what they asked for, and the
+        // groundedness check downstream reads the utterance to decide whether a
+        // required text value was invented. Accumulated for the same reason a
+        // fill accumulates it.
+        const utterance = picked ? `${pendingChoice.utterance} ${picked.label}`.trim()
+          : pendingChoice.utterance;
+
+        const resumed = await resolveWrites({
+          steps: pinned,
+          ctx: { userId: user.id, timezone, consumer: 'chat' },
+          language,
+          currency,
+          names: pendingChoice.names as StepNames[],
+        });
+
+        // Another slot was ambiguous too — "which David" and then "which of his
+        // meetings". Asked one at a time, each carrying everything pinned so far.
+        if (resumed.status === 'choice') {
+          return askChoice(resumed, {
+            sources: pendingChoice.sources,
+            answerText: pendingChoice.answerText,
+            utterance,
+          });
+        }
+
+        return completeWrites({
+          writes: pinned as Array<MutateQuery | ForEachQuery>,
+          resolved: resumed.writes,
+          sources: pendingChoice.sources,
+          answerText: pendingChoice.answerText,
+          utterance,
+          // The question the user just answered. Two taps on the same chip carry
+          // the same id, which is what makes them one write rather than two.
+          planId: pendingChoice.choiceId,
+        });
+      }
+    }
 
     /*
      * 4a. A write already under way takes precedence over EVERYTHING, planning
@@ -624,21 +1182,45 @@ async function handleChatTurn(
         }
 
         await fills.clear(user.id);
-        const result = await executeMutate(
-          filled,
-          { userId: user.id, timezone, consumer: 'chat' },
-          {
+        // Claimed against the fill the user just finished: two submissions of
+        // the last answer carry the same id, so the write happens once.
+        const result = await applyClaimedMutate({
+          step: filled,
+          ctx: { userId: user.id, timezone, consumer: 'chat' },
+          planId: inProgress.fillId,
+          stepId: filled.id ?? 's0',
+          options: {
             language,
             targetName: inProgress.targetName,
             referenceNames: inProgress.referenceNames,
             utterance,
-          }
-        );
+          },
+        });
+
+        /*
+         * Audited, like the confirmed path below.
+         *
+         * A write finished by answering questions is still a write, and this
+         * branch recorded nothing — so the only chat writes with an audit trail
+         * were the ones that happened to need a yes. Which entry exists should
+         * not depend on how the user got there.
+         */
+        auditTrail
+          .log({
+            action: 'BUSINESS_CHAT_WRITE',
+            userId: user.id,
+            entityType: 'system',
+            entityId: turnId,
+            resourceName: `${filled.entity}.${filled.action}`,
+            severity: 'warning',
+            request,
+          })
+          .catch((err) => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
 
         return NextResponse.json({
           success: true,
           answer: {
-            text: `${writeDone(language)} — ${result.preview ?? `${filled.entity}.${filled.action}`}.`,
+            text: `${writeDone(language)} — ${result.preview}.`,
             rows: [],
             truncated: false,
             approximate: false,
@@ -1024,336 +1606,44 @@ async function handleChatTurn(
     );
 
     if (writes.length > 0) {
-      const previews: string[] = [];
-      const frozenRows: Record<string, QueryRow[]> = {};
-
-      // Resolve any described target ("invoice INV-00002") to a concrete row
-      // FIRST, so everything downstream — preview, confirmation card, execution —
-      // works on a literal id the user was shown.
-      //
-      // Ambiguity is a question, never a guess: two matching invoices means we
-      // ask which, not that we pick one or write to both.
-      // Each entry carries the step AND the human names resolved for it, so the
-      // confirmation card can read "mark as paid: INV-00002 — contact: אופיר עמר"
-      // rather than naming uuids the user has no way to check.
-      interface ResolvedWrite {
-        step: MutateQuery | ForEachQuery;
-        targetName?: string;
-        referenceNames?: Record<string, string>;
-      }
-
-      const resolved: ResolvedWrite[] = [];
-
-      const resolveCtx = { userId: user.id, timezone, consumer: 'chat' as const };
-
-      const askAbout = (
-        kind: 'none' | 'ambiguous',
-        entityKey: string,
-        total: number,
-        candidates: QueryRow[]
-      ) => {
-        const rendered = renderAnswer(
-          undefined,
-          [{ id: 'r', op: 'find', entity: entityKey } as FindQuery],
-          [
-            {
-              op: 'find',
-              entity: entityKey,
-              rows: candidates,
-              truncated: false,
-            } as FindResult,
-          ],
-          { language, timezone, currency }
-        );
-
-        return NextResponse.json({
-          success: true,
-          answer: { ...rendered, text: '' },
-          choice: { kind, entity: entityKey, total },
-          budget: budgetPayload,
-        debug,
-        });
-      };
-
-      for (const step of writes) {
-        if (step.op !== 'mutate') {
-          resolved.push({ step });
-          continue;
-        }
-
-        let current: MutateQuery = step;
-        // Names, not ids, for the confirmation card the user actually reads.
-        let targetName: string | undefined;
-        let referenceNames: Record<string, string> | undefined;
-
-        // A described foreign key — "an invoice FOR Ofir" — resolves the same way
-        // a target does, and for the same reason: the planner has never seen a
-        // row id and must not invent one.
-        if (hasDescribedReferences(current)) {
-          const refs = await resolveDescribedReferences(current, resolveCtx, language);
-
-          if (refs.status !== 'resolved') {
-            return askAbout(
-              refs.status,
-              refs.entity,
-              refs.status === 'ambiguous' ? refs.total : 0,
-              refs.status === 'ambiguous' ? refs.rows : []
-            );
-          }
-
-          current = { ...current, data: refs.data as MutateQuery['data'] };
-          referenceNames = refs.labels;
-        }
-
-        if (!needsTargetResolution(current)) {
-          resolved.push({ step: current, referenceNames });
-          continue;
-        }
-
-        const outcome = await resolveMutateTarget(current, {
-          userId: user.id,
-          timezone,
-          consumer: 'chat',
-        });
-
-        // Neither outcome below writes prose. The server says WHAT happened —
-        // nothing matched, or several did — and the client phrases it from its
-        // own translation dictionary. A message written here would need one
-        // string per language per outcome, which is the pattern this stack
-        // replaced.
-        if (outcome.status !== 'resolved') {
-          return askAbout(
-            outcome.status,
-            step.entity,
-            outcome.status === 'ambiguous' ? outcome.total : 0,
-            outcome.status === 'ambiguous' ? outcome.rows : []
-          );
-        }
-
-        targetName = labelForRow(step.entity, outcome.row, { language, timezone, currency });
-        resolved.push({
-          step: withResolvedTarget(current, outcome.id),
-          targetName,
-          referenceNames,
-        });
-      }
-
-      for (const { step, targetName, referenceNames } of resolved) {
-        if (step.op === 'for_each') {
-          // Resolve the target rows NOW and freeze them. The user must confirm a
-          // concrete set of people, not a query that might match a different set
-          // by the time they say yes.
-          const source = plan.steps.find((s) => s.id === step.over);
-          if (!source || source.op !== 'find') {
-            throw new BizQLValidationError([
-              `for_each 'over' must reference an earlier find step; '${step.over}' is not one.`,
-            ]);
-          }
-
-          const rows = await runBusinessQuery(source, {
-            userId: user.id,
-            timezone,
-            consumer: 'chat',
-          });
-          if (rows.op !== 'find') continue;
-
-          frozenRows[step.id ?? ''] = rows.rows;
-
-          const preview = await executeForEach(
-            step,
-            rows.rows,
-            { userId: user.id, timezone, consumer: 'chat' },
-            { planId: 'preview', dryRun: true, language }
-          );
-
-          previews.push(
-            recipientSummary(
-              preview.attempted,
-              preview.items.map((i) => i.target ?? i.id),
-              language
-            )
-          );
-          continue;
-        }
-
-        // Dry run validates and describes without touching anything.
-        try {
-          const result = await executeMutate(
-            step,
-            { userId: user.id, timezone, consumer: 'chat' },
-            { dryRun: true, language, targetName, referenceNames, utterance: message }
-          );
-          previews.push(result.preview ?? `${step.entity}.${step.action}`);
-        } catch (err) {
-          // "add a new service" is a reasonable thing to say — it just does not
-          // yet contain a name or a duration. Asking is the correct outcome, and
-          // deciding it here rather than in the prompt is what makes it happen
-          // every time instead of most of the time.
-          if (!(err instanceof MissingFieldsError)) throw err;
-
-          // Labelled from the catalog, in the user's language, so the client
-          // needs one framing sentence rather than a string per field.
-          const wanted = describeFields(err.entity, err.fields, language);
-
-          /*
-           * Park the write. This branch used to return `needs` and keep NOTHING
-           * — not the question, not even the turn — which is the whole bug: the
-           * user's answer came back as a fresh request and was planned instead
-           * of filled. See PendingFillStore for why context in the prompt was
-           * not enough to fix it.
-           *
-           * `step` is the right thing to park rather than the planner's original:
-           * its target and references are already resolved, so finishing the
-           * write later cannot re-resolve "דויד המלך" onto a different contact.
-           */
-          if (step.op === 'mutate') {
-            await fills.park({
-              userId: user.id,
-              step,
-              remaining: wanted,
-              utterance: message,
-              language,
-              targetName,
-              referenceNames,
-            });
-          }
-
-          // Recorded for the same reason the `clarification` branch does it:
-          // the transcript should show that a question was asked. The fill above
-          // is what actually resolves the next turn.
-          await remember(`asked for: ${wanted.map((f) => f.label).join(', ')}`, {
-            pendingQuestion: wanted.map((f) => f.label).join(', '),
-          });
-
-          return NextResponse.json({
-            success: true,
-            answer: {
-              text: '',
-              rows: [],
-              entity: err.entity,
-              truncated: false,
-              approximate: false,
-              collapsed: 0,
-            },
-            needs: {
-              entity: err.entity,
-              action: err.action,
-              fields: wanted,
-            },
-            budget: budgetPayload,
-        debug,
-          });
-        }
-      }
-
-      // Fan-out ALWAYS confirms, whatever the action's own policy says. Acting
-      // on many rows at once is categorically different from acting on one.
-      const needsConfirmation =
-        writes.some((s) => s.op === 'for_each') ||
-        writes.some((s) => s.op === 'mutate' && requiresConfirmation(s));
-
-      if (needsConfirmation) {
-        const parked = await confirmations.park({
-          userId: user.id,
-          steps: resolved.map((r) => r.step),
-          preview: previews,
-          utterance: message,
-          language,
-          frozenRows,
-          // Positionally aligned with `steps` above — same array, same order.
-          names: resolved.map((r) => ({
-            targetName: r.targetName,
-            referenceNames: r.referenceNames,
-          })),
-        });
-
-        return NextResponse.json({
-          success: true,
-          confirmation: {
-            id: parked.confirmationId,
-            // Empty rather than an English fallback: the client asks in the
-            // reader's language. A hardcoded sentence here is how a Hebrew
-            // conversation ended with "Confirm this change?" in it.
-            message: plan.answer?.text || '',
-            preview: previews,
-            canAttach: acceptsAttachment(writes as Array<{ entity: string; action: string }>),
-          },
-          budget: budgetPayload,
-        debug,
-        });
-      }
-
-      // Low-risk and explicitly targeted: apply directly. Only single mutates
-      // reach here — fan-out always went through confirmation above.
-      //
-      // Iterates the RESOLVED writes, not the originals. Iterating `writes` here
-      // would hand the executor a target it had already refused to accept
-      // unresolved, so every low-risk update naming its row — "change Yael's
-      // phone number" — would have thrown after the preview had just succeeded.
-      const applied: string[] = [];
-      const actionResults: QueryResult[] = [];
-      const actionSteps: Array<{ id?: string }> = [];
-
-      for (const { step, targetName, referenceNames } of resolved) {
-        if (step.op === 'for_each') continue;
-        const result = await executeMutate(
-          step,
-          { userId: user.id, timezone, consumer: 'chat' },
-          { language, targetName, referenceNames, utterance: message }
-        );
-        applied.push(result.preview ?? `${step.entity}.${step.action}`);
-        actionResults.push(result as QueryResult);
-        actionSteps.push({ id: step.id });
-      }
-
       /*
-       * A READ action answers a question; it does not confirm a change.
+       * Resolve any described row FIRST — "invoice INV-00002", "for David" — so
+       * everything downstream works on a literal id the user was shown.
        *
-       * Everything here previously ended as "בוצע — <the parameters it was
-       * given>", which for `open_time` meant the user asked how many hours were
-       * free tomorrow and was told, in effect, that a date had been supplied.
-       * The figures were fetched and then thrown away.
-       *
-       * So when nothing was actually changed, the planner's own sentence is
-       * rendered against the action's result — `{s1.result.freeMinutes}` and its
-       * siblings, declared in the catalog under `returns`. Falls back to the
-       * confirmation line if the sentence does not resolve, which is the same
-       * rule every other answer follows.
+       * Ambiguity is a question, never a guess: two matching invoices means we
+       * ask which, not that we pick one or write to both. What changed is that
+       * the question now CARRIES the write, so answering it finishes this
+       * command instead of starting a new one.
        */
-      const isReadOnly = resolved.every(
-        ({ step }) =>
-          step.op === 'mutate' &&
-          CATALOG.entities[step.entity]?.actions?.[step.action]?.risk === 'read'
-      );
+      const resolution = await resolveWrites({
+        steps: writes,
+        ctx: { userId: user.id, timezone, consumer: 'chat' },
+        language,
+        currency,
+      });
 
-      if (isReadOnly && plan.answer?.text) {
-        const rendered = renderAnswer(plan.answer.text, actionSteps, actionResults, {
-          language,
-          currency,
-          timezone,
+      // Carried rather than looked up later: a resume turn has no plan to find
+      // a fan-out's `over` step in.
+      const sources = plan.steps.filter((s): s is FindQuery => s.op === 'find');
+
+      if (resolution.status === 'choice') {
+        return askChoice(resolution, {
+          sources,
+          answerText: plan.answer?.text,
+          utterance: message,
+          debug,
+          onAsked: remember,
         });
-
-        if (rendered.text) {
-          return NextResponse.json({
-            success: true,
-            answer: rendered,
-            budget: budgetPayload,
-            debug,
-          });
-        }
       }
 
-      return NextResponse.json({
-        success: true,
-        answer: {
-          text: `${writeDone(language)} — ${applied.join('; ')}.`,
-          rows: [],
-          truncated: false,
-          approximate: false,
-          collapsed: 0,
-        },
-        budget: budgetPayload,
+      return completeWrites({
+        writes,
+        resolved: resolution.writes,
+        sources,
+        answerText: plan.answer?.text,
+        utterance: message,
         debug,
+        onAsked: remember,
       });
     }
 

@@ -9,6 +9,7 @@
  */
 
 import { createLogger } from '@/lib/logger';
+import type { BookingStatus } from '@/lib/business-os/bookingStatus';
 import { z } from 'zod';
 import { crmContactRepository, type CRMContactListOptions } from '@/lib/repositories/CRMContactRepository';
 import { crmTaskRepository } from '@/lib/repositories/CRMTaskRepository';
@@ -1887,13 +1888,88 @@ export class SafeExecutionLayer {
       }
       case 'update': {
         if (!id) return { success: false, error: 'ID required for update' };
-        const result = await schedulingServiceRepository.update(id, this.userId, {
-          service_name: payload?.service_name as string,
-          description: payload?.description as string,
-          duration_minutes: payload?.duration_minutes as number,
-          price: payload?.price as number,
-          is_active: payload?.is_active as boolean
+
+        /*
+         * Publishing goes to `publish()`, not through a field update.
+         *
+         * The `publish` capability declares `{ is_active: true, status:
+         * 'active' }`, but `status` was absent from the field list below, so it
+         * was dropped in transit and publishing only ever set `is_active`. A
+         * service needs BOTH to be bookable (`SchedulingServiceRepository
+         * .BOOKABLE`), so the action reported success while leaving the service
+         * on `draft` — the assistant told the owner it had published something
+         * no client could see.
+         *
+         * Fixed by routing rather than by adding `status` to the list. That
+         * method owns the `.eq('status','draft')` guard, the already-published
+         * case and the refusal to silently un-pause; `update()` now declines
+         * this transition outright, so forwarding the field would have turned a
+         * silent no-op into a hard error instead of into a publish.
+         *
+         * The capability cannot simply declare a `publish` operation: the
+         * mutation schema's `operation` enum is create|update|delete, and
+         * widening it changes the tool contract the model is given.
+         */
+        if (payload?.status === 'active') {
+          /*
+           * Which path depends on where the service actually is, because the
+           * two transitions are different operations with different guards:
+           *
+           *   draft    -> publish()  : first time out, needs the draft guard
+           *   inactive -> update()   : un-pausing, which publish() deliberately
+           *                            refuses ("refuses to un-pause an
+           *                            inactive service")
+           *
+           * Sending everything to publish() would leave every paused service
+           * stranded; sending everything to update() would put a draft live
+           * past the guard. Reading the row first is what tells them apart.
+           */
+          const current = await schedulingServiceRepository.findById(id, this.userId);
+          if (current.error || !current.data) {
+            return { success: false, error: current.error?.message || 'Service not found' };
+          }
+
+          if (current.data.status === 'draft') {
+            const result = await schedulingServiceRepository.publish(id, this.userId);
+            return result.error
+              ? { success: false, error: result.error.message }
+              : { success: true, data: result.data };
+          }
+
+          const result = await schedulingServiceRepository.update(id, this.userId, {
+            is_active: true,
+            status: 'active',
+          } as Parameters<typeof schedulingServiceRepository.update>[2]);
+          return result.error
+            ? { success: false, error: result.error.message }
+            : { success: true, data: result.data };
+        }
+
+        /*
+         * Forward only the keys the caller actually sent. The five below used
+         * to go out wholesale, so a `deactivate` — whose payload is nothing but
+         * `is_active: false` — also carried `service_name: undefined` and three
+         * more beside it. Harmless while serialisation drops undefined, and one
+         * behavioural change away from blanking a service's name.
+         */
+        const UPDATABLE = [
+          'service_name',
+          'description',
+          'duration_minutes',
+          'price',
+          'is_active',
+        ] as const;
+
+        const updates: Record<string, unknown> = {};
+        UPDATABLE.forEach(key => {
+          if (payload?.[key] !== undefined) updates[key] = payload[key];
         });
+
+        const result = await schedulingServiceRepository.update(
+          id,
+          this.userId,
+          updates as Parameters<typeof schedulingServiceRepository.update>[2]
+        );
         return result.error
           ? { success: false, error: result.error.message }
           : { success: true, data: result.data };
@@ -1939,7 +2015,7 @@ export class SafeExecutionLayer {
         if (!id) return { success: false, error: 'ID required for update' };
         // Build update object with only provided fields
         const updateData: Record<string, unknown> = {};
-        if (payload?.status) updateData.status = payload.status as 'confirmed' | 'cancelled' | 'completed' | 'no_show';
+        if (payload?.status) updateData.status = payload.status as BookingStatus;
         if (payload?.internal_notes !== undefined) updateData.internal_notes = payload.internal_notes as string;
         if (payload?.start_time) updateData.start_time = payload.start_time as string;
         if (payload?.end_time) updateData.end_time = payload.end_time as string;

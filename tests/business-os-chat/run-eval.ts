@@ -32,14 +32,7 @@ import { getBizQLPlanner } from '@/lib/business-os/bizql/planner/Planner';
 import { runBusinessQuery } from '@/lib/business-os/bizql';
 import { CATALOG_VERSION } from '@/lib/business-os/catalog';
 import { executeMutate, requiresConfirmation } from '@/lib/business-os/bizql/mutate/MutateExecutor';
-import {
-  hasDescribedReferences,
-  needsTargetResolution,
-  resolveDescribedReferences,
-  resolveMutateTarget,
-  withResolvedTarget,
-} from '@/lib/business-os/bizql/mutate/resolveTarget';
-import { labelForRow } from '@/lib/business-os/bizql/render/AnswerRenderer';
+import { resolveWrites } from '@/lib/business-os/bizql/mutate/resolveWrites';
 import { MissingFieldsError } from '@/lib/business-os/bizql/types';
 import { supabaseServer } from '@/lib/supabaseServer';
 import type { Plan } from '@/lib/business-os/bizql/planner/Planner';
@@ -339,30 +332,25 @@ async function runWrite(
     return { outcome: 'refuses', detail: 'plan contained no write step' };
   }
 
-  for (const step of writes) {
-    let current = step;
-    let referenceNames: Record<string, string> | undefined;
-    let targetName: string | undefined;
+  // The route's own resolver, not a copy of it. This used to be a duplicate of
+  // that loop, which meant the harness could pass while the route behaved
+  // differently — exactly the divergence an eval exists to catch.
+  const resolution = await resolveWrites({
+    steps: writes,
+    ctx,
+    language: scenario.language,
+    currency: 'USD',
+  });
 
-    if (hasDescribedReferences(current)) {
-      const refs = await resolveDescribedReferences(current, ctx, scenario.language);
-      if (refs.status !== 'resolved') {
-        return { outcome: 'chooses', detail: `${refs.status} ${refs.entity} for ${refs.field}` };
-      }
-      current = { ...current, data: refs.data as MutateQuery['data'] };
-      referenceNames = refs.labels;
-    }
+  if (resolution.status === 'choice') {
+    const where = resolution.slot.kind === 'reference' ? ` for ${resolution.slot.field}` : '';
+    return { outcome: 'chooses', detail: `${resolution.kind} ${resolution.entity}${where}` };
+  }
 
-    if (needsTargetResolution(current)) {
-      const target = await resolveMutateTarget(current, ctx);
-      if (target.status !== 'resolved') {
-        return { outcome: 'chooses', detail: `${target.status} ${current.entity}` };
-      }
-      targetName = labelForRow(current.entity, target.row, { language: scenario.language });
-      current = withResolvedTarget(current, target.id);
-    }
+  for (const { step, targetName, referenceNames } of resolution.writes) {
+    if (step.op !== 'mutate') continue;
 
-    const result = await executeMutate(current, ctx, {
+    const result = await executeMutate(step, ctx, {
       dryRun: true,
       language: scenario.language,
       utterance: scenario.utterance,
@@ -372,9 +360,9 @@ async function runWrite(
 
     return {
       outcome: 'confirms',
-      detail: `${current.entity}.${current.action}`,
+      detail: `${step.entity}.${step.action}`,
       card: result.preview,
-      step: current,
+      step,
     };
   }
 

@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
 import { supabase } from '@/lib/supabaseClient';
 import { signOutUser } from '@/lib/client/auth-actions';
-import { marketingLoginUrl } from '@/lib/utils/marketingUrl';
+import { marketingLogoutUrl } from '@/lib/utils/marketingUrl';
 import {
   ArrowLeft,
   Loader2,
@@ -209,6 +209,9 @@ function BusinessOSSettingsContent() {
     const { error: prefsError } = await supabase.from('user_preferences').upsert({
       user_id: user.id,
       timezone: zone,
+      // A human just answered, so record THAT as well as what they said — the
+      // value alone cannot tell a chosen 'UTC' from the old column default.
+      timezone_confirmed_at: stamp,
       // Carried even though this save is about the timezone. Without it the
       // upsert CREATES the row, and `preferred_language` lands on its `en`
       // default — which server-side features read as a deliberate choice
@@ -480,7 +483,18 @@ function BusinessOSSettingsContent() {
      * security interstitial — every other sign-out in the app was fixed by that
      * one edit and this one alone kept the broken domain.
      */
-    window.location.href = marketingLoginUrl();
+    /*
+     * `replace`, not `href`.
+     *
+     * `href` PUSHES, which leaves the page they just signed out of sitting in
+     * history immediately behind the login page — so one tap of Back returned
+     * them to it. `replace` overwrites that entry, so Back goes to whatever
+     * preceded the app, not into it.
+     *
+     * This alone is not enough: any EARLIER platform entry is still reachable,
+     * which is what `SessionRecheckOnRestore` covers.
+     */
+    window.location.replace(marketingLogoutUrl());
   };
 
   /*
@@ -511,16 +525,69 @@ function BusinessOSSettingsContent() {
     label: `${code} (${config.symbol})`,
   }));
 
-  // Timezone options (simplified)
-  const timezoneOptions = [
-    { value: 'America/New_York', label: 'New York' },
-    { value: 'America/Los_Angeles', label: 'Los Angeles' },
-    { value: 'Europe/London', label: 'London' },
-    { value: 'Europe/Paris', label: 'Paris' },
-    { value: 'Asia/Tokyo', label: 'Tokyo' },
-    { value: 'Asia/Jerusalem', label: 'Jerusalem' },
-    { value: 'UTC', label: 'UTC' },
-  ];
+  /*
+   * Every zone the runtime knows, not a list of seven cities.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * This was seven options. An owner in Madrid, Sydney or São Paulo could not
+   * express where they are — and worse, `currentTimezone` below resolves to
+   * `undefined` for any stored zone outside the list, so the field renders its
+   * placeholder. A business that HAD set a timezone looked, on this screen,
+   * exactly like one that never had, and re-saving from here would have
+   * narrowed them to one of seven.
+   *
+   * That matters more now that a missing timezone blocks publishing a booking
+   * page: a short list would have the readiness card nagging people who
+   * already answered.
+   *
+   * `supportedValuesOf` is the runtime's own IANA list and needs no
+   * maintenance. It is missing in older engines, so the seven stay as a
+   * fallback rather than leaving an owner with an empty dropdown.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  const timezoneOptions = useMemo(() => {
+    const labelFor = (zone: string) => zone.split('/').pop()?.replace(/_/g, ' ') ?? zone;
+
+    const supported =
+      typeof Intl.supportedValuesOf === 'function'
+        ? Intl.supportedValuesOf('timeZone')
+        : [];
+
+    if (supported.length === 0) {
+      return [
+        { value: 'America/New_York', label: 'New York' },
+        { value: 'America/Los_Angeles', label: 'Los Angeles' },
+        { value: 'Europe/London', label: 'London' },
+        { value: 'Europe/Paris', label: 'Paris' },
+        { value: 'Asia/Tokyo', label: 'Tokyo' },
+        { value: 'Asia/Jerusalem', label: 'Jerusalem' },
+        { value: 'UTC', label: 'UTC' },
+      ];
+    }
+
+    // UTC first: it is a legitimate answer for a business that genuinely works
+    // to it, and `supportedValuesOf` does not always include it.
+    return [
+      { value: 'UTC', label: 'UTC' },
+      ...supported
+        .filter(zone => zone !== 'UTC')
+        .map(zone => ({ value: zone, label: `${labelFor(zone)} — ${zone}` })),
+    ];
+  }, []);
+
+  const [timezoneQuery, setTimezoneQuery] = useState('');
+
+  /*
+   * Capped at 60 rows. Nobody reads past that; what they do is type. The cap
+   * keeps the first render cheap with several hundred zones in the list.
+   */
+  const visibleTimezones = useMemo(() => {
+    const query = timezoneQuery.trim().toLowerCase();
+    const matches = query
+      ? timezoneOptions.filter(tz => tz.label.toLowerCase().includes(query))
+      : timezoneOptions;
+    return matches.slice(0, 60);
+  }, [timezoneOptions, timezoneQuery]);
 
   const currentLanguage = languageOptions.find(l => l.code === language) || languageOptions[0];
   const currentCurrency = currencyOptions.find(c => c.code === currencyCode) || currencyOptions[0];
@@ -737,7 +804,21 @@ function BusinessOSSettingsContent() {
                   {currencyOptions.map((curr) => (
                     <button
                       key={curr.code}
-                      onClick={() => { setCurrency(curr.code as 'USD' | 'EUR' | 'ILS' | 'GBP'); setOpenDropdown(null); }}
+                      onClick={async () => {
+                        setOpenDropdown(null);
+                        const result = await setCurrency(curr.code as 'USD' | 'EUR' | 'ILS' | 'GBP');
+                        /*
+                         * The database refuses a change once money exists in
+                         * the current currency — changing it would relabel
+                         * history, not convert it. `setCurrency` has already
+                         * put the old value back; this says why, rather than
+                         * leaving the picker to snap back unexplained.
+                         */
+                        if (!result.ok) {
+                          setErrorMessage(t('settings.profile.currency_locked'));
+                          setTimeout(() => setErrorMessage(''), 6000);
+                        }
+                      }}
                       className={`w-full px-4 py-3 text-sm flex items-center justify-between hover:bg-[var(--v2-bg)] ${currencyCode === curr.code ? 'bg-[var(--v2-bg)]' : ''}`}
                     >
                       <span>{curr.label}</span>
@@ -766,18 +847,38 @@ function BusinessOSSettingsContent() {
             </button>
             {openDropdown === 'timezone' && (
               <>
-                <div className="fixed inset-0 z-40" onClick={() => setOpenDropdown(null)} />
-                <div className="absolute z-50 top-full left-0 right-0 mt-1 mx-4 bg-[var(--v2-surface)] border border-gray-200 dark:border-gray-700 shadow-lg max-h-48 overflow-y-auto" style={{ borderRadius: 'var(--v2-radius-card)' }}>
-                  {timezoneOptions.map((tz) => (
-                    <button
-                      key={tz.value}
-                      onClick={() => { setProfile(p => ({ ...p, timezone: tz.value })); setOpenDropdown(null); saveProfile({ timezone: tz.value }); }}
-                      className={`w-full px-4 py-3 text-sm flex items-center justify-between hover:bg-[var(--v2-bg)] ${profile.timezone === tz.value ? 'bg-[var(--v2-bg)]' : ''}`}
-                    >
-                      <span>{tz.label}</span>
-                      {profile.timezone === tz.value && <Check className="w-4 h-4 text-[var(--v2-primary)]" />}
-                    </button>
-                  ))}
+                <div className="fixed inset-0 z-40" onClick={() => { setOpenDropdown(null); setTimezoneQuery(''); }} />
+                <div className="absolute z-50 top-full left-0 right-0 mt-1 mx-4 bg-[var(--v2-surface)] border border-gray-200 dark:border-gray-700 shadow-lg" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+                  {/*
+                    Typed, not scrolled. The list is now every zone the runtime
+                    knows rather than seven cities, and several hundred options
+                    in a short scroller is a worse answer than the seven were.
+                  */}
+                  <input
+                    value={timezoneQuery}
+                    onChange={(e) => setTimezoneQuery(e.target.value)}
+                    autoFocus
+                    placeholder={t('settings.profile.timezone_search')}
+                    className="w-full px-4 py-2.5 text-sm bg-transparent border-b border-[var(--v2-border)] text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] focus:outline-none"
+                  />
+                  <div className="max-h-48 overflow-y-auto">
+                    {visibleTimezones.length === 0 ? (
+                      <p className="px-4 py-3 text-sm text-[var(--v2-text-muted)]">
+                        {t('settings.profile.timezone_none')}
+                      </p>
+                    ) : (
+                      visibleTimezones.map((tz) => (
+                        <button
+                          key={tz.value}
+                          onClick={() => { setProfile(p => ({ ...p, timezone: tz.value })); setOpenDropdown(null); setTimezoneQuery(''); saveProfile({ timezone: tz.value }); }}
+                          className={`w-full px-4 py-3 text-sm flex items-center justify-between hover:bg-[var(--v2-bg)] ${profile.timezone === tz.value ? 'bg-[var(--v2-bg)]' : ''}`}
+                        >
+                          <span className="text-start">{tz.label}</span>
+                          {profile.timezone === tz.value && <Check className="w-4 h-4 text-[var(--v2-primary)] flex-shrink-0" />}
+                        </button>
+                      ))
+                    )}
+                  </div>
                 </div>
               </>
             )}

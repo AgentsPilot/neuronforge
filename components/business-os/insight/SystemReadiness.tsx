@@ -340,9 +340,18 @@ export function SystemReadiness({
             minWidth: 0,
           }}
         >
+          {/* Said from the owner's side of the screen, not the platform's.
+              Both states used to name the SYSTEM — "Your system is ready",
+              "What's missing before this works" — which is our word for our
+              thing. What the owner is actually asking is whether a client can
+              reach them, so that is what both answers now say.
+
+              The fallbacks are kept in step with the keys: they are what shows
+              if a lookup ever fails, and a fallback still saying "system" is
+              how the old wording comes back. */}
           {ready
-            ? (t('readiness.ready') || 'Your system is ready')
-            : (t('readiness.title') || "What's missing before this works")}
+            ? (t('readiness.ready') || 'You are ready for clients')
+            : (t('readiness.title') || 'What is left before clients can reach you')}
         </span>
         {/* Plain text rather than a pill. The steps below no longer use pills,
             and one floating badge above a list that has none reads as leftover.

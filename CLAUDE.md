@@ -1,6 +1,6 @@
 # CLAUDE.md — Project Context for AgentPilot
 
-> **Last Updated**: 2026-09-21  
+> **Last Updated**: 2026-09-22  
 > This file is the project's root context document and is exempt from the standard docs ToC requirement.
 
 ## Overview
@@ -479,6 +479,23 @@ export class AgentRepository {
 
 ---
 
+## Currency & Timezone (Business OS)
+
+Both are business-level facts with traps. Read before touching money display or any hour shown to a client.
+
+| Rule | Why |
+|---|---|
+| **`scheduling_services.currency` is the authority** for what a client is charged | A business in Israel may price a US client in USD. `business_profiles.currency` is only a **default** for new services and a **label** for sums — never a constraint |
+| **`user_preferences.timezone` is the authority** for the clock | `business_profiles.timezone` **does not exist**. Naming it in a `.select()` makes PostgREST reject the *whole* query — a business with a full diary once showed no times at all |
+| **NULL means "not asked"; `'UTC'` means "chose UTC"** | Keep them distinguishable. The `DEFAULT 'UTC'` was dropped (20261006) for exactly this: the readiness gate could not tell it needed to ask, and the briefing mailed never-configured accounts at 07:00 UTC |
+| **`LanguageContext.currencyCode` is localStorage-backed** — display only | Never seed a value that gets **written** from it. Use `businessCurrency` for anything persisted (invoices, payments, new services), or a per-device preference becomes permanent client-visible data |
+| **Never sum money across currencies** | There is no FX rate anywhere in the platform. Group by currency (`revenue_by_currency`) and label with `primary_currency`; a single total for a mixed-currency business cannot be honest |
+| **A missing timezone blocks publishing** a booking surface | Via the `timezone` gap in `journeyReadiness`. Currency deliberately does **not** gate — the service row already carries it |
+
+Fixing a gap? Use `gapFixAction(kind)` — it returns the settings tab *and* the label together, so they cannot point at different things.
+
+---
+
 ## Feature Flags
 
 Feature flags control experimental features and gradual rollouts. See `/docs/feature_flags.md` for full documentation.
@@ -788,4 +805,5 @@ npm run lint       # ESLint
 |------|--------|---------|
 | 2026-04-07 | Resolved merge conflicts | Merged 13 conflicts between comprehensive (agent team, design principles, security, testing, deprecated) and lean branches. Kept comprehensive version with additional Code Quality gotcha entries from lean branch. |
 | 2026-09-19 | Corrected Testing section | E2E/Playwright is documented as not set up yet (it was never installed, and `npm run test:e2e` did not exist). `npm test` now exists and runs Jest; `jest.config.js` ignores `.claude/` worktrees. Adding E2E needs SA review. |
+| 2026-09-22 | Added Currency & Timezone section | Which column is authoritative for each, why NULL must stay distinct from `'UTC'`, the localStorage display-vs-persisted split, the no-FX rule on sums, and that timezone gates publishing while currency does not |
 | 2026-09-21 | Business OS LLM Layer 2 recorded | The Business OS LLM row now covers Layer 2 (model settings per area): call sites resolve provider, model, temperature and on/off from eight `system_settings_config` rows rather than writing them, `npm run check:bos-llm-literals` enforces it in the existing `bos-llm-typecheck` job, and the operator runbook is linked — including the fail-open kill switch |

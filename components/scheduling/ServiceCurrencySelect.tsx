@@ -42,6 +42,18 @@ interface ServiceCurrencySelectProps {
   compact?: boolean;
   /** Which side the menu opens from, for a trigger pinned inside a field. */
   align?: 'start' | 'end';
+  /**
+   * Shown but not changeable, because this service has already been sold.
+   *
+   * Changing a currency RELABELS rather than converts — 300 USD becoming 300
+   * ILS is a 73% price cut nobody typed — so once a service has an invoice,
+   * payment, booking or quote against it, the database refuses the change
+   * (`service_currency_lock`, 20261008). Offering the menu anyway would turn a
+   * settled rule into an error message after the click.
+   */
+  locked?: boolean;
+  /** Why it cannot change, on hover. */
+  lockedReason?: string;
 }
 
 export function ServiceCurrencySelect({
@@ -50,6 +62,8 @@ export function ServiceCurrencySelect({
   fullWidth = false,
   compact = false,
   align = 'start',
+  locked = false,
+  lockedReason,
 }: ServiceCurrencySelectProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -69,9 +83,13 @@ export function ServiceCurrencySelect({
     <div className="relative" ref={ref}>
       <button
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={() => { if (!locked) setOpen(!open); }}
+        disabled={locked}
+        title={locked ? lockedReason : undefined}
         className={
-          compact
+          locked
+            ? `flex items-center ${compact ? 'gap-0.5 text-sm' : `justify-between gap-2 ${fullWidth ? 'w-full' : 'w-24'} px-3 py-2.5 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-sm`} text-[var(--v2-text-muted)] cursor-not-allowed`
+          : compact
             ? 'flex items-center gap-0.5 text-sm text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] transition-colors cursor-pointer'
             : `flex items-center justify-between gap-2 ${fullWidth ? 'w-full' : 'w-24'} px-3 py-2.5 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm hover:bg-[var(--v2-surface-hover)] transition-all cursor-pointer`
         }
@@ -80,10 +98,13 @@ export function ServiceCurrencySelect({
         <span className="font-medium">
           {getCurrencySymbol(value)}{compact ? '' : ` ${value}`}
         </span>
-        <ChevronDown className={`${compact ? 'h-3 w-3 opacity-60' : 'h-4 w-4'} text-[var(--v2-text-muted)] transition-transform ${open ? 'rotate-180' : ''}`} />
+        {/* No chevron when locked: it promises a menu that will not open. */}
+        {!locked && (
+          <ChevronDown className={`${compact ? 'h-3 w-3 opacity-60' : 'h-4 w-4'} text-[var(--v2-text-muted)] transition-transform ${open ? 'rotate-180' : ''}`} />
+        )}
       </button>
 
-      {open && (
+      {open && !locked && (
         <div
           className={`absolute top-full mt-1 ${align === 'end' ? 'end-0' : 'start-0'} ${fullWidth ? 'w-full' : 'w-32'} bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-lg z-50 overflow-hidden`}
           style={{ borderRadius: 'var(--v2-radius-button)' }}

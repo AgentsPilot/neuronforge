@@ -37,7 +37,6 @@ import {
   Sparkles,
   AlertCircle,
   CornerDownRight,
-  Send,
 } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { TabFooter } from '@/components/business-os/settings/TabFooter';
@@ -78,7 +77,6 @@ interface FormState {
   isDraft: boolean;
   hasPublished: boolean;
   isEnabled: boolean;
-  sendAfterBooking: boolean;
   contentSource: 'llm' | 'fallback' | 'manual' | null;
 }
 
@@ -87,7 +85,6 @@ const EMPTY: FormState = {
   isDraft: false,
   hasPublished: false,
   isEnabled: false,
-  sendAfterBooking: true,
   contentSource: null,
 };
 
@@ -99,6 +96,18 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
   const [publishing, setPublishing] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /*
+   * Publishing said nothing when it worked.
+   *
+   * The only signal was the subtitle changing from "Draft" to "Published" —
+   * three words at the top of a panel whose button is at the BOTTOM, so the one
+   * thing that moved was off the part of the screen being looked at. An owner
+   * who pressed Publish had no way to tell it had happened, and pressed again.
+   *
+   * Cleared on any later edit, so it can never sit there claiming a draft is
+   * published.
+   */
+  const [published, setPublished] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY);
 
@@ -125,7 +134,6 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
         isDraft: !!draft,
         hasPublished: !!published,
         isEnabled: settings.is_enabled,
-        sendAfterBooking: settings.send_after_booking,
         contentSource: active?.generated_from?.source ?? null,
       });
     } catch (err) {
@@ -179,6 +187,8 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
     const previous = form.questions;
     setForm(prev => ({ ...prev, questions, isDraft: true }));
     setError(null);
+    // The form is a draft again, so the confirmation would now be a lie.
+    setPublished(false);
 
     try {
       const response = await fetch('/api/intake/form', {
@@ -233,6 +243,7 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
   const publish = async () => {
     setPublishing(true);
     setError(null);
+    setPublished(false);
     try {
       const response = await fetch('/api/intake/form/publish', { method: 'POST' });
       const body = await response.json();
@@ -247,6 +258,7 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
       } else {
         await load();
       }
+      setPublished(true);
       onSaved?.();
     } catch (err) {
       logger.error({ err }, 'Failed to publish the intake form');
@@ -256,12 +268,16 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
     }
   };
 
-  const saveSettings = async (next: { is_enabled?: boolean; send_after_booking?: boolean }) => {
+  /*
+   * One switch, so one argument. This took a `send_after_booking` too, which
+   * no caller can supply any more — and a setter that accepts a field nothing
+   * sends is the next reader's reason to build a control for it.
+   */
+  const saveSettings = async (next: { is_enabled: boolean }) => {
     setSavingSettings(true);
     setForm(prev => ({
       ...prev,
-      isEnabled: next.is_enabled ?? prev.isEnabled,
-      sendAfterBooking: next.send_after_booking ?? prev.sendAfterBooking,
+      isEnabled: next.is_enabled,
     }));
 
     try {
@@ -269,8 +285,7 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          is_enabled: next.is_enabled ?? form.isEnabled,
-          send_after_booking: next.send_after_booking ?? form.sendAfterBooking,
+          is_enabled: next.is_enabled,
         }),
       });
       onSaved?.();
@@ -405,6 +420,18 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
             </div>
           )}
 
+          {/* Said in the same place, and the same way, as a failure would be. */}
+          {published && !error && (
+            <div
+              className="flex items-start gap-2.5 border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-[12.5px] text-[var(--v2-text-primary)]"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+              role="status"
+            >
+              <Check className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-500" />
+              <span>{t('config.intake.published_confirmation')}</span>
+            </div>
+          )}
+
           {/* Nothing written yet — the only state with a single obvious act. */}
           {empty && !generating && (
             <div
@@ -499,30 +526,31 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
                 </div>
               )}
 
-              {/* ── What happens to it ──────────────────────────────────── */}
-              <div
-                className="bg-[var(--v2-bg)] border border-[var(--v2-border)] p-4 space-y-3"
-                style={{ borderRadius: 'var(--v2-radius-card)' }}
-              >
-                <label className="flex items-start gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={form.sendAfterBooking}
-                    onChange={e => saveSettings({ send_after_booking: e.target.checked })}
-                    className="mt-0.5 w-4 h-4"
-                    style={{ accentColor: CONFIG_COLOR }}
-                  />
-                  <span className="min-w-0">
-                    <span className="flex items-center gap-1.5 text-sm text-[var(--v2-text-primary)]">
-                      <Send className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
-                      {t('config.intake.send_after_booking')}
-                    </span>
-                    <span className="block text-[11.5px] text-[var(--v2-text-muted)] mt-0.5">
-                      {t('config.intake.send_after_booking_hint')}
-                    </span>
-                  </span>
-                </label>
-              </div>
+              {/* A "What happens to it" card stood here, holding one checkbox:
+                  "Send it automatically after someone books".
+
+                  It has controlled nothing since 8c53562a (2026-09-14), which
+                  made intake ONE switch rather than two. The reasoning is on
+                  `send_after_booking` in `intakeReach.ts`: it read as a second
+                  preference where the owner only ever meant one, and because
+                  the column defaults to false it silently suppressed sends for
+                  every account that never found it, buried as it was inside a
+                  panel you only reach by enabling intake first.
+
+                  The gate went; this checkbox did not, so the panel went on
+                  promising a choice the platform had stopped offering. Four of
+                  five live businesses sat on its `false` default while their
+                  clients received intake anyway.
+
+                  Removing it changes no behaviour — that is the point. The
+                  master toggle above is the whole answer: intake on, form
+                  published, and the client gets it. The exceptions live on the
+                  SERVICE (`intakeAppliesToService`), and a booking the owner
+                  enters by hand is decided by the toggle in the booking dialog.
+
+                  The column and the API field are deliberately KEPT: nothing
+                  reads them, dropping them needs a migration, and the settings
+                  endpoint still round-trips the value for older callers. */}
 
               {/* ── Footer: preview, regenerate, publish ──────────────────
                   Frozen at the bottom of the tab. The generated questions run

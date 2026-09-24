@@ -127,7 +127,16 @@ describe('row 8 — correlated insight', () => {
 
 describe('row 9 — health summary', () => {
   it('is recorded under health_summary, grouped by the run', async () => {
-    await repository()['generateHealthNarrative'](U1, 72, 3, { cash_flow: 60 }, summary, [] as Insight[], 'en', R1);
+    /*
+     * `health` sits between the category scores and the correlation summary.
+     * It carries the measured rates that replaced the old insight-count score;
+     * an empty one is the shape for a business with nothing measurable yet,
+     * which is what this attribution test cares about least and must still
+     * handle.
+     */
+    const health = { categories: [], movingUp: null, improved: 0, declined: 0, steady: 0, measured: 0, unavailable: 0 };
+
+    await repository()['generateHealthNarrative'](U1, 72, 3, { cash_flow: 60 }, health, summary, [] as Insight[], 'en', R1);
 
     expect(contexts()).toEqual([
       { userId: U1, feature: 'business-os-insights', component: 'health_summary', sessionId: R1 },

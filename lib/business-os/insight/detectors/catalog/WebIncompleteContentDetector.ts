@@ -253,12 +253,31 @@ export class WebIncompleteContentDetector extends BaseDetector {
       currentValue: issues.length,
       baselineValue: 0,
       thresholdValue: 0,
-      percentChange: 100,
+      /*
+       * Nothing changed by a hundred per cent.
+       *
+       * This detector counts: there is no baseline to have moved from, and a
+       * hardcoded 100 reached the narrator as a real measurement. It produced
+       * sentences like "a 100% increase in risk compared to your usual client
+       * retention" and "a 100% increase in your expected cash flow" — arithmetic
+       * presented as a trend, about a base of zero.
+       *
+       * `hasRealBaseline` now keeps the figure out of the prompt, but that guard
+       * reads `baselineValue`, so it is the second line of defence. This is the
+       * first: a count reports no change, because none was measured.
+       */
+      percentChange: 0,
       direction: 'above',
       affectedEntityType: 'page',
       affectedEntityIds: [...new Set(issues.map((i) => i.pageId))],
       affectedCount: issues.length,
-      estimatedImpactUsd: criticalCount * 100 + highCount * 50, // Rough impact estimate
+      /*
+       * No money. This was `critical * 100 + high * 50`, described in its own
+       * comment as a "rough impact estimate" — two invented prices per page
+       * problem, summed and shown as the owner's currency. An unfinished page
+       * is worth saying on its own; nothing here measures what it costs.
+       */
+      estimatedImpactUsd: undefined,
       impactDirection: 'opportunity',
       impactPeriod: 'monthly',
       processParameters: {

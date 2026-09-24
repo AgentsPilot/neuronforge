@@ -360,7 +360,41 @@ const driveAnalysis = () =>
 
 const driveImages = () => generateImage({ userId: U1, groupId: G1 }, 'a calm studio', 'wide', 'hero');
 
+/*
+ * The planner puts a literal `Today is YYYY-MM-DD` in its USER message
+ * (`Planner.ts`, so it can resolve "the 30th of October" to the right year),
+ * and this suite snapshots that message verbatim. Read from the real clock it
+ * matched only on the day it was recorded and failed every day after — which
+ * is what it had been doing since 2026-09-21.
+ *
+ * Re-recording would not have fixed it; it would have moved the failure to
+ * tomorrow. So the clock is pinned instead, and pinned to the date already in
+ * the snapshot so the expected value is unchanged.
+ *
+ * `doNotFake` leaves the timer functions real. Only `Date` is faked here —
+ * taking over setTimeout as well would stall the async paths these call sites
+ * run through, and the suite would hang rather than fail.
+ */
+const FROZEN_NOW = new Date('2026-09-21T12:00:00.000Z');
+
 beforeEach(() => {
+  jest.useFakeTimers({
+    now: FROZEN_NOW,
+    doNotFake: [
+      'nextTick',
+      'setImmediate',
+      'clearImmediate',
+      'setTimeout',
+      'clearTimeout',
+      'setInterval',
+      'clearInterval',
+      'queueMicrotask',
+      'performance',
+      'requestAnimationFrame',
+      'cancelAnimationFrame',
+    ],
+  });
+
   logged.length = 0;
   jest.clearAllMocks();
   jest.restoreAllMocks();
@@ -394,7 +428,10 @@ beforeEach(() => {
   } as never);
 });
 
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => {
+  jest.restoreAllMocks();
+  jest.useRealTimers();
+});
 
 /* ------------------------------------------------------------------ AC-2 */
 

@@ -69,21 +69,42 @@ jest.mock('@/lib/repositories/CRMContactRepository', () => ({
 
 /** Rows the lead-response queue would return for this contact. */
 const leadResponseState: { rows: Array<{ id: string; kind: string }> } = { rows: [] };
+
+/** The one profile column the booking reminder asks about. */
+const profileState = { meeting_reminder_enabled: false };
+
 jest.mock('@/lib/supabaseServer', () => ({
   supabaseServer: {
-    from() {
+    from(table: string) {
       const chain: Record<string, unknown> = {
         then: (resolve: (v: { data: unknown; error: null }) => unknown) =>
           resolve({ data: leadResponseState.rows, error: null }),
+        // Routed by table: the booking reminder reads one profile row, every
+        // other caller here reads a list.
+        maybeSingle: async () => ({
+          data: table === 'business_profiles' ? { ...profileState } : null,
+          error: null,
+        }),
       };
       for (const m of ['select', 'eq', 'gte', 'lt', 'in', 'order', 'limit']) chain[m] = () => chain;
       return chain;
     },
   },
 }));
+
+/** What the scheduling tables hold for the booking under test. */
+const bookingState: { data: Record<string, unknown> | null } = { data: null };
 jest.mock('@/lib/repositories/SchedulingRepository', () => ({
-  schedulingBookingRepository: { findById: async () => ({ data: null, error: null }) },
-  schedulingServiceRepository: { findById: async () => ({ data: null, error: null }) },
+  schedulingBookingRepository: { findById: async () => ({ data: bookingState.data, error: null }) },
+  schedulingServiceRepository: {
+    findById: async () => ({ data: { service_name: 'Assessment' }, error: null }),
+  },
+}));
+
+/** Whether the standing reminder already has a row for this booking. */
+const standingReminder = { hasRow: false };
+jest.mock('@/lib/repositories/LeadResponseRepository', () => ({
+  leadResponseRepository: { hasRowFor: async () => standingReminder.hasRow },
 }));
 
 /** A minimal queue that behaves the way the RPCs do. */
@@ -114,6 +135,27 @@ function nudgeRow(id: string) {
   };
 }
 
+/** A confirmed appointment two days out — well inside any reminder window. */
+function futureBooking(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'b1',
+    status: 'confirmed',
+    start_time: new Date(Date.now() + 48 * 3_600_000).toISOString(),
+    timezone: 'UTC',
+    contact_id: 'c1',
+    service_id: 's1',
+    ...overrides,
+  };
+}
+
+function bookingReminderRow(id: string) {
+  return {
+    id, user_id: 'u1', kind: 'booking_reminder', process_id: 'send_booking_reminders',
+    invoice_id: null, contact_id: 'c1', booking_id: 'b1',
+    payload: {}, attempts: 1, dedupe_key: `b-${id}`,
+  };
+}
+
 function invoiceRow(id: string) {
   return {
     id, user_id: 'u1', kind: 'chase_invoice', process_id: 'chase_overdue_invoices',
@@ -136,6 +178,9 @@ describe('drainInsightActions', () => {
     invoiceState.status = 'sent';
     contactState.data = null;
     leadResponseState.rows = [];
+    profileState.meeting_reminder_enabled = false;
+    bookingState.data = futureBooking();
+    standingReminder.hasRow = false;
     sendEmail.mockClear();
     sendEmail.mockImplementation(async () => ({ sent: true, provider: 'resend' }));
   });
@@ -242,6 +287,94 @@ describe('drainInsightActions', () => {
 
     expect(result.sent).toBe(1);
     expect(sendEmail).toHaveBeenCalledTimes(1);
+  });
+
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE TWO REMINDERS MUST NOT BOTH FIRE.
+   *
+   * The card off, this insight-triggered one is the safety net that wakes when
+   * the no-show detector spots a spike. The card on, every confirmed
+   * appointment already gets a reminder at the owner's chosen lead time. With
+   * both running a client gets two emails about one appointment — the exact
+   * collision invoice chasing had, where the card and the payment reminders
+   * both fired on day three.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  describe('against the standing meeting reminder', () => {
+    it('sends when the card is off and nothing else has reminded them', async () => {
+      contactState.data = { email: 'client@example.com', first_name: 'Dana' };
+      install([bookingReminderRow('a')]);
+
+      const result = await drainInsightActions();
+
+      expect(result.sent).toBe(1);
+      expect(sendEmail).toHaveBeenCalledTimes(1);
+    });
+
+    it('stands down while the card is on', async () => {
+      contactState.data = { email: 'client@example.com', first_name: 'Dana' };
+      profileState.meeting_reminder_enabled = true;
+      install([bookingReminderRow('a')]);
+
+      const result = await drainInsightActions();
+
+      expect(result.sent).toBe(0);
+      expect(sendEmail).not.toHaveBeenCalled();
+    });
+
+    it('stands down for a booking the standing reminder already handled', async () => {
+      /*
+       * The owner switched the card off after it had already queued this one.
+       * Reminders do not unsend themselves, so the safety net must not send a
+       * second about the same appointment.
+       */
+      contactState.data = { email: 'client@example.com', first_name: 'Dana' };
+      profileState.meeting_reminder_enabled = false;
+      standingReminder.hasRow = true;
+      install([bookingReminderRow('a')]);
+
+      const result = await drainInsightActions();
+
+      expect(result.sent).toBe(0);
+      expect(result.skipped).toBe(1);
+    });
+
+    it('closes the row rather than leaving it to be retried forever', async () => {
+      // A stand-down is a decision, not a failure. Left pending it would be
+      // claimed again every run until it hit the attempt cap.
+      contactState.data = { email: 'client@example.com', first_name: 'Dana' };
+      profileState.meeting_reminder_enabled = true;
+      install([bookingReminderRow('a')]);
+
+      await drainInsightActions();
+
+      expect(queue.state.get('a')!.status).toBe('skipped');
+    });
+
+    it('does not remind anyone about an appointment that was cancelled', async () => {
+      contactState.data = { email: 'client@example.com', first_name: 'Dana' };
+      bookingState.data = futureBooking({ status: 'cancelled' });
+      install([bookingReminderRow('a')]);
+
+      const result = await drainInsightActions();
+
+      expect(result.sent).toBe(0);
+      expect(sendEmail).not.toHaveBeenCalled();
+    });
+
+    it('does not remind anyone about an appointment that has passed', async () => {
+      contactState.data = { email: 'client@example.com', first_name: 'Dana' };
+      bookingState.data = futureBooking({
+        start_time: new Date(Date.now() - 3_600_000).toISOString(),
+      });
+      install([bookingReminderRow('a')]);
+
+      const result = await drainInsightActions();
+
+      expect(result.sent).toBe(0);
+    });
   });
 
   it('leaves a failed send retryable rather than losing it', async () => {

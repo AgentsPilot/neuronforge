@@ -18,6 +18,34 @@ interface AboutContent {
   highlight_text?: string;
 }
 
+/**
+ * Owner text as HTML, with only the line breaks honoured.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * This block renders the owner's "about" copy through `dangerouslySetInnerHTML`
+ * in five places, and it used to pass the raw string with nothing but
+ * `\n` -> `<br/>`. Everything else in it was live markup on the public page: a
+ * `<script>` or an `onerror` handler in that field executed for every visitor.
+ *
+ * It matters more now that a business's pages are served at
+ * `{prefix}.agentspilot.ai` — the same registrable domain as the platform — so
+ * script running there is script running under our own brand and cookie scope.
+ *
+ * Escape first, THEN convert newlines: the other order would escape the `<br/>`
+ * tags this function has just written.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function aboutTextToHtml(text: string): string {
+  const escaped = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+  return escaped.replace(/\n/g, '<br/>');
+}
+
 export function AboutBlock({ content, styles, theme, isRTL, className, locale = 'en' }: BlockRendererProps) {
   // Translation helper
   const t = (key: string, section: 'about' | 'common' = 'about') =>
@@ -282,7 +310,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                   fontFamily: 'var(--ap-font-body)',
                   color: isDark ? '#9ca3af' : '#4b5563'
                 }}
-                dangerouslySetInnerHTML={{ __html: aboutContent.replace(/\n/g, '<br/>') }}
+                dangerouslySetInnerHTML={{ __html: aboutTextToHtml(aboutContent) }}
               />
 
               {/* Credentials as styled badges */}
@@ -417,7 +445,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                 fontFamily: 'var(--ap-font-body)',
                 color: isDark ? '#9ca3af' : '#4b5563'
               }}
-              dangerouslySetInnerHTML={{ __html: aboutContent.replace(/\n/g, '<br/>') }}
+              dangerouslySetInnerHTML={{ __html: aboutTextToHtml(aboutContent) }}
             />
 
             {/* Enhanced credentials */}
@@ -521,7 +549,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                   fontFamily: 'var(--ap-font-body)',
                   color: isDark ? '#9ca3af' : '#4b5563'
                 }}
-                dangerouslySetInnerHTML={{ __html: aboutContent.replace(/\n/g, '<br/>') }}
+                dangerouslySetInnerHTML={{ __html: aboutTextToHtml(aboutContent) }}
               />
             </motion.div>
           </div>
@@ -571,7 +599,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                   fontFamily: 'var(--ap-font-body)',
                   color: image ? 'rgba(255,255,255,0.9)' : (isDark ? '#9ca3af' : '#4b5563')
                 }}
-                dangerouslySetInnerHTML={{ __html: aboutContent.replace(/\n/g, '<br/>') }}
+                dangerouslySetInnerHTML={{ __html: aboutTextToHtml(aboutContent) }}
               />
 
               {signature && (
@@ -666,7 +694,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                     fontFamily: 'var(--ap-font-body)',
                     color: isDark ? '#9ca3af' : '#4b5563'
                   }}
-                  dangerouslySetInnerHTML={{ __html: aboutContent.replace(/\n/g, '<br/>') }}
+                  dangerouslySetInnerHTML={{ __html: aboutTextToHtml(aboutContent) }}
                 />
 
                 {/* Credentials as inline badges */}

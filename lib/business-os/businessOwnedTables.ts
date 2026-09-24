@@ -121,6 +121,12 @@ export const BUSINESS_OWNED_TABLES = [
 export const USER_OWNED_TABLES: Record<string, string> = {
   business_profiles: 'The parent row itself.',
 
+  auth_handoff_codes:
+    'Keyed to the auth user, not to a business profile. A row is a pending sign-in that ' +
+    'expires in sixty seconds, and it is created during sign-in — possibly before the ' +
+    'profile exists at all, so a foreign key to it would reject the first sign-in of a ' +
+    'new account. Rows go with the auth user through ON DELETE CASCADE.',
+
   onboarding_conversations:
     'Written before the profile exists — the chat is what produces the profile. ' +
     'A foreign key here would reject the first message of every new account.',

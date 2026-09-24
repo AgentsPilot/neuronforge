@@ -1,3 +1,5 @@
+import { readdirSync } from 'fs';
+import { join } from 'path';
 import { DetectorEngine } from '../../detectors/DetectorEngine';
 import { TRIGGERABLE_PROCESSES, DETECTOR_TO_PROCESS } from '../TriggerableProcesses';
 
@@ -20,28 +22,28 @@ jest.mock('@/lib/logger', () => ({
 const detectors = new DetectorEngine({} as never).getDetectors();
 
 describe('detector ↔ process wiring', () => {
-  it('registers at least the detectors we expect', () => {
+  it('registers every detector in the catalog', () => {
     /*
-     * A guard on the guard: if this list ever came back empty the assertions
-     * below would all pass vacuously.
+     * An EXACT count against the files on disk, not a floor.
      *
-     * The floor was 30 and is now 25, because five detectors were deliberately
-     * removed rather than lost:
+     * This asserted `>= 25` while 40 were registered, so fifteen registrations
+     * could have been lost without a single test failing — and a detector that
+     * is not registered never runs, whatever else is true about it. The barrel
+     * in `catalog/index.ts` does not catch it either: `DetectorEngine` imports
+     * each class directly and ignores the barrel entirely.
      *
-     *   ret_package_ending      advised renewing a package, and the product has
-     *                           no renewal for a client's plan to be renewed into
-     *   cash_cards_expiring     reads saved_payment_methods, which is empty on
-     *                           every account — cards live at Stripe, not here
-     *   pricing_discount_abuse  looks for discounts, and there is no discount
-     *                           feature to produce any
-     *   web_mobile_issues       every query named a column that does not exist
-     *   web_page_underperform   four of its five queries did the same
-     *
-     * The last two are worth rebuilding: the analytics are real
-     * (website_page_views, smart_link_clicks), only the column names were wrong.
-     * Raise this floor again when they come back.
+     * Counting the files is what makes this a real census. Adding a detector
+     * file without registering it now fails here, which is the mistake the
+     * module's own documentation calls the most common one in this area.
      */
-    expect(detectors.length).toBeGreaterThanOrEqual(25);
+    const files = readdirSync(join(__dirname, '..', '..', 'detectors', 'catalog'))
+      .filter(f => f.endsWith('Detector.ts') && f !== 'BaseDetector.ts');
+
+    const registered = new Set(detectors.map(d => d.definition.id));
+
+    expect(detectors.length).toBe(files.length);
+    // A duplicate registration would keep the count right and the set wrong.
+    expect(registered.size).toBe(files.length);
   });
 
   it('never contradicts a detector about its own process', () => {

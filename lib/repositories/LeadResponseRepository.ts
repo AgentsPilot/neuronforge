@@ -14,14 +14,25 @@ import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 
 /**
- * What a queued reply is.
+ * What a queued message is.
  *
  * `invite` and `chase` are the lead conversation — one invitation, one
- * reminder. The other two chase something that is not the lead itself, and are
+ * reminder. The rest are about something that is not the lead itself, and are
  * keyed on the invoice or booking rather than the person, because one client
  * can have two of either.
+ *
+ * Must match the CHECK on `lead_responses.kind`
+ * (20260923_meeting_reminder.sql). The constraint is there because a kind no
+ * dispatcher recognises would otherwise be stored happily and skipped forever —
+ * the same drift that let `scheduling_bookings.status` hold a fifth value for
+ * months while eleven declarations said there were four.
  */
-export type LeadResponseKind = 'invite' | 'chase' | 'invoice_chase' | 'intake_chase';
+export type LeadResponseKind =
+  | 'invite'
+  | 'chase'
+  | 'invoice_chase'
+  | 'intake_chase'
+  | 'meeting_reminder';
 export type LeadResponseStatus = 'pending' | 'processing' | 'sent' | 'skipped' | 'failed';
 
 export interface LeadResponse {
@@ -238,8 +249,23 @@ export class LeadResponseRepository {
     return { scheduled: (data || []).length > 0 };
   }
 
-  /** Is this exact thing already queued? Cheap guard before a sweep enqueues. */
-  async hasPending(
+  /**
+   * Is there already a row of this kind for this thing, in any state?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Deliberately NOT filtered by status, and named for what it asks rather than
+   * for the one caller that first asked it. A `sent` row is the record that the
+   * message went out, so "is there a row" answers both questions this is put
+   * to: the sweep asking whether to queue again, and the insight path asking
+   * whether this booking has already been reminded about by the standing
+   * automation.
+   *
+   * It was called `hasPending`, which described neither — it never looked at
+   * `status`, and a reader taking the name at its word would have concluded
+   * that a sent reminder no longer counted.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async hasRowFor(
     userId: string,
     kind: LeadResponseKind,
     contactId: string,

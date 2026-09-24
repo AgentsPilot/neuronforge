@@ -10,6 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { platformOrigin } from '@/lib/utils/origins';
 import { isInstallmentPlan, type PlanTerms } from '@/lib/payments/PaymentPlanService';
 import { toMinorUnits } from '@/lib/payments/refundMath';
 import { stripeIntervalFor, planPhases, type PlanFrequency } from '@/lib/payments/planSchedule';
@@ -39,7 +40,19 @@ const CheckoutSchema = z.object({
    */
   user_code: z.string().optional().transform(val => val && val.trim() ? val : undefined),
   amount: z.number().positive('Amount must be positive'),
-  currency: z.enum(['USD', 'EUR', 'GBP', 'ILS']).default('USD'),
+  /*
+   * Optional, and deliberately WITHOUT a default.
+   *
+   * It used to `.default('USD')`, which made "the caller said dollars" and "the
+   * caller said nothing" the same value — so the server could not tell it
+   * needed to work the currency out, and every silent caller charged dollars.
+   * A business in Israel selling a 300 ILS service took $300.
+   *
+   * Absent now means absent, and `resolveCheckoutCurrency` below decides.
+   * (Same distinction as `timezone_confirmed_at`: a column doing two jobs
+   * cannot be read reliably for either.)
+   */
+  currency: z.enum(['USD', 'EUR', 'GBP', 'ILS']).optional(),
   description: z.string().min(1).max(500),
   customer_email: z.string().email().optional(),
   booking_id: z.string().uuid().optional(),
@@ -238,6 +251,7 @@ export async function POST(request: NextRequest) {
      * executed by nothing.
      */
     let planTerms: PlanTerms | null = null;
+    let serviceCurrency: string | null = null;
 
     if (data.service_id) {
       const { data: planService } = await supabaseServer
@@ -247,13 +261,24 @@ export async function POST(request: NextRequest) {
         .eq('user_id', ownerId)
         .maybeSingle();
 
+      /*
+       * Read for EVERY service, not only for a plan.
+       *
+       * The installment branch below already honoured the service's currency.
+       * The ordinary one did not — it took the request's, which defaulted to
+       * USD — so the same service charged correctly when sold in twelve
+       * payments and in dollars when sold outright. Whether a price is split
+       * over months has nothing to do with what it is denominated in.
+       */
+      serviceCurrency = planService?.currency?.toUpperCase() ?? null;
+
       if (planService && isInstallmentPlan(planService)) {
         planTerms = {
           // The SERVICE's price, not the amount in the request: a plan's total
           // is what was agreed, and the caller sends one period's worth or the
           // whole sum depending on which surface it came from.
           totalAmount: Number(planService.price),
-          currency: (planService.currency || data.currency).toUpperCase(),
+          currency: serviceCurrency || data.currency || 'USD',
           installmentCount: planService.installment_count ?? 1,
           frequency: (planService.installment_frequency || 'monthly') as PlanFrequency,
           firstPaymentDue: (planService.first_payment_due || 'on_booking') as 'on_booking' | 'days_after',
@@ -262,8 +287,51 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    /*
+     * What this client is charged in, in order of authority:
+     *
+     *   1. the SERVICE — `scheduling_services.currency` is the authority for
+     *      what a client is charged, by design, so an Israeli business can
+     *      price a US client in dollars;
+     *   2. what the caller explicitly asked for — a payment button carries no
+     *      service, and the owner set its currency when they built it;
+     *   3. the BUSINESS's own default;
+     *   4. USD, only when nothing above has an answer.
+     *
+     * Nothing converts between them: the amount is charged as given, so
+     * choosing the wrong one does not mis-price by a rate, it mis-prices by the
+     * whole difference.
+     */
+    /*
+     * Typed `string` from the outset, and the fallback branches on the SOURCES
+     * rather than on the variable.
+     *
+     * Written as `let x = a || b || null` it carried `string | null`, and the
+     * use sites sit inside the object literal handed to Stripe — past an
+     * `await`, where the narrowing the `if` established does not reach. Asking
+     * whether the two sources were absent says the same thing without ever
+     * admitting a null.
+     */
+    let currencyForCharge: string = serviceCurrency || data.currency || 'USD';
+
+    if (!serviceCurrency && !data.currency) {
+      const { data: profile } = await supabaseServer
+        .from('business_profiles')
+        .select('currency')
+        .eq('user_id', ownerId)
+        .maybeSingle();
+
+      currencyForCharge = profile?.currency?.toUpperCase() || 'USD';
+    }
+
+
+    requestLogger.info(
+      { ownerId, currencyForCharge, fromService: Boolean(serviceCurrency), requested: data.currency ?? null },
+      'Resolved checkout currency'
+    );
+
     // Build success/cancel URLs
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const baseUrl = platformOrigin();
     // For preview mode without subdomain, redirect back to current page
     const siteUrl = effectiveSubdomain ? `${baseUrl}/site/${effectiveSubdomain}` : baseUrl;
     const successUrl = data.success_url || `${siteUrl}?payment=success`;
@@ -313,11 +381,14 @@ export async function POST(request: NextRequest) {
                 }
               : {
                   price_data: {
-                    currency: data.currency.toLowerCase(),
+                    currency: currencyForCharge.toLowerCase(),
                     product_data: {
                       name: data.description
                     },
-                    unit_amount: toMinorUnits(data.amount, data.currency)
+                    // `toMinorUnits` takes the SAME currency Stripe is told,
+                    // because zero-decimal currencies scale differently — a
+                    // mismatch here is a 100x charge, not a labelling slip.
+                    unit_amount: toMinorUnits(data.amount, currencyForCharge)
                   },
                   quantity: 1
                 }

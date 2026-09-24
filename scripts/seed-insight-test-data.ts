@@ -2016,25 +2016,75 @@ async function seedData(userId: string) {
 // MAIN ENTRY POINT
 // ============================================================
 
-async function main() {
-  let userId = process.argv[2];
+/**
+ * Refuse to write fake data into a real business without being told to, twice.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHAT THIS SCRIPT DID
+ *
+ * It took a user id from argv with no environment check — and when given none,
+ * it selected `profiles` LIMIT 1 and seeded whoever came back. It wrote ~105
+ * `business_events` and several hundred `derived_metrics` into two live
+ * accounts, using event names (`booking_created`) that do not exist in
+ * `BusinessEventType` and categories that do not match `EVENT_CATEGORY`.
+ *
+ * Nothing downstream can tell those rows from real ones. The detectors read
+ * them, `MetricsComputeService` computed metrics from them, and insights were
+ * generated about a business that had not done any of it.
+ *
+ * Three gates now, because one was clearly not enough:
+ *
+ *   an explicit user id     no more "whoever is first in the table"
+ *   not production          the environment must not be production
+ *   --yes-seed-fake-data    a flag nobody types by accident
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function refuseUnlessDeliberate(userId: string | undefined): asserts userId is string {
+  const usage = [
+    'Usage: npx tsx --env-file=.env.local scripts/seed-insight-test-data.ts <userId> --yes-seed-fake-data',
+    '',
+    'This writes FAKE business events and metrics that are indistinguishable',
+    'from real ones. Never point it at an account anybody is using.',
+  ].join('\n');
 
   if (!userId) {
-    // Try to get an existing user
-    const { data: profiles } = await supabase
-      .from('profiles')
-      .select('id')
-      .limit(1);
-
-    if (profiles?.[0]) {
-      userId = profiles[0].id;
-    } else {
-      console.error('No users found. Please provide a userId as argument.');
-      console.error('Usage: npx tsx scripts/seed-insight-test-data.ts <userId>');
-      process.exit(1);
-    }
+    console.error('Refusing: no user id given.\n');
+    console.error(usage);
+    process.exit(1);
   }
 
+  if (process.env.NODE_ENV === 'production') {
+    console.error('Refusing: NODE_ENV is production.\n');
+    console.error(usage);
+    process.exit(1);
+  }
+
+  /*
+   * The Supabase URL, not NODE_ENV, is what actually says which database this
+   * is about to write to — a script run locally against the production project
+   * passes every other check.
+   */
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
+  if (process.env.SEED_ALLOW_REMOTE !== 'true' && !/localhost|127\.0\.0\.1/.test(url)) {
+    console.error(`Refusing: ${url} is not a local database.\n`);
+    console.error('Set SEED_ALLOW_REMOTE=true only if you are certain, and never for an account in use.\n');
+    console.error(usage);
+    process.exit(1);
+  }
+
+  if (!process.argv.includes('--yes-seed-fake-data')) {
+    console.error('Refusing: pass --yes-seed-fake-data to confirm.\n');
+    console.error(usage);
+    process.exit(1);
+  }
+}
+
+async function main() {
+  const userId = process.argv[2];
+
+  refuseUnlessDeliberate(userId);
+
+  console.log(`Seeding FAKE data into ${userId} on ${process.env.NEXT_PUBLIC_SUPABASE_URL}`);
   await seedData(userId);
 }
 

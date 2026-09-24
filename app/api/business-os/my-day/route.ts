@@ -81,7 +81,7 @@ export async function GET(request: NextRequest) {
         .maybeSingle(),
       supabaseServer
         .from('user_preferences')
-        .select('timezone, preferred_language')
+        .select('timezone, timezone_confirmed_at, preferred_language')
         .eq('user_id', user.id)
         .maybeSingle(),
     ]);
@@ -135,10 +135,20 @@ export async function GET(request: NextRequest) {
         briefing: briefing && {
           narrative: briefing.narrative,
           date: day.date,
-          // Undefined rather than 'UTC' when nothing is stored, so the card can
-          // tell "no timezone set" from "the timezone is UTC" and gate the
-          // morning email on the difference.
-          timezone: preferences?.timezone ? day.timezone : undefined,
+          /*
+           * Undefined until a human has ANSWERED, so the card can tell "nobody
+           * was asked" from "the timezone is UTC" — and gate the morning email
+           * on the difference.
+           *
+           * Keyed on `timezone_confirmed_at`, not on the value. The column
+           * defaulted to 'UTC' until 20261006 and 9 of 12 accounts still carry
+           * that default, so a truthy timezone proved nothing: this read as
+           * "set" for every business that had never been asked.
+           */
+          timezone:
+            preferences?.timezone_confirmed_at && preferences?.timezone
+              ? day.timezone
+              : undefined,
           isQuiet: briefing.isQuiet,
           source: briefing.source,
           emailEnabled: Boolean(

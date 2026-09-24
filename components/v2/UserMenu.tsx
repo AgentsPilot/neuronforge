@@ -113,7 +113,18 @@ export function UserMenu({ triggerIcon = 'avatar' }: UserMenuProps) {
      * trusts that copy, so sending people straight to `/login` left half the
      * session alive and able to hand them back.
      */
-    window.location.href = marketingLogoutUrl()
+    /*
+     * `replace`, not `href`.
+     *
+     * `href` PUSHES, which leaves the page they just signed out of sitting in
+     * history immediately behind the login page — so one tap of Back returned
+     * them to it. `replace` overwrites that entry, so Back goes to whatever
+     * preceded the app, not into it.
+     *
+     * This alone is not enough: any EARLIER platform entry is still reachable,
+     * which is what `SessionRecheckOnRestore` covers.
+     */
+    window.location.replace(marketingLogoutUrl())
   }
 
   const getUserInitials = () => {

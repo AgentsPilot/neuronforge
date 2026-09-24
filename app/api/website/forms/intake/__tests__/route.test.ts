@@ -14,6 +14,7 @@ const findByEmail = jest.fn();
 const createContact = jest.fn();
 const updateContact = jest.fn();
 const linkIntakeContact = jest.fn();
+const findLinkBySession = jest.fn().mockResolvedValue({ data: null, error: null });
 const createActivity = jest.fn();
 // The route reads the owner's `language` to localise the activity title, so this
 // repository is now part of its data path (merge 2026-09-02, D25).
@@ -49,6 +50,19 @@ jest.mock('@/lib/repositories/CRMActivityRepository', () => ({
 jest.mock('@/lib/repositories/BusinessProfileRepository', () => ({
   businessProfileRepository: {
     findByUserId: (...args: unknown[]) => findProfileByUserId(...args),
+  },
+}));
+
+/*
+ * Mocked for the same reason as every repository above: T13 asserts this route
+ * touches no database CLIENT directly, and a real repository would reach one
+ * through its own. The route consults it to resolve which smart link sent a
+ * visitor, so a contact captured through one is attributed to that link rather
+ * than to the website (`lib/business-os/enrichCaptureAttribution`).
+ */
+jest.mock('@/lib/repositories/SmartLinkRepository', () => ({
+  smartLinkRepository: {
+    findLinkBySession: (...args: unknown[]) => findLinkBySession(...args),
   },
 }));
 

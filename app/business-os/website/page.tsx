@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { configTabForGap } from '@/lib/business-os/journeyReadiness';
+import { gapFixAction } from '@/lib/business-os/journeyGapFix';
 import { publicSiteDisplayHost, publicSiteSuffix, publicSiteUrl } from '@/lib/utils/origins';
 import { intakeReachesClient } from '@/lib/business-os/intakeReach';
 import { wantsWebsite } from '@/lib/business-os/onlinePresence';
@@ -327,6 +327,7 @@ const LABELS = {
     publish_failed: 'Could not publish the website.',
     unpublish_failed: 'Could not unpublish the website.',
     publish_fix_availability: 'Set working hours',
+    publish_fix_timezone: 'Set your timezone',
     publish_fix_invoicing: 'Complete invoice details',
     publishing: 'Publishing...',
     view_site: 'View Site',
@@ -512,6 +513,7 @@ const LABELS = {
     publish_failed: 'No se pudo publicar el sitio.',
     unpublish_failed: 'No se pudo despublicar el sitio.',
     publish_fix_availability: 'Configurar horario',
+    publish_fix_timezone: 'Configura tu zona horaria',
     publish_fix_invoicing: 'Completar datos de factura',
     publishing: 'Publicando...',
     view_site: 'Ver Sitio',
@@ -697,6 +699,7 @@ const LABELS = {
     publish_failed: 'לא ניתן לפרסם את האתר.',
     unpublish_failed: 'לא ניתן להסיר את האתר מפרסום.',
     publish_fix_availability: 'הגדר שעות פעילות',
+    publish_fix_timezone: 'הגדירו אזור זמן',
     publish_fix_invoicing: 'השלם פרטי חשבונית',
     publishing: '...מפרסם',
     view_site: 'צפה באתר',
@@ -839,7 +842,7 @@ export default function WebsiteManagementPage() {
   // `t` as well as `language`: the guidance and the publish warning are keyed
   // strings in three languages, not the inline ternaries the rest of this file
   // uses for one-off labels.
-  const { language, t } = useLanguage();
+  const { language, t, businessCurrency, currencyCode } = useLanguage();
   const { user } = useAuth();
   const labels = LABELS[language] || LABELS.en;
 
@@ -4132,7 +4135,7 @@ export default function WebsiteManagementPage() {
                             <button
                               type="button"
                               onClick={() =>
-                                openConfiguration(configTabForGap(gap.kind), {
+                                openConfiguration(gapFixAction(gap.kind).tab, {
                                   // Cleared rather than re-asked: activation is a
                                   // deliberate click, and it answers freshly.
                                   onClose: () => setSmartLinkNotice(null),
@@ -4141,9 +4144,11 @@ export default function WebsiteManagementPage() {
                               className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#4F6EF7] hover:bg-[#3B5AE5] transition-colors"
                               style={{ borderRadius: 'var(--v2-radius-button)' }}
                             >
-                              {isInvoicing
+                              {gap.kind === 'invoicing'
                                 ? labels.publish_fix_invoicing
-                                : labels.publish_fix_availability}
+                                : gap.kind === 'timezone'
+                                  ? labels.publish_fix_timezone
+                                  : labels.publish_fix_availability}
                               <ArrowRight className={`w-3.5 h-3.5 ${language === 'he' ? 'rotate-180' : ''}`} />
                             </button>
                           </div>
@@ -5402,7 +5407,7 @@ export default function WebsiteManagementPage() {
                                   <button
                                     type="button"
                                     onClick={() =>
-                                      openConfiguration(configTabForGap(gap.kind), {
+                                      openConfiguration(gapFixAction(gap.kind).tab, {
                                         // The owner has just been sent to fix the very
                                         // thing this names; ask again rather than leave
                                         // the refusal asserting the old answer.
@@ -5412,9 +5417,11 @@ export default function WebsiteManagementPage() {
                                     className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#4F6EF7] hover:bg-[#3B5AE5] transition-colors"
                                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                                   >
-                                    {isInvoicing
+                                    {gap.kind === 'invoicing'
                                       ? labels.publish_fix_invoicing
-                                      : labels.publish_fix_availability}
+                                      : gap.kind === 'timezone'
+                                        ? labels.publish_fix_timezone
+                                        : labels.publish_fix_availability}
                                     <ArrowRight className={`w-3.5 h-3.5 ${language === 'he' ? 'rotate-180' : ''}`} />
                                   </button>
                                 </div>
@@ -7215,8 +7222,20 @@ export default function WebsiteManagementPage() {
                                         <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
                                           {language === 'he' ? 'מטבע' : language === 'es' ? 'Moneda' : 'Currency'}
                                         </label>
+                                        {/* The business's own currency, not a
+                                            hardcoded 'USD'. This value is what
+                                            the client is CHARGED at checkout,
+                                            so the old default quietly billed a
+                                            shekel business's customers in
+                                            dollars unless somebody noticed the
+                                            dropdown and changed it.
+
+                                            Display currency only as a fallback
+                                            for a business that has not stated
+                                            one — it is per-device, and this is
+                                            written into a payment. */}
                                         <Select
-                                          value={(editingBlockContent.currency as string) || 'USD'}
+                                          value={(editingBlockContent.currency as string) || businessCurrency || currencyCode}
                                           onValueChange={(value) => updateBlockField('currency', value)}
                                         >
                                           <SelectTrigger>

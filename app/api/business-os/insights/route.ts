@@ -16,6 +16,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { InsightRepository } from '@/lib/business-os/insight/repository';
 import { enqueueInsightActions } from '@/lib/business-os/insight/automation/InsightActionEnqueuer';
+import { TRIGGERABLE_PROCESSES } from '@/lib/business-os/insight/kernel/TriggerableProcesses';
 import { ImpactProjector } from '@/lib/business-os/insight/projection';
 import { AutonomousWorkFeed } from '@/lib/business-os/insight/reporting';
 
@@ -283,6 +284,27 @@ export async function POST(request: NextRequest) {
         if (!insight.paired_process_id) {
           return NextResponse.json(
             { success: false, error: 'This insight has no process to automate' },
+            { status: 400 }
+          );
+        }
+
+        /*
+         * Having a process is not the same as that process being automatable.
+         *
+         * `AutomationManager.createFromInsight` checks this and is not on the
+         * API path, so this branch would happily create a standing automation
+         * for a process marked `eligibleForAutomation: false` — one that then
+         * runs every hour forever, produces no work, and tells nobody.
+         *
+         * Read from the process registry rather than the insight's own column:
+         * whether a KIND of work may run unattended is a property of the work,
+         * not of the row that happened to surface it.
+         */
+        const process = TRIGGERABLE_PROCESSES[insight.paired_process_id];
+
+        if (!process?.eligibleForAutomation) {
+          return NextResponse.json(
+            { success: false, error: 'This one cannot be set up to run on its own' },
             { status: 400 }
           );
         }

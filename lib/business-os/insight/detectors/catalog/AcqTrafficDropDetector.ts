@@ -25,7 +25,14 @@ export class AcqTrafficDropDetector extends BaseDetector {
     thresholdType: 'percent_change',
     threshold: 30, // 30% drop
     direction: 'below',
-    minSamples: 1,
+    /**
+     * Unique visitors LAST week before a drop is a trend.
+     *
+     * Twenty. This said 1, which let two visitors becoming none render as
+     * "Website Traffic Down 100%". A percentage needs a denominator somebody
+     * would recognise as traffic.
+     */
+    minSamples: 20,
 
     severityFn: (percentDrop: number): InsightSeverity => {
       const absDrop = Math.abs(percentDrop);
@@ -101,7 +108,18 @@ export class AcqTrafficDropDetector extends BaseDetector {
     const currentUnique = new Set(currentWeek?.map((v) => v.ip_hash) || []).size;
     const previousUnique = new Set(previousWeek?.map((v) => v.ip_hash) || []).size;
 
-    // Need baseline data to compare
+    /*
+     * A percentage needs a denominator somebody would recognise as traffic.
+     *
+     * The guard was `previousUnique === 0`, so two visitors last week and none
+     * this week reported "website traffic down 100%" — a real division and a
+     * meaningless statement.
+     *
+     * The floor itself is now declared rather than checked here: `sampleSize`
+     * is passed to `createDetectionResult` at the end of this method, which
+     * withholds the detection when it falls below `minSamples`. That is the
+     * mechanism the definition always implied and never had.
+     */
     if (previousUnique === 0) {
       this.logDetection(userId, null);
       return null;
@@ -143,6 +161,12 @@ export class AcqTrafficDropDetector extends BaseDetector {
         : lostVisitors * conversionRate * avgDealValue;
 
     const result = this.createDetectionResult({
+      /*
+       * Last week's visitors are the denominator, so they are the sample.
+       * Below `minSamples` (20) the percentage is arithmetic on a handful of
+       * visits and `createDetectionResult` withholds the whole detection.
+       */
+      sampleSize: previousUnique,
       severity,
       metricKey: 'acquisition.unique_visitors',
       currentValue: currentUnique,

@@ -27,6 +27,7 @@
  */
 
 import type { NextRequest } from 'next/server';
+import { platformOrigin } from '@/lib/utils/origins';
 import { resolveInvoicePaymentOptions } from '@/lib/payments/invoicePaymentOptions';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { createLogger } from '@/lib/logger';
@@ -464,7 +465,7 @@ async function sendByEmail(
       });
     }
 
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.neuronforge.app';
+    const baseUrl = platformOrigin();
 
     /**
      * What this client can actually do about the bill.
