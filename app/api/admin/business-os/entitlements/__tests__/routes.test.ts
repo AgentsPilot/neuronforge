@@ -22,6 +22,14 @@ const state = {
   user: null as { id: string; email?: string } | null,
   isAdmin: false,
   adminThrows: false,
+  /** Is the account a Business OS tenant at all? (QA, 2026-09-24) */
+  isTenant: true,
+  /** The plan row the GET reads. Set per test when the account matters. */
+  plan: null as Record<string, unknown> | null,
+  /** Both tenancy reads fail: the check cannot answer (QA NEW-2). */
+  tenantCheckThrows: false,
+  /** Only the onboarding read fails, with a profile present (QA NEW-2). */
+  onboardingErrors: false,
   audit: [] as Array<Record<string, unknown>>,
   flushes: 0,
   /** Order matters: the flush must happen before the handler resolves. */
@@ -60,30 +68,33 @@ jest.mock('@/lib/services/AuditTrailService', () => ({
 
 const repositoryCalls: string[] = [];
 
+/** The plan row the GET returns. State-driven so one test can vary it. */
+const CHAMPION_PLAN = {
+  user_id: ACCOUNT,
+  tier: null as string | null,
+  plan_version: 0,
+  tier_expires_at: null as string | null,
+  cohort: 'champion' as string | null,
+  cohort_expires_at: null as string | null,
+  onboarding_started_at: '2026-01-01T00:00:00.000Z',
+  profile_created_at: '2026-01-02T00:00:00.000Z',
+  trial_started_at: null as string | null,
+  trial_ends_at: null as string | null,
+  grace_ends_at: null as string | null,
+  period_anchor: '2026-01-01T00:00:00.000Z',
+  origin: 'backfill',
+  updated_by_admin_id: null as string | null,
+  created_at: '2026-01-01T00:00:00.000Z',
+  updated_at: '2026-01-01T00:00:00.000Z',
+};
+
 jest.mock('@/lib/repositories/BusinessOsAccountPlanRepository', () => ({
   businessOsAccountPlanRepository: {
     async findEntitlementInputs() {
       repositoryCalls.push('findEntitlementInputs');
       return {
         data: {
-          plan: {
-            user_id: ACCOUNT,
-            tier: null,
-            plan_version: 0,
-            tier_expires_at: null,
-            cohort: 'champion',
-            cohort_expires_at: null,
-            onboarding_started_at: '2026-01-01T00:00:00.000Z',
-            profile_created_at: '2026-01-02T00:00:00.000Z',
-            trial_started_at: null,
-            trial_ends_at: null,
-            grace_ends_at: null,
-            period_anchor: '2026-01-01T00:00:00.000Z',
-            origin: 'backfill',
-            updated_by_admin_id: null,
-            created_at: '2026-01-01T00:00:00.000Z',
-            updated_at: '2026-01-01T00:00:00.000Z',
-          },
+          plan: state.plan,
           overrides: [],
         },
         error: null,
@@ -119,7 +130,10 @@ jest.mock('@/lib/repositories/BusinessOsEntitlementShadowRepository', () => ({
 jest.mock('@/lib/repositories/BusinessProfileRepository', () => ({
   businessProfileRepository: {
     async findByUserId() {
-      return { data: { created_at: '2026-01-02T00:00:00.000Z' }, error: null };
+      // `isTenant` drives BOTH repositories: the tenancy rule is "a business
+      // profile OR an onboarding message", so a non-tenant needs neither.
+      if (state.tenantCheckThrows) return { data: null, error: new Error('profile read failed') };
+      return { data: state.isTenant ? { created_at: '2026-01-02T00:00:00.000Z' } : null, error: null };
     },
   },
 }));
@@ -127,10 +141,13 @@ jest.mock('@/lib/repositories/BusinessProfileRepository', () => ({
 jest.mock('@/lib/repositories/OnboardingConversationRepository', () => ({
   onboardingConversationRepository: {
     async getFirstMessageAt() {
-      return { data: '2026-01-01T00:00:00.000Z', error: null };
+      return { data: state.isTenant ? '2026-01-01T00:00:00.000Z' : null, error: null };
     },
     async getLatestMessageAt() {
-      return { data: '2026-03-01T00:00:00.000Z', error: null };
+      if (state.tenantCheckThrows || state.onboardingErrors) {
+        return { data: null, error: new Error('onboarding read failed') };
+      }
+      return { data: state.isTenant ? '2026-03-01T00:00:00.000Z' : null, error: null };
     },
   },
 }));
@@ -141,6 +158,8 @@ const accountRoute = require('@/app/api/admin/business-os/entitlements/accounts/
 const launchRoute = require('@/app/api/admin/business-os/entitlements/launch/route');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const reportRoute = require('@/app/api/admin/business-os/entitlements/shadow-report/route');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const plansRoute = require('@/app/api/admin/business-os/entitlements/plans/route');
 
 function post(url: string, body: unknown): NextRequest {
   return new NextRequest(new URL(url, 'http://localhost'), {
@@ -158,6 +177,10 @@ beforeEach(() => {
   state.user = { id: ADMIN, email: 'admin@example.com' };
   state.isAdmin = true;
   state.adminThrows = false;
+  state.isTenant = true;
+  state.tenantCheckThrows = false;
+  state.onboardingErrors = false;
+  state.plan = { ...CHAMPION_PLAN };
   state.audit = [];
   state.flushes = 0;
   state.events = [];
@@ -181,6 +204,7 @@ const HANDLERS: Array<[string, () => Promise<Response>]> = [
   ],
   ['launch POST', () => launchRoute.POST(post('/api/admin/business-os/entitlements/launch', { confirm: 'launch_champion_existing', reason: 'dry run' }))],
   ['shadow-report GET', () => reportRoute.GET(get('/api/admin/business-os/entitlements/shadow-report'))],
+  ['plans GET', () => plansRoute.GET(get('/api/admin/business-os/entitlements/plans'))],
 ];
 
 describe('the gate, on every handler', () => {
@@ -397,5 +421,185 @@ describe('GET /shadow-report (S1-T12b)', () => {
   it('refuses asTier without a window to replay', async () => {
     const response = await reportRoute.GET(get('/api/admin/business-os/entitlements/shadow-report?asTier=growth'));
     expect(response.status).toBe(400);
+  });
+});
+
+describe('GET /plans (the Tiers admin screen)', () => {
+  it('returns every plan, the mode and the not-built list', async () => {
+    const response = await plansRoute.GET(get('/api/admin/business-os/entitlements/plans'));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    // Four plans, two of them tiers. Asserted through the payload rather than
+    // against a list written here: the config is the source of truth, and a
+    // test that named the plans would have to be edited to add one.
+    expect(body.data.plans.length).toBeGreaterThanOrEqual(2);
+    expect(body.data.plans.filter((plan: { kind: string }) => plan.kind === 'tier').length).toBeGreaterThan(0);
+    expect(body.data.notBuilt.length).toBeGreaterThan(0);
+    expect(['off', 'shadow', 'enforce']).toContain(body.data.mode);
+    // SA R-1: the page needs to know which withheld capabilities nothing
+    // enforces, and the route is where that fact arrives.
+    expect(Array.isArray(body.data.withheldWithoutGate)).toBe(true);
+    expect(body.data.plans[0].includes[0]).toHaveProperty('gateBuilt');
+    expect(body.data.plans[0]).toHaveProperty('basis');
+  });
+
+  it('reads nothing and writes nothing', async () => {
+    // The screen behind it is read-only, and so is this: no repository call,
+    // no audit row. If either ever appears, the route has grown a side effect.
+    await plansRoute.GET(get('/api/admin/business-os/entitlements/plans'));
+
+    expect(repositoryCalls).toEqual([]);
+    expect(state.audit).toEqual([]);
+  });
+
+  it('has no POST: the write ops live on the accounts route', async () => {
+    // v1 is read-only by decision (D-4), and the absence is asserted rather
+    // than assumed — a POST added here would bypass the audited op path.
+    expect(plansRoute.POST).toBeUndefined();
+    expect(plansRoute.PUT).toBeUndefined();
+    expect(plansRoute.PATCH).toBeUndefined();
+    expect(plansRoute.DELETE).toBeUndefined();
+  });
+});
+
+describe('GET /accounts/[accountId] — the contract the admin screen renders (QA-7)', () => {
+  /**
+   * The node half of a two-part check.
+   *
+   * `app/admin/business-os-tiers/__tests__/__fixtures__/recordedAccountBody.json`
+   * is the verbatim body this route produced for a `basic` tier account, and
+   * the screen's `accountLookup.contract.test.tsx` renders the component
+   * against it. This test asserts the route still produces exactly that.
+   *
+   * Together they close the gap that let two High defects ship: a fixture the
+   * component's author wrote, checked against nothing, while the server sent a
+   * different shape.
+   */
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const recordedOnATier = require('@/app/admin/business-os-tiers/__tests__/__fixtures__/recordedAccountBody.json');
+  const recordedNoPlanRow = require('@/app/admin/business-os-tiers/__tests__/__fixtures__/recordedAccountBodyNoPlanRow.json');
+  /* eslint-enable @typescript-eslint/no-require-imports */
+
+  /** The plan row each recording was taken for. */
+  const TIER_PLAN = { ...CHAMPION_PLAN, tier: 'basic', plan_version: 1, cohort: null, origin: 'admin' };
+
+  it('still matches the body the admin screen is tested against — account on a tier', async () => {
+    // The interesting case for the screen: `basis` carries a tier name and the
+    // granted count is the plan's.
+    state.plan = { ...TIER_PLAN };
+
+    const response = await accountRoute.GET(
+      get(`/api/admin/business-os/entitlements/accounts/${ACCOUNT}`),
+      { params: { accountId: ACCOUNT } }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(recordedOnATier);
+  });
+
+  it('still matches it for a tenant with NO plan row — the state the screen got most wrong', async () => {
+    // 14 of 38 capabilities were reported as in force here, for an account with
+    // none at all. The recording pins the corrected answer: zero.
+    state.plan = null;
+
+    const response = await accountRoute.GET(
+      get(`/api/admin/business-os/entitlements/accounts/${ACCOUNT}`),
+      { params: { accountId: ACCOUNT } }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(recordedNoPlanRow);
+
+    const granting = Object.values(
+      recordedNoPlanRow.data.capabilities as Record<string, { granting: boolean }>
+    ).filter((capability) => capability.granting);
+    expect(granting).toHaveLength(0);
+  });
+
+  it('sends `basis` as an object, and `granting` + `display` on every capability', () => {
+    // Named separately from the deep-equal, because these are the fields whose
+    // shape broke the page — a failure should say which.
+    expect(typeof recordedOnATier.data.basis).toBe('object');
+    expect(recordedOnATier.data.basis.kind).toBeDefined();
+
+    const capabilities = Object.values(recordedOnATier.data.capabilities) as Array<
+      Record<string, unknown>
+    >;
+    expect(capabilities.length).toBeGreaterThan(30);
+    for (const capability of capabilities) {
+      expect(typeof capability.granting).toBe('boolean');
+      expect(typeof capability.decidedBy).toBe('string');
+      // QA-8: the human rendering, so the lookup never formats a value itself.
+      expect(typeof capability.display).toBe('string');
+      expect(capability.display).not.toMatch(/^\{/);
+    }
+  });
+
+  it('answers a tenant check that CANNOT be answered with 500, not with a guess', async () => {
+    // QA NEW-2: the read path now calls the write path's own function, so the
+    // two cannot disagree about what a tenant is — including about failure.
+    state.tenantCheckThrows = true;
+
+    const response = await accountRoute.GET(
+      get(`/api/admin/business-os/entitlements/accounts/${ACCOUNT}`),
+      { params: { accountId: ACCOUNT } }
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({ error: 'tenant_check_failed' });
+  });
+
+  it('and a profile hit alone is enough for BOTH paths, even when onboarding errors', async () => {
+    // The disagreement QA found: the private function short-circuits on a
+    // profile hit, the re-implementation read both and 500'd. One function now,
+    // so this account reads and writes.
+    state.onboardingErrors = true;
+
+    const read = await accountRoute.GET(
+      get(`/api/admin/business-os/entitlements/accounts/${ACCOUNT}`),
+      { params: { accountId: ACCOUNT } }
+    );
+    const write = await accountRoute.POST(
+      post(`/api/admin/business-os/entitlements/accounts/${ACCOUNT}`, {
+        op: 'set_cohort',
+        cohort: 'trial',
+        reason: 'support case',
+      }),
+      { params: { accountId: ACCOUNT } }
+    );
+
+    expect(read.status).toBe(200);
+    expect(write.status).toBe(200);
+  });
+
+  it('404s an id that is not a Business OS account', async () => {
+    // Was a 200 with a confident panel until 2026-09-24: an agent-platform-only
+    // id, or a deleted account, read as a Business OS account with a plan.
+    state.isTenant = false;
+
+    const response = await accountRoute.GET(
+      get(`/api/admin/business-os/entitlements/accounts/${ACCOUNT}`),
+      { params: { accountId: ACCOUNT } }
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: 'not_a_business_os_account' });
+  });
+
+  it('the write path answers the same way, so the two cannot disagree', async () => {
+    state.isTenant = false;
+
+    const response = await accountRoute.POST(
+      post(`/api/admin/business-os/entitlements/accounts/${ACCOUNT}`, {
+        op: 'set_cohort',
+        cohort: 'trial',
+        reason: 'support case',
+      }),
+      { params: { accountId: ACCOUNT } }
+    );
+
+    expect(response.status).toBe(404);
   });
 });

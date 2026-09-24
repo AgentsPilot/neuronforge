@@ -1,0 +1,581 @@
+{
+  "success": true,
+  "data": {
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "mode": "off",
+    "state": "unknown",
+    "basis": {
+      "kind": "none"
+    },
+    "lifecycle": {
+      "state": "unknown",
+      "basis": {
+        "kind": "none"
+      },
+      "accessEndsAt": null,
+      "graceEndsAt": null,
+      "reason": "no_plan_row",
+      "anomaly": "no_plan_row"
+    },
+    "anomaly": "no_plan_row",
+    "matrixVersion": 1,
+    "capabilities": {
+      "crm.core": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "crm.documents": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "booking.calendar_sync": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "website.ai_site": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "website.branding": {
+        "value": "branded",
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": "branded",
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "branded"
+      },
+      "intake.forms": {
+        "value": "manual",
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": "manual",
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "manual"
+      },
+      "intake.reminders": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "payments.invoices": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "payments.card": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "payments.reminders": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "payments.multi_currency": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "chat.access": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "chat.marketing": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "chat.invoice_control": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "chat.email": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "chat.search": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "chat.scheduling": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "chat.quotes": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "chat.reporting": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "chat.bulk": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "ai.actions": {
+        "value": {
+          "perMonth": 0
+        },
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": {
+              "perMonth": 0
+            },
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "0 per month"
+      },
+      "marketing.mass_email": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "marketing.lead_response": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "marketing.posts": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "insights.checks": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "insights.channels": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "insights.daily_briefing": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "support.level": {
+        "value": "standard",
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": "standard",
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "standard"
+      },
+      "email.volume": {
+        "value": {
+          "ceilingPerMonth": 0
+        },
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": {
+              "ceilingPerMonth": 0
+            },
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "0 per month (alerts, never blocks)"
+      },
+      "addon.marketing_analytics": {
+        "value": "unavailable",
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": "unavailable",
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "unavailable"
+      },
+      "addon.mobile": {
+        "value": "unavailable",
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": "unavailable",
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "unavailable"
+      },
+      "addon.full_payment_cycle": {
+        "value": "unavailable",
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": "unavailable",
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "unavailable"
+      },
+      "addon.sms": {
+        "value": "unavailable",
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": "unavailable",
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "unavailable"
+      },
+      "sms.messages": {
+        "value": {
+          "perMonth": 0
+        },
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": {
+              "perMonth": 0
+            },
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "0 per month"
+      },
+      "team.seats": {
+        "value": {
+          "included": 0
+        },
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": {
+              "included": 0
+            },
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "0 seats"
+      },
+      "business.locations": {
+        "value": {
+          "included": 0
+        },
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": {
+              "included": 0
+            },
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "0 locations"
+      },
+      "website.custom_domain": {
+        "value": "unavailable",
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": "unavailable",
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "unavailable"
+      },
+      "addon.act_for_you": {
+        "value": "unavailable",
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": "unavailable",
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "unavailable"
+      }
+    },
+    "ignoredOverrides": [],
+    "overrides": [],
+    "plan": null,
+    "effectiveWithinSeconds": 30
+  }
+}

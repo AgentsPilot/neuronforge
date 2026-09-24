@@ -25,7 +25,8 @@ import {
   HardDrive,
   UserCheck,
   Sparkles,
-  Bot
+  Bot,
+  Layers
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -153,6 +154,12 @@ const navigationSections: NavSection[] = [
         href: '/admin/business-os-llm',
         icon: Bot,
         description: 'Models & Switches'
+      },
+      {
+        name: 'Business OS Tiers',
+        href: '/admin/business-os-tiers',
+        icon: Layers,
+        description: 'Plans & Entitlements'
       },
       {
         name: 'Storage Config',
