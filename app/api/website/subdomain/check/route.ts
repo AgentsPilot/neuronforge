@@ -8,17 +8,14 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
+import {
+  validatePrefix,
+  normalizePrefix,
+  PREFIX_REJECTION_MESSAGE,
+} from '@/lib/business-os/reservedPrefixes';
+import { publicSiteUrl } from '@/lib/utils/origins';
 
 const logger = createLogger({ module: 'SubdomainCheckAPI' });
-
-// Reserved subdomains that cannot be used
-const RESERVED_SUBDOMAINS = [
-  'www', 'app', 'api', 'admin', 'dashboard', 'mail', 'email',
-  'help', 'support', 'docs', 'blog', 'status', 'dev', 'staging',
-  'test', 'demo', 'cdn', 'assets', 'static', 'media', 'images',
-  'auth', 'login', 'signup', 'register', 'account', 'billing',
-  'payment', 'checkout', 'cart', 'shop', 'store', 'marketplace'
-];
 
 export async function GET(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
@@ -40,27 +37,29 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Validate subdomain format
-    const subdomainRegex = /^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/;
-    if (!subdomainRegex.test(subdomain)) {
+    /*
+     * Shape and reserved names come from `reservedPrefixes.ts`, the same module
+     * middleware and the write path use.
+     *
+     * This route used to carry its own copy of both, and the reserved list here
+     * disagreed with middleware's: `preview` was absent here and present there,
+     * so this endpoint reported it AVAILABLE while middleware would refuse to
+     * serve it — a business could take the name and end up with a permanently
+     * unreachable site, with no error raised anywhere along the way.
+     */
+    const verdict = validatePrefix(subdomain);
+    if (!verdict.ok) {
       return NextResponse.json({
         success: true,
         available: false,
-        reason: 'Invalid format. Use 3-30 lowercase letters, numbers, and hyphens. Must start and end with a letter or number.'
+        reason: PREFIX_REJECTION_MESSAGE[verdict.reason],
       });
     }
 
-    // Check reserved subdomains
-    if (RESERVED_SUBDOMAINS.includes(subdomain)) {
-      return NextResponse.json({
-        success: true,
-        available: false,
-        reason: 'This subdomain is reserved'
-      });
-    }
+    const normalized = normalizePrefix(subdomain);
 
     const pageRepo = new WebsitePageRepository(supabaseServer);
-    const result = await pageRepo.checkSubdomainAvailable(subdomain);
+    const result = await pageRepo.checkSubdomainAvailable(normalized);
 
     if (result.error) {
       throw result.error;
@@ -69,8 +68,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       available: result.data,
-      subdomain,
-      url: result.data ? `https://${subdomain}.agentpilot.io` : null
+      subdomain: normalized,
+      // The address it would actually be served at, from the one resolver —
+      // this line used to read `https://${subdomain}.agentpilot.io`.
+      url: result.data ? publicSiteUrl(normalized) : null
     });
   } catch (error) {
     requestLogger.error({ err: error }, 'Failed to check subdomain');

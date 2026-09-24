@@ -14,15 +14,29 @@
  * So this function does the fetching too. A caller asks one question and gets
  * back the form, the reason it cannot be sent, or both.
  *
- * TWO AUDIENCES, TWO ANSWERS.
+ * ONE ANSWER, WHOEVER IS ASKING.
  *
- * `forClient: true` is for anything that happens TO a client — the automatic
- * email after booking, the journey strip promising them a form. It additionally
- * requires the business to have asked us to send it.
+ * This said there were two: that `forClient: true` "additionally requires the
+ * business to have asked us to send it", and that the default was the laxer
+ * answer for the owner. Neither has been true since `send_after_booking`
+ * stopped being a gate — `intakeReachesClient` and `businessCollectsIntake`
+ * now resolve to the same pair of conditions, and `intakeBlockReason` never
+ * read the flag at all. The parameter was accepted and ignored.
  *
- * The default is for anything the OWNER does — pressing Send on a booking,
- * filling the answers in themselves. A business that sends by hand should be
- * able to; that distinction is why there are two predicates rather than one.
+ * A comment describing removed behaviour is not merely stale, it is an
+ * instruction: the next reader restores the gate to make the code match, and
+ * the bug the removal fixed comes back — `send_after_booking` defaults to
+ * false, so every account that never found that switch had its automatic sends
+ * silently off.
+ *
+ * What DOES still vary is the occasion, and that is a fact about the SERVICE,
+ * not about the audience: a quote request and a product have nothing to
+ * prepare for. See `intakeAppliesToService`.
+ *
+ * WHEN a form is sent still differs — automatically for a booking a client
+ * makes, and on the owner's say-so for one they enter themselves, which is what
+ * the toggle in the booking dialog decides. That is a question of trigger, not
+ * of permission, and it is answered by the caller rather than here.
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * @module lib/business-os/intake/resolveIntake
@@ -43,10 +57,8 @@ export interface ResolvedIntake {
 export async function resolveIntakeForSending(
   userId: string,
   {
-    forClient = false,
     service,
   }: {
-    forClient?: boolean;
     /**
      * The service being booked, when the caller knows it.
      *
@@ -64,11 +76,10 @@ export async function resolveIntakeForSending(
 
   const reach = {
     is_enabled: settings.data?.is_enabled ?? false,
-    send_after_booking: settings.data?.send_after_booking ?? false,
     hasPublishedForm: !!published.data,
   };
 
-  const blocked = intakeBlockReason(reach, { forClient, service });
+  const blocked = intakeBlockReason(reach, { service });
 
   // The form is withheld when anything blocks it, rather than returned with a
   // flag beside it. A caller holding the questions is one `if` away from

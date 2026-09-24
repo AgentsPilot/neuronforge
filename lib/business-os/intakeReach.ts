@@ -121,9 +121,21 @@ export type IntakeBlockReason = 'disabled' | 'not_published' | 'not_applicable';
 
 export function intakeBlockReason(
   settings: IntakeReachInput | null | undefined,
+  /*
+   * `forClient` USED TO BE ACCEPTED HERE AND WAS NEVER READ.
+   *
+   * It stayed in the signature after `send_after_booking` stopped being a gate,
+   * so four call sites passed it believing it narrowed the answer — and one of
+   * them documented behaviour it no longer had. A parameter that is accepted
+   * and ignored is worse than none: it reads as a decision being made.
+   *
+   * Audience is no longer a factor. Whether a form may be sent depends on the
+   * business having one published and enabled, and on the SERVICE having an
+   * occasion for it. Neither of those changes with who pressed send.
+   */
   {
     service,
-  }: { forClient?: boolean; service?: { sale_mode?: string | null; is_scheduled?: boolean | null } | null } = {}
+  }: { service?: { sale_mode?: string | null; is_scheduled?: boolean | null } | null } = {}
 ): IntakeBlockReason | null {
   if (!settings || settings.is_enabled !== true) return 'disabled';
   if (settings.hasPublishedForm !== true) return 'not_published';

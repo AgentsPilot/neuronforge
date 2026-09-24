@@ -5,6 +5,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { BOOKING_STATUSES } from '@/lib/business-os/bookingStatus';
+import type { BookingStatus } from '@/lib/business-os/bookingStatus';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
@@ -55,7 +57,7 @@ const createBookingSchema = z.object({
 const listBookingsSchema = z.object({
   service_id: z.string().uuid().optional(),
   contact_id: z.string().uuid().optional(),
-  status: z.enum(['confirmed', 'cancelled', 'completed', 'no_show']).optional(),
+  status: z.enum(BOOKING_STATUSES).optional(),
   // Use .refine for date validation to accept ISO strings with any valid format
   start_date: z.string().refine(val => !isNaN(Date.parse(val)), { message: 'Invalid date format' }).optional(),
   end_date: z.string().refine(val => !isNaN(Date.parse(val)), { message: 'Invalid date format' }).optional(),
@@ -327,7 +329,7 @@ export async function GET(request: NextRequest) {
     const queryParams = {
       service_id: searchParams.get('service_id') || undefined,
       contact_id: searchParams.get('contact_id') || undefined,
-      status: (searchParams.get('status') || undefined) as 'confirmed' | 'cancelled' | 'completed' | 'no_show' | undefined,
+      status: (searchParams.get('status') || undefined) as BookingStatus | undefined,
       start_date: searchParams.get('start_date') || undefined,
       end_date: searchParams.get('end_date') || undefined,
       limit: searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : undefined,

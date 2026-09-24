@@ -1680,10 +1680,28 @@ export async function compileAndRunCompute(
       : group.column
     : undefined;
 
+  /*
+   * The currency column, wherever the entity being aggregated has one.
+   *
+   * Money is only addable within one currency, and this platform has no FX rate
+   * anywhere. Without this column every total here was a bare number over
+   * whatever mix of currencies the rows happened to hold — so a business
+   * charging US clients in dollars from Israel asked "how much did I earn" and
+   * was told a figure that was the sum of two different units.
+   *
+   * Fetched only when the aggregate is over a money field: nothing else has a
+   * currency, and an unknown column makes PostgREST reject the WHOLE select.
+   */
+  const currencyColumn =
+    aggField && (aggField.format === 'money' || aggField.type === 'money')
+      ? entity.fields.currency?.column
+      : undefined;
+
   const columns = [
     ...(aggField ? [aggField.column] : []),
     // The deduction travels with the figure it reduces, or the net is the gross.
     ...(aggField?.minus ? [aggField.minus] : []),
+    ...(currencyColumn ? [currencyColumn] : []),
     ...(groupColumn ? [groupColumn] : []),
     // Same lesson as buildSelect: a dedupe key that is not fetched reads as
     // undefined for every row, and the distinct count silently equals the raw one.
@@ -1938,11 +1956,55 @@ export async function compileAndRunCompute(
     };
   }
 
+  /*
+   * ONE NUMBER IS ONLY AN ANSWER IF THE ROWS SHARE A CURRENCY.
+   *
+   * `reduce` adds whatever it is handed. Over a mixed set that produced a
+   * confident figure in no currency at all — 300 USD plus 300 ILS reported as
+   * 600 — and the sentence around it then stamped a symbol on the result, so
+   * the owner read a number that was wrong twice.
+   *
+   * There is no rate to convert with, so the honest answer is per currency. The
+   * scalar `value` stays the largest one's total, because every caller reads it
+   * and a single-currency business — nearly all of them — gets exactly the
+   * figure it always did. `currency` names what that figure is in, and
+   * `currencyBreakdown` appears ONLY when there is genuinely more than one, so
+   * a renderer can tell the two situations apart without guessing.
+   */
+  let value = reduce(scanned.map(numeric));
+  let currency: string | undefined;
+  let currencyBreakdown: { currency: string; value: number }[] | undefined;
+
+  if (currencyColumn && fn !== 'count') {
+    const byCurrency = new Map<string, number[]>();
+    for (const row of scanned) {
+      const code = String(row[currencyColumn] ?? '').toUpperCase() || '—';
+      if (!byCurrency.has(code)) byCurrency.set(code, []);
+      byCurrency.get(code)!.push(numeric(row));
+    }
+
+    const totals = [...byCurrency.entries()]
+      .map(([code, values]) => ({ currency: code, value: reduce(values) ?? 0 }))
+      .sort((a, b) => b.value - a.value);
+
+    if (totals.length === 1) {
+      currency = totals[0].currency;
+    } else if (totals.length > 1) {
+      currency = totals[0].currency;
+      currencyBreakdown = totals;
+      // `value` becomes the primary currency's own total rather than a sum
+      // across units, which was never a quantity of anything.
+      value = totals[0].value;
+    }
+  }
+
   return {
     op: 'compute',
     entity: query.entity,
     agg: { fn, field: aggFieldKey },
-    value: reduce(scanned.map(numeric)),
+    value,
+    ...(currency ? { currency } : {}),
+    ...(currencyBreakdown ? { currencyBreakdown } : {}),
     approximate,
     // `scanned.length`, never the aggregate's value: a sum of genuine zeroes is
     // 0 over real rows, and calling that "no such thing" would be the mirror of

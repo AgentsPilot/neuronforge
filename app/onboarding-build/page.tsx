@@ -342,7 +342,20 @@ function OnboardingBuildContent() {
           },
           services: data.services,
           pipelineStages: data.pipelineStages,
-          language: selectedLanguage
+          language: selectedLanguage,
+          /*
+           * The clock this business runs on.
+           *
+           * The chat never asks, and the build route is server-side — on Vercel
+           * that means UTC, so every account built here landed on the column
+           * default and the platform could not tell "never asked" from "chose
+           * UTC". The browser is the only thing in this request that knows, and
+           * it is right far more often than UTC is.
+           *
+           * A guess, offered as the answer and changeable in Settings — not a
+           * question added to a flow that exists to be fast.
+           */
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
         })
       });
 

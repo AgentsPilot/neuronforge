@@ -98,6 +98,41 @@ async function operationalAutomations(
       : []
   );
 
+  /*
+   * The reminder's settings, read SEPARATELY and allowed to fail.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * They were briefly folded into the select above, which is the mistake the
+   * comment on that read exists to prevent: Postgres rejects an ENTIRE select
+   * for one unknown column, so on a database where this migration has not run
+   * the approvals came back empty and every automation on the card — including
+   * the three that predate this one — reported itself as not approved. An owner
+   * with all four running was asked to switch all four on.
+   *
+   * One extra round trip is the price of a card that cannot be taken down by a
+   * column that is not there yet. Unreadable means the defaults, which are the
+   * same defaults the migration writes.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  let reminderSettings = { hoursBefore: 24, notifyClient: true, notifyOwner: true };
+  try {
+    const { data, error } = await supabaseServer
+      .from('business_profiles')
+      .select('meeting_reminder_hours_before, meeting_reminder_notify_client, meeting_reminder_notify_owner')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (error) throw error;
+    const row = (data ?? {}) as Record<string, unknown>;
+    reminderSettings = {
+      hoursBefore: Number(row.meeting_reminder_hours_before ?? 24),
+      notifyClient: row.meeting_reminder_notify_client !== false,
+      notifyOwner: row.meeting_reminder_notify_owner !== false,
+    };
+  } catch (err) {
+    log.warn({ err }, 'Meeting reminder settings unreadable; showing the defaults');
+  }
+
   const waitingByGap = new Map(all.map(gap => [gap.id, gap.count]));
 
   /*
@@ -116,6 +151,12 @@ async function operationalAutomations(
     waiting: waitingByGap.get(automation.gapId) ?? 0,
     labelKey: automation.labelKey,
     hintKey: automation.hintKey,
+    /*
+     * Present only for the automation that has settings. The card renders its
+     * extra controls off the presence of this object, so the other three keep
+     * their one-line shape.
+     */
+    settings: automation.id === 'remind_about_meeting' ? reminderSettings : undefined,
   }));
 }
 

@@ -38,6 +38,7 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger, type Logger } from '@/lib/logger';
 import { leadResponseRepository, type LeadResponse } from '@/lib/repositories/LeadResponseRepository';
 import { sendBookingLink } from '@/lib/services/LeadBookingLinkService';
+import { whenDue } from '@/lib/business-os/gaps/whenDue';
 import { OPERATIONAL_AUTOMATIONS } from '@/lib/business-os/gaps/automations';
 import { automationApplies } from '@/lib/business-os/gaps/automationApplies';
 import { findGaps } from '@/lib/business-os/gaps/findGaps';
@@ -71,6 +72,7 @@ export interface DispatchResult {
   sent: number;
   skipped: number;
 }
+
 
 export async function dispatchLeadResponses(): Promise<DispatchResult> {
   const runnerId = randomUUID();
@@ -121,13 +123,13 @@ async function dispatchOne(row: LeadResponse): Promise<DispatchOutcome> {
    * send, and "reply to my enquiries" is a different consent from "chase my
    * clients for money".
    */
-  const automation = OPERATIONAL_AUTOMATIONS.find(entry =>
-    row.kind === 'invite' || row.kind === 'chase'
-      ? entry.id === 'reply_to_enquiries'
-      : row.kind === 'invoice_chase'
-        ? entry.id === 'chase_invoices'
-        : entry.id === 'chase_intake'
-  );
+  /*
+   * Which consent covers this row.
+   *
+   * Read from the same map the enqueuer writes by, so a kind cannot be queued
+   * under one automation and checked against another.
+   */
+  const automation = OPERATIONAL_AUTOMATIONS.find(entry => entry.covers.includes(row.kind));
 
   if (!automation) return { sent: false, reason: 'unknown_kind' };
 
@@ -156,7 +158,92 @@ async function dispatchOne(row: LeadResponse): Promise<DispatchOutcome> {
 
   if (row.kind === 'invoice_chase') return chaseInvoice(row, log);
   if (row.kind === 'intake_chase') return chaseIntake(row, log);
+  if (row.kind === 'meeting_reminder') return remindAboutMeeting(row, log);
   return inviteOrChaseLead(row, log);
+}
+
+
+/**
+ * One reminder before the appointment, to whoever the owner asked for.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Two audiences, two switches, and they fail independently: a client address
+ * that bounces must not cost the owner their own heads-up, and an owner with no
+ * email on file must not stop the client being reminded.
+ *
+ * EVERYTHING IS RE-CHECKED HERE
+ *
+ * The row was queued hours ago — a day, for the default lead time — and in that
+ * window the appointment can be cancelled, moved, or simply have happened. A
+ * reminder about a cancelled appointment is worse than no reminder, and one
+ * that arrives after the meeting is noise with the business's name on it.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function remindAboutMeeting(
+  row: LeadResponse,
+  log: Logger
+): Promise<DispatchOutcome> {
+  if (!row.entity_id) return { sent: false, reason: 'no_booking' };
+
+  const { data: booking } = await supabaseServer
+    .from('scheduling_bookings')
+    .select('id, status, start_time, contact_id')
+    .eq('id', row.entity_id)
+    .eq('user_id', row.user_id)
+    .maybeSingle();
+
+  if (!booking) return { sent: false, reason: 'booking_gone' };
+  if ((booking.status ?? '').toLowerCase() !== 'confirmed') {
+    return { sent: false, reason: `booking_${booking.status}` };
+  }
+
+  const startsAt = booking.start_time ? Date.parse(String(booking.start_time)) : NaN;
+  if (Number.isNaN(startsAt)) return { sent: false, reason: 'no_start_time' };
+  if (startsAt < Date.now()) return { sent: false, reason: 'appointment_passed' };
+
+  /*
+   * Who the owner asked to be reminded. Read at SEND time, like the approval
+   * itself — somebody who switches the owner copy off after the row was queued
+   * should not receive one more.
+   */
+  const { data: profile, error: profileError } = await supabaseServer
+    .from('business_profiles')
+    .select('meeting_reminder_notify_client, meeting_reminder_notify_owner')
+    .eq('user_id', row.user_id)
+    .maybeSingle();
+
+  /*
+   * Unreadable means both, and says so out loud.
+   *
+   * The error is bound rather than destructured away so this cannot become one
+   * of the silent fall-throughs: where the columns have not been added yet the
+   * whole select is rejected, and the defaults below would otherwise be reached
+   * with nothing recorded about why. Both-on is the migration's own default and
+   * the only safe reading — the owner switched this automation on, so sending
+   * the reminder is what they asked for; who receives it is the part in doubt.
+   */
+  if (profileError) {
+    log.warn({ err: profileError }, 'Reminder audience unreadable; reminding both');
+  }
+
+  const notifyClient = (profile as Record<string, unknown> | null)?.meeting_reminder_notify_client !== false;
+  const notifyOwner = (profile as Record<string, unknown> | null)?.meeting_reminder_notify_owner !== false;
+
+  if (!notifyClient && !notifyOwner) return { sent: false, reason: 'nobody_to_notify' };
+
+  const outcome = await BookingEmailService.sendMeetingReminder(booking.id, row.user_id, {
+    notifyClient,
+    notifyOwner,
+  });
+
+  if (!outcome.sent) {
+    // An approved send that failed is an error, and the reason travels with
+    // the row rather than being logged and discarded.
+    log.error({ error: outcome.error, bookingId: booking.id }, 'Meeting reminder not sent');
+    return { sent: false, reason: 'send_failed', detail: outcome.error };
+  }
+
+  return { sent: true };
 }
 
 /**
@@ -378,9 +465,9 @@ async function enqueueApprovedChases(): Promise<number> {
   let queued = 0;
 
   for (const automation of OPERATIONAL_AUTOMATIONS) {
-    // The lead invite is queued by the alert path at the moment the owner is
-    // told, so it has its own clock and is not swept for here.
-    if (automation.kind === 'invite') continue;
+    // Nothing for the sweep to queue: the lead invite is written by the alert
+    // path at the moment the owner is told, so it has its own clock.
+    if (!automation.sweepQueues) continue;
 
     /*
      * Somebody else sends this one.
@@ -391,9 +478,20 @@ async function enqueueApprovedChases(): Promise<number> {
      */
     if (automation.carriedOutBy) continue;
 
+    /*
+     * The lead time travels with the approval.
+     *
+     * A `before_event` automation needs the owner's own number of hours, and
+     * reading it per business inside the loop would be a query per account for
+     * a value that arrives free with the row we are already selecting.
+     */
+    const columns = automation.leadHoursColumn
+      ? `user_id, ${automation.leadHoursColumn}`
+      : 'user_id';
+
     const { data: approved, error } = await supabaseServer
       .from('business_profiles')
-      .select('user_id')
+      .select(columns)
       .eq(automation.column, true)
       .limit(SWEEP_BUSINESSES);
 
@@ -402,7 +500,7 @@ async function enqueueApprovedChases(): Promise<number> {
       continue;
     }
 
-    for (const row of approved || []) {
+    for (const row of (approved || []) as unknown as Array<Record<string, unknown>>) {
       const userId = row.user_id as string;
 
       try {
@@ -420,25 +518,40 @@ async function enqueueApprovedChases(): Promise<number> {
         const items = gaps.flatMap(gap => gap.items);
 
         for (const item of items) {
+          const dueAt = whenDue(automation, item, row);
+
           /*
-           * Only once it has been stuck long enough.
+           * Not yet. Two different "not yet"s, depending on the clock:
            *
-           * The registry's own staleness window answers "is this a gap"; this
-           * answers "has the owner had their chance first". An invoice one hour
-           * past due is a gap and is nobody's emergency.
+           *   after_gap     it has not been stuck long enough, and the owner
+           *                 still has their chance to handle it themselves
+           *   before_event  the appointment is further away than the owner's
+           *                 lead time, so the reminder would arrive early
+           *
+           * Either way the sweep runs again in five minutes and will pick it up
+           * the moment it is due.
            */
-          const stuckSince = Date.parse(item.since);
-          const dueAt = Number.isNaN(stuckSince)
-            ? new Date()
-            : new Date(stuckSince + automation.delayHours * 60 * 60 * 1000);
+          if (dueAt === null || dueAt.getTime() > Date.now()) continue;
 
-          if (dueAt.getTime() > Date.now()) continue;
+          /*
+           * A reminder whose moment has passed is not sent late.
+           *
+           * An appointment starting in ten minutes does not need a
+           * twenty-four-hour reminder, and one that has already started needs
+           * nothing at all. `after_gap` work has no equivalent — a chase is
+           * still worth sending a week late.
+           */
+          if (automation.timing === 'before_event') {
+            const eventAt = item.eventAt ? Date.parse(item.eventAt) : NaN;
+            if (Number.isNaN(eventAt) || eventAt < Date.now()) continue;
+          }
 
-          const kind = automation.id === 'chase_invoices' ? 'invoice_chase' : 'intake_chase';
+          // From the registry, which is also where the consent check reads it.
+          const kind = automation.sweepQueues;
 
           // The unique index makes a repeat a no-op, but checking first keeps
           // the sweep from writing the same row on every five-minute run.
-          if (await leadResponseRepository.hasPending(userId, kind, item.contactId, item.entityId ?? null)) {
+          if (await leadResponseRepository.hasRowFor(userId, kind, item.contactId, item.entityId ?? null)) {
             continue;
           }
 

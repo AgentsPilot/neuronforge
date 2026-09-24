@@ -2,8 +2,6 @@
 
 import { publicT } from '@/lib/i18n/public-pages';
 import type { PublicBrand } from '@/lib/branding/publicBranding';
-import { resolvePrivacyPolicyUrl } from '@/lib/consent/privacyPolicyUrl';
-import { marketingConsentRepository } from '@/lib/repositories/MarketingConsentRepository';
 
 interface PublicFooterProps {
   brand: PublicBrand;
@@ -25,37 +23,38 @@ interface PublicFooterProps {
  * without pretending to be actionable.
  */
 /*
- * Async, so the privacy link resolves here rather than in each of the pages
- * that render this. Every public surface needs the same link and none of them
- * had a reason to know how to build it; threading it through would have meant
- * the same two lines in five places, which is how the four copies of the
- * "Questions? Contact" line above came about in the first place.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * PRESENTATIONAL, AND NOT ASYNC. BOTH DELIBERATE.
  *
- * A server component throughout — no caller is a client component.
+ * This used to resolve the privacy link itself, which made it an async SERVER
+ * component — and its own comment claimed "no caller is a client component".
+ * That stopped being true: `PublicShell` renders this, and five `'use client'`
+ * pages render `PublicShell` (the booking-management screens and the proposal
+ * page). The fetch dragged `MarketingConsentRepository`, and through it
+ * `lib/supabaseServer`, into the BROWSER bundle — where it builds its client at
+ * module load from a service-role key that is deliberately not there. Every
+ * public page died on hydration with "supabaseKey is required".
+ *
+ * The link now arrives on `brand`, resolved once per request with the rest of
+ * branding. That keeps the "resolve it in one place" intent this component was
+ * reaching for, without a component that renders in a client tree needing to
+ * reach a database to do it.
+ *
+ * Keep it free of server imports. Anything it imports, every public page ships.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
-export async function PublicFooter({
+export function PublicFooter({
   brand,
   showPoweredBy = true,
   showContact = true,
   showPrivacy = true,
 }: PublicFooterProps) {
   /*
-   * Null is a real answer: a business may publish no notice at all. Failure is
-   * also null, because a footer must never be the thing that breaks a booking
-   * page.
+   * Null is a real answer: a business may publish no notice at all, and the
+   * resolver answers null on failure too — a footer must never be the thing
+   * that breaks a booking page.
    */
-  let privacyPolicyUrl: string | null = null;
-
-  if (showPrivacy) {
-    try {
-      const { data: settings } = await marketingConsentRepository.settings(brand.userId);
-      privacyPolicyUrl = await resolvePrivacyPolicyUrl(brand.userId, settings, {
-        user_code: brand.userCode,
-      });
-    } catch {
-      privacyPolicyUrl = null;
-    }
-  }
+  const privacyPolicyUrl = showPrivacy ? brand.privacyPolicyUrl : null;
 
   const contactHref = brand.info.phone
     ? `tel:${brand.info.phone.replace(/\s/g, '')}`

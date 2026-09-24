@@ -1,7 +1,7 @@
 // /lib/audit/types.ts
 // TypeScript types for enterprise audit trail system
 
-import { NextRequest } from 'next/server';
+import type { NextRequest } from 'next/server';
 
 /**
  * Severity levels for audit events

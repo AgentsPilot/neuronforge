@@ -139,7 +139,127 @@ jobs:
           QSTASH_NEXT_SIGNING_KEY: 'sig_ci_not_a_real_key'
         # No `|| true`, no continue-on-error: next build exits non-zero on a
         # build error and that must fail the job.
-        run: npm run build
+        #
+        # The one exception is retried below, and ONLY that one.
+        #
+        # `next/font/google` downloads the three build-time faces (Heebo in
+        # app/layout.tsx, Space Grotesk + Inter in app/business-os/layout.tsx)
+        # from Google during the build. Google answers 200 with valid CSS, but
+        # intermittently gives the font file a URL with no file extension - the
+        # `fonts.gstatic.com/l/font?kit=...` form rather than the usual
+        # `/s/heebo/v26/<hash>.woff2`. next/font 14.2 indexes the extension
+        # match with no null guard:
+        #
+        #   node_modules/next/dist/compiled/@next/font/dist/google/loader.js:112
+        #   const ext = /\.(woff|woff2|eot|ttf|otf)$/.exec(googleFontFileUrl)[1]
+        #
+        # so the build dies with `TypeError: Cannot read properties of null
+        # (reading '1')`. Google varies that URL form per edge, which is why
+        # the SAME commit builds green on one run and red on the next. It has
+        # already reddened main (run 35639481653, the #87 merge, 2026-09-21)
+        # and PR #90 the next morning. next/font retries twice internally -
+        # fetch-css-from-google-fonts.js AND fetch-font-file.js - and the crash
+        # is downstream of BOTH, so neither ever fires. 14.2.35 is the last
+        # 14.2.x as of 2026-09-22, so there is no patch to upgrade into.
+        #
+        # This retry is INSURANCE, NOT THE FIX. It cannot help Vercel, which
+        # runs the same build and makes the same call, so a production deploy
+        # can still fail on this. Accept with open eyes that this weakens the
+        # correspondence this file's header defends: a green gate no longer
+        # quite implies a clean deploy of the same commit. Self-hosting the
+        # three faces through `next/font/local` is what removes the network
+        # call for good, and it is why Step 1 has an expiry - see
+        # docs/workplans/NEXT_FONT_BUILD_FLAKE_WORKPLAN.md.
+        #
+        # Retry only on that one signature. Any other failure exits
+        # immediately, so a genuine build break still fails once, at full
+        # speed, and this can never turn a real error green. In particular
+        # every next/font MISCONFIGURATION (unknown family, unknown weight,
+        # unknown subset, bad display value) is thrown as a NextFontError and
+        # renders as "`next/font` error:", which deliberately does NOT match -
+        # only the unknown-throw branch does. `Failed to fetch font` is also a
+        # NextFontError and is also not retried on purpose: that one is the
+        # honest signal that the network is down.
+        shell: bash
+        run: |
+          set -o pipefail
+          log="$(mktemp)"
+
+          for attempt in 1 2 3; do
+            # `tee`, never `tee -a`: each attempt must be judged on its OWN
+            # log. Appending would let a genuine compile error on attempt 2
+            # match attempt 1's stale font signature, retry, and be reported
+            # as the font flake.
+            #
+            # `timeout` because a next build that HANGS (a stalled font socket
+            # rather than a crash) would otherwise eat the job's whole 30-min
+            # budget and report nothing useful.
+            #
+            # 480s, and the arithmetic is the constraint: timeout-minutes: 30
+            # bounds the WHOLE job, so 3 attempts must fit inside it alongside
+            # the prelude (checkout + npm ci measured 35s and 105s on the two
+            # failed runs). 3 x 480 + 2 x 10 = 24m20s, which fits; 3 x 900
+            # would be 45m20s and GitHub would cancel the job before the step
+            # could print ANY of its own annotations - losing exactly the
+            # diagnostics the timeout exists to preserve. 480s is still ~2.5x
+            # the slowest of the 30 most recent Build runs (1m27s-3m31s).
+            #
+            # `-k 30` because plain `timeout` signals only the direct child
+            # (npm). next build runs beneath it and holds the pipe's write end,
+            # so without the follow-up SIGKILL `tee` can block past the timeout
+            # and the 124 branch never runs.
+            #
+            # Captured via `|| status=$?`, not `$?` after an `if`: an `if`
+            # whose condition fails and which has no `else` returns 0, so the
+            # status would be lost. Spelled as a full `if` rather than
+            # `[ ... ] && exit 0`, which is a set -e footgun.
+            status=0
+            timeout -k 30 480 npm run build 2>&1 | tee "$log" || status=$?
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+
+            if [ "$status" -eq 124 ]; then
+              echo "::error::next build hung and was killed after 8 minutes. Not retrying: a hang is not the font flake, and three of them would blow the job's 30-minute budget."
+              exit 1
+            fi
+
+            # All THREE strings, not just the first. "An error occurred in
+            # next/font" is the catch-all for ANY non-NextFontError throw, and
+            # the loader frame only narrows that to "something threw somewhere
+            # inside google/loader.js" - an ENOSPC at loader.js:200 would still
+            # match both. The null-dereference text is what actually identifies
+            # THIS bug, and it is present in the real crash log. Without it the
+            # step retries an unrelated failure three times and then reports it
+            # as the Google URL flake - and the runbook in the workplan tells
+            # the reader to redeploy and not debug, so the misdiagnosis turns
+            # into wrong action.
+            if ! { grep -qF 'An error occurred in `next/font`' "$log" \
+                && grep -qF '@next/font/dist/google/loader.js' "$log" \
+                && grep -qF 'Cannot read properties of null' "$log"; }; then
+              echo "::error::next build failed for a reason other than the known next/font flake. Not retrying."
+              exit 1
+            fi
+
+            # `|| true` because an unset GITHUB_STEP_SUMMARY would otherwise
+            # abort the whole step under set -e, turning a retryable flake into
+            # a hard failure with no annotation at all. Actions always sets it;
+            # this is belt and braces on the one line that would swallow the
+            # diagnostics if it did not.
+            #
+            # The summary line is the instrument for measuring how often this
+            # actually fires, so it must count real retries: on attempt 3 there
+            # is no retry left, and announcing one there would inflate the rate
+            # by 50% and waste a 10s sleep before the loop exits anyway.
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::next/font hit the known Google URL crash (attempt ${attempt}/3). Retrying."
+              echo "- Attempt ${attempt}/3 hit the next/font Google URL flake." >> "$GITHUB_STEP_SUMMARY" || true
+              sleep 10
+            fi
+          done
+
+          echo "::error::next build hit the same next/font null-dereference on all 3 attempts. Every edge this runner reached served the unparseable URL form; treat it as a real outage rather than a flake."
+          exit 1
 
       - name: Note the skip in the run summary
         if: steps.scope.outputs.skip == 'true'

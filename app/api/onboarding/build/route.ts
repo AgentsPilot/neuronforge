@@ -13,11 +13,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { businessProfileRepository, type BusinessProfileInsert } from '@/lib/repositories/BusinessProfileRepository';
+// Service role: the two business-level defaults below are written for the
+// authenticated owner, already established by `getUser()` above.
+import { supabaseServer } from '@/lib/supabaseServer';
 import { onboardingConversationRepository } from '@/lib/repositories/OnboardingConversationRepository';
 import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { smartLinkRepository } from '@/lib/repositories/SmartLinkRepository';
 import { resolveBusinessCurrency } from '@/lib/business-os/currency';
+import { resolveOnboardingTimezone } from '@/lib/business-os/onboardingTimezone';
 import { paymentPlanRepository } from '@/lib/repositories/PaymentPlanRepository';
 import { capabilityActivationService } from '@/lib/services/CapabilityActivationService';
 import { capabilityConditionEvaluator } from '@/lib/services/CapabilityConditionEvaluator';
@@ -178,6 +182,14 @@ const buildRequestSchema = z.object({
 
   locale: z.string().optional(),
   language: z.enum(['en', 'he', 'es']).optional(),
+
+  /**
+   * The browser's IANA zone, sent by the build page.
+   *
+   * Optional, and validated below rather than here: an unrecognised zone must
+   * not reject a build that carries everything else the conversation collected.
+   */
+  timezone: z.string().optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -601,6 +613,145 @@ export async function POST(request: NextRequest) {
      */
     const serviceCurrency = (code: string | null | undefined) =>
       code === 'USD' || code === 'EUR' || code === 'ILS' || code === 'GBP' ? code : currency;
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE TWO BUSINESS-LEVEL DEFAULTS, RECORDED RATHER THAN RECOMPUTED.
+     *
+     * Both values are already known here and both used to be thrown away.
+     *
+     * The CURRENCY above is resolved from the prices the owner actually typed,
+     * stamped onto every service — and never onto the business. So the platform
+     * re-derived it later by taking the first service row it happened to find,
+     * a query with no ORDER BY, which can return a different row between page
+     * loads once two services disagree.
+     *
+     * The TIMEZONE was never asked at all. This route is server-side, so
+     * "wherever the server is" meant UTC on Vercel, and the account landed on
+     * the column's own default — indistinguishable from a deliberate choice,
+     * which is why the readiness card could never tell it needed to ask.
+     *
+     * WRITTEN ONLY WHERE NOTHING IS STORED YET. Onboarding can be re-run, and
+     * an owner who has since corrected either value in Settings must not have
+     * that correction overwritten by a conversation repeated later.
+     *
+     * Neither is fatal. A business whose defaults did not save still trades;
+     * the readiness card asks again.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    try {
+      const stored = await businessProfileRepository.findByUserId(user.id);
+
+      if (!stored.data?.currency && currency) {
+        const { error: currencyError } = await supabaseServer
+          .from('business_profiles')
+          .update({ currency, updated_at: new Date().toISOString() })
+          .eq('user_id', user.id);
+
+        if (currencyError) {
+          requestLogger.warn({ err: currencyError, currency }, 'Could not store the default currency');
+        }
+      }
+
+      /*
+       * WHERE THE ZONE COMES FROM, IN ORDER OF HOW WELL IT KNOWS.
+       *
+       *   1. the browser, which knows the machine's own setting;
+       *   2. the EDGE, which resolved the caller's IP before the request
+       *      reached us and costs nothing to read.
+       *
+       * The second exists because the first depended on the caller
+       * remembering. Only `/onboarding-build` ever sent a timezone; anything
+       * else reaching this route — the test harness, a retry, a future surface
+       * — built an account with no zone at all, and the readiness card had to
+       * ask for something the request had been holding all along.
+       *
+       * A route that needs a fact should not rely on each caller to volunteer
+       * it. Same reading the website analytics route already does for
+       * `x-vercel-ip-country`, and the same fallback chain.
+       *
+       * IP geolocation is a guess: a VPN or a trip abroad gets it wrong. That
+       * is acceptable HERE and only here, because the alternative is no zone
+       * whatsoever, it is offered rather than imposed, and Settings changes it.
+       * It is deliberately the weaker source, used only when the browser said
+       * nothing.
+       */
+      const { zone, source: zoneSource, confirmed, rejected } = resolveOnboardingTimezone(
+        validated.timezone,
+        request.headers.get('x-vercel-ip-timezone') || request.headers.get('cf-timezone')
+      );
+
+      for (const bad of rejected) {
+        requestLogger.warn(
+          { timezone: bad.value, source: bad.source },
+          'Ignoring an unrecognised timezone'
+        );
+      }
+
+      if (!zone) {
+        requestLogger.info('No timezone from the browser or the edge; the readiness card will ask');
+      }
+
+      if (zone) {
+        const { data: prefs } = await supabaseServer
+          .from('user_preferences')
+          .select('timezone')
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        /*
+         * A stored 'UTC' counts as UNSET here, unlike everywhere else.
+         *
+         * It is the column's default, so a row that has never been written
+         * carries it — and this is the one moment the platform has a better
+         * answer than the default. Overwriting a real choice is the risk, and
+         * an owner cannot have chosen UTC in Settings before finishing
+         * onboarding.
+         */
+        const unset = !prefs?.timezone || !prefs.timezone.trim() || prefs.timezone === 'UTC';
+
+        if (unset) {
+          /*
+           * CONFIRMED ONLY IF A HUMAN COULD HAVE SEEN IT.
+           *
+           * The browser's zone is shown in the flow and accepted by finishing
+           * the build, so it is an answer: recorded as confirmed, and the
+           * readiness card stops asking.
+           *
+           * The edge's guess is not. It is derived from an IP nobody was shown
+           * and never appeared on screen, so marking it confirmed would silence
+           * the question on behalf of someone who was never asked it — exactly
+           * the failure 20261007 exists to correct, rebuilt one layer up. The
+           * zone is still STORED, because a likely zone beats none for every
+           * hour the platform has to render meanwhile; the card then asks, and
+           * the answer it gets overwrites this.
+           *
+           * So the two columns keep doing their two jobs: `timezone` is the
+           * best value available, `timezone_confirmed_at` is whether anybody
+           * has actually said.
+           */
+          const { error: zoneError } = await supabaseServer
+            .from('user_preferences')
+            .upsert({
+              user_id: user.id,
+              timezone: zone,
+              ...(confirmed ? { timezone_confirmed_at: new Date().toISOString() } : {}),
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'user_id' });
+
+          if (zoneError) {
+            requestLogger.warn({ err: zoneError, timezone: zone }, 'Could not store the timezone');
+          } else {
+            // The SOURCE is logged, not just the value: "the edge guessed it"
+            // and "the machine said so" are different levels of confidence,
+            // and only the log can tell them apart afterwards.
+            requestLogger.info({ timezone: zone, source: zoneSource }, 'Stored the business timezone');
+          }
+        }
+      }
+    } catch (err) {
+      requestLogger.warn({ err }, 'Could not store the business defaults; the readiness card will ask');
+    }
 
     /*
      * What this business already sells, by name.

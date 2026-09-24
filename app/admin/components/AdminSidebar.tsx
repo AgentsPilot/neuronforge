@@ -24,7 +24,8 @@ import {
   MessageCircle,
   HardDrive,
   UserCheck,
-  Sparkles
+  Sparkles,
+  Bot
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -146,6 +147,12 @@ const navigationSections: NavSection[] = [
         href: '/admin/system-config',
         icon: DollarSign,
         description: 'Pricing & Billing'
+      },
+      {
+        name: 'Business OS AI',
+        href: '/admin/business-os-llm',
+        icon: Bot,
+        description: 'Models & Switches'
       },
       {
         name: 'Storage Config',

@@ -32,6 +32,13 @@ export const AUDIT_EVENTS = {
   AGENT_RUN_STARTED: 'AGENT_RUN_STARTED',
   AGENT_RUN_COMPLETED: 'AGENT_RUN_COMPLETED',
   AGENT_RUN_FAILED: 'AGENT_RUN_FAILED',
+  // Written live by app/api/run-agent/route.ts and stored in audit_trail, but
+  // never registered here — so it was reachable only because the admin page
+  // hardcoded it. Registered so the catalogue-driven filter (Gap A, FR-A3)
+  // still offers it. Its metadata below is deliberately identical to the
+  // getEventMetadata() fallback it has been written under (severity 'info', no
+  // compliance flags), so already-stored rows and new ones stay the same (WC-12).
+  AGENT_EXECUTED: 'AGENT_EXECUTED',
   AGENT_SCHEMA_UPDATED: 'AGENT_SCHEMA_UPDATED', // input/output schema changes
   AGENT_CONFIG_SAVED: 'AGENT_CONFIG_SAVED', // input values saved/updated
   EFFORT_ESTIMATE_GENERATED: 'EFFORT_ESTIMATE_GENERATED', // Effort Estimator wrote agent_config.roi_estimate
@@ -312,6 +319,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'Calibration rewrote a stored workflow field name to the plugin\'s real spelling (Item 7 in-place field-fidelity correction)',
+  },
+  [AUDIT_EVENTS.AGENT_EXECUTED]: {
+    // No complianceFlags on purpose: this event has always been written through
+    // the getEventMetadata() fallback (severity 'info', no flags), and metadata
+    // is what decides both when the caller does not pass them.
+    severity: 'info',
+    description: 'Agent executed',
   },
   [AUDIT_EVENTS.AGENT_RUN_STARTED]: {
     severity: 'info',

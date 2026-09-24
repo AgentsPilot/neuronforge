@@ -111,7 +111,7 @@ export class PricingIntroOfferStuckDetector extends BaseDetector {
     // Note: intro_price and is_intro_offer may be stored in metadata since not all schemas have these columns
     const { data: services } = await this.supabase
       .from('scheduling_services')
-      .select('id, service_name, price')
+      .select('id, service_name, price, currency')
       .eq('user_id', userId);
 
     // Build map of intro services and their full-price equivalents
@@ -225,13 +225,58 @@ export class PricingIntroOfferStuckDetector extends BaseDetector {
     const stuckCount = stuckEmails.size;
     const severity = this.definition.severityFn(conversionRate, stuckCount);
 
-    // Calculate missed revenue
-    const avgFullPrice = services
-      ? services.reduce((sum, s) => sum + parseFloat(s.price || '0'), 0) / services.length
+    /*
+     * Calculate missed revenue — WITHIN ONE CURRENCY.
+     *
+     * This averaged every service's price together regardless of what each was
+     * denominated in. A business pricing US clients in dollars from Israel
+     * (the case per-service currency exists for) had 300 ILS and 300 USD
+     * averaged to 300 of nothing, and `missedRevenue` — which reaches the owner
+     * as a figure — was a quantity in no unit. There is no FX rate anywhere in
+     * the platform to make that average mean something.
+     *
+     * So the comparison runs over the DOMINANT currency: the one the most
+     * priced services are in. Anything else is excluded rather than converted,
+     * and `currency` is reported so the number can be labelled correctly
+     * instead of taking a symbol from the reader's language.
+     */
+    const priced = (services ?? []).filter((s) => parseFloat(s.price || '0') > 0);
+    const currencyCounts = new Map<string, number>();
+    for (const s of priced) {
+      const code = (s.currency || 'ILS').toUpperCase();
+      currencyCounts.set(code, (currencyCounts.get(code) ?? 0) + 1);
+    }
+    const dominantCurrency =
+      [...currencyCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+
+    const comparable = priced.filter(
+      (s) => (s.currency || 'ILS').toUpperCase() === dominantCurrency
+    );
+
+    const avgFullPrice = comparable.length
+      ? comparable.reduce((sum, s) => sum + parseFloat(s.price || '0'), 0) / comparable.length
       : 100;
-    const avgIntroPrice = eligibleIntroBookings.reduce((sum, b) => sum + b.price, 0) / eligibleIntroBookings.length;
+
+    // The intro bookings are already scoped to services this detector matched;
+    // restrict them to the same currency so the two halves of the subtraction
+    // are in the same unit.
+    const comparableIds = new Set(comparable.map((s) => s.id));
+    const comparableIntro = eligibleIntroBookings.filter((b) => comparableIds.has(b.serviceId));
+    const introSample = comparableIntro.length ? comparableIntro : eligibleIntroBookings;
+
+    const avgIntroPrice =
+      introSample.reduce((sum, b) => sum + b.price, 0) / introSample.length;
     const priceDiff = avgFullPrice - avgIntroPrice;
-    const missedRevenue = stuckCount * priceDiff * 2; // Assume 2 future bookings missed
+    /*
+     * One upgrade each, not two.
+     *
+     * This multiplied by a literal 2 — "Assume 2 future bookings missed" — so
+     * every figure shown to the owner was double a number that was itself an
+     * assumption. What is actually knowable is the gap between the intro price
+     * and the full price, once per client who has not moved on. That is the
+     * claim the data supports; anything beyond it is a forecast.
+     */
+    const missedRevenue = stuckCount * priceDiff;
 
     // Get contact details for stuck users
     const { data: contacts } = await this.supabase
@@ -270,6 +315,10 @@ export class PricingIntroOfferStuckDetector extends BaseDetector {
         target_rate: this.definition.threshold,
         avg_intro_price: Math.round(avgIntroPrice),
         avg_full_price: Math.round(avgFullPrice),
+        // What the three money figures above are denominated in. Without it a
+        // reader takes the symbol from the UI language, so a dollar-billing
+        // business working in Hebrew reads every one of them as shekels.
+        currency: dominantCurrency,
         stuck_contacts: stuckContacts.slice(0, 10),
       },
     });

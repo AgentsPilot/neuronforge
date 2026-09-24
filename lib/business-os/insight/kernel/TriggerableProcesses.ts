@@ -187,8 +187,19 @@ export const TRIGGERABLE_PROCESSES: Record<string, TriggerableProcess> = {
 export const DETECTOR_TO_PROCESS: Record<string, string> = {
   cash_ar_overdue: 'chase_overdue_invoices',
   ret_no_show_spike: 'send_reminder_sequence',
-  sales_stalled: 'send_followup_nudge',
-  sales_reply_slow: 'draft_reply_templates',
+  /*
+   * `sales_stalled` and `sales_reply_slow` are deliberately absent.
+   *
+   * Both dropped their `pairedProcessId` — the first because its process was
+   * never built, the second because `draft_reply_templates` sends nothing and
+   * the enqueuer refuses it. This map is read by the browser through
+   * `getProcessForDetector`, so an entry here renders a button the server then
+   * answers 400 to.
+   *
+   * The parity test only catches a CONTRADICTION (a detector with a process
+   * that disagrees with the map), not a map entry for a detector that has since
+   * dropped its process — which is how these two survived.
+   */
   // ops_utilization_low has no paired process (advisory only)
 
   /*

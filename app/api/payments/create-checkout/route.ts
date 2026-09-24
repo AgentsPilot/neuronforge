@@ -8,6 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { platformOrigin } from '@/lib/utils/origins';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
@@ -217,7 +218,7 @@ export async function POST(request: NextRequest) {
      * destination, and they at least tell the customer their payment went
      * through. Callers that DO know the invoice keep passing `success_url`.
      */
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.agentpilot.io';
+    const baseUrl = platformOrigin();
     const successUrl =
       data.success_url || `${baseUrl}/payments/success?session_id={CHECKOUT_SESSION_ID}`;
     const cancelUrl = data.cancel_url || `${baseUrl}/payments/cancelled`;

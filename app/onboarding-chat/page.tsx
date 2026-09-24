@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Bot, Loader2, Send, User, Sparkles, Check, Plus, Trash2, X, Building2, Users, Calendar, CreditCard, Globe, Share2, XCircle, Lock } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
+import { SessionHandler } from '@/components/SessionHandler';
 import { V2Logo } from '@/components/v2/V2Header';
 import { useV2Theme } from '@/lib/design-system-v2';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -20,13 +21,27 @@ interface ServiceInput {
   duration: string;
   price: string;
   /**
-   * What this service is charged in.
+   * What this service is charged in — and, through it, what the BUSINESS is.
    *
    * Chosen, not inferred from the interface language: a practice working in
    * Hebrew and serving clients abroad charges in dollars, and a symbol derived
    * from the reading language put the wrong one on every price it had.
+   *
+   * NULL UNTIL SOMEBODY CHOOSES. It used to be pre-filled on every row, which
+   * broke the thing it was feeding: `resolveBusinessCurrency` takes the first
+   * service carrying a currency and only falls back to the language when none
+   * does — so a pre-filled row meant that fallback could never run, and the
+   * default arrived looking exactly like a deliberate answer.
+   *
+   * Worse, the first row's pre-fill was evaluated at first render, when
+   * `selectedLanguage` is still its `'en'` default and before the owner has
+   * said a word. A Hebrew business that never opened the picker got USD on
+   * service one — and service one is the row that decides the business.
+   *
+   * Same lesson as `user_preferences.timezone`: a field that cannot express
+   * "nobody said" cannot be read reliably for what anybody did say.
    */
-  currency: 'USD' | 'EUR' | 'ILS' | 'GBP';
+  currency: 'USD' | 'EUR' | 'ILS' | 'GBP' | null;
   /**
    * The two facts that decide this service's client journey, asked here
    * because this is where the person is already typing a duration and a price.
@@ -231,7 +246,9 @@ export default function OnboardingChatPage() {
       name: '',
       duration: '60',
       price: '',
-      currency: currencyForLanguage(selectedLanguage),
+      // Null until chosen — see the field's own note. A value here is
+      // indistinguishable from an answer, and this one would be a stale 'en'.
+      currency: null,
       isScheduled: true,
       bufferMinutes: '15',
       saleMode: 'direct',
@@ -500,7 +517,8 @@ export default function OnboardingChatPage() {
         name: '',
         duration: '60',
         price: '',
-        currency: prev[prev.length - 1]?.currency || currencyForLanguage(selectedLanguage),
+        // Inherits what the first row settled on, including "nobody has said".
+        currency: prev[prev.length - 1]?.currency ?? null,
         isScheduled: true,
         bufferMinutes: '15',
       saleMode: 'direct',
@@ -522,6 +540,30 @@ export default function OnboardingChatPage() {
 
   // `isScheduled` is a boolean, so the setter can no longer take strings only.
   const updateServiceRow = (index: number, field: keyof ServiceInput, value: string | boolean) => {
+    /*
+     * CURRENCY IS ONE DECISION FOR THE WHOLE BUSINESS, TAKEN ON THE FIRST ROW.
+     *
+     * It is not really a property of a row here, however it is stored: what is
+     * picked in this form becomes `business_profiles.currency` by way of
+     * `resolveBusinessCurrency`, which reads the FIRST service that names one.
+     * Per-row pickers therefore offered a choice that silently did not exist —
+     * set row two to ILS behind a USD row one and the business is still USD,
+     * with a services table that disagrees with itself and no rate anywhere to
+     * reconcile it.
+     *
+     * So it applies to every row, and only the first row offers it. A business
+     * that genuinely prices one service in another currency changes that
+     * service afterwards, in settings, against real data — not here, where the
+     * change would quietly redefine the business.
+     */
+    if (field === 'currency') {
+      setServicesInput(prev => prev.map(service => ({
+        ...service,
+        currency: value as ServiceInput['currency'],
+      })));
+      return;
+    }
+
     setServicesInput(prev => prev.map((service, i) => {
       if (i !== index) return service;
 
@@ -655,7 +697,12 @@ export default function OnboardingChatPage() {
         // keep it exactly as typed. Otherwise use the one they picked for the
         // row, which is the whole point of the selector.
         const wroteCurrency = currencyFromText(s.price) !== null;
-        parts.push(wroteCurrency ? s.price : `${currencySymbol(s.currency)}${s.price}`);
+        // `s.currency` is null until somebody chooses, and `currencySymbol`
+        // returns '' for null — which would send a bare number into the
+        // conversation. The language default is the right thing to SHOW while
+        // nothing has been chosen; it is still not stored.
+        const symbol = currencySymbol(s.currency ?? currencyForLanguage(selectedLanguage));
+        parts.push(wroteCurrency ? s.price : `${symbol}${s.price}`);
       }
 
       // How this one is collected, in words too — so a business that takes a
@@ -700,7 +747,9 @@ export default function OnboardingChatPage() {
       name: '',
       duration: '60',
       price: '',
-      currency: currencyForLanguage(selectedLanguage),
+      // Null until chosen — see the field's own note. A value here is
+      // indistinguishable from an answer, and this one would be a stale 'en'.
+      currency: null,
       isScheduled: true,
       bufferMinutes: '15',
       saleMode: 'direct',
@@ -1156,6 +1205,17 @@ export default function OnboardingChatPage() {
 
   return (
     <div className="min-h-screen bg-[var(--v2-bg)]" dir={isRTL ? 'rtl' : 'ltr'}>
+      {/*
+        Mounted HERE, and only here.
+
+        This is the one address a sign-in handoff has ever landed on. It used to
+        be mounted in `PlatformShell`, so it ran on every page and would adopt an
+        `access_token` from any url's fragment — which, with the fragment left in
+        browser history, is how a Back button could sign someone back in after
+        they had logged out.
+      */}
+      <SessionHandler />
+
       {/* Header */}
       <div className="border-b border-[var(--v2-border)] bg-[var(--v2-surface)]">
         {/* Pinned to LTR on purpose.
@@ -1953,15 +2013,43 @@ export default function OnboardingChatPage() {
                               dialog, which is about how a price is split, not
                               what it is denominated in. Same dropdown the
                               service settings use, with a trigger small enough
-                              to sit inside the field. */}
+                              to sit inside the field.
+
+                              ONCE, ON THE FIRST ROW. What is chosen here
+                              becomes the business's own currency, so a second
+                              row offering the choice again was offering one
+                              that does not exist — see `updateServiceRow`.
+                              Every row shows it; only the first can change it.
+
+                              The displayed value falls back to the language
+                              while nobody has chosen, WITHOUT storing that
+                              fallback: a stored default cannot be told from an
+                              answer, and the build route needs to tell them
+                              apart.
+
+                              THE LOCK IS ABOUT CONSISTENCY, NOT PERMANENCE.
+                              Nothing here is frozen: the first row stays
+                              editable for as long as onboarding is open, a
+                              change there rewrites every row, and deleting the
+                              first row promotes the next one to editable. So
+                              the reason text says WHERE to change it rather
+                              than only that this row cannot. */}
                           <div className={cn(
                             'absolute top-1/2 -translate-y-1/2 z-10',
                             isRTL ? 'right-2.5' : 'left-2.5'
                           )}>
                             <ServiceCurrencySelect
-                              value={service.currency}
+                              value={service.currency ?? currencyForLanguage(selectedLanguage)}
                               onChange={code => updateServiceRow(index, 'currency', code)}
                               compact
+                              locked={index > 0}
+                              lockedReason={
+                                selectedLanguage === 'he'
+                                  ? 'אפשר לשנות בשירות הראשון: הוא קובע את המטבע של העסק'
+                                  : selectedLanguage === 'es'
+                                    ? 'Cámbiala en el primer servicio: define la moneda del negocio'
+                                    : 'Change it on the first service: it sets the currency for the whole business'
+                              }
                             />
                           </div>
                           <input
@@ -2340,7 +2428,10 @@ export default function OnboardingChatPage() {
                 <ServicePaymentOptions
                   formData={{
                     price,
-                    currency: service.currency,
+                    // `ServicePaymentOptions` requires a concrete currency; the row's is
+                    // null until somebody chooses. Same display fallback used by the
+                    // picker, and still not stored.
+                    currency: service.currency ?? currencyForLanguage(selectedLanguage),
                     payment_type: service.paymentType,
                     installment_count: count,
                     installment_frequency: service.installmentFrequency,
@@ -2350,7 +2441,10 @@ export default function OnboardingChatPage() {
                   setFormData={updater => {
                     const next = updater({
                       price,
-                      currency: service.currency,
+                      // `ServicePaymentOptions` requires a concrete currency; the row's is
+                    // null until somebody chooses. Same display fallback used by the
+                    // picker, and still not stored.
+                    currency: service.currency ?? currencyForLanguage(selectedLanguage),
                       payment_type: service.paymentType,
                       installment_count: count,
                       installment_frequency: service.installmentFrequency,

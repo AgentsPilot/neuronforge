@@ -192,7 +192,20 @@ export class PaymentIssuesDetector extends BaseDetector {
       currentValue: topIssue.totalAmount,
       baselineValue: 0,
       thresholdValue: 0,
-      percentChange: 100,
+      /*
+       * Nothing changed by a hundred per cent.
+       *
+       * This detector counts: there is no baseline to have moved from, and a
+       * hardcoded 100 reached the narrator as a real measurement. It produced
+       * sentences like "a 100% increase in risk compared to your usual client
+       * retention" and "a 100% increase in your expected cash flow" — arithmetic
+       * presented as a trend, about a base of zero.
+       *
+       * `hasRealBaseline` now keeps the figure out of the prompt, but that guard
+       * reads `baselineValue`, so it is the second line of defence. This is the
+       * first: a count reports no change, because none was measured.
+       */
+      percentChange: 0,
       direction: 'above',
       affectedEntityType: entityType,
       affectedEntityIds: topIssue.transactions.map((t) => t.id),

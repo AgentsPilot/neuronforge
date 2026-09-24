@@ -305,14 +305,33 @@ export class InsightPrioritizer {
   }
 
   /**
-   * Deduplicate insights - keep highest scored per category/entity combination
+   * One insight per detector, highest-scoring wins.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The key was `category:affectedEntityType`, which is not a description of a
+   * finding — it is a description of a SHAPE. Five conversion detectors all
+   * report `conversion:contact`:
+   *
+   *   crm_cold_leads · conv_pipeline_stuck · conv_no_next_step
+   *   conv_stage_dropoff · conv_service_rate_drop
+   *
+   * They answer five different questions, and four of them were discarded here
+   * every run — not stored, not counted, not resolved, no row, no trace. The
+   * owner never learned that people were stalling at a particular stage because
+   * a cold-lead insight happened to score higher that day.
+   *
+   * A detector is the unit of a finding, and `createBatch` already refuses a
+   * second open insight for the same detector, so keying on it is both the
+   * honest grouping and the one the storage layer expects. Volume is bounded by
+   * the top-N cap in `prioritize`, which is where a limit belongs — a visible
+   * cut, not a silent collapse.
+   * ───────────────────────────────────────────────────────────────────────────
    */
   private deduplicate(insights: PrioritizedInsight[]): PrioritizedInsight[] {
     const seen = new Map<string, PrioritizedInsight>();
 
     for (const insight of insights) {
-      // Create a dedup key based on category and affected entity type
-      const key = `${insight.detection.category}:${insight.detection.affectedEntityType || 'none'}`;
+      const key = insight.detection.detectorId;
 
       const existing = seen.get(key);
       if (!existing || insight.score > existing.score) {

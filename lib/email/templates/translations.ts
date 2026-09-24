@@ -468,6 +468,62 @@ export const emailTranslations = {
   // ==========================================
   // BOOKING CANCELLATION EMAIL
   // ==========================================
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE APPOINTMENT THE CLIENT DID NOT ATTEND — AND THE WORD "NO-SHOW" APPEARS
+   * NOWHERE IN IT.
+   *
+   * "No-show" is the OWNER's bookkeeping label. To the person receiving this it
+   * reads as an accusation, and the owner marking the status cannot actually
+   * know why someone was absent: illness, a bereavement, the wrong address, or
+   * a status ticked in error while the client sat in the waiting room.
+   *
+   * So the copy states only what is certainly true — they were not there, and
+   * the business would like to see them — and offers a way forward. No blame,
+   * no fault, no fee. A missed-fee message is a different email with different
+   * rules and must not ride on this one.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  missedAppointment: {
+    subject: {
+      en: (serviceName: string) => `We missed you - ${serviceName}`,
+      es: (serviceName: string) => `Te echamos de menos - ${serviceName}`,
+      he: (serviceName: string) => `התגעגענו אליך - ${serviceName}`
+    },
+    greeting: {
+      en: 'We missed you',
+      es: 'Te echamos de menos',
+      he: 'התגעגענו אליך'
+    },
+    intro: {
+      en: (clientName: string) =>
+        `Hi ${clientName}, we had you down for the appointment below and did not get to see you.`,
+      es: (clientName: string) =>
+        `Hola ${clientName}, te esperábamos en la cita de abajo y no pudimos verte.`,
+      he: (clientName: string) =>
+        `שלום ${clientName}, חיכינו לכם לפגישה שלהלן ולא הספקנו להיפגש.`
+    },
+    /** Deliberately warm, and deliberately not a question about what happened. */
+    bookAgainPrompt: {
+      en: 'If you would still like to come in, you can pick a new time here.',
+      es: 'Si aún quieres venir, puedes elegir un nuevo horario aquí.',
+      he: 'אם עדיין תרצו להגיע, אפשר לבחור מועד חדש כאן.'
+    },
+    bookAgain: {
+      en: 'Find another time',
+      es: 'Elegir otro horario',
+      he: 'בחירת מועד אחר'
+    },
+    questions: {
+      en: (businessName: string) =>
+        `If this reached you by mistake, or you need anything, just reply to this email and ${businessName} will pick it up.`,
+      es: (businessName: string) =>
+        `Si has recibido esto por error, o necesitas algo, responde a este correo y ${businessName} lo verá.`,
+      he: (businessName: string) =>
+        `אם ההודעה הגיעה בטעות, או שנדרש משהו, אפשר להשיב למייל הזה ו${businessName} יטפלו בכך.`
+    }
+  },
+
   bookingCancellation: {
     subject: {
       en: (serviceName: string) => `Appointment cancelled - ${serviceName}`,

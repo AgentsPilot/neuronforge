@@ -11,6 +11,8 @@ import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { z } from 'zod';
 import { createServiceSchema } from '@/lib/validation/schedulingService';
+import { soldServiceIds } from '@/lib/scheduling/soldServices';
+import { supabaseServer } from '@/lib/supabaseServer';
 // One schema for create and update, so the two cannot drift apart again.
 
 const logger = createLogger({ module: 'SchedulingServicesAPI' });
@@ -129,10 +131,28 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // 4. Return success
+    /*
+     * 4. Mark the ones whose currency is frozen.
+     *
+     * `service_currency_lock` (20261008) refuses the change once a service has
+     * been booked, invoiced, paid or quoted. Without this the picker offers all
+     * four currencies on a sold service, takes the click, and fails on save —
+     * a settled rule arriving as an error.
+     *
+     * Never fatal: an unresolved set leaves every picker open, which is exactly
+     * the behaviour before this existed. The database is still the guarantee.
+     */
+    const sold = await soldServiceIds(supabaseServer, user.id);
+
+    const services = (result.data ?? []).map(service => ({
+      ...service,
+      currency_locked: sold.has(service.id),
+    }));
+
+    // 5. Return success
     return NextResponse.json({
       success: true,
-      services: result.data
+      services
     });
 
   } catch (error) {

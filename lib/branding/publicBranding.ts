@@ -41,6 +41,8 @@ import { cleanPublicContact } from '@/lib/branding/placeholderContact';
 import { whatsappLink } from '@/lib/branding/phone';
 import { safeExternalUrl } from '@/lib/branding/externalUrl';
 import { resolvePlatformWebsiteUrl } from '@/lib/branding/platformSite';
+import { resolvePrivacyPolicyUrl } from '@/lib/consent/privacyPolicyUrl';
+import { marketingConsentRepository } from '@/lib/repositories/MarketingConsentRepository';
 import { isDarkColor } from '@/lib/branding/color';
 import { DAY_NAMES, windowsForDay, hasAnyAvailability, type AvailabilityWindow } from '@/lib/scheduling/availabilityWindows';
 import { isValidLocale, getDirection, defaultLocale, type Locale } from '@/lib/i18n/config';
@@ -112,6 +114,27 @@ export interface PublicBrand {
   /** Whether the chosen palette is a dark one, for `color-scheme`. */
   colorScheme: 'light' | 'dark';
   info: PublicBusinessInfo;
+  /**
+   * The business's privacy notice, or null where it publishes none.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Resolved HERE rather than by the footer that shows it, and that is a
+   * correctness requirement rather than a tidiness one.
+   *
+   * `PublicFooter` used to fetch it itself, which made it an async SERVER
+   * component — and it is rendered through `PublicShell` by five `'use client'`
+   * pages (the booking-management screens and the proposal page). That dragged
+   * `MarketingConsentRepository`, and through it `lib/supabaseServer`, into the
+   * browser bundle. `supabaseServer` builds its client at module load from a
+   * service-role key that is deliberately absent in the browser, so every one
+   * of those pages died on hydration with "supabaseKey is required".
+   *
+   * Branding is already resolved once per request on the server and handed to
+   * the client as plain data, so carrying the link with it costs nothing and
+   * reaches both worlds.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  privacyPolicyUrl: string | null;
 }
 
 /**
@@ -382,6 +405,20 @@ async function loadPublicBranding(
     hasAny: Boolean(email || phone || address || hours || websiteUrl),
   };
 
+  /*
+   * Never fatal. A business may publish no notice at all, and a failure to look
+   * one up must not take down a booking page — so both answer null.
+   */
+  let privacyPolicyUrl: string | null = null;
+  try {
+    const { data: consentSettings } = await marketingConsentRepository.settings(userId);
+    privacyPolicyUrl = await resolvePrivacyPolicyUrl(userId, consentSettings, {
+      user_code: userCode,
+    });
+  } catch (err) {
+    logger.warn({ err, userId }, 'Could not resolve the privacy policy link for a public page');
+  }
+
   return {
     userId,
     userCode,
@@ -395,6 +432,7 @@ async function loadPublicBranding(
     currency: CURRENCY_BY_LOCALE[locale],
     colorScheme: isDarkColor(theme.colors.background) ? 'dark' : 'light',
     info,
+    privacyPolicyUrl,
   };
 }
 

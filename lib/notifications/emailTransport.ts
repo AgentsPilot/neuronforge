@@ -102,6 +102,25 @@ export interface SendEmailResult {
   provider: 'resend' | 'smtp' | 'gmail' | 'none';
   error?: string;
   /**
+   * The provider's own id for this message.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * The single thing that makes delivery observable. Resend returns `{ id }`
+   * from its send call and this code discarded the whole response body — so
+   * `email_sends.provider_message_id` was null on all 63 rows, and there was
+   * no key to match a webhook event back to the send it belonged to.
+   *
+   * The consequence: `opened_at`, `clicked_at` and `delivered_at` existed as
+   * columns and were never written. Sixty emails sent, zero known to have been
+   * read — so "your chase emails are not being opened", the most actionable
+   * thing the platform could tell an owner about the automations they switched
+   * on, was unanswerable.
+   *
+   * Absent for SMTP and Gmail, which return no such handle.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  providerMessageId?: string;
+  /**
    * Refused before any transport was touched.
    *
    * NOT a delivery failure, and callers must not treat it as one. A blocked
@@ -144,7 +163,8 @@ function gmailConfigured(): boolean {
   );
 }
 
-async function sendViaResend(p: SendEmailParams): Promise<void> {
+/** Returns the provider's message id, or undefined when it cannot be read. */
+async function sendViaResend(p: SendEmailParams): Promise<string | undefined> {
   // Build request body
   const body: Record<string, unknown> = {
     from: p.from || process.env.RESEND_FROM_EMAIL || RESEND_DEFAULT_FROM,
@@ -187,6 +207,21 @@ async function sendViaResend(p: SendEmailParams): Promise<void> {
     const errorText = await res.text();
     logger.error({ status: res.status, error: errorText }, 'Resend API error');
     throw new Error(`Resend API error (${res.status}): ${errorText}`);
+  }
+
+  /*
+   * `{ id }`, and it is the whole point of reading this response.
+   *
+   * A body that cannot be parsed is not a failed send — the mail has gone. It
+   * costs the tracking for that one message and nothing else, so it degrades
+   * to undefined rather than throwing.
+   */
+  try {
+    const payload = (await res.json()) as { id?: string };
+    return typeof payload?.id === 'string' ? payload.id : undefined;
+  } catch {
+    logger.warn('Resend accepted the send but its response could not be read; delivery will not be tracked');
+    return undefined;
   }
 }
 
@@ -413,9 +448,9 @@ export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
   // 1. Resend (preferred for production)
   if (resendConfigured()) {
     try {
-      await sendViaResend(p);
-      logger.info({ to: p.to, provider: 'resend' }, 'Email sent');
-      return { sent: true, provider: 'resend' };
+      const providerMessageId = await sendViaResend(p);
+      logger.info({ to: p.to, provider: 'resend', providerMessageId }, 'Email sent');
+      return { sent: true, provider: 'resend', providerMessageId };
     } catch (err: any) {
       errors.push(`resend: ${err?.message ?? err}`);
       logger.warn({ err: err?.message ?? String(err) }, 'Resend send failed — trying next transport');

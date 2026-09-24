@@ -27,6 +27,7 @@
  * @module lib/business-os/gaps/automationApplies
  */
 
+import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { intakeRepository } from '@/lib/repositories/IntakeRepository';
 import { intakeFormRepository } from '@/lib/repositories/IntakeFormRepository';
 import { intakeReachesClient } from '@/lib/business-os/intakeReach';
@@ -69,12 +70,41 @@ export async function applicableAutomations(
   return automations.filter((_, index) => verdicts[index]);
 }
 
-async function resolve(userId: string, requirement: 'intake_reaches_client'): Promise<boolean> {
+async function resolve(
+  userId: string,
+  requirement: NonNullable<OperationalAutomation['requires']>
+): Promise<boolean> {
   switch (requirement) {
     case 'intake_reaches_client':
       return intakeReaches(userId);
+    case 'takes_bookings':
+      return takesBookings(userId);
     default:
       return true;
+  }
+}
+
+/**
+ * Is there anything anyone could book?
+ *
+ * Asked of the services, not of the diary. A business that published a service
+ * last week and has no appointments yet is exactly the one that should be
+ * offered this — the question is what happens from the first booking on, and
+ * gating on existing bookings would hide the automation until it was too late
+ * to have helped.
+ *
+ * `activeOnly` carries both halves of bookable — the Power toggle and the
+ * draft/published status — from `SchedulingServiceRepository.BOOKABLE`, so a
+ * business whose only service is switched off reads as taking no bookings.
+ */
+async function takesBookings(userId: string): Promise<boolean> {
+  try {
+    const { data, error } = await schedulingServiceRepository.listAll(userId, true);
+    if (error) throw error;
+    return (data ?? []).length > 0;
+  } catch (err) {
+    logger.warn({ err, userId }, 'Could not resolve bookable services; not offering the meeting reminder');
+    return false;
   }
 }
 

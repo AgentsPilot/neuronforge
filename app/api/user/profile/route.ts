@@ -211,7 +211,15 @@ export async function PUT(req: NextRequest) {
       await supabase
         .from('user_preferences')
         .upsert(
-          { user_id: user.id, timezone, updated_at: new Date().toISOString() },
+          {
+            user_id: user.id,
+            timezone,
+            // The caller stated a zone, so record that it was ANSWERED — the
+            // value alone cannot distinguish a chosen 'UTC' from the column
+            // default this table carried until 20261006. See 20261007.
+            timezone_confirmed_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
           { onConflict: 'user_id' }
         )
         .then(({ error: mirrorError }) => {

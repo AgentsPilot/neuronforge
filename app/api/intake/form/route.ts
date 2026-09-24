@@ -125,7 +125,7 @@ export async function GET(request: NextRequest) {
         // Why intake is not reaching anyone, if it is not. Null when nothing is
         // in the way, so the screen can say something specific instead of
         // leaving the owner to work it out.
-        blockedBecause: intakeBlockReason(reach, { forClient: true }),
+        blockedBecause: intakeBlockReason(reach),
       },
     });
   } catch (error) {

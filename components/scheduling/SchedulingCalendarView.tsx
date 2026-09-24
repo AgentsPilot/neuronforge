@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { ChevronLeft, ChevronRight, Clock, Calendar, Phone, Mail, CheckCircle, XCircle, AlertCircle, Trash2, Loader2, LayoutGrid, List } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { NoShowConfirmDialog } from '@/components/scheduling/NoShowConfirmDialog';
 import { businessClock, businessDateKey, businessInstant, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
 import type { SchedulingBooking, SchedulingService } from '@/lib/repositories/SchedulingRepository';
 import type { WeeklyAvailability } from './AvailabilityEditor';
@@ -90,6 +91,63 @@ const STATUS_FILTERS: { key: StatusFilter; color: string; darkColor: string }[] 
   { key: 'no_show', color: '#f59e0b', darkColor: '#fcd34d' }
 ];
 
+
+/**
+ * Where each booking sits when several share the same time.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Every block was positioned `absolute inset-x-1` — the full width of its day
+ * column — with only `top` and `height` varying. Two appointments at 10:00
+ * therefore occupied exactly the same rectangle, and the grid showed whichever
+ * happened to render last. A week whose list said "3 bookings" drew one.
+ *
+ * That is not a rare case. It is the NORMAL one after a no-show: the original
+ * slot, the rebooking and a cancellation all sit on the same hour, which is
+ * precisely when the owner most needs to see that three things happened there.
+ *
+ * So concurrent bookings are laid out side by side, as a calendar does.
+ * Overlapping runs are found by sweeping the day in start order and closing a
+ * group when a booking starts after everything before it has ended — so two
+ * appointments that merely touch (10:00-10:15, 10:15-10:30) stay full width,
+ * and only genuine collisions are narrowed.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function layoutConcurrentBookings(
+  dayBookings: { id: string; start_time: string; end_time: string }[]
+): Map<string, { column: number; columns: number }> {
+  const layout = new Map<string, { column: number; columns: number }>();
+
+  const ordered = [...dayBookings].sort(
+    (a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+  );
+
+  let group: typeof ordered = [];
+  let groupEnd = 0;
+
+  const flush = () => {
+    group.forEach((booking, index) =>
+      layout.set(booking.id, { column: index, columns: group.length })
+    );
+    group = [];
+    groupEnd = 0;
+  };
+
+  for (const booking of ordered) {
+    const start = new Date(booking.start_time).getTime();
+    const end = new Date(booking.end_time).getTime();
+
+    // A booking starting at or after everything so far has ended begins a new
+    // group: it collides with none of them and should keep the full width.
+    if (group.length && start >= groupEnd) flush();
+
+    group.push(booking);
+    groupEnd = Math.max(groupEnd, end);
+  }
+  flush();
+
+  return layout;
+}
+
 export function SchedulingCalendarView({
   bookings,
   services,
@@ -154,7 +212,20 @@ export function SchedulingCalendarView({
   }, [currentWeek, externalEventsRefreshTrigger]);
 
   // Quick action handler
-  const handleQuickAction = async (bookingId: string, action: 'cancel' | 'complete' | 'no-show' | 'delete', e: React.MouseEvent) => {
+  /*
+   * The booking awaiting a no-show confirmation, or null. A no-show is a
+   * judgement recorded against a person and it reaches their timeline, so it is
+   * confirmed rather than applied on one click — and the confirmation is where
+   * the owner decides whether to invite them back.
+   */
+  const [noShowTarget, setNoShowTarget] = useState<{ id: string; name: string | null } | null>(null);
+
+  const handleQuickAction = async (
+    bookingId: string,
+    action: 'cancel' | 'complete' | 'no-show' | 'delete',
+    e: React.MouseEvent,
+    options?: { notifyClient?: boolean }
+  ) => {
     e.stopPropagation();
     if (actionInProgress) return;
 
@@ -169,7 +240,7 @@ export function SchedulingCalendarView({
       const response = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: action === 'delete' ? undefined : JSON.stringify({})
+        body: action === 'delete' ? undefined : JSON.stringify(options ?? {})
       });
       if (response.ok) {
         onBookingUpdated();
@@ -749,7 +820,7 @@ export function SchedulingCalendarView({
                         </div>
                       ))
                     }
-                    {dayBookings.map(booking => {
+                    {(() => { const concurrency = layoutConcurrentBookings(dayBookings); return dayBookings.map(booking => {
                       const statusStyle = STATUS_COLORS[booking.status] || STATUS_COLORS.pending;
                       /*
                        * A completed meeting opens nothing.
@@ -767,6 +838,16 @@ export function SchedulingCalendarView({
                       const height = getBookingHeight(booking.start_time, booking.end_time);
                       const service = getServiceDetails(booking.service_id);
                       const isHovered = hoveredBooking === booking.id;
+                      /*
+                       * How many bookings share this block's time, and which of
+                       * them this is. Drives BOTH the geometry below and how
+                       * much of the content can be shown: at a third of a day
+                       * column there is no room for a name, so a crowded slot
+                       * degrades to initials and says how many it holds.
+                       */
+                      const slot = concurrency.get(booking.id);
+                      const sharing = slot?.columns ?? 1;
+                      const crowded = sharing > 1 && !isHovered;
                       return (
                         <div
                           key={booking.id}
@@ -774,7 +855,7 @@ export function SchedulingCalendarView({
                           onMouseEnter={() => handleBookingMouseEnter(booking.id)}
                           onMouseLeave={handleBookingMouseLeave}
                           className={`
-                            absolute inset-x-1 ${isRecord ? 'cursor-default' : 'cursor-pointer'}
+                            absolute ${isRecord ? 'cursor-default' : 'cursor-pointer'}
                             ${statusStyle.bg} ${statusStyle.border} border
                             rounded-lg
                             transition-all duration-200
@@ -784,16 +865,38 @@ export function SchedulingCalendarView({
                           style={{
                             top: `${getBookingPosition(booking.start_time)}px`,
                             height: `${height}px`,
+                            /*
+                             * Side by side when they collide, full width when
+                             * they do not — see `layoutConcurrentBookings`.
+                             * A hovered block takes the whole column so its
+                             * detail is readable even at a third of the width.
+                             */
+                            ...(() => {
+                              if (sharing < 2 || isHovered) {
+                                return { insetInlineStart: '4px', insetInlineEnd: '4px' };
+                              }
+                              const share = 100 / sharing;
+                              return {
+                                insetInlineStart: `calc(${share * (slot?.column ?? 0)}% + 2px)`,
+                                width: `calc(${share}% - 4px)`,
+                              };
+                            })(),
                           }}
                         >
-                          <div className="h-full flex items-center px-2 overflow-hidden">
+                          <div className={`h-full flex items-center overflow-hidden ${crowded ? 'px-1 justify-center' : 'px-2'}`}>
                             <div className="flex items-center gap-2 min-w-0">
                               <div className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold text-[#14B8A6] border border-[#14B8A6] bg-[#14B8A6]/10 flex-shrink-0">
                                 {getInitials(booking.client_first_name, booking.client_last_name)}
                               </div>
-                              <span className={`text-[11px] font-semibold truncate ${statusStyle.text}`}>
-                                {booking.client_first_name}
-                              </span>
+                              {/* The name needs room. In a shared slot there is
+                                  none, and a truncated "E…" reads as a glitch —
+                                  the initials already say who it is, and hover
+                                  widens the block back to full width. */}
+                              {!crowded && (
+                                <span className={`text-[11px] font-semibold truncate ${statusStyle.text}`}>
+                                  {booking.client_first_name}
+                                </span>
+                              )}
                             </div>
                           </div>
 
@@ -808,6 +911,26 @@ export function SchedulingCalendarView({
                                 marginLeft: '12px'
                               }}
                             >
+                              {/*
+                                "1 of 3 at this time" — the count lives HERE.
+                                ─────────────────────────────────────────────
+                                It was briefly a badge pinned to the block
+                                itself, which cannot work: an hour is 56px, so
+                                a 15-minute booking is FOURTEEN PIXELS tall and
+                                `overflow-hidden` clipped anything that tried to
+                                sit on it. The tooltip is the one surface in
+                                this view with room to say it, and it is already
+                                what the owner opens to read a crowded slot.
+                              */}
+                              {sharing > 1 && (
+                                <div className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--v2-text-muted)]">
+                                  {t('scheduling.slot.position', {
+                                    position: (slot?.column ?? 0) + 1,
+                                    total: sharing,
+                                  })}
+                                </div>
+                              )}
+
                               {/* Client Name */}
                               <div className="flex items-center gap-3 mb-3">
                                 <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-[#14B8A6] border border-[#14B8A6] bg-[#14B8A6]/10">
@@ -870,7 +993,7 @@ export function SchedulingCalendarView({
                           )}
                         </div>
                       );
-                    })}
+                    }); })()}
                   </div>
                 );
               })}
@@ -999,8 +1122,9 @@ export function SchedulingCalendarView({
                         </div>
                       </div>
 
-                      {/* Date & Time - fixed width container for consistent positioning */}
-                      <div className="flex items-center gap-4 flex-shrink-0">
+                      {/* Date & Time. `min-w-0` so a narrow pane truncates it
+                          rather than pushing the row wider than the card. */}
+                      <div className="flex items-center gap-4 flex-shrink min-w-0">
                         <div className="flex items-center gap-2 text-xs text-[var(--v2-text-secondary)]">
                           <div className="w-7 h-7 rounded-lg bg-teal-500/10 flex items-center justify-center flex-shrink-0">
                             <Calendar className="h-3.5 w-3.5 text-teal-500" />
@@ -1015,8 +1139,26 @@ export function SchedulingCalendarView({
                         </div>
                       </div>
 
-                      {/* Quick Action Buttons - fixed width container so date/time stays aligned regardless of button count */}
-                      <div className="flex items-center justify-end gap-1.5 flex-shrink-0 w-[340px] opacity-0 group-hover:opacity-100 transition-all duration-200">
+                      {/*
+                        Quick actions, FLOATED over the row rather than given
+                        space in it.
+                        ─────────────────────────────────────────────────────
+                        This was `flex-shrink-0 w-[340px]`, so every row
+                        reserved 340px for buttons that are invisible until
+                        hover. In the bookings pane — a third of the dialog —
+                        that reserve plus the non-shrinking date block exceeded
+                        the card, and since neither could shrink the row
+                        overflowed: the status badge came to rest on top of
+                        "Thu, Sep 24".
+
+                        Positioning them absolutely keeps the original intent
+                        (nothing shifts when the button count differs, because
+                        they never occupied the row) without charging every row
+                        340px it does not have. The backdrop keeps the text
+                        underneath from showing through while they are up.
+                        ─────────────────────────────────────────────────────
+                      */}
+                      <div className="absolute inset-y-0 end-0 flex items-center justify-end gap-1.5 ps-8 pe-4 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto bg-gradient-to-l from-[var(--v2-surface)] via-[var(--v2-surface)] to-transparent rounded-e-2xl">
                         {isConfirmed && (
                           <>
                             <button
@@ -1032,7 +1174,15 @@ export function SchedulingCalendarView({
                               {t('scheduling.quick_action.done')}
                             </button>
                             <button
-                              onClick={(e) => handleQuickAction(booking.id, 'no-show', e)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setNoShowTarget({
+                                  id: booking.id,
+                                  name: [booking.client_first_name, booking.client_last_name]
+                                    .filter(Boolean)
+                                    .join(' ') || null,
+                                });
+                              }}
                               disabled={actionInProgress?.bookingId === booking.id}
                               className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-amber-500 bg-amber-500/10 border border-amber-500/30 rounded-full hover:bg-amber-500/20 active:scale-95 transition-all disabled:opacity-50"
                             >
@@ -1096,6 +1246,28 @@ export function SchedulingCalendarView({
         </div>
         )}
       </div>
+
+      {/*
+        Confirms before recording a no-show, and is where the owner chooses
+        whether to invite the client to rebook. Off by default — see the dialog.
+      */}
+      <NoShowConfirmDialog
+        open={noShowTarget !== null}
+        onOpenChange={open => !open && setNoShowTarget(null)}
+        clientName={noShowTarget?.name ?? null}
+        onConfirm={async ({ notifyClient }) => {
+          if (!noShowTarget) return;
+          await handleQuickAction(
+            noShowTarget.id,
+            'no-show',
+            // Synthesised: the real click was on the dialog's own button, and
+            // `handleQuickAction` only needs something to stop propagating.
+            { stopPropagation: () => {} } as React.MouseEvent,
+            { notifyClient }
+          );
+          setNoShowTarget(null);
+        }}
+      />
     </div>
   );
 }

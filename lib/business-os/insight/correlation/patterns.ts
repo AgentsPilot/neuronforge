@@ -46,7 +46,7 @@ export const CORRELATION_PATTERNS: CorrelationPattern[] = [
       'Revenue is at risk from multiple angles. ' +
       '{ar_issue} and {payment_issue}. ' +
       '{optional_context}' +
-      'Total exposure: ${total_impact}.',
+      'Total exposure: {total_impact}.',
     actionTemplate:
       'Prioritize collection efforts and investigate the root causes of payment failures. ' +
       'Consider implementing automated payment reminders and retry logic.',
@@ -86,7 +86,7 @@ export const CORRELATION_PATTERNS: CorrelationPattern[] = [
       'Your sales pipeline is stalling. ' +
       '{cold_leads_issue} and {stuck_deals_issue}. ' +
       '{optional_context}' +
-      'Estimated opportunity at risk: ${total_impact}.',
+      'Estimated opportunity at risk: {total_impact}.',
     actionTemplate:
       'Clear your follow-up backlog immediately. ' +
       'Move stuck deals forward with targeted outreach and consider re-qualifying cold leads.',
@@ -139,7 +139,19 @@ export const CORRELATION_PATTERNS: CorrelationPattern[] = [
     id: 'website_crisis',
     name: 'Website Conversion Crisis',
     category: 'funnel',
-    requiredDetectors: ['web_missing_cta'],
+    /*
+     * Two required, because `minMatches` is two.
+     *
+     * This listed ONE required detector and asked for two matches, so the
+     * pattern could never fire — `matchedRequired.length` can never exceed the
+     * length of `requiredDetectors`. Three of the ten patterns were written
+     * this way and none of them had ever produced a correlated insight.
+     *
+     * `web_page_no_conversions` is the second, and it is also what fills
+     * `{page_issue}`: the placeholder named `web_page_underperform`, a detector
+     * replaced during the 2026-09 rebuild.
+     */
+    requiredDetectors: ['web_missing_cta', 'web_page_no_conversions'],
     optionalDetectors: ['web_incomplete_content', 'acq_low_conversion'],
     minMatches: 2,
     storyTemplate:
@@ -159,12 +171,21 @@ export const CORRELATION_PATTERNS: CorrelationPattern[] = [
     id: 'cash_flow_warning',
     name: 'Cash Flow Warning',
     category: 'revenue',
-    requiredDetectors: ['cash_ar_aging'],
-    optionalDetectors: ['cash_payment_issues', 'cash_ar_overdue'],
+    /*
+     * `cash_ar_overdue` promoted from optional to required — see the note on
+     * `website_crisis` for why one required detector and `minMatches: 2` meant
+     * this never fired.
+     *
+     * `{cards_issue}` is gone from the story: it could only be filled by
+     * `cash_cards_expiring`, which was never in this pattern's lists and is
+     * dark anyway until card expiry is synced from Stripe.
+     */
+    requiredDetectors: ['cash_ar_aging', 'cash_ar_overdue'],
+    optionalDetectors: ['cash_payment_issues'],
     minMatches: 2,
     storyTemplate:
       'Cash flow problems are developing. ' +
-      '{aging_issue} and {cards_issue}. ' +
+      '{aging_issue}. ' +
       '{optional_context}' +
       'Take action now to prevent payment disruptions.',
     actionTemplate:
@@ -179,12 +200,20 @@ export const CORRELATION_PATTERNS: CorrelationPattern[] = [
     id: 'pricing_issue',
     name: 'Pricing Strategy Issue',
     category: 'revenue',
+    /*
+     * One required, one match — the honest shape for this pattern.
+     *
+     * There is no second pricing detector that can fire: `pricing_discount_abuse`
+     * is dark until a discount is recorded anywhere, which is also why
+     * `{discount_issue}` has been removed from the story. Asking for two
+     * matches from a single required detector made this unreachable.
+     */
     requiredDetectors: ['pricing_intro_offer_stuck'],
     optionalDetectors: ['cash_refund_pattern'],
-    minMatches: 2,
+    minMatches: 1,
     storyTemplate:
       'Your pricing strategy needs attention. ' +
-      '{discount_issue} and {intro_issue}. ' +
+      '{intro_issue}. ' +
       '{optional_context}' +
       'Revenue is being left on the table.',
     actionTemplate:

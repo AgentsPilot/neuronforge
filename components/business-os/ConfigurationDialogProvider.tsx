@@ -26,7 +26,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ConfigurationDialog } from '@/components/business-os/ConfigurationDialog';
 import { useCapabilities } from '@/components/business-os/CapabilitiesProvider';
 
@@ -47,6 +47,27 @@ interface OpenConfigurationOptions {
 interface ConfigurationDialogContextValue {
   /** Open the configuration dialog, optionally on a specific tab. */
   openConfiguration: (initialTab?: ConfigTab, options?: OpenConfigurationOptions) => void;
+  /**
+   * Whether this dialog is up — or was, a moment ago.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * For any surface underneath it. Radix treats a click INSIDE this dialog as
+   * an interaction outside whatever is beneath, so a modal below dismisses
+   * itself while someone is using this one. That is how publishing an intake
+   * form from the booking dialog closed the booking AND the contact drawer
+   * behind it, losing everything typed into both.
+   *
+   * Every such surface needs the same answer, so it is given once here rather
+   * than inferred separately by each — the drawer could not have known about a
+   * dialog its own grandchild opened.
+   *
+   * IT STAYS TRUE BRIEFLY AFTER THE CLOSE, and that is the subtle part: the
+   * closing click is still in flight when `isOpen` flips. Radix delivers it to
+   * the surfaces below immediately afterwards, and a flag that had already gone
+   * false lets exactly the dismissal this exists to prevent straight through.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  isConfigurationOpen: boolean;
 }
 
 const ConfigurationDialogContext = createContext<ConfigurationDialogContextValue | null>(null);
@@ -64,6 +85,37 @@ export function useConfigurationDialog(): ConfigurationDialogContextValue {
   return context;
 }
 
+/**
+ * The same thing, for a component that may render OUTSIDE Business OS.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `useConfigurationDialog` throwing is right for anything that lives inside
+ * Business OS — a Configuration tab that quietly does nothing is worse than a
+ * loud failure in development. But some components render in both worlds:
+ * `SchedulingBookingModal` is used on `/business-os` AND on the V1
+ * `/(protected)/scheduling` page, which has no provider above it.
+ *
+ * Such a component must not take the whole page down to offer a shortcut. This
+ * returns null there, and the caller hides the shortcut — the message it sits
+ * beside already names where to go, so nothing is lost but the click.
+ *
+ * Use the throwing version everywhere else. A component that genuinely belongs
+ * to Business OS and reaches for this one is hiding a wiring mistake.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function useConfigurationDialogOptional(): ConfigurationDialogContextValue | null {
+  return useContext(ConfigurationDialogContext);
+}
+
+/**
+ * Just the flag, safe to call anywhere — false where there is no provider.
+ *
+ * For a surface that only needs to know whether to hold its ground.
+ */
+export function useConfigurationDialogOpen(): boolean {
+  return useContext(ConfigurationDialogContext)?.isConfigurationOpen ?? false;
+}
+
 export function ConfigurationDialogProvider({ children }: { children: React.ReactNode }) {
   const [isOpen, setIsOpen] = useState(false);
   // Services is where the card has always landed; kept in state so reopening on
@@ -78,8 +130,29 @@ export function ConfigurationDialogProvider({ children }: { children: React.Reac
    */
   const onCloseRef = useRef<(() => void) | undefined>(undefined);
 
+  /*
+   * True from the moment this opens until a beat AFTER it closes.
+   *
+   * Separate from `isOpen`, which has to go false immediately so the dialog
+   * unmounts. The surfaces below need the opposite: the closing click is still
+   * being dispatched when that happens, and they are asked "should I dismiss?"
+   * a moment later. Answering honestly at that instant — "no dialog is open" —
+   * is what let the booking dialog and the contact drawer close themselves.
+   */
+  const [closingGrace, setClosingGrace] = useState(false);
+  const graceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (graceTimer.current) clearTimeout(graceTimer.current);
+  }, []);
+
   const openConfiguration = useCallback(
     (tab: ConfigTab = 'services', options?: OpenConfigurationOptions) => {
+      if (graceTimer.current) {
+        clearTimeout(graceTimer.current);
+        graceTimer.current = null;
+      }
+      setClosingGrace(false);
       setInitialTab(tab);
       onCloseRef.current = options?.onClose;
       setIsOpen(true);
@@ -98,12 +171,24 @@ export function ConfigurationDialogProvider({ children }: { children: React.Reac
   const handleClose = useCallback(() => {
     setIsOpen(false);
     refreshCapabilities();
+
+    /*
+     * Long enough to cover the dismissal and the exit animation. A deliberate
+     * click outside a third of a second later closes as it always did.
+     */
+    setClosingGrace(true);
+    if (graceTimer.current) clearTimeout(graceTimer.current);
+    graceTimer.current = setTimeout(() => setClosingGrace(false), 350);
+
     const notify = onCloseRef.current;
     onCloseRef.current = undefined;
     notify?.();
   }, [refreshCapabilities]);
 
-  const value = useMemo(() => ({ openConfiguration }), [openConfiguration]);
+  const value = useMemo(
+    () => ({ openConfiguration, isConfigurationOpen: isOpen || closingGrace }),
+    [openConfiguration, isOpen, closingGrace]
+  );
 
   return (
     <ConfigurationDialogContext.Provider value={value}>

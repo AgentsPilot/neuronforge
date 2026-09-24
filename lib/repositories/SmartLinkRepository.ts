@@ -5,6 +5,7 @@
  */
 
 import { createLogger } from '@/lib/logger';
+import { platformOrigin } from '@/lib/utils/origins';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { resolveChannel } from '@/lib/business-os/channel-insights/channelFromReferrer';
 
@@ -444,6 +445,53 @@ export class SmartLinkRepository {
   }
 
   /**
+   * The smart link a visitor arrived through, from the session on their page.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * `/go/[code]` records a click against a session id and appends that id to
+   * the destination as `_sid`. That session is the ONLY thing tying a later
+   * form submission back to the link — nothing else about the submission names
+   * it — and the CRM chooses the "Smart Link" chip purely on
+   * `source_metadata.smart_link_id` (`components/crm/contactSources`).
+   *
+   * Without this lookup that id was never resolved, so a client who arrived
+   * through a smart link and filled in the contact form was recorded as having
+   * come from the Website.
+   *
+   * Most recent click wins: a session can legitimately touch more than one
+   * link, and the last one is the one that produced the page they submitted
+   * from.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  async findLinkBySession(
+    sessionId: string
+  ): Promise<SmartLinkRepositoryResult<{ id: string; code: string; name: string | null } | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('smart_link_clicks')
+        .select('smart_link_id, created_at, smart_links ( id, code, name )')
+        .eq('session_id', sessionId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      const link = (data as { smart_links?: { id: string; code: string; name: string | null } } | null)
+        ?.smart_links;
+
+      return { data: link ?? null, error: null };
+    } catch (error) {
+      /*
+       * Never throws to the caller. This is ENRICHMENT on a capture path: a
+       * failure here must cost the chip's precision, never the lead itself.
+       */
+      logger.warn({ err: error }, 'Could not resolve a smart link from its session');
+      return { data: null, error: null };
+    }
+  }
+
+  /**
    * Mark a click as converted
    */
   async markConversion(
@@ -761,7 +809,7 @@ export class SmartLinkRepository {
       result.payment = existing?.find(l => l.destination_type === 'payment') as SmartLink || null;
 
       // Create missing links
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.agentspilot.com';
+      const baseUrl = platformOrigin();
 
       /**
        * A link still addressed to this account.

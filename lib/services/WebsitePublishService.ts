@@ -21,6 +21,7 @@
  */
 
 import type { NextRequest } from 'next/server';
+import { publicSiteUrl } from '@/lib/utils/origins';
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -400,7 +401,7 @@ export async function publishPage(
    */
   await claimBusinessSubdomain(userId, subdomain);
 
-  const url = subdomain ? `https://${subdomain}.agentpilot.io` : null;
+  const url = subdomain ? publicSiteUrl(subdomain) : null;
 
   auditTrail
     .log({

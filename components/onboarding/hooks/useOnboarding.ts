@@ -371,6 +371,52 @@ export const useOnboarding = () => {
         throw new Error(`Failed to update profile: ${profileError.message}`);
       }
 
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * THE TIMEZONE HAS TO REACH `user_preferences`, NOT ONLY `profiles`.
+       *
+       * Onboarding asks for a timezone, infers it from the browser, and makes
+       * it a required field — then wrote it to `profiles.timezone` alone. Every
+       * consumer reads `user_preferences.timezone`: availability, the booking
+       * routes, every client-facing email. That column has a DEFAULT of 'UTC',
+       * so a business that answered the question looked, to the whole platform,
+       * exactly like one that never had.
+       *
+       * `scripts/backfill-timezone-preferences.ts` exists to repair this drift
+       * after the fact. This is the leak it was repairing.
+       *
+       * Written as a second upsert rather than folded into the first, because
+       * they are different tables with different conflict targets — the same
+       * pair `/api/user/profile` and the Business OS settings page already
+       * write together.
+       *
+       * NOT FATAL. An owner who has finished onboarding must not be sent back
+       * to the start because a preferences row would not save; the readiness
+       * card asks for the timezone again if this did not land.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      if (state.data.profile.timezone) {
+        const { error: prefsError } = await supabase
+          .from('user_preferences')
+          .upsert({
+            user_id: user.id,
+            timezone: state.data.profile.timezone,
+            // Inferred from the browser, shown to them, and accepted by
+            // finishing onboarding — an answer, so it counts as confirmed.
+            timezone_confirmed_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }, {
+            onConflict: 'user_id'
+          });
+
+        if (prefsError) {
+          logger.warn(
+            { err: prefsError, timezone: state.data.profile.timezone },
+            'Timezone saved to profiles but not to user_preferences; the readiness card will ask again'
+          );
+        }
+      }
+
       logger.info(
         {
           timezone: state.data.profile.timezone,

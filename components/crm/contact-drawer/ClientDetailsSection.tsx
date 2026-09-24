@@ -177,26 +177,26 @@ export function ClientDetailsSection({
           <Label className="text-[var(--v2-text-secondary)] mb-2 block text-start">
             {t('crm.modal.pipeline_stage')}
           </Label>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5">
             {stages.map(stage => (
               <button
                 key={stage.stage_key}
                 type="button"
                 onClick={() => setFormData(prev => ({ ...prev, stage: stage.stage_key }))}
-                className={`flex items-center gap-2 px-3 py-1.5 text-sm font-medium border transition-all rounded-full ${
+                className={`flex items-center gap-1.5 px-2.5 py-1 text-[12.5px] font-medium border transition-all rounded-full ${
                   formData.stage === stage.stage_key
                     ? 'border-[#8B5CF6] bg-[#8B5CF6]/10 text-[#8B5CF6]'
                     : 'border-[var(--v2-border)] bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:border-[#8B5CF6]/50'
                 }`}
               >
                 <div
-                  className="w-2 h-2 rounded-full"
+                  className="w-1.5 h-1.5 rounded-full shrink-0"
                   style={{ backgroundColor: stage.color || '#64748B' }}
                 />
                 {t(`crm.stage.${stage.stage_key}`) !== `crm.stage.${stage.stage_key}`
                   ? t(`crm.stage.${stage.stage_key}`)
                   : stage.stage_label}
-                {formData.stage === stage.stage_key && <Check className="h-3 w-3" />}
+                {formData.stage === stage.stage_key && <Check className="h-2.5 w-2.5 shrink-0" />}
               </button>
             ))}
           </div>
@@ -207,7 +207,7 @@ export function ClientDetailsSection({
           <Label className="text-[var(--v2-text-secondary)] mb-2 block text-start">
             {t('crm.modal.how_found')}
           </Label>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5">
             {/*
               The chip is the GROUP — Website, not "Website Booking". Which page
               or which smart link is the line underneath, because with several
@@ -225,13 +225,13 @@ export function ClientDetailsSection({
                   key={origin.value}
                   type="button"
                   onClick={() => setFormData(prev => ({ ...prev, source: origin.value }))}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border transition-all rounded-full ${
+                  className={`flex items-center gap-1.5 px-2.5 py-1 text-[12.5px] font-medium border transition-all rounded-full ${
                     selected
                       ? 'border-[#8B5CF6] bg-[#8B5CF6]/10 text-[#8B5CF6]'
                       : 'border-[var(--v2-border)] bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:border-[#8B5CF6]/50'
                   }`}
                 >
-                  <Icon className="h-3.5 w-3.5" />
+                  <Icon className="h-3 w-3 shrink-0" />
                   {t(origin.labelKey)}
                 </button>
               );
@@ -277,16 +277,16 @@ export function ClientDetailsSection({
             {t('crm.modal.tags')}
           </Label>
           {formData.tags.length > 0 && (
-            <div className="flex flex-wrap gap-2 mb-3">
+            <div className="flex flex-wrap gap-1.5 mb-3">
               {formData.tags.map(tag => (
-                <Badge key={tag} className="bg-[#8B5CF6]/20 text-[#8B5CF6] border-[#8B5CF6]/30 gap-1 px-2 py-0.5">
+                <Badge key={tag} className="bg-[#8B5CF6]/20 text-[#8B5CF6] border-[#8B5CF6]/30 gap-1 px-2 py-0 text-[11.5px] leading-[1.7]">
                   {tag}
                   <button
                     type="button"
                     onClick={() => handleRemoveTag(tag)}
-                    className="hover:bg-[#8B5CF6]/30 rounded-full p-0.5 transition-colors"
+                    className="hover:bg-[#8B5CF6]/30 rounded-full p-px transition-colors shrink-0"
                   >
-                    <X className="h-3 w-3" />
+                    <X className="h-2.5 w-2.5" />
                   </button>
                 </Badge>
               ))}

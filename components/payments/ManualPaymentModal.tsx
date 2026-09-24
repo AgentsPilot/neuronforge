@@ -33,7 +33,6 @@ const PAYMENT_METHODS = [
   { value: 'other', label: 'Other', icon: HelpCircle }
 ];
 
-const CURRENCIES = ['USD', 'EUR', 'GBP', 'ILS', 'CAD', 'AUD'];
 
 export function ManualPaymentModal({
   isOpen,
@@ -47,13 +46,34 @@ export function ManualPaymentModal({
   onSuccess,
   onError
 }: ManualPaymentModalProps) {
-  // Get user's currency from context as fallback when no defaultCurrency is provided
-  const { currencyCode } = useLanguage();
-  const effectiveCurrency = defaultCurrency || currencyCode;
+  /*
+   * The row's own currency wins, then the business's, then the display one.
+   *
+   * The last of those is localStorage-backed and gets WRITTEN to the payment
+   * record, so a device preference could become the permanent currency of money
+   * somebody actually received.
+   */
+  const { currencyCode, businessCurrency } = useLanguage();
+
+  /*
+   * Recorded, not chosen.
+   *
+   * This dialog logs money that has ALREADY been received against an existing
+   * installment, so its currency is a fact about that row — not a decision left
+   * open at the moment of recording. The picker it replaces could disagree with
+   * the plan it was recording against, and nothing converts: the amount is
+   * stored as typed, so a payment against a 300 USD installment recorded in ILS
+   * marks it settled with a third of the money.
+   *
+   * It also offered CAD and AUD, which are not among the currencies the
+   * platform supports (USD/EUR/ILS/GBP) — so a payment recorded in one produced
+   * a row nothing downstream could format or group, and totals have no FX rate
+   * to fold it back in with.
+   */
+  const currency = defaultCurrency || businessCurrency || currencyCode;
 
   const [loading, setLoading] = useState(false);
   const [amount, setAmount] = useState(defaultAmount?.toString() || '');
-  const [currency, setCurrency] = useState(effectiveCurrency);
   const [method, setMethod] = useState<string>('cash');
   const [notes, setNotes] = useState('');
   const [receivedAt, setReceivedAt] = useState(new Date().toISOString().split('T')[0]);
@@ -131,10 +151,16 @@ export function ManualPaymentModal({
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-3 sm:space-y-4">
-          {/* Amount and Currency */}
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="flex-1">
-              <label className="mb-1 sm:mb-1.5 block text-xs sm:text-sm font-medium">Amount</label>
+          {/* Amount, in the currency this installment is already denominated
+              in. The code sits inside the field on its leading edge rather than
+              in a control beside it — it is part of the figure being recorded,
+              and there is nothing here to decide. */}
+          <div>
+            <label className="mb-1 sm:mb-1.5 block text-xs sm:text-sm font-medium">Amount</label>
+            <div className="flex items-stretch overflow-hidden rounded-md border border-input bg-background focus-within:ring-1 focus-within:ring-ring">
+              <span className="flex select-none items-center border-e border-input bg-muted px-3 text-xs text-muted-foreground">
+                {currency}
+              </span>
               <Input
                 type="number"
                 step="0.01"
@@ -143,22 +169,8 @@ export function ManualPaymentModal({
                 onChange={(e) => setAmount(e.target.value)}
                 placeholder="0.00"
                 required
+                className="flex-1 border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
               />
-            </div>
-            <div className="w-full sm:w-28">
-              <label className="mb-1 sm:mb-1.5 block text-xs sm:text-sm font-medium">Currency</label>
-              <Select value={currency} onValueChange={setCurrency}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {CURRENCIES.map((curr) => (
-                    <SelectItem key={curr} value={curr}>
-                      {curr}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
             </div>
           </div>
 

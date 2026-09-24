@@ -338,8 +338,23 @@ export class ImpactProjector {
    */
   private projectSalesStalled(insight: Insight, rates: HistoricalRates, currency: string): ImpactProjection {
     const stalledCount = insight.affected_count || 0;
-    const avgDealValue = 500;
-    const potentialValue = stalledCount * avgDealValue * 0.2; // 20% conversion
+    /*
+     * The detector's own figure, or none.
+     *
+     * This was `stalledCount * 500 * 0.2` — an invented average deal and an
+     * invented conversion rate, multiplied together and shown to the owner in
+     * their real currency as deals they were about to lose. Exactly the
+     * constant the comment in `projectOpsUtilizationLow` describes removing;
+     * it survived here.
+     *
+     * `SalesStalledDetector` prices these from the business's own data, or
+     * leaves it unset when it cannot. Where it is unset the sentence stops at
+     * the count and the time, which are both real.
+     */
+    const potentialValue =
+      typeof insight.estimated_impact_usd === 'number' && insight.estimated_impact_usd > 0
+        ? insight.estimated_impact_usd
+        : null;
     const expectedResponses = Math.round(stalledCount * rates.responseRate);
     const manualTimeMinutes = stalledCount * 10;
 
@@ -351,13 +366,22 @@ export class ImpactProjector {
           key: 'insight.sales_stalled.do_nothing',
           params: { count: stalledCount },
         },
-        details: `Potential loss of ~${formatMoney(potentialValue, currency)} in deals, plus ~${manualTimeMinutes} minutes of manual follow-up`,
-        detailsLine: {
-          text: `Potential loss of ~${formatMoney(potentialValue, currency)} in deals, plus ~${manualTimeMinutes} minutes of manual follow-up`,
-          key: 'insight.sales_stalled.do_nothing_detail',
-          params: { amount: formatMoney(potentialValue, currency), minutes: manualTimeMinutes },
-        },
-        projectedLoss: potentialValue,
+        // The time is measured from the count; the money only sometimes exists.
+        details: potentialValue === null
+          ? `~${manualTimeMinutes} minutes of manual follow-up`
+          : `Potential loss of ~${formatMoney(potentialValue, currency)} in deals, plus ~${manualTimeMinutes} minutes of manual follow-up`,
+        detailsLine: potentialValue === null
+          ? {
+              text: `~${manualTimeMinutes} minutes of manual follow-up`,
+              key: 'insight.sales_stalled.do_nothing_detail_time',
+              params: { minutes: manualTimeMinutes },
+            }
+          : {
+              text: `Potential loss of ~${formatMoney(potentialValue, currency)} in deals, plus ~${manualTimeMinutes} minutes of manual follow-up`,
+              key: 'insight.sales_stalled.do_nothing_detail',
+              params: { amount: formatMoney(potentialValue, currency), minutes: manualTimeMinutes },
+            },
+        projectedLoss: potentialValue ?? undefined,
         projectedEffort: `${manualTimeMinutes} minutes of follow-up`,
       },
       letMeHandleIt: {

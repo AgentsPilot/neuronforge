@@ -23,6 +23,7 @@
 export type StepId =
   | 'services'
   | 'availability'
+  | 'timezone'
   | 'design'
   | 'website'
   | 'payments'
@@ -274,6 +275,30 @@ export const SETUP_STEPS: GraphNode[] = [
     owner: 'platform',
     applies: shape => takesAppointments(shape),
     mandatory: shape => takesAppointments(shape),
+  },
+  /*
+   * The zone those hours are in.
+   *
+   * Hours with no timezone are not hours: `09:00–17:00` is only an instant once
+   * you know where. Unset falls back to UTC, so a Jerusalem business offers its
+   * clients times three hours from the ones it works, the confirmation email
+   * states an hour it is closed, and nothing reports an error anywhere.
+   *
+   * Follows availability rather than standing beside it — asking for a zone
+   * before there are any hours is asking about nothing. Mandatory on the same
+   * condition: a business selling only downloads never displays a time, so it
+   * is never asked.
+   *
+   * `owner: 'user'`. The browser's guess is offered as the answer, but only the
+   * owner can confirm where they actually work.
+   */
+  {
+    id: 'timezone',
+    requires: ['availability'],
+    owner: 'user',
+    applies: shape => takesAppointments(shape),
+    mandatory: shape => takesAppointments(shape),
+    belongsTo: 'availability',
   },
   // Sync blocks slots; with no slots there is nothing to protect. Theirs to do:
   // Google and Outlook ask them to approve access in their own account.

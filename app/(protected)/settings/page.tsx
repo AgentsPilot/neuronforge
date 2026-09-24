@@ -168,6 +168,8 @@ export default function SettingsPage() {
           .upsert({
             user_id: user.id,
             timezone: profileForm.timezone,
+            // See 20261007 — a stored zone does not say whether anyone chose it.
+            ...(profileForm.timezone ? { timezone_confirmed_at: new Date().toISOString() } : {}),
             preferred_language: profileForm.language,
             updated_at: new Date().toISOString()
           }, {

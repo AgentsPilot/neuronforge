@@ -47,6 +47,7 @@
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
+import { platformOrigin } from '@/lib/utils/origins';
 import { Megaphone } from 'lucide-react';
 import {
   Dialog,
@@ -235,7 +236,7 @@ export function ShareGuide({
   const [dismissed, setDismissed] = useState(true);
   const [open, setOpen] = useState(false);
   const t = TEXT[language] || TEXT.en;
-  const link = `${shareDomain || 'agentspilot.ai'}/go/${code}`;
+  const link = `${shareDomain || platformOrigin().replace(/^https?:\/\//, '')}/go/${code}`;
 
   /*
    * The words that differ between a booking link and a contact form. Picked
@@ -577,7 +578,7 @@ export function ShareGuide({
                 <div className="mt-2 overflow-hidden rounded-md border border-[#DDDFE2]">
                   <div className="h-[30px]" style={{ background: '#E4E6EB' }} />
                   <div className="px-2 py-1" style={{ background: '#F0F2F5' }}>
-                    <div className="text-[8px] uppercase tracking-wide text-[#65676B]">{(shareDomain || 'agentspilot.ai').toUpperCase()}</div>
+                    <div className="text-[8px] uppercase tracking-wide text-[#65676B]">{(shareDomain || platformOrigin().replace(/^https?:\/\//, '')).toUpperCase()}</div>
                     <div className="text-[9.5px] font-semibold text-[#050505]">{v.cta}</div>
                   </div>
                 </div>

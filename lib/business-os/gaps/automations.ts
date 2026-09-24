@@ -31,8 +31,15 @@
  */
 
 import type { GapId } from './types';
+// Type-only: erased at build, so the registry stays free of the repository and
+// everything the repository imports.
+import type { LeadResponseKind } from '@/lib/repositories/LeadResponseRepository';
 
-export type OperationalAutomationId = 'reply_to_enquiries' | 'chase_invoices' | 'chase_intake';
+export type OperationalAutomationId =
+  | 'reply_to_enquiries'
+  | 'chase_invoices'
+  | 'chase_intake'
+  | 'remind_about_meeting';
 
 export interface OperationalAutomation {
   id: OperationalAutomationId;
@@ -43,7 +50,11 @@ export interface OperationalAutomation {
    * On the profile rather than `user_preferences`, which has no DDL anywhere in
    * this repo and would fail a migration on a fresh environment.
    */
-  column: 'lead_autosend_enabled' | 'chase_invoices_enabled' | 'chase_intake_enabled';
+  column:
+    | 'lead_autosend_enabled'
+    | 'chase_invoices_enabled'
+    | 'chase_intake_enabled'
+    | 'meeting_reminder_enabled';
 
   /** The gap this clears, so the advisor can count what is waiting. */
   gapId: GapId;
@@ -53,11 +64,66 @@ export interface OperationalAutomation {
    *
    * Never zero. Every one of these writes to somebody's client, and a delay is
    * what gives the owner room to do it themselves first — or to stop it.
+   *
+   * Ignored when `timing` is `before_event`, where the schedule runs from the
+   * appointment rather than from us noticing something.
    */
   delayHours: number;
 
-  /** The queue row kind that carries it out. */
-  kind: 'invite' | 'chase';
+  /**
+   * Which direction the clock runs.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `after_gap` — the default, and how the first three work. Something is
+   *   stuck, and we wait `delayHours` from the moment it got stuck before
+   *   acting. The delay exists to give the owner first refusal.
+   *
+   * `before_event` — the reminder case. The work is due a chosen number of
+   *   hours BEFORE something happens, so the only date that can schedule it is
+   *   the event's own (`GapItem.eventAt`), and the number of hours is the
+   *   owner's rather than ours.
+   *
+   * These are genuinely different clocks, not a sign flip: one is "wait, then
+   * act", the other is "be ready by". Writing the second as a negative
+   * `delayHours` would have worked and been unreadable — and would have left
+   * `dueAt` in the past for every appointment already inside its window, which
+   * is the state that matters most.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  timing?: 'after_gap' | 'before_event';
+
+  /**
+   * The `business_profiles` column holding the owner's chosen lead time, in
+   * hours. Only meaningful with `before_event`.
+   */
+  leadHoursColumn?: 'meeting_reminder_hours_before';
+
+  /**
+   * The queue row kinds this one permission covers.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The dispatcher asks "which automation did the owner approve for this row?"
+   * and this array is the answer. It replaced a `kind` field that named a
+   * DIFFERENT vocabulary — `chase_invoices` was `kind: 'chase'`, while a queue
+   * row of kind `'chase'` is the lead follow-up and belongs to
+   * `reply_to_enquiries`. The dispatcher kept a second map to get the real
+   * answer and a special case to get round the collision, so the same fact was
+   * written twice in two languages, and one of them was wrong.
+   *
+   * `reply_to_enquiries` covers two: the first reply and the follow-up are one
+   * conversation and one decision.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  covers: LeadResponseKind[];
+
+  /**
+   * What the five-minute sweep queues for this automation.
+   *
+   * Absent where the sweep is not what queues it: the lead invite is written by
+   * the alert path at the moment the owner is told, so it has its own clock and
+   * the sweep skips it.
+   */
+  sweepQueues?: LeadResponseKind;
 
   /**
    * Which system actually does the work once the owner has said yes.
@@ -113,7 +179,7 @@ export interface OperationalAutomation {
    * enquiry, so nothing gates the reply.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  requires?: 'intake_reaches_client';
+  requires?: 'intake_reaches_client' | 'takes_bookings';
 
   /** i18n keys. The copy lives with the other copy, not here. */
   labelKey: string;
@@ -129,7 +195,7 @@ export const OPERATIONAL_AUTOMATIONS: OperationalAutomation[] = [
     // phone, short enough that the person who wrote in still has this business
     // in mind when the reply lands.
     delayHours: 0.25,
-    kind: 'invite',
+    covers: ['invite', 'chase'],
     labelKey: 'automation.reply_to_enquiries',
     hintKey: 'automation.reply_to_enquiries_hint',
   },
@@ -145,7 +211,8 @@ export const OPERATIONAL_AUTOMATIONS: OperationalAutomation[] = [
      * change. This 72-hour send landed on top of that schedule's day three.
      */
     delayHours: 72,
-    kind: 'chase',
+    covers: ['invoice_chase'],
+    sweepQueues: 'invoice_chase',
     carriedOutBy: 'payment_reminders',
     labelKey: 'automation.chase_invoices',
     hintKey: 'automation.chase_invoices_hint',
@@ -158,11 +225,33 @@ export const OPERATIONAL_AUTOMATIONS: OperationalAutomation[] = [
     // appointment; this is the one for a form that has been ignored for longer
     // than that and still has time to be useful.
     delayHours: 24,
-    kind: 'chase',
+    covers: ['intake_chase'],
+    sweepQueues: 'intake_chase',
     // Nothing to chase if no form reaches the client in the first place.
     requires: 'intake_reaches_client',
     labelKey: 'automation.chase_intake',
     hintKey: 'automation.chase_intake_hint',
+  },
+  {
+    id: 'remind_about_meeting',
+    column: 'meeting_reminder_enabled',
+    gapId: 'meeting_upcoming',
+    /*
+     * Unused: `timing: 'before_event'` means the clock runs from the
+     * appointment, and the number of hours is the owner's. Left at the default
+     * lead time so the field is never undefined for a caller reading it
+     * generically.
+     */
+    delayHours: 24,
+    timing: 'before_event',
+    leadHoursColumn: 'meeting_reminder_hours_before',
+    covers: ['meeting_reminder'],
+    sweepQueues: 'meeting_reminder',
+    // A business that takes no bookings has no meetings to remind anyone
+    // about. Same reasoning as the intake chase, different fact.
+    requires: 'takes_bookings',
+    labelKey: 'automation.remind_about_meeting',
+    hintKey: 'automation.remind_about_meeting_hint',
   },
 ];
 

@@ -24,7 +24,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { notifyOwnerOfLead } from '@/lib/services/LeadAlertService';
 import { buildAttributionFromRequest } from '@/lib/utils/attribution';
-import { resolveCapturePageType } from '@/lib/business-os/capturePageType';
+import { enrichCaptureAttribution } from '@/lib/business-os/enrichCaptureAttribution';
 import { ConsentInputSchema } from '@/lib/validation/consent';
 import { recordConsent } from '@/lib/consent/recordConsent';
 
@@ -82,15 +82,14 @@ export async function POST(request: NextRequest) {
     });
 
     /*
-     * Which KIND of page this was, recorded now rather than inferred later.
-     * A landing page is only distinguishable by matching the path against the
-     * owner's landing slugs, and the CRM cannot do that per contact it draws.
-     * Enrichment only: a failure here leaves the contact grouped under Website.
+     * Where they came from: the page KIND, and the smart link if one sent them.
+     * Shared with every other capture route, because five copies of this had
+     * drifted into three different answers — see `enrichCaptureAttribution`.
      */
-    const capturePageType = await resolveCapturePageType(data.subdomain, data.page_url);
-    if (capturePageType) {
-      attribution.page_type = capturePageType;
-    }
+    await enrichCaptureAttribution(attribution, {
+      subdomain: data.subdomain,
+      pageUrl: data.page_url,
+    });
 
     /*
      * The owner comes from the address the client arrived at, never from the

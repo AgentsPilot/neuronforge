@@ -16,6 +16,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { platformOrigin } from '@/lib/utils/origins';
 import { settleInvoicePaid } from '@/lib/payments/invoiceSettlement';
 import { z } from 'zod';
 import { getUser } from '@/lib/auth';
@@ -93,13 +94,13 @@ async function executeCollectPayment(
     successUrl:
       (success_url as string) ||
       (invoice_id
-        ? `${process.env.NEXT_PUBLIC_APP_URL}/invoice/${invoice_id}?payment=success`
-        : `${process.env.NEXT_PUBLIC_APP_URL}/payments/success`),
+        ? `${platformOrigin()}/invoice/${invoice_id}?payment=success`
+        : `${platformOrigin()}/payments/success`),
     cancelUrl:
       (cancel_url as string) ||
       (invoice_id
-        ? `${process.env.NEXT_PUBLIC_APP_URL}/invoice/${invoice_id}?payment=cancelled`
-        : `${process.env.NEXT_PUBLIC_APP_URL}/payments/cancelled`)
+        ? `${platformOrigin()}/invoice/${invoice_id}?payment=cancelled`
+        : `${platformOrigin()}/payments/cancelled`)
   };
 
   // If invoice_id provided, get invoice amount

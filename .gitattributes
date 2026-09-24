@@ -1,3 +1,7 @@
 # Shell scripts run on Linux CI (GitHub Actions, Vercel build containers).
 # CRLF would make bash fail with ": command not found".
 *.sh text eol=lf
+
+# Workflows embed bash directly in `run:` blocks, so they need the same
+# protection as a .sh file - the rule above does not reach them by extension.
+.github/workflows/*.yml text eol=lf

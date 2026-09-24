@@ -39,6 +39,7 @@ import {
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
+import { leadResponseRepository } from '@/lib/repositories/LeadResponseRepository';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { resolveEmailBranding } from '@/lib/email/branding';
 import { sendEmail, type SendEmailResult } from '@/lib/notifications/emailTransport';
@@ -334,8 +335,63 @@ async function followupNudge(action: InsightAction, ctx: Context): Promise<Outco
 async function bookingReminder(action: InsightAction, ctx: Context): Promise<Outcome> {
   if (!action.booking_id) return { sent: false, reason: 'no booking on the action' };
 
+  /*
+   * ─────────────────────────────────────────────────────────────────────────
+   * STAND DOWN IF THE STANDING REMINDER IS ON.
+   *
+   * There are two ways a client can be reminded about an appointment, and they
+   * are alternatives rather than layers:
+   *
+   *   the card OFF  this one. It fires only when the no-show or cancellation
+   *                 detectors spot a spike, so it is the safety net.
+   *   the card ON   every confirmed appointment gets a reminder at the owner's
+   *                 chosen lead time, so the spike case is covered already.
+   *
+   * With both running, a business whose no-shows spiked would send two
+   * reminders for the same appointment — the exact collision invoice chasing
+   * had, where `chase_invoices_enabled` and `payment_reminder_enabled` both
+   * fired on day three.
+   *
+   * One check per action, no per-booking bookkeeping, and nothing for the
+   * owner to do. The card says this in as many words.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  const { data: profile } = await supabaseServer
+    .from('business_profiles')
+    .select('meeting_reminder_enabled')
+    .eq('user_id', action.user_id)
+    .maybeSingle();
+
+  if ((profile as { meeting_reminder_enabled?: boolean } | null)?.meeting_reminder_enabled) {
+    return { sent: false, reason: 'standing meeting reminder covers this booking' };
+  }
+
   const { data: booking } = await schedulingBookingRepository.findById(action.booking_id, action.user_id);
   if (!booking) return { sent: false, reason: 'booking no longer exists' };
+
+  /*
+   * And stand down for a booking the standing reminder ALREADY handled.
+   *
+   * The check above covers the card being on now. This covers the owner having
+   * switched it off since: the reminders already queued or sent do not unsend
+   * themselves, and a client who got one on Monday must not get a second one
+   * from the safety net on Tuesday.
+   *
+   * The queue row IS the record. A `meeting_reminder` row keyed on this
+   * booking means the standing automation has it, whatever state the row is
+   * in — pending means it is going out, sent means it went.
+   */
+  if (
+    booking.contact_id &&
+    (await leadResponseRepository.hasRowFor(
+      action.user_id,
+      'meeting_reminder',
+      booking.contact_id,
+      action.booking_id
+    ))
+  ) {
+    return { sent: false, reason: 'standing meeting reminder already handled this booking' };
+  }
 
   // Reminding somebody about an appointment that was cancelled is worse than
   // not reminding them at all.

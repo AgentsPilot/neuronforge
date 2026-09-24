@@ -1,6 +1,8 @@
 'use client';
 
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { WeeklyReview } from './WeeklyReview';
+import type { BusinessHealthSummaryData } from '@/hooks/useInsights';
 
 // ===========================
 // Types
@@ -41,6 +43,22 @@ interface VerdictCardProps {
    * came out permanently shorter than the one beside it.
    */
   fillHeight?: boolean;
+  /**
+   * The week's review, rendered inside this card beneath the figures.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * One card, two registers: the figures say what the week HELD, the review
+   * says what it MEANT. They were briefly two cards, and the seam showed — the
+   * review's title was also this card's `verdictSub`, so the same sentence
+   * appeared twice in a column, once under the other.
+   *
+   * Composed rather than duplicated: there is now exactly one place that
+   * sentence can render, so the fault cannot come back by someone forgetting.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  review?: BusinessHealthSummaryData | null;
+  /** Jump to an insight the review's priorities name. */
+  onOpenInsight?: (insightId: string) => void;
 }
 
 // ===========================
@@ -55,6 +73,8 @@ export function VerdictCard({
   figures,
   highlight,
   fillHeight = false,
+  review,
+  onOpenInsight,
 }: VerdictCardProps) {
   const { isRTL } = useLanguage();
 
@@ -277,6 +297,9 @@ export function VerdictCard({
             {verdictSub}
           </div>
         )}
+
+        {/* The week's review. See the `review` prop. */}
+        {review && <WeeklyReview summary={review} onOpenInsight={onOpenInsight} />}
       </div>
 
       {/* Global keyframes for pulse animation */}
