@@ -8,7 +8,7 @@ This is the hand-off for the one person who runs this: **you, in the Supabase da
 
 It adds three tables, four functions and two triggers. **Nothing in the product reads them.** The feature is off by default (`BOS_ENTITLEMENTS_MODE` is unset), so when you finish, customers see exactly what they saw before. That is the point: the risky part is the schema change, and it is being done while it cannot affect anyone.
 
-**Only two of the eight steps change anything: step 4 and step 5.** Everything else reads, or takes a backup. Stopping before step 4 leaves the database exactly as it was.
+**Only three steps change anything: step 4, step 5 and step 9.** Everything else reads, or takes a backup. Stopping before step 4 leaves the database exactly as it was, and step 9 changes privileges only.
 
 **One thing will probably go wrong, and it is one line to fix.** Step 2 makes its editor tab read-only on purpose. If step 4 runs on **that same tab**, it fails with *"cannot execute CREATE TABLE in a read-only transaction"* — immediately after step 2 said `PASS`, which looks much worse than it is. Run `RESET default_transaction_read_only;` on that tab, or open a new one, and paste again. Nothing was applied.
 
@@ -28,7 +28,7 @@ It adds three tables, four functions and two triggers. **Nothing in the product 
 
 ---
 
-## The eight steps
+## The steps
 
 ### 1. Open the SQL editor
 
@@ -100,7 +100,7 @@ New query tab → paste the whole of `supabase/migrations/20261005b_business_os_
 | Block | Starts with | What it answers | Grid |
 |---|---|---|---|
 | 0 | `SET default_transaction_read_only = on;` | Makes the rest of this tab refuse writes | no output |
-| 1 | `WITH plan_tables(table_name) AS (` | Do the three tables exist, is RLS on, can a client role touch them | `BLOCK 1 VERDICT` + 5 rows |
+| 1 | `WITH plan_tables(table_name) AS (` | Do the three tables exist, is RLS on, can a client role touch them, can `service_role` delete | `BLOCK 1 VERDICT` + 6 rows |
 | 2 | `WITH entitlement_functions AS (` | The four functions, the two triggers, the three CHECK constraints | `BLOCK 2 VERDICT` + 10 rows |
 | 3 | `WITH tenants AS (` | The data the backfill produced, and the counts for the PR | `BLOCK 3 VERDICT` + 9 rows |
 
@@ -138,6 +138,23 @@ In the PR: the step 2 table, the two elapsed times, the step 6 table, row 54's n
 ### 8. One week later
 
 Run **block 3** of `scripts/check-bos-entitlements-migration.sql` again and look at **row 61**. Once anyone has signed up since the apply, it must be above `0`. Search the log for `business_os_plan_fact_` once more. These two together are how we know the new triggers work on real traffic — it is a real check, not a formality.
+
+### 9. The privilege fix (2026-09-24, run once)
+
+**Check A4 failed on production the first time the rewritten checker ran, and it was right.** Two real defects in what was applied:
+
+| What | Why it happened |
+|---|---|
+| `anon` and `authenticated` kept **`m`** on all three tables | `m` is MAINTAIN (VACUUM, ANALYZE, REINDEX, CLUSTER, REFRESH MATERIALIZED VIEW, LOCK TABLE), added in PostgreSQL 17. The Supabase defaults granted it at `CREATE TABLE` time, and our `REVOKE` **enumerated** seven privileges that did not include it |
+| `service_role` kept **`d`** and **`D`** (DELETE, TRUNCATE) | A `GRANT` naming SELECT, INSERT and UPDATE does not take away what the defaults already gave. The comment beside it claimed DELETE was deliberately not granted — it was not true in production |
+
+**No data was exposed.** RLS is on with zero policies and neither client role has SELECT, so `m` is a nuisance privilege, not a read. Fix it at your convenience, not as an incident.
+
+Paste `supabase/migrations/20261009_business_os_entitlements_privilege_fix.sql` → **Run**. It is 32 plain statements, no comments, and it is **safe to re-run**: every statement is a `REVOKE` or a `GRANT`, and a `REVOKE` from a role that holds nothing is a no-op. It touches no data and creates nothing.
+
+Then run **block 1** of the checker again. Expect `BLOCK 1 VERDICT PASS`, with **A4** reporting `0 of 3 tables carry an entry for anon authenticated or PUBLIC` and **A4b** reporting `0 of 3 tables let service_role delete or truncate`. A10 says the same before and after — that is deliberate, so the fix cannot be mistaken for a regression.
+
+> **The lesson, in one line:** enumerate the `GRANT`, which says what you intend, and never the `REVOKE`, which says what you forbid. A database gains privileges over time and a list written today silently stops covering them. `20261005` has been corrected the same way, so a fresh environment never has the gap.
 
 ---
 
@@ -190,8 +207,9 @@ What each row means, and what to do when it is not `PASS`. The `fix` column of t
 | A1 | `runbook A1` | The three tables exist. If not: apply `supabase/migrations/20261005_business_os_entitlements.sql` |
 | A2 | `runbook A2` | Row level security is on for all three. RLS off **plus** no policies means anyone holding a table grant reads everything. Re-apply `20261005`, or `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` |
 | A3 | `runbook A3` | This module defines **no** RLS policies: every read and write goes through `service_role` in the repository layer. A policy appearing here is somebody else's change, and worth asking about |
-| A4 | `runbook A4` | No grant to `anon`, `authenticated` or `PUBLIC`. If one exists, an account could read or write its own entitlements. Re-apply the `REVOKE` statements at the end of `20261005` |
-| A10 tables | `runbook A10 tables` | `service_role` holds SELECT, INSERT and UPDATE on all three (the `arw` in its ACL entry). Without it every repository call fails with "permission denied". Re-apply the `GRANT` statements at the end of `20261005` |
+| A4 | `runbook A4` | `anon`, `authenticated` and `PUBLIC` have **no ACL entry at all** — not "no dangerous privilege", no entry. That distinction is the point: this check failed on production over `anon=m`, which is neither a read nor a write, and a check that had looked for `anon=r` would have passed. The row prints the offending ACL so you can see which role and which letters. **Fix: [step 9](#9-the-privilege-fix-2026-09-24-run-once)** |
+| A4b | `runbook A4b` | `service_role` holds neither `d` (DELETE) nor `D` (TRUNCATE). Nothing in this module removes a plan row or an override — the reset **ends** rows (M-2) — so the privilege should not exist. It did, because a `GRANT` that omits a privilege does not revoke it. **Fix: [step 9](#9-the-privilege-fix-2026-09-24-run-once)** |
+| A10 tables | `runbook A10 tables` | `service_role` holds SELECT, INSERT and UPDATE on all three, tested letter by letter so a grant carrying `WITH GRANT OPTION` (`a*r*w*`) still counts. Without it every repository call fails with "permission denied". Re-apply the `GRANT` statements at the end of `20261005` |
 
 ### Block 2 — functions, triggers, constraints
 
@@ -312,5 +330,6 @@ The reason it is quarantined is not the rollback at the end — every write is i
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-09-24 | Step 9 added: the privilege fix | The rewritten checker ran on production and **A4 failed for real**: `anon` and `authenticated` retained PostgreSQL 17's `MAINTAIN` privilege, and `service_role` retained DELETE and TRUNCATE, both because the migration **enumerated** what it revoked. `20261009_business_os_entitlements_privilege_fix.sql` corrects the live database, `20261005` is corrected for fresh environments, and A4 now asserts the client roles have no ACL entry at all, with a new A4b for the `service_role` DELETE/TRUNCATE case |
 | 2026-09-24 | The scripts are comment-free and block-per-paste | After two failed pastes (`relation "a" does not exist`), the checking script was rewritten as four standalone statements with **no `--` comments and no prose in any string**. Every word of explanation moved into this document: a new reference section per script, keyed by the `fix` column of each row, plus [Why the scripts are boring](#why-the-scripts-are-boring). No check changed its predicate, its threshold or its PASS/WARN/FAIL meaning |
 | 2026-09-22 | Created | Extracted from the workplan (§4.20.3) as a self-contained hand-off for the production apply, written for the operator rather than the team |

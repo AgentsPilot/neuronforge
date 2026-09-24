@@ -2103,6 +2103,61 @@ So §4.33's mechanism and §4.35's fragment model are **retracted as explanation
 
 If block 1 of the new checker runs, the practical problem is solved and the cause stays an open question. If it does not, the next step is bisecting that one block, not another theory.
 
+### 4.38 A4 found a real defect on production (2026-09-24) - the privilege fix
+
+The rewritten checker **ran** in the Supabase editor. Block 1 returned 4 PASS and 1 FAIL, and **the FAIL is a true positive.** The ACL on all three entitlement tables, from the user database:
+
+```
+postgres=arwdDxtm/postgres
+anon=m/postgres
+authenticated=m/postgres
+service_role=arwdDxtm/postgres
+```
+
+#### Two defects, one cause
+
+| Defect | Cause |
+|---|---|
+| `anon` and `authenticated` hold **`m`** | `m` is MAINTAIN (VACUUM, ANALYZE, REINDEX, CLUSTER, REFRESH MATERIALIZED VIEW, LOCK TABLE), added in PostgreSQL 17. The Supabase default privileges granted it at `CREATE TABLE` time. Our REVOKE enumerated SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES and TRIGGER, so it never took `m` away |
+| `service_role` holds **`d`** and **`D`** | A GRANT naming SELECT, INSERT and UPDATE does not remove what the defaults already gave. The comment beside that GRANT said DELETE was deliberately not granted - **false in production**, so M-2 (the reset ENDS rows, it does not remove them) rested on the function body alone rather than on privileges |
+
+**The cause is the enumeration, not the missing entry.** A database gains privileges over time - a major upgrade, a vendor default - and a list written today silently stops covering them. Enumerate the GRANT, which states what we intend. Never the REVOKE, which states what we forbid.
+
+**No data exposure.** RLS is on with zero policies and neither client role has SELECT, so `m` is a nuisance privilege rather than a read. This is a fix to schedule, not an incident.
+
+#### What shipped
+
+| File | Change |
+|---|---|
+| `supabase/migrations/20261009_business_os_entitlements_privilege_fix.sql` | **NEW.** 32 plain statements, no comments, pastes under the new rules. `REVOKE ALL ... FROM anon / authenticated / PUBLIC` on all three tables, `REVOKE DELETE, TRUNCATE ... FROM service_role`, then the positive `GRANT SELECT, INSERT, UPDATE` restated. Safe to re-run: every statement is a REVOKE or a GRANT, and a REVOKE from a role holding nothing is a no-op. Number chosen after checking `origin/main`, where the highest is `20261008` |
+| `supabase/migrations/20261005_business_os_entitlements.sql` | Corrected so a fresh environment never has the gap: `REVOKE ALL` for the client roles, an explicit `REVOKE DELETE, TRUNCATE` from `service_role`, and a comment recording **why the enumeration is the trap** rather than just what changed. The four function REVOKEs became `REVOKE ALL` too |
+| `scripts/check-bos-entitlements-migration.sql` | **A4 strengthened**: it asserts the client roles have **no ACL entry at all**, not the absence of particular privileges - the production entry was `anon=m`, and a check looking for `anon=r` would have passed. The row now prints the offending ACL. **A4b added**: `service_role` holds neither `d` nor `D`. **A10 hardened**: letter by letter through the extracted privilege string, so a grant carrying `WITH GRANT OPTION` (`a*r*w*`) still counts |
+
+The `service_role` REVOKE is deliberately narrow (`DELETE, TRUNCATE`) rather than `REVOKE ALL` followed by a re-GRANT: it is the minimal change that closes the defect, and it cannot strip a privilege some operation depends on that nobody remembered. Say so if you would rather have the strict version.
+
+#### How it was verified without a database
+
+Both halves are in `supabase/migrations/__tests__/business-os-entitlements-privileges.test.ts` (24 tests):
+
+1. **Text assertions** over both migrations: `REVOKE ALL` per table per client role, the `DELETE, TRUNCATE` revoke, the restated grant, **no enumerated revoke may come back**, every statement is a REVOKE/GRANT/BEGIN/COMMIT/SET, and nothing destructive.
+2. **The checker predicates, evaluated against the two REAL ACL strings** - production as it is, and production as it will be (`anon` and `authenticated` gone entirely, because PostgreSQL drops an ACL entry once it carries no privileges; `service_role=arwxtm`). A4 **false then true**, A4b **false then true**, A10 **true in both** so the fix cannot be mistaken for a regression, plus a non-vacuity leg where A10 genuinely fails.
+
+This does **not** execute SQL - there is no database here. What keeps the re-implementation honest is a first test asserting each predicate appears **verbatim** in the checker: change the SQL without mirroring it and that test fails rather than a stale model passing.
+
+#### The same mistake elsewhere - reported, not fixed
+
+Three other applied migrations use the identical enumeration, covering **15 more tables**:
+
+| Migration | Tables | Note |
+|---|---|---|
+| `20261004_payment_tables_write_lockdown.sql` | 12 payment and ledger tables | Keeps SELECT **on purpose** |
+| `20261001_user_subscriptions_write_lockdown.sql` | `user_subscriptions` | Keeps SELECT on purpose |
+| `20260920a_lock_system_settings_and_pricing_rls.sql` | `ai_model_pricing`, `system_settings_config` | Keeps SELECT on purpose |
+
+**`REVOKE ALL` is NOT the right fix for those three**, because SELECT is kept deliberately. The correct shape is `REVOKE ALL` followed by `GRANT SELECT`, or adding MAINTAIN to the list. Severity is low for the same reason as ours - PostgREST cannot issue VACUUM or LOCK TABLE - and **it is unverified against the live database**: nothing measures those tables today, and our checker only covers our three. Out of scope here, worth one small migration and one check of its own.
+
+Nothing else in the module enumerates: the four function REVOKEs had no gap to begin with, because EXECUTE is the only privilege a function can carry. They were changed to `REVOKE ALL` as habit, where it is free.
+
 ---
 
 ## 5. Slice 2: Enforcement (outline; G-3: the addendum restates each WC as tasks + tests)
