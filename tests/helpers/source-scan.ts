@@ -185,3 +185,216 @@ export function literalSpanAt(scaffold: string, from: number): LiteralSpan | nul
 
   return { open: i, close, quote };
 }
+
+/**
+ * Remove TypeScript comments, preserving newlines so every later line keeps its
+ * number.
+ *
+ * ── The precedence bug this replaces (QA D1/D2, High) ──────────────────────
+ * The previous implementation blanked STRINGS FIRST and then looked for
+ * comments in the resulting scaffold:
+ *
+ *     const scaffold = blankStringLiterals(source);   // strings gone
+ *     …scan `scaffold` for // and /* …                // comments second
+ *
+ * That order is backwards, and an apostrophe is enough to break it. In
+ * `/* the admin user's list *\/` the blanker sees `'`, opens a single-quoted
+ * string, finds no closing quote on the line, and blanks to the newline —
+ * TAKING THE `*\/` WITH IT. The block comment therefore never closes, and the
+ * comment scan deletes everything up to the next `*\/` anywhere later in the
+ * file: real code, silently, in the permissive direction.
+ *
+ * Measured consequences, both of which QA demonstrated:
+ *   * a one-line block comment containing an apostrophe, placed above an early
+ *     return in `app/admin/layout.tsx`, hid the return from R6 — 106/106 green
+ *     with the admin shell rendered to any caller;
+ *   * the layout's own comment, reflowed onto one line, failed R6 on a correct
+ *     file.
+ *
+ * And it was never branch-local. Measured over the 2,524 files the guard scans
+ * against an oracle built from TYPESCRIPT'S OWN SCANNER — chosen after SA showed
+ * that a hand-written reference can share the implementation's blind spot:
+ * `origin/main`'s version truncates **36 files / 62,594 characters**, so R1-R5 have been deciding on mangled source in production CI.
+ *
+ * Two corrections to figures reported earlier on this branch, recorded because a
+ * wrong zero is worse than an honest number:
+ *   * the precedence fix alone left **28 files / 1,952 characters** truncated
+ *     (SA's measurement), NOT the "0 / 0" first reported — that zero came from a
+ *     reference which, like the implementation, had no regex-literal state;
+ *   * with the regex state added below the figure is **0 files / 0 characters**.
+ *
+ * ── The fix is smaller, not cleverer ──────────────────────────────────────
+ * One left-to-right pass with explicit state. Inside a comment a quote is just
+ * a character; inside a string `//` is just two characters. Neither construct
+ * is discovered by looking at a text the other one has already rewritten.
+ */
+export function stripComments(source: string): string {
+  let out = '';
+  let i = 0;
+  /** Open template literals, innermost last, so `${ … }` nests correctly. */
+  const templates: { braceDepth: number }[] = [];
+  /** The last non-whitespace character of real code, for the regex decision. */
+  let lastCode = '';
+
+  const inTemplateText = () =>
+    templates.length > 0 && templates[templates.length - 1].braceDepth === 0;
+
+  /**
+   * Could a `/` here START a regex literal rather than be a division?
+   *
+   * The standard rule: a regex may begin where an expression may begin. After an
+   * identifier, a literal, a `)` or a `]` the slash is division.
+   *
+   * The `<` carve-out is for TSX: `</div>` must NOT read as a regex opener, and
+   * `a < /re/.source` is not a shape this repo contains.
+   */
+  const regexMayStartHere = () => {
+    if (lastCode === '') return true;
+    if (lastCode === '<') return false;
+    return !/[A-Za-z0-9_$)\]'"`]/.test(lastCode);
+  };
+
+  const emit = (c: string) => {
+    out += c;
+    if (!/\s/.test(c)) lastCode = c;
+  };
+
+  while (i < source.length) {
+    const c = source[i];
+    const next = source[i + 1];
+
+    // ── inside the literal text of a template ──────────────────────────────
+    if (inTemplateText()) {
+      if (c === '\\') {
+        out += source.slice(i, i + 2);
+        i += 2;
+        continue;
+      }
+      if (c === '`') {
+        emit('`');
+        templates.pop();
+        i++;
+        continue;
+      }
+      if (c === '$' && next === '{') {
+        // F2: an interpolation holds real CODE, so the scanner re-enters code
+        // state and a comment in there is stripped like any other.
+        out += '${';
+        lastCode = '{';
+        templates[templates.length - 1].braceDepth = 1;
+        i += 2;
+        continue;
+      }
+      out += c;
+      i++;
+      continue;
+    }
+
+    // ── code, either top level or inside `${ … }` ──────────────────────────
+    // Comments FIRST — the precedence that D1 got backwards.
+    if (c === '/' && next === '/') {
+      while (i < source.length && source[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      const end = source.indexOf('*/', i + 2);
+      const stop = end === -1 ? source.length : end + 2;
+      for (let j = i; j < stop; j++) if (source[j] === '\n') out += '\n';
+      i = stop;
+      continue;
+    }
+
+    /*
+     * ── F1: the regex-literal state (SA, final re-check) ──────────────────
+     * Without it `/[/*]/` opens a phantom BLOCK COMMENT and everything to the
+     * next `*<slash>` is deleted. SA demonstrated a `profiles.role` decision
+     * vanishing from R4's input, and `AnswerRenderer.ts:458` losing 22,686 of
+     * its 40,701 non-newline characters.
+     *
+     * A regex cannot span a newline, so if no closing `/` is found on this line
+     * the slash was division after all and is emitted as an ordinary character.
+     * That is the conservative direction: code stays code.
+     */
+    if (c === '/' && regexMayStartHere()) {
+      let j = i + 1;
+      let inClass = false;
+      let closed = false;
+      while (j < source.length && source[j] !== '\n') {
+        const d = source[j];
+        if (d === '\\') {
+          j += 2;
+          continue;
+        }
+        if (d === '[') inClass = true;
+        else if (d === ']') inClass = false;
+        else if (d === '/' && !inClass) {
+          closed = true;
+          break;
+        }
+        j++;
+      }
+      if (closed) {
+        // Copied through verbatim: a `/*` or `//` inside it is just characters.
+        out += source.slice(i, j + 1);
+        lastCode = '/';
+        i = j + 1;
+        // Flags, so `/x/g.test(…)` leaves `g` as the last code character.
+        while (i < source.length && /[a-z]/.test(source[i])) {
+          emit(source[i]);
+          i++;
+        }
+        continue;
+      }
+    }
+
+    // Track `${ … }` nesting so the closing brace returns to template text.
+    if (templates.length > 0) {
+      const top = templates[templates.length - 1];
+      if (c === '{') {
+        top.braceDepth++;
+        emit(c);
+        i++;
+        continue;
+      }
+      if (c === '}') {
+        top.braceDepth--;
+        out += c;
+        lastCode = top.braceDepth === 0 ? '`' : '}';
+        i++;
+        continue;
+      }
+    }
+
+    // Strings are copied through: a `//` inside one is not a comment.
+    if (c === "'" || c === '"') {
+      out += c;
+      i++;
+      while (i < source.length && source[i] !== c && source[i] !== '\n') {
+        if (source[i] === '\\') {
+          out += source.slice(i, i + 2);
+          i += 2;
+          continue;
+        }
+        out += source[i];
+        i++;
+      }
+      if (i < source.length) {
+        out += source[i];
+        i++;
+      }
+      lastCode = c;
+      continue;
+    }
+    if (c === '`') {
+      emit('`');
+      templates.push({ braceDepth: 0 });
+      i++;
+      continue;
+    }
+
+    emit(c);
+    i++;
+  }
+
+  return out;
+}

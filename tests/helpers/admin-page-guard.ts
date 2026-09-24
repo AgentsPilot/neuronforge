@@ -90,6 +90,13 @@
  * code), whose message says exactly that and points here. That is the safe
  * direction, and the fix is to extend this parser, never to weaken the rule.
  *
+ * ── Known limits, recorded and deliberately not chased ────────────────────
+ * **An ALIASED import is rejected** (QA D8): with
+ * `import { requireAdminPage as guard }` the first statement reads
+ * `await guard()`, which is not the anchored shape. No admin file is written
+ * that way; the failure carries the parser hatch, so it reads as a limit rather
+ * than as a verdict on the author.
+ *
  * ── Shapes that FAIL CLOSED, recorded and deliberately not chased ──────────
  * `export { AdminLayout as default }` and a semicolon-less
  * `export default AdminLayout` both report `parsed: false`. That is the CORRECT
@@ -224,7 +231,15 @@ function locateComponent(scaffold: string): { from: number; isArrow: boolean } |
   const arrowDefault = /export\s+default\s+(?:async\s*)?\(/.exec(scaffold);
   if (arrowDefault) return { from: arrowDefault.index + arrowDefault[0].length - 1, isArrow: true };
 
-  const named = /export\s+default\s+([A-Za-z_$][\w$]*)\s*;/.exec(scaffold);
+  /*
+   * `export default Name;` and `export { Name as default };` are the same
+   * declaration seen from two angles, and QA found the second one rejected on a
+   * CORRECT self-guarding page (D4). The semicolon is optional in both, because
+   * ASI makes it optional in the language.
+   */
+  const named =
+    /export\s+default\s+([A-Za-z_$][\w$]*)\s*;?/.exec(scaffold) ??
+    /export\s*\{[^}]*?([A-Za-z_$][\w$]*)\s+as\s+default[^}]*\}/.exec(scaffold);
   if (!named) return null;
   const name = named[1];
 
@@ -374,7 +389,16 @@ export function declaresLocalGuard(source: string, strip: CommentStripper): bool
   }
 
   const parsed = parseDefaultExportedComponent(source, strip);
-  return parsed !== null && /\brequireAdminPage\b/.test(blankStringLiterals(parsed.parameters));
+  if (parsed === null) return false;
+
+  /*
+   * D9: `typeof requireAdminPage` inside a parameter's TYPE is a reference, not a
+   * binding — `{ guard }: { guard: typeof requireAdminPage }` shadows nothing, and
+   * reading it as a shadow failed a correct file. Type-only references are removed
+   * before the binding test; a real default-valued parameter survives it.
+   */
+  const params = blankStringLiterals(parsed.parameters).replace(/\btypeof\s+requireAdminPage\b/g, '');
+  return /\brequireAdminPage\b/.test(params);
 }
 
 /**
@@ -816,3 +840,12 @@ export const SELF_GUARDING_SERVER_PAGE =
  * asserted, in the same spirit as the guard's exemption caps.
  */
 export const CORPUS_FLOORS = { disabled: 12, guarded: 9 } as const;
+
+/**
+ * D10: a floor counting ENTRIES can be satisfied by pasting one fixture twice.
+ * Distinctness is the property that actually matters, so the suites assert the
+ * count of unique sources, not the length of the array.
+ */
+export function distinctSources(corpus: ReadonlyArray<{ source: string }>): number {
+  return new Set(corpus.map((entry) => entry.source)).size;
+}

@@ -122,6 +122,7 @@ import path from 'path';
 
 import {
   ADMIN_LAYOUT_GUARD_FAILURE,
+  distinctSources,
   ADMIN_LAYOUT_UNPARSEABLE,
   adminLayoutGuardVerdict,
   CORPUS_FLOORS,
@@ -133,7 +134,7 @@ import {
   SELF_GUARDING_SERVER_PAGE,
   SERVER_LAYOUT_WITH_USE_CLIENT_IN_A_COMMENT,
 } from '@/tests/helpers/admin-page-guard';
-import { blankStringLiterals } from '@/tests/helpers/source-scan';
+import { blankStringLiterals, stripComments } from '@/tests/helpers/source-scan';
 
 /*
  * Re-exported because this file's own unit tests below exercise it, and because
@@ -144,7 +145,7 @@ import { blankStringLiterals } from '@/tests/helpers/source-scan';
  * by both rules — a second copy of "what counts as a string" is how two guards
  * drift apart.
  */
-export { blankStringLiterals };
+export { blankStringLiterals, stripComments };
 
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
 
@@ -154,7 +155,24 @@ const TS_SCAN_ROOTS = ['app', 'lib', 'components', 'hooks'];
 /** Where RLS policies live. */
 const SQL_SCAN_ROOTS = [path.join('supabase', 'migrations'), path.join('supabase', 'SQL Scripts')];
 
-const SKIP_DIRS = new Set(['node_modules', '.next', '.git', 'dist', 'build', 'coverage', '.claude']);
+/*
+ * ── QA D3 (High): scope, split by WHERE not just by name ───────────────────
+ * This was one flat set matched against `e.name` at EVERY depth, so any
+ * directory called `build`, `dist` or `coverage` was invisible to the guard —
+ * anywhere. QA put an unguarded server page at `app/admin/build/page.tsx` and an
+ * ungated handler at `app/api/admin/build/route.ts` and both passed 106/106,
+ * while the identical files in normally-named directories went red. `build` is a
+ * perfectly ordinary route segment.
+ *
+ * Inherited, not introduced here: `origin/main` has the identical single set and
+ * the identical `walk`, so its required check has the same blind spot today.
+ *
+ * Now: tool output that can appear at any depth is skipped by name; the
+ * repo-root build directories are skipped ONLY at the root, where they are
+ * actually build output.
+ */
+const SKIP_ANY_DEPTH = new Set(['node_modules', '.git', '.next', '.claude']);
+const SKIP_AT_ROOT_ONLY = new Set(['dist', 'build', 'coverage', 'out', '.vercel']);
 
 /** Next.js route-handler export names. All of them — authz is not verb-specific. */
 const HTTP_HANDLERS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const;
@@ -423,68 +441,65 @@ const R8_ALLOWED = new Set(R8_ALLOW.map((e) => e.id));
 function walk(dir: string, exts: RegExp): string[] {
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-    if (SKIP_DIRS.has(e.name)) return [];
     const full = path.join(dir, e.name);
-    if (e.isDirectory()) return walk(full, exts);
+    if (e.isDirectory()) {
+      if (SKIP_ANY_DEPTH.has(e.name)) return [];
+      // Depth matters: `build` directly under the repo root is build output;
+      // `app/admin/build` is a route segment. See SKIP_AT_ROOT_ONLY.
+      const isRootChild = path.dirname(full) === REPO_ROOT;
+      if (isRootChild && SKIP_AT_ROOT_ONLY.has(e.name)) return [];
+      return walk(full, exts);
+    }
     return exts.test(e.name) ? [full] : [];
   });
 }
 
 /**
- * Remove TypeScript comments so documentation cannot match itself.
+ * An INDEPENDENT enumeration, with no skip logic at all.
  *
- * This repo is full of comments that say things like "never profiles.role" and
- * "requireAdmin" — `lib/server/route-identity.ts:121` and
- * `lib/business-os/purge/purgeAuthz.ts:23-26` are comments FORBIDDING the very
- * pattern R4 looks for. Without stripping, this guard would flag the files that
- * document the rule.
+ * R8's anti-vacuity check compares the scanned set against a second listing. QA
+ * pointed out that while both sides call `walk`, a bug in `walk`'s skip list
+ * moves both sides together and the equality proves nothing — which is exactly
+ * how D3 hid. This function shares no code with `walk`, so a skip-list mistake
+ * shows up as a mismatch instead of cancelling out.
  *
- * ── D-3 (SA review, 2026-09-20): why this is a scan and not two regexes ────
- * The previous implementation was
- *   source.replace(/^[ \t]*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')
- * whose line-comment pass is anchored to the START of a line (`^[ \t]*`). It
- * therefore removed only comments occupying a WHOLE line. A **trailing**
- * comment survived into the block pass — and if it contained a `/*` (a glob,
- * say) that pass matched from there to the next close-comment anywhere later in
- * the file, deleting everything in between.
- *
- * SA reproduced it deleting an access decision: with a trailing
- * `// glob note: <slash-star>.ts files`, the following
- * `if (p.role === 'admin') { grantEverything(); }` was swallowed whole. R2 and
- * R4 scan stripped code, so that violation became invisible — silently, and in
- * the PERMISSIVE direction.
- *
- * This is the bug class the old docstring claimed to be designed against.
- * "Line comments first" only ever covered whole-line comments, and the unit
- * test used a whole-line comment, so nothing pinned the trailing case.
- *
- * Now: one left-to-right scan over a string-blanked scaffold, so a comment is
- * recognised wherever it starts, and `//` or a block opener inside a string
- * literal is not treated as a comment. Newlines inside removed regions are
- * preserved so every later line keeps its number.
+ * Safe to run without skips because it is only ever pointed at `app/admin`,
+ * which contains no `node_modules`.
  */
-export function stripComments(source: string): string {
-  const scaffold = blankStringLiterals(source);
-  let out = '';
-
-  for (let i = 0; i < source.length; ) {
-    if (scaffold[i] === '/' && scaffold[i + 1] === '/') {
-      while (i < source.length && source[i] !== '\n') i++;
-      continue;
+function listEveryFileUnconditionally(dir: string): string[] {
+  if (!fs.existsSync(dir)) return [];
+  const found: string[] = [];
+  const stack = [dir];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) stack.push(full);
+      else found.push(full);
     }
-    if (scaffold[i] === '/' && scaffold[i + 1] === '*') {
-      const end = scaffold.indexOf('*/', i + 2);
-      const stop = end === -1 ? source.length : end + 2;
-      for (let j = i; j < stop; j++) if (source[j] === '\n') out += '\n';
-      i = stop;
-      continue;
-    }
-    out += source[i];
-    i++;
   }
-
-  return out;
+  return found;
 }
+
+/*
+ * `stripComments` MOVED to tests/helpers/source-scan.ts (QA D1/D2, High).
+ *
+ * The version that lived here blanked STRINGS FIRST and then looked for comments
+ * in the scaffold. An apostrophe inside a one-line block comment —
+ * `/* the admin user's list *\/` — made the blanker swallow the closing `*\/`,
+ * so the comment never closed and the scan deleted real code up to the next
+ * `*\/` anywhere later in the file. Silently, and in the permissive direction:
+ * QA hid an early return from R6 that way and got 106/106 green with the admin
+ * shell rendered to any caller.
+ *
+ * It was never branch-local. Over the 2,524 files this guard scans,
+ * `origin/main`'s copy truncates 16 files / 64,700 characters (including
+ * `BusinessProfileRepository.ts`, −36,546) — so R1-R5 have been deciding on
+ * mangled source in production CI, not just here.
+ *
+ * The replacement is one left-to-right pass that recognises comments BEFORE
+ * strings. Its unit tests stay below, with QA's regressions added.
+ */
 
 /**
  * Remove SQL comments (`-- line` and block).
@@ -888,6 +903,37 @@ describe('repo-wide guard: the admin authorization surface', () => {
       }
     });
 
+    it('D3: a source directory named `build` under app/ is NOT skipped', () => {
+      /*
+       * QA D3 (High). `SKIP_DIRS` matched `e.name` at every depth, so
+       * `app/admin/build/page.tsx` and `app/api/admin/build/route.ts` were
+       * invisible: an unguarded page and an ungated handler both passed 106/106.
+       * `build` is an ordinary route segment. Inherited — `origin/main` has the
+       * identical set and the identical walk.
+       *
+       * Asserted as the RULE, because no such directory exists today: the two
+       * sets must not overlap, and the root-only names must not be skipped at
+       * depth.
+       */
+      expect([...SKIP_AT_ROOT_ONLY].filter((d) => SKIP_ANY_DEPTH.has(d))).toEqual([]);
+      for (const name of ['build', 'dist', 'coverage', 'out']) {
+        expect(SKIP_ANY_DEPTH.has(name)).toBe(false);
+      }
+      // And the tool directories stay skipped wherever they appear.
+      for (const name of ['node_modules', '.next', '.git', '.claude']) {
+        expect(SKIP_ANY_DEPTH.has(name)).toBe(true);
+      }
+    });
+
+    it('D3: R8\'s two sides of the walk-equality share no code', () => {
+      // If both sides used `walk`, a skip-list bug would move them together and
+      // the equality would prove nothing — which is how D3 hid.
+      const independent = listEveryFileUnconditionally(path.join(REPO_ROOT, 'app', 'admin'));
+      expect(independent.length).toBeGreaterThan(0);
+      expect(listEveryFileUnconditionally.toString()).not.toContain('SKIP_ANY_DEPTH');
+      expect(listEveryFileUnconditionally.toString()).not.toContain('walk(');
+    });
+
     it('D-4: scans every route-file extension Next.js accepts', () => {
       // Latent today (the repo has only `route.ts`), so assert the MATCHER
       // rather than the tree — otherwise this passes for the wrong reason.
@@ -1051,6 +1097,99 @@ describe('repo-wide guard: the admin authorization surface', () => {
   // ─────────────────────────────────────────────────────────────────────────
 
   describe('stripComments', () => {
+    /*
+     * F1 (SA, final re-check). The precedence fix was correct but incomplete:
+     * with no REGEX-LITERAL state, `/[/*]/` opens a phantom block comment and
+     * everything to the next `*<slash>` disappears. SA demonstrated a
+     * `profiles.role` decision vanishing from R4's input, and
+     * `AnswerRenderer.ts` losing 22,686 of its 40,701 characters.
+     *
+     * It fails CLOSED for R6, but R2 and R4 decide on this text, so a deletion
+     * is a MISSED VIOLATION for them. Hence one more state in the same pass.
+     */
+    it('F1: a regex literal containing a comment opener is not a comment', () => {
+      const src = ['const rx = /[/*]/;', "const decision = p.role === 'admin';"].join('\n');
+      const out = stripComments(src);
+      expect(out).toContain('const rx = /[/*]/;');
+      expect(out).toContain("p.role === 'admin'");
+    });
+
+    it('F1: an access decision after a regex literal survives into R4 input', () => {
+      // The shape SA used: without the regex state the decision was deleted, so
+      // R4 could not see the violation it exists to catch.
+      const src = [
+        'const slug = name.replace(/[^a-z]/g, "-");',
+        "if (profile.role === 'admin') grantEverything();",
+      ].join('\n');
+      expect(stripComments(src)).toContain("profile.role === 'admin'");
+    });
+
+    it('F1: division is still division, not a regex', () => {
+      const src = 'const ratio = total / count / 2;';
+      expect(stripComments(src)).toBe(src);
+    });
+
+    it('F1: a JSX closing tag is not a regex opener', () => {
+      const src = 'const el = <div>{x}</div>;';
+      expect(stripComments(src)).toBe(src);
+    });
+
+    it('F2: a comment inside a template interpolation IS stripped', () => {
+      // `${ … }` is real code, so a comment in there is a comment. Without this
+      // the text survived into the scanned source, which for R1 means a
+      // `requireAdmin(` mentioned in a comment could read as a gate.
+      const src = 'const t = `a ${/* gone */ b} c`;';
+      const out = stripComments(src);
+      expect(out).not.toContain('gone');
+      expect(out).toContain('const t = `a ${');
+      expect(out).toContain('} c`;');
+    });
+
+    it('F2: template TEXT is still left alone', () => {
+      const src = 'const t = `keep // this and /* this */ too`;';
+      expect(stripComments(src)).toBe(src);
+    });
+
+    it('F1: a CRLF source keeps its line count', () => {
+      const src = ['/* one */', 'const a = 1;', '// two', 'const b = 2;'].join('\r\n');
+      const out = stripComments(src);
+      expect(out.split('\n').length).toBe(src.split('\n').length);
+      expect(out).toContain('const a = 1;');
+      expect(out).toContain('const b = 2;');
+    });
+
+    /*
+     * QA D1/D2 (High). These four are the regression: an apostrophe inside a
+     * comment used to open a phantom string, swallow the closing `*<slash>`, and
+     * delete real code up to the next one anywhere later in the file.
+     *
+     * Not branch-local — `origin/main`'s copy truncates 16 files / 64,700
+     * characters of the corpus this guard scans. Measured, not reasoned.
+     */
+    it("D1: an apostrophe inside a one-line block comment does not eat the code below it", () => {
+      const src = ["/* the admin user's list */", 'const keep = 1;', 'const alsoKeep = 2;'].join('\n');
+      const out = stripComments(src);
+      expect(out).toContain('const keep = 1;');
+      expect(out).toContain('const alsoKeep = 2;');
+      expect(out).not.toContain('admin');
+    });
+
+    it('D1: an unbalanced apostrophe cannot reach a later block comment', () => {
+      const src = ["/* don't */", 'const a = 1;', '/* second */', 'const b = 2;'].join('\n');
+      const out = stripComments(src);
+      expect(out).toContain('const a = 1;');
+      expect(out).toContain('const b = 2;');
+    });
+
+    it('D1: a `//` inside a string literal is not a comment', () => {
+      expect(stripComments("const url = 'https://example.com/x';")).toContain('https://example.com/x');
+    });
+
+    it('D1: line numbers survive — one newline out per newline in', () => {
+      const src = ['/*', " * user's note", ' */', 'const a = 1;'].join('\n');
+      expect(stripComments(src).split('\n').length).toBe(src.split('\n').length);
+    });
+
     it('removes line and block comments', () => {
       expect(stripComments('// gone\nconst a = 1;')).not.toContain('gone');
       expect(stripComments('/* gone */const a = 1;')).not.toContain('gone');
@@ -1779,8 +1918,13 @@ describe('repo-wide guard: the admin authorization surface', () => {
        * corpus is allowed to grow, never to shrink, and shrinking it is a
        * visible act in a diff.
        */
-      expect(DISABLED_ADMIN_LAYOUTS.length).toBeGreaterThanOrEqual(CORPUS_FLOORS.disabled);
-      expect(GUARDED_ADMIN_LAYOUTS.length).toBeGreaterThanOrEqual(CORPUS_FLOORS.guarded);
+      // D10: counted by DISTINCT source, so the floor cannot be met by pasting
+      // one fixture twice.
+      expect(distinctSources(DISABLED_ADMIN_LAYOUTS)).toBeGreaterThanOrEqual(CORPUS_FLOORS.disabled);
+      expect(distinctSources(GUARDED_ADMIN_LAYOUTS)).toBeGreaterThanOrEqual(CORPUS_FLOORS.guarded);
+      expect(distinctSources(DISABLED_ADMIN_LAYOUTS)).toBe(DISABLED_ADMIN_LAYOUTS.length);
+      expect(distinctSources(GUARDED_ADMIN_LAYOUTS)).toBe(GUARDED_ADMIN_LAYOUTS.length);
+      expect(new Set(DISABLED_ADMIN_LAYOUTS.map((v) => v.name)).size).toBe(DISABLED_ADMIN_LAYOUTS.length);
 
       // Every disabled fixture must be attributed to a sub-rule that exists.
       for (const variant of DISABLED_ADMIN_LAYOUTS) {
@@ -1836,7 +1980,12 @@ describe('repo-wide guard: the admin authorization surface', () => {
       'FIRST statement — option 2 is immune to the bypass, because the crafted header re-uses the ' +
       'cached /admin LAYOUT segment and never skips the page’s own render. Note the guard must be ' +
       'the FIRST statement: a guard that runs after a repository read is still an offender. ' +
-      'Do not exempt the file.';
+      'Do not exempt the file. ' +
+      'IF YOU BELIEVE THE FILE IS ALREADY CORRECT — a self-guarding page this rule is ' +
+      'not recognising — that may be a FALSE POSITIVE in the parser rather than a ' +
+      'fault in your code: it lives in tests/helpers/admin-page-guard.ts, it documents ' +
+      'its limits, and the fix is to extend it and add your shape to ' +
+      'GUARDED_ADMIN_LAYOUTS. Never satisfy this by deleting the assertion.';
 
     it('the scan sees EVERY render entry point that exists on disk', () => {
       /*
@@ -1851,9 +2000,11 @@ describe('repo-wide guard: the admin authorization surface', () => {
        * filesystem's, so nothing can hide from the rule, plus a floor of ONE so
        * a renamed directory cannot make the rule vacuous.
        */
-      const onDisk = walk(path.join(REPO_ROOT, 'app', 'admin'), CODE_EXT)
+      // Enumerated WITHOUT `walk`, so a skip-list bug cannot move both sides
+      // of this equality together (QA D3).
+      const onDisk = listEveryFileUnconditionally(path.join(REPO_ROOT, 'app', 'admin'))
         .map(rel)
-        .filter((f) => ADMIN_RENDER_ENTRY_RE.test(f))
+        .filter((f) => CODE_EXT.test(f) && ADMIN_RENDER_ENTRY_RE.test(f))
         .sort();
 
       expect(ADMIN_RENDER_ENTRIES.map((s) => s.file).sort()).toEqual(onDisk);
