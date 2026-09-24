@@ -55,8 +55,20 @@ import {
   lastChangedByFor,
 } from '@/lib/business-os/llm/adminSettingsView';
 import { validateAreaRow } from '@/lib/business-os/llm/modelSettings';
-import { bosLlmAreaKey } from '@/lib/business-os/llm/modelSettingsPolicy';
+import {
+  BOS_LLM_SETTINGS_EXCLUDED_CALLS,
+  BOS_LLM_SETTINGS_EXCLUSION_REASON,
+  bosLlmAreaKey,
+} from '@/lib/business-os/llm/modelSettingsPolicy';
 import { BOS_LLM_AREAS } from '@/lib/business-os/llm/callCatalog';
+import {
+  SEED_EXCLUDED_CALL_NAMES,
+  SEED_EXCLUDED_REASON,
+} from '@/tests/helpers/bos-llm-admin-fixtures';
+import { flattened } from '@/tests/helpers/bos-llm-literal-rules';
+
+import * as fs from 'fs';
+import * as path from 'path';
 
 function row(overrides: Partial<SystemSettingsConfig> & { key: string }): SystemSettingsConfig {
   return {
@@ -316,5 +328,104 @@ describe('S1-T4: provenance', () => {
     // Another call of the same area must not inherit it.
     const other = leads.calls.find((c) => c.callName !== 'reply_recommendation');
     if (other) expect(other.issues).toHaveLength(0);
+  });
+});
+
+/**
+ * R-T13 (payload half) / AC-19 / FR-9 / FR-14.
+ *
+ * The screen may import no server module (FR-6), so it can neither know which
+ * calls are excluded nor write the reason itself. Both have to be on the wire,
+ * and the reason has to be the POLICY's constant — not a second sentence that
+ * says roughly the same thing and is free to drift from it.
+ */
+describe('R-T13: the excluded calls travel on the wire', () => {
+  it('carries chat’s four, in catalog order, and none for the other seven areas', async () => {
+    const { areas } = await buildAdminSettingsView();
+
+    const chat = areas.find((a) => a.area === 'chat')!;
+    expect(chat.excludedCalls.map((c) => c.callName)).toEqual([
+      ...BOS_LLM_SETTINGS_EXCLUDED_CALLS,
+    ]);
+    for (const area of areas.filter((a) => a.area !== 'chat')) {
+      expect({ area: area.area, excluded: area.excludedCalls }).toEqual({
+        area: area.area,
+        excluded: [],
+      });
+    }
+  });
+
+  it('never overlaps the configurable calls — the page renders both lists', async () => {
+    const { areas } = await buildAdminSettingsView();
+    for (const area of areas) {
+      const configurable = area.calls.map((c) => c.callName);
+      for (const excluded of area.excludedCalls) {
+        expect({ area: area.area, name: excluded.callName, alsoConfigurable: configurable.includes(excluded.callName) })
+          .toEqual({ area: area.area, name: excluded.callName, alsoConfigurable: false });
+      }
+    }
+  });
+
+  /**
+   * FR-14 — the sentence the wire carries IS the policy's.
+   *
+   * ⚠️ This is the DRIFT half, and on its own it is not the "never re-typed"
+   * rule it was once described as: a BYTE-IDENTICAL copy pasted into
+   * `adminSettingsView.ts` passes it, because the values still compare equal.
+   * Measured, not assumed — mutation M7 was re-run in exactly that form and
+   * this suite stayed green. The source half below is what M7 needs.
+   */
+  it('puts the POLICY’s constant on the wire, not a copy of it', async () => {
+    const { areas } = await buildAdminSettingsView();
+    const chat = areas.find((a) => a.area === 'chat')!;
+    for (const excluded of chat.excludedCalls) {
+      expect(excluded.reason).toBe(BOS_LLM_SETTINGS_EXCLUSION_REASON);
+    }
+  });
+
+  /**
+   * FR-14 / R-H5, the DUPLICATION half — the one M7 actually turns red.
+   *
+   * `modelSettingsPolicy.test.ts` already asserts the sentence appears exactly
+   * once in the policy module. The same property has to hold one file over: a
+   * second, identical copy here is how the two wordings start out agreeing and
+   * then stop, which is the whole reason FR-14 says "referenced, never
+   * re-typed".
+   *
+   * Flattened first, because a re-typed sentence of this length is wrapped
+   * across concatenated literals — the same blindness CR-1 fixed in the
+   * screen's propagation rule.
+   */
+  it('does not re-type the sentence in its own source — it imports it', () => {
+    const viewSource = flattened(
+      fs.readFileSync(path.join(process.cwd(), 'lib/business-os/llm/adminSettingsView.ts'), 'utf8')
+    );
+    const distinctive = /invalidates every stored vector/g;
+    expect((viewSource.match(distinctive) ?? []).length).toBe(0);
+    expect(viewSource).toContain('BOS_LLM_SETTINGS_EXCLUSION_REASON');
+    // The rule is proved against the input it must reject, wrapped as a
+    // developer would write it — not only against today's clean file.
+    const plantedWrapped =
+      "reason:\n  'Not configurable here — changing an embedding model invalidates every stored ' +\n" +
+      "  'vector (the plan cache and the verified questions), so it is a data migration.',";
+    expect((flattened(plantedWrapped).match(distinctive) ?? []).length).toBe(1);
+  });
+
+  it('survives JSON — a call name and a sentence, nothing structural', async () => {
+    const { areas } = await buildAdminSettingsView();
+    const roundTripped = JSON.parse(JSON.stringify(areas));
+    const chat = roundTripped.find((a: { area: string }) => a.area === 'chat');
+    expect(chat.excludedCalls).toHaveLength(4);
+    expect(Object.keys(chat.excludedCalls[0]).sort()).toEqual(['callName', 'reason']);
+  });
+
+  /**
+   * The render tests assert the SCREEN shows the fixture's reason; this asserts
+   * the fixture's reason IS the policy's. Without it the two halves of AC-19
+   * could both pass while the page rendered a sentence nobody wrote.
+   */
+  it('pins the render fixture to the same two facts', () => {
+    expect(SEED_EXCLUDED_REASON).toBe(BOS_LLM_SETTINGS_EXCLUSION_REASON);
+    expect(SEED_EXCLUDED_CALL_NAMES).toEqual([...BOS_LLM_SETTINGS_EXCLUDED_CALLS]);
   });
 });

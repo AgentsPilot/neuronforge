@@ -47,7 +47,9 @@ import {
   BOS_LLM_CALL_POLICY,
   BOS_LLM_SETTINGS_CATEGORY,
   BOS_LLM_SETTINGS_EXCLUDED_CALLS,
+  BOS_LLM_SETTINGS_EXCLUSION_REASON,
   bosLlmAreaKey,
+  bosLlmExcludedCallNames,
   bosLlmSettingsCallNames,
   getBosLlmCallPolicy,
   IMAGE_PRICE_REQUIRED_QUALITIES,
@@ -121,6 +123,79 @@ describe('policy coverage (T1-3, FR-3)', () => {
         'verified_question_store_embedding',
       ].sort()
     );
+  });
+
+  /**
+   * FR-14 / RC-7 — the exclusion reason has exactly ONE home.
+   *
+   * The sentence used to be the doc-block prose on
+   * `BOS_LLM_SETTINGS_EXCLUDED_CALLS`. The admin screen now renders it to an
+   * operator and the client may not import this module (FR-6), so it had to
+   * become a constant on the wire. Promoting it while leaving the original
+   * prose in place would have re-created the very drift the constant exists to
+   * prevent — inside one file — so the comment is now a POINTER, and this test
+   * says so.
+   */
+  const policySource = fs.readFileSync(
+    path.join(ROOT, 'lib/business-os/llm/modelSettingsPolicy.ts'),
+    'utf8'
+  );
+
+  describe('FR-14: the exclusion reason is authored once', () => {
+    it('states the mechanism, and opens with what the reader needs first', () => {
+      expect(BOS_LLM_SETTINGS_EXCLUSION_REASON.startsWith('Not configurable here')).toBe(true);
+      expect(BOS_LLM_SETTINGS_EXCLUSION_REASON).toContain('invalidates every stored vector');
+      expect(BOS_LLM_SETTINGS_EXCLUSION_REASON).toContain('data migration, not a setting');
+      expect(BOS_LLM_SETTINGS_EXCLUSION_REASON).toContain('helpbot_embedding_model');
+      expect(BOS_LLM_SETTINGS_EXCLUSION_REASON).toContain('area switch still stops them');
+    });
+
+    it('leaves no second wording of it beside the constant', () => {
+      // The distinctive clause of the superseded comment. One occurrence only:
+      // the constant itself.
+      const occurrences = (policySource.match(/invalidates every stored vector/g) ?? []).length;
+      expect(occurrences).toBe(1);
+      expect(policySource).not.toContain('The four chat embeddings keep the shared');
+    });
+
+    it('records that the wording names chat, and must be revisited if that changes (R-6)', () => {
+      expect(policySource).toMatch(/If a non-chat call is ever excluded/);
+    });
+  });
+
+  /**
+   * FR-9 / W-5 — the derivation is generic, by data rather than by an area
+   * check. The exclusion list happens to be typed to chat today; nothing here
+   * assumes it, and nothing has to be edited the day it stops being true.
+   */
+  describe('FR-9: the excluded call names of an area', () => {
+    it('is chat’s four, in catalog order, and empty everywhere else', () => {
+      expect(bosLlmExcludedCallNames('chat')).toEqual([
+        'plan_cache_lookup_embedding',
+        'plan_cache_store_embedding',
+        'verified_question_embedding',
+        'verified_question_store_embedding',
+      ]);
+      for (const area of BOS_LLM_AREAS.filter((a) => a !== 'chat')) {
+        expect({ area, excluded: bosLlmExcludedCallNames(area) }).toEqual({ area, excluded: [] });
+      }
+    });
+
+    it('partitions each area’s catalogue exactly — nothing lost, nothing counted twice', () => {
+      for (const area of BOS_LLM_AREAS) {
+        expect(
+          [...bosLlmSettingsCallNames(area), ...bosLlmExcludedCallNames(area)].sort()
+        ).toEqual([...BOS_LLM_CALLS[area]].sort());
+      }
+    });
+
+    it('derives from the per-NAME predicate, never from an area comparison', () => {
+      const at = policySource.indexOf('export function bosLlmExcludedCallNames');
+      expect(at).toBeGreaterThan(-1);
+      const body = policySource.slice(at, policySource.indexOf('\n}', at));
+      expect(body).toContain('isExcludedFromBosLlmSettings');
+      expect(body).not.toMatch(/'chat'/);
+    });
   });
 
   it('allows only OpenAI, everywhere (DEC-4)', () => {

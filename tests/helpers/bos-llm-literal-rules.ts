@@ -31,6 +31,27 @@ export function codeOf(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 }
 
+/**
+ * Flatten source to ONE logical line before scanning for a phrase or a list
+ * (CR-1).
+ *
+ * ── Two mutations survived for this one reason ───────────────────────────
+ * Every string longer than a line in this layer is authored as `'…' + '…'`,
+ * and prettier wraps a long array literal the same way. A raw scan sees
+ * neither. Two rules were caught out by it in the same round: the propagation
+ * clause (M5) and the excluded-call reason (M7), both of which a developer
+ * would re-type in exactly the wrapped form the rule could not see.
+ *
+ * Shared rather than copied because it is now the normalisation THREE source
+ * rules depend on, in two different suites — and a second copy of it would be
+ * the same defect class one level up.
+ */
+export function flattened(source: string): string {
+  return source
+    .replace(/['"]\s*\+\s*['"]/g, '') // `'…' + '…'` → one literal
+    .replace(/\s+/g, ' '); // a wrapped literal, array or template → one line
+}
+
 /** The vendor families `MODEL_ID_PATTERNS` in the gate recognises. */
 export const FEATURE_ROOTS =
   'gpt|chatgpt|o[1345]|text-embedding|tts|sora|omni-moderation|claude|kimi|mistral|gemini|llama|moonshot|deepseek|grok|dall-e|whisper';

@@ -23,6 +23,27 @@ describe('the screen is reachable from the admin sidebar', () => {
     expect(sidebar.match(/\/admin\/business-os-llm/g)).toHaveLength(1);
   });
 
+  /**
+   * R-T16 / AC-22 / FR-12. The description said 'Models & Switches' and
+   * NOTHING asserted it — so it would have shipped stale and green beside a
+   * page that no longer mirrors the switch at all (the switch is runbook §4).
+   *
+   * ── RC-11: scoped to THIS entry ──────────────────────────────────────────
+   * This file is a source scan over the whole sidebar, and ~20 other entries
+   * carry descriptions of their own. A bare `toContain` would pass if the
+   * string turned up on any of them, so the assertion is made in PROXIMITY to
+   * the href, using the same `indexOf` + `slice` idiom the ordering test uses.
+   */
+  it('describes the page by what it now shows, next to the href it belongs to', () => {
+    const oursAt = sidebar.indexOf("href: '/admin/business-os-llm'");
+    expect(oursAt).toBeGreaterThan(-1);
+    // The entry runs from its href to the start of the next one.
+    const entry = sidebar.slice(oursAt, sidebar.indexOf("href: '", oursAt + 10));
+    expect(entry).toContain("description: 'Models & temperatures'");
+    // And the superseded string is gone from the file entirely.
+    expect(sidebar).not.toContain('Models & Switches');
+  });
+
   it('sits beside System Config, where an operator looks for configuration', () => {
     const systemConfigAt = sidebar.indexOf("href: '/admin/system-config'");
     const oursAt = sidebar.indexOf("href: '/admin/business-os-llm'");
