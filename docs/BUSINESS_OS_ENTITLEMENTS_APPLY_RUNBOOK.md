@@ -150,7 +150,9 @@ Run **block 3** of `scripts/check-bos-entitlements-migration.sql` again and look
 
 **No data was exposed.** RLS is on with zero policies and neither client role has SELECT, so `m` is a nuisance privilege, not a read. Fix it at your convenience, not as an incident.
 
-Paste `supabase/migrations/20261009_business_os_entitlements_privilege_fix.sql` → **Run**. It is 32 plain statements, no comments, and it is **safe to re-run**: every statement is a `REVOKE` or a `GRANT`, and a `REVOKE` from a role that holds nothing is a no-op. It touches no data and creates nothing.
+Paste `supabase/migrations/20261009_business_os_entitlements_privilege_fix.sql` → **Run**. It is 33 plain statements, **no comments** — it is pasted by hand, so it is held to the same rule as the scripts — and it is **safe to re-run**: every statement is a `REVOKE` or a `GRANT`, and a `REVOKE` from a role that holds nothing is a no-op. It touches no data and creates nothing.
+
+The last statement is a `SELECT` that prints what the migration is and points back here. That is the pointer the file would otherwise have carried as a comment, and it doubles as the grid confirming the paste ran.
 
 Then run **block 1** of the checker again. Expect `BLOCK 1 VERDICT PASS`, with **A4** reporting `0 of 3 tables carry an entry for anon authenticated or PUBLIC` and **A4b** reporting `0 of 3 tables let service_role delete or truncate`. A10 says the same before and after — that is deliberate, so the fix cannot be mistaken for a regression.
 

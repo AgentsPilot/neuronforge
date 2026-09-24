@@ -1919,7 +1919,9 @@ The hypothesis handed to me was the apostrophes alone. **That is not sufficient*
 
 ### 4.34 SA review fixes applied (2026-09-24) - T-1 and five smaller items
 
-SA approved §4.32 and §4.33 and cleared them for QA (§13.9), confirming the root cause of the paste failure and the chat-surface finding - and widening the finding to **writes**, not only reads. Implementation stays uncommitted.
+SA approved §4.32 and §4.33 and cleared them for QA (§13.9), and widened the chat-surface finding to **writes**, not only reads. Implementation stays uncommitted.
+
+> ⚠️ **One word of that clearance has since been retracted by SA (§13.10):** §13.9 also said it had independently confirmed the paste root cause. It had not - it treated evidence that was *consistent* with the theory as evidence that established it, and the theory was later disproven (§4.37). **Nothing in this section depends on that**: every item below is a config or test change, and T-1 stands on the chat-surface finding, which is unaffected.
 
 | # | What changed |
 |---|---|
@@ -1998,7 +2000,7 @@ QA was right to stop me refreshing it on a story. The base tree was measured dir
 | Base production config + this branch's tests | 2,043 | 2 |
 | **This branch, complete** | **2,029** | 2 |
 
-So **this change set is net zero**, and the baseline for the branch is **2,029** because that is what the base measures - not because something here removed a diagnostic. The `-1` against the 2,030 recorded in §4.31 predates this branch, and so does the `lib/repositories` control moving from 3 to 2: `CRMContactRepository.ts` is clean at the base commit with the tier work absent, so the "3" in §13.9 and in the component-1 notes is stale. **SA's attribution of the `-1` to the `never` diagnostic is not supported** - it would have had to show up in the second row above, and it does not.
+So **this change set is net zero**, and the baseline for the branch is **2,029** because that is what the base measures - not because something here removed a diagnostic. The `-1` against the 2,030 recorded in §4.31 predates this branch, and so does the `lib/repositories` control moving from 3 to 2: `CRMContactRepository.ts` is clean at the base commit with the tier work absent, so the "3" in §13.9 and in the component-1 notes is stale. **SA's attribution of the `-1` to the `never` diagnostic is not supported** - it would have had to show up in the second row above, and it does not. **SA withdrew that attribution in §13.10** on the strength of this control, so nothing now rests on it either way.
 
 #### B-1 (proposal only, not implemented) - `enforce` needs a second key
 
@@ -2129,7 +2131,7 @@ service_role=arwdDxtm/postgres
 
 | File | Change |
 |---|---|
-| `supabase/migrations/20261009_business_os_entitlements_privilege_fix.sql` | **NEW.** 32 plain statements, no comments, pastes under the new rules. `REVOKE ALL ... FROM anon / authenticated / PUBLIC` on all three tables, `REVOKE DELETE, TRUNCATE ... FROM service_role`, then the positive `GRANT SELECT, INSERT, UPDATE` restated. Safe to re-run: every statement is a REVOKE or a GRANT, and a REVOKE from a role holding nothing is a no-op. Number chosen after checking `origin/main`, where the highest is `20261008` |
+| `supabase/migrations/20261009_business_os_entitlements_privilege_fix.sql` | **NEW.** 33 plain statements, no comments, pastes under the new rules. Its pointer is the final `SELECT` rather than a `--` line (SA P-2, see below). `REVOKE ALL ... FROM anon / authenticated / PUBLIC` on all three tables, `REVOKE DELETE, TRUNCATE ... FROM service_role`, then the positive `GRANT SELECT, INSERT, UPDATE` restated. Safe to re-run: every statement is a REVOKE or a GRANT, and a REVOKE from a role holding nothing is a no-op. Number chosen after checking `origin/main`, where the highest is `20261008` |
 | `supabase/migrations/20261005_business_os_entitlements.sql` | Corrected so a fresh environment never has the gap: `REVOKE ALL` for the client roles, an explicit `REVOKE DELETE, TRUNCATE` from `service_role`, and a comment recording **why the enumeration is the trap** rather than just what changed. The four function REVOKEs became `REVOKE ALL` too |
 | `scripts/check-bos-entitlements-migration.sql` | **A4 strengthened**: it asserts the client roles have **no ACL entry at all**, not the absence of particular privileges - the production entry was `anon=m`, and a check looking for `anon=r` would have passed. The row now prints the offending ACL. **A4b added**: `service_role` holds neither `d` nor `D`. **A10 hardened**: letter by letter through the extracted privilege string, so a grant carrying `WITH GRANT OPTION` (`a*r*w*`) still counts |
 
@@ -2156,7 +2158,66 @@ Three other applied migrations use the identical enumeration, covering **15 more
 
 **`REVOKE ALL` is NOT the right fix for those three**, because SELECT is kept deliberately. The correct shape is `REVOKE ALL` followed by `GRANT SELECT`, or adding MAINTAIN to the list. Severity is low for the same reason as ours - PostgREST cannot issue VACUUM or LOCK TABLE - and **it is unverified against the live database**: nothing measures those tables today, and our checker only covers our three. Out of scope here, worth one small migration and one check of its own.
 
+> ### The rule to carry into that work (SA, §13.10)
+>
+> **Verify the resulting permissions, not the statement that sets them.**
+>
+> Every artefact we had said the right thing. The migration said `REVOKE`, the comment said DELETE was not granted, and a text test asserted both. All three were true about the *statement* and false about the *database*, because a REVOKE only removes what it names and a GRANT only adds. The defect was invisible until something read the ACL back.
+>
+> So a privilege migration is not finished when the statement is written. It is finished when a check reads `relacl` and says what the role actually holds - which is why A4 found this and three years of review did not. **Whoever picks up the 15 tables should write that check first**, run it before the migration to see the defect, and run it after to see it gone.
+
 Nothing else in the module enumerates: the four function REVOKEs had no gap to begin with, because EXECUTE is the only privilege a function can carry. They were changed to `REVOKE ALL` as habit, where it is free.
+
+### 4.39 SA fixes applied (2026-09-24) - P-1, P-2, and two retractions recorded
+
+SA approved the privilege fix and the rewritten scripts and cleared them for QA (§13.10), with no required changes and two low-priority items. Both applied. Implementation stays uncommitted.
+
+#### P-1 - the applied migration now says it was edited afterwards
+
+`20261005_business_os_entitlements.sql` opens with a warning block, because the file no longer matches the SQL the live database received and somebody will eventually read it as a record of what ran:
+
+| | |
+|---|---|
+| **What production got** | the file as it stood on 2026-09-23, whose REVOKE **enumerated** seven privileges, **plus** `20261009_business_os_entitlements_privilege_fix.sql`, which repairs the two gaps the enumeration left |
+| **What this file is** | the corrected version. A fresh apply of it alone reaches the same end state and does **not** need `20261009` |
+
+It names both gaps, points at the follow-up, and points at check A4 as the thing that tells you which state a given database is in.
+
+#### P-2 - the pointer is SQL, not a comment
+
+**Chosen: no `--` line.** `20261009` is pasted by hand, so it is in `PASTE_SCRIPTS` and held to the no-comment rule - and that rule exists precisely because we **cannot explain** the failure it guards against. Adding the first comment back into a file the user pastes, to save one line of documentation, is the wrong side of that trade.
+
+Instead the pointer is the **last statement**:
+
+```sql
+SELECT 'business_os entitlements privilege fix' AS migration,
+       'revokes ALL from anon authenticated and PUBLIC and takes DELETE and TRUNCATE from service_role' AS what_it_does,
+       'see docs BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md step 9' AS why,
+       'safe to re-run' AS notes;
+```
+
+A reader sees it at the bottom of the file, and the operator sees it as the **confirmation grid** after running - which a comment would not have given them. It has no `FROM`, so it reads nothing. A test asserts the file still has no `--`, that the pointer is present, and that exactly one statement is a `SELECT`.
+
+#### SA's two retractions, and where they touch this workplan
+
+| Retraction | Effect here |
+|---|---|
+| §13.9's claim to have **independently confirmed** the paste root cause is withdrawn - SA treated evidence that was *consistent* with the theory as evidence that *established* it | §4.34 cited that confirmation in its first line. It now states what the clearance actually covered, and carries the retraction inline. Nothing in §4.34 depended on it: every item is a config or test change, and T-1 rests on the chat-surface finding, which is unaffected |
+| SA's attribution of the typecheck `-1` to a `never` diagnostic is withdrawn, on the strength of the §4.38 control | §4.35 had recorded the attribution as "not supported". It now records it as **withdrawn**, so nothing rests on it in either direction |
+
+I checked the rest of my sections for the same lean: §4.33 and §4.35 already carry retraction banners from §4.37, and no other section of mine cites either claim.
+
+#### The rule worth carrying forward
+
+SA's transferable lesson from the privilege defect is now stated once, in §4.38, next to the queued 15-table work where the next person will meet it: **verify the resulting permissions, not the statement that sets them.** Every artefact we had said the right thing about the statement and the wrong thing about the database. Write the check that reads `relacl` first, run it before the migration to see the defect and after to see it gone.
+
+#### Re-verified
+
+| Check | Result |
+|---|---|
+| Migration guards plus the SQL paste guard | **120 tests**, 0 failures |
+| Full affected scope | **54 suites, 1,142 tests**, 0 failures |
+| Typecheck, the verified method | **2,029**, equal to the measured base |
 
 ---
 
@@ -4253,8 +4314,11 @@ I mapped every row of the last committed checker onto the rewrite. **Twenty chec
 
 | # | Sev | Finding |
 |---|---|---|
-| **QA-1** | Low | **The TS predicates are a re-implementation, and only the SQL side is pinned.** `hasClientEntry` / `serviceRolePrivs` (`business-os-entitlements-privileges.test.ts:154-157`) happen to mirror the four `LIKE`s and the `substring` exactly — I checked each — but the pin asserts the *SQL contains those strings*, not that the TS matches them. A future edit to the regexes alone would drift silently. One way to close it: derive the TS predicates from the pinned strings, or assert both directions on a shared table of ACL fixtures. |
-| **QA-2** | Low (note) | **`ACL_AFTER` is a transcription, asserted as fact.** `expect(privs).toBe('arwxtm')` (`:196`) encodes what the user reported after applying the fix. It matches his live re-verification today, so it is accurate — but the suite would pass just the same if the real ACL differed, because nothing here reads a database. The comment explains *why* the entries disappear (PostgreSQL drops an ACL entry once it carries no privileges), which is correct and is the justification for A4's "no entry at all" framing. |
+| **QA-1** | Low | **The TS predicates are a re-implementation, and only the SQL side is pinned.** `hasClientEntry` / `serviceRolePrivs` (`business-os-entitlements-privileges.test.ts:168-171`) happen to mirror the four `LIKE`s and the `substring` exactly — I checked each — but the pin asserts the *SQL contains those strings*, not that the TS matches them. A future edit to the regexes alone would drift silently. One way to close it: derive the TS predicates from the pinned strings, or assert both directions on a shared table of ACL fixtures. |
+| **QA-2** | Low (note) | **`ACL_AFTER` is a transcription, asserted as fact.** `expect(privs).toBe('arwxtm')` (`:212`) encodes what the user reported after applying the fix. It matches his live re-verification today, so it is accurate — but the suite would pass just the same if the real ACL differed, because nothing here reads a database. The comment explains *why* the entries disappear (PostgreSQL drops an ACL entry once it carries no privileges), which is correct and is the justification for A4's "no entry at all" framing. |
+
+
+**Re-read after Dev edited the file mid-report (15:11).** `business-os-entitlements-privileges.test.ts` grew from 214 to 228 lines while I was writing this, so I re-ran and re-read it. The change is **an improvement**: A10 gained a non-vacuity leg (`serviceRolePrivs('postgres=arwdDxtm/postgres')` must NOT satisfy r+a+w), and the suite is now **82 tests, all passing** with the guard. **QA-1 survives the edit and is now slightly sharper:** the new doc comment above the predicates says *"If the SQL changes and this does not, the first `expect` in each block fails"* - which is true in that one direction only. Edit the two TS regexes alone and every assertion still passes, because nothing compares the TS to the SQL. The comment reads as a two-way guarantee the code does not give.
 
 #### 14.14.6 The guard and the retractions
 
