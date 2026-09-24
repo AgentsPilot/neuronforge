@@ -187,6 +187,27 @@ export const CAPABILITIES = {
   },
 
   // ── AI & chat ─────────────────────────────────────────────────────────────
+  'chat.access': {
+    labels: { en: 'AI chat assistant', he: 'גישה לעוזר הצ׳אט', es: 'Acceso al asistente de chat' },
+    category: 'ai_chat',
+    // `boolean`, not `group`: a group is "a named set of fine-grained operations
+    // on one surface", and this is the SURFACE itself. May this account open
+    // chat at all? The nine-or-so `chat.*` groups then say what it may do there.
+    shape: { kind: 'boolean' },
+    lifecycle: 'available',
+    audience: 'owner',
+    atLimit: 'none',
+    sellableAsAddon: false,
+    note:
+      'THE commercial difference between Essentials and Autopilot, expressed once (FR-46, added ' +
+      '2026-09-24 on SA review). Added because the per-operation capabilities cannot express it: ' +
+      'every chat operation maps to the capability of the DOMAIN it touches, so an Essentials ' +
+      'account reading or writing contacts through chat resolves to crm.core — which Essentials ' +
+      'has — and chat answers. Withholding the eight chat.* groups does not close the surface. ' +
+      'NOTHING READS THIS YET: Slice 2 gates the chat entry point on it, once per turn, before ' +
+      'any per-capability check. Until then it is a configured intent, like every other value ' +
+      'here while the mode is off.',
+  },
   'chat.marketing': {
     labels: { en: 'Bulk email via chat', he: 'שליחה מרובה דרך הצ׳אט', es: 'Envío masivo por chat' },
     category: 'ai_chat',

@@ -32,23 +32,51 @@ describe('layer 1 — the basis', () => {
     expect(result.values['chat.search'].trace[0].note).toContain('tier growth');
   });
 
-  it('a champion gets the catalog-derived maximum (RC-2, B-14)', () => {
+  it('a champion inherits the tier its cohort points at (2026-09-23)', () => {
+    // Until the tiers existed, champions resolved from `{ all: true }`. They now
+    // point at `basic`, so a champion gets Essentials — including NO CHAT, until
+    // the day `champion.base` becomes `{ tier: 'pro' }`.
     const result = resolve(championAccount());
 
     expect(result.basis).toEqual({ kind: 'cohort', cohort: 'champion' });
-    expect(result.values['chat.search'].value).toBe(true);
-    // Variant: the TOP of the list, which is what makes the order load-bearing.
-    expect(result.values['website.branding'].value).toBe('unbranded');
-    expect(result.values['intake.forms'].value).toBe('ai');
-    // Quantities cannot be derived, so they come from the cohort's own numbers.
+    expect(result.values['chat.search'].value).toBe(false);
+    expect(result.values['crm.core'].value).toBe(true);
+    // The FIXTURE Basic is branded and manual, and the champion gets exactly
+    // that — which is the inheritance, shown rather than asserted in the
+    // abstract. (Production Essentials is unbranded; the fixture is not a
+    // price list.)
+    expect(result.values['website.branding'].value).toBe('branded');
+    expect(result.values['intake.forms'].value).toBe('manual');
+    // The cohort still states its own numbers, which override the tier row.
     expect(result.values['ai.actions'].value).toEqual(readCodeConfig().cohorts.champion.values['ai.actions']);
   });
 
-  it('a trial gets the same everything, with the trial numbers', () => {
+  it('a `{ all: true }` cohort still gets the catalog-derived maximum (RC-2)', () => {
+    // The mechanism did not go away when production stopped using it — a future
+    // cohort may want it, and the derivation is what `{ all: true }` means.
+    const production = readCodeConfig();
+    const everything = {
+      ...production,
+      cohorts: {
+        ...production.cohorts,
+        champion: { ...production.cohorts.champion, base: { all: true as const } },
+      },
+    };
+
+    const result = resolve(championAccount(), [], everything);
+
+    expect(result.values['chat.search'].value).toBe(true);
+    expect(result.values['website.branding'].value).toBe('unbranded');
+  });
+
+  it('a trial previews the plan it points at, with the trial numbers', () => {
     const result = resolve(trialAccount('2026-09-20T00:00:00.000Z'));
 
     expect(result.state).toBe('trial');
-    expect(result.values['chat.search'].value).toBe(true);
+    // Test Flight is Essentials for fourteen days, so it shows what Essentials
+    // is — no chat included.
+    expect(result.values['chat.search'].value).toBe(false);
+    expect(result.values['crm.core'].value).toBe(true);
     expect(result.values['ai.actions'].value).toEqual(readCodeConfig().cohorts.trial.values['ai.actions']);
   });
 
@@ -92,10 +120,19 @@ describe('the lifecycle gate (FR-13)', () => {
     // with one — otherwise this test would pass by having nothing to check.
     const beta = { ...config.catalog, 'chat.quotes': { ...CAPABILITIES['chat.quotes'], lifecycle: 'beta' } } as unknown as typeof config.catalog;
 
-    const optedIn = resolve(championAccount(), [], { ...config, catalog: beta });
+    // A cohort that derives its own values is the case the beta gate is about:
+    // a tier row states a value outright, so there is nothing to opt into.
+    const allCohorts = {
+      ...config.cohorts,
+      champion: { ...config.cohorts.champion, base: { all: true as const } },
+    };
+    const optedIn = resolve(championAccount(), [], { ...config, catalog: beta, cohorts: allCohorts });
     expect(optedIn.values['chat.quotes'].value).toBe(true);
 
-    const cohorts = { ...config.cohorts, champion: { ...config.cohorts.champion, includeLifecycle: [] } };
+    const cohorts = {
+      ...allCohorts,
+      champion: { ...allCohorts.champion, includeLifecycle: [] },
+    };
     const optedOut = resolve(championAccount(), [], { ...config, catalog: beta, cohorts });
     expect(optedOut.values['chat.quotes'].value).toBe(false);
 
@@ -255,13 +292,21 @@ describe('lowestTierFor (RC-1)', () => {
     expect(lowestTierFor(config, 'marketing.posts')).toBeNull();
   });
 
-  it('is null for EVERY capability on the production config (U-1)', () => {
-    // The whole point of shipping with no tiers: nothing can offer an upgrade,
-    // because there is nothing to upgrade to.
+  it('names a real plan on the production config, now that tiers exist', () => {
+    // Until 2026-09-23 this asserted `null` for every capability, because there
+    // was nothing to upgrade to. There is now, and an upgrade prompt can name it.
     const production = readCodeConfig();
-    for (const capability of Object.keys(production.catalog)) {
-      expect(lowestTierFor(production, capability)).toBeNull();
-    }
+
+    // Chat is the differentiator, so chat points at Autopilot and everything
+    // else the product does is already in Essentials.
+    expect(lowestTierFor(production, 'chat.search')).toBe('pro');
+    expect(lowestTierFor(production, 'chat.bulk')).toBe('pro');
+    expect(lowestTierFor(production, 'crm.core')).toBe('basic');
+    expect(lowestTierFor(production, 'insights.daily_briefing')).toBe('basic');
+
+    // …and still null for what does not exist, whatever a tier row said.
+    expect(lowestTierFor(production, 'marketing.posts')).toBeNull();
+    expect(lowestTierFor(production, 'website.custom_domain')).toBeNull();
   });
 });
 

@@ -143,7 +143,7 @@ function load(
       },
     }));
 
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     harness.shadowChatPlan = require('@/lib/business-os/entitlements/shadow').shadowChatPlan;
   });
 
@@ -313,9 +313,9 @@ describe('the module itself (RC-7)', () => {
     // The property, asserted from the source: `shadow.ts` is on the chat route's
     // import path, so anything that could throw while loading — Zod, the config,
     // a repository — must be reached through `await import()` inside the try.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { readFileSync } = require('fs');
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { join } = require('path');
     const source = readFileSync(join(process.cwd(), 'lib', 'business-os', 'entitlements', 'shadow.ts'), 'utf8');
 

@@ -9,6 +9,7 @@
  */
 
 import { capabilitiesForPlan } from '@/lib/business-os/entitlements/planCapabilities';
+import { ACTION_OVERRIDES, ENTITY_DOMAIN, isUngated } from '@/lib/business-os/entitlements/config/chatActionMap';
 import type { Plan } from '@/lib/business-os/bizql/planner/Planner';
 
 const plan = (steps: unknown[]) => ({ steps } as unknown as Pick<Plan, 'steps'>);
@@ -132,6 +133,47 @@ describe('what is NOT a capability request', () => {
 
     expect(requests).toEqual([]);
     expect(gaps[0]).toMatchObject({ entity: 'agents', reason: 'unmapped_entity' });
+  });
+
+  it('the shipped map classifies NOTHING as ungated today (B-8, 2026-09-23)', () => {
+    // `agents` and `agent_runs` were the only two, and they left the chat
+    // catalog upstream, so there is no live entity to assert against. The rule
+    // they encoded still holds — a Business OS plan grants nothing on the agent
+    // platform — and this is the standing check that nobody has quietly gated
+    // one without saying so.
+    const mappings = [...Object.values(ENTITY_DOMAIN), ...Object.values(ACTION_OVERRIDES)];
+
+    expect(mappings.filter(isUngated)).toEqual([]);
+    expect(mappings.length).toBeGreaterThan(20); // not vacuous
+  });
+
+  it('an ungated entity would be a gap with its reason, and would grant nothing', () => {
+    // The branch itself, kept alive now that the config no longer reaches it.
+    // Only the CLASSIFICATION is faked — one entity declared ungated, which is
+    // precisely what a config entry says. Everything downstream of it (the gap,
+    // its note, the absence of a request, the once-not-per-reading behaviour)
+    // is the real `capabilitiesForPlan`.
+    jest.isolateModules(() => {
+      jest.doMock('@/lib/business-os/entitlements/config/chatActionMap', () => {
+        const actual = jest.requireActual('@/lib/business-os/entitlements/config/chatActionMap');
+        const ungatedEntity = { unicorns: { ungated: 'not a Business OS sale (B-8)' } };
+        return {
+          ...actual,
+          ENTITY_DOMAIN: { ...actual.ENTITY_DOMAIN, ...ungatedEntity },
+          capabilityForOp: (entity: string, op: string, rule: string) =>
+            ungatedEntity[entity as keyof typeof ungatedEntity] ?? actual.capabilityForOp(entity, op, rule),
+        };
+      });
+      // The module graph has to be rebuilt for the doMock above to take effect.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { capabilitiesForPlan: withUngated } = require('@/lib/business-os/entitlements/planCapabilities');
+      const { requests, gaps } = withUngated(plan([{ id: 's1', op: 'find', entity: 'unicorns' }]));
+
+      expect(requests).toEqual([]);
+      expect(gaps).toHaveLength(1); // once, not once per reading
+      expect(gaps[0]).toMatchObject({ reason: 'ungated', entity: 'unicorns' });
+      expect(gaps[0].note).toContain('B-8');
+    });
   });
 
   it('an action override wins over the entity default', () => {
