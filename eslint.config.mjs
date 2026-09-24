@@ -15,6 +15,28 @@ const compat = new FlatCompat({
 // checked almost nothing: one file reported 1 warning here and 88 problems
 // under this config. It was deleted on 2026-09-20 — do not reintroduce it.
 const eslintConfig = [
+  {
+    // `next lint` used to supply these. It no longer runs at all on Next 14 —
+    // it ignores this flat config and drops into the interactive setup wizard —
+    // so `npm run lint` now invokes `eslint` directly and has to bring its own
+    // ignores. Flat config's defaults are only `**/node_modules/` and `.git/`,
+    // so without this the lint walks build output and the agent worktrees under
+    // `.claude/`, which is minutes of work over files nobody wrote.
+    //
+    // `jest.config.js` ignores `.claude/` for exactly the same reason.
+    ignores: [
+      ".next/**",
+      "out/**",
+      "build/**",
+      "dist/**",
+      "coverage/**",
+      "public/**",
+      ".vercel/**",
+      ".claude/**",
+      "next-env.d.ts",
+      "**/*.min.js",
+    ],
+  },
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
     rules: {
