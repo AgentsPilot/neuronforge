@@ -33,7 +33,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 
 import { AreaCard } from './components/AreaCard';
-import { FailOpenNotice } from './components/FailOpenNotice';
+import { PAGE_STANDING_NOTE, PAGE_SUBTITLE } from './copy';
 import { formatInstant } from './format';
 import type { SettingsPayload } from './types';
 
@@ -77,9 +77,8 @@ export default function BusinessOsLlmSettingsPage() {
                 Read-only
               </span>
             </div>
-            <p className="max-w-3xl text-sm text-slate-400">
-              Provider, model, temperature and the on/off switch for every catalogued Business OS AI
-              call — showing the value each call will actually use, and where that value came from.
+            <p data-testid="page-subtitle" className="max-w-3xl text-sm text-slate-400">
+              {PAGE_SUBTITLE}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -107,9 +106,17 @@ export default function BusinessOsLlmSettingsPage() {
         </div>
       </header>
 
-      {/* Above the cards, not below them: the reason a card can be wrong has to
-          be read before the card is. */}
-      <FailOpenNotice variant="banner" />
+      {/* Above the cards, not below them: the reason a card can be wrong has
+          to be read before the card is.
+
+          FR-5: this one muted line replaced a ~180-word amber banner. All four
+          of that banner's strings were framed around the on/off switch, which
+          is no longer on the page — but the residual truth is about the VALUES,
+          and it is what makes every number below conditional. Muted, not styled
+          as a warning, and with nothing to dismiss. */}
+      <p data-testid="page-standing-note" className="text-xs leading-relaxed text-slate-500">
+        {PAGE_STANDING_NOTE}
+      </p>
 
       {error && (
         <div
