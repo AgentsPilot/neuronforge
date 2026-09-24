@@ -1,13 +1,14 @@
 # Workplan: Business OS LLM — Model Settings Admin Screen
 
-> **Last Updated**: 2026-09-22
+> **Last Updated**: 2026-09-23
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_LLM_MODEL_SETTINGS_ADMIN_UI_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_MODEL_SETTINGS_ADMIN_UI_REQUIREMENT.md) — 30 FRs, 30 ACs (AC-27 removed). SA **APPROVED WITH CHANGES** twice: required changes 1–11 (folded by the BA) and the re-check's five must-fixes **R-1 … R-5, which this workplan carries** instead of a second requirement cycle.
 **Context (read, not re-derived):** [BUSINESS_OS_LLM_MODEL_SETTINGS_LAYER2_WORKPLAN.md](/docs/workplans/BUSINESS_OS_LLM_MODEL_SETTINGS_LAYER2_WORKPLAN.md) (Layer 2 shipped in PRs #61/#79/#85/#87/#89; it carries every SA review and QA report for the machinery this screen drives) · [BUSINESS_OS_LLM_MODEL_SETTINGS_RUNBOOK.md](/docs/runbooks/BUSINESS_OS_LLM_MODEL_SETTINGS_RUNBOOK.md) (the de-facto spec of what an operator needs) · [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md) · `.claude/skills/bos-llm-call-standards/SKILL.md`.
-**Branch:** `feature/business-os-llm-admin-ui`, worktree `C:\Users\Barak\My Projects\AgentsPilot\neuronforge-llm-admin-ui`, off `origin/main` `d9c60ab4`. Each slice is its own PR. **Nothing is committed from this worktree by Dev** — RM commits and merges.
-**Date:** 2026-09-22
-**Status:** **Slice 1 QA-PASSED (SHIP) and all in-slice defects closed — awaiting the user's code review, then RM** (uncommitted, HEAD still `d9c60ab4`). Reviews and reports: [SA Code Review](#sa-code-review--slice-1), [SA Re-check](#sa-re-check--slice-1), [QA Test Report](#14-qa-testing-report). Fixes in §4.6 (SA must-fixes), §4.7 (RC-A—D) and §4.9 (QA DEF-1—7); gates re-measured after each round (§4.4). **§4.8 carries the owed insert-caller census.** **The `literalScope()` inclusion-list change must land WITH OR BEFORE slice 1.** Carried forward: **RC-D** (confirmed by QA measurement — the live seed is ≈29 h old, so a panel rendered on load would 400 on **all eight** areas today) and **DEF-6**, both for slice 2; **DEF-7** is a standalone follow-up.
+**Branch:** slice 1 on `feature/business-os-llm-admin-ui` (merged as **PR #98**); **slice 2 on `feature/business-os-llm-admin-ui-slice2`, off `origin/main` `d1e54bef`**, worktree `C:\Users\Barak\My Projects\AgentsPilot\neuronforge-llm-admin-ui`. Each slice is its own PR. **Nothing is committed from this worktree by Dev** — RM commits and merges.
+**Date:** 2026-09-22 (slice 2 implemented 2026-09-23)
+**Status:** **Slice 1 MERGED (PR #98). Slice 2 code complete; SA review (Fix Required) and QA report (46/7/2/1, no High) both closed — ALL SA AND QA FIXES APPLIED — F-1, F-3, F-4, F-5, F-6 plus F-7…F-11; awaiting SA/QA re-check → the user's view → RM** (uncommitted). Slice 2's gates, mutations and deviations are in §5.3 / §5.3b / §5.3c / §5.4; RC-D and DEF-6 are both closed there. **F-2 is deliberately NOT fixed here** — it changes a required gate and is the user's call (§5.3b).
+**Earlier status (slice 1):** QA-PASSED (SHIP), all in-slice defects closed. Reviews and reports: [SA Code Review](#sa-code-review--slice-1), [SA Re-check](#sa-re-check--slice-1), [QA Test Report](#14-qa-testing-report). Fixes in §4.6 (SA must-fixes), §4.7 (RC-A—D) and §4.9 (QA DEF-1—7); gates re-measured after each round (§4.4). **§4.8 carries the owed insert-caller census.** **The `literalScope()` inclusion-list change must land WITH OR BEFORE slice 1.** Carried forward: **RC-D** (confirmed by QA measurement — the live seed is ≈29 h old, so a panel rendered on load would 400 on **all eight** areas today) and **DEF-6**, both for slice 2; **DEF-7** is a standalone follow-up.
 **Resolved since the first draft:** Q-1 ✅ (provenance in the resolver, subject to RC-2) · Q-2 ✅ (`listPricedModels()` including `FALLBACK_PRICING`, filter moved out of the route per RC-3) · **Q-3 ✅ option C** (the door lives on the audit entries; **no column, no migration, no audit read**), narrowed by RC-1's three-state FR-14 rendering · Q-4 ✅ (3 s + `maxDuration`, RC-5) · Q-5 ✅ (the **FR-24** split stands; the **4a** split does not — RC-7) · Q-6 ✅ (drop `costSum`, RC-6) · **Q-7 ✅ answered by the user 2026-09-22: sidebar only** (D-U1 below).
 **Environment:** ✅ unblocked (RC-12). The worktree has the `node_modules` junction and `.env.local`. Baselines are measured **before** the first edit (T1.0) and recorded in §4.4.
 
@@ -596,7 +597,48 @@ So that the machinery is not left untested until the first real entry arrives, `
 
 **`app/admin/system-config/page.tsx` is NOT touched — D-U1** (user, 2026-09-22). Its 20 `console.*` calls are out of scope, and the trigger that would bring them in is recorded in the Overview.
 
-### 5.2 Tests
+**As built (Dev, 2026-09-23).** Eight files created under `app/admin/business-os-llm/`, four test files, two shared test helpers, and three files modified. The additions to the plan's list are marked ⊕.
+
+| File | Action | Change |
+|---|---|---|
+| `app/admin/business-os-llm/page.tsx` | create | `'use client'`. Header, the standing notice, eight cards, one expanded at a time |
+| `app/admin/business-os-llm/types.ts` | ⊕ create | The payload's shape, **re-declared** for the client. FR-6 forbids importing `adminSettingsView` (it is `server-only` and pulls in the resolver, the policy module and the catalog), and an `import type` would put a server path in a client file for the next edit to break. The duplication is pinned by a compile-time test, not trusted |
+| `app/admin/business-os-llm/copy.ts` | ⊕ create | The screen's own words — **glosses only**. The three ledger readings and the caveat are NOT here; they come from `ledgerCheckCopy` |
+| `app/admin/business-os-llm/format.ts` | ⊕ create | One timestamp formatter, UTC, that returns `null` for a missing instant instead of the epoch (DEF-6) |
+| `app/admin/business-os-llm/components/AreaCard.tsx` | create | As planned |
+| `app/admin/business-os-llm/components/CallRow.tsx` | create | As planned |
+| `app/admin/business-os-llm/components/FailOpenNotice.tsx` | create | As planned. Two variants (banner, inline); no dismiss prop in either |
+| `app/admin/business-os-llm/components/LedgerCheckPanel.tsx` | create | As planned, plus RC-D's *"too long ago to check"* state |
+| `app/admin/business-os-llm/components/StoredRowPanel.tsx` | create | As planned |
+| `app/admin/business-os-llm/components/LastChangedLine.tsx` | ⊕ create | FR-14's three states in **one** component, used by the card AND the stored-row panel, so the two renderings cannot drift |
+| `app/admin/business-os-llm/components/Chip.tsx` | ⊕ create | The state / provenance / lock label. See deviation **D-2** for why not `components/ui/badge.tsx` |
+| `app/admin/business-os-llm/__tests__/{source.guard,page.render,lastChanged.render,ledgerPanel.render,nav}.test.*` | create | 71 tests |
+| `tests/helpers/bos-llm-literal-rules.ts` | ⊕ create | `codeOf` + the five `LITERAL_RULES`, extracted at their **third** caller exactly as SA suggested. `route.test.ts` now imports them |
+| `tests/helpers/bos-llm-admin-fixtures.ts` | ⊕ create | Payload fixtures + the `fetch` stub |
+| `lib/business-os/llm/__tests__/adminSettingsView.wireTypes.test.ts` | ⊕ create | The compile-time pin on `types.ts` |
+| `app/admin/components/AdminSidebar.tsx` | modify | One entry, "Business OS AI" → `/admin/business-os-llm`, in the Configuration group directly under System Config |
+| `lib/business-os/llm/adminSettingsView.ts` | ⊕ modify | **DEF-6 fixed at the boundary:** `LastChangedBy.at` is `string \| null` and `lastChangedByFor` narrows `row.updated_at ?? null` |
+| `app/api/admin/business-os/llm-settings/ledger/route.ts` | ⊕ modify | Each 400 now carries a machine-readable `reason` (`too_long_ago` / `since_in_future`) beside its sentence. See deviation **D-1** |
+| `app/api/admin/business-os/llm-settings/__tests__/route.test.ts` | ⊕ modify | Imports the extracted rules instead of holding its own copy |
+
+### 5.2 Tasks
+
+- ✅ **T2.0** Confirm the branch (`feature/business-os-llm-admin-ui-slice2`, off `origin/main` `d1e54bef` with slice 1 merged as PR #98) and read every review section before the first edit.
+- ✅ **T2.1** Confirm HOW the page is guarded before adding anything: `app/admin/layout.tsx` awaits `requireAdminPage()` and renders `AdminChrome` — the page adds nothing (S2-T1).
+- ✅ **T2.2** `types.ts` + the compile-time pin (`adminSettingsView.wireTypes.test.ts`).
+- ✅ **T2.3** `copy.ts` — the fail-open sentence, the FR-14 states, the glosses. No ledger reading restated.
+- ✅ **T2.4** `format.ts` + **DEF-6 / S2-T7c** fixed at the boundary in `adminSettingsView.ts`.
+- ✅ **T2.5** `FailOpenNotice`, `Chip`, `LastChangedLine`, `CallRow`, `StoredRowPanel`.
+- ✅ **T2.6** `LedgerCheckPanel` with RC-D's *"too long ago to check"* state, and the `reason` code the route now sends.
+- ✅ **T2.7** `AreaCard` and `page.tsx`.
+- ✅ **T2.8** The sidebar entry. `app/admin/system-config/page.tsx` untouched (D-U1).
+- ✅ **T2.9** Tests S2-T1 … S2-T11 — **71 tests across 5 files**, plus the wire-type pin.
+- ✅ **T2.10** Gates (§5.3) measured verbatim. Five deliberate mutations run to prove the load-bearing assertions bite (§5.5).
+- ⬜ **T2.11** SA code review → QA → user view → RM.
+
+### 5.2b Tests
+
+All ✅ as at 2026-09-23.
 
 | ID | Asserts | AC |
 |---|---|---|
@@ -616,7 +658,93 @@ So that the machinery is not left untested until the first real entry arrives, `
 
 ### 5.3 Gates
 
-⬜ As §4.4, plus `npm run lint` and `npm run lint:hooks`.
+**Measured in this worktree on 2026-09-23, verbatim.**
+
+| Gate | Result |
+|---|---|
+| `npm run typecheck:bos-llm` | ✅ `231 files in scope, 28 errors, 0 new (132.6s)` — passed. (Scope is 231, not slice 1's 177, because `main` has moved; **0 new** is the property. It also reports 1 baseline entry now fixed in `app/api/onboarding/build/route.ts` — not mine, and NOT regenerated) |
+| `npm run check:bos-llm-literals` | ✅ `43 files in scope, 2 exempt, 0 violations (22.0s)` — passed |
+| `check:bos-llm-literals -- --list` | ✅ `included app/api/admin/business-os/llm-settings/route.ts` · `exempt lib/business-os/llm/modelSettingsPolicy.ts` · `exempt scripts/bos-llm-settings.ts` · `43 in scope, 2 exempt, 1 included by name`. **Unchanged by this slice** — no exemption added or widened, no inclusion added, no baseline regenerated |
+| `npm run lint:hooks` | ✅ clean, no output, exit 0 |
+| `npm run build` | ✅ `✓ Compiled successfully`, exit 0. `ƒ /admin/business-os-llm  6.59 kB  94.4 kB` in the route table — dynamic, like every other `/admin` page |
+| jest (touched paths) | ✅ **25 suites, 526 tests, all passing** (`app/admin/business-os-llm`, `app/admin/components`, `app/api/admin/business-os/llm-settings`, `lib/business-os/llm/__tests__`). The new files are 71 tests in 5 suites |
+| `eslint` on the touched files | ⚠️ **Corrected 2026-09-24 (QA DEF-S2-6): this row first claimed 0 problems and was wrong** — `adminSettingsView.wireTypes.test.ts` carried one `prefer-as-const` error and three unused-type warnings. Both fixed, so it is now genuinely **0 problems in every file this slice created.** Pre-existing and NOT mine: 3 `no-require-imports` errors in slice 1's two route test files (the `require('../route')` idiom), and 3 warnings in `AdminSidebar.tsx` (two unused icon imports and its `icon: any`, all predating the one entry added here) |
+| `npm run lint` | ⚠️ **cannot run in this repo** — `next lint` (Next 14) does not read the flat `eslint.config.mjs` and drops into its interactive "How would you like to configure ESLint?" setup instead. Pre-existing, unrelated to this slice; `npx eslint <paths>` above is the substitute. **Flagged for the TL** |
+
+**Five mutations, run to prove the assertions are alive rather than merely green.** Each was reverted; the suite is 71/71 at rest.
+
+| Mutation | Test that failed |
+|---|---|
+| Delete `<FailOpenNotice variant="inline" />` from `AreaCard` | S2-T8 "beside every area switch" |
+| `formatInstant(at)` → `new Date(at as string).toISOString()` | S2-T7 (both states) **and** all three S2-T7c cases |
+| Give the RC-D state a red class | RC-D "in the neutral tone" |
+| Add `const isChat = area === 'chat'` to the panel | S2-T10 "holds no knowledge of WHICH areas the ledger can see" |
+| Import `TEMPERATURE_BOUNDS` and write a model id in `page.tsx` | S2-T2 both rules (server module, literal) |
+
+**Re-measured after the SA fixes (2026-09-24), verbatim:** `typecheck:bos-llm` → `231 files in scope, 28 errors, 0 new (89.9s)` passed · `check:bos-llm-literals` → `43 files in scope, 2 exempt, 0 violations (18.6s)` passed, `--list` unchanged (`1 included by name`, 2 exempt, no baseline regenerated) · `lint:hooks` → clean, exit 0 · `build` → `✓ Compiled successfully`, exit 0, `ƒ /admin/business-os-llm  6.8 kB  94.7 kB` · jest over the touched paths **plus the required `admin-authz-surface.guard` suite** → **26 suites / 609 tests, all passing** (the screen's own five suites are now 80 tests) · `npx eslint` on every new and touched file → exit 0 — **this claim was wrong when first written and is true only after the DEF-S2-6 fix**.
+
+### 5.3b SA slice-2 review — F-1 … F-11 (Dev, 2026-09-24)
+
+| # | Fix | What changed |
+|---|---|---|
+| **F-1** (High) | **The guard assertion was defeated by a comment.** It read `app/admin/layout.tsx` **raw** and looked for the substring `await requireAdminPage()`; SA commented the call out and got **114/114 green with all 22 admin pages open**. | It now goes through `codeOf()` like every other assertion in the file, and asserts the **call as a shape** — `/await\s+requireAdminPage\s*\(\s*\)/` — so an import, a comment or prose cannot satisfy it. A second test proves the **rule** rather than the file: the import line, a `//`-commented call and a `/* */`-commented call are each asserted NOT to match, and a real call is asserted to match — the property whose absence is exactly what F-1 found. **Re-measured:** SA's `// TEMPORARILY DISABLED FOR DEBUGGING: await requireAdminPage();` now gives **1 failed / 114 passed** across both guard suites, and deleting the line outright also fails. |
+| **F-3** (High) | **The banner told an operator switching *chat* off to draw the false conclusion.** *"no new calls for the area is the only evidence"* is untrue for an area the ledger cannot see at all. | The claim is **scoped, not enumerated** — naming chat would put a per-area fact in the browser bundle (FR-6) and rot the day another area stops being catalogued. New `FAIL_OPEN_ACTION`: *"Confirm at the ledger rather than at this switch — and check first that the ledger can see the area at all: each card's ledger check says whether it can answer, and for some areas it cannot. Where it can, no new calls is the only evidence you will get. Runbook §5 (…) lists the three log lines to search for."* `FAIL_OPEN_INLINE` carries the same scope **and now the runbook pointer** (F-7): *"…Confirm at this area's ledger check below, which also says whether the ledger can answer for this area at all (runbook §5)."* Both are asserted, and the old unscoped sentence is asserted **absent** so it cannot come back. |
+| **F-4** (Medium) | **The wireTypes header named a mechanism that does not exist.** ts-jest emits no diagnostics under this config, so **no test in this repo fails on a type error**. | The header now says what actually enforces it: **`typecheck:bos-llm`**, which has the file in scope and fails with `TS2344` on the DEF-6 revert. The ts-jest claim is gone, and the note that the runtime bodies are deliberately trivial is explicit. **This is repo-wide, not file-local** — any test whose stated mechanism is "it fails to compile" is inert outside that gate's scope, which belongs in the QA report and the test-tiering workplan. |
+| **F-5** (Medium) | The undeclared second deviation. | Declared as **D-8** beside D-3, with SA's ruling recorded on both: **slice 3 adds the payload field, never a doc link.** |
+| **F-6** (Medium) | **"No green in any branch" covered 3 of 5**, and the RC-D check read a wrapper whose class is `space-y-1` — it could not have failed. SA coloured the RC-D heading green and got 9/9. | Every branch the panel can reach is now driven from one table — **all five `LedgerReadingKind`s plus `cannot_check`, `failed` and `no_change`, eight in total, with a count assertion so a new branch cannot be added silently** — and each asserts the strong form: no green/emerald class anywhere in the panel's HTML, no tick glyph, no success wording. The weak `className` check is gone, replaced by "no red anywhere in the panel" on the RC-D branch. **Re-measured:** SA's green-heading mutation now **fails**, naming the `cannot_check (RC-D)` branch. |
+| **F-7** (Low) | `AreaCard`'s comment said the inline notice is beside every switch *"always"*, but it renders inside `expanded &&`. | Comment corrected — "always" belonged to the banner, which is above the cards and never collapses — with the slice-3 obligation recorded: place it adjacent to the real control and in the FR-15 confirmation, where *"beside every switch"* becomes literal. The runbook pointer was added to the inline copy in the same edit. |
+| **F-8** (Low) | `FAIL_OPEN_BODY` compressed runbook §5 in the alarming direction. | Now *"cannot read them **on startup**"*, plus the case it was missing: *"(An instance that had already read them keeps serving the last good values, so it stays off there.)"* — which is what §5 actually says. |
+| **F-9** (Low) | `Check again` stayed enabled on `too_long_ago`, where the answer is monotonic. | `cannot_check` carries `retryable`, and the button is disabled for `too_long_ago` only — every other refusal may change on the next read. Asserted. The `reason` is also **narrowed through a type guard** now (SA optimisation), so the neutral fallback is visibly a decision about codes that do not exist yet rather than a typo-swallower. |
+| **F-10** (Low) | The DEF-6 comment asserted a schema fact the repo cannot establish. | Reworded to what is known: the repository type is **hand-written, not generated**, and this table has no `CREATE TABLE` in the repo — so the renderer does not rely on the declaration. It also states plainly that the sub-state is **defensive and unreachable from a legitimate row today**, and pinned by a test. |
+| **F-11** (Low) | Doc counts. | The Change History row now says **7 components / 15 files (10 source + 5 test)**. "21 pages" → **22** in `app/admin/layout.tsx` and `lib/admin/requireAdminPage.ts`. ⚠️ The two mentions inside `lib/admin/__tests__/admin-authz-surface.guard.test.ts` are **deliberately left alone**: that file belongs to the required `Admin authz surface guard` and to F-2's workstream, and this slice does not touch it. |
+
+**F-2 is not fixed here, by instruction.** R6 of the required `Admin authz surface guard` asserts only `toContain('requireAdminPage')`, which the import satisfies — the same hole as F-1, in the gate that blocks merges for the whole repo. It is one line (`toMatch(/await\s+requireAdminPage\s*\(/)`), it changes a **gate**, and the user decides whether it lands here or opens the parked admin-authz work. **Until it does, F-1's assertion is the only thing standing.**
+
+### 5.3c QA slice-2 defects — DEF-S2-1 … S2-9 (Dev, 2026-09-24)
+
+QA: **46 PASS / 7 FAIL / 2 PARTIAL / 1 BLOCKED, no High** — but not shippable as written. It rendered the real page in jsdom and quoted the output, so the copy findings are **quotations, not inferences**. All four Mediums and all four Lows are fixed below; the three items ruled out of scope are recorded at the end.
+
+| # | Defect | Fix |
+|---|---|---|
+| **S2-1** (Medium; High as a class) | **Two more ways to disable the one guard over 22 admin pages, both green at 115/115.** `try { await requireAdminPage(); } catch {}` — the hazard `app/admin/layout.tsx` names in **its own comment**, because `requireAdminPage` redirects by THROWING — and the call placed **after an early return**. F-1's shape match proved the call EXISTS, not that it can fail the request. | The asserted property is now **"the guard is the FIRST statement of the component body"**, computed by `firstStatementOfAdminLayout()`, which strips comments, finds the signature, and terminates the statement at `;` **or `{`** — so a `try {` opener IS the first statement and fails. One property subsumes all four known mutations. It is proved on **synthetic layouts** (deleted · `//`-commented · block-commented · try/catch · early return) rather than only on today's clean file, and an unrecognisable signature returns `null` and **fails** rather than passing vacuously. A second assertion names the try/catch hazard directly, so the failure message matches the layout's own comment. **Re-measured:** try/catch → **2 failed / 120 passed**; early return → **1 failed / 121 passed**. This also closes **DEF-S2-2**, the guard’s position in **this one file**, for free. **It does NOT close OI-20 (SA R-1).** OI-20 is the precedence gap over the **38 gated `/api/admin/*` handlers**, and closing it needs the surface guard’s oracle extended to instrument the **body parse** — whereas this is one assertion, over a different guard (`requireAdminPage`, not `requireAdmin`), in a **non-required** suite. OI-20 carries an SA condition that it is the FIRST thing built when the parked admin-authz slices resume, and calling it closed here would discharge that condition without the work ever happening. |
+| **S2-3** (Medium) | **The copy promised evidence the page cannot give today.** Both sentences sent the operator to the per-area ledger check — which answers the reach question in **1 of 8 states**, while `too_long_ago` is the day-one state of **all eight cards**. So the page said *"confirm at the ledger"* and every panel answered *"Too long ago to check"*. Residue of F-3: scoping was right, but it relocated the truth-claim onto the panel without checking which states the panel can be in. | Both sentences now state the limit **up front** — so a refusal is the expected answer rather than a dead end — and name the fallback that works for a change of **any** age: runbook §5's three log lines, and the **LLM Usage tab on `/test-business-os`**, which renders the per-area call counts without SQL (runbook §5 documents it). No per-area hardcoding, so FR-6 holds. Asserted, including that neither the unscoped claim nor the old day-one-false promise can come back. **The route option (a `ledgerCanSeeArea` boolean on every response) was deliberately NOT taken here** — it is a payload change, it belongs with D-3/D-8's field in slice 3, and the copy fix is what makes the page honest today. |
+| **S2-4** (Medium) | **A flat contradiction on the onboarding card:** the fail-open notice rendered one line above *"This area can never be switched off"* — on the single card where a switch warning cannot apply, it was the most prominent text. | The inline notice renders **only when `area.switchable`**. The non-switchable area gets its own line instead, saying what still **is** true there: *"There is no switch to fail open here. A settings-read failure on startup does still put this area's calls back on their code-default provider and model, which for this area is the only lever there is…"* — which matters, because onboarding's model is its only cost lever. Both directions asserted; rendering the notice unconditionally again fails the new test. |
+| **S2-5** (Medium) | **The count assertion missed the likelier shape of a new branch.** `EVERY_BRANCH` derived only the three **counted** readings and hard-coded the rest, so a sixth **count-less** kind — which is what both existing count-less kinds are — left **535/535** green with `toHaveLength(8)` passing. | The table is an **exhaustive `Record<LedgerReadingKind, Branch>`**, so a new kind is a missing property. Two independent pins, because neither alone is enough: `typecheck:bos-llm` has this file in scope (`--list` → `caller`) and fails **`TS2741`**; and because **no test in this repo fails on a type error** (F-4), a runtime assertion requires the table's keys to equal `LEDGER_READING_TEXT`'s. **Re-measured with QA's own mutation** (a sixth, count-less kind): jest **1 failed / 19 passed**, `typecheck:bos-llm` **FAILED with 1 new TS2741**. The branch list also grew to **nine** — both `cannot_check` sub-states and the unknown-code fallback are now driven, closing QA's edge case 2 — and the retry rule is exercised on **both** sides of the branch it distinguishes. |
+| **S2-6** (Low) | **§5.3 claimed eslint was clean and it was not:** `const ok: true = true;` in the wireTypes test is one `prefer-as-const` **error**, plus three unused-type-alias warnings. | The three type assertions are now **named and referenced**, so there is no literal annotation and no unused symbol: `npx eslint` on that file is **exit 0, 0 problems** — not merely 0 errors. The §5.3 row and the Change History row are corrected to say what was actually measured. |
+| **S2-7** (Low) | F-10's retracted schema claim survived in `LastChangedLine.tsx` and `types.ts`. | Both reworded to what `adminSettingsView.ts` now says: the repository type is hand-written rather than generated, so the renderer does not rely on it; the sub-state is defensive and pinned by a test. Three files, one claim. |
+| **S2-8** (Low) | `LedgerCheckPanel`'s header said *"every sentence"* comes from `ledgerCheckCopy`. | Now *"every **reading**, and the caveat"*, and the header names what the file does write — the two refusal headings, the no-stored-change line and its own failure line — while recording that even there the refusal's **explanation** is the route's sentence. |
+| **S2-9** (Low) | F-4's misreading survived in `types.ts`, the file a UI author opens first. | It now names **`typecheck:bos-llm`** as the pin and states plainly that jest does not catch it, ending with *"Run the gate, not the suite, after editing either side."* |
+
+### 5.3d SA re-check — R-1, R-2 and what regex cannot reach (Dev, 2026-09-24)
+
+| # | Item | Resolution |
+|---|---|---|
+| **R-2** | **The S2-3 fix reintroduced the defect it was fixing, one layer down.** The new fallback said the LLM Usage tab shows calls per area *"for any period"*. It does not, and the runbook never claimed it — I summarised the doc instead of reading the code. `lib/business-os/usage/llmUsageVerification.ts` **requires an `accountId`** (`:86-90`, and it refuses the platform account) and bounds `since` by `MAX_WINDOW_MS = 7 * 24 * 60 * 60 * 1000` (`:61`), **refusing rather than clamping** (`:96-101`). So it is **one business at a time, last 7 days only**, while the switch it is meant to corroborate is fleet-wide and the change may be older — named in the fallback an operator reaches for precisely when the 24-hour check has already turned them away. | The fleet-wide path is now the runbook's **own read-only SQL over `token_usage`**, and the tab is offered for what it actually is: *"(The LLM Usage tab on /test-business-os is quicker but narrower — one business at a time, and the last 7 days only.)"* The inline form drops the tab altogether and names only the fleet-wide path — it has no room to qualify it. Asserted, including that *"for any period"* cannot come back. **The lesson, recorded because it is the second time it has bitten this slice: check the claim against the code, not against a doc's summary of the code.** |
+| **R-1** | The OI-20 closure claim. | Corrected in both places. The first-statement property closes the **page-layout half (DEF-S2-2)** and nothing else; OI-20's precedence gap is over the 38 gated `/api/admin/*` handlers, needs the oracle instrumented for the body parse, and keeps its SA condition to be built first when the parked slices resume. |
+| **Copy length** | 178 words, judged borderline. | **Reordered, not cut**, per SA's ruling: headline → **what to do** → the quiet why, with the mechanism styled quieter than the action. An operator mid-incident reads the first two blocks and acts; the why is what they come back for. The order is asserted **by position**, because "reorder, not cut" is only observable in the order. |
+
+**Recorded, not fixed — three shapes still satisfy the first-statement property, and the real fix is behavioural.** SA found all three green at 122/122: `process.env.X && (await requireAdminPage());`, the ternary form, and a **locally shadowed no-op** `requireAdminPage`. Nothing leaks by any of them (the two properties below still hold), so none is blocking. But the conclusion is worth more than the three examples: **after three rounds of regex (F-1 → S2-1 → here), the property that matters is behavioural, not textual** — one test that renders `AdminLayout` as a non-admin and asserts the redirect, which is immune to all five known mutations **and** to these three, and does not care how the call is written. That is the shape of the fix whenever this is next touched; a fourth regex would be the wrong answer to the same question.
+
+**Recorded, not fixed — QA's P6/P7, and the condition that makes it harmless.** An unauthenticated request carrying a crafted `Next-Router-State-Tree` header returns **200 with no redirect**: the layout is not re-rendered, so `requireAdminPage()` never runs. The caller does not have to have entered the `/admin` subtree — it only has to **say** it did, in a client-supplied header. Nothing leaks today, and the reason has to be written down because it is **two unasserted properties**, not one:
+
+1. **every `app/admin/*/page.tsx` is `'use client'` and carries no server props** — QA checked all 22 — so no admin page has server-rendered data to leak; and
+2. **every admin API is `requireAdmin`-gated as its first statement**, which is the actual security boundary.
+
+**The day one admin page becomes a server component, or fetches on the server, property 1 breaks and this stops being harmless — silently, with no test failing.** Slice 3 must not introduce one. This belongs beside **F-2** in the admin-authz workstream, together with **S2-10** (which falsifies the *stated reason* for SA's ✅ on escape E2 while leaving the conclusion standing), and it is the TL's item for the user — not fixed here.
+
+### 5.4 Implementation notes and deviations (Dev, 2026-09-23)
+
+| # | Note |
+|---|---|
+| **D-1** | **The ledger route's two 400s now carry a `reason` code — a slice-1 file changed inside slice 2.** RC-D requires the 24 h refusal to render as *"too long ago to check"* and never as an error. The route returned only `{ success: false, error: <sentence> }`, so the client could tell the two refusals apart only by matching the message text — which makes a copy edit a UI bug, and DEF-5 had already rewritten that very sentence once. So each refusal now also carries `reason: 'too_long_ago' \| 'since_in_future'`. Purely additive: no status, sentence or behaviour changed, and slice 1's ledger tests pass untouched. **For SA:** this is the alternative to the client inferring a server decision, and it is why the panel has no string-matching in it. |
+| **D-2** | **The chips are local, not `components/ui/badge.tsx`, and the reason is measured.** (a) `badge`'s `outline` variant is coloured with `--v2-border` / `--v2-text-secondary`, which are declared in `app/v2/globals-v2.css` — a stylesheet `/admin` does not load, so under this layout those tokens are undefined; (b) `cn()` in `lib/utils.ts` is a plain `join`, **not** `tailwind-merge`, so passing a `className` to recolour a variant ships both classes and lets stylesheet order pick the winner. The screen therefore uses the palette all 21 sibling admin pages use (translucent accent over slate) via one local `Chip`, and the same applies to the two buttons. **Not a new pattern — the existing one.** Recorded because "use the design system" was the instruction and this is why it was not followed literally. |
+| **D-3** | **The "What *off* means here" section of the requirement's screen sketch is NOT rendered, and it is not in slice 2's FR scope.** It needs the owner-facing behaviour per area, which lives in the **Layer 2 requirement's** table and is not in the `GET` payload. Rendering it from a client-side map would be a hardcoded per-area copy table in a `'use client'` file — precisely what FR-6 exists to prevent. **For SA:** either the payload gains a per-area `whenOffBehaviour` string (a small slice-3 route addition, sourced from one server-side table), or the card links the doc. Not invented here. |
+| **D-3 (ruling)** | **✅ SA APPROVED as deferred — and slice 3 adds the field to the PAYLOAD, not a doc link.** A doc link is a second source of truth for the same fact and rots silently, which is the failure this whole layer exists to avoid; and the consequence belongs beside the switch at the moment of the FR-15 confirmation, not behind a click. If slice 3 cannot carry it, the row is **withdrawn from the requirement explicitly** rather than left quietly unrendered. |
+| **D-8** | **(SA F-5 — declared late, and the lateness was the defect.) The requirement's expanded-card "Area settings" section is NOT rendered either** — area-level `enabled` / `provider` / `model` / `temperature` with provenance and lock state, listed as the first section of the expanded card. The card goes straight to Calls; `areaModelSummary()` puts a derived one-line model summary on the **collapsed** card instead. **Same cause as D-3, same disposition:** the payload carries no area-level field — RC-C deliberately removed the one it had, because two answers to one question is how the picker bug happened — and synthesising one client-side would be the FR-6 hardcoding. SA accepted the reasoning; what was wrong was leaving it undeclared, where the TL and slice 3's scoping could not see it. **Disposed of together with D-3: slice 3 adds the field, or both rows are withdrawn from the requirement explicitly.** |
+| **D-4** | **`LastChangedLine` is one component used twice**, rather than the card and the stored-row panel each rendering FR-14. Three states rendered in two places is four chances to make them disagree, and the state that matters most (`not_recorded`) is the one every row is in today. |
+| **D-5** | **The panel auto-runs the check when a card is expanded, and `Check again` re-runs it.** FR-18 calls for a *refreshable* panel, and RC-D's refusal is only informative if an operator sees it without having to ask. Today that means every area renders *"Too long ago to check"* on expand — the correct, measured state (§14.4), not an error. Chat is not special-cased client-side: the route short-circuits it before any repository read, so the panel simply renders the kind it is given (see the component header). |
+| **D-6** | **The literal-rule table was extracted to `tests/helpers/bos-llm-literal-rules.ts`** at its third caller, which is where SA said it would be worth doing. `route.test.ts` imports it; the assertions *about* the rules (each one alive, the measured subsumption) stay where they were. No rule changed. |
+| **D-7** | **The screen says it is read-only, and where to go instead.** Every expanded card carries one line pointing at `npm run bos:llm-settings` / runbook §4. A read-only screen that did not say so would leave an operator who came to stop a cost runaway hunting for a control that is not there yet — and the runbook is still the only writer until slice 3. |
 
 ---
 
@@ -762,7 +890,7 @@ Counted in this worktree on 2026-09-22 over every file this workplan lists. **Re
 | `lib/repositories/SystemConfigRepository.ts` · `TokenUsageRepository.ts` · `AdminUserRepository.ts` | 0 | — |
 | `lib/audit/events.ts` · `admin-helpers.ts` | 0 | — |
 | `app/api/admin/system-config/route.ts` | 0 | — |
-| `app/admin/components/AdminSidebar.tsx` | 0 | — |
+| `app/admin/components/AdminSidebar.tsx` | 0 | **Re-counted 2026-09-23 when the nav entry was added: still 0.** Nothing to convert |
 | `scripts/bos-llm-settings.ts` | 0 | — |
 | `lib/business-os/llm/modelSettings.ts` · `modelSettingsPolicy.ts` | 0 | — |
 | `lib/notifications/emailTransport.ts` · `lib/ai/pricing.ts` | 0 | — |
@@ -1091,6 +1219,330 @@ The framing is right and matches FR-24's own principle. Two conditions on how it
 ### Code Approved for QA: **Yes**
 
 RC-A is two characters in a test. RC-B belongs to the gate PR, which lands with or before slice 1. RC-C and RC-D are carried into slice 2's scope. None of them is in the code slice 1 ships, and slice 1 still ships nothing writable.
+
+---
+
+## SA Code Review — Slice 2
+
+**Reviewed by SA — 2026-09-24**
+**Status:** 🔄 **Fix Required** — three must-fixes (F-1, F-3, and F-4's comment), none of them large. The screen itself is the best-argued UI in this repo: the FR-6 boundary is real and independently pinned, the fail-open notice is undismissible by construction rather than by convention, FR-14's three states are three different sentences, and RC-D lands as a neutral first-class state rather than an error. **What fails is not the page — it is the test that pins the one guard protecting it, and one sentence in the banner that is false for exactly one area.**
+
+Every gate below was re-run by SA in the worktree, not taken from the summary. Every mutation below was applied, measured and reverted by SA; `git status` at the end of the review is byte-identical to the one at the start.
+
+**Gates, as SA measured them:**
+
+| Gate | SA's measurement | Dev's claim |
+|---|---|---|
+| `npm run typecheck:bos-llm` | `231 files in scope, 28 errors, 0 new (84.9s)` — passed | matches |
+| `npm run check:bos-llm-literals` | `43 files in scope, 2 exempt, 0 violations (18.1s)` — passed | matches |
+| `npm run lint:hooks` | clean, no output | matches |
+| `npm run build` | exit 0; `/admin/business-os-llm/page` present in `.next/app-build-manifest.json`, `.next/server/app/admin/business-os-llm` emitted | matches |
+| jest, the screen's five suites | **5 suites / 71 tests**, all green | matches |
+| jest, all three touched paths | **25 suites / 526 tests**, all green | matches |
+| `npx eslint` on every new file | 0 problems | matches |
+
+The screen is correctly **outside** both CI gates' scope (it imports nothing from the call catalog, by design), so `source.guard.test.ts` is the only enforcement that exists for FR-6 and for the no-literals rule. That raises the bar on that file, which is where F-1 lands.
+
+---
+
+### Priority 1 — the access guard. The reasoning holds. The test that pins it does not.
+
+**The reasoning is correct, and correct for a stronger reason than the Dev gives.** Walking each path:
+
+| Path | Verdict |
+|---|---|
+| Full page load / direct RSC payload request | `app/admin/layout.tsx:40` awaits `requireAdminPage()` and the page renders as its `children`. There is no per-page escape from a parent layout, and `redirect()` throws to unwind before any child renders. ✅ |
+| Client-side soft navigation **into** `/admin` | The layout is not yet mounted, so it renders and the guard runs. ✅ |
+| Soft navigation **between** `/admin` siblings | Escape E2, documented at `requireAdminPage.ts:26-29`: the layout does not re-render. Harmless here, because the caller already passed the guard on entry to the subtree. ✅ |
+| Prefetch | Prefetching `/admin/business-os-llm` renders the layout, so a non-admin's prefetch gets the redirect, not the payload. ✅ |
+| Route handler under the page's directory (escape E1) | **None exists.** `find app/admin -name route.ts` returns nothing, and R3 of the required `Admin authz surface guard` keeps it that way. ✅ |
+| Server action | **None.** `grep -rn "use server" app/admin/business-os-llm/` finds no match. ✅ |
+| Data disclosure if the shell ever leaked | **Zero.** `page.tsx:1` is `'use client'` with no server props and no server fetch: the RSC payload carries a client-module reference and literally no settings. Both `GET`s are `requireAdmin`-gated as the first statement (`llm-settings/route.ts:59`, `ledger/route.ts:106`). The API gate is the security boundary; the layout is defence-in-depth, exactly as `requireAdminPage.ts:29` says. ✅ |
+
+**So the page is guarded. But the assertion that proves it is defeated by a comment — F-1 — and the required CI check never proved it at all — F-2.** Both are one line each.
+
+---
+
+### Numbered findings
+
+#### F-1 — `app/admin/business-os-llm/__tests__/source.guard.test.ts:130-133` — the guard assertion reads raw source, so a commented-out guard passes it. **Priority: High. MUST FIX.**
+
+```ts
+it('the layout still owns the guard', () => {
+  const layout = read('app/admin/layout.tsx');          // <- raw, not codeOf()
+  expect(layout).toContain('await requireAdminPage()');
+});
+```
+
+Every other assertion in this file goes through `codeOf()` — the file imports it at line 14 — precisely so prose about a rule is never mistaken for the rule. This one does not.
+
+**Measured, not argued.** SA replaced `app/admin/layout.tsx:40` with
+
+```ts
+  // TEMPORARILY DISABLED FOR DEBUGGING: await requireAdminPage();
+```
+
+and ran both guard suites:
+
+```
+Test Suites: 2 passed, 2 total
+Tests:       114 passed, 114 total
+```
+
+**All 22 `/admin` pages unguarded, and every gate green.** Deleting the line outright *is* caught (S2-T1 fails, confirmed separately) — so the hole is specifically the commented-out case, which is the realistic one, because commenting a guard out while debugging is how guards get disabled.
+
+**Fix (one line):** `const layoutCode = codeOf(read('app/admin/layout.tsx'));` and assert on `layoutCode`. Better still, assert the shape rather than a substring: `expect(layoutCode).toMatch(/await\s+requireAdminPage\s*\(\s*\)/)`.
+
+#### F-2 — `lib/admin/__tests__/admin-authz-surface.guard.test.ts:1568` — R6 is satisfied by the import statement. **Priority: High. Pre-existing — record as an open item, do not fix in this slice.**
+
+R6 ("`app/admin/layout.tsx` without its server-side page guard") asserts only:
+
+```ts
+expect(scanned!.code).toContain('requireAdminPage');
+```
+
+`import { requireAdminPage } from '@/lib/admin/requireAdminPage'` satisfies that. SA **deleted** `await requireAdminPage();` entirely and R6 still passed — only slice 2's own S2-T1 caught it.
+
+This is the `Admin authz surface guard`, a **required status check on `main`**. It has never been able to detect removal of the only guard over the `/admin` page tree, and F-1 shows the compensating control can be satisfied by a comment. The fix there is also one line — `expect(scanned!.code).toMatch(/await\s+requireAdminPage\s*\(/)` — but it belongs to the admin-authz workstream, not to this feature's diff. **F-1 must land in this slice because it is the only thing standing in the meantime.**
+
+#### F-3 — `app/admin/business-os-llm/copy.ts:32-34` and `:37-39` — the banner tells an operator switching **chat** off to draw the exact false conclusion this feature exists to prevent. **Priority: High. MUST FIX.**
+
+`FAIL_OPEN_ACTION`: *"Confirm at the ledger, not at this switch: **no new calls for the area is the only evidence**."*
+`FAIL_OPEN_INLINE`: *"… Confirm at the ledger."*
+
+For chat that is false. `AIDataLayerService` writes **no** `token_usage` row, so an empty `business-os-chat` is vacuously empty and proves nothing. The route says so itself (`ledgerCheckCopy.ts:61-63`), and the runbook flags it with a ⚠️ in §5 — the very section `FAIL_OPEN_ACTION` points at.
+
+Judged as an operator at 2am: they read the banner *before* the cards (correctly placed, `page.tsx:107-109`), switch chat off, query the ledger, see nothing, and walk away believing a switch they have no evidence for. The correction exists only inside the chat card's ledger panel, one expand away. **The single most important piece of copy in this feature is the one place the chat exception is missing.**
+
+**Fix, without hardcoding an area (FR-6 holds):** scope the claim instead of enumerating areas — e.g. *"Confirm at the ledger, where it can see the area: no new calls is the only evidence there is. Each card's ledger check says whether the ledger can answer for that area."* The per-area truth keeps coming from the route, the sentence stays generic, and `LedgerCheckPanel` still needs no knowledge of which areas the ledger sees.
+
+#### F-4 — `lib/business-os/llm/__tests__/adminSettingsView.wireTypes.test.ts:5-11` — the doc block names a mechanism that does not exist in this repo. **Priority: Medium. MUST FIX (comment only).**
+
+The header states: *"It is a COMPILE-TIME assertion: `ts-jest` type-checks this file, so if the server's `AreaView` stops satisfying the client's, the suite fails to build."*
+
+**That is false.** `jest.config.js:50-61` hands ts-jest an inline `tsconfig` object, and ts-jest 29.4.5 emits no diagnostics under it. SA put `const probe: number = 'definitely not a number';` in a fresh test file under the same config: **1 suite passed, 1 test passed.** Reverting the DEF-6 widening (`at: string | null` back to `at: string` in `adminSettingsView.ts:71`) also leaves the wireTypes suite **green, 2/2**.
+
+**The pin is nonetheless real — it is just a different gate.** `typecheck:bos-llm` includes this file as `core` (confirmed with `--list`), and with the same mutation it fails loudly:
+
+```
+lib/business-os/llm/__tests__/adminSettingsView.wireTypes.test.ts(35,52): error TS2344:
+  Type '{ kind: "not_recorded"; at: string | null; }' is not assignable to '{ kind: "not_recorded"; at: string; }'
+```
+
+So the duplicated client types **are** protected, by a required check. Fix the comment to name `typecheck:bos-llm` and drop the ts-jest claim — otherwise the next reader believes `npm test` covers it and it does not. This matters beyond this file: **no test in this repo can rely on type errors failing jest**, which is worth a line in the QA report.
+
+#### F-5 — `app/admin/business-os-llm/components/AreaCard.tsx:45-49` and `:151-156` — an undeclared deviation of the same shape as D-3. **Priority: Medium.**
+
+The requirement's expanded-card table (§ *What the Screen Shows*) lists **"Area settings"** — area-level `enabled` / `provider` / `model` / `temperature`, each with its provenance badge and lock state — as the **first** section of the expanded card. It is not rendered. `areaModelSummary()` puts a derived one-line model summary on the *collapsed* card instead, and the expanded card goes straight to Calls.
+
+The justification is identical to the declared D-3 (the payload has no area-level field, and synthesising one client-side would be the FR-6 hardcoding) and **SA accepts it on those grounds**. But it is a second deviation from the requirement's own layout table and was not declared, so it is invisible to the TL and to slice 3's scoping. Declare it beside D-3 with the same disposition (payload field in slice 3, or an explicit withdrawal).
+
+#### F-6 — `app/admin/business-os-llm/__tests__/ledgerPanel.render.test.tsx:148` and `:68-80` — "no green in any branch" is only asserted for three of the five branches. **Priority: Medium.**
+
+Line 148 asserts `screen.getByTestId('ledger-cannot-check').className` does not match `/red/` — but that node's className is `space-y-1`; the styling lives on its children. The genuinely strong assertion (`:77`, `container.innerHTML` against `text-(green|emerald)-`) runs only over the three `LEDGER_READINGS_WITH_COUNTS` branches.
+
+**Measured:** SA coloured the RC-D heading (`LedgerCheckPanel.tsx:180`) `text-green-400`. **9 tests passed.** Priority 4 of this review asked whether any branch can degrade into a green class; today nothing stops the `cannot_check` or `no_change` branches doing so. Fix: apply the `:77` `innerHTML` assertion to the whole panel in every branch, and drop the weak `className` check.
+
+#### F-7 — `AreaCard.tsx:126` — the comment claims more than the code does. **Priority: Low.**
+
+*"FR-17: beside the switch state, on every area, always."* The inline notice renders inside `expanded &&` (`:123`), so on the default collapsed view it is beside nothing. The requirement is still met in substance — the undismissible banner sits above the cards (`page.tsx:107-109`, deliberately) — but the word "always" is wrong. Separately, FR-17 asks the sentence beside the switch to point at runbook §5; only the banner's `FAIL_OPEN_ACTION` does. Add the pointer to `FAIL_OPEN_INLINE`. **Slice 3 must place it adjacent to the real control and in the FR-15 confirmation, where "beside every switch" becomes literal.**
+
+#### F-8 — `copy.ts:26-30` (`FAIL_OPEN_BODY`) — compresses the runbook §5 table in the alarming direction. **Priority: Low.**
+
+Runbook §5 distinguishes two cases: an instance that has read the settings before keeps serving **last-good**, so a switched-off area **stays off**; only an instance that has *never* read them falls back to defaults-on. `FAIL_OPEN_BODY` reads as though any read failure re-enables.
+
+**SA's ruling on the copy overall: accurate, actionable, and it does not overclaim about the fleet.** Every claim is about the *mechanism* ("is not a guarantee", "One that cannot read them…"), never about the present state, so the case where the fleet is entirely fine is not maligned. The bias toward caution is the right bias for a 2am banner. Two words would make it exactly true: *"One that cannot read them **on startup** falls back…"*.
+
+#### F-9 — `LedgerCheckPanel.tsx:151` — `Check again` stays enabled on a branch where the answer is provably monotonic. **Priority: Low.**
+
+The button is disabled only for `loading` and `no_change`. On `too_long_ago` — the branch **every area takes today** — the answer can only ever get more refused with time, so the control is futile and invites pressing. D-1's `reason` code makes this a one-line branch. Either disable it for that reason, or say why it is still offered.
+
+#### F-10 — `lib/business-os/llm/adminSettingsView.ts:166-170` — the DEF-6 comment asserts a schema fact the repo cannot establish. **Priority: Low.**
+
+*"the column is nullable in the database and a row really can arrive without one"*. Nothing in the repository supports that: `SystemSettingsConfig.updated_at` is typed `string` (`lib/repositories/types.ts:397`), `system_settings_config` has **no `CREATE TABLE` migration in this repo** (it was created in the Supabase dashboard), and all eight seeded rows carry a timestamp.
+
+**On the question asked:** DEF-6 **is** genuinely fixed at the boundary — `at: string | null` on all three attributed states, and `formatInstant` returning `null` rather than the epoch — and the mutation confirms it bites (4 failures, below). And **`(time not recorded)` is not reachable from a legitimate row today**, which is the correct answer: the sub-state is defensive, it is pinned by a test, and SA wants it kept. But reword the comment to what is actually known — *"the repository type is hand-written, not generated from the schema, so the renderer does not rely on it"* — so the next reader does not inherit an unverified claim about production.
+
+#### F-11 — doc accuracy. **Priority: Low.**
+
+- The slice-2 Change History row says "six components" and "Eleven files created under `app/admin/business-os-llm/`": there are **7** components and **15** files (10 source + 5 test). "Eleven" is right for source files only.
+- "21 pages" / "twenty-one" is now 22: `app/admin/layout.tsx:9` and `:11`, `lib/admin/requireAdminPage.ts:36`, `admin-authz-surface.guard.test.ts:41` and `:311`. Cheap to fix while the files are open; no equality cap depends on the number (checked — the guard has no page-count assertion).
+
+---
+
+### Mutation testing — SA's own runs
+
+All applied, measured and reverted by SA. The five the Dev reports do bite; two more do not.
+
+| # | Mutation | Expected | SA measured |
+|---|---|---|---|
+| M1 | `app/admin/layout.tsx:40` **deleted** | S2-T1 fails | ✅ 1 failed / 113 passed — only slice 2's test; **R6 passed** (→ F-2) |
+| M1c | `app/admin/layout.tsx:40` **commented out** | S2-T1 fails | ❌ **114/114 passed** (→ **F-1**) |
+| M2 | `format.ts:17` returns a 1970 string for `null` | S2-T7c fails | ✅ 4 failed / 5 passed, all four named DEF-6 |
+| M3 | `onDismiss?: () => void` added to `FailOpenNotice` Props | S2-T8 fails | ✅ 1 failed — "no dismiss affordance at all" |
+| M4 | `if (area === 'chat')` branch added to `LedgerCheckPanel.run` | S2-T10 fails | ✅ 2 failed, incl. "holds no knowledge of WHICH areas" |
+| M5 | model-id literal added to `copy.ts` | literal rule fails | ✅ 1 failed — "writes no model id" on `copy.ts` |
+| M6 | `import type … from '@/lib/business-os/llm/adminSettingsView'` in `types.ts` | FR-6 rule fails | ✅ 1 failed — "imports no server module" on `types.ts` |
+| M7 | `at: string \| null` back to `at: string` in `adminSettingsView.ts:71` | wireTypes fails to build | ❌ jest **2/2 passed**; `typecheck:bos-llm` **FAILED, 1 new TS2344** (→ F-4) |
+| M8 | RC-D heading coloured `text-green-400` | a "no green" test fails | ❌ **9/9 passed** (→ F-6) |
+
+---
+
+### Rulings on the Dev's four items
+
+**D-1 — the `reason` codes on the two 400s. ✅ Approved.** Additive, machine-readable, and it removes the failure mode DEF-5 already caused once. Both codes are emitted **after** the chat short-circuit and **before** any repository read, so the classification cannot cost a cross-tenant scan. `CANNOT_CHECK_HEADINGS` (`LedgerCheckPanel.tsx:54-57`) is keyed on the code and falls back to a neutral heading for an unknown one, so a third code added in slice 3 degrades to "This check does not apply here" rather than to an error — correct. The route's own `error` sentence is still what the operator reads (`:184`), so the limit is stated once, at the place that enforces it. This is the right shape: a code for the machine, a sentence for the human, neither doing the other's job.
+
+**D-2 — a local `Chip` instead of `components/ui/badge.tsx`. ✅ Approved. All three claims independently verified.** `badge.tsx`'s `outline` variant is `border-[var(--v2-border)] … text-[var(--v2-text-secondary)]`; those tokens are declared in **`app/v2/globals-v2.css` only**; `app/layout.tsx:3` imports `./globals.css` and nothing in the `/admin` tree loads the v2 sheet — so under this layout the variant is a transparent chip with no border colour and secondary text that resolves to nothing. And `cn()` (`lib/utils.ts:1-3`) is `classes.filter(Boolean).join(' ')` — **not** `tailwind-merge` — so a `className` override ships both classes and stylesheet order decides. A 45-line local component with six named tones, matching the palette the other 21 admin pages already use, is proportionate and is **not** a new pattern. Two notes, neither blocking: the real defect is that `cn()` is named after a function that merges (its own repo-wide chore); and if a third admin screen needs a chip, promote this one rather than writing a third.
+
+**D-3 — the requirement's *"What 'off' means here"* section not rendered. ✅ Approved as deferred, with F-5 attached.** The reasoning is exactly right and is the FR-6 argument, not an excuse: the owner-facing consequence of switching an area off is a **per-area fact**, so a client-side table of it would be precisely the hardcoding FR-6 forbids, and it would drift the moment a call moves between areas. **SA's direction for slice 3: add it to the payload, do not link a doc.** A doc link is a second source of truth for the same fact and it will rot silently, which is the failure this whole layer exists to avoid; and the consequence text belongs beside the switch at the moment of the FR-15 confirmation, not behind a click. If slice 3 cannot carry it, withdraw the row from the requirement explicitly rather than leaving it unrendered. **F-5 is the same call about the "Area settings" row — declare both, dispose of both together.**
+
+**D-6 — `codeOf` and `LITERAL_RULES` extracted to `tests/helpers/`. ✅ Approved, as suggested.** Verified the extraction is behaviour-preserving: all five rules keep `String.raw`, each keeps its `mustMatch` sample, `FEATURE_ROOTS` is byte-identical to the string it replaced, and the *assertions about* the rules correctly stayed in slice 1's route test rather than moving into the helper — a helper that asserts its own correctness is a helper nobody checks. Third caller was the right trigger; two would have been premature.
+
+---
+
+### Standards, scope and the rest
+
+| Check | Verdict |
+|---|---|
+| `console.*` in any touched file | **Zero.** The only two matches under the screen are a test name and a doc sentence. `AdminSidebar.tsx`, `ledger/route.ts`, `adminSettingsView.ts` and both helpers are all 0. `app/admin/system-config/page.tsx` and its 20 `console.*` calls stay **out of the diff** — D-U1 is the right call, and `nav.test.ts:40-43` pins it so a one-line cross-link cannot smuggle a 2,000-line conversion in later. |
+| Pino where server-side | `ledger/route.ts` logs through the child logger with `correlationId` and `userId`, `{ err }` on the error path, never the email. The client files log nothing at all, which is correct for a browser bundle. |
+| Repository pattern | Untouched. No Supabase call anywhere in the diff; `tokenUsageRepository`, `systemConfigRepository` and `adminUserRepository` are the only data paths and none changed shape. |
+| Zod | `ledger/route.ts:94-100` unchanged and still validates before anything; `area` is a closed enum and `feature` is derived, never accepted. The new `reason` is response-side only. |
+| The literal gate's four false-positive shapes | The screen contains **no** model-id type union, **no** `z.enum` of model ids, **no** `switch` on a model and **no** price-index key — it contains no model name at all. `--list` is unchanged: no exemption, no new inclusion, no baseline regenerated. `source.guard.test.ts` applies all five rules to every screen file, walked rather than listed, so a component added tomorrow is covered before anyone remembers. **No gate rule change was needed and none was made.** Correct. |
+| Nothing writable | Confirmed at source: no `<form>`, no `onSubmit`, no `onChange`, no non-GET `fetch`. The two controls are a disabled `readOnly` checkbox (a lock has to look like a lock — right call) and refresh buttons. `READ_ONLY_NOTE` names the command instead of offering a dead control, which is the honest thing. |
+| Nothing pre-empting slice 3 | Confirmed. No confirmation step, no audit write, no notification, no foreign-key fallback — and `LastChangedLine`'s `not_recorded` copy is deliberately worded to stay true once slice 3's unattributed-save lands (`:17-22`), which is the rare case of a comment doing real work. |
+| `updated_by` / actor | Read-only use only. `buildAdminEmailById` fails **soft** with a warn and renders ids raw rather than failing the page — right trade, and the raw id is labelled, never "unknown". |
+
+**On `npm run lint`: yes, this needs its own fix, and it is not slice 2's.** `"lint": "next lint"`, and the repo's only ESLint config is the flat `eslint.config.mjs`, which `next lint` on Next 14 does not read — hence the interactive setup prompt. So the repo has **no working full-lint entry point**: `lint:hooks` works but loads a different, hooks-only config, and no workflow runs anything broader. This is the second time a broken lint entry point has hidden findings here (PR #76 surfaced two crash bugs once the config was fixed). Recommend a one-line chore in a separate PR before more UI lands: `"lint": "eslint . --max-warnings 0"`. The Dev was right to use `npx eslint <paths>` and right to flag it rather than paper over it.
+
+---
+
+### Optimisation suggestions (never blocking)
+
+- `LedgerCheckPanel.tsx:121` — `CANNOT_CHECK_HEADINGS[body?.reason]` indexes a `Record<string, string>` with a possibly-`undefined` value off an untyped `body`. It works, and the `??` saves it, but narrowing `reason` through a small type guard would make the fallback visible as intentional rather than incidental.
+- `page.tsx:88` — `read at {formatInstant(...)}` renders a bare label if `formatInstant` ever returns `null`. `generatedAt` is always set, so this is theoretical; guarding it costs nothing.
+- Collapsing and re-expanding a card unmounts and refetches the ledger panel. Cheap today (the `too_long_ago` branch is refused before any DB read), and it becomes a real read once rows are fresh. Worth remembering in slice 3, not worth changing now.
+- `areaModelSummary()` returning `varies by call (n)` is a good collapsed-card summary. If F-5 puts a real area-level field in the payload, prefer the field and keep the derived summary only for the "no area value set" case.
+
+### Code Approved for QA: **No** — approved on condition
+
+Fix **F-1** (one line, the guard assertion), **F-3** (one clause in `FAIL_OPEN_ACTION` and `FAIL_OPEN_INLINE`) and **F-4**'s comment; declare **F-5** as a deviation. Then re-run the five screen suites and `typecheck:bos-llm`. **F-6 and F-2 should land too** — F-6 here, F-2 as an item on the admin-authz workstream — but neither changes shipping code, so QA may start once F-1, F-3, F-4 and F-5 are in. F-7 to F-11 are comment and doc accuracy: fix them while the files are open, and do not re-open the cycle for them.
+
+**Escalation to TL — two items the user must decide:**
+
+1. **F-2 is a hole in a required status check.** The `Admin authz surface guard` cannot detect removal of the only guard over 22 admin pages. It is pre-existing and one line to fix, but it changes the *gate*, so the user decides whether it goes in this slice or opens the parked admin-authz work.
+2. **No test in this repo fails on a type error** (F-4). ts-jest is effectively transpile-only here. Any test whose stated mechanism is "it fails to compile" is inert unless the file also sits inside `typecheck:bos-llm`'s scope. That is a repo-wide test-strategy fact and belongs in the test-tiering workplan, not in this feature.
+
+---
+
+## SA Re-check — Slice 2
+
+**Reviewed by SA — 2026-09-24** (delta only, against the review and QA report above)
+**Status:** 🔄 **Fix Required — one clause and one doc claim.** Everything else is approved and needs no further SA pass. F-1's re-fix, F-3's re-fix, F-4, F-5, F-6 and F-7…F-11 are all properly closed; the branch table and the onboarding card are both right. But the fix for QA's S2-3 introduced a **new** unsupported instruction in the same sentence it was repairing, and the workplan claims to have closed an item in another workstream that it has not closed.
+
+**Gates re-run by SA, not taken from the summary:**
+
+| Gate | SA's measurement |
+|---|---|
+| `npm run typecheck:bos-llm` | `231 files in scope, 28 errors, 0 new (87.9s)` — passed |
+| `npm run check:bos-llm-literals` | `43 files in scope, 2 exempt, 0 violations (18.7s)` — passed |
+| `npm run lint:hooks` | clean, exit 0 |
+| `npx eslint` on the screen + `app/admin/layout.tsx` + `lib/admin/requireAdminPage.ts` + `tests/helpers` | **0 problems, exit 0** — S2-6 is genuinely fixed |
+| `npm run build` | exit 0 |
+| jest, the screen's five suites | **5 suites / 92 tests** |
+| jest, all touched paths **+ `lib/admin`** | **28 suites / 636 tests**, all green (a superset of the Dev's 26/621 — the required authz-guard suite is included in both) |
+
+---
+
+### 1. The first-statement property — what it really tests, and what still satisfies it
+
+**It is a genuine improvement and it is honestly built.** `firstStatementOfAdminLayout` strips comments, locates the signature, terminates the statement at `;` **or `{`** — so `try {` *is* the first statement and fails — and returns `null` on an unrecognisable signature so the assertion cannot pass vacuously. Crucially it is **proved against five synthetic layouts that must be rejected**, which is the part most source-scanning tests skip. I confirmed the clean file passes and that the five rejections are asserted. QA's two mutations are closed.
+
+**But the property is still satisfiable by a layout that does not guard.** Three probes, each applied to the real `app/admin/layout.tsx` and run against both `source.guard.test.ts` and the required `admin-authz-surface.guard.test.ts`:
+
+| Probe | First statement of the body | Result |
+|---|---|---|
+| `process.env.ADMIN_STRICT && (await requireAdminPage());` | contains the call → matches `GUARD_CALL` | **122/122 passed.** `/admin` is open in any environment where that variable is unset |
+| `process.env.NODE_ENV === 'production' ? await requireAdminPage() : undefined;` | ditto | **122/122 passed** |
+| import replaced by `const requireAdminPage = async () => undefined;` | `await requireAdminPage()` is first, and is a no-op | **122/122 passed** |
+
+The first two are not exotic: QA's own early-return mutation was `if (process.env.NODE_ENV === 'development') return …`. The **same intent**, expressed as a short-circuit instead of an early return, now passes. The third is contrived, but it shows the assertion pins the call's *shape*, not its *identity* — nothing checks the import resolves to `@/lib/admin/requireAdminPage`.
+
+**The observation that matters more than any of the three:** this is the third iteration of a regex chasing source shapes. Each round closes the shapes someone thought of. The property that actually matters is behavioural — *a non-admin render of `AdminLayout` does not return children* — and it is one test: mock `getUser`/`AdminAccessService` to a non-admin, render the layout, assert it throws `NEXT_REDIRECT`. That single test is immune to all five known mutations **and** to all three of mine, because it exercises the guard instead of reading it.
+
+**Not a blocker, and I am not asking for it in this diff.** Nothing leaks today by any of these paths — the page is `'use client'` with no server props and both `GET`s are `requireAdmin`-first, which QA proved on a real `next start` server. The source assertion should stay as a cheap tripwire. But the workplan must stop describing the property as closed, and the behavioural test belongs on the admin-authz workstream beside F-2. **Recorded, with the three probes named so the next person does not have to rediscover them.**
+
+#### R-1 — the OI-20 closure claim is wrong and must be corrected. **Priority: High (doc). MUST FIX.**
+
+§5.3c's S2-1 row and the Change History both say this fix closes **"DEF-S2-2 / OI-20's 'present, not first'"**. DEF-S2-2, yes. **OI-20, no.** Read at source (`docs/workplans/admin-authz-unification.md:1506`, `docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md:190`), OI-20 is:
+
+> **Guard precedence gap (D-5 + D-Q2), applying to all 38 gated handlers.** R1 proves `requireAdmin(` is **present** in a handler body — not that it runs **first** … **closing this needs the oracle's instrumentation extended to cover the body parse** — `mockTablesTouched` records DB/RPC/auth-API calls, not `request.json()`.
+
+So OI-20 is about **API route handlers** and it carries QA's explicit refinement that closing it requires instrumenting the oracle for the body parse. Slice 2 asserts precedence in **one file** (`app/admin/layout.tsx`), for a **different** guard (`requireAdminPage`, not `requireAdmin`), from a **feature** test suite that no workflow runs as a required check, and touches neither the 65 gated handlers nor the oracle. The workplan's own earlier wording at `:2037` was precise — *"OI-20's 'present, not first' **landing in the one file where `requireAdminPage` actually lives**"* — and that is the true claim. The Change History compressed it into closure.
+
+This matters because OI-20 carries an SA condition that it is **the first thing built when the parked admin-authz slices resume**. A workplan row saying it is closed is how that condition gets quietly discharged without the work happening. **Correct both places to "closes the page-layout half of the precedence gap; OI-20 itself (route handlers + oracle instrumentation) is untouched and remains open."**
+
+---
+
+### 2. The copy, judged again — and my earlier judgement was wrong in a way worth naming
+
+QA was right and I was not. I read the banner's *claims* for truth and found them individually accurate; I did not check whether the **action it prescribed could be carried out on the day the page ships**. It could not: the banner said "confirm at the ledger" while all eight panels said "Too long ago to check". That is a different and better test than the one I applied, and I am adopting it here.
+
+**Applying it to the new text:**
+
+**True on day one? Yes.** *"Expect to be turned away often — the check on each card only covers a change made in the last 24 hours, and it cannot see every area."* That is now a **prediction of what the operator will actually see**, so a refusal reads as the expected answer rather than a dead end. `FAIL_OPEN_BODY`'s new parenthetical is also exactly right and closes F-8 without softening the warning. The headline is unchanged and still carries the whole warning alone.
+
+**Does naming the fallback rescue it? Half — and the half that is wrong is a repeat of the defect being fixed.**
+
+#### R-2 — `app/admin/business-os-llm/copy.ts:69-75` (`FAIL_OPEN_ACTION`) — *"the LLM Usage tab on /test-business-os, which shows the calls per area for **any period**"* is false. **Priority: High. MUST FIX.**
+
+Measured at source (`lib/business-os/usage/llmUsageVerification.ts:61`, `:89-102`):
+
+- **`MAX_WINDOW_MS: 7 * 24 * 60 * 60 * 1000`** — and it is **refused, not clamped**: *"Start time is more than 7 days ago; the maximum window is 7 days"*. "Any period" is wrong by construction.
+- **`accountId` is required** — a non-platform account UUID. The report is **per business**, so it does not show "the calls per area" for the fleet without first picking one business — while the switch the operator just flipped is fleet-wide.
+
+The runbook, which this sentence is summarising, is careful where the copy is not: it says the tab *"renders these per area and per call"* (§5:191) and *"per area and per business"* (:13). It never says any period. **The copy over-generalised past its own source, in the fallback an operator reaches for precisely when the 24-hour check has turned them away.** For a change 1–7 days old the tab does help; beyond 7 days it refuses too — and the sentence promised it would not.
+
+That is the same defect class as S2-3, reintroduced by the fix for S2-3. It is one clause. The unbounded path is the **SQL in runbook §5**, which an operator can widen by editing the interval; the tab is the convenient path within 7 days, per business. Say that.
+
+**Has it become too long to be read?** `FAIL_OPEN_HEADLINE` 8 words + `FAIL_OPEN_BODY` 85 + `FAIL_OPEN_ACTION` 85 = **178 words** in the banner, `FAIL_OPEN_INLINE` 65. That is at the edge, and I own part of it — F-8's parenthetical lengthened the one block whose job is to be skimmable. **My judgement: do not cut words, change the order.** `FailOpenNotice.tsx:55-57` renders headline → body → action, so the two sentences an operator must read (*"not a guarantee"* and *"expect to be turned away often; here is what to use instead"*) are separated by 85 words of mechanism. Headline → **action** → body-as-the-quiet-why costs nothing and puts the instruction where a skimmer lands. **Low, presentational, and I am explicitly not re-opening a cycle for it** — take it with R-2 if the file is open anyway.
+
+---
+
+### 3. Rulings on the three items put to SA
+
+**The onboarding card renders no fail-open notice — ✅ right call, and for the right reason.** *"Switching an area off is not a guarantee"* one line above *"This area can never be switched off"* is a contradiction, and it was the most prominent text on the one card where the warning cannot apply. `AreaCard.tsx:146-153` now branches on `area.switchable`, and `LOCK_AREA_FAIL_OPEN` says what **is** true there: a cold-start read failure still puts that area's calls back on their code-default provider and model. Two things make removing the inline notice safe rather than a gap: the **banner is above every card and is never collapsed**, so the fleet-wide warning is still on screen for onboarding; and the replacement text is not reassurance — it re-states the same 60-second propagation and silent-fallback hazard about the field that area *can* change. Correct, and better than the notice it replaced. (Minor, no action: *"the only lever there is"* is loose — temperature is settable too unless locked — but the model is the cost lever and that is the point being made.)
+
+**The exhaustive `Record<LedgerReadingKind, Branch>` with two pins — ✅ approved, and I verified both pins independently.** Adding a sixth kind (`sixth_kind`) to the union **and** to `LEDGER_READING_TEXT`:
+
+- runtime pin: `● S2-T9 › covers every reading kind that exists, however a new one is added` — **1 failed / 19 passed**
+- compile pin: `typecheck:bos-llm` → **29 errors, 1 new, FAILED** with `ledgerPanel.render.test.tsx(110,9): error TS2741: Property 'sixth_kind' is missing in type … but required in type 'Record<LedgerReadingKind, Branch>'`
+
+Two genuinely independent mechanisms, and the second exists **because** of F-4 — the test's own comment says so. That is the right response to "no test in this repo fails on a type error": do not rely on the type system alone, and do not throw it away either. Nine branches now drive the strong `innerHTML` no-green / no-tick assertion (F-6 closed, including both `cannot_check` sub-states and the unknown-code fallback), and `isKnownReason` replaces the untyped index I raised as an optimisation. Better than I asked for.
+
+**§5.3c's P6/P7 — ⚠️ recording is NOT enough for one of the two properties, but the fix does not belong in this diff.**
+
+First, QA falsified a premise of mine and the record should say so plainly: my priority-1 table justified escape E2 with *"the caller already passed the guard on entry to the subtree."* **False** — a crafted `Next-Router-State-Tree` only has to *claim* it did. My **conclusion** survives, but on the other reason I gave in the same table (`'use client'`, no server props, zero settings in the payload), not on the premise I leaned on.
+
+Of the two properties that make P6/P7 harmless:
+
+- *"every admin API is `requireAdmin`-gated"* — **recording is enough.** It is already the subject of R1 and the required guard, with a published census; it cannot rot silently.
+- *"all 22 admin pages are `'use client'` with no server props"* — **recording is not enough.** It is (a) load-bearing for an *unauthenticated, already-demonstrated* request, (b) the kind of property that breaks **silently** — the next admin page written as a Server Component that fetches data would serve its payload to that request with no test failing and no reviewer prompted — and (c) **nearly free to assert**: the guard's scanner already computes `isClient` per file (`admin-authz-surface.guard.test.ts:1567` uses `expect(scanned!.isClient).toBe(false)` on the layout), so the rule is "for every `app/admin/**/page.tsx`, `isClient === true`" over data the scanner already has.
+
+**Ruling:** it must be escalated as a **named, tracked item with a working exploit and a costed one-line fix** — not a footnote in a feature workplan, which is where the parked workstream will never look. It goes to the admin-authz workstream with F-2 and S2-10, and it should be logged in `docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md` § *Known gaps in the guard itself* alongside OI-20, because that is the file a future admin-page author reads. Slice 2's own page satisfies the property, so this does not block it.
+
+---
+
+### Code Approved for QA / for the user's eye: **after R-1 and R-2 — both one edit each**
+
+- **R-2** — one clause in `FAIL_OPEN_ACTION`. Describe the tab as it is (admin-only, per business, up to 7 days) and name the runbook §5 SQL as the path with no period limit.
+- **R-1** — correct the OI-20 claim in §5.3c's S2-1 row and in the Change History to the page-layout half only.
+
+Neither needs another SA pass: re-run the screen's five suites and `check:bos-llm-literals` and the page is ready for the user. **No code change is required** — R-2 is a string, R-1 is documentation.
+
+**Carried to the admin-authz workstream, not this diff:** F-2 (R6 satisfied by the import), S2-10 / P6-P7 (the `'use client'` assertion, per the ruling above), OI-20 proper (route-handler precedence + oracle instrumentation), and the recommendation to replace the source-shape regex with one behavioural render test of `AdminLayout` — which would retire my three probes and the five synthetic layouts in a single assertion.
+
+**Not blocking, take them or leave them:** the banner's headline → action → body ordering, and `'the only lever there is'` on the onboarding card.
 
 ---
 
@@ -1462,6 +1914,341 @@ QA probe - RC-B, the covered route moved
 
 ---
 
+## QA Test Report — Slice 2
+
+**QA — 2026-09-24**
+**Test mode:** full
+**Strategy used:** **A + B + C + D-by-hand** — Jest unit/render suites (the screen is pure client rendering), source-level guard scans, **seven applied-and-reverted mutations of `app/admin/layout.tsx`**, **five applied-and-reverted mutations of the ledger panel and its copy module**, two throwaway probe suites (deleted), and — because Playwright does not exist in this repo — **a real `next start` server on port 3123 with unauthenticated `curl` against the RSC payload endpoint**. Every gate was re-run verbatim by QA, not taken from §5.3 or from the SA review.
+**Focus:** security (the access guard), copy truthfulness, the FR-14 states, the ledger panel, nothing-writable
+**Skipped:** nothing. `npm run lint` is **BLOCKED** (pre-existing, §5.3 — `next lint` on Next 14 will not read the flat config); `npx eslint <paths>` is the substitute and was run.
+**Input source:** prompt keywords (`full`, focus security + copy) over the §5 / §5.3b scope block.
+**Worktree discipline:** `git status --short` at the end of this report is **identical** to the one at the start — same 7 modified, same 4 untracked. Both probe suites were deleted; every mutation was reverted and verified byte-identical.
+
+---
+
+### 14.13 Gates — re-run verbatim by QA
+
+| Gate | QA's measurement | §5.3 / SA claim | Verdict |
+|---|---|---|---|
+| `npm run typecheck:bos-llm` | `231 files in scope, 28 errors, 0 new (89.3s)`, exit **0** | matches both | ✅ PASS |
+| `npm run check:bos-llm-literals` | `43 files in scope, 2 exempt, 0 violations (23.7s)`, exit **0** | matches | ✅ PASS |
+| `check:bos-llm-literals -- --list` | `included app/api/admin/business-os/llm-settings/route.ts` · `exempt lib/business-os/llm/modelSettingsPolicy.ts` · `exempt scripts/bos-llm-settings.ts` · `43 in scope, 2 exempt, 1 included by name` | matches | ✅ PASS |
+| **Gate scripts unchanged** | `git diff origin/main -- scripts/check-bos-llm-literals.ts scripts/typecheck-bos-llm.ts` is **empty**. No exemption added or widened, no inclusion added, no baseline regenerated | as claimed | ✅ PASS |
+| `npm run lint:hooks` | clean, no output, exit **0** | matches | ✅ PASS |
+| `npm run build` | `✓ Compiled successfully`, exit **0**; route table `ƒ /admin/business-os-llm  6.8 kB  94.7 kB`; `/admin/business-os-llm/page` present in `.next/app-build-manifest.json`; `.next/server/app/admin/business-os-llm` emitted | matches | ✅ PASS |
+| jest — the four touched paths **plus the required `admin-authz-surface.guard` suite** | **26 suites / 609 tests / 23 snapshots, all passing**, exit **0** | matches exactly | ✅ PASS |
+| `npx eslint` on every new + touched file | **1 error, 6 warnings.** The error is in a file this slice created — see **DEF-S2-6** | §5.3 claims "exit 0, **0 problems**" | ⚠️ **FAIL (claim)** |
+| `npm run lint` | cannot run — interactive `next lint` setup prompt | as recorded | ⛔ BLOCKED (pre-existing) |
+
+**Incidental, and worth one line:** the build log shows `requireAdminPage` emitting *"Auth lookup threw on an admin page; treating as signed out"* for `/admin/business-os-llm` during prerender. That is the layout guard **running for this page** and **failing closed** — the first independent confirmation that the page is inside the guarded subtree, obtained without a single assertion.
+
+---
+
+### 14.14 The access guard — attacked, not reasoned about
+
+**Two unexpected modified files, cleared first.** `app/admin/layout.tsx` and `lib/admin/requireAdminPage.ts` are not in the stated change list. Both diffs are **comment-only** (F-11's "21 pages" → 22). No behaviour. ✅
+
+#### Can settings data be obtained without being an admin? — measured against a running server
+
+`npx next start -p 3123`, then unauthenticated `curl` (no cookies). Every body was scanned for the page's own copy (`Business OS AI`, `Switching an area off is not a guarantee`, `Configured`, `Ledger check`) and for settings words (`gpt-`, `temperature`, `provider`, `business_os_llm`).
+
+| # | Probe | Result | Verdict |
+|---|---|---|---|
+| P1 | `GET /admin/business-os-llm` (HTML) | 200, 5,934 bytes, contains `NEXT_REDIRECT`, **0 hits** for every page string and every settings word. Body is the not-found/redirect shell, `<title>NeuronForge</title>` | ✅ no leak |
+| P2 | `GET …?_rsc=…` with `RSC: 1` (direct RSC payload) | 200, `NEXT_REDIRECT` present, **0 settings words**. Payload carries a **client-module reference** to `static/chunks/app/admin/business-os-llm/page-*.js` (public JS) and nothing else | ✅ no leak |
+| P3 | Prefetch (`RSC: 1` + `Next-Router-Prefetch: 1`) | 200, bare tree, `null` children — **no data at all** | ✅ no leak |
+| P4 | `GET /api/admin/business-os/llm-settings` | `{"success":false,"error":"Unauthorized"}` **401** | ✅ |
+| P5 | `GET …/llm-settings/ledger?area=website&since=…` | `{"success":false,"error":"Unauthorized"}` **401** | ✅ |
+| **P6** | **Soft navigation** — `RSC: 1` + a crafted `Next-Router-State-Tree` claiming the caller is already at `/admin/system-config` | **200, and NO `NEXT_REDIRECT`.** The layout was **not** re-rendered, so `requireAdminPage()` **did not run**. 0 settings words; payload is the page's client-chunk reference only | ⚠️ see **DEF-S2-10** |
+| **P7** | Same, claiming `/admin/business-os-llm` itself is already rendered (deepest escape) | **200, no `NEXT_REDIRECT`**, 739 bytes, 0 settings words | ⚠️ see **DEF-S2-10** |
+| P8 | `find app/admin -name route.ts` (escape E1) | **none** | ✅ |
+| P9 | `grep -rn "use server" app/admin/business-os-llm/` | **none** | ✅ |
+| P10 | Server modules imported by the screen | only `@/lib/business-os/llm/ledgerCheckCopy` (a plain copy module, deliberately not `server-only`), plus local files, `react`, `lucide-react`. **No `modelSettings`, `modelSettingsPolicy`, `modelSettingsSchema`, `callCatalog`** | ✅ FR-6 holds |
+| P11 | `requireAdmin` position in both `GET`s | **first statement** in each (`llm-settings/route.ts`, `ledger/route.ts`); nothing above either but `correlationId` + child logger | ✅ |
+
+**Verdict on disclosure: no settings data can be obtained without being an admin, by any of the paths above.** SA's conclusion holds. **The reason SA gave for one path does not** — DEF-S2-10.
+
+#### The guard assertion — seven mutations, each applied, measured and reverted
+
+Both guard suites run together each time (`source.guard.test.ts` + the required `admin-authz-surface.guard.test.ts`), 115 tests at rest.
+
+| # | Mutation of `app/admin/layout.tsx:40` | Measured | Verdict |
+|---|---|---|---|
+| **G1** | `// TEMPORARILY DISABLED FOR DEBUGGING: await requireAdminPage();` (SA's F-1 mutation, verbatim) | **1 failed / 114 passed** — *"the layout still owns the guard, and a commented-out guard does not count"* | ✅ **F-1's fix bites** |
+| **G2** | `/* await requireAdminPage(); */` (block comment) | **1 failed / 114 passed** | ✅ caught |
+| **G3** | `if (process.env.NODE_ENV === 'development') return <AdminChrome>{children}</AdminChrome>;` **above** the call | **115 / 115 passed** | ❌ **DEF-S2-2** |
+| **G4** | `await` dropped — `requireAdminPage();` | **1 failed / 114 passed** | ✅ caught |
+| **G5** | `try { await requireAdminPage(); } catch {}` | **115 / 115 passed** | ❌ **DEF-S2-1** |
+| **G6** | Guard replaced with a hand-rolled `AdminAccessService` call | **1 failed / 114 passed** | ✅ caught |
+| **G7** | `const _admin = await requireAdminPage();` (result assigned, never read) | 115 / 115 passed | ✅ **correct** — the guard still runs and still redirects; this is not a regression and must not fail |
+
+**F-1 is genuinely fixed**, and the rule-level test (import line / `//` comment / `/* */` comment asserted **not** to match, a real call asserted to match) is the right shape. **F-2 reproduced as recorded:** on G1, G2, G4 and G6 the required `Admin authz surface guard` stayed **green** — slice 2's own assertion was the only thing that failed, every time. §5.3b's sentence *"until then, F-1's assertion is the only thing standing"* is measured fact. **That is exactly why DEF-S2-1 matters:** it is a hole in the only control standing.
+
+---
+
+### 14.15 The fail-open copy, read as an operator at 2am
+
+Driven by rendering the real components and reading the real strings, not by reading `copy.ts`.
+
+| Probe | Question | Outcome |
+|---|---|---|
+| **C1** | Is the banner **undismissible by construction**? | ✅ **Yes.** `Props` is `{ variant }` only; the module's entire export surface is `["FailOpenNotice"]`; **0** buttons, `[role=button]` or links inside the rendered banner; no `useState`, no `onClose`, no `dismissible`, no storage key. SA's M3 (adding `onDismiss?`) re-confirmed as caught. There is nowhere to put a dismiss without changing the signature |
+| **C2** | Does the banner **overclaim about the fleet**? | ✅ **No.** Every sentence is about the *mechanism* ("is not a guarantee", "One that cannot read them **on startup**…"), never about the present state, so a fleet that is entirely fine is not maligned. F-8's two-word fix and the missing last-good case are both in. *"A card that reads 'Configured: off' is describing the stored row, not what the fleet is doing"* is exactly true |
+| **C3** | Is the **evidence claim** still false for chat (the F-3 defect)? | ✅ **No** — the old unscoped sentence is gone and asserted absent. Chat is not named, so FR-6 holds |
+| **C4** | Does the **inline** line stay true when its own area's ledger check **cannot answer**? | ❌ **No.** See **DEF-S2-3** |
+| **C5** | Is every sentence true **for every area it appears beside**? | ❌ **No.** See **DEF-S2-4** (the one non-switchable area) |
+| **C6** | Does chat's card, when the ledger answers, keep the promise? | ✅ Yes — verbatim: *"The ledger cannot answer for chat: … Check the chat entry gate and the server log line 'Business OS LLM settings changed' instead."* This is the **one** panel state in which the inline notice's promise is kept |
+
+---
+
+### 14.16 FR-14's three states and DEF-6
+
+Driven through the **real** `lastChangedByFor()` with realistic `SystemSettingsConfig` rows, then rendered — not from hand-made props.
+
+| Check | Result |
+|---|---|
+| **State 1 (`admin`)** from a real row + a real `Map` | ✅ `{ kind: 'admin', at: '2026-09-21T10:14:08.000Z', email: 'ops@…' }` → *"Last changed by ops@… at 2026-09-21 10:14 UTC"*. No `1970`, no `(time not recorded)` |
+| **State 3 (`unresolved`)** — an id in no `Map` | ✅ `{ kind: 'unresolved', at, userId: 'ghost-42' }` → the raw id **plus** *"that id matches no active admin account, so it is shown as stored"*. Never *unknown*, never blank |
+| **State 2 (`not_recorded`)** — today's state on all eight rows | ✅ renders, and is textually distinct from state 1, 3 **and** from no-row (which renders **nothing**, the card printing the FR-7 line instead — confirmed: `last-changed` absent, `no-row-note` present) |
+| **`at: null` → 1970 anywhere?** | ✅ **Impossible.** `formatInstant` is the **only** date path in the whole screen (`grep` for `new Date(`, `Date.parse`, `toLocale` outside `format.ts`: zero hits in code). It guards with `!at`, so `null`, `undefined` **and `''`** all return `null`. An unparseable string is returned **as-is** (`'not-a-date'` → `'not-a-date'`), never guessed at. `formatInstant('1970-01-01T00:00:00.000Z')` correctly renders that real instant; numeric `0` returns `null` |
+| **Is `(time not recorded)` reachable from a legitimate row?** | ✅ **No.** Four realistic timestamp forms — `…Z`, `… +00` (raw Postgres), microsecond precision, and no-designator — all produce a real date. **Only** `updated_at` ∈ {`null`, `undefined`, `''`} reaches the sub-state. It is defensive and unreachable today, which is what SA wanted kept, and it is pinned |
+| **DEF-6 closed at the boundary** | ✅ and the pin is real: reverting `at: string \| null` → `at: string` (SA's M7) makes `typecheck:bos-llm` fail — `231 files, 29 errors, **1 new**`, `TS2344` naming `adminSettingsView.wireTypes.test.ts(45,52)`. **And jest stays 2/2 green under the same mutation** — F-4's repo-wide fact reproduced |
+| **F-4's stated gate is correct** | ✅ `typecheck:bos-llm -- --list` reports the wireTypes file as **`core`**. Also — better than §5.3b claims — `LedgerCheckPanel.tsx` and `ledgerPanel.render.test.tsx` are in that scope as **`caller`** (via `ledgerCheckCopy`), so two screen files *are* type-pinned |
+
+---
+
+### 14.17 The ledger panel — all eight branches, plus a ninth
+
+| Check | Result |
+|---|---|
+| **All eight `PanelState` branches driven** | ✅ 3 counted readings + `ledger_cannot_answer` + `too_soon` + `cannot_check` + `failed` + `no_change` |
+| **No tick, no green, no success wording, in every branch** | ✅ Each branch asserts the **strong** form over the whole panel: `panel.innerHTML` against `/text-(green\|emerald)-\|bg-(green\|emerald)-/`, `textContent` against `/\b(confirmed\|verified\|success\|proven)\b/i` and against `/[✓✔☑]/`. **F-6's weak wrapper-`className` check is gone** |
+| **F-6's mutation re-run** | ✅ RC-D heading → `text-green-400`: **1 failed**, naming the `cannot_check (RC-D)` branch. (SA measured 9/9 green before the fix) |
+| **A tick smuggled into a reading sentence** | ✅ caught — `1 failed`, `stopped_with_before` branch |
+| **The panel writing its own reading** | ✅ caught — **4 failed** |
+| **The caveat dropped** | ✅ caught — **3 failed** |
+| **Would the count assertion catch a NINTH branch?** | ❌ **No, not for the realistic shape.** See **DEF-S2-5** |
+| **Chat renders none of the three readings** | ✅ each of the three count-bearing sentences asserted absent; `ledger-counts` absent; the gate and the log line both named |
+| **The chat short-circuit is server-side** | ✅ **twice over.** (a) `LedgerCheckPanel.tsx`, comments stripped, contains no `'chat'` / `"chat"` at all — asserted, and SA's M4 (adding `if (area === 'chat')`) re-confirmed as caught. (b) The route decides it **before** any repository call, and QA confirmed both `reason` codes are emitted after that short-circuit and before any read |
+| **Does every string come from `ledgerCheckCopy`?** | ⚠️ **The readings and the caveat do; three branches' headings do not.** See **DEF-S2-8** — a doc overclaim, not a design fault: the refusal's *explanation* correctly comes from the route's own sentence (D-1), which is the right split |
+| **F-9** (`Check again` disabled on `too_long_ago` only) | ✅ asserted and confirmed disabled on the monotonic branch; `isKnownReason` type guard makes the neutral fallback visibly deliberate |
+| **RC-D is not an error** | ✅ no red anywhere in the panel's `innerHTML`; `ledger-failed` absent; the route's own 24-hour sentence rendered verbatim |
+
+---
+
+### 14.18 Nothing writable, and nothing pre-empting slice 3
+
+| Scan (source, tests excluded, comments stripped) | Hits |
+|---|---|
+| `<form`, `onSubmit`, `onChange`, `action=`, `useFormState`, `useActionState` | **0** |
+| `method: 'POST' \| 'PUT' \| 'PATCH' \| 'DELETE'` | **0** |
+| `fetch(` calls | **2**, both bare `GET` — `/api/admin/business-os/llm-settings` and `…/ledger?area=&since=` |
+| `AuditTrailService`, `sendEmail`, notification, `dryRun`, `supabase`, an `updated_by` write | **0** |
+| `confirm` / `PUT` textual hits | **6, every one of them prose or copy** (verified after stripping comments: the only survivors are the two `Confirm at…` sentences in `copy.ts`) |
+| `<input>` in the whole screen | **1**, and it is `disabled readOnly` — a lock that looks like a lock (FR-12) |
+| Buttons | **4**: card expand/collapse, `Check again`, stored-row expand, page refresh. All read-only |
+| Slice-3 surface | **None.** No confirmation step, no audit entry, no notification, no foreign-key fallback. `LastChangedLine`'s `not_recorded` copy is already worded to stay true once slice 3's unattributed save lands, and is asserted not to claim the change came from the command line |
+| `READ_ONLY_NOTE` | Present on every expanded card, naming `npm run bos:llm-settings` and runbook §3/§4 — the honest alternative to a dead control |
+
+✅ **PASS.** Slice 2 changes what an admin can **see** and nothing about what anyone can **write**.
+
+### 14.19 The literal gate's four false-positive shapes
+
+✅ **None tripped, and none needed a rule change.** Scanned every screen source file with the gate's own patterns after stripping comments: **no** quoted model id of any vendor family, **no** `z.enum` of model ids, **no** `switch` case on a model, **no** price-index key, **no** temperature literal. The screen contains no model name at all. `--list` confirms the screen is **outside** the literal gate's 43-file scope, so `source.guard.test.ts` — which walks the directory rather than listing it, so tomorrow's component is covered before anyone remembers — really is the only enforcement. Exemption and inclusion lists are **byte-identical to `origin/main`**.
+
+### 14.20 The sidebar (D-U1)
+
+✅ One entry, `Business OS AI` → `/admin/business-os-llm`, icon `Bot`, **directly under System Config** in the Configuration group — exactly as documented. `app/admin/system-config/page.tsx` is **untouched** and its 20 `console.*` calls stay out of the diff; `nav.test.ts` pins that so a one-line cross-link cannot smuggle the conversion in later.
+
+---
+
+### 14.21 Test coverage against the acceptance criteria
+
+| AC / FR | Tested? | Result | Notes |
+|---|---|---|---|
+| AC-2 / FR-1 — non-admin never reaches the page | ✅ | **Pass, with a test gap** | Seven live unauthenticated probes found no leak on any path. Two of seven guard mutations are undetected (DEF-S2-1, DEF-S2-2) |
+| AC-6 / FR-6 — client imports no server module, holds no literal | ✅ | Pass | Verified independently of the test; M5/M6 re-confirmed |
+| AC-4 / FR-4 — provenance, `temperature` "not set" | ✅ | Pass | `not set — the provider default applies`; `null` never rendered as `0`; code default shown beside an overridden model |
+| AC-5 / FR-5 — issue against its field, resolver's own `reason` | ✅ | Pass | Reason verbatim in mono, gloss beside it, never instead; non-field issues surfaced rather than dropped |
+| AC-3 / FR-7 — no row → code defaults, no attribution, not an error | ✅ | Pass | Confirmed rendered: `no-row-note` present, `last-changed` absent, no error styling |
+| AC-12 / FR-12 — locks disabled **with their reason as text** | ✅ | Pass | Three lock reasons render as text, not tooltip-only |
+| AC-14 / FR-14 — three states (+ DEF-6) | ✅ | Pass | §14.16, driven from the real server function |
+| AC-16 / FR-16 — never claims an area is off | ✅ | Pass | Only `Configured: on/off` and `Cannot be switched off`; rendered-output scan |
+| AC-17 / FR-17 — standing, undismissible sentence | ⚠️ | **Partial** | Undismissible ✅ and beside every switch ✅; but two of its sentences are untrue in the state every card is in today, and one is self-contradictory on one card (DEF-S2-3, DEF-S2-4) |
+| AC-17 / FR-18 — three readings, equal weight, shared caveat, no success affordance | ✅ | Pass | Eight branches, strong assertions, four mutations bite |
+| AC-18 / FR-19 — chat renders none of the readings | ✅ | Pass | And the short-circuit is server-side, proven two ways |
+| FR-20 — propagation stated | ✅ | Pass | `PROPAGATION_NOTE` on every panel |
+| RC-D — the 24 h bound as a neutral state | ✅ | Pass | *"Too long ago to check"*, no red, retry disabled |
+| D-1 — `reason` codes | ✅ | Pass | Purely additive; slice 1's ledger tests pass untouched; a third code degrades to a neutral heading |
+| Nothing writable | ✅ | Pass | §14.18 |
+
+**Counts: 46 checks PASS · 7 FAIL · 2 PARTIAL · 1 BLOCKED** (`npm run lint`, pre-existing).
+
+---
+
+### 14.22 Issues found
+
+#### Bugs (must fix before commit)
+
+**DEF-S2-1 — A `try/catch` around the guard disables it, and both guard suites stay green. — File: `app/admin/business-os-llm/__tests__/source.guard.test.ts:142-145` — Severity: Medium (High as a class; it is a hole in the only control standing)**
+- Steps to reproduce: replace `app/admin/layout.tsx:40` with `try { await requireAdminPage(); } catch {}`, then `npx jest app/admin/business-os-llm/__tests__/source.guard.test.ts lib/admin/__tests__/admin-authz-surface.guard.test.ts`.
+- Expected: a failure — `requireAdminPage` redirects **by throwing**, so a bare `catch` swallows the redirect and the layout returns `AdminChrome` to a non-admin.
+- Actual: **`Tests: 115 passed, 115 total`**, exit 0. `GUARD_CALL = /await\s+requireAdminPage\s*\(\s*\)/` matches happily inside a `try`.
+- Why this one: `app/admin/layout.tsx:38-39` **names this exact hazard in its own comment** — *"Deliberately NOT wrapped in try/catch: `requireAdminPage` redirects by throwing, and swallowing that would render the admin shell to a non-admin."* The documented hazard is the unasserted one. It is the same class as F-1 (a realistic way to disable the guard that leaves the suite green), and with F-2 open this assertion is the only control over 22 admin pages.
+- Not a live vulnerability today: no settings leak (§14.14 P1–P5), because the page is `'use client'` with no server data and both APIs are `requireAdmin`-gated. What would render is the admin **shell**.
+- Fix shape (one line): `expect(layoutCode).not.toMatch(/try\s*\{[\s\S]*?requireAdminPage/)`, or better, assert the call is the **first statement** of the component body — which also closes DEF-S2-2.
+
+**DEF-S2-3 — The inline fail-open notice, and the banner, promise an answer the ledger panel does not give in the state all eight cards are in today. — Files: `app/admin/business-os-llm/copy.ts:63-66` (`FAIL_OPEN_INLINE`) and `:56-60` (`FAIL_OPEN_ACTION`) — Severity: Medium**
+- `FAIL_OPEN_INLINE` says: *"Confirm at this area's ledger check below, **which also says whether the ledger can answer for this area at all** (runbook §5)."* `FAIL_OPEN_ACTION` says: *"…**each card's ledger check says whether it can answer**, and for some areas it cannot."*
+- The panel makes that statement in **exactly one** of its eight states — `reading` with `kind: 'ledger_cannot_answer'`. In the other three non-reading states it says nothing about the ledger's reach. Measured, verbatim:
+  - `cannot_check / too_long_ago` → *"Too long ago to check — The ledger check only works for a change made in the last 24 hours. For an older change, use the audit trail instead."*
+  - `no_change` (no stored row) → *"There is no stored change to count from, so there is nothing to check."*
+  - `failed` → *"The ledger check itself could not be run. That says nothing about this area — try again."*
+- **`too_long_ago` is the branch every one of the eight areas takes on load** — RC-D, measured in §14.4, and restated in `LedgerCheckPanel`'s own header. So on day one the sentence that tells an operator how to verify a switch-off points at a panel that never answers the question it was sent to answer.
+- Secondary misread, and the reason this is not merely pedantic: the banner primes *"for some areas it cannot [answer]"*; the operator then opens `website` and reads *"Too long ago to check"* and may conclude the ledger can **never** see that area — conflating RC-D's window bound with chat's permanent blindness. The misread is **conservative** (it sends them to the runbook §5 log lines), so it is not dangerous; it is still a misread the copy induces.
+- This is the residue of F-3. Scoping instead of enumerating was the right call for FR-6 — but the fix relocated the truth-claim onto the panel without checking that the panel makes it in the states it can actually be in.
+- Fix shape, still no per-area hardcoding: have the route answer the reach question **independently of the window** — add one boolean (e.g. `ledgerCanSeeArea`) to the two 400 bodies and to every reading, so the panel can state it in all eight branches — **or** soften both sentences to the conditional: *"where the check can answer, it will also tell you if the ledger cannot see this area at all."*
+
+**DEF-S2-4 — On `onboarding`, the inline notice contradicts the line rendered directly beneath it. — Files: `app/admin/business-os-llm/components/AreaCard.tsx:123-136` + `copy.ts:63` — Severity: Medium**
+- `BOS_LLM_AREA_LOCKS` makes exactly one area non-switchable: `onboarding: { switchable: false }`. `AreaCard` renders `FailOpenNotice variant="inline"` for **every** expanded card, then `LOCK_AREA_NOT_SWITCHABLE` immediately after, in the same `space-y-2` block.
+- Measured, verbatim and consecutive, on the onboarding card:
+  - chip: **`Cannot be switched off`**
+  - notice: **`"Off" is the stored configuration, not a guarantee — an instance that cannot read these settings on startup starts with every area on. Confirm at this area's ledger check below…`**
+  - next line: **`This area can never be switched off — the code refuses it at every level.`**
+- An operator is told to treat a stored "off" as unreliable and to go corroborate a switch-off, one line above being told the switch-off cannot exist. On the single card where the fail-open warning is **inapplicable** (nothing can be switched off, so falling back to defaults-on changes nothing), it is the most prominent text.
+- Fix shape: render the inline notice only when `area.switchable`, or give the locked area its own one-liner. Either is a two-line change in `AreaCard`.
+
+**DEF-S2-5 — "a new branch cannot be added silently" does not hold for the realistic shape of a new branch. — File: `app/admin/business-os-llm/__tests__/ledgerPanel.render.test.tsx:78-142, 167-174` — Severity: Medium**
+- §5.3b states the F-6 fix drives *"all five `LedgerReadingKind`s plus `cannot_check`, `failed` and `no_change`, eight in total, **with a count assertion so a new branch cannot be added silently**."*
+- Measured: added a **sixth** `LedgerReadingKind` (`provider_outage`) to the union in `ledgerCheckCopy.ts` with its sentence, **without** adding it to `LEDGER_READINGS_WITH_COUNTS`. Result: **`Tests: 535 passed, 535 total`**, exit 0. The new branch is silently uncovered and `toHaveLength(8)` passes.
+- Cause: `EVERY_BRANCH` derives only **three** entries, by spreading `LEDGER_READINGS_WITH_COUNTS`, and hard-codes the other five as literals. A new **count-less** kind therefore never enters the table — and count-less is precisely what **both** existing non-counted kinds (`ledger_cannot_answer`, `too_soon`) are, so it is the likelier shape of the next one. The assertion only bites for a new *with-counts* kind.
+- This is the same family as F-1 and F-6: an assertion that reads as though it pins a property and does not.
+- Fix shape: key the table off an exhaustive `Record<LedgerReadingKind, …>` so a new kind is a **compile** failure — both this test file and `LedgerCheckPanel.tsx` are inside `typecheck:bos-llm`'s scope (confirmed `caller` via `--list`), so the pin would be real rather than a number.
+
+#### Should fix (accuracy of the record — no shipping code)
+
+**DEF-S2-6 — §5.3's ESLint row is wrong; a file this slice created has a lint error. — File: `lib/business-os/llm/__tests__/adminSettingsView.wireTypes.test.ts:36` — Severity: Low**
+- §5.3 (re-measured, 2026-09-24) claims *"`npx eslint` on every new and touched file → exit 0, **0 problems**"*. SA's gate table agrees (*"0 problems"*).
+- Measured: `npx eslint lib/business-os/llm/__tests__/adminSettingsView.wireTypes.test.ts` exits **1**:
+  - `36:15  error  Expected a 'const' assertion instead of a literal type annotation  @typescript-eslint/prefer-as-const` — on `const ok: true = true;`
+  - plus three `no-unused-vars` warnings (`_Check` ×2, `_Reverse`), which are inherent to type-level assertions and are arguably fine.
+- The screen's own ten source files, the three `tests/helpers/` files and the ledger route are genuinely **0 problems** (verified per-group, exit 0 each). `AdminSidebar.tsx`'s 3 warnings are pre-existing, as recorded. So the error is the one new-file finding, and the gate row overstates by claiming zero.
+- Fix: `const ok = true as const;` (one line), and correct the §5.3 row.
+
+**DEF-S2-7 — F-10's retracted claim survives in two other files. — Files: `app/admin/business-os-llm/components/LastChangedLine.tsx:30-31`, `app/admin/business-os-llm/types.ts:43-46` — Severity: Low**
+- SA's F-10 asked for *"the column is nullable in the database and a row really can arrive without one"* to go, because nothing in the repo establishes it. It was correctly reworded in `adminSettingsView.ts:166-174`. The same unverified claim still reads in `LastChangedLine.tsx` (*"`updated_at` is typed `string` but the column is nullable (QA DEF-6)"*) and in `types.ts` (*"but a row really can come back without one"*).
+- F-10 is therefore **partially** fixed: the next reader inherits the claim from whichever of the three files they open first, and two of the three are the ones a UI author opens.
+
+**DEF-S2-8 — `LedgerCheckPanel`'s header claims more than the file does. — File: `app/admin/business-os-llm/components/LedgerCheckPanel.tsx:6-10` — Severity: Low**
+- *"The panel writes no readings of its own … **Every sentence** comes from `lib/business-os/llm/ledgerCheckCopy.ts`."*
+- The five **readings** and the caveat do. Three branches' text is written in the component: `CANNOT_CHECK_HEADINGS` (`:54-57`), the `No usable change time` heading and explanation (`:106-112`), the `This check does not apply here` fallback, `ledger-no-change` (`:181`) and `ledger-failed` (`:188`).
+- The **split is correct** and is D-1's approved shape — a code for the machine, the route's sentence for the human, and the refusal's *explanation* does come from the route. Only the word "sentence" overclaims; "reading" would be exactly true.
+
+**DEF-S2-9 — F-4's misreading survives in the file most likely to be opened next. — File: `app/admin/business-os-llm/types.ts:17-18` — Severity: Low**
+- The wireTypes test's own header was properly corrected (it now names `typecheck:bos-llm` and states the repo-wide fact). But `types.ts` still says the wireTypes test *"fails to compile if the server's `AreaView` stops satisfying the type below"* without naming the gate — which is the precise sentence that led SA to measure F-4. A UI author reading `types.ts` still concludes `npm test` covers the duplication. It does not: QA reproduced 2/2 green under SA's M7 while `typecheck:bos-llm` failed with `1 new`.
+
+**DEF-S2-10 — SA's ✅ on soft navigation between `/admin` siblings rests on a premise QA falsified. The conclusion survives; the stated reason does not. — File: the workplan's SA slice-2 path table (~line 1222) and `lib/admin/requireAdminPage.ts:26-29` — Severity: Low (documentation + latent hazard)**
+- SA recorded escape E2 as *"Harmless here, **because the caller already passed the guard on entry to the subtree**."*
+- Measured (P6/P7): an **unauthenticated** `curl` that simply supplies a crafted `Next-Router-State-Tree` claiming it is already inside `/admin` gets **200 with no `NEXT_REDIRECT`** — the layout is not re-rendered and `requireAdminPage()` never runs. The caller does not have to have entered the subtree; it only has to **say** it did, in a client-supplied header.
+- Nothing leaks, and that is the part worth writing down: the payload carries only a reference to a public JS chunk, **and QA verified that all 22 `/admin` pages are `'use client'`** (every `app/admin/**/page.tsx` has the directive — checked, none missing), so no admin page has server-rendered data to leak, and both `GET`s answer **401**.
+- So the real guarantee is *"every admin page is a client component **and** every admin API is `requireAdmin`-gated"* — two properties, **neither of which is asserted anywhere**, and the first of which a future server-component admin page would silently break. Worth one line in the admin-authz workstream beside F-2, and worth knowing before slice 3.
+
+#### Edge cases (nice to fix)
+
+1. **DEF-S2-2 — the guard's *position* is unasserted.** `if (process.env.NODE_ENV === 'development') return <AdminChrome>{children}</AdminChrome>;` above the call leaves **115/115** green. Contrived (and inert in production, where `NODE_ENV` is `production`), but it is OI-20's *"the guard proves present, not first"* landing in the one file where `requireAdminPage` actually lives. The same "first statement" assertion that fixes DEF-S2-1 closes this for free.
+2. **Two `cannot_check` sub-states are never rendered by any test.** `since_in_future`'s heading and the unknown-code `This check does not apply here` fallback share `cannot_check`'s JSX, so the no-green/no-tick property holds for them by construction — but the F-9 retry logic (`retryable: reason !== 'too_long_ago'`) is only exercised on one of the two branches it distinguishes.
+3. **Collapsing and re-expanding a card refetches the ledger.** Free today (the `too_long_ago` refusal precedes any DB read), a real cross-tenant read once rows are fresh. SA already flagged it for slice 3.
+4. **The operator must expand all eight cards to learn which areas the ledger cannot see.** SA ruled that enumerating them on the collapsed card would breach FR-6, so this is by design — but it is the practical cost of DEF-S2-3's fix being a conditional rather than a list.
+
+---
+
+### 14.23 What QA could and could not see
+
+**QA could see the page render.** Not in a browser — Playwright is not installed (CLAUDE.md § Testing) — but in three independent ways:
+
+1. **`next start` + `curl`**, which proved the guard runs and fails closed, and that nothing leaks.
+2. **jsdom, the full `page.tsx` with a stubbed `fetch`**, rendering all eight cards; QA read the complete rendered text of the page, of the chat card expanded, and of the onboarding card. DEF-S2-3 and DEF-S2-4 are quotations from that output, not inferences from `copy.ts`.
+3. **The build's route table and app manifest**, confirming the page is emitted and dynamic.
+
+**Left for the user to check by eye** — none of it is behavioural, all of it is visual, and none of it can invalidate the defects above:
+
+- **Colour and contrast.** D-2's local `Chip` claims the `/admin` palette because `badge.tsx`'s `outline` variant depends on `--v2-border` / `--v2-text-secondary`, declared only in `app/v2/globals-v2.css`, which `/admin` does not load. QA verified the *reasoning* at source and that no green/emerald class reaches the ledger panel, but **whether the six chip tones are legible against the slate cards is a visual judgement**.
+- **Whether the banner is actually read before the cards.** It is DOM-ordered above them (`page.tsx:107-109`), which is what FR-17 asks. Whether it survives a skim at 2am on a real monitor — the thing DEF-S2-3 and DEF-S2-4 are about — is worth ten seconds of the user's eyes.
+- **Layout at width.** `sm:grid-cols-2 lg:grid-cols-4` for the four call fields, and `truncate` on the collapsed model summary; an eight-card page with long call names was never rendered at a real viewport.
+- **That the sidebar entry looks right** under System Config with the `Bot` icon.
+- **The live data.** Every card will read *"Configured: on"*, *"actor not recorded"* and *"Too long ago to check"* against the real seed — correct, measured, and the exact combination DEF-S2-3 is about.
+
+---
+
+### 14.24 Test outputs
+
+```
+typecheck-bos-llm: 231 files in scope, 28 errors, 0 new (89.3s)            -> passed
+check-bos-llm-literals: 43 files in scope, 2 exempt, 0 violations (23.7s)  -> passed
+check-bos-llm-literals --list: 43 in scope, 2 exempt, 1 included by name   (unchanged)
+lint:hooks: (no output), exit 0
+build: OK, exit 0;   f /admin/business-os-llm   6.8 kB   94.7 kB
+jest (4 touched paths + admin-authz-surface.guard):
+  Test Suites: 26 passed, 26 total
+  Tests:       609 passed, 609 total
+  Snapshots:   23 passed, 23 total
+npx eslint (new + touched):  1 error, 6 warnings    <- DEF-S2-6
+```
+
+Guard mutations (both suites, 115 tests at rest):
+
+```
+G1 line-comment                    exit=1  1 failed, 114 passed   CAUGHT (F-1 fixed)
+G2 block-comment                   exit=1  1 failed, 114 passed   CAUGHT
+G3 after-early-return              exit=0  115 passed             NOT CAUGHT -> DEF-S2-2
+G4 await-dropped                   exit=1  1 failed, 114 passed   CAUGHT
+G5 try-catch-swallow                exit=0  115 passed            NOT CAUGHT -> DEF-S2-1
+G6 hand-rolled AdminAccessService  exit=1  1 failed, 114 passed   CAUGHT
+G7 result-assigned-unused          exit=0  115 passed             correct (guard still runs)
+```
+
+Panel / copy mutations:
+
+```
+M-A sixth LedgerReadingKind (no counts)  exit=0  535 passed        NOT CAUGHT -> DEF-S2-5
+M-B RC-D heading text-green-400          exit=1  1 failed          CAUGHT (F-6 fixed)
+M-C tick glyph in a reading sentence     exit=1  1 failed          CAUGHT
+M-D panel writes its own reading         exit=1  4 failed          CAUGHT
+M-E caveat dropped                       exit=1  3 failed          CAUGHT
+M7 revert the DEF-6 widening             typecheck exit=1, 29 errors, 1 new, TS2344
+                                         jest wireTypes: 2 passed  <- F-4's fact, reproduced
+```
+
+Unauthenticated probes against `next start -p 3123`:
+
+```
+P1 GET /admin/business-os-llm           200  NEXT_REDIRECT present, 0 page strings, 0 settings words
+P2 RSC: 1                               200  NEXT_REDIRECT present, 0 settings words
+P3 RSC + Next-Router-Prefetch: 1        200  bare tree, null children
+P4 GET /api/.../llm-settings            401  {"success":false,"error":"Unauthorized"}
+P5 GET /api/.../llm-settings/ledger     401  {"success":false,"error":"Unauthorized"}
+P6 RSC + crafted Next-Router-State-Tree 200  NO NEXT_REDIRECT  <- guard not re-run; 0 settings words
+P7 same, deepest segment                200  NO NEXT_REDIRECT, 739 bytes, 0 settings words
+```
+
+---
+
+### 14.25 Final status
+
+**Counts: 46 PASS · 7 FAIL · 2 PARTIAL · 1 BLOCKED. No High-severity defect is open.**
+
+The page itself is right, and it is right about the hard things: the FR-6 boundary is real and independently pinned, the fail-open notice is undismissible **by construction** (verified at source *and* in the rendered DOM), FR-14's three states are three different sentences driven correctly from the real server function, `at: null` cannot produce a 1970 anywhere in the screen because one formatter is the only date path, RC-D is a neutral first-class state, the ledger panel has no success affordance in any of its eight branches, chat's short-circuit is server-side and the client provably knows nothing about which areas the ledger can see, and **nothing in this slice writes**. F-1's fix bites, F-6's fix bites, and F-4's pin is real in the gate it now correctly names.
+
+What fails is the same thing that failed SA's review, one layer further in: **two assertions that read as though they pin a property and do not** (DEF-S2-1, DEF-S2-5), and **two sentences in the feature's most important copy that are untrue in the state every card is in on day one** (DEF-S2-3, DEF-S2-4).
+
+- [ ] **Do not ship as-is.** Fix **DEF-S2-1** (one line — assert the guard is the first statement, which also closes DEF-S2-2), **DEF-S2-3** (either one boolean on the route's refusals, or soften two sentences to the conditional), **DEF-S2-4** (render the inline notice only when `area.switchable`) and **DEF-S2-5** (key the branch table off an exhaustive `Record<LedgerReadingKind, …>`). None is large; three are one to three lines. Then re-run the five screen suites, both guard suites, and `typecheck:bos-llm`.
+- [ ] **DEF-S2-6 … DEF-S2-9** are a one-line lint fix and three comment corrections — take them in the same pass while the files are open; do not re-open the cycle for them.
+- [ ] **DEF-S2-10 goes to the TL/user with F-2**, as one item on the admin-authz workstream: the `Admin authz surface guard` cannot see the removal of the guard (F-2, reproduced here four times), the compensating assertion has two blind spots (DEF-S2-1, DEF-S2-2), and the E2 escape is reachable by a crafted header — harmless only because **all 22 admin pages happen to be client components**, which nothing asserts.
+- [ ] **For the test-tiering workplan, unchanged and re-confirmed by measurement:** no test in this repo fails on a type error. `typecheck:bos-llm`'s scope is the only place a type-level assertion is alive — and two screen files (`LedgerCheckPanel.tsx`, `ledgerPanel.render.test.tsx`) are in it as `caller`, which is worth knowing when writing the DEF-S2-5 fix.
+- [x] **The user should look at the rendered page** before RM commits — §14.23 lists the five visual things QA could not judge, and DEF-S2-3/DEF-S2-4 are exactly the kind of thing a second pair of eyes confirms in ten seconds.
+
+---
+
 ## 15. Commit Info
 
 *(RM populates this section. Nothing has been committed from this worktree.)*
@@ -1472,6 +2259,12 @@ QA probe - RC-B, the covered route moved
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-09-24 | **SA re-check of slice 2 — 🔄 Fix Required: one clause and one doc claim, no code change** | All seven gates re-run by SA (`typecheck:bos-llm` 231/28/0 new; literals 43/2/0; `lint:hooks` clean; `npx eslint` **0 problems, exit 0** — S2-6 genuinely fixed; `build` exit 0 with the page in `app-build-manifest.json`; jest **28 suites / 636 tests** over the touched paths plus `lib/admin`, a superset of the Dev's 26/621). **The first-statement property is a genuine improvement, honestly built** — comments stripped, statement terminated at `;` **or `{`** so a `try {` opener fails, `null` on an unrecognisable signature, and proved against five synthetic layouts that must be REJECTED, which is the part such tests usually skip. QA's two mutations are closed. **But SA found three shapes that still satisfy it, all 122/122 green:** `process.env.ADMIN_STRICT && (await requireAdminPage());`, the ternary form, and a locally shadowed no-op `requireAdminPage` (the assertion pins the call's shape, not its identity). The first two are the *same intent* as QA's early-return mutation expressed differently, so they are not exotic. **Nothing leaks by any of them** (the page is `'use client'` with no server props, both `GET`s are `requireAdmin`-first), so this is recorded, not blocking — but the honest conclusion after three rounds of regex is that the property that matters is **behavioural**: one test that renders `AdminLayout` with a non-admin and asserts `NEXT_REDIRECT` is immune to all five known mutations and all three of SA's. That belongs on the admin-authz workstream, not in this diff. **R-1 (must fix, doc): the OI-20 closure claim is wrong.** Read at source (`admin-authz-unification.md:1506`, `ADMIN_IDENTIFICATION_AND_ACCESS.md:190`), OI-20 is the precedence gap over the **38/65 gated API route handlers** and carries QA's refinement that closing it needs **the oracle instrumented for the body parse**. Slice 2 asserts precedence in **one file**, for a **different** guard, from a **feature** suite that is not a required check, and touches neither the handlers nor the oracle. The workplan's own earlier wording at `:2037` was precise ("landing in the one file where `requireAdminPage` actually lives"); the Change History compressed it into closure. This matters because OI-20 carries an SA condition that it is **the first thing built when the parked slices resume** — a row saying it is closed is how that condition gets discharged without the work. Correct both places to the page-layout half only. **R-2 (must fix, one clause): the S2-3 fix reintroduced the defect it was fixing.** `FAIL_OPEN_ACTION` now says the LLM Usage tab "shows the calls per area **for any period**". Measured at `lib/business-os/usage/llmUsageVerification.ts:61,:89-102`: **`MAX_WINDOW_MS` is 7 days and it is REFUSED, not clamped** (*"the maximum window is 7 days"*), and **`accountId` is required** — the report is **per business**, while the switch is fleet-wide. The runbook it summarises is careful where the copy is not ("per area and per call", "per area and per business" — never any period). So the page again names a verification path it cannot support, in the fallback an operator reaches for **precisely when the 24-hour check has turned them away**. The unbounded path is runbook §5's SQL; the tab is the convenient path within 7 days, per business. Say that. **Otherwise the copy is now right, and SA's earlier judgement is formally overturned:** QA applied the better test — not "is each claim true?" but "can the action be carried out on the day the page ships?" — and SA has adopted it. *"Expect to be turned away often"* makes a refusal the predicted answer rather than a dead end, and F-8's parenthetical closes the runbook §5 warm-cache gap without softening the warning. **Length: 178 words in the banner, at the edge** — SA's ruling is to change the ORDER, not cut words (headline → action → quiet why, since `FailOpenNotice.tsx:55-57` currently puts 85 words of mechanism between the two sentences a skimmer must read). Low, presentational, **explicitly not re-opening a cycle for it**. **Rulings: the onboarding card ✅ right call** — the contradiction is gone, the banner above every card still carries the fleet-wide warning so nothing is lost, and `LOCK_AREA_FAIL_OPEN` is not reassurance but the same hazard re-stated about the field that area can actually change. **The exhaustive `Record` ✅ approved, both pins verified independently by SA** — a sixth kind fails the runtime keys-equality assertion (1 failed / 19 passed) **and** `typecheck:bos-llm` (`TS2741`, 1 new); two genuinely independent mechanisms, the second existing *because* of F-4, which is the right response to "no test here fails on a type error". `isKnownReason` also closes SA's untyped-index optimisation. **P6/P7 ⚠️ recording is NOT enough for one of the two properties.** QA falsified an SA premise — "the caller already passed the guard on entry" is false, it only has to *say* it did — though the conclusion survives on the other reason SA gave in the same table. "Every admin API is `requireAdmin`-gated" is adequately recorded (R1 + published census). **"All 22 admin pages are `'use client'` with no server props" is not:** it is load-bearing for an already-demonstrated **unauthenticated** request, it breaks **silently** (the next Server-Component admin page leaks its payload with no test failing), and it is **nearly free to assert** — the guard's scanner already computes `isClient` per file (`:1567`). It must be escalated as a named item with the exploit and the one-line fix, and logged in the access doc § Known gaps beside OI-20, not left as a footnote in a feature workplan. **Verdict: ready for the user's eye once R-1 and R-2 land** — a string and a doc row; no code change, and no further SA pass needed. |
+| 2026-09-24 | **QA tested slice 2 — 46 PASS / 7 FAIL / 2 PARTIAL / 1 BLOCKED, no High open, NO-SHIP as-is** | Every gate re-run verbatim (`typecheck:bos-llm` 231/28/**0 new**; literals 43/2/**0**, `--list` and both gate scripts **byte-identical to `origin/main`**; `lint:hooks` clean; `build` OK with `ƒ /admin/business-os-llm 6.8 kB`; jest **26 suites / 609 tests** incl. the required `admin-authz-surface.guard`). **The guard was attacked with seven mutations, not reasoned about:** F-1's fix **bites** (SA's comment-out and a block comment both now fail), `await` dropped and a hand-rolled `AdminAccessService` are caught, and **F-2 was reproduced four times** — the required guard stayed green every time, so slice 2's assertion really is the only thing standing. **Two mutations are NOT caught: `try { await requireAdminPage(); } catch {}` (DEF-S2-1) and the call placed after an early return (DEF-S2-2), both 115/115 green** — and the try/catch is the hazard `layout.tsx` names in its own comment. **No settings data leaks by any path**, proved on a real `next start` server with unauthenticated `curl`: HTML, direct RSC payload and prefetch all carry `NEXT_REDIRECT` and **zero** settings words, both `GET`s answer **401**, no route handler, no server action. But a crafted `Next-Router-State-Tree` gets the page's RSC segment with **no redirect at all** — so SA's “the caller already passed the guard” premise is false (DEF-S2-10); the conclusion survives only because **all 22 admin pages are `'use client'`**, which nothing asserts. **The copy was read as an operator:** undismissible **by construction** confirmed in the rendered DOM (0 buttons, export surface is one name), no fleet overclaim, F-3's chat falsehood gone — but the inline notice and the banner **promise a ledger-reach answer the panel gives in only 1 of its 8 states**, and `too_long_ago` is the state **all eight cards** are in on day one (DEF-S2-3), and on `onboarding` the notice sits one line above “This area can never be switched off” (DEF-S2-4). **FR-14 driven through the real `lastChangedByFor()`:** states 1 and 3 render correctly, `at: null` cannot produce 1970 anywhere (one formatter is the only date path, and it catches `''` too), `(time not recorded)` is unreachable from a legitimate row, and SA's M7 confirms the pin is real in `typecheck:bos-llm` while jest stays green. **Ledger panel:** all eight branches drive the strong no-green / no-tick / no-success assertion and four mutations bite — but **a sixth count-less `LedgerReadingKind` leaves 535/535 green**, so “a new branch cannot be added silently” is false for the likelier shape (DEF-S2-5). **Nothing writable confirmed** (no form, no `onSubmit`, two bare `GET`s, one `disabled readOnly` input, nothing pre-empting slice 3). §5.3's “`npx eslint` → 0 problems” is **wrong** — `adminSettingsView.wireTypes.test.ts:36` errors on `prefer-as-const` (DEF-S2-6). Ship after DEF-S2-1, -3, -4, -5 (one to three lines each). |
+| 2026-09-24 | **QA slice-2 defects closed — DEF-S2-1 … S2-9, and S2-1 was the one that mattered** | **The guard assertion had two more holes, and both were green at 115/115.** QA disabled it with `try { await requireAdminPage(); } catch {}` — the hazard `app/admin/layout.tsx` names in its OWN comment, since `requireAdminPage` redirects by throwing — and again by putting an early `return` above the call. F-1's shape match proved the call EXISTS, not that it can fail the request. The asserted property is now **the guard is the FIRST statement of the component body**, terminated at `;` or `{` so a `try {` opener fails, proved against five synthetic layouts (deleted, `//`-commented, block-commented, try/catch, early return) and failing rather than passing when the signature is unrecognisable. One property, four mutations, and **DEF-S2-2** — the guard’s position in this one file — closed for free. **This does NOT close OI-20 (SA R-1):** that is the precedence gap over the 38 gated API handlers and needs the oracle instrumented for the body parse; it keeps its SA condition to be built first when the parked admin-authz slices resume. Re-measured: try/catch **2 failed / 120 passed**; early return **1 failed / 121 passed**. **S2-3: the copy promised evidence the page cannot give on day one.** Both sentences pointed at the per-area ledger check, which answers the reach question in 1 of 8 states — and `too_long_ago` is the state of all eight cards on load, so the page said "confirm at the ledger" while every panel said "Too long ago to check". Both now state the 24-hour limit up front and name the fallback that works for a change of any age: runbook §5's log lines and the **LLM Usage tab on `/test-business-os`**. No per-area hardcoding, so FR-6 holds; the `ledgerCanSeeArea` payload option is deliberately deferred to slice 3 with D-3/D-8's field. **S2-4: the onboarding card contradicted itself** — the fail-open notice sat one line above "can never be switched off". The notice now renders only for a switchable area; the locked one gets its own line saying what IS true there (a read failure still puts its calls back on the code-default model, which is that area's only cost lever). **S2-5: the branch table missed the likelier shape of a new branch** — a sixth count-less reading kind left 535/535 green. It is now an exhaustive `Record<LedgerReadingKind, Branch>` with two independent pins (`TS2741` under `typecheck:bos-llm`, which has the file in scope, plus a runtime keys-equal-`LEDGER_READING_TEXT` assertion, because no test in this repo fails on a type error); QA's own mutation now fails both. Nine branches are driven, including both `cannot_check` sub-states and the unknown-code fallback, and the retry rule is exercised on both sides. **Lows:** S2-6 the one lint error this slice introduced is gone and the two gate rows that claimed "0 problems" are corrected to say they were wrong; S2-7 F-10's retracted schema claim removed from the two remaining files; S2-8 the panel header says "every reading" and names what it does write; S2-9 `types.ts` now names `typecheck:bos-llm` as the pin and says plainly that jest does not catch it. **Recorded, not fixed (§5.3c):** QA's P6/P7 — a crafted `Next-Router-State-Tree` header returns 200 with no redirect and the guard never runs, harmless **only** because (1) all 22 admin pages are `'use client'` with no server props and (2) every admin API is `requireAdmin`-gated — two unasserted properties, the first of which a future server-component admin page would break silently. With **F-2** and **S2-10** it goes to the admin-authz workstream, not into this diff. Gates re-run verbatim: `typecheck:bos-llm` **231 / 28 / 0 new**; `check:bos-llm-literals` **43 / 2 / 0**, `--list` unchanged; `lint:hooks` clean; `build` exit 0 with `ƒ /admin/business-os-llm`; jest **26 suites / 621 tests** including the required authz-guard suite (the screen's five are 92); `npx eslint` **0 problems** on every new and touched file. |
+| 2026-09-24 | **SA slice-2 fixes applied — F-1, F-3, F-4, F-5, F-6 and every Low item** | **F-1 (High) was the one that mattered: the guard assertion read `app/admin/layout.tsx` RAW, so commenting the call out left 114/114 green with all 22 admin pages open.** It now runs through `codeOf()` and matches the CALL as a shape (`/await\s+requireAdminPage\s*\(\s*\)/`), with a second test proving the RULE itself — an import line, a `//`-commented call and a `/* */`-commented call are each asserted not to match, a real call is asserted to match. Re-measured: SA's exact mutation now gives **1 failed / 114 passed**; deletion fails too. **F-3 (High): the banner's evidence claim is scoped, not enumerated** — *"check first that the ledger can see the area at all: each card's ledger check says whether it can answer, and for some areas it cannot. Where it can, no new calls is the only evidence you will get"* — because the old sentence was false for any area the ledger cannot see, and naming chat would have put a per-area fact in the browser bundle (FR-6). The unscoped sentence is asserted **absent** so it cannot come back; the inline form carries the same scope plus the runbook pointer (F-7). **F-4: the wireTypes header no longer claims ts-jest type-checks it** — it names `typecheck:bos-llm`, which does (`TS2344` on the DEF-6 revert), and records the repo-wide fact that **no test in this repo fails on a type error**. **F-5: the second deviation is declared as D-8** (the requirement's "Area settings" section), disposed of with D-3 under SA's ruling that **slice 3 adds the payload field, never a doc link**. **F-6: "no green in any branch" now drives all eight branches** — five reading kinds plus `cannot_check`, `failed` and `no_change`, with a count assertion so a ninth cannot appear silently — asserting no green/emerald class anywhere in the panel's HTML, no tick glyph and no success wording; SA's green-heading mutation now fails, naming the RC-D branch. **Lows:** F-7 comment corrected ("always" belonged to the banner) and the pointer added; F-8 `FAIL_OPEN_BODY` now says *"on startup"* and carries the last-good case runbook §5 distinguishes; F-9 `Check again` disabled on the monotonic `too_long_ago` branch, `reason` narrowed through a type guard; F-10 the DEF-6 comment reworded to what the repo can establish (hand-written type, no `CREATE TABLE` here, defensive and pinned by a test); F-11 counts fixed (**7 components / 15 files**) and "21 pages" → **22** in `layout.tsx` and `requireAdminPage.ts`. **F-2 NOT fixed, by instruction** — R6 of the required `Admin authz surface guard` is satisfied by the import, the same hole one level up, and it changes the gate the whole repo merges through; until the user rules, F-1's assertion is the only thing standing. Gates re-run verbatim: `typecheck:bos-llm` **231 in scope / 28 errors / 0 new (89.9s)**; `check:bos-llm-literals` **43 / 2 exempt / 0**, `--list` unchanged (1 included by name, no baseline regenerated); `lint:hooks` clean, exit 0; `build` exit 0 with `ƒ /admin/business-os-llm 6.8 kB 94.7 kB`; jest **26 suites / 609 tests** (the screen's five are 80), including the required authz-guard suite; `eslint` **0 problems** on every new and touched file. |
+| 2026-09-24 | **SA code review of slice 2 — 🔄 Fix Required (three must-fixes, none large)** | All seven gates re-run by SA and all matching the Dev's numbers (`typecheck:bos-llm` 231/28/0 new, `check:bos-llm-literals` 43/2/0 with `--list` unchanged, `lint:hooks` clean, `build` exit 0 with the page in `app-build-manifest.json`, jest 5/71 for the screen and 25/526 across the touched paths, `eslint` clean). **Priority 1: the guard reasoning is sound on every path** — full load, direct RSC payload request, soft navigation into and within `/admin`, prefetch, route handler (none exists; R3 keeps it so) and server action (none) — and it is stronger than the Dev argued, because a `'use client'` page with no server props puts **no settings at all** in the RSC payload. **But F-1 (High, must fix): `source.guard.test.ts:130-133` reads the layout raw instead of through the `codeOf()` it already imports, so commenting the guard out passes it — SA measured 114/114 green with `// TEMPORARILY DISABLED: await requireAdminPage();` at `app/admin/layout.tsx:40`, i.e. all 22 admin pages open with every gate reporting pass.** Deleting the line outright *is* caught, so the hole is the realistic case. **F-2 (High, pre-existing, escalated):** R6 of the **required** `Admin authz surface guard` asserts only `toContain('requireAdminPage')`, which the import satisfies — it passed with the call deleted, so slice 2's test was the only thing catching it at all. **F-3 (High, must fix): the fail-open banner's *"no new calls for the area is the only evidence"* is false for chat** (`AIDataLayerService` writes no `token_usage` row), so it tells an operator switching chat off to draw exactly the false conclusion this feature exists to prevent; the correction lives only inside the chat card. Fix by scoping the claim, not by naming an area (FR-6 holds). **F-4 (Medium, must fix — comment only): the wireTypes test's stated mechanism does not exist** — ts-jest 29.4.5 under this `jest.config.js` emits no diagnostics (SA proved it with a blatant type error in a fresh file, and with the DEF-6 revert leaving jest 2/2 green). The pin is real but belongs to `typecheck:bos-llm`, which does fail with `TS2344`. Repo-wide consequence: **no test here fails on a type error.** **F-5 (Medium): an undeclared deviation** — the requirement's *"Area settings"* expanded-card row is not rendered either; same justification as D-3, accepted, but it must be declared. **F-6 (Medium):** the "no green in any branch" assertion covers only 3 of 5 branches — SA coloured the RC-D heading green and all 9 tests passed. F-7 to F-11 are Low (a comment overclaiming "always", `FAIL_OPEN_BODY` compressing runbook §5's warm-cache case, a futile `Check again` on `too_long_ago`, an unverified nullability claim in the DEF-6 comment, and "six components" / "21 pages" drift). **Rulings: D-1 ✅; D-2 ✅ with all three claims independently verified** (the `--v2-*` tokens are declared only in `app/v2/globals-v2.css`, `/admin` loads only `app/globals.css`, and `cn()` is a plain filter+join, not `tailwind-merge`); **D-3 ✅ deferred**, with SA's direction to add a payload field in slice 3 rather than link a doc; **D-6 ✅**. **Copy judgement: the fail-open notice is accurate, actionable, undismissible by construction, and does not overclaim about the fleet** — every claim is about the mechanism, never the present state — with the single exception of F-3. Standards clean: zero `console.*` in any touched file, Pino server-side, repository pattern untouched, Zod unchanged, no literal-gate false positive and no gate rule change. Nothing writable and nothing pre-empting slice 3, both confirmed at source. Nine mutations run by SA (the Dev's five plus four more); **two did not bite**, and became F-1 and F-6, with a third exposing F-4. `npm run lint` **does** need its own fix — `next lint` cannot read the flat `eslint.config.mjs`, so the repo has no working full-lint entry point — but as a separate one-line chore, not in this slice. |
+| 2026-09-23 | **Slice 2 implemented — the read-only page, the first part of this work anyone can look at** | On `feature/business-os-llm-admin-ui-slice2`, off `origin/main` `d1e54bef` (slice 1 = PR #98). **Nothing writable: no form submits, two `GET`s, and every expanded card says so and points at the runbook.** **15 files under `app/admin/business-os-llm/` — 10 source (page, `types.ts`, `copy.ts`, `format.ts` and **seven** components) and 5 test files (71 tests, 80 after the SA fixes)** — two shared test helpers, and the sidebar entry beside System Config — **`app/admin/system-config/page.tsx` untouched, D-U1, its 20 `console.*` calls still out of scope and the trigger still recorded**. **FR-14's three states render as three different things** through one shared `LastChangedLine`: a resolved email, *"Last changed at Y — actor not recorded"* plus a sentence explaining that a change made before this screen or from the command line carries no name (**never** "see the audit trail" — S2-T7b: the seeded rows have no entry either), and **no line at all** when there is no row, where the card prints the FR-7 code-defaults line instead. That middle state is what **all eight** areas show today, which is correct. **QA DEF-6 closed at the boundary** (S2-T7c): `LastChangedBy.at` is now `string \| null` in `adminSettingsView.ts`, and one formatter returns `null` rather than `new Date(null)`'s 1970. **RC-D implemented as a first-class state:** the panel auto-runs on expand, the route's 400 now carries `reason: 'too_long_ago' \| 'since_in_future'` (deviation D-1, a purely additive slice-1 change so the client never string-matches a sentence DEF-5 already rewrote once), and it renders *"Too long ago to check"* in the neutral tone with the route's own explanation — **not an error**, which is the state every area is in today. **All five ledger readings come from `ledgerCheckCopy`'s constants**, the caveat is the shared string, no branch has a tick or a green class, and **chat is not special-cased client-side at all** — the route short-circuits it before any repository read, so the panel renders the kind it is handed and holds no knowledge of which areas the ledger can see (asserted at source). **The fail-open notice is undismissible by construction** (no `onClose`, no visibility state, asserted) and appears twice: a banner above the cards and one sentence beside every area's switch. **Deviations for SA: D-1** (the `reason` codes), **D-2** (local `Chip` instead of `components/ui/badge.tsx` — its `outline` variant is coloured by `--v2-*` tokens that `/admin` does not load, and `cn()` is a plain `join`, not `tailwind-merge`, so a `className` override is decided by stylesheet order), **D-3** (the requirement's *"What off means here"* section is **not** rendered — the payload carries no such field and a client-side per-area table would be the hardcoding FR-6 forbids; it needs either a payload field in slice 3 or a doc link). **D-6:** the five `LITERAL_RULES` and `codeOf` were extracted to `tests/helpers/bos-llm-literal-rules.ts` at their third caller, exactly as SA suggested; no rule changed. Gates: `typecheck:bos-llm` **231/28/0 new**; `check:bos-llm-literals` **43/2/0** with the `--list` set **unchanged** (no exemption, no new inclusion, no baseline regenerated); `lint:hooks` clean; `build` exit 0 with `ƒ /admin/business-os-llm` in the table; jest **25 suites / 526 tests, all green**; `eslint` 0 problems in every new file. **Five deliberate mutations** were run to prove the load-bearing assertions bite (delete the inline notice, render `new Date(null)`, colour the RC-D state red, add a client-side chat branch, import a server module + a model literal) — each failed exactly the test named for it, all reverted. ⚠️ `npm run lint` **cannot run in this repo** (`next lint` on Next 14 ignores the flat config and opens its interactive setup) — pre-existing, flagged for the TL, with `npx eslint <paths>` used instead. |
 | 2026-09-22 | RM: recorded why the gate PR ships its inclusion list empty | §4.11. An inclusion entry cannot ship ahead of the file it names — `staleInclusions()` correctly treats a missing target as the rot it was built to catch. Split re-cut: #91 keeps the rule/discipline work with an empty list proved against a fixture; #92 adds the entry beside the route. |
 | 2026-09-22 | **QA defects closed; slice 1 ready for the user's review** | **DEF-3 was the one that mattered, and the first fix for it did not work.** QA proved the equivalence suite blind in one direction: mutation **M2** (ask about the raw candidate, offer a normalised one) left it **15/15 green** while offering models a save refuses, because the assertion quantified over candidates and never over what is **offered**. Added **DIRECTION B** — every offered option, across four areas and every call, asserted acceptable to the guardrail — and **it still passed M2 on the first attempt**, because the fixture priced everything, so no normalised form could become unacceptable. Made the price mock **exact-match as production is** and added a candidate priced under one exact casing; **M2 now fails** (`offered: "openai:gpt-4o-uniq", acceptable: false`), the restored file is md5-identical to its backup, and the suite is 16/16. **DEF-1:** `since` gains an upper bound (2 min skew tolerance), so `2099-01-01` is refused rather than answered *"about 60 seconds"*. **DEF-2:** the `[200,400]` assertion — satisfied by every status — is replaced by the ordering it meant to pin (chat short-circuits **before** the bound, so an ancient `since` still gets 200 and still reads nothing). **DEF-4** AC-25's stale "cost sum" wording corrected; **DEF-5** the refusal copy now states the real reach (24 h change age, ≈48 h across both reads). **DEF-6** recorded as S2-T7c for slice 2. **DEF-7** written up standalone with its fix shape. **The owed insert-caller census is in §4.8: exactly three call sites, none passing the new argument** — `setMultiple` (which is how the Step 0 admin route reaches it) and the operator script — so the parameter is additive and unreached, `updated_by` is never written as null, and the one real change is the insert branch's explicit `updated_at`. Flagged while enumerating, **not fixed**: `SystemConfigService.set` bypasses the repository entirely and contradicts its own docstring. Gates: `177/31/0 new`; `43/2/0`, 1 included by name; build clean; jest **899/900**. |
 | 2026-09-22 | **QA test report for slice 1 appended — ship recommended, 2 defects to fix in-slice** | **All four gates re-run by QA and reproduced exactly**: `typecheck:bos-llm` 177/31/**0 new**; `check:bos-llm-literals` 43 in scope, 2 exempt, 0 violations, `--list` showing 1 **included by name** with the exemption set byte-identical and the baseline untouched; `next build` exit 0; jest **895/896**. **The one red suite is pre-existing, proved by stashing the whole tree** (`git stash push -u` of all 21 paths, re-run at a clean `d9c60ab4`, identical `Today is 2026-09-21` vs `-22` diff, then popped). **It will NOT spread** — `Planner.ts:420` is the only snapshotted call site that stores a raw user message carrying a date, and every other snapshot hashes its system prompt — **but it will never heal**: the value is per **UTC day**, so the selection is red every day from now on and `-u` buys one. Escalated as DEF-7, for the TL. **The picker/validator equivalence was attacked against the REAL save path, not against `checkModelForCall`**: 8 areas × every call × 12 hostile `ai_model_pricing` shapes (padded id, zero price on one side only, an image model on a token call and the converse, a model priced for one image size but not all, a foreign provider, over-long and empty ids, NaN prices, reasoning models, non-string models), both directions, compared with `validateAreaRow`. **No divergence — 20/20 green.** The unconditional code default is safe because `checkModel` carries the same equal-to-default shortcut. **SA's 'near-tautological' judgement measured, and it is half right:** mutation **M1** (the exact pre-fix bug) turns the equivalence test red **only because** the fixture carries `' gpt-4o '` and an over-long id — the eight absolute siblings do carry the weight, as SA said. But mutation **M2** (ask about the raw candidate, offer a normalised one) leaves the suite **15/15 green** while offering a model a save refuses: the assertion quantifies over **candidates**, never over what is **offered**. **DEF-3**, one assertion to close. **Gate discipline proved by breaking it.** Each of the five `LITERAL_RULES` broken in turn: all five fail and name themselves (the three shape rules subsumed by the broad one exactly as the suite's own subsumption test records; isolating variants prove each narrow rule independently live). The **required** gate catches the same literals (exit 0 → 1 → 0). **RC-B:** renaming the route and moving it to a sibling folder both take the gate to **exit 1** with the stale-inclusion message — **red, not green**. **Ledger panel:** window offset exactly 60 000 ms from the imported constant, `before` the same length ending at the save, 'calls **completed**', a quiet area reads `no_traffic_either`, chat issues **zero** cross-tenant reads, `too_soon` reads nothing, no success affordance in any of the five strings, and `LEDGER_READINGS_WITH_COUNTS` partitions the union **exactly**. **`since` boundary:** exactly-24 h allowed, a hair over refused before any read, absent/empty/malformed/negative/epoch/no-designator/date-only/max-Date all 400. **RC-D CONFIRMED, measured:** the live seed `2026-09-21T10:14:08Z` is ≈29 h old, so a panel rendered on load **400s on all eight areas today** — slice 2 must render *'too long ago to check'*, never an error. **New defects: DEF-1 (Medium)** — `since` is bounded below but **not above**, so `2099-01-01` returns 200 `too_soon` with *'about 60 seconds'*, false by 73 years (no DB read; contained, but the route's own principle is refuse-never-guess and it should apply symmetrically); **DEF-2 (Low)** the chat-ordering test asserts `[200,400]`, which every status satisfies; **DEF-3 (Low)**; **DEF-4 (Low, doc)** AC-25 still says *'and cost sum'* after RC-6 dropped it, so as written it cannot pass; **DEF-5 (Low)** the refusal copy says 24 h while the union of both windows reaches ≈48 h; **DEF-6 (Low)** `lastChangedByFor` can emit `at: null` against a `string` type, for slice 2. **51 PASS / 2 FAIL / 1 PARTIAL / 0 BLOCKED, no High open. Ship slice 1 with DEF-1 and DEF-3 fixed in-slice.** Still owed before merge: §4.8's enumeration of every **insert** caller of `SystemConfigRepository.set` in the PR description. QA restored the tree exactly (all probe suites deleted, mutated file md5-identical to its pre-mutation backup); the stash round-trip rewrote working-tree line endings to CRLF under `core.autocrlf=true`, with **no** whitespace churn in `git diff --numstat`. |

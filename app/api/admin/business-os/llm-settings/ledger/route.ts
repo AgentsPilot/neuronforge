@@ -156,6 +156,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
+          // A MACHINE-READABLE reason beside the sentence. The screen must
+          // render this refusal as "too long ago to check" and NOT as an
+          // error (RC-D): every seeded row is days old, so this is the branch
+          // the panel takes on load for every area. Inferring it from the
+          // message text would make a copy edit a UI bug.
+          reason: 'too_long_ago',
           error:
             'The ledger check only works for a change made in the last 24 hours. (It also reads the same length of time before the change, so the two reads together look back about 48 hours.) For an older change, use the audit trail instead.',
         },
@@ -171,6 +177,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
+          reason: 'since_in_future',
           error: 'That change time is in the future, so there is nothing to check yet.',
         },
         { status: 400 }
