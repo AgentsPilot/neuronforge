@@ -332,6 +332,147 @@ AccountLookup "in force" counts, measured:
 - [ ] All acceptance criteria pass — ready for commit
 - [x] **Issues found — Dev must address before commit.** Three High (QA-0, QA-1, QA-2), one Medium behavioural (QA-3), one Medium judgement (QA-5, in progress), four test-quality (QA-4, QA-6, QA-7, QA-8). **QA-7 is the one to fix even if everything else is already in hand: the page and its payload have never been compared, and that is why a green suite hid an unrenderable page.**
 
+---
+
+## QA Testing Report — round 2 (re-verification)
+
+**QA — 2026-09-24, 21:05**
+**Test mode:** regression on the fixes + full adversarial re-check
+**Strategy used:** A + B + the jsdom render path, plus **mutation testing** as the primary instrument. Every fix was attacked by reintroducing the defect it claims to close and confirming the suite goes red; every new guarantee was attacked by asking what it would miss.
+**Input source:** prompt keywords (five numbered re-check items)
+**Tree state:** implementation still uncommitted, nothing of it touched by me. Docs at `6a925e96`.
+
+### Verdict
+
+**The three High and the Medium are genuinely closed. I could not break any of them.** Four new Medium/Low findings remain, one of which is a truth-on-screen issue in the very mechanism added to fix a truth-on-screen issue.
+
+### 1. Every fix, attacked
+
+Each mutation was applied to the real source, the suite run, and the file restored from a backup; the tree is byte-identical afterwards and green.
+
+| # | Mutation — the defect, put back | Result | Verdict |
+|---|---|---|---|
+| M1 | drop `withheldWithoutGate` from the payload (**the exact High-1 defect**) | **6 failed** / 9 | ✅ matches Dev's claim of 6, exactly |
+| M2 | drop `gateBuilt` from every capability | **3 failed** / 9 | ✅ |
+| M3 | the route grows a field the recording lacks | **1 failed** / 36 | ✅ the deep-equal bites |
+| M4 | the recording loses a key the route still sends | **1 failed** / 42 | ✅ the deep-equal bites both ways |
+| M5 | register a gate file that does not exist | **2 failed** / 17 | ✅ the forward check bites |
+| M6a | `syntheticAccount.onboardingStartedAt` → `null` (my round-1 vacuity mutation) | **5 failed** / 25 | ✅ matches Dev's claim of 5 |
+| M6b | `syntheticAccount.planVersion` → `999` (my second one) | **2 failed** / 25 | ✅ matches Dev's claim of 2 |
+| M7 | the route stops sending `granting` (**the High-3 defect**) | **3 failed** / 42 | ✅ |
+
+**Dev's compile-time claim is true, and I checked it rather than took it.** Forcing `AccountPayload.basis` back to `string` produces **`TS2352` at `accountLookup.contract.test.tsx:56`** — *"neither type sufficiently overlaps"* — plus seven consequent errors in the component. So the recorded-body assignment really is the check that would have caught High-2 before a render. I also tried the mirror defect, which is the one that caused High-1: adding a required field to `AccountPayload` that the recording lacks is caught at `accountLookup.contract.test.tsx:56`, and adding one to `PlansPayload` the server never sends is caught at `page.render.test.tsx:67`. **Both contracts fail in both directions.**
+
+### 2. Do the two contract suites close QA-7? — Yes, and I verified the claim under them
+
+Dev's claim is *"those are the only two payloads this screen consumes"*. **I checked it myself** rather than accepting it: `grep` for `fetch(` across the whole screen returns exactly two call sites — `page.tsx:53` (`/plans`) and `AccountLookup.tsx:67` (`/accounts/[accountId]`) — and there is no `require`, no dynamic `import`, no third endpoint. The claim holds **for success bodies**.
+
+**It does not hold for error bodies, and that is NEW-3 below.**
+
+The two suites are also built differently, which is worth recording: the **plans** contract is enforced at *runtime* (the real builder rendered through the real page, plus key-lists at three levels), the **accounts** contract at *compile time* (the recorded body assigned to `AccountPayload`) **and** at runtime. Neither mechanism is the weaker one; they close different halves.
+
+### 3. The recorded body — can it go stale in a way that passes?
+
+This was the sharpest question asked, so it got the sharpest test. **No, not in the ways that matter**, because the recording is not compared to a hand-written expectation — it is compared to the **live route running the real resolver over the real config**. The repositories are mocked, but `capabilities` is produced by `getSnapshot` → `resolveEntitlements` → the real catalog and the real matrix. So:
+
+| If this changes | Does the deep-equal notice? |
+|---|---|
+| the route adds or removes a field | ✅ M3 |
+| the recording loses a field | ✅ M4 |
+| a capability is added to the catalog | ✅ the `capabilities` map gains a key |
+| a tier's value changes | ✅ the resolved value changes |
+| `isGrantingValue` changes | ✅ `granting` flips |
+
+**The residual is coverage, not staleness:** the recording is one account — `basic`, no overrides, no anomaly — so the component is only ever rendered in that state. A **tenant whose plan row is missing** still reaches the panel (the new 404 only catches non-tenants), and renders `basis.kind === 'none'`, `anomaly: no_plan_row`, `plan: null`. That path is correct today — with server-side `granting` it now reads *"Capabilities in force (0 of 38)"*, which is the truth — but nothing tests it, and it is the state this screen was most wrong about a round ago.
+
+### 4. The enforcement registry — can the both-ways check be satisfied vacuously?
+
+**The backward half is not vacuous**: it walks 300+ product files (with a `> 300` floor so a broken file list cannot pass silently), strips comments first, and currently finds exactly one hit — `LanguageContext.tsx` naming `payments.invoices` — which is exempted per *(file, capability)* pair with a reason and a ratchet asserting the file still names it. The exemption **hides nothing**: it is scoped to that one pair, so any other capability in that file would still fail. That is the right shape.
+
+**The forward half bites** (M5: a registered file that does not exist → 2 failures).
+
+**But the claim is stronger than the check — NEW-5 below.**
+
+### 5. Nothing I had confirmed correct was disturbed
+
+| Previously confirmed | Now |
+|---|---|
+| the 19 / 10 / 19 / 19 include-withhold split | **unchanged** — re-dumped the real payload and re-compared to the config by hand |
+| the synthetic accounts, all eleven fields | **unchanged**, and now *asserted by value* per plan kind via the newly exported `previewAccountFor` |
+| the recorded account body's granted count | **19 of 38** for `basic` — the same number I derived independently in round 1, now produced by the route |
+| authorization | `requireAdmin` still first in both handlers; 401 / 403 / fail-closed still parametrized over every handler; `test:authz-guard` **74 passed**, no new exemption |
+| lint / typecheck | ESLint **0 problems**; tsc **2,077**, with **zero in any file this branch creates or touches** — Dev's stated baseline, confirmed |
+| scope suite | **30 suites, 789 tests** |
+
+### New findings
+
+**NEW-1 — The "no gate yet" marker is on 10 capabilities that cannot have a gate, and it says the product allows them.** — Severity: **Medium**
+
+- Files: `lib/business-os/entitlements/adminPlansView.ts:282-288`, `app/admin/business-os-tiers/page.tsx:133-141`, `components/PlanCard.tsx:149-156`
+- `withheldWithoutGate` is **19** entries, and **10 of them are the `not_built` capabilities** — `payments.reminders`, `marketing.posts`, `sms.messages`, the five `addon.*`, `website.custom_domain`, `marketing.mass_email`. The heading reads *"Withheld in the plan, not yet refused by the product"*, the body reads *"the configuration says no and nothing asks"*, and each one carries an amber chip whose tooltip says *"Withheld by the plan, but nothing in the product refuses it yet."*
+- For a capability whose feature **does not exist**, that is read as *"a customer can currently get this despite their plan"*, which is false — there is nothing to refuse. The page says so itself, sixty pixels below, in **Cannot be sold (10)**.
+- It also **dilutes the one entry that matters**: `chat.access` — the whole reason SA asked for R-1 — is 1 chip in 19 amber chips.
+- Suggested shape (Dev's call): exclude `lifecycle === 'not_built'` from `withheldWithoutGate` and from the badge, since the not-built panel already carries them with better evidence; the summary then reads **9**, and every one of the nine is a real commercial gap.
+
+**NEW-2 — The tenancy rule is now a second copy of itself, and the two copies disagree under a repository error.** — Severity: **Medium**
+
+- Files: `app/api/admin/business-os/entitlements/accounts/[accountId]/route.ts:78-90` against `lib/business-os/entitlements/adminOps.ts:253-261`
+- `isBusinessOsTenant` is **private** to `adminOps.ts`, so the route re-implements it. The implementations are not equivalent: `adminOps` reads the profile and **short-circuits on a hit**, reading onboarding only when there is no profile; the route reads **both in `Promise.all`** and returns 500 `tenant_check_failed` if **either** errors.
+- So for an account **that has a profile** whose onboarding read fails: the **write** path says "tenant, proceed"; the **read** path says 500. The route's own comment states *"the same rule as `isBusinessOsTenant`, so the two paths cannot disagree about what a tenant is."*
+- It fails in the safe direction and the test that "asserts both paths answer alike" exercises only the tenant / non-tenant cases, not the error case — the same shape as the vacuity class already twice found here. **Fix: export `isBusinessOsTenant` and call it from both.** That is the only version of this that cannot drift.
+
+**NEW-3 — The third contract nobody checks: the error vocabulary. A code Dev added in this very fix has no copy.** — Severity: **Medium**
+
+- Files: `app/admin/business-os-tiers/components/AccountLookup.tsx:43-49` against the route's four codes
+- The GET now returns **`invalid_account_id`** (400), **`tenant_check_failed`** (500, new in this fix), **`not_a_business_os_account`** (404, new in this fix) and **`entitlement_inputs_unavailable`** (503), plus the catch-all `Internal server error`. `ERROR_COPY` names three. **`tenant_check_failed` is not one of them**, so an admin whose tenancy read fails is shown `Could not read that account (tenant_check_failed).`
+- Nothing pins the two lists together — no test, no type. This is **QA-7 one layer down**: the success payload now has a contract, the failure payload does not, and the first thing added after the contract landed already fell through the hole. Round 1's `not_a_business_os_account` was dead copy for the same reason.
+- Cheapest fix: export the route's error codes as a union and key `ERROR_COPY` by it, so an unhandled code is a compile error rather than a string in front of an admin.
+
+**NEW-4 — `accountLookup.contract.test.tsx` is flaky under load: 2 tests failed in 1 of 6 full-scope runs.** — Severity: **Low** (honest caveat below)
+
+- The suite takes 26–41 s, uses `userEvent.type` of a 36-character uuid (36 awaited events) before every assertion, and relies on Jest's default 5 s per-test timeout and `waitFor`'s default 1 s. It passed in isolation and in five of six scope runs; the failing run overlapped a heavy `tsc` **that I was running**, so I caused the contention and say so.
+- It still matters: CI machines are contended too, and this is the suite whose entire job is to be the thing that catches a page-breaking regression. **An intermittently red contract suite gets re-run and ignored, which is exactly how the next green run hides the next broken page.** A `testTimeout`, or seeding the input with `fireEvent.change` instead of 36 keystrokes, removes it.
+
+**NEW-5 — "A gate cannot ship unregistered" is stronger than the check.** — Severity: **Low**
+
+- File: `lib/business-os/entitlements/__tests__/enforcementPoints.test.ts:146`
+- The backward scan matches only **quoted string literals**: `code.includes("'" + capability + "'")`. A gate written with an imported constant, a template literal, or a capability looked up through a map — and `chatActionMap.ts`, which already maps chat actions to capabilities, lives inside `lib/business-os/entitlements/`, which `NOT_A_GATE` excludes **wholesale** — will not be found. The plausible Slice 2 shape (`decide({ capability: CHAT_SURFACE })` in a chat route) produces **no hit**, and the page goes on saying "no gate yet" after the gate ships.
+- Same class, smaller: the source guard's import rule (`source.guard.test.ts:67`) matches only `from '…'`, so `require()` and dynamic `import()` walk past it.
+- Neither is a defect today. Both are claims that should be narrowed to what they do, as R-4 taught: *"a gate cannot ship unregistered as a bare string literal"* is still a good rule and is honest.
+
+**NEW-6 — Two "negative controls" that cannot fail.** — Severity: **Low**
+
+- `lib/business-os/entitlements/__tests__/adminPlansView.test.ts:278-285` — *"the two QA mutations are caught, and the assertion says which"*:
+  ```ts
+  expect({ ...real, onboardingStartedAt: null }).not.toEqual(real);
+  ```
+  This is true for **any** object with any field. It passes if `previewAccountFor` returns `{}`. It tests `toEqual`, not the preview. Its own comment says *"Without it, the expectations above are just three more copies of the same object"* — it provides no such protection.
+- `lib/business-os/entitlements/__tests__/enforcementPoints.test.ts:183-188` — *"would report a gate the moment one is registered"* builds a local literal `withGate` and asserts on it. **`hasEnforcementPoint` is never called.** It reduces to `expect(true).toBe(true)`.
+- The real protection is elsewhere and **does** work — my M6a/M6b/M5 runs prove the by-value assertions and the forward check bite. These two add nothing and read as coverage, which is worse than absent.
+
+**NEW-7 — The gate suite's "nothing was read before the refusal" now has two blind repositories.** — Severity: **Low**
+
+- The accounts GET reads `businessProfileRepository` and `onboardingConversationRepository` before the snapshot; neither mock pushes to `repositoryCalls` (`routes.test.ts:126-145`), which only `findEntitlementInputs` does. `expect(repositoryCalls).toEqual([])` on the 401 / 403 / fail-closed tests therefore no longer covers everything the handler reads. The assertion is still **true** — the gate returns first — but it is now narrower than it reads.
+
+**Carry-over — QA-8 (Low), unfixed:** `AccountLookup.tsx:191` still renders `JSON.stringify(resolved.value)`, so the value column shows `{"included":1,"purchasable":false}` — the thing the plan cards deliberately avoid and assert against.
+
+### SA's third low item
+
+It is **R-4**: *"the 'strongest form' comment overclaims."* Dev's table above accounts for R-3 and R-5 (as *"the lookup takes an id"*) and adds a fifth item SA did not list (propagating the layout-guard pattern), which is why the count came out one short. **R-4 is already done** — `adminPlansView.test.ts:81` now opens *"SA R-2: this is NOT the strongest form, and the comment used to claim it was"*, and states what the test does prove. All three of SA's lows are closed.
+
+### Would a non-technical reader be misled?
+
+**Not about the plans.** The four cards, the prices, the allowances, the endings and the include/withhold split are true to the configuration — re-verified capability by capability after the changes.
+
+**Not about the account any more.** The panel renders, the count is the resolver's, and an id that is not a Business OS account is told so instead of being given a plan.
+
+**Yes, mildly, about the product — NEW-1.** A reader who counts the amber chips concludes that nineteen things a plan withholds are currently obtainable. Nine are. The other ten do not exist, which the same page says in a different panel. It errs toward over-warning, which is the safe direction, and it is a copy-and-filter change rather than a design one.
+
+### Final Status
+
+- [x] **Ready for the user's review.** The three High and the Medium are closed, and I could not break them.
+- [ ] Not yet ready to commit. **Fix first: NEW-1** (the page's own truth standard) **and NEW-3** (a raw error code in front of an admin, added by this fix) — both small. **NEW-2** should be the exported-function version before this pattern is copied. NEW-4 to NEW-7 and QA-8 are follow-ups that need not hold the commit, but NEW-6 should be deleted rather than left reading as coverage.
+
 ## Commit Info
 
 _RM to populate._
