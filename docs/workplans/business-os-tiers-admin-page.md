@@ -500,6 +500,81 @@ It is **R-4**: *"the 'strongest form' comment overclaims."* Dev's table above ac
 - [x] **Ready for the user's review.** The three High and the Medium are closed, and I could not break them.
 - [ ] Not yet ready to commit. **Fix first: NEW-1** (the page's own truth standard) **and NEW-3** (a raw error code in front of an admin, added by this fix) — both small. **NEW-2** should be the exported-function version before this pattern is copied. NEW-4 to NEW-7 and QA-8 are follow-ups that need not hold the commit, but NEW-6 should be deleted rather than left reading as coverage.
 
+---
+
+## QA Testing Report — round 3 (final re-verification)
+
+**QA — 2026-09-24, 22:05**
+**Test mode:** targeted regression on the eight closures, proportionate
+**Strategy used:** mutation first. Eight mutations against the eight claims, each applied to real source, run, and reverted. Only where a mutation could not settle a question did I read.
+**Input source:** prompt keywords (six ranked items)
+**Tree state:** implementation uncommitted and untouched by me; docs at `f3d7b967`; `origin/main` merged in.
+
+### Verdict
+
+**Seven of the eight closures hold under attack. One does not, and it is the one asked about first.**
+
+| # | Mutation — the claim, attacked | Result | Verdict |
+|---|---|---|---|
+| **P1** | **a plausible FR-46 gate added to `chat-v4`: imports a new symbol from the module, no capability literal, call named `qaChatSurfaceGate`** | **16 passed, 0 failed** | ❌ **NOT caught — see R3-1** |
+| P1b | the same gate, written as `decide(` | 1 failed | ✅ caught |
+| P2 | a brand-new product file importing the entitlements module | 1 failed | ✅ caught |
+| P3 | a fifth error code in the GET handler, no copy | 1 failed | ✅ caught |
+| P4 | `not_built` back in `withheldWithoutGate` (the NEW-1 defect) | **3 failed** | ✅ caught |
+| P5 | `hasEnforcementPoint` ignores its injected registry | 1 failed | ✅ caught |
+| P6 | the read path answers 404 where the write path answers 500 | 1 failed | ✅ caught |
+| P7 | the shared formatter emits raw JSON again | 1 failed | ✅ caught |
+| — | baseline and after-restore | **106 / 106 both** | tree byte-identical |
+
+### R3-1 — The chat-v4 exemption is a denylist, and I got a gate through it — Severity: **Medium**
+
+- File: `lib/business-os/entitlements/__tests__/enforcementPoints.test.ts` — the test *"the chat route still only RECORDS — the claim its exemption rests on"*
+- The exemption's claim-check is `expect(chat).toContain('shadowChatPlan')` plus **four forbidden substrings**: `decide(`, `requireEntitlement`, `withEntitlement`, `.check(`. That is a **denylist of call names**, and the comment above it says *"Without this, 'known non-gate' would be a place for a gate to hide."*
+- **It still is.** I added to `app/api/business-os/chat-v4/route.ts` exactly what a Slice 2 author plausibly writes:
+  ```ts
+  import { shadowChatPlan } from '@/lib/business-os/entitlements/shadow';
+  import { resolveEntitlements } from '@/lib/business-os/entitlements/resolver';
+  const qaChatSurfaceGate = async () => { … };
+  ```
+  No capability literal, so the literal scan sees nothing. chat-v4 is already in `KNOWN_NON_GATE_IMPORTERS`, so the new import rule sees nothing. The call is not one of the four names, so the claim-check sees nothing. **All 16 enforcement tests stayed green**, and the page would go on saying *"no gate yet"* for `chat.access` after the gate shipped.
+- Rename it `decide(` and it is caught (P1b). Put the same gate in a **new** file and it is caught (P2). The hole is exactly the one file the exemption names as *"the file the real gate will be added to (FR-46)"*.
+- **The property the coordinator asked me to confirm — that the FR-46 gate cannot ship while the page still says "no gate" — does not hold.** It holds for a gate written one of four ways, in the one file that matters.
+- **Fix, and it is one assertion:** make the claim an **allow-list of imported symbols** rather than a denylist of call names. chat-v4 imports exactly one thing from the module today (`shadowChatPlan`, line 108). Assert that set equals `['shadowChatPlan']` and P1 fails immediately, because a gate must reach the resolver through *some* symbol. Combined with the literal scan the cover is then complete: a gate in chat-v4 must either name a capability (scan), or import something new (allow-list), or use only `shadowChatPlan` — which records and can refuse nothing.
+- Dev is right that NEW-5 was understated, and the second rule is a real improvement — it catches every gate **outside** chat-v4. This is the remaining corner, and it is the corner FR-46 lands in.
+
+### The other five items
+
+**2. NEW-6's replacements can fail.** The enforcement control now calls `hasEnforcementPoint` against an injected non-empty registry, checks a negative, and checks that a key with an empty array is **not** a gate; making the function ignore its parameter turns it red (P5). The account control's first assertion — `previewAccountFor(config,'trial',NOW)` against a written-out object — is real. **Two of its three assertions are still tautological**, though: `expect({ ...expectedTrial, onboardingStartedAt: null }).not.toEqual(expectedTrial)` compares two local literals and is true of any object and any mutation, and the `planVersion: 999` one differs on that field alone regardless of what the function returns. The real protection is the by-value tests above them, which do bite (proven in round 2: 5 and 2 failures). **Low** — delete the two tails rather than leave them reading as controls.
+
+**3. NEW-1 re-derived independently.** I dumped the real payload and computed the sets myself: `withheldWithoutGate` is **exactly the nine `chat.*` capabilities**, the intersection with the ten `not_built` is **empty**, and **no card marks a `not_built` capability**. `chat.access` is 1 in 9. The 19 / 10 / 19 / 19 split is unchanged. Three tests hold it (P4 → 3 failures), and the one that matters most asserts the *property* — every survivor's lifecycle is not `not_built` — rather than the number 9, so it survives a catalog change.
+
+**4. NEW-3 closed.** The suite reads the GET handler's own source for every `error: '…'` and asserts each renders as a sentence not containing the code. I added a fifth code with no copy: **red** (P3). The extraction is quote-specific (`/error:\s*'…'/`), so a code written with double quotes or a template literal would be missed — worth knowing, not worth fixing now.
+
+**5. NEW-2 properly closed.** `isBusinessOsTenant` is now **one exported function** called by both paths (`adminOps.ts:257`, `accounts/[accountId]/route.ts:85`), not two implementations agreeing by inspection. Making the read path answer differently is caught (P6). The case Dev says was false before — profile found, onboarding read failing — now answers **200 on read and 200 on write**, because the shared function short-circuits on the profile hit.
+
+**6. The second recording and the formatter.** `recordedAccountBodyNoPlanRow.json` is the no-plan-row tenant: `state: unknown`, `basis: {kind:'none'}`, `anomaly: no_plan_row`, `plan: null`, and **0 of 38 granting** — where the old `value !== false` rule said 14. It is deep-equal-pinned in `routes.test.ts:513` and rendered in the lookup contract, and it is assigned to `AccountPayload`, so it carries the same compile-time protection as the first. `capabilityDisplay.ts` is one `server-only` formatter used by both payloads; the lookup renders `resolved.display` rather than `JSON.stringify` (`AccountLookup.tsx:207`), no display in the real payload contains `{`, and making the formatter emit raw JSON is caught (P7).
+
+### Numbers
+
+| Check | Result |
+|---|---|
+| Wide scope (`app/admin`, `lib/business-os/entitlements`, `app/api/admin/business-os`, `lib/admin`, `supabase/migrations`, `scripts/__tests__`) | **45 suites / 1,230 tests, 0 failures** — consistent with Dev's 43 / 1,217 on a marginally narrower scope |
+| `test:authz-guard` | **74 passed**, no new exemption |
+| ESLint, the three paths | **0 problems** |
+| `tsc --noEmit` (verified method) | **2,077**, and **zero in any file this branch creates or touches** — Dev's stated baseline, confirmed |
+| Mutation baseline / after restore | 106 / 106 both; working tree byte-identical |
+
+**One observation, not a finding:** `app/api/business-os/chat-v4/__tests__/route.audit.test.ts` **fails to run** on this branch — a deliberate `throw` inside a mock escapes and kills the worker. The route and that test are **byte-identical to `HEAD`** and nothing this branch adds is in their import graph, so it is inherited from `origin/main`, not caused here. It is worth one line only because it is the file the R-1 mechanism now depends on, and no scope anyone is running includes it.
+
+### Would a non-technical reader be misled?
+
+**No.** The plans, the prices, the endings and the split are true to the configuration; the two panels no longer contradict each other; the account lookup renders, counts with the resolver's rule, prints sentences rather than JSON, and tells the truth about an id that is not a Business OS account. The residual is not something a reader sees today — it is that the page's self-clearing promise has one route by which it could **stop** being true in Slice 2, silently.
+
+### Final Status
+
+- [x] **Ready for the user's review.** Everything a reader sees is correct, and I could not break any of it.
+- [ ] **One assertion before commit — R3-1.** An allow-list of chat-v4's imported symbols in place of the four-name denylist. It is the difference between "the marker clears itself" being a mechanism and being a convention, and the whole of R-1 rests on it. Everything else on this page is done.
+
 ## Commit Info
 
 _RM to populate._
