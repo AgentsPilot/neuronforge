@@ -11,6 +11,15 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import {
+  ADMIN_LAYOUT_GUARD_FAILURE,
+  ADMIN_LAYOUT_UNPARSEABLE,
+  adminLayoutGuardVerdict,
+  adminLayoutWith,
+  DISABLED_ADMIN_LAYOUTS,
+  GUARDED_ADMIN_LAYOUTS,
+  NOT_A_COMPONENT,
+} from '@/tests/helpers/admin-page-guard';
 import { codeOf, LITERAL_RULES } from '@/tests/helpers/bos-llm-literal-rules';
 
 const ROOT = 'app/admin/business-os-llm';
@@ -128,56 +137,48 @@ describe('S2-T1: the page adds no guard of its own, and offers no lesser tier', 
   });
 
   /*
-   * The one guard over all 22 `/admin` pages, asserted three times over.
+   * The one guard over all 22 `/admin` pages.
    *
-   * ── The history of this assertion, because it is the point ───────────────
-   * v1 read the layout RAW and looked for the substring `await
-   * requireAdminPage()`. SA commented the call out and got 114/114 green
-   * (F-1). v2 stripped comments and matched the call as a shape — and QA then
-   * disabled the guard two more ways that still passed 115/115 (DEF-S2-1,
-   * DEF-S2-2):
+   * ── The assertion moved OUT of this file ─────────────────────────────────
+   * It now lives in `tests/helpers/admin-page-guard.ts` and is shared with
+   * rule R6 of `lib/admin/__tests__/admin-authz-surface.guard.test.ts` — the
+   * REQUIRED `Admin authz surface guard` check.
    *
-   *   try { await requireAdminPage(); } catch {}        // redirect swallowed
-   *   if (…) return <AdminChrome>{children}</AdminChrome>;  // guard bypassed
-   *   await requireAdminPage();
+   * Why that mattered enough to move it: R6 asserted only
+   * `toContain('requireAdminPage')`, which the IMPORT LINE satisfies, so the
+   * gate that blocks every merge in the repo passed with the call deleted (F-2,
+   * reproduced by SA four times) while THIS suite — which no CI gate runs —
+   * held the real property. Two copies of one security assertion, and the
+   * weaker copy was the one with authority.
    *
-   * The first is the hazard `app/admin/layout.tsx` names in its OWN comment —
-   * `requireAdminPage` redirects by THROWING, so a bare `catch` renders the
-   * admin shell to a non-admin — and the second is OI-20's "the guard proves
-   * present, not first" landing in the file where the guard actually lives.
-   *
-   * So the property asserted is no longer "the call exists somewhere" but
-   * **the call is the FIRST statement of the component body**. That single
-   * property subsumes all four known mutations: deleted, commented out,
-   * wrapped in try/catch (the first statement becomes the `try`), and preceded
-   * by an early return. `firstStatementOfAdminLayout` is exercised against
-   * every one of them below, so the rule is proved on synthetic sources rather
-   * than only on today's clean file.
+   * The shared module also closes the three shapes SA found still satisfying
+   * the v3 rule (`&&`, the ternary, a locally shadowed no-op). Its header
+   * carries the full history and SA's standing ruling that the durable fix is
+   * behavioural rather than textual.
    */
-  const GUARD_CALL = /await\s+requireAdminPage\s*\(\s*\)/;
-
-  /**
-   * The first statement of `AdminLayout`'s body, comments stripped.
-   *
-   * Returns `null` when the signature cannot be found at all, which is itself
-   * a failure — a silent `''` would make this assertion vacuous, which is the
-   * exact defect class it exists to close.
-   */
-  function firstStatementOfAdminLayout(source: string): string | null {
-    const code = codeOf(source);
-    const opener = /export default async function AdminLayout\s*\([\s\S]*?\)\s*\{/.exec(code);
-    if (!opener) return null;
-    const body = code.slice(opener.index + opener[0].length).trim();
-    // Statement-terminated by `;`, or by `{` for a block opener like `try {`
-    // — which is precisely how a swallowed guard is caught.
-    const end = Math.min(
-      ...[body.indexOf(';'), body.indexOf('{')].filter((index) => index >= 0).concat([body.length])
-    );
-    return body.slice(0, end).trim();
-  }
 
   it('the guard is the FIRST statement of the layout body', () => {
-    expect(firstStatementOfAdminLayout(read('app/admin/layout.tsx'))).toMatch(GUARD_CALL);
+    const verdict = adminLayoutGuardVerdict(read('app/admin/layout.tsx'), codeOf);
+    expect({
+      ...verdict,
+      ifGenuinelyUnguarded: ADMIN_LAYOUT_GUARD_FAILURE,
+      ifParsedIsFalse: ADMIN_LAYOUT_UNPARSEABLE,
+    }).toEqual({
+      // Echoed on BOTH sides, so it PRINTS on failure without being
+      // CONSTRAINED. Pinning the literal text rejected the correct
+      // `const admin = await requireAdminPage();` and
+      // `const { id } = await requireAdminPage();` on the real file --
+      // the same false-positive class SA found three of. The property is
+      // the verdict, not the spelling.
+      firstStatement: verdict.firstStatement,
+      parsed: true,
+      firstStatementIsTheGuard: true,
+      importsCanonicalGuard: true,
+      shadowsTheGuard: false,
+      guarded: true,
+      ifGenuinelyUnguarded: ADMIN_LAYOUT_GUARD_FAILURE,
+      ifParsedIsFalse: ADMIN_LAYOUT_UNPARSEABLE,
+    });
   });
 
   it('the layout does not wrap the guard in a try/catch, which would swallow the redirect', () => {
@@ -186,63 +187,57 @@ describe('S2-T1: the page adds no guard of its own, and offers no lesser tier', 
     expect(codeOf(read('app/admin/layout.tsx'))).not.toMatch(/try\s*\{[\s\S]*?requireAdminPage/);
   });
 
-  /**
+  /*
    * Every way we know of to disable the guard, as synthetic layouts. A rule is
-   * only proved by the inputs it must REJECT.
+   * only proved by the inputs it must REJECT — and, just as importantly, by the
+   * correct inputs it must ACCEPT, because a rule that rejects a legitimate
+   * edit is how a required check gets switched off.
+   *
+   * Both tables are run HERE and again in the surface guard. That is not the
+   * duplication the extraction removed: the duplicated thing was the RULE, and
+   * there is now one of those. Running the same fixtures in both suites is what
+   * proves the two callers agree.
    */
-  const DISABLED_LAYOUTS: ReadonlyArray<{ name: string; body: string }> = [
-    { name: 'deleted', body: '  return <AdminChrome>{children}</AdminChrome>;' },
-    {
-      name: 'commented out',
-      body:
-        '  // TEMPORARILY DISABLED FOR DEBUGGING: await requireAdminPage();\n' +
-        '  return <AdminChrome>{children}</AdminChrome>;',
-    },
-    {
-      name: 'block-commented out',
-      body: '  /* await requireAdminPage(); */\n  return <AdminChrome>{children}</AdminChrome>;',
-    },
-    {
-      name: 'wrapped in try/catch (redirect swallowed)',
-      body:
-        '  try { await requireAdminPage(); } catch {}\n' +
-        '  return <AdminChrome>{children}</AdminChrome>;',
-    },
-    {
-      name: 'preceded by an early return (guard bypassed)',
-      body:
-        "  if (process.env.NODE_ENV === 'development') return <AdminChrome>{children}</AdminChrome>;\n" +
-        '  await requireAdminPage();\n' +
-        '  return <AdminChrome>{children}</AdminChrome>;',
-    },
-  ];
-
-  const layoutWith = (body: string) =>
-    `import { requireAdminPage } from '@/lib/admin/requireAdminPage';\n\n` +
-    `export default async function AdminLayout({\n  children,\n}: {\n  children: React.ReactNode;\n}) {\n${body}\n}\n`;
-
-  it.each(DISABLED_LAYOUTS.map((variant) => [variant.name, variant.body] as const))(
-    'a guard that is %s fails the first-statement assertion',
-    (_name, body) => {
-      const first = firstStatementOfAdminLayout(layoutWith(body));
-      expect({ first, guarded: first !== null && GUARD_CALL.test(first) }).toEqual({
-        first,
+  it.each(DISABLED_ADMIN_LAYOUTS.map((v) => [v.name, v] as const))(
+    'a guard that is %s fails the assertion',
+    (_name, variant) => {
+      const verdict = adminLayoutGuardVerdict(variant.source, codeOf);
+      expect({ name: variant.name, guarded: verdict.guarded }).toEqual({
+        name: variant.name,
         guarded: false,
+      });
+      // The named part must be the one that catches it, so a rule cannot go
+      // dead behind another rule that happens to cover the same fixture.
+      expect({ name: variant.name, caught: verdict[variant.caughtBy] }).toEqual({
+        name: variant.name,
+        // `shadowsTheGuard` is the one sub-rule whose TRUE value is the
+        // violation; the others report the property that must hold.
+        caught: variant.caughtBy === 'shadowsTheGuard',
       });
     }
   );
 
-  it('a real guard passes, and an unrecognisable signature fails rather than passing vacuously', () => {
-    expect(firstStatementOfAdminLayout(layoutWith('  await requireAdminPage();'))).toMatch(
-      GUARD_CALL
+  it.each(GUARDED_ADMIN_LAYOUTS.map((v) => [v.name, v.source] as const))(
+    'a correctly guarded layout (%s) passes',
+    (_name, source) => {
+      expect(adminLayoutGuardVerdict(source, codeOf).guarded).toBe(true);
+    }
+  );
+
+  it('a file with no default-exported component fails closed rather than vacuously', () => {
+    // The parser is name-agnostic now (pinning the component's NAME is what made
+    // three legitimate shapes report null), so the vacuity case is "no default
+    // export at all" rather than "not called AdminLayout".
+    const verdict = adminLayoutGuardVerdict(NOT_A_COMPONENT, codeOf);
+    expect({ parsed: verdict.parsed, first: verdict.firstStatement, guarded: verdict.guarded }).toEqual(
+      { parsed: false, first: null, guarded: false }
     );
-    expect(firstStatementOfAdminLayout('export default function Something() {}')).toBeNull();
   });
 
   it('the import alone never satisfies the rule', () => {
-    const importOnly = layoutWith('  return <AdminChrome>{children}</AdminChrome>;');
+    const importOnly = adminLayoutWith('  return <AdminChrome>{children}</AdminChrome>;');
     expect(importOnly).toContain('requireAdminPage');
-    expect(firstStatementOfAdminLayout(importOnly)).not.toMatch(GUARD_CALL);
+    expect(adminLayoutGuardVerdict(importOnly, codeOf).guarded).toBe(false);
   });
 });
 
