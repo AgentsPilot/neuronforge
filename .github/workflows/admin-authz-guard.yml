@@ -7,7 +7,7 @@
 #   R3  a route.ts under app/admin/** (route handlers bypass layouts)
 #   R4  an access decision keyed on a `role` value (profiles.role is user-writable)
 #   R5  a migration adding an RLS policy that references profiles.role
-#   R6  app/admin/layout.tsx without its server-side page guard
+#   R6  app/admin/layout.tsx whose FIRST STATEMENT is not the page guard
 #
 # ── NO `paths:` FILTER, ON PURPOSE ─────────────────────────────────────────
 # This is the whole reason the job exists as its own workflow.

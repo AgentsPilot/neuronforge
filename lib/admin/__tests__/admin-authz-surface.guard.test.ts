@@ -120,6 +120,32 @@
 import fs from 'fs';
 import path from 'path';
 
+import {
+  ADMIN_LAYOUT_GUARD_FAILURE,
+  ADMIN_LAYOUT_UNPARSEABLE,
+  adminLayoutGuardVerdict,
+  CORPUS_FLOORS,
+  DISABLED_ADMIN_LAYOUTS,
+  GUARDED_ADMIN_LAYOUTS,
+  guardsItselfFirst,
+  isClientComponent,
+  NOT_A_COMPONENT,
+  SELF_GUARDING_SERVER_PAGE,
+  SERVER_LAYOUT_WITH_USE_CLIENT_IN_A_COMMENT,
+} from '@/tests/helpers/admin-page-guard';
+import { blankStringLiterals } from '@/tests/helpers/source-scan';
+
+/*
+ * Re-exported because this file's own unit tests below exercise it, and because
+ * `stripComments` and rule R1 (D-Q1) both depend on it. It MOVED to
+ * tests/helpers/source-scan.ts when the page-guard assertion needed the same
+ * primitive: SA defeated that assertion with a decoy component signature inside
+ * a template literal, which is D-Q1 one file over. One implementation, imported
+ * by both rules — a second copy of "what counts as a string" is how two guards
+ * drift apart.
+ */
+export { blankStringLiterals };
+
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
 
 /** Everything an admin access decision can live in. */
@@ -445,33 +471,6 @@ export function stripSqlComments(source: string): string {
   return source.replace(/^[ \t]*--.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
-/**
- * Blank the CONTENTS of string and template literals, preserving length and
- * newlines, so brace-matching cannot be thrown off by a `{` inside a string.
- *
- * Only used for finding a handler's body boundaries. The gate check itself
- * runs against the un-blanked code, because a primitive inside a string literal
- * must still count (a false positive costs a conversation; a false negative
- * costs the platform).
- */
-export function blankStringLiterals(code: string): string {
-  /*
-   * Quote rules follow JavaScript, deliberately: only a template literal may
-   * span newlines. The earlier single pattern allowed `'` and `"` to run across
-   * lines, so one apostrophe in prose (`// don't`) could "open" a string that
-   * ran to the next apostrophe pages later, blanking real code in between.
-   *
-   * That was harmless while this helper was only used for brace matching. It is
-   * NOT harmless now that `stripComments` scans this scaffold (D-3): a blanked
-   * region is a region where `//` and block openers stop being visible. Bounding
-   * `'` and `"` to a single line keeps the worst case to the line the
-   * apostrophe is on — which, being a comment, is discarded anyway.
-   */
-  return code.replace(
-    /`(?:\\[\s\S]|[^`\\])*`|'(?:\\[^\n]|[^'\\\n])*'|"(?:\\[^\n]|[^"\\\n])*"/g,
-    (m) => m[0] + m.slice(1, -1).replace(/[^\n]/g, ' ') + m[m.length - 1]
-  );
-}
 
 /** Index just past the `)` matching the `(` at `openParen`, or -1. */
 function matchParen(scaffold: string, openParen: number): number {
@@ -786,12 +785,27 @@ const SCANNED: ScannedTs[] = TS_FILES.filter((f) => rel(f) !== SELF).map((f) => 
   return {
     file: rel(f),
     code: stripComments(raw),
-    isClient: /^\s*['"]use client['"]/m.test(raw),
+    /*
+     * STRIPPED, not raw, and anchored to the start of the file.
+     *
+     * Against raw source a block comment one of whose lines begins with
+     * `'use client'` — plausible prose in a file explaining why it is NOT a
+     * client component — made this true, and R6 then FAILED ON A CORRECT FILE.
+     * The `/m` flag made it worse by accepting the directive anywhere.
+     *
+     * Single-sourced with the page-guard helper so the two cannot disagree.
+     */
+    isClient: isClientComponent(raw, stripComments),
   };
 });
 
 const ROUTE_FILES = SCANNED.filter((s) => ROUTE_FILE_RE.test(s.file));
 const ADMIN_API_ROUTES = ROUTE_FILES.filter((s) => s.file.startsWith('app/api/admin/'));
+
+// ── The `/admin` page tree ─────────────────────────────────────────────────
+
+/** The one file R6 requires to be a Server Component: the guard itself. */
+const ADMIN_GUARD_LAYOUT = 'app/admin/layout.tsx';
 
 const SQL_FILES = SQL_SCAN_ROOTS.flatMap((r) => walk(path.join(REPO_ROOT, r), /\.sql$/)).map((f) => ({
   file: rel(f),
@@ -1552,8 +1566,27 @@ describe('repo-wide guard: the admin authorization surface', () => {
   // ─────────────────────────────────────────────────────────────────────────
 
   describe('R6 — the /admin page tree is guarded on the server', () => {
-    it('app/admin/layout.tsx is a Server Component that calls the page guard', () => {
-      const layout = 'app/admin/layout.tsx';
+    /*
+     * ── F-2: what this used to assert, and why it was not enough ───────────
+     * `expect(scanned!.code).toContain('requireAdminPage')` — which the IMPORT
+     * LINE satisfies. SA deleted the call from `app/admin/layout.tsx` and this
+     * REQUIRED check stayed green, four times over.
+     *
+     * The property is now the one slice 2 had already reached and this gate had
+     * not: **the guard call is the FIRST STATEMENT of the layout body**, it IS
+     * the call rather than merely containing it, and the identifier comes from
+     * the real module. The rule and its fixtures live in
+     * `tests/helpers/admin-page-guard.ts` — ONE implementation, imported by this
+     * gate and by `app/admin/business-os-llm/__tests__/source.guard.test.ts`.
+     *
+     * Extracted rather than copied because the drift already happened once, in
+     * the direction that matters: the weaker copy was the one with authority
+     * over merges. Read that module's header before changing the rule; it
+     * carries all eight known mutations and SA's ruling that the durable fix is
+     * a behavioural test, not a fifth regex.
+     */
+    it('app/admin/layout.tsx is a Server Component whose FIRST statement is the page guard', () => {
+      const layout = ADMIN_GUARD_LAYOUT;
       if (R6_ALLOWED.has(layout)) {
         // Allow-listed: slice 5 is PARKED, so this is not "until" anything.
         // Assert the file still exists so the
@@ -1564,10 +1597,152 @@ describe('repo-wide guard: the admin authorization surface', () => {
 
       const scanned = SCANNED.find((s) => s.file === layout);
       expect(scanned).toBeDefined();
+
+      // A Server Component, or it could not await anything at all.
       expect(scanned!.isClient).toBe(false);
-      expect(scanned!.code).toContain('requireAdminPage');
+
+      // Read RAW and stripped by this file's own unit-tested stripper. Passing
+      // the stripper is REQUIRED by the helper's signature: on raw source a
+      // `//`-commented call passes, because the comment carries its own `;`.
+      const verdict = adminLayoutGuardVerdict(
+        fs.readFileSync(path.join(REPO_ROOT, layout), 'utf-8'),
+        stripComments
+      );
+
+      expect({
+        layout,
+        ...verdict,
+        ifGenuinelyUnguarded: ADMIN_LAYOUT_GUARD_FAILURE,
+        ifParsedIsFalse: ADMIN_LAYOUT_UNPARSEABLE,
+      }).toEqual({
+        layout,
+        // Echoed on BOTH sides, so it PRINTS on failure without being
+      // CONSTRAINED. Pinning the literal text rejected the correct
+      // `const admin = await requireAdminPage();` and
+      // `const { id } = await requireAdminPage();` on the real file --
+      // the same false-positive class SA found three of. The property is
+      // the verdict, not the spelling.
+      firstStatement: verdict.firstStatement,
+        parsed: true,
+        firstStatementIsTheGuard: true,
+        importsCanonicalGuard: true,
+        shadowsTheGuard: false,
+        guarded: true,
+        ifGenuinelyUnguarded: ADMIN_LAYOUT_GUARD_FAILURE,
+        ifParsedIsFalse: ADMIN_LAYOUT_UNPARSEABLE,
+      });
+    });
+
+    it('the guard is not wrapped in a try/catch, which would swallow the redirect', () => {
+      // `requireAdminPage` redirects by THROWING — the hazard the layout names
+      // in its own comment. Asserted separately so the failure says so.
+      const scanned = SCANNED.find((s) => s.file === ADMIN_GUARD_LAYOUT);
+      expect(scanned!.code).not.toMatch(/try\s*\{[\s\S]*?requireAdminPage/);
+    });
+
+    /*
+     * The rule proved against the inputs it must REJECT — the five from F-1,
+     * DEF-S2-1 and DEF-S2-2, plus the three SA found still passing the v3 rule
+     * (`&&`, the ternary, a locally shadowed no-op).
+     *
+     * These run here as well as in the screen suite ON PURPOSE. The extraction
+     * removed the duplicated RULE; running the shared fixtures in both callers
+     * is what proves the two callers still agree, and it puts the mutation
+     * evidence inside the check that actually gates merges.
+     */
+    it.each(DISABLED_ADMIN_LAYOUTS.map((v) => [v.name, v] as const))(
+      'a guard that is %s FAILS this rule',
+      (_name, variant) => {
+        const verdict = adminLayoutGuardVerdict(variant.source, stripComments);
+
+        expect({ name: variant.name, guarded: verdict.guarded }).toEqual({
+          name: variant.name,
+          guarded: false,
+        });
+
+        // And it is caught by the part of the verdict that is SUPPOSED to catch
+        // it, so no sub-rule can go dead behind another that happens to cover
+        // the same fixture.
+        expect({
+          name: variant.name,
+          caughtBy: variant.caughtBy,
+          caught: verdict[variant.caughtBy],
+        }).toEqual({
+          name: variant.name,
+          caughtBy: variant.caughtBy,
+          caught: variant.caughtBy === 'shadowsTheGuard',
+        });
+      }
+    );
+
+    /*
+     * And against the inputs it must ACCEPT. Not symmetry for its own sake: a
+     * rule that rejects a CORRECT layout turns `main` red for every PR in the
+     * repo, which is the single likeliest way to get a required check switched
+     * off. `const admin = await requireAdminPage();` is a legitimate future
+     * edit — the function returns the admin's identity.
+     */
+    it.each(GUARDED_ADMIN_LAYOUTS.map((v) => [v.name, v.source] as const))(
+      'a correctly guarded layout (%s) PASSES this rule',
+      (_name, source) => {
+        const verdict = adminLayoutGuardVerdict(source, stripComments);
+        expect({
+          name: _name,
+          parsed: verdict.parsed,
+          guarded: verdict.guarded,
+          firstStatement: verdict.firstStatement,
+          ifThisFails: ADMIN_LAYOUT_UNPARSEABLE,
+        }).toEqual({
+          name: _name,
+          parsed: true,
+          guarded: true,
+          firstStatement: verdict.firstStatement,
+          ifThisFails: ADMIN_LAYOUT_UNPARSEABLE,
+        });
+      }
+    );
+
+    it('a server layout whose COMMENT mentions use client is still a Server Component', () => {
+      // `isClient` used to read RAW source with /m, so a block comment line
+      // beginning `'use client'` — prose explaining why the directive must NOT
+      // be added — failed R6 on a correct file. A false positive on a required
+      // check is worse than the hole it closes: the cheap fix is to switch the
+      // check off.
+      expect(
+        isClientComponent(SERVER_LAYOUT_WITH_USE_CLIENT_IN_A_COMMENT, stripComments)
+      ).toBe(false);
+      expect(
+        adminLayoutGuardVerdict(SERVER_LAYOUT_WITH_USE_CLIENT_IN_A_COMMENT, stripComments).guarded
+      ).toBe(true);
+    });
+
+    it('a file with no default-exported component fails CLOSED rather than vacuously', () => {
+      const verdict = adminLayoutGuardVerdict(NOT_A_COMPONENT, stripComments);
+      expect({ parsed: verdict.parsed, first: verdict.firstStatement, guarded: verdict.guarded }).toEqual(
+        { parsed: false, first: null, guarded: false }
+      );
+    });
+
+    it('the mutation corpus may only GROW', () => {
+      /*
+       * The rule and the inputs that give it meaning live in one module, so a
+       * future edit could quietly delete the fixtures and leave a green suite
+       * that proves nothing. Same spirit as the exemption caps above: the
+       * corpus is allowed to grow, never to shrink, and shrinking it is a
+       * visible act in a diff.
+       */
+      expect(DISABLED_ADMIN_LAYOUTS.length).toBeGreaterThanOrEqual(CORPUS_FLOORS.disabled);
+      expect(GUARDED_ADMIN_LAYOUTS.length).toBeGreaterThanOrEqual(CORPUS_FLOORS.guarded);
+
+      // Every disabled fixture must be attributed to a sub-rule that exists.
+      for (const variant of DISABLED_ADMIN_LAYOUTS) {
+        expect(['firstStatementIsTheGuard', 'shadowsTheGuard', 'importsCanonicalGuard']).toContain(
+          variant.caughtBy
+        );
+      }
     });
   });
+
 });
 
 /**
