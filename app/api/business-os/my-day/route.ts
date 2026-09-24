@@ -95,7 +95,17 @@ export async function GET(request: NextRequest) {
         }
       | null;
     const preferences = preferencesResult.data as
-      | { timezone?: string | null; preferred_language?: string | null }
+      | {
+          timezone?: string | null;
+          /*
+           * Selected three lines above and missing from this cast, so the read
+           * of it below was a type error. A `.select()` and the shape it is
+           * asserted into have to be written together, or one of them is
+           * describing a row the other does not fetch.
+           */
+          timezone_confirmed_at?: string | null;
+          preferred_language?: string | null;
+        }
       | null;
 
     const userName =
