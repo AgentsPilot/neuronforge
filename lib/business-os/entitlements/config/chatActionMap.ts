@@ -18,11 +18,28 @@
 // until it is classified here — which is exactly the "a chat action is
 // unmapped" invariant FR-8 asks for.
 //
-// ── THE READ RULE (Q-B1, still the user's decision) ─────────────────────────
-// "Search via chat" is a sellable capability in the draft price list, but what
-// counts as search was never settled. Both readings are expressible here, and
-// shadow mode records BOTH, so the decision can be made with numbers instead of
-// intuition. See `ChatReadRule`.
+// ── THE READ RULE (Q-B1) ────────────────────────────────────────────────────
+// "Search via chat" is a sellable capability, but what counts as search was
+// never settled. Both readings are expressible here, and shadow mode records
+// BOTH, so the decision can be made with numbers. See `ChatReadRule`.
+//
+// ── WHAT Q-B1 BECAME ON 2026-09-23 ──────────────────────────────────────────
+// The tiers were configured that day, and chat turned out to be all-or-nothing:
+// Autopilot has all eight `chat.*` capabilities, Essentials has none. So Q-B1
+// stopped being the PRICING question it was asked as ("which plan includes
+// search?") — there is no middle plan whose reads could go either way.
+//
+// It did NOT go away. It became an ENFORCEMENT question, and a sharper one:
+// under `domain_group` an Essentials owner's chat question about their contacts
+// maps to `crm.core`, which Essentials HAS — so chat answers it, even though
+// Essentials is sold without chat. Under `read_only_plans_need_search` the same
+// question maps to `chat.search` and is refused.
+//
+// That is why the dual recording stays. It is the only thing that measures the
+// difference, and the difference is now "is the chat surface open on the plan
+// that does not include chat?" — see the ⚠️ note on the `basic` row in
+// tierMatrix.ts and workplan §4.32. Deleting either reading before Slice 2 has
+// answered that would throw away the measurement that answers it.
 
 import type { CapabilityOrUngated, ChatReadRule, Ungated } from '../types';
 import type { CapabilityId } from './catalog';
@@ -78,11 +95,17 @@ export const ENTITY_DOMAIN: Readonly<Record<string, ChatMapping>> = {
   // Email
   emails: 'chat.email',
 
-  // The agent platform. Gating these would couple the two products, which B-8
-  // forbids: a Business OS subscription grants nothing on the agent platform and
-  // vice versa. Showing an owner their own agent runs is not a Business OS sale.
-  agents: { ungated: 'agent platform, B-8' },
-  agent_runs: { ungated: 'agent platform, B-8' },
+  // ── The agent platform is NOT in the chat catalog any more ───────────────
+  // `agents` and `agent_runs` were classified here as deliberately ungated
+  // (B-8: a Business OS subscription grants nothing on the agent platform, and
+  // vice versa). They were removed from the chat catalog on main, so the
+  // invariant test — which walks the LIVE catalog — started failing on an
+  // entity that no longer exists to gate.
+  //
+  // Removed rather than kept "just in case": an entry for an entity the planner
+  // cannot produce is a claim nobody can check. If chat ever offers the agent
+  // platform again, the same test will fail until it is classified, and B-8
+  // says what the answer should be.
 };
 
 /**
