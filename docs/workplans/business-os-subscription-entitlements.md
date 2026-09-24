@@ -4116,6 +4116,8 @@ One note for RM: my P-1/P-2 fixes to the rollback script from the last round are
 
 ### 14.13 QA — the SQL paste fix and the four plans (2026-09-24)
 
+> ⚠️ **PARTIALLY RETRACTED by QA, 2026-09-24 — see §14.14.** Finding **A-1** was right that the stated mechanism and the evidence could not both be true, and the probe (§4.37) settled it: the mechanism is **disproven**. Finding **A-2** (the twelve comment semicolons) was therefore framed on a model that does not hold — the rule is kept as hygiene, not as a cause, and the scripts have since been rewritten to contain no comments at all. The fragment counts in A-1/A-2 are "the model we had at the time", not a diagnosis. Everything in Part B (the tiers) stands.
+
 **Test mode:** full. **Strategy:** **A + B + E** — suites run independently, the splitter failure **reconstructed and simulated** rather than replayed, and the tier rules **probed against the real config** with a temporary test that was deleted afterwards.
 **Reviewed against:** docs `a4a69bbd` + §13.9 (T-1..T-5); Slice 1 merged (PR #93) and applied to production.
 **Timing:** Dev applied SA's fixes while I reviewed. **All five (T-1 to T-5) landed before I finished**, the last at 00:19; every number and quotation below is from the tree at **00:21**.
@@ -4184,6 +4186,104 @@ One note for RM: my P-1/P-2 fixes to the rollback script from the last round are
 - [x] **Six findings: A-1 High (a verification gap settled by one paste), A-2 Medium, A-3/A-4/A-5 Low, B-1 for the user, B-2 Low.** None blocks the commit.
 - [x] **Still true: nothing in this branch has been run against any database**, and the four scripts remain unproven against the editor that broke them.
 
+### 14.14 QA — the boring rewrite, the privilege fix and the retractions (2026-09-24)
+
+**Test mode:** full. **Strategy:** **A + B + E** — suites run independently, the rewritten checker compared **check by check** against the last committed version, the ACL predicates reasoned through against real ACL strings, and the runbook read as the operator.
+**Reviewed against:** docs `6b7f2931`, `72180a3d`, `455c0f47` (§4.36–§4.38). SA's §13.10 was landing in parallel; nothing below depends on it.
+
+**Verdict: ✅ PASS — ready for the user's code review and for RM to commit.**
+- **Meaning is preserved across all twenty checks**, two are strengthened, two added, and **no check passes vacuously** — including the new prose-to-key indirection, which I verified end to end.
+- **A4, A4b and A10 can all fail**, and the one false-positive route I went looking for is closed by the extraction.
+- **The privilege fix is correct, idempotent and complete**, and a fresh apply of the corrected `20261005` now lands in exactly the state the hand-fix achieved — a new environment never needs the follow-up.
+- **Three findings, all Low.** One is a wrong row count in the runbook table the operator uses to tell whether a grid came back whole.
+
+#### 14.14.1 What QA ran
+
+| Command | Result |
+|---|---|
+| `npm run test:bos-entitlements` | ✅ **50 suites, 960 tests** |
+| The SQL guard + the new privileges suite | ✅ **2 suites, 81 tests** |
+| Everything above + admin routes + `lib/admin` + `scripts/__tests__` | ✅ **59 suites, 1,260 tests, 0 failures** |
+| Hooks ESLint over the module and the admin routes | ✅ exit 0 |
+| Typecheck, the verified method | ✅ **2,029**, 0 × TS2688, **0 in entitlements, 0 under `supabase/migrations`, 0 in the new guard test**. The three `scripts/__tests__` diagnostics are all in `check-bos-llm-literals.test.ts` — pre-existing and unrelated |
+
+#### 14.14.2 Meaning preservation — check by check
+
+I mapped every row of the last committed checker onto the rewrite. **Twenty checks, all present, none weakened:**
+
+| Old row | New row | Predicate |
+|---|---|---|
+| A1 / A2 / A3 | same | identical (`table_oid IS NULL`, `NOT rls_on`, `policy_count.total = 0`) |
+| **A4 client roles have no grant** | **A4 client roles have no acl entry at all** | **Strengthened** — the production entry was `anon=m`, which a check looking for particular privileges would have passed |
+| — | **A4b service_role has no delete or truncate** | **New** |
+| A10 service_role can work | A10 service role can read and write | same question, letters instead of `aclexplode` |
+| A8 / A6 / A7 / A5 invoker / A5 execute / A10 functions | same | **including both non-vacuity legs**: A6 keeps `count(*) = 4 AND …`, A7 keeps `count(*) = 2 AND …` |
+| **26 function owners (INFO)** | **preserved** | the row QA asked for in the very first round is still there |
+| A9 / A11 | same | `trigger_bindings.bound = 2`, `constraint_matches.matched = 3` |
+| B1 / B2 / B3 / B4 / Q-5 / B5 / C counts / 61 / read-only | same | predicates character-for-character equivalent (`counts.missing = 0`, `counts.tenant_count = 0 OR counts.backfilled > 0`, `counts.plan_rows <= counts.tenant_count`, `trigger_origin_rows > 0 → PASS else INFO`) |
+
+**The one I checked hardest — A5 no client execute — is not weaker, it is broader.** The old version's `proacl IS NULL` leg (for a function, a null ACL *is* `EXECUTE TO PUBLIC`) survives as `acl_is_null`, and the rewrite adds explicit PUBLIC-entry detection that the old `aclexplode` version got from `grantee = 'PUBLIC'`.
+
+**Does the prose-to-key move create vacuity?** No, and I checked it rather than assuming: **all 45 `fix` keys emitted by the three pasted scripts resolve to a documented entry in the runbook.** Zero dangling pointers. The three `BLOCK n VERDICT` rows each aggregate their own block with the same FAIL > WARN > PASS precedence the single `OVERALL` row had.
+
+#### 14.14.3 Can A4, A4b and A10 fail?
+
+| Check | Verdict |
+|---|---|
+| **A4** | ✅ Proven in the field. Its four patterns cover `anon=`, `authenticated=` and PUBLIC **both when first (`'=%'`) and when later (`'% =%'`)** — correct precisely because `acl_text` is `array_to_string(relacl, ' ')`, so entries are space-separated. A NULL `relacl` yields `''` → no client entry → PASS, which is right for a table (unlike a function). |
+| **A4b** | ✅ Fails on `arwdDxtm`, passes on `arwxtm`. **The false-positive route I went looking for is closed:** `substring(acl_text from 'service_role=([a-zA-Z*]*)')` stops at the `/`, so a grantor name containing a `d` — `/supabase_admin` is the realistic one — can never be read as a DELETE privilege. |
+| **A10** | ✅ `WITH GRANT OPTION` is handled: `*` is inside the character class, so `a*r*w*` is captured whole and `position()` still finds each letter. It fails when the grant is genuinely missing (no entry → `''` → 0 of 3). |
+
+**One thing to carry forward, not a defect:** A4b checks `d` and `D` only, so `x`, `t` and `m` on `service_role` are deliberately unchecked — consistent with the narrow revoke §4.38 chose and offered to change. If the strict version is ever taken, A4b has to widen with it.
+
+#### 14.14.4 The privilege fix
+
+| Question | Answer |
+|---|---|
+| Idempotent / safe to re-run? | ✅ Every statement is `REVOKE` or `GRANT`; a revoke from a role holding nothing is a no-op, a grant already held is a no-op. |
+| Anything beyond REVOKE/GRANT? | ✅ No. `BEGIN`, `SET LOCAL lock_timeout`, `COMMIT` and 38 privilege statements. No DDL, no DML. |
+| Does the narrow `service_role` revoke leave anything the module needs? | ✅ Nothing. No repository method deletes — `endOverride` updates, the reset RPC ends and upserts — and the fact triggers run as DEFINER (owner), so they need no `service_role` privilege at all. |
+| **Does a FRESH apply now land where the hand-fix landed?** | ✅ **Yes, and this is the important one.** `20261005` now does `REVOKE ALL … FROM PUBLIC, anon, authenticated` (so a future privilege like `m` is covered by construction), `REVOKE DELETE, TRUNCATE … FROM service_role`, then the positive `GRANT SELECT, INSERT, UPDATE`. Starting from Supabase's `arwdDxtm` default that yields `service_role=arwxtm` — character for character the state the user re-verified live. **A new environment never needs `20261009`.** |
+
+#### 14.14.5 The privileges test
+
+**The verbatim pinning is real and load-bearing.** Nine exact SQL fragments are asserted present in the checker, including the whole `substring(plan_table_acl.acl_text from 'service_role=([a-zA-Z*]*)')` expression and both `position(...)` calls — so the SQL cannot change without this suite going red. The non-vacuity legs are there (A10 fails when the grant is missing; A4 passes once the entries are gone), and `touches privileges only` carries `statements.length > 20` so it cannot pass on an empty parse.
+
+**Two limits worth recording, since the brief asked what the test cannot know:**
+
+| # | Sev | Finding |
+|---|---|---|
+| **QA-1** | Low | **The TS predicates are a re-implementation, and only the SQL side is pinned.** `hasClientEntry` / `serviceRolePrivs` (`business-os-entitlements-privileges.test.ts:154-157`) happen to mirror the four `LIKE`s and the `substring` exactly — I checked each — but the pin asserts the *SQL contains those strings*, not that the TS matches them. A future edit to the regexes alone would drift silently. One way to close it: derive the TS predicates from the pinned strings, or assert both directions on a shared table of ACL fixtures. |
+| **QA-2** | Low (note) | **`ACL_AFTER` is a transcription, asserted as fact.** `expect(privs).toBe('arwxtm')` (`:196`) encodes what the user reported after applying the fix. It matches his live re-verification today, so it is accurate — but the suite would pass just the same if the real ACL differed, because nothing here reads a database. The comment explains *why* the entries disappear (PostgreSQL drops an ACL entry once it carries no privileges), which is correct and is the justification for A4's "no entry at all" framing. |
+
+#### 14.14.6 The guard and the retractions
+
+**The framing now claims only what it can support.** The header says the rules are *"hygiene … not a fix and not a proof that a file will paste"*, and names both failed pastes. **Two findings of mine from §14.13 are closed properly rather than papered over:** the scanner now reads a **multi-line string literal as one string** (my A-3) and a **`$$` body as one unit including the comments inside it** (my A-4), each with its own named test, and there is a test for an unterminated dollar quote. Seven files are covered, four of them hand-pasted, with a meta-test that pins the count and another that keeps the migrations in the list.
+
+**The retraction sweep is complete.** I grepped the three pasted scripts, both migrations, the privilege fix and the runbook for any surviving statement of the disproven mechanism — **none**. §4.33, §4.35 and §13.9 all carry retraction notes. **The one gap was my own §14.13**, whose A-2 was framed on that model; I have added a retraction line to it pointing here.
+
+#### 14.14.7 The runbook, read as the operator
+
+**It stands alone, and step 9 is the right shape** — it states the two defects, says plainly that no data was exposed and that this is "a fix at your convenience, not an incident", gives the paste, says it is safe to re-run, and tells him exactly what A4 and A4b should say afterwards, including *why A10 reads the same before and after* so the fix cannot look like a regression. **Step 8 is exactly the week-later check he will run unaided:** block 3 again, row 61 above `0`, and a `business_os_plan_fact_` log search that comes back empty. The two-names note (triggers are `business_os_plan_on_…`, functions are `business_os_plan_fact_…`) is the kind of thing that saves a confused half hour.
+
+| # | Sev | Finding |
+|---|---|---|
+| **QA-3** | Low | **The block table says block 2 returns `BLOCK 2 VERDICT` + 10 rows; it returns 9.** `BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md:104`. I counted the file (block 1: 6, block 2: 9, block 3: 9) and the user's own field report agrees — he saw **6 / 8+INFO / 6**, and 8+INFO is 9. Blocks 1 and 3 are right. It matters because this is the table he uses to tell whether a grid came back whole; a grid that is one row short of the documented count is exactly what should make someone stop. The block-2 reference table below it correctly lists all nine including `owners`. |
+
+#### 14.14.8 Needs the user
+
+1. **Nothing blocking.** QA-1 and QA-2 are test-quality notes; QA-3 is a one-character fix in the runbook, worth making before the ~1 October run because it is the number he will check the grid against.
+2. **The field evidence closed my §14.13 A-1**, and I have retracted the part of that section that rested on the disproven model. The honest position is now recorded in three places consistently: the rules are hygiene, the cause is unknown, and the scripts avoid the problem by having nothing to misparse.
+3. **Unchanged and still open:** G-1 (the service-role key rotation) before enforcement is ever switched on, and G-2 (the required CI checks). Neither moved this round.
+
+#### 14.14.9 Final Status
+
+- [x] **PASS — ready for the user's code review and for RM to commit.** 50 suites / 960 tests in the CI scope, 59 / 1,260 in the wider one, guard + privileges 81, lint clean, typecheck 2,029 with zero in any file this branch touches.
+- [x] **Meaning preserved across all twenty checks**, two strengthened, two added, and all 45 runbook keys resolve.
+- [x] **A4 / A4b / A10 can each fail**, and the grantor-name false positive is closed by the extraction.
+- [x] **Three Low findings: QA-1, QA-2, QA-3.**
+- [x] **Still true: the entitlement module enforces nothing**, and the only production changes so far are the schema, the backfill and the privilege fix.
+
 ## 15. Commit Info
 
 _RM to populate._
@@ -4229,3 +4329,4 @@ _RM to populate._
 | 2026-09-24 | SA code review of the SQL paste fix and the four plans: APPROVED for QA (SA) | Added §13.9. Ran `test:bos-entitlements` (49 suites / 930 tests), the new SQL guard (18) and `lint:hooks` — all green. Confirmed the root cause independently: a comment apostrophe inverts a naive splitter, real semicolons are then ignored, the next genuine quote re-inverts it, and a semicolon INSIDE a literal cuts the statement mid-sentence — which is exactly why the errors were `relation "a"` and `relation "it"`, and why the migrations survived. Both conditions are necessary; the guard forbidding both is the right response to a splitter we cannot inspect. Rephrasings verified meaning-preserving; row 55, row 30 and the raw sizes endorsed. **Chat-surface gap CONFIRMED and wider than reported:** under `domain_group` the entity domain is the default for every operation, so an Essentials owner can not only ask chat about contacts/tasks/website/insights but CHANGE them through it — no capability means "may use chat at all", so no combination of values can withhold it. Slice 2 must add one `chat.access` capability, gate the surface once per turn before per-capability checks, refuse as `not_entitled` with `lowestTier: pro` and have chat explain it, keep the per-capability map, and record the surface decision in shadow. Dev's decision to keep the dual read-rule recording endorsed (moot as pricing, live as enforcement). Required: T-1 write the gap into the requirement as an FR and into the Slice 2 addendum — it is the entire difference between the two paid plans and currently lives only in a test comment. Low: T-2 name the benign cause in row 55, T-3 extend the SQL guard to the migrations, T-4 cohorts.ts:33 type alias, T-5 mark the plan names as deliberately untranslated. Keep the unreachable `ungated` branch; the isolateModules mocks are acceptable; the typecheck sitting one below baseline is expected and the baseline should be refreshed. |
 | 2026-09-24 | QA of the SQL paste fix and the four plans: PASS (QA) | Added §14.13. Ran the final state: **49 suites / 934 tests**, the SQL guard + admin routes + authz guard (157), lint clean, typecheck **2,029** with 0 TS2688 and 0 in any entitlements file. **All five SA items (T-1 to T-5) verified applied**, T-1 in both halves — `chat.access` in the catalog and both tier rows, FR-46 + AC-38 in the requirement, and a new §5 Chat SURFACE row ahead of the per-capability one. **Part A:** the guard's parser is correct (a `--` inside a string is not a comment, `''` handled twice over, the negative control uses the real lines); the pre-fix offenders were reconstructed from `git show` rather than replayed (preflight 7+3, checker 2+8, all nine apostrophes on full-line comments); and the rephrasings are meaning-preserving — a filtered non-comment diff shows only `;`→`,` in display strings, three additive `counts` sub-selects and row 55, with **no predicate, threshold or status changed**. Row 55 discriminates and T-2's benign-cause text landed. **A-1 (High, verification gap):** implementing the splitter the guard's header describes shows the **fixed** preflight still splitting into 4 fragments, 3 prose-leading — one beginning with the bare word **`a`**, which is the user's exact error — while the same model says the two migrations would split into 63 and 6 fragments, and they applied cleanly. Both cannot be true, and there is no `--` inside any string literal pre-fix, so a regex comment-stripper does not explain it either. **One paste settles it**, and it is needed before the week-later checker run anyway. **A-2 (Med):** twelve semicolons remain inside `--` comments, and the fix made them live rather than dormant. A-3/A-4 (Low): the guard parses per line and has no `$$` rule. A-5: T-3 required rewording 25 comment lines and two `COMMENT ON` strings in two already-applied migrations. **Part B:** the not_built rule **re-verified against the REAL two-tier matrix** by a temporary probe (deleted) — six grant shapes refused on `basic` and `pro`, withholding accepted; presentation validated both ways (one direction via the record's enum key, message quoted); the ten-key diff test names its keys; the snapshot non-vacuity check now pins tier keys and row width, and the new shipped-matrix drift test fails when it should; `mode.ts` keeps the UD-2 mechanism alive under `isolateModules`; `decide.test.ts`'s cohort retarget is documented and does not paper over a behaviour change. **B-1 (for the user):** UD-2 no longer downgrades `enforce`, so the code-level safety net is gone while G-1 remains open. **B-2 (Low):** the write direction of the chat-surface gap — verified by me — is asserted nowhere in tests. |
 | 2026-09-24 | SA code review of the privilege fix and the rewritten scripts: APPROVED for QA, plus two SA retractions (SA) | Added §13.10 and a retraction banner on §13.9. **Retracted my own §13.9 confirmation of the paste root cause** — the apostrophe/semicolon mechanism is disproven by the probe, and I had treated evidence that was merely CONSISTENT with the theory as confirming it; also withdrew my typecheck `-1` attribution, which §4.38 disproves with the control. Ran `test:bos-entitlements` (50 suites / 960 tests) and the migration + script guards (5 suites / 217 tests) — all green. Privilege fix: diagnosis confirmed (an enumerated REVOKE goes stale when the server gains a privilege — PG17 MAINTAIN survived; a narrower GRANT does not remove what the defaults already gave, so service_role kept d/D and the migration comment was false in production); severity correctly framed as a nuisance privilege, not a read; the narrow service_role revoke endorsed over REVOKE ALL + re-grant because the failure mode of a wrong re-grant on a hand-applied migration is a module-wide outage, and the checker asserts the property rather than the string; the 20261005 fresh-environment fix is the right forward-fix-plus-source-fix pattern. Checker rewrite verified by inventory comparison rather than prose: **no predicate weakened** — A4 strengthened to "no ACL entry at all", A10 to explicit r/a/w over service_role's OWN extracted letters, A4b and B5 added, all others renamed only. The extraction via `substring(... from service_role=([a-zA-Z*]*))` is correct and is what stops A4b matching the owner's `d`. The TS privileges test is an honest pinned model — it proves the predicates on the two REAL ACL strings and says plainly it does not execute SQL; the gap it cannot close was closed by the user's production run agreeing with it in both directions. Guard retraction accurate, no stale explanation survives anywhere. Spread confirmed in all three migrations (SELECT is deliberate there, so REVOKE ALL is the WRONG fix) and correctly left out of this branch; the transferable rule is to verify the resulting ACL, not the statement. Tiers unaffected; M-2's "ends rows, never deletes" now has database-level backing it did not have when I approved it. Low: P-1 note in 20261005 that it was edited post-apply, P-2 one pointer line in 20261009. |
+| 2026-09-24 | QA of the boring rewrite, the privilege fix and the retractions: PASS (QA) | Added §14.14; added a partial-retraction note to §14.13 (its A-2 rested on the now-disproven mechanism). Ran: **50 suites / 960 tests** in the CI scope, **59 / 1,260** wider, guard + privileges **81**, lint clean, typecheck **2,029** with zero in entitlements, `supabase/migrations` or the new guard test. **Meaning preservation checked row by row:** all twenty checks survive the rewrite with identical predicates — including both non-vacuity legs (A6's `count(*) = 4`, A7's `count(*) = 2`) and the `function owners` INFO row — A4 and A5-execute are **stronger**, A4b and B5 are new, and **all 45 `fix` keys resolve to a documented runbook entry**, so the prose-to-key move adds no vacuity. **A4/A4b/A10 can each fail**, and the false-positive route I hunted is closed: `substring(... from 'service_role=([a-zA-Z*]*)')` stops at the `/`, so a grantor name containing `d` (`/supabase_admin`) cannot read as DELETE; `WITH GRANT OPTION` (`a*r*w*`) is handled because `*` is inside the class. **The privilege fix** is idempotent, privileges-only, and leaves nothing the module needs (no repository method deletes; the fact triggers run as owner). **A fresh apply of the corrected `20261005` lands on `service_role=arwxtm` — exactly the hand-fixed state — so a new environment never needs `20261009`.** **The guard's framing now claims only hygiene**, my §14.13 A-3 (multi-line strings) and A-4 (`$$` bodies) are both closed with named tests, and a sweep of the scripts, both migrations, the fix and the runbook found **no surviving statement of the disproven theory**. Three Low findings: **QA-1** the privileges test pins the SQL but its TS predicates are a re-implementation that could drift; **QA-2** `ACL_AFTER` is a transcription asserted as fact by a test that reads no database; **QA-3** the runbook's block table says block 2 returns 10 rows — it returns 9, as the user's own `6 / 8+INFO / 6` shows — and that is the number he checks the grid against on ~1 October. |
