@@ -7,6 +7,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { publicSiteUrl } from '@/lib/utils/origins';
 import {
   Link, FileText, Copy, ExternalLink, Trash2,
   MoreHorizontal, Loader2, TrendingUp, Users
@@ -180,7 +181,7 @@ export function CustomerAcquisitionList({
             name: page.title,
             url: pageUrl,
             fullUrl: subdomain
-              ? `https://${subdomain}.agentspilot.com/${page.slug}`
+              ? publicSiteUrl(subdomain, `/${page.slug}`)
               : `${baseUrl}/site/${subdomain}/${page.slug}`,
             status: page.status,
             clicks: 0, // TODO: Add analytics for landing pages

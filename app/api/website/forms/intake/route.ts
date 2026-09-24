@@ -33,6 +33,7 @@ import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRep
 import { activitySentence } from '@/lib/business-os/activityText';
 import { z } from 'zod';
 import { buildAttributionFromRequest } from '@/lib/utils/attribution';
+import { enrichCaptureAttribution } from '@/lib/business-os/enrichCaptureAttribution';
 
 const logger = createLogger({ module: 'WebsiteIntakeFormAPI' });
 
@@ -151,6 +152,15 @@ export async function POST(request: NextRequest) {
       captureChannel: 'form',
       pageUrl: data.page_url,
       generateSessionId: true
+    });
+
+    /*
+     * Where they came from: the page KIND, and the smart link if one sent them.
+     * Shared with every other capture route — see `enrichCaptureAttribution`.
+     */
+    await enrichCaptureAttribution(attribution, {
+      subdomain: data.subdomain,
+      pageUrl: data.page_url,
     });
 
     // Either identifier resolves the business — the schema no longer demands a

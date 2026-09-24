@@ -17,6 +17,9 @@
  */
 
 import { isBlockingGap, describeJourneyGaps, type JourneyGap } from '../journeyReadiness';
+// Client-safe: the mapping lives apart from the server module so a component
+// rendering a gap does not pull `supabaseServer` into the browser bundle.
+import { gapFixAction } from '../journeyGapFix';
 
 const HOURS: JourneyGap = { kind: 'hours', services: ['Training 60 min'] };
 const PROCESSOR: JourneyGap = { kind: 'processor', services: ['Training 60 min'] };
@@ -138,5 +141,104 @@ describe('what the invoicing gap asks for', () => {
     // `company_name` is required by the profile check AND the invoice check.
     const message = describeJourneyGaps([withFields(['company_name', 'company_name'])]);
     expect(message.match(/business name/g)).toHaveLength(1);
+  });
+});
+
+/*
+ * The timezone gap.
+ *
+ * Hours with no zone are not hours: `09:00–17:00` is only an instant once you
+ * know where. Unset falls back to UTC, so a Jerusalem business publishes a page
+ * offering times three hours from the ones it works — and unlike empty hours,
+ * the page looks perfectly fine. Nothing reports an error; the first person to
+ * find out is a client at a locked door.
+ */
+describe('the timezone gap', () => {
+  const TIMEZONE: JourneyGap = { kind: 'timezone', services: ['Training'] };
+
+  it('blocks, like hours and invoicing', () => {
+    expect(isBlockingGap(TIMEZONE)).toBe(true);
+  });
+
+  it('says what goes wrong, not what is missing', () => {
+    // "Set your timezone" reads as housekeeping and gets postponed. The reason
+    // it cannot wait is that every hour the page offers is the wrong one.
+    const message = describeJourneyGaps([TIMEZONE]);
+    expect(message).toContain('wrong times');
+  });
+
+  it('sends the owner to the tab that actually has the picker', () => {
+    /*
+     * Availability holds the hours; the timezone lives with the business's own
+     * details. Every surface used to map `isInvoicing ? 'invoice' :
+     * 'availability'`, so a third kind would have opened a tab where the thing
+     * the message names cannot be set.
+     */
+    expect(gapFixAction('timezone').tab).toBe('business');
+    expect(gapFixAction('hours').tab).toBe('availability');
+    expect(gapFixAction('invoicing').tab).toBe('invoice');
+    expect(gapFixAction('processor').tab).toBe('payments');
+  });
+
+  it('gives every kind a label, so none can open a tab unlabelled', () => {
+    for (const kind of ['hours', 'timezone', 'processor', 'invoicing'] as const) {
+      const fix = gapFixAction(kind);
+      expect(fix.key).toMatch(/^gap\.fix\./);
+      expect(fix.fallback.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('what currency does NOT do', () => {
+  it('is not a gap kind at all', () => {
+    /*
+     * Deliberate. `scheduling_services.currency` is already set on the row
+     * being booked, and a business may legitimately price in another country's
+     * currency — Israel charging a US client in USD. There is nothing for a
+     * currency gate to protect, and adding one would refuse bookings that are
+     * perfectly correct.
+     */
+    const kinds: JourneyGap['kind'][] = ['hours', 'timezone', 'processor', 'invoicing'];
+    expect(kinds).not.toContain('currency');
+  });
+});
+
+/*
+ * "Answered" is not "set".
+ *
+ * `user_preferences.timezone` defaulted to 'UTC' until 20261006, and 9 of 12
+ * accounts still carry that default. A gate reading the VALUE therefore
+ * protected nobody: every one of those businesses looked like it had chosen.
+ *
+ * `timezone_confirmed_at` is written whenever a human answers, so the question
+ * "has anyone said" has its own column rather than being inferred from a string
+ * that means two things.
+ */
+describe('a timezone is answered, not merely stored', () => {
+  const answered = (prefs: { timezone?: string | null; timezone_confirmed_at?: string | null }) =>
+    Boolean(prefs.timezone_confirmed_at) &&
+    Boolean(prefs.timezone) &&
+    Boolean(String(prefs.timezone).trim());
+
+  it('treats the old default as unanswered', () => {
+    // The row that 9 accounts are in: 'UTC' from the column default, nobody asked.
+    expect(answered({ timezone: 'UTC', timezone_confirmed_at: null })).toBe(false);
+  });
+
+  it('treats a deliberately chosen UTC as answered', () => {
+    // Same five characters, opposite meaning — which is the whole point.
+    expect(answered({ timezone: 'UTC', timezone_confirmed_at: '2026-09-22T10:00:00Z' })).toBe(true);
+  });
+
+  it('treats a real zone as answered only once someone confirmed it', () => {
+    expect(answered({ timezone: 'Asia/Jerusalem', timezone_confirmed_at: '2026-09-22T10:00:00Z' })).toBe(true);
+    // Backfilled for exactly this case, but the rule stays value-independent.
+    expect(answered({ timezone: 'Asia/Jerusalem', timezone_confirmed_at: null })).toBe(false);
+  });
+
+  it('refuses a confirmation with nothing behind it', () => {
+    // The two columns must agree; a stamp over a blank zone is not an answer.
+    expect(answered({ timezone: '', timezone_confirmed_at: '2026-09-22T10:00:00Z' })).toBe(false);
+    expect(answered({ timezone: null, timezone_confirmed_at: '2026-09-22T10:00:00Z' })).toBe(false);
   });
 });

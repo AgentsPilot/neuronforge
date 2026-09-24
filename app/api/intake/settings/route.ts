@@ -5,11 +5,21 @@
  *   POST /api/intake/settings
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * Two switches, and a fact that is not a switch.
+ * One switch, a fact that is not a switch, and a flag that no longer decides
+ * anything.
  *
  *   is_enabled          the business collects intake at all
- *   send_after_booking  we email it when a booking is made, or they send it
  *   hasPublishedForm    derived — there is an approved form to send
+ *   send_after_booking  STILL STORED AND RETURNED, but it gates nothing. It
+ *                       was once required before a client could be emailed a
+ *                       form, which made "I collect intake" and "send it for
+ *                       me" two switches where the owner only ever meant one —
+ *                       and since the column defaults to false, every account
+ *                       that never found the second one had its automatic
+ *                       sends silently off. Intake now reaches a client when
+ *                       it is enabled and published; the exceptions are about
+ *                       the SERVICE, not a preference. Read as history, not as
+ *                       a condition.
  *
  * The third is why this route exists in its current shape. Every caller feeds
  * this response into `intakeReachesClient` or `businessCollectsIntake`, and

@@ -247,6 +247,8 @@ function insights() {
       s: number,
       c: number | null,
       cs: Record<string, number>,
+      // The measured rates that replaced the old insight-count score.
+      health: unknown,
       summary: unknown,
       all: Insight[],
       lang: string,
@@ -295,6 +297,8 @@ describe('T2-O: insights off → the translated templates', () => {
       72,
       3,
       { cash_flow: 60 },
+      // A business with nothing measurable yet: the shape this must still handle.
+      { categories: [], movingUp: null, improved: 0, declined: 0, steady: 0, measured: 0, unavailable: 0 },
       correlationSummary,
       [] as Insight[],
       'en',

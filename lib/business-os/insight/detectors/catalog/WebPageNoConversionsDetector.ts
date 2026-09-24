@@ -278,7 +278,19 @@ export class WebPageNoConversionsDetector extends BaseDetector {
       currentValue: 0,
       baselineValue: totalVisitors,
       thresholdValue: MIN_VISITORS,
-      percentChange: -100,
+      /*
+       * Nothing fell by a hundred per cent; nothing was measured twice.
+       *
+       * Worse than the same fabrication elsewhere, because `baselineValue`
+       * here is the VISITOR COUNT rather than a previous conversion rate. So
+       * `hasRealBaseline` sees a non-zero baseline, lets the figure through to
+       * the prompt, and the narrator is handed "current 0, baseline 412,
+       * change -100%" — three numbers in two different units presented as one
+       * trend.
+       *
+       * The finding is "nobody got in touch", which needs no percentage.
+       */
+      percentChange: 0,
       direction: 'below',
       affectedEntityType: 'page',
       affectedEntityIds: failing.map(f => f.page.id),

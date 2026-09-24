@@ -1,6 +1,7 @@
 'use client';
 
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { publicSiteDisplayHost } from '@/lib/utils/origins';
 import { Globe, Users, BarChart3, Settings, Check } from 'lucide-react';
 
 // Card type configurations
@@ -123,7 +124,7 @@ function MiniBrowser({ url }: { url?: string }) {
           className="text-[var(--v2-text-muted)] truncate"
           style={{ fontSize: '9.5px', marginLeft: '6px' }}
         >
-          {url || 'your-site.agentspilot.site'}
+          {url || publicSiteDisplayHost('your-site')}
         </span>
       </div>
       <div className="flex flex-col" style={{ padding: '10px', gap: '5px' }}>

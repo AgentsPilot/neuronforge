@@ -38,7 +38,7 @@ is done.
 
 | detector | reason |
 |---|---|
-| `ret_package_ending` | Advised renewing a package. The product has no renewal concept for a client's plan, and it fired on every plan that finished paying, including one-off quotes |
+| `ret_package_ending` | ~~Advised renewing a package. The product has no renewal concept for a client's plan, and it fired on every plan that finished paying, including one-off quotes~~ **Rebuilt 2026-09-23.** The data source was always real (`payment_plan_installments`); the three defects were logic. `remaining <= 1` included zero, so a finished package was reported as being AT its final instalment; a two-instalment payment split counted as a package, which is what produced "1 Client at Final Instalment, $1,000 Impact" about a paid-off $1,000 quote; and `percentChange: 100` was narrated as "a 100% increase in risk". Now: exactly one instalment left, at least three instalments, no percentage, and the advice is to send a proposal for the next block rather than to press a renew button that does not exist |
 | `cash_cards_expiring` | Reads `saved_payment_methods`. Zero rows on every account; cards live at Stripe under Connect |
 | `pricing_discount_abuse` | Looks for discounts in transaction metadata. No discount feature exists to write any |
 | `web_mobile_issues` | Every query named a column that does not exist |

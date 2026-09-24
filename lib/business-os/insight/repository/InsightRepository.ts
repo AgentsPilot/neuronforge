@@ -21,6 +21,10 @@ import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
 import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
 import { getVerticalConfig, buildTerminologyInstruction, getVerticalDescriptor } from '../vertical-config';
 import { OPERATIONAL_AUTOMATIONS } from '@/lib/business-os/gaps/automations';
+import { resolveBusinessHealth } from '../health/resolveBusinessHealth';
+import { healthScore, MEASURE_IN_PLAIN_WORDS } from '../health/businessHealth';
+import { getCurrencySymbol } from '@/lib/utils/currencyHelpers';
+import type { BusinessHealth } from '../health/businessHealth';
 import { automationApplies } from '@/lib/business-os/gaps/automationApplies';
 
 const logger = createLogger({ service: 'InsightRepository' });
@@ -453,11 +457,113 @@ function hasRealBaseline(detection: {
  */
 const RESOLVED_VISIBLE_HOURS = 24;
 
+/**
+ * An insight still waiting on somebody.
+ *
+ * `viewed` belongs here: the advisor card stamps it the moment it renders one,
+ * so treating it as closed meant an insight vanished the first time it was
+ * looked at. Only a person closes an insight (dismiss, snooze, act, automate)
+ * or the world does (`resolved`).
+ *
+ * The one list. `resolveStaleInsights` and the partial index in
+ * 20260917_insight_resolution.sql must agree with it — they did before
+ * `findActive` did.
+ */
+const OPEN_STATUSES = ['new', 'viewed'] as const;
+
+/** The figures an insight's own sentence is built from. */
+interface StoredInsightFacts {
+  id: string;
+  current_value: number | string | null;
+  affected_count: number | string | null;
+  estimated_impact_usd: number | string | null;
+  language?: string | null;
+}
+
+/**
+ * Are these two figures the same number, allowing for the round trip?
+ *
+ * Numerics come back from PostgREST as strings or floats, so `===` would call
+ * every unchanged insight changed and rewrite its prose daily at the price of
+ * an LLM call. Absent on both sides counts as equal; absent on one does not.
+ *
+ * A cent of difference is not a new story, which is what the tolerance is for.
+ */
+function near(stored: number | string | null | undefined, fresh: number | null | undefined): boolean {
+  const a = stored === null || stored === undefined ? null : Number(stored);
+  const b = fresh === null || fresh === undefined ? null : Number(fresh);
+
+  if (a === null || b === null) return a === b;
+  if (Number.isNaN(a) || Number.isNaN(b)) return false;
+
+  return Math.abs(a - b) < 0.01;
+}
+
 export class InsightRepository {
   private supabase: SupabaseClient;
 
   constructor(supabase: SupabaseClient) {
     this.supabase = supabase;
+  }
+
+  /**
+   * Re-narrate an existing insight when the figures its sentence quotes moved.
+   *
+   * Returns the fields to merge into the update, or an empty object to leave
+   * the wording alone. Never throws: a narration that fails leaves the previous
+   * words in place, which is worse than fresh prose and much better than a card
+   * with no text at all.
+   */
+  private async restateIfChanged(
+    existing: StoredInsightFacts,
+    detection: DetectionResult,
+    userId: string,
+    // Required, like `CreateInsightParams.runId`: it is the grouping id every
+    // LLM call in the run is recorded under, and a rewrite is one of those.
+    runId: string
+  ): Promise<Partial<Pick<Insight, 'title' | 'description' | 'recommendation' | 'language'>>> {
+    /*
+     * The three figures a sentence is built from.
+     *
+     * `estimated_impact_usd` is included because it is the money in the title —
+     * "$1,000 Impact" — and it can move while the count stays still.
+     *
+     * Compared with a tolerance rather than strict equality: these arrive as
+     * numerics and come back from PostgREST as strings or floats, and a card
+     * must not be rewritten because 300 came back as 300.0000001. A penny is
+     * not a new story.
+     */
+    const moved =
+      !near(existing.current_value, detection.currentValue) ||
+      !near(existing.affected_count, detection.affectedCount) ||
+      !near(existing.estimated_impact_usd, detection.estimatedImpactUsd);
+
+    if (!moved) return {};
+
+    try {
+      const businessContext = await this.getUserBusinessContext(userId);
+      const { title, description, recommendation } = await this.generateLocalizedContent(
+        detection,
+        userId,
+        businessContext,
+        runId
+      );
+
+      logger.info(
+        { userId, insightId: existing.id, detectorId: detection.detectorId },
+        'Insight figures moved; sentence rewritten'
+      );
+
+      // The language travels with the words. A business that switched language
+      // would otherwise carry a stale label over freshly translated prose.
+      return { title, description, recommendation, language: businessContext.language };
+    } catch (error) {
+      logger.error(
+        { err: error, userId, insightId: existing.id },
+        'Could not rewrite insight text; keeping the previous wording'
+      );
+      return {};
+    }
   }
 
   /**
@@ -471,10 +577,10 @@ export class InsightRepository {
       // Check if there's already an active insight for this detector
       const { data: existingInsights } = await this.supabase
         .from('insights')
-        .select('id')
+        .select('id, current_value, affected_count, estimated_impact_usd, language')
         .eq('user_id', userId)
         .eq('detector_id', detection.detectorId)
-        .in('status', ['new', 'viewed'])
+        .in('status', OPEN_STATUSES)
         .order('created_at', { ascending: false })
         .limit(1);
 
@@ -487,9 +593,44 @@ export class InsightRepository {
           'Updating existing insight instead of creating duplicate'
         );
 
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * REWRITE THE SENTENCE WHEN THE STORY CHANGED.
+         *
+         * This update refreshed every NUMBER and left `title`, `description`
+         * and `recommendation` exactly as first written. So an insight raised
+         * when one invoice was outstanding kept saying "$500 has not been
+         * paid" while `current_value` underneath it climbed to 2,105 — the
+         * card reading as a statement about a state that had passed.
+         *
+         * It also froze the prose against the PROMPT. Cards written on 17
+         * September still said "a 100% increase in your expected cash flow"
+         * days after the fabricated percentage behind that sentence was
+         * removed, because nothing ever asked for the sentence again.
+         *
+         * WHY NOT EVERY RUN
+         *
+         * Narration is an LLM call. Detection runs daily for every business
+         * with an open insight, and re-narrating an unchanged finding would
+         * buy identical words at full price — and churn the wording of a card
+         * the owner is mid-way through reading.
+         *
+         * So: only when a number the sentence actually quotes has moved.
+         * A changed severity or priority score is not that — those affect
+         * ordering and colour, not what the sentence says.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        const restated = await this.restateIfChanged(
+          existingInsight as StoredInsightFacts,
+          detection,
+          userId,
+          runId
+        );
+
         const { data: updated, error: updateError } = await this.supabase
           .from('insights')
           .update({
+            ...restated,
             detection_run_id: runId,
             severity: detection.severity,
             current_value: detection.currentValue,
@@ -752,6 +893,10 @@ export class InsightRepository {
         conv_quote_acceptance_drop: 'the share of answered quotes that were accepted falling against the previous quarter',
         web_mobile_conversion_gap: 'mobile visitors getting in touch far less often than desktop visitors',
         web_page_no_conversions: 'published pages with real traffic that produced no enquiries at all',
+        cash_cards_expiring: 'saved client cards that expire within thirty days, so the next charge against them will fail',
+        pricing_discount_abuse: 'a large share of what the business takes being charged below its list price',
+        ret_reschedule_churn: 'clients who have moved their appointment three or more times, which usually comes before they stop',
+        ret_package_ending: 'clients on the last instalment of a multi-part package with nothing booked to follow it',
         web_link_not_converting: 'shared links that people click and that produced no bookings or enquiries behind any click',
         web_link_dead_destination: 'a link the owner is still sharing whose destination cannot open on anyone else\'s device',
         conv_no_next_step: 'people who had activity but now have nothing scheduled to happen next — no booking, no task, no movement',
@@ -921,6 +1066,22 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
  * has to say "that sorted itself out", which is the most reassuring thing an
  * advisor ever gets to report. They carry `resolved_at`, and the dashboard
  * renders them read-only.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `viewed` IS OPEN. READING SOMETHING IS NOT DEALING WITH IT.
+ *
+ * This asked for `status = 'new'` alone, and the advisor card marks whatever it
+ * is showing as `viewed` the moment it shows it. So an insight disappeared from
+ * the dashboard the first time the owner laid eyes on it, for good: nothing
+ * resets the status, and the re-detection path finds the row by
+ * `('new','viewed')` and updates it in place. On the account this was found
+ * from, a card reporting a genuinely broken booking link had already gone.
+ *
+ * Only a person can close an insight — dismiss, snooze, act — or the world can,
+ * by the condition clearing. `new` and `viewed` are both "open, still true",
+ * which is exactly how `resolveStaleInsights` and the partial index in
+ * 20260917_insight_resolution.sql already treat them. This was the odd one out.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
   async findActive(
     userId: string,
@@ -935,7 +1096,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
           .from('insights')
           .select('*')
           .eq('user_id', userId)
-          .eq('status', 'new')
+          .in('status', OPEN_STATUSES)
           .or(`snoozed_until.is.null,snoozed_until.lt.${now}`)
           .order('priority_score', { ascending: false })
           .limit(limit),
@@ -1248,7 +1409,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         .from('insights')
         .select('id, detector_id')
         .eq('user_id', userId)
-        .in('status', ['new', 'viewed']);
+        .in('status', OPEN_STATUSES);
 
       if (readError) throw readError;
 
@@ -1404,6 +1565,10 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
           : titlePageKind === 'homepage'
             ? `דף הבית מקבל תנועה ולא מביא פניות`
             : `${count} עמודים עם תנועה וללא פניות`,
+        cash_cards_expiring: `${count} כרטיסים עומדים לפוג`,
+        pricing_discount_abuse: `חלק גדול מההכנסות מגיע בהנחה`,
+        ret_reschedule_churn: `${count} לקוחות שדוחים פגישות שוב ושוב`,
+        ret_package_ending: `${count} לקוחות מסיימים חבילה`,
         web_link_not_converting: `${count} קישורים שנלחצים ולא מביאים כלום`,
         web_link_dead_destination: `${count} קישורים ששיתפת לא נפתחים`,
         conv_no_next_step: `${count} אנשים בלי המשך`,
@@ -1451,6 +1616,10 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         : titlePageKind === 'homepage'
           ? `Your Home Page Has Readers And No Enquiries`
           : `${count} Page${count === 1 ? '' : 's'} With Readers And No Enquiries`,
+      cash_cards_expiring: `${count} Client Card${count === 1 ? '' : 's'} About To Expire`,
+      pricing_discount_abuse: `More Is Going Out At A Discount Than It Looks`,
+      ret_reschedule_churn: `${count} Client${count === 1 ? '' : 's'} Keep${count === 1 ? 's' : ''} Moving Their Appointment`,
+      ret_package_ending: `${count} Client${count === 1 ? '' : 's'} About To Finish Their Package`,
       web_link_not_converting: `${count} Shared Link${count === 1 ? '' : 's'} Nobody Books From`,
       web_link_dead_destination: `${count === 1 ? 'A Link You Share Does Not Open' : `${count} Links You Share Do Not Open`}`,
       conv_no_next_step: `${count} People With No Next Step`,
@@ -1582,6 +1751,10 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
           : pageKind === 'homepage'
             ? `דף הבית שלך קיבל תנועה אמיתית בחודש האחרון ואיש לא יצר קשר ממנו.`
             : `${count} עמודים קיבלו תנועה אמיתית בחודש האחרון ואיש לא יצר קשר דרכם.`,
+        cash_cards_expiring: `${count} כרטיסים שמורים עומדים לפוג בתוך חודש. החיוב הבא עליהם ייכשל, ועדיף לבקש פרטים מעודכנים עכשיו ולא אחרי שהתשלום לא עבר.`,
+        pricing_discount_abuse: `${value}% מהעסקאות בחודש האחרון נסגרו מתחת למחיר המחירון. כל אחת בנפרד היא טובה קטנה; ביחד הן מחירון המחירים האמיתי שלך.`,
+        ret_reschedule_churn: `${count === 1 ? 'לקוח אחד דחה' : `${count} לקוחות דחו`} את הפגישה שלהם שלוש פעמים או יותר בשלושת החודשים האחרונים. כל דחייה בנפרד סבירה; ביחד זה בדרך כלל מה שקורה לפני שמפסיקים להגיע.`,
+        ret_package_ending: `${count === 1 ? 'לקוח אחד נמצא בתשלום האחרון של החבילה שלו' : `${count} לקוחות נמצאים בתשלום האחרון של החבילה שלהם`}, ואין עדיין חבילה הבאה. שווי החבילה: ${formatMoney(impact, currency)}.`,
         web_link_not_converting: `${wastedClicks} אנשים לחצו על ${count} קישורים ששיתפת, ואף אחד מהם לא קבע פגישה או יצר קשר. הקישור עובד, מה שנמצא בצד השני שלו לא.`,
         web_link_dead_destination: `${count === 1 ? 'קישור פעיל שאתה משתף מוביל' : `${count} קישורים פעילים שאתה משתף מובילים`} לכתובת שלא נפתחת אצל אף אחד אחר. אצלך במחשב זה עובד, אצל הלקוח מופיעה שגיאה. ${lostClicks > 0 ? `${lostClicks} אנשים כבר לחצו והגיעו לשם.` : 'עדיין אף אחד לא לחץ.'}`,
         conv_no_next_step: `${count} אנשים היו פעילים אצלך ועכשיו אין להם שום דבר מתוכנן - לא פגישה, לא משימה, לא שלב הבא.`,
@@ -1630,6 +1803,10 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         : pageKind === 'homepage'
           ? `Your home page had real traffic this month and nobody got in touch from it.`
           : `${count} published page${count === 1 ? ' had' : 's had'} real traffic this month and nobody got in touch from ${count === 1 ? 'it' : 'them'}.`,
+      cash_cards_expiring: `${count} saved card${count === 1 ? '' : 's'} expire${count === 1 ? 's' : ''} within the month. The next charge against ${count === 1 ? 'it' : 'them'} will fail, and asking for new details now is easier than after a payment bounces.`,
+      pricing_discount_abuse: `${value}% of what you took last month was charged below list price. Each one is a favour; together they are your real price list.`,
+      ret_reschedule_churn: `${count === 1 ? 'A client has' : `${count} clients have`} moved their appointment three or more times in the last three months. Each move is reasonable on its own; together it is usually what happens before somebody stops coming.`,
+      ret_package_ending: `${count === 1 ? 'A client is on the last instalment of their package' : `${count} clients are on the last instalment of their packages`} with nothing booked to follow. The package ${count === 1 ? 'was' : 'were'} worth ${formatMoney(impact, currency)}.`,
       web_link_not_converting: `${wastedClicks} people clicked ${count === 1 ? 'a link you shared' : `${count} links you shared`} and not one of them booked or got in touch. The link is working: what sits on the other side of it is not.`,
       web_link_dead_destination: `${count === 1 ? 'A link you are still sharing points' : `${count} links you are still sharing point`} at an address that cannot open on anyone else's device. It works on your own computer, and shows an error on theirs. ${lostClicks > 0 ? `${lostClicks} ${lostClicks === 1 ? 'person has' : 'people have'} already clicked through to it.` : 'Nobody has clicked it yet.'}`,
       conv_no_next_step: `${count} ${plural ? 'people have' : 'person has'} had activity with you and now ${plural ? 'have' : 'has'} nothing scheduled next — no booking, no task, no stage to move to.`,
@@ -1746,6 +1923,10 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         web_page_no_conversions: recPageKind === 'landing'
           ? `דף נחיתה צריך לבקש דבר אחד. צמצם אותו לבקשה הזאת ושים אותה במקום שלא צריך לגלול כדי למצוא.`
           : `בדוק שיש בעמוד דרך ברורה ליצור קשר או לקבוע פגישה.`,
+        cash_cards_expiring: `שלח להם בקשה לעדכן את פרטי התשלום לפני מועד החיוב הבא.`,
+        pricing_discount_abuse: `עבור על ההנחות של החודש האחרון ובדוק אם המחירון עצמו צריך לעלות.`,
+        ret_reschedule_churn: `שאל אותם אם השעה עדיין מתאימה. לפעמים זה רק צריך מועד קבוע אחר, ולפעמים זו ההזדמנות האחרונה לשמור עליהם.`,
+        ret_package_ending: `דבר איתם על הבלוק הבא בפגישה הקרובה, בזמן שהם עדיין מגיעים. שלח הצעת מחיר להמשך.`,
         web_link_not_converting: `לחץ בעצמך על הקישור ותראה מה הלקוח רואה: אם יש זמנים פנויים, אם המחיר ברור, וכמה פרטים אתה מבקש ממישהו שעוד לא מכיר אותך.`,
         web_link_dead_destination: `ערוך את הקישור ועדכן את כתובת היעד לכתובת הציבורית של העסק. הדרך לוודא: פתח את הקישור בטלפון עם אינטרנט סלולרי, לא ברשת המשרד.`,
         conv_no_next_step: `עבור על הרשימה וקבע לכל אחד צעד הבא - פגישה, משימה או פנייה.`,
@@ -1791,6 +1972,10 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       web_page_no_conversions: recPageKind === 'landing'
         ? `A landing page should ask for one thing. Cut it back to that one ask and put it where nobody has to scroll to find it.`
         : `Check each one has an obvious way to get in touch or book.`,
+      cash_cards_expiring: `Send them a request to update their payment details before the next charge is due.`,
+      pricing_discount_abuse: `Go through last month's discounts and ask whether the list price itself should move.`,
+      ret_reschedule_churn: `Ask whether the time still suits them. Sometimes it just needs a different regular slot, and sometimes this is the last chance to keep them.`,
+      ret_package_ending: `Raise the next block at their last session, while they are still coming. Send a proposal for it.`,
       web_link_not_converting: `Click it yourself and see what a stranger sees: whether there are times free, whether the price is clear, and how much you are asking of someone who has not met you yet.`,
       web_link_dead_destination: `Edit the link and point it at your public address. The way to be sure it is fixed: open it on your phone over mobile data, not on your own network.`,
       conv_no_next_step: `Go through the list and give each person a next step — a booking, a task, or a message.`,
@@ -1884,7 +2069,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         .eq('user_id', userId)
         .eq('detector_id', detectorId)
         .eq('is_correlated', true)
-        .in('status', ['new', 'viewed'])
+        .in('status', OPEN_STATUSES)
         .order('created_at', { ascending: false })
         .limit(1);
 
@@ -2257,10 +2442,53 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         .single();
 
       // Calculate category scores and overall health
+      /*
+       * ───────────────────────────────────────────────────────────────────
+       * MEASURED FROM THE BUSINESS, NOT FROM OUR CATALOGUE.
+       *
+       * This was `calculateCategoryScores(allInsights)`: 80 for a category
+       * with no insights, minus a severity penalty for each one. An account
+       * with no data scored 81 and was told it was doing well, and shipping a
+       * detector lowered every affected business's score.
+       *
+       * `resolveBusinessHealth` reads six rates from module tables and
+       * compares each with the same business's previous 28 days. No benchmark
+       * is involved, and a category with too little behind it reports null
+       * rather than a number.
+       * ───────────────────────────────────────────────────────────────────
+       */
+      const health = await resolveBusinessHealth(this.supabase, userId);
+
+      /*
+       * The score, measured against this business's own previous month.
+       *
+       * ───────────────────────────────────────────────────────────────────
+       * 50 means nothing changed; above it the measured rates are improving,
+       * below it they are slipping. `healthScore` is the one place that scale
+       * is defined — see `businessHealth.ts` for why an absolute grade is not
+       * available to a platform holding no benchmarks.
+       *
+       * This column briefly carried `movingUp`, the SHARE of comparable
+       * categories that improved. Two of four moving up is not "50 out of a
+       * hundred", and the narrator's prompt renders this number as a mark out
+       * of 100 — so the column and the sentence disagreed about what the
+       * figure was. See 20260923_health_measures.sql.
+       * ───────────────────────────────────────────────────────────────────
+       */
+      const score = healthScore(health.categories);
+
+      // Kept for the narrative, which still reads per-category context.
       const scores = this.calculateCategoryScores(allInsights);
-      const healthScore = this.calculateOverallHealthScore(scores);
-      const previousHealthScore = previousSummary?.health_score || null;
-      const scoreChange = previousHealthScore ? healthScore - previousHealthScore : null;
+      const previousHealthScore = previousSummary?.health_score ?? null;
+      /*
+       * Both sides must exist, and must be the same quantity. The score is null
+       * until at least two categories can be compared, and subtracting from
+       * null produced a change of "NaN" that the narrator would have read out.
+       */
+      const scoreChange =
+        score !== null && previousHealthScore !== null
+          ? score - previousHealthScore
+          : null;
 
       // Count insights by severity
       const criticalCount = allInsights.filter((i) => i.severity === 'critical').length;
@@ -2272,9 +2500,16 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       // Generate LLM narrative
       const { title, narrative, highlights, priorities } = await this.generateHealthNarrative(
         userId,
-        healthScore,
+        /*
+         * Null travels. It used to be coerced to 0 here, which on this scale is
+         * not "unknown" but "every measure collapsed" — so a business with too
+         * little history to compare was handed the worst possible mark. The
+         * prompt now knows to write a title with no number when there is none.
+         */
+        score,
         scoreChange,
         scores,
+        health,
         correlationSummary,
         allInsights,
         language,
@@ -2287,7 +2522,8 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         period_start: periodStart.toISOString(),
         period_end: periodEnd.toISOString(),
         period_type: 'weekly' as const,
-        health_score: healthScore,
+        health_score: score,
+        health_measures: health as unknown as Record<string, unknown>,
         previous_health_score: previousHealthScore,
         score_change: scoreChange,
         acquisition_score: scores.acquisition,
@@ -2317,12 +2553,42 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         .select()
         .single();
 
+      /*
+       * Degrade if `health_measures` has not been added yet.
+       *
+       * 20260923_health_measures.sql adds the column, and PostgREST rejects the
+       * WHOLE upsert for one unknown name — so a deploy that lands before the
+       * migration would stop writing weekly summaries altogether rather than
+       * merely writing them without the new field.
+       *
+       * The same shape `findActive` already carries for `resolved_at`, for the
+       * same reason: this repository has shipped ahead of its migrations before.
+       */
+      if (error && /health_measures/.test(error.message ?? '')) {
+        logger.warn(
+          { userId },
+          'health_measures column missing; writing the summary without the measured rates'
+        );
+
+        const { health_measures: _omitted, ...withoutMeasures } = summaryData;
+        const retry = await this.supabase
+          .from('business_health_summaries')
+          .upsert(withoutMeasures, { onConflict: 'user_id,period_type,period_start' })
+          .select()
+          .single();
+
+        if (retry.error) throw retry.error;
+        return { data: retry.data, error: null };
+      }
+
       if (error) throw error;
 
       logger.info(
         {
           userId,
-          healthScore,
+          // The VALUE. `healthScore` in this scope is now the imported
+          // function, and logging it would serialise a function body.
+          healthScore: score,
           scoreChange,
           insightCount: allInsights.length,
           criticalCount,
@@ -2344,8 +2610,22 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     const categories = ['acquisition', 'conversion', 'sales', 'cash_flow', 'retention', 'operations', 'pricing'];
     const scores: Record<string, number> = {};
 
+    /*
+     * Only what is still open.
+     *
+     * `findActive` returns recently-RESOLVED insights too, so that the card can
+     * say "this sorted itself out" — and they were being scored. A business
+     * whose problem cleared kept its penalty for the next 24 hours, which is
+     * the one moment the score should have gone up.
+     *
+     * The mirror-image half of the same bug is now fixed upstream: `viewed`
+     * insights used to be excluded entirely, so merely reading the dashboard
+     * raised the score.
+     */
+    const open = insights.filter(i => i.status !== 'resolved');
+
     for (const category of categories) {
-      const categoryInsights = insights.filter((i) => i.category === category);
+      const categoryInsights = open.filter((i) => i.category === category);
 
       if (categoryInsights.length === 0) {
         scores[category] = 80; // Default healthy score when no issues
@@ -2410,9 +2690,16 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
    */
   private async generateHealthNarrative(
     userId: string,
-    healthScore: number,
+    /**
+     * Out of 100, where 50 is unchanged — or null when fewer than two
+     * categories could be compared. Null must reach the prompt as null: on this
+     * scale zero is the worst possible month, not an absent one.
+     */
+    healthScore: number | null,
     scoreChange: number | null,
     categoryScores: Record<string, number>,
+    /** Measured rates, or null per category where there is too little to say. */
+    health: BusinessHealth,
     correlationSummary: CorrelationSummary,
     allInsights: Insight[],
     language: string,
@@ -2423,6 +2710,26 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     highlights: Array<{ type: 'positive' | 'negative' | 'neutral'; text: string }>;
     priorities: Array<{ rank: number; category: string; title: string; insight_id?: string }>;
   }> {
+    /*
+     * Whose trade this is, in their own words.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * The vertical config has existed since the module was built and this —
+     * the longest piece of prose the owner reads all week — was the one place
+     * that never consulted it. Insight TITLES were personalised; the weekly
+     * narrative was written for a generic "solo entrepreneur".
+     *
+     * A gym has members, a clinic has patients, a groomer has pets and a tutor
+     * has students. `buildTerminologyInstruction` already holds those mappings
+     * per vertical, and `getVerticalDescriptor` names the trade. Both degrade
+     * to something sensible for a business that has not said what it does.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const context = await this.getUserBusinessContext(userId);
+    const whoTheyAre = getVerticalDescriptor(context.vertical, context.company_size);
+    const theirWords = buildTerminologyInstruction(context.vertical, language);
+    const theirTone = getVerticalConfig(context.vertical).toneGuidelines;
+
     try {
       const settings = await resolveBosLlmSettings('insights', 'health_summary');
       if (!settings.enabled) {
@@ -2438,8 +2745,31 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
 
       const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
 
-      const langName = language === 'he' ? 'Hebrew' : 'English';
-      const currencySymbol = language === 'he' ? '₪' : '$';
+      /*
+       * ───────────────────────────────────────────────────────────────────
+       * THREE LANGUAGES, NOT TWO.
+       *
+       * This read `language === 'he' ? 'Hebrew' : 'English'`, so a Spanish
+       * business had its weekly note written in English. The platform has
+       * supported es since the LanguageContext was built, and every other
+       * prompt in this file already uses the map below.
+       *
+       * AND THE MONEY IS NOT THE LANGUAGE.
+       *
+       * The symbol was `language === 'he' ? '₪' : '$'` — the exact fault
+       * already removed from the correlation stories and the detect route:
+       * an Israeli practice that works in English was told its money was
+       * dollars, and a Spanish one billing euros saw `$`. `context.currency`
+       * is the business's own, read from what its services actually charge.
+       * ───────────────────────────────────────────────────────────────────
+       */
+      const languageNames: Record<string, string> = {
+        en: 'English',
+        he: 'Hebrew',
+        es: 'Spanish',
+      };
+      const langName = languageNames[language] || 'English';
+      const currencySymbol = getCurrencySymbol(context.currency);
 
       // Build context
       const trendEmoji = scoreChange === null ? '➡️' : scoreChange > 0 ? '📈' : scoreChange < 0 ? '📉' : '➡️';
@@ -2462,21 +2792,77 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         .map((ci) => `- ${ci.patternName}: ${ci.story.substring(0, 100)}...`)
         .join('\n');
 
-      // Category breakdown
-      const categoryList = Object.entries(categoryScores)
-        .sort((a, b) => a[1] - b[1])
-        .map(([cat, score]) => `- ${cat}: ${score}/100`)
+      /*
+       * What was MEASURED, and what could not be.
+       *
+       * This listed `${cat}: ${score}/100` from scores that were counts of our
+       * own detections — so the model dutifully narrated "your acquisition
+       * score is strong at 85", a sentence about our catalogue in the language
+       * of the owner's business.
+       *
+       * The unmeasured categories are listed too, and named as unmeasured. A
+       * model given six rates and no mention of the seventh will assume the
+       * seventh is fine; told plainly there is not enough data, it says so.
+       */
+      const measuredList = health.categories
+        .filter(c => c.rate !== null)
+        .map(c => {
+          const movement = c.change === null
+            ? 'no comparison yet — first period with enough data'
+            : c.change > 0
+              ? `up ${c.change} points from ${c.previousRate}%`
+              : c.change < 0
+                ? `down ${Math.abs(c.change)} points from ${c.previousRate}%`
+                : 'unchanged';
+          /*
+           * Described, not named. This read `${c.category}: … (${c.measureKey})`
+           * — so the model was handed the words `acquisition` and `cash_flow`
+           * and a translation key, and wrote them straight back to a massage
+           * therapist as "your acquisition score".
+           */
+          return `- ${MEASURE_IN_PLAIN_WORDS[c.category]}: ${c.rate}%, ${movement}, measured from ${c.sample}`;
+        })
         .join('\n');
 
-      const prompt = `You are a friendly business advisor giving a weekly health check to a solo business owner.
+      const unmeasuredList = health.categories
+        .filter(c => c.rate === null)
+        .map(c => `- ${MEASURE_IN_PLAIN_WORDS[c.category]}: NOT ENOUGH DATA${c.unavailable === 'not_measurable' ? ' (nothing records this yet)' : ` (only ${c.sample} to go on)`}`)
+        .join('\n');
 
-BUSINESS HEALTH DATA:
-- Overall Score: ${healthScore}/100 ${trendEmoji} (${trendText})
+      const prompt = `You are writing a short weekly note to a ${whoTheyAre}.
+
+They are very good at what they do. They are NOT a business person, they did not study business, and they do not think in business words. Write the way a friendly, practical person would talk to them over a coffee.
+
+${theirTone}
+${theirWords}
+
+HOW THIS BUSINESS IS MOVING:
+${healthScore === null
+  ? '- NO SCORE THIS WEEK. Fewer than two measures could be compared with last month, so there is no number to give. Write the title WITHOUT any number in it.'
+  : `- SCORE: ${healthScore} out of 100. This compares the business with ITS OWN previous month. 50 means unchanged, above 50 means the measured rates are improving, below means they are slipping. It is not a mark against other businesses — no such comparison exists.`}
+${health.movingUp === null
+  ? '- Not enough measurable history yet to say whether things are improving overall.'
+  : `- ${health.improved} of ${health.improved + health.declined + health.steady} measures improved, ${health.declined} declined, ${health.steady} held steady ${trendEmoji}`}
 - Total Impact at Risk: ${currencySymbol}${correlationSummary.totalImpactUsd.toLocaleString()}
 - Issues Found: ${allInsights.length} (${allInsights.filter(i => i.severity === 'critical').length} critical)
 
-CATEGORY BREAKDOWN:
-${categoryList}
+WHAT WAS MEASURED (each compared with this business's own previous 28 days):
+${measuredList || 'Nothing yet — this business is too new to measure anything reliably.'}
+
+WHAT COULD NOT BE MEASURED:
+${unmeasuredList || 'Everything could be measured.'}
+
+RULES ABOUT THESE NUMBERS — these matter more than the writing:
+- Never invent a benchmark. There is no industry data here. "31% is low" is not
+  something you can know; "31%, up from 22%" is.
+- Never describe an unmeasured category as good, bad or fine. Say there is not
+  enough data yet, or do not mention it.
+- The ONLY number out of 100 you may use is the SCORE above, and only when one
+  was given. Never invent a score for a single category — the per-category
+  figures are measured rates, not marks.
+- Never call the score good or bad by comparison with other businesses. It
+  compares this business with its own last month, and 50 is unchanged. A 55 is
+  "slightly better than last month", never "just above average".
 
 TOP CRITICAL ISSUES:
 ${issuesList || 'None'}
@@ -2488,13 +2874,40 @@ Generate an executive summary that:
 1. Opens with the most important takeaway (good news or urgent concern)
 2. Explains what's working and what needs attention
 3. Provides context (is this improving or getting worse?)
-4. Ends with clear prioritized next steps
+4. Ends with next steps that are ACTIONS, not topics. "Send a reminder to the
+   three people who have not paid" is an action. "Review cash flow strategies
+   to ensure stability" is a topic, and is the single most common failure here
+   — it tells someone who is not a business person to go and do homework.
 
-Be conversational, not corporate. Imagine talking to a busy solo entrepreneur.
+HOW TO WRITE IT — this matters as much as the facts:
+
+- Use the words THEY use for the people they serve and the work they do — the
+  vocabulary above is theirs, not a suggestion. Whatever their trade, they do
+  not have "acquisition", "conversion", "retention", "pipeline", "metrics",
+  "KPIs", "revenue streams", "cash flow strategies", "momentum", "trends",
+  "optimising" or anything "-driven".
+- These are banned as CONCEPTS, in whatever language you are writing. Do not
+  translate "acquisition" or "cash flow" into ${langName} and use it there —
+  the business-school register is the problem, not the English words.
+- BANNED, with what to write instead:
+    "acquisition"            -> people finding you
+    "conversion"             -> enquiries turning into bookings
+    "retention"              -> clients coming back
+    "cash flow"              -> money coming in / getting paid
+    "review X strategies"    -> a specific thing to do on a specific day
+    "stay proactive"         -> say what to actually do
+    "leverage", "optimise", "streamline", "utilise" -> just say it simply
+- Short sentences. If a sentence needs reading twice, rewrite it.
+- Be concrete. "Two people asked about massages last week and never heard back"
+  beats "your response rate has declined".
+- No pep talk and no filler. Do not open with "Hey there!" or "Great news!".
+  Start with the thing that actually matters.
+- Never tell them their business is doing well or badly overall. Say what
+  changed, and what is worth doing about it.
 
 Generate in ${langName}. Respond with ONLY a JSON object:
 {
-  "title": "One-line summary with emotion and score (e.g., 'Your business is healthy at 78/100!')",
+  "title": "One warm line about the week. Include the score ONLY if one was given above, phrased as movement against last month (e.g. 'A better month: you're at 64/100, up from 58'). If there is NO SCORE, name what actually moved and use no number at all (e.g. 'Your reply times improved this week').",
   "narrative": "2-3 paragraph executive summary (conversational, specific, actionable)",
   "highlights": [
     {"type": "positive", "text": "Something good"},
@@ -2542,8 +2955,24 @@ Generate in ${langName}. Respond with ONLY a JSON object:
   /**
    * Fallback health narrative generation
    */
+  /**
+   * What the summary says when the narrator is off or has failed.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Rewritten because it was a second, unnoticed source of the fabrication the
+   * measured health was built to remove. It printed `${weakest[1]}/100` from
+   * `categoryScores` — counts of OUR OWN detections, 80 by default — so a
+   * business with no insights in a category was told that category scored
+   * eighty out of a hundred. "Your acquisition score is impressive at 85" was
+   * this, in the owner's own language, about our catalogue.
+   *
+   * Now it states only what is true: a score against the business's own
+   * previous month, and where the open items are concentrated. No category is
+   * given a mark, and no number appears when there is no score to give.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   private generateHealthNarrativeFallback(
-    healthScore: number,
+    healthScore: number | null,
     scoreChange: number | null,
     categoryScores: Record<string, number>,
     correlationSummary: CorrelationSummary,
@@ -2554,56 +2983,111 @@ Generate in ${langName}. Respond with ONLY a JSON object:
     highlights: Array<{ type: 'positive' | 'negative' | 'neutral'; text: string }>;
     priorities: Array<{ rank: number; category: string; title: string }>;
   } {
-    // Find weakest category
-    const weakest = Object.entries(categoryScores).sort((a, b) => a[1] - b[1])[0];
-    const strongest = Object.entries(categoryScores).sort((a, b) => b[1] - a[1])[0];
+    /*
+     * Where the open items sit, NOT how each category scores.
+     *
+     * `categoryScores` counts detections, so the lowest is the category
+     * carrying the most attention — a fact about our findings, which is what
+     * the sentence below claims. Its numeric value is never printed.
+     */
+    const lowest = Object.entries(categoryScores).sort((a, b) => a[1] - b[1])[0]?.[0];
+    /*
+     * In words, not as a key. `lowest` is a category id — `cash_flow` — and
+     * printing it put a database column in front of a massage therapist.
+     */
+    const needsAttention = lowest
+      ? MEASURE_IN_PLAIN_WORDS[lowest as keyof typeof MEASURE_IN_PLAIN_WORDS] ?? lowest.replace(/_/g, ' ')
+      : undefined;
+    const connected = correlationSummary.correlatedInsights.length;
 
     if (language === 'he') {
       const trendText = scoreChange === null
         ? ''
         : scoreChange > 0
-          ? ` (עלייה של ${scoreChange} נקודות מהשבוע שעבר)`
+          ? ` (עלייה של ${scoreChange} נקודות מהחודש שעבר)`
           : scoreChange < 0
-            ? ` (ירידה של ${Math.abs(scoreChange)} נקודות מהשבוע שעבר)`
-            : ' (יציב)';
+            ? ` (ירידה של ${Math.abs(scoreChange)} נקודות מהחודש שעבר)`
+            : ' (ללא שינוי)';
 
       return {
-        title: `בריאות העסק שלך: ${healthScore}/100${trendText}`,
-        narrative: `הציון הכולל של העסק שלך השבוע הוא ${healthScore} מתוך 100. ` +
-          `התחום החזק ביותר שלך הוא ${strongest[0]} (${strongest[1]}/100), ` +
-          `בעוד ${weakest[0]} דורש תשומת לב (${weakest[1]}/100). ` +
-          (correlationSummary.correlatedInsights.length > 0
-            ? `זיהינו ${correlationSummary.correlatedInsights.length} דפוסי בעיות מקושרות שכדאי לטפל בהן יחד.`
+        title: healthScore === null
+          ? 'עדיין אין מספיק נתונים כדי לסכם את השבוע'
+          : `בריאות העסק שלך: ${healthScore}/100${trendText}`,
+        narrative: (healthScore === null
+          ? 'עדיין אין מספיק היסטוריה כדי להשוות את החודש הזה לקודם. '
+          : `הציון ${healthScore} מתוך 100 משווה את העסק שלך לחודש הקודם שלו. 50 פירושו ללא שינוי. `) +
+          (needsAttention ? `מה שהכי כדאי להסתכל עליו כרגע: ${needsAttention}. ` : '') +
+          (connected > 0 ? `זיהינו ${connected} דפוסי בעיות מקושרות שכדאי לטפל בהן יחד.` : ''),
+        highlights: needsAttention
+          ? [{ type: 'negative' as const, text: `כדאי להסתכל על ${needsAttention}` }]
+          : [],
+        priorities: lowest && needsAttention
+          // `category` stays the id — it is data. Only the title is read.
+          ? [{ rank: 1, category: lowest, title: `כדאי להסתכל על ${needsAttention}` }]
+          : [],
+      };
+    }
+
+    if (language === 'es') {
+      /*
+       * Spanish was missing entirely: the branch above caught Hebrew and
+       * everything else fell through to English, so a Spanish-speaking owner
+       * whose narrator was switched off read their weekly note in English.
+       */
+      const trendTextEs = scoreChange === null
+        ? ''
+        : scoreChange > 0
+          ? ` (${scoreChange} puntos más que el mes pasado)`
+          : scoreChange < 0
+            ? ` (${Math.abs(scoreChange)} puntos menos que el mes pasado)`
+            : ' (sin cambios)';
+
+      return {
+        title: healthScore === null
+          ? 'Aún no hay suficientes datos para resumir la semana'
+          : `Cómo va tu negocio: ${healthScore}/100${trendTextEs}`,
+        narrative: (healthScore === null
+          ? 'Todavía no hay suficiente historial para comparar este mes con el anterior. '
+          : `${healthScore} sobre 100 compara tu negocio con su propio mes anterior. 50 significa sin cambios. `) +
+          (needsAttention ? `Lo que más conviene mirar ahora: ${needsAttention}. ` : '') +
+          (connected > 0
+            ? `Detectamos ${connected} problemas relacionados que conviene resolver juntos.`
             : ''),
-        highlights: [
-          { type: 'positive' as const, text: `${strongest[0]} הוא התחום החזק ביותר שלך` },
-          { type: 'negative' as const, text: `${weakest[0]} דורש תשומת לב מיידית` },
-        ],
-        priorities: [{ rank: 1, category: weakest[0], title: `שפר את ה${weakest[0]} שלך` }],
+        highlights: needsAttention
+          ? [{ type: 'negative' as const, text: `Conviene mirar: ${needsAttention}` }]
+          : [],
+        priorities: lowest && needsAttention
+          ? [{ rank: 1, category: lowest, title: `Echa un vistazo a ${needsAttention}` }]
+          : [],
       };
     }
 
     const trendText = scoreChange === null
       ? ''
       : scoreChange > 0
-        ? ` (up ${scoreChange} points from last week)`
+        ? ` (up ${scoreChange} points from last month)`
         : scoreChange < 0
-          ? ` (down ${Math.abs(scoreChange)} points from last week)`
-          : ' (stable)';
+          ? ` (down ${Math.abs(scoreChange)} points from last month)`
+          : ' (unchanged)';
 
     return {
-      title: `Your Business Health: ${healthScore}/100${trendText}`,
-      narrative: `Your overall business score this week is ${healthScore} out of 100. ` +
-        `Your strongest area is ${strongest[0]} (${strongest[1]}/100), ` +
-        `while ${weakest[0]} needs attention (${weakest[1]}/100). ` +
-        (correlationSummary.correlatedInsights.length > 0
-          ? `We identified ${correlationSummary.correlatedInsights.length} connected issue patterns that are worth addressing together.`
+      title: healthScore === null
+        ? 'Not enough yet to sum up the week'
+        : `Your business health: ${healthScore}/100${trendText}`,
+      narrative: (healthScore === null
+        ? 'There is not enough history yet to compare this month with the one before it. '
+        : `${healthScore} out of 100 compares your business with its own previous month. 50 means unchanged. `) +
+        (needsAttention ? `The thing most worth a look right now is ${needsAttention}. ` : '') +
+        (connected > 0
+          ? `We identified ${connected} connected issue patterns that are worth addressing together.`
           : ''),
-      highlights: [
-        { type: 'positive' as const, text: `${strongest[0]} is your strongest area` },
-        { type: 'negative' as const, text: `${weakest[0]} needs immediate attention` },
-      ],
-      priorities: [{ rank: 1, category: weakest[0], title: `Improve your ${weakest[0]}` }],
+      highlights: needsAttention
+        ? [{ type: 'negative' as const, text: `Worth a look: ${needsAttention}` }]
+        : [],
+      priorities: lowest && needsAttention
+        // `category` stays the id — it is data. Only the title is read.
+        ? [{ rank: 1, category: lowest, title: `Take a look at ${needsAttention}` }]
+        : [],
     };
   }
 
@@ -2632,7 +3116,7 @@ Generate in ${langName}. Respond with ONLY a JSON object:
    */
   async getCorrelatedInsights(
     userId: string,
-    status: InsightStatus[] = ['new', 'viewed']
+    status: InsightStatus[] = [...OPEN_STATUSES]
   ): Promise<RepositoryResult<Insight[]>> {
     try {
       const { data, error } = await this.supabase

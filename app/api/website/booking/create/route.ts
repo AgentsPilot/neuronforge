@@ -13,6 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { SLOT_HOLDING_STATUSES } from '@/lib/business-os/bookingStatus';
 import { wallClockToInstant } from '@/lib/scheduling/wallClock';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { activitySentence, activityMoment } from '@/lib/business-os/activityText';
@@ -25,11 +26,11 @@ import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { syncBookingToOwnerCalendar } from '@/lib/scheduling/syncBookingCalendar';
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
 import { buildAttributionFromRequest, type LeadSourceMetadata } from '@/lib/utils/attribution';
-import { resolveCapturePageType } from '@/lib/business-os/capturePageType';
-import { smartLinkRepository } from '@/lib/repositories/SmartLinkRepository';
+import { enrichCaptureAttribution } from '@/lib/business-os/enrichCaptureAttribution';
 import { z } from 'zod';
 import { ConsentInputSchema } from '@/lib/validation/consent';
 import { recordConsent } from '@/lib/consent/recordConsent';
+import { safeTimezone } from '@/lib/scheduling/businessTime';
 
 const logger = createLogger({ module: 'WebsiteBookingCreateAPI' });
 
@@ -106,15 +107,14 @@ export async function POST(request: NextRequest) {
     });
 
     /*
-     * Which KIND of page this was, recorded now rather than inferred later.
-     * A landing page is only distinguishable by matching the path against the
-     * owner's landing slugs, and the CRM cannot do that per contact it draws.
-     * Enrichment only: a failure here leaves the contact grouped under Website.
+     * Where they came from: the page KIND, and the smart link if one sent them.
+     * Shared with every other capture route, because five copies of this had
+     * drifted into three different answers — see `enrichCaptureAttribution`.
      */
-    const capturePageType = await resolveCapturePageType(data.subdomain, data.page_url);
-    if (capturePageType) {
-      (attribution as Record<string, unknown>).page_type = capturePageType;
-    }
+    await enrichCaptureAttribution(attribution, {
+      subdomain: data.subdomain,
+      pageUrl: data.page_url,
+    });
 
     let ownerId: string;
 
@@ -249,7 +249,10 @@ export async function POST(request: NextRequest) {
       .eq('user_id', ownerId)
       .maybeSingle();
 
-    const bookingTimezone = ownerPrefs?.timezone || data.timezone || 'UTC';
+    // `safeTimezone` validates against Intl; the bare `||` it replaces only
+    // caught null, so an unrecognised stored zone reached the booking record
+    // and every hour rendered from it afterwards.
+    const bookingTimezone = safeTimezone(ownerPrefs?.timezone || data.timezone);
 
     // Determine if this is a scheduled booking (has start_time) or non-scheduled (course, product, etc.)
     const isScheduledBooking = !!data.start_time;
@@ -266,7 +269,10 @@ export async function POST(request: NextRequest) {
         .from('scheduling_bookings')
         .select('id')
         .eq('user_id', ownerId)
-        .neq('status', 'cancelled')
+        // A booking that will not happen does not hold its slot — that is
+      // `cancelled` AND `no_show`, which this asked as "not cancelled" and so
+      // kept a no-show's time shut. See `SLOT_HOLDING_STATUSES`.
+      .in('status', SLOT_HOLDING_STATUSES)
         .or(`and(start_time.lt.${endTime.toISOString()},end_time.gt.${startTime.toISOString()})`);
 
       if (conflicts && conflicts.length > 0) {

@@ -243,16 +243,33 @@ export interface BusinessProfile {
   created_at: string | null;
   updated_at: string | null;
 
-  // --- Not backed by a physical column ---
-  // No migration defines `currency`, `timezone`, or `contact_email` on
-  // business_profiles (the scheduling availability route even carries a
-  // "TODO: Add timezone column" note). Existing consumers nonetheless read them
-  // defensively with a fallback (ContextBuilder, SafeExecutionLayer,
-  // BookingEmailService). Typed here as optional, read-only extras to preserve
-  // that behavior; deliberately absent from Insert/Update so nobody writes a
-  // non-existent column (cf. the documented `tools` PGRST204 bug in the
-  // onboarding build route). Follow-up: add real columns or drop the reads.
+  /**
+   * The business's DEFAULT currency. Real since
+   * 20261004_business_default_currency.sql.
+   *
+   * Nullable with no database default, and that is load-bearing: NULL means
+   * NOT CHOSEN, which the readiness card needs in order to ask. A DEFAULT would
+   * make "never answered" indistinguishable from "answered UTC" — the exact
+   * ambiguity `user_preferences.timezone` suffers from below.
+   *
+   * Never a constraint on a service: `scheduling_services.currency` stays the
+   * authority for what a client is charged, so a business in Israel can price a
+   * US client in USD.
+   */
   currency?: string | null;
+
+  // --- Not backed by a physical column ---
+  // No migration defines `timezone` or `contact_email` on business_profiles.
+  // The authoritative timezone is `user_preferences.timezone`; reading it here
+  // returns undefined and silently means UTC, and — worse — PostgREST rejects
+  // the WHOLE select for one unknown column, which is how a business with a
+  // full diary once showed no times at all.
+  //
+  // Existing consumers read them defensively with a fallback (ContextBuilder,
+  // SafeExecutionLayer, BookingEmailService). Typed here as optional, read-only
+  // extras to preserve that behavior; deliberately absent from Insert/Update so
+  // nobody writes a non-existent column (cf. the documented `tools` PGRST204
+  // bug in the onboarding build route).
   timezone?: string | null;
   contact_email?: string | null;
 }
@@ -1411,8 +1428,14 @@ export class BusinessProfileRepository {
     collectionMethod: string | null;
   }>> {
     try {
-      // Note: Only selecting columns that exist in the schema
-      // currency and customer_journey are not in the DB yet - using defaults
+      /*
+       * Only columns that exist. PostgREST rejects the WHOLE select for one
+       * unknown name, so a stale column here does not degrade the result — it
+       * returns nothing at all.
+       *
+       * `currency` is real as of 20261004_business_default_currency.sql;
+       * `customer_journey` still is not.
+       */
       const { data, error } = await this.supabase
         .from('business_profiles')
         .select(`
@@ -1423,6 +1446,7 @@ export class BusinessProfileRepository {
           show_logo_on_smart_links,
           vertical,
           language,
+          currency,
           collection_method,
           theme
         `)
@@ -1444,7 +1468,10 @@ export class BusinessProfileRepository {
         logoUrl: data.show_logo_on_smart_links === false ? null : data.logo_url,
         vertical: data.vertical,
         language: data.language,
-        currency: null, // Not in DB yet - API will default to 'USD'
+        // The column exists now. Null still flows through where a business has
+        // not chosen one, and the caller's own fallback handles that — but a
+        // business that HAS chosen no longer has its answer thrown away here.
+        currency: data.currency ?? null,
         /*
          * The business's own colour, from the template it chose.
          *

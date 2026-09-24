@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useConfigurationDialogOpen } from '@/components/business-os/ConfigurationDialogProvider';
+import { NoShowConfirmDialog } from '@/components/scheduling/NoShowConfirmDialog';
 import { businessCollectsIntake } from '@/lib/business-os/intakeReach';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -15,6 +17,7 @@ import { Label } from '@/components/ui/label';
 import { SchedulingBookingModal } from '@/components/scheduling/SchedulingBookingModal';
 import { createLogger } from '@/lib/logger';
 import { fetchContactMoney } from '@/lib/payments/fetchContactMoney';
+import { transactionMoneyArrived } from '@/lib/payments/bookingPaymentState';
 import type { SchedulingService, SchedulingBooking } from '@/lib/repositories/SchedulingRepository';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { toast } from 'sonner';
@@ -1023,6 +1026,9 @@ export function CRMContactDrawerV2({
   initialSection = 'details'
 }: CRMContactDrawerV2Props) {
   const { t, isRTL, language, timezone, timeZoneOptions } = useLanguage();
+  // Whether the configuration dialog is up — see the Sheet below for why this
+  // drawer must not dismiss itself while it is.
+  const configurationOpen = useConfigurationDialogOpen();
 
   // Form state
   const [formData, setFormData] = useState<ContactFormData>({
@@ -1204,6 +1210,15 @@ export function CRMContactDrawerV2({
   /* Cancelling emails the client and frees the slot, so it asks first.
      Completing and marking a no-show are internal record-keeping. */
   const [pendingCancelBookingId, setPendingCancelBookingId] = useState<string | null>(null);
+  /*
+   * The booking awaiting a no-show confirmation.
+   *
+   * Confirmed for the same reason cancelling is, and one more: a no-show is a
+   * JUDGEMENT recorded against this client, it lands on the timeline shown two
+   * sections up, and it counts towards their no-show rate. The confirmation is
+   * also where the owner decides whether to invite them back.
+   */
+  const [pendingNoShowBookingId, setPendingNoShowBookingId] = useState<string | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedBookingForPayment, setSelectedBookingForPayment] = useState<SessionCardData | null>(null);
   const [cancellingBooking, setCancellingBooking] = useState(false);
@@ -1383,8 +1398,29 @@ export function CRMContactDrawerV2({
           refunded_amount?: number | string | null;
           refunded_at?: string | null;
         };
+        /* Joined by the repository and, until now, never read here. */
+        payments?: Array<{ id: string; status: string; paid_at?: string | null }>;
       };
       const invoiceData = bookingWithInvoice.invoice;
+
+      /*
+       * WHEN THE MONEY ARRIVED — from whichever record actually holds it.
+       *
+       * This read `invoice.paid_at` alone. A booking paid through a TRANSACTION
+       * with no invoice therefore had no date at all, so the payment step
+       * carried no timestamp and `groupJourneyByDay` filed it with the steps
+       * that have not happened yet. A payment already taken appeared under
+       * "Upcoming".
+       *
+       * Both records hang off the booking and the payments tab reads both;
+       * only this path did not, which is why the same money could be listed
+       * there and undated here. Invoice first, because where both exist the
+       * invoice is the document the client was actually sent.
+       */
+      const paidAtFromRecords =
+        invoiceData?.paid_at ||
+        bookingWithInvoice.payments?.find(pay => transactionMoneyArrived(pay.status) && pay.paid_at)?.paid_at ||
+        undefined;
 
       /*
        * A quoted job's money comes from the QUOTE, not the service.
@@ -1412,7 +1448,7 @@ export function CRMContactDrawerV2({
         currency: serviceCurrency,
         status: mapPaymentStatus(booking.payment_status),
         plan: sessionPlan,
-        paidAt: invoiceData?.paid_at || undefined,
+        paidAt: paidAtFromRecords,
         /*
          * The refund, across BOTH ways money attaches to a booking — the same
          * three fields `fetchSessions` sets. Without them the journey's payment
@@ -1814,7 +1850,7 @@ export function CRMContactDrawerV2({
           const isFreeService = servicePrice === 0;
 
           // Extract invoice data from booking if available
-          const invoiceData = (booking as SchedulingBooking & {
+          const bookingMoney = booking as SchedulingBooking & {
             invoice?: {
               id: string;
               status: string;
@@ -1825,7 +1861,15 @@ export function CRMContactDrawerV2({
               refunded_amount?: number | string | null;
               refunded_at?: string | null;
             };
-          }).invoice;
+            payments?: Array<{ id: string; status: string; paid_at?: string | null }>;
+          };
+          const invoiceData = bookingMoney.invoice;
+
+          // Same rule as the primary path above — see the note there.
+          const paidAtFromRecords =
+            invoiceData?.paid_at ||
+            bookingMoney.payments?.find(pay => transactionMoneyArrived(pay.status) && pay.paid_at)?.paid_at ||
+            undefined;
 
           // Same rule as the primary path: the quote decides, not the service.
           const quotedMoney = quotedPayment(
@@ -1845,7 +1889,7 @@ export function CRMContactDrawerV2({
             amount: servicePrice,
             currency: serviceCurrency,
             status: mapPaymentStatus(booking.payment_status),
-            paidAt: invoiceData?.paid_at || undefined,
+            paidAt: paidAtFromRecords,
             /*
              * What has gone back, across BOTH ways money attaches to a booking.
              *
@@ -2371,11 +2415,40 @@ export function CRMContactDrawerV2({
 
   return (
     <>
-      <Sheet open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      {/*
+        ───────────────────────────────────────────────────────────────────────
+        THIS DRAWER DISMISSED ITSELF WHILE SOMEONE WAS USING A DIALOG ABOVE IT.
+
+        A Sheet is a Radix dialog and is modal by default, so a click INSIDE the
+        configuration dialog counts as an interaction outside this one. Opening
+        settings from the booking dialog — itself opened from here — therefore
+        closed the drawer, which unmounted the booking with it. Everything typed
+        into both was gone, and guarding the booking dialog alone could never
+        have helped: the drawer was dismissing on its own account.
+
+        The signal comes from the provider rather than from a prop, because this
+        drawer cannot know what a dialog two levels down decided to open.
+        ───────────────────────────────────────────────────────────────────────
+      */}
+      <Sheet
+        open={isOpen}
+        onOpenChange={(open) => {
+          if (open) return;
+          if (configurationOpen) return;
+          onClose();
+        }}
+        modal={!configurationOpen}
+      >
         <SheetContent
           side={isRTL ? 'left' : 'right'}
           className="w-full sm:max-w-xl p-0 bg-[var(--v2-bg)] border-[var(--v2-border)] overflow-hidden flex flex-col [&>button]:hidden"
           dir={isRTL ? 'rtl' : 'ltr'}
+          onInteractOutside={event => {
+            if (configurationOpen) event.preventDefault();
+          }}
+          onEscapeKeyDown={event => {
+            if (configurationOpen) event.preventDefault();
+          }}
         >
           {/* Header - matching old drawer design */}
           <div className="flex-shrink-0 border-b border-[var(--v2-border)] p-6">
@@ -2529,7 +2602,19 @@ export function CRMContactDrawerV2({
                     return;
                   }
 
-                  const path = status === 'completed' ? 'complete' : 'no-show';
+                  /*
+                   * A no-show is confirmed too. It is not a neutral record: it
+                   * says this person did not turn up, it appears on their
+                   * timeline, and the owner may want to invite them back — a
+                   * choice only they can make, so it is asked for rather than
+                   * assumed.
+                   */
+                  if (status === 'no_show') {
+                    setPendingNoShowBookingId(bookingId);
+                    return;
+                  }
+
+                  const path = 'complete';
 
                   try {
                     const response = await fetch(`/api/scheduling/bookings/${bookingId}/${path}`, {
@@ -3021,6 +3106,43 @@ export function CRMContactDrawerV2({
         t={t}
         isRTL={isRTL}
         startInRefundView={true}
+      />
+
+      {/*
+        No-show confirmation, and the choice of whether to invite the client
+        back. Placed beside the cancellation dialog it mirrors.
+      */}
+      <NoShowConfirmDialog
+        open={!!pendingNoShowBookingId}
+        onOpenChange={open => !open && setPendingNoShowBookingId(null)}
+        clientName={[contact?.first_name, contact?.last_name].filter(Boolean).join(' ') || null}
+        onConfirm={async ({ notifyClient }) => {
+          if (!pendingNoShowBookingId) return;
+
+          try {
+            const response = await fetch(
+              `/api/scheduling/bookings/${pendingNoShowBookingId}/no-show`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ notifyClient }),
+              }
+            );
+            const data = await response.json();
+            if (!response.ok || data.success === false) {
+              throw new Error(data.error || 'Failed to update the booking');
+            }
+
+            toast.success(t('crm.booking.status_updated') || 'Booking updated');
+            fetchSessions(contact.id, { silent: true });
+            // The no-show now writes a row on the timeline, so refresh it too.
+            fetchActivities(contact.id, { silent: true });
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Failed to update the booking');
+          } finally {
+            setPendingNoShowBookingId(null);
+          }
+        }}
       />
 
       {/* Booking Cancellation Confirmation */}

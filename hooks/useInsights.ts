@@ -60,9 +60,48 @@ export interface CorrelatedInsightData {
 }
 
 // Business Health Summary
+/**
+ * One measured rate, compared with the same business's previous period.
+ *
+ * `rate === null` means there is not enough data to say — it is NOT zero, and
+ * rendering it as a number is the defect this whole shape exists to prevent.
+ */
+export interface HealthMeasure {
+  category: string;
+  rate: number | null;
+  previousRate: number | null;
+  /** Percentage points moved, or null when there is nothing to compare with. */
+  change: number | null;
+  /** Translation key naming what the rate counts. */
+  measureKey: string;
+  unavailable: 'too_little_data' | 'not_measurable' | null;
+  sample: number;
+}
+
+export interface HealthMeasures {
+  categories: HealthMeasure[];
+  /** Share of comparable measures that improved, or null below two of them. */
+  movingUp: number | null;
+  improved: number;
+  declined: number;
+  steady: number;
+  measured: number;
+  unavailable: number;
+}
+
 export interface BusinessHealthSummaryData {
   id: string;
-  health_score: number;
+  /**
+   * No longer a grade.
+   *
+   * Was 100 minus severity penalties over insight COUNTS, so it moved when the
+   * detector catalogue changed rather than when the business did. Now carries
+   * `movingUp`, and is null when fewer than two categories can be compared.
+   * Read `health_measures` for anything meaningful.
+   */
+  health_score: number | null;
+  /** The measured rates. Null on summaries written before 2026-09-23. */
+  health_measures?: HealthMeasures | null;
   previous_health_score?: number;
   score_change?: number;
   acquisition_score: number;

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import type { BookingStatus } from '@/lib/business-os/bookingStatus';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -87,7 +88,7 @@ interface Appointment {
   start_time: string;
   end_time: string;
   timezone?: string;
-  status: 'confirmed' | 'cancelled' | 'completed' | 'no_show';
+  status: BookingStatus;
   notes?: string;
   intake_responses?: IntakeResponses;
   intake_completed_at?: string;

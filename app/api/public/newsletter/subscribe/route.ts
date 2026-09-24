@@ -20,6 +20,7 @@ import { businessSubscriberRepository } from '@/lib/repositories/BusinessSubscri
 import { marketingConsentRepository } from '@/lib/repositories/MarketingConsentRepository';
 import { beginDoubleOptIn } from '@/lib/consent/doubleOptIn';
 import { buildAttributionFromRequest } from '@/lib/utils/attribution';
+import { enrichCaptureAttribution } from '@/lib/business-os/enrichCaptureAttribution';
 
 const logger = createLogger({ module: 'PublicNewsletterSubscribeAPI' });
 
@@ -110,6 +111,15 @@ export async function POST(request: NextRequest) {
       captureChannel: 'form',
       pageUrl: data.page_url,
       generateSessionId: true,
+    });
+
+    /*
+     * Where they came from: the page KIND, and the smart link if one sent them.
+     * Shared with every other capture route — see `enrichCaptureAttribution`.
+     */
+    await enrichCaptureAttribution(attribution, {
+      subdomain: data.subdomain,
+      pageUrl: data.page_url,
     });
 
     /*

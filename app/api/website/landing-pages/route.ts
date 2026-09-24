@@ -5,6 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { publicSiteUrl } from '@/lib/utils/origins';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -551,7 +552,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       landingPage: pageResult.data,
-      url: subdomain ? `https://${subdomain}.agentspilot.com/${validated.slug}` : null
+      // From the one resolver: this line read `agentspilot.com` while the
+      // dashboard read `agentspilot.site` and middleware served `agentpilot.io`.
+      url: subdomain ? publicSiteUrl(subdomain, `/${validated.slug}`) : null
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

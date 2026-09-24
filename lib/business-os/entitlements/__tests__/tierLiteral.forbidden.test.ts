@@ -52,6 +52,10 @@ const BASELINE: Record<string, number> = {
   'lib/intelligence/core/types.ts': 1,
   'lib/pilot/WorkflowPilot.ts': 1,
   'lib/pilot/insight/AutomationAdvisor.ts': 1,
+  // 'growth' in a `subVerticalKeywords` map, beside 'marketing' and 'digital':
+  // a business vertical, not a pricing tier. Same collision as the entries
+  // around it — the word is ordinary English before it is a tier name.
+  'lib/services/WebsiteAutoBuildService.ts': 1,
   'lib/services/OnboardingConfigurationService.ts': 1,
   'lib/services/OnboardingConversationManager.ts': 2,
   'lib/testing/GenericTestSystem.ts': 1,

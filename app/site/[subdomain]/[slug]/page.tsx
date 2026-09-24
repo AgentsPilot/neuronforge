@@ -19,6 +19,7 @@
  * before this dynamic one.
  */
 import { Metadata } from 'next';
+import { platformOrigin } from '@/lib/utils/origins';
 import { notFound } from 'next/navigation';
 import { headers } from 'next/headers';
 import { WebsiteBlocks, type BlockData } from '@/components/website/blocks';
@@ -63,7 +64,7 @@ interface WebsiteData {
 }
 
 async function getWebsiteData(subdomain: string, slug: string): Promise<WebsiteData | null> {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const baseUrl = platformOrigin();
 
   try {
     const response = await fetch(

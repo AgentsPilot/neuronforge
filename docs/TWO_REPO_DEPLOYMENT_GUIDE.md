@@ -1,5 +1,11 @@
 # Two-Repository Deployment Guide
 
+> ⚠️ **Domain values in this document are superseded.**
+> It was written for the `agentspilot.com` layout. Addresses now resolve from
+> `lib/utils/origins.ts` and three environment variables — see
+> [WEB_ADDRESSES.md](/docs/WEB_ADDRESSES.md). The Vercel and DNS *mechanics* below still
+> apply; the domains named in them do not.
+
 ## Architecture Overview
 
 This project uses a **two-repository deployment architecture**:

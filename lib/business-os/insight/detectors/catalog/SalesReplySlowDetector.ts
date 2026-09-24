@@ -35,7 +35,19 @@ export class SalesReplySlowDetector extends BaseDetector {
       return 'low';
     },
 
-    pairedProcessId: 'draft_reply_templates',
+    /*
+     * Advisory. There is no process that can reply faster on the owner's
+     * behalf.
+     *
+     * This named `draft_reply_templates`, which renders "Handle it for me" —
+     * and that process is deliberately absent from `PROCESS_EFFECTS`, because
+     * drafting a template sends nothing. So the enqueuer answered "no send
+     * effect" and the owner got a 400 from a button the card had offered them.
+     *
+     * Replying sooner is something a person does. The finding is worth stating;
+     * the button was not.
+     */
+    pairedProcessId: undefined,
     consentTier: 'suggest', // Not automatable - just advice
     eligibleForAutomation: false,
     ownerParameters: [],

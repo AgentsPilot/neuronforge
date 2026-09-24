@@ -119,12 +119,38 @@ export class OpsLastMinuteCancelsDetector extends BaseDetector {
       return null;
     }
 
-    // Calculate lost revenue
-    const lostRevenue = lastMinuteCancels.reduce((sum, b) =>
-      sum + parseFloat(b.payment_amount || '75'), 0);
+    /*
+     * What these cancellations were actually worth.
+     *
+     * `payment_amount || '75'` put an invented £75 on every booking whose price
+     * was not recorded. Two measured sources replace it, in order:
+     *
+     *   the booking's own `payment_amount`, where it has one
+     *   this business's own average, from `resolveAverageDealValue` — real
+     *   collected transactions, falling back to the prices of the services it
+     *   actually sells
+     *
+     * So a business that has priced its services gets a real figure even for
+     * bookings with no amount recorded. Only a business with neither — no
+     * transactions and no priced services — reports no money, because there is
+     * then genuinely nothing to read it from.
+     */
+    const businessAverage = await this.resolveAverageDealValue(userId);
+
+    const cancelValues = lastMinuteCancels
+      .map(b => {
+        const charged = parseFloat(String(b.payment_amount ?? ''));
+        if (Number.isFinite(charged) && charged > 0) return charged;
+        return businessAverage;
+      })
+      .filter((value): value is number => value !== null);
+
+    const lostRevenue = cancelValues.length > 0
+      ? cancelValues.reduce((sum, value) => sum + value, 0)
+      : null;
 
     // Calculate severity
-    const severity = this.definition.severityFn(lastMinuteCancels.length, lostRevenue);
+    const severity = this.definition.severityFn(lastMinuteCancels.length, lostRevenue ?? 0);
 
     // Analyze patterns
     const hourBreakdown: Record<string, number> = {};
@@ -148,19 +174,34 @@ export class OpsLastMinuteCancelsDetector extends BaseDetector {
       currentValue: lastMinuteCancels.length,
       baselineValue: 0,
       thresholdValue: this.definition.threshold,
-      percentChange: 100,
+      /*
+       * Nothing changed by a hundred per cent.
+       *
+       * This detector counts: there is no baseline to have moved from, and a
+       * hardcoded 100 reached the narrator as a real measurement. It produced
+       * sentences like "a 100% increase in risk compared to your usual client
+       * retention" and "a 100% increase in your expected cash flow" — arithmetic
+       * presented as a trend, about a base of zero.
+       *
+       * `hasRealBaseline` now keeps the figure out of the prompt, but that guard
+       * reads `baselineValue`, so it is the second line of defence. This is the
+       * first: a count reports no change, because none was measured.
+       */
+      percentChange: 0,
       direction: 'above',
       affectedEntityType: 'booking',
       affectedEntityIds: lastMinuteCancels.map((b) => b.id),
       affectedCount: lastMinuteCancels.length,
-      estimatedImpactUsd: lostRevenue,
+      // Undefined, not zero: zero reads as "nothing at stake", which is the
+      // opposite of "we could not price it".
+      estimatedImpactUsd: lostRevenue ?? undefined,
       impactDirection: 'loss',
       impactPeriod: 'weekly',
       processParameters: {
         hours_threshold: hoursThreshold,
         total_cancellations: cancelledBookings.length,
         last_minute_count: lastMinuteCancels.length,
-        lost_revenue: Math.round(lostRevenue),
+        lost_revenue: lostRevenue === null ? null : Math.round(lostRevenue),
         hour_breakdown: hourBreakdown,
         cancellation_reasons: reasons,
         booking_ids: lastMinuteCancels.map((b) => b.id),

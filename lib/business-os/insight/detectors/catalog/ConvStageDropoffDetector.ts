@@ -258,7 +258,18 @@ export class ConvStageDropoffDetector extends BaseDetector {
 
     if (prices.length === 0) return undefined;
 
+    /*
+     * The share that actually converts, measured — not a literal 0.2.
+     *
+     * This multiplied by an invented 20% and showed the product to the owner as
+     * money they could recover. `resolveLeadConversionRate` answers it from
+     * this business's own contacts, and answers null when there is not enough
+     * history to say — in which case there is no figure at all.
+     */
+    const conversionRate = await this.resolveLeadConversionRate(userId);
+    if (conversionRate === null) return undefined;
+
     const average = prices.reduce((sum, price) => sum + price, 0) / prices.length;
-    return Math.round(count * average * 0.2 * 100) / 100;
+    return Math.round(count * average * conversionRate * 100) / 100;
   }
 }

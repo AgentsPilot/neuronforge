@@ -31,6 +31,14 @@
 /** Everything currently tracked. Adding one is an entry in `GAP_DEFINITIONS`. */
 export type GapId =
   | 'enquiry_unanswered'
+  /**
+   * A confirmed appointment coming up.
+   *
+   * A gap in the registry's mechanical sense — something the platform can act
+   * on, with a count the card can show — rather than something stuck. Nobody is
+   * waiting on anybody; the work is reminding both sides before it happens.
+   */
+  | 'meeting_upcoming'
   | 'quote_unwritten'
   | 'quote_unsent'
   | 'quote_awaiting_client'
@@ -73,6 +81,19 @@ export interface GapItem {
    */
   value?: number;
   currency?: string;
+  /**
+   * When the thing this is about actually HAPPENS, where it is in the future.
+   *
+   * Every other gap is something already stuck, and its timing runs forward
+   * from `since` — an invoice raised three days ago is chased today. An
+   * appointment runs the other way: the reminder is due a chosen number of
+   * hours BEFORE it, so the only date that can schedule it is the appointment's
+   * own.
+   *
+   * Set only by `meeting_upcoming`. Absent everywhere else, where `since` is
+   * the whole story.
+   */
+  eventAt?: string;
 }
 
 export interface GapDefinition {

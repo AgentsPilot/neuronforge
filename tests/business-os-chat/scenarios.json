@@ -463,6 +463,18 @@
       }
     },
     {
+      "name": "no-match-target-en",
+      "utterance": "mark invoice INV-99999 as paid",
+      "language": "en",
+      "why": "A described target that matches NOTHING must end the write, not pick the nearest invoice. Deliberately data-independent: no account has INV-99999, so this asserts the same thing on every account the golden set runs against. The AMBIGUOUS half of this branch — two rows matching, the write parked and carried across the question — is pinned in lib/business-os/bizql/__tests__/pending-choice.test.ts and resolve-writes.test.ts instead, because it needs two rows with the same name and the eval runs against one live account whose data cannot be assumed to contain duplicates.",
+      "expect": {
+        "write": {
+          "outcome": "chooses",
+          "entity": "invoices"
+        }
+      }
+    },
+    {
       "name": "add-service-no-details-he",
       "utterance": "הוסף שירות חדש",
       "language": "he",

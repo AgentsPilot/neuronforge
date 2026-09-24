@@ -29,18 +29,9 @@ export const maxDuration = 60;
  * business write to its own clients. A missing CRON_SECRET in production means
  * the request cannot be authenticated, so it is refused.
  *
- * Deliberately unlike /api/cron/insight-detect, /insight-metrics and
- * /insight-automations, which all return true when the secret is unset.
- *
- * Those three should be closed too, and the order matters: closing them before
- * `CRON_SECRET` exists in production stops detection outright, because
- * insight-detect is what writes insights at all. Set the secret, redeploy, then
- * close them.
- *
- * Note that /insight-automations is no longer merely computing — it enqueues
- * into the very table this route drains. It cannot send by itself, but an
- * arbitrary caller can make it queue work, so it is the most urgent of the
- * three.
+ * As of 2026-09-23 all four insight crons fail closed. The other three used to
+ * return true on a missing secret; `payment-reminders` sending in production
+ * proved `CRON_SECRET` was configured, which is what made closing them safe.
  */
 function verifyCronSecret(request: NextRequest): boolean {
   const authHeader = request.headers.get('authorization');

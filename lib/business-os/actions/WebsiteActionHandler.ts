@@ -12,6 +12,7 @@
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
+import { publicSiteDisplayHost, publicSiteUrl } from '@/lib/utils/origins';
 import { createLogger } from '@/lib/logger';
 import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
@@ -409,7 +410,7 @@ export class WebsiteActionHandler {
 
     return {
       success: true,
-      message: `Your website is now live at ${pageResult.data.subdomain}.agentpilot.io!`,
+      message: `Your website is now live at ${publicSiteDisplayHost(pageResult.data.subdomain)}!`,
       data: { page: result.data }
     };
   }
@@ -469,13 +470,13 @@ export const CHAT_RESPONSE_TEMPLATES = {
     `Done! I've moved the ${blockType} section ${direction}.`,
 
   published: (subdomain: string) =>
-    `Your website is now live at ${subdomain}.agentpilot.io!`,
+    `Your website is now live at ${publicSiteDisplayHost(subdomain)}!`,
 
   unpublished: () =>
     `Your website is now unpublished. Visitors will see a "Coming Soon" page.`,
 
   page_created: (title: string, subdomain: string) =>
-    `I've created a new "${title}" landing page with booking and payment integrated. View it at ${subdomain}.agentpilot.io/${title.toLowerCase().replace(/\s+/g, '-')}`,
+    `I've created a new "${title}" landing page with booking and payment integrated. View it at ${publicSiteUrl(subdomain, `/${title.toLowerCase().replace(/\s+/g, '-')}`)}`,
 
   no_website: () =>
     `You don't have a website yet. Would you like me to create one based on your business profile?`,

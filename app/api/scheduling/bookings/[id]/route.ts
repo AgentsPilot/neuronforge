@@ -6,6 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { BOOKING_STATUSES } from '@/lib/business-os/bookingStatus';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
@@ -74,7 +75,7 @@ const updateBookingSchema = z.object({
   // Contact update (to link to different contact)
   contact_id: z.string().uuid().optional(),
   // Status updates
-  status: z.enum(['confirmed', 'cancelled', 'completed', 'no_show']).optional(),
+  status: z.enum(BOOKING_STATUSES).optional(),
   cancellation_reason: z.string().optional(),
   // Payment updates
   payment_status: z.enum(['pending', 'paid', 'refunded']).optional(),
@@ -557,10 +558,12 @@ export async function PUT(
        * Two faults here, and together they made the toggle look like it worked
        * while sending nothing:
        *
-       *  1. Called without `manual`, so it consulted `send_after_booking` — the
-       *     "send it for me automatically" switch. An owner who had turned that
-       *     off, and was therefore using this toggle precisely because they send
-       *     by hand, was refused.
+       *  1. Called without `manual`, which at the time meant it consulted
+       *     `send_after_booking` — the "send it for me automatically" switch.
+       *     An owner who had turned that off, and was therefore using this
+       *     toggle precisely because they send by hand, was refused. That flag
+       *     no longer gates anything, so only the second fault could recur —
+       *     but the shape of the first is why `manual` is still passed.
        *
        *  2. `.catch()` only catches a THROWN error. `sendIntakeFormRequest`
        *     RETURNS `{ sent: false }` on refusal, so the failure passed through

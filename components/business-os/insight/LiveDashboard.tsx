@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Bot } from 'lucide-react';
-import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { useLanguage, type CurrencyCode } from '@/lib/business-os/LanguageContext';
 import { resolveGap, gapStateFor, pickLeak, type FunnelWindow } from '@/lib/business-os/insight/funnelGap';
 import { buildJourney, daysSince } from '@/lib/business-os/insight/journeyTimeline';
 import { getProcess } from '@/lib/business-os/insight/kernel/TriggerableProcesses';
@@ -145,6 +145,13 @@ export interface WeeklyStats {
   paidCount: number;
   /** Money received in the last 7 days. */
   revenue: number;
+  /**
+   * What that money IS, from the server.
+   *
+   * Not this browser's display preference, and not the business's chosen
+   * default — either can differ from what its services actually charge.
+   */
+  currency: CurrencyCode | null;
 }
 
 // Real CRM pipeline stage from crm_pipeline_stages table
@@ -540,12 +547,22 @@ export function LiveDashboard({
    * One source of truth for what is still undecided.
    */
   const handleOperationalDecide = useCallback(
-    async (id: string, approve: boolean) => {
+    async (
+      id: string,
+      approve: boolean,
+      settings?: { hoursBefore: number; notifyClient: boolean; notifyOwner: boolean }
+    ) => {
       try {
         await fetch('/api/business-os/automations/operational', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id, enabled: approve }),
+          /*
+           * The settings go with the answer, so the lead time the owner picked
+           * before pressing Approve is the one the first reminder uses. Spread
+           * rather than always sent: the route reads an absent field as "do not
+           * change", which is what the other three automations need.
+           */
+          body: JSON.stringify({ id, enabled: approve, ...(settings ?? {}) }),
         });
       } finally {
         onGapsChanged?.();
@@ -930,9 +947,18 @@ export function LiveDashboard({
    * render and defeat itself.
    */
   const weekly = useMemo<WeeklyStats>(
-    () => weeklyStats || { found: 0, contacts: 0, booked: 0, paidCount: 0, revenue: 0 },
+    () => weeklyStats || { found: 0, contacts: 0, booked: 0, paidCount: 0, revenue: 0, currency: null },
     [weeklyStats]
   );
+
+  /**
+   * The week's money, labelled with what it actually is.
+   *
+   * Wrapped once rather than repeated: the two render sites below described the
+   * same figure and could disagree about its symbol.
+   */
+  const money = (amount: number) =>
+    formatCurrency(amount, { currencyOverride: weekly.currency ?? undefined });
 
   /*
    * Is anything of this business actually live?
@@ -1335,15 +1361,6 @@ export function LiveDashboard({
     milestoneData?.firstBooking
   );
 
-  /**
-   * One line about the week, from the weekly health summary.
-   *
-   * `summary_title` rather than the full narrative: this is the sub-line of a
-   * card whose content is four figures, and a paragraph under them would bury
-   * the numbers the card exists to state.
-   */
-  const weeklyHeadline = healthSummary?.summary_title?.trim() || '';
-
   // Build verdict from REAL data
   const verdict = useMemo<VerdictContent>(() => {
     if (!hasPublished) {
@@ -1401,7 +1418,7 @@ export function LiveDashboard({
          * them. `text` stays filled for the accessible summary and for any
          * consumer that wants the one-line form.
          */
-        text: `${weekly.found} ${foundLabel}. ${weekly.contacts} ${reachedLabel}. ${closingCount} ${closingLabel}${weekly.revenue > 0 ? ` — ${formatCurrency(weekly.revenue)}` : ''}.`,
+        text: `${weekly.found} ${foundLabel}. ${weekly.contacts} ${reachedLabel}. ${closingCount} ${closingLabel}${weekly.revenue > 0 ? ` — ${money(weekly.revenue)}` : ''}.`,
         figures: [
           { value: weekly.found.toLocaleString(), label: foundLabel },
           { value: weekly.contacts.toLocaleString(), label: reachedLabel },
@@ -1416,7 +1433,7 @@ export function LiveDashboard({
          * states a fact the business would read as a loss — nothing came in —
          * when what actually happened is that nothing has come in YET.
          */
-        highlight: weekly.revenue > 0 ? formatCurrency(weekly.revenue) : undefined,
+        highlight: weekly.revenue > 0 ? money(weekly.revenue) : undefined,
         /*
          * The week's closing line, when the engine has one.
          *
@@ -1431,7 +1448,12 @@ export function LiveDashboard({
          * what the week held, and the card omits an empty sub rather than
          * leaving a blank row.
          */
-        sub: weeklyHeadline,
+        /*
+         * No sub-line. This carried `summary_title`, which now renders inside
+         * this same card as the weekly review's opening line — the two together
+         * printed one sentence twice, in a column, one under the other.
+         */
+        sub: '',
         when: t('verdict.running.when') || 'This week',
       };
     }
@@ -1504,7 +1526,7 @@ export function LiveDashboard({
         when: t('verdict.running.when') || 'This week',
       };
     }
-  }, [hasPublished, reachesByLink, hasEverTraded, setupShape, weekly, weeklyHeadline, topLeadChannel, formatCurrency, t]);
+  }, [hasPublished, reachesByLink, hasEverTraded, setupShape, weekly, topLeadChannel, formatCurrency, t]);
 
   /*
    * Today's briefing, ready for the card.
@@ -2297,6 +2319,17 @@ export function LiveDashboard({
             figures={verdict.figures}
             highlight={verdict.highlight}
             fillHeight
+            review={healthSummary ?? null}
+            /*
+             * A priority names an insight; pressing it moves the advisor carousel
+             * to that card rather than opening a second surface. The index is how
+             * that carousel is addressed — there is no by-id selector — and an
+             * insight since dismissed simply is not found, so nothing moves.
+             */
+            onOpenInsight={(insightId) => {
+              const index = advisorInsights.findIndex(i => i.id === insightId);
+              if (index >= 0) setCurrentInsightIndex(index);
+            }}
           />
         </div>
       ) : (
@@ -2307,6 +2340,17 @@ export function LiveDashboard({
           when={verdict.when}
           figures={verdict.figures}
           highlight={verdict.highlight}
+          review={healthSummary ?? null}
+          /*
+           * A priority names an insight; pressing it moves the advisor carousel
+           * to that card rather than opening a second surface. The index is how
+           * that carousel is addressed — there is no by-id selector — and an
+           * insight since dismissed simply is not found, so nothing moves.
+           */
+          onOpenInsight={(insightId) => {
+            const index = advisorInsights.findIndex(i => i.id === insightId);
+            if (index >= 0) setCurrentInsightIndex(index);
+          }}
         />
       )}
 

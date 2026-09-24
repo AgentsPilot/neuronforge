@@ -6,6 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { platformOrigin } from '@/lib/utils/origins';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { smartLinkRepository } from '@/lib/repositories/SmartLinkRepository';
@@ -84,7 +85,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     // Build the short URL
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.agentspilot.com';
+    const baseUrl = platformOrigin();
     const shortUrl = `${baseUrl}/go/${result.data.code}`;
 
     return NextResponse.json({

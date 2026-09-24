@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import type { BookingStatus } from '@/lib/business-os/bookingStatus';
 import { Calendar, Clock, CreditCard, ClipboardList, ChevronDown, ChevronUp, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
 import { useBusinessTimezone } from '@/lib/business-os/LanguageContext';
 
@@ -49,7 +50,7 @@ interface SessionBooking {
   start_time: string;
   end_time: string;
   timezone?: string;
-  status: 'confirmed' | 'cancelled' | 'completed' | 'no_show';
+  status: BookingStatus;
   notes?: string;
   intake_responses?: IntakeResponses;
   intake_completed_at?: string;

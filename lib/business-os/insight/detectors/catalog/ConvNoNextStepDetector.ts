@@ -214,7 +214,20 @@ export class ConvNoNextStepDetector extends BaseDetector {
       currentValue: stranded.length,
       baselineValue: 0,
       thresholdValue: this.definition.minSamples,
-      percentChange: 100,
+      /*
+       * Nothing changed by a hundred per cent.
+       *
+       * This detector counts: there is no baseline to have moved from, and a
+       * hardcoded 100 reached the narrator as a real measurement. It produced
+       * sentences like "a 100% increase in risk compared to your usual client
+       * retention" and "a 100% increase in your expected cash flow" — arithmetic
+       * presented as a trend, about a base of zero.
+       *
+       * `hasRealBaseline` now keeps the figure out of the prompt, but that guard
+       * reads `baselineValue`, so it is the second line of defence. This is the
+       * first: a count reports no change, because none was measured.
+       */
+      percentChange: 0,
       direction: 'above',
       affectedEntityType: 'contact',
       affectedEntityIds: stranded.map(c => c.id),
@@ -260,7 +273,18 @@ export class ConvNoNextStepDetector extends BaseDetector {
 
     if (prices.length === 0) return undefined;
 
+    /*
+     * The share that actually converts, measured — not a literal 0.2.
+     *
+     * This multiplied by an invented 20% and showed the product to the owner as
+     * money they could recover. `resolveLeadConversionRate` answers it from
+     * this business's own contacts, and answers null when there is not enough
+     * history to say — in which case there is no figure at all.
+     */
+    const conversionRate = await this.resolveLeadConversionRate(userId);
+    if (conversionRate === null) return undefined;
+
     const average = prices.reduce((sum, price) => sum + price, 0) / prices.length;
-    return Math.round(count * average * 0.2 * 100) / 100;
+    return Math.round(count * average * conversionRate * 100) / 100;
   }
 }

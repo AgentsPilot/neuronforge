@@ -121,19 +121,63 @@ export class RetRepeatBookingLowDetector extends BaseDetector {
     // Calculate severity
     const severity = this.definition.severityFn(repeatRate, oneTimeClients.length);
 
-    // Estimate lost recurring revenue
-    const avgBookingValue = bookings.reduce((sum, b) =>
-      sum + parseFloat(b.payment_amount || '75'), 0) / bookings.length;
-    const potentialRebookings = oneTimeClients.length * 0.3; // 30% could rebook
-    const estimatedLoss = potentialRebookings * avgBookingValue;
+    /*
+     * What a booking here is actually worth, and how many might come back.
+     *
+     * Both halves of this were invented. `payment_amount || '75'` priced every
+     * unpriced booking at £75, and `* 0.3 // 30% could rebook` was a rebooking
+     * rate nobody measured — multiplied together and shown to the owner as
+     * money they were losing.
+     *
+     * The value now comes from the bookings that HAVE a price. The rate comes
+     * from the business's own repeat behaviour: `repeatRate` is the share of
+     * clients who already came back, which is the only rebooking rate this
+     * platform can honestly claim. If neither can be resolved there is no
+     * money sentence.
+     */
+    const pricedBookings = bookings
+      .map(b => parseFloat(String(b.payment_amount ?? '')))
+      .filter(value => Number.isFinite(value) && value > 0);
+
+    /*
+     * The bookings that carry a price, or the business's own average.
+     *
+     * `resolveAverageDealValue` reads real collected transactions first and the
+     * prices of the services this business sells second — so a business that
+     * has priced its catalogue still gets a real figure when its bookings have
+     * no amount recorded. Null only when there is neither.
+     */
+    const avgBookingValue = pricedBookings.length > 0
+      ? pricedBookings.reduce((sum, value) => sum + value, 0) / pricedBookings.length
+      : await this.resolveAverageDealValue(userId);
+
+    /*
+     * Measured, not assumed: the share of this business's own clients who came
+     * back. Using it says "as many again as already do", which is a claim the
+     * data supports.
+     */
+    const potentialRebookings = oneTimeClients.length * (repeatRate / 100);
+
+    const estimatedLoss = avgBookingValue === null
+      ? undefined
+      : potentialRebookings * avgBookingValue;
 
     const result = this.createDetectionResult({
       severity,
       metricKey: 'retention.rebooking_rate',
       currentValue: Math.round(repeatRate * 10) / 10,
-      baselineValue: this.definition.threshold,
+      /*
+       * A target is not a baseline, and the distance to it is not a change.
+       *
+       * These reported the THRESHOLD as `baselineValue` and the gap to it as
+       * `percentChange`, which the narrator reads as "Change from baseline" —
+       * so a business whose repeat rate had been perfectly steady was told it
+       * had fallen 40%. The threshold belongs in `thresholdValue`, where it
+       * already is, and nothing here was measured twice.
+       */
+      baselineValue: 0,
       thresholdValue: this.definition.threshold,
-      percentChange: Math.round(((repeatRate - this.definition.threshold) / this.definition.threshold) * 100),
+      percentChange: 0,
       direction: 'below',
       affectedEntityType: 'contact',
       affectedEntityIds: [], // Would need to map emails to contact IDs
@@ -148,7 +192,8 @@ export class RetRepeatBookingLowDetector extends BaseDetector {
         one_time_clients: oneTimeClients.length,
         repeat_clients: repeatClients.length,
         one_time_emails: oneTimeClients.slice(0, 20), // Limit for payload size
-        avg_booking_value: Math.round(avgBookingValue),
+        // Null when no booking carried a price, rather than a rounded guess.
+        avg_booking_value: avgBookingValue === null ? null : Math.round(avgBookingValue),
       },
     });
 

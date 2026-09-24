@@ -5,7 +5,10 @@
  */
 
 import { Metadata } from 'next';
+import { platformOrigin } from '@/lib/utils/origins';
 import { notFound } from 'next/navigation';
+import { PublicBookingPage } from '@/components/public/PublicBookingPage';
+import { resolveBusinessByPrefix } from '@/lib/business-os/resolveBusinessByPrefix';
 import { BookingWidget } from './BookingWidget';
 import { isValidLocale, getDirection, type Locale } from '@/lib/i18n/config';
 import { PublicThemeStyle } from '@/components/public/PublicThemeStyle';
@@ -81,7 +84,7 @@ const LABELS = {
 };
 
 async function getBusinessData(subdomain: string): Promise<BusinessData | null> {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const baseUrl = platformOrigin();
 
   try {
     const response = await fetch(
@@ -101,7 +104,7 @@ async function getBusinessData(subdomain: string): Promise<BusinessData | null> 
 }
 
 async function getWebsiteData(subdomain: string) {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const baseUrl = platformOrigin();
 
   try {
     const response = await fetch(
@@ -137,7 +140,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   };
 }
 
-export default async function PublicBookingPage({ params, searchParams }: PageProps) {
+export default async function SiteBookingPage({ params, searchParams }: PageProps) {
   const { subdomain } = await params;
   const { service: initialServiceId, flow: flowParam } = await searchParams;
   const [businessData, websiteData] = await Promise.all([
@@ -148,7 +151,32 @@ export default async function PublicBookingPage({ params, searchParams }: PagePr
   // Parse custom flow from query param
   const customFlow = parseFlowParam(flowParam);
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * NO WEBSITE IS NOT THE SAME AS NO BUSINESS.
+   *
+   * `getBusinessData` above asks
+   * `/api/website/booking/availability?subdomain=`, which resolves through
+   * website_pages — so it answers for a business with a PUBLISHED WEBSITE and
+   * for no one else. A business reaching clients by link alone has no such row,
+   * and this page called `notFound()` on it: the address the builder shows as
+   * theirs answered 404 on the one page they most need.
+   *
+   * The prefix identifies the BUSINESS, not a website, so it can be resolved
+   * independently — and where it resolves, the link-first booking page is
+   * rendered instead. Same address, same page, whichever kind of business it is.
+   */
   if (!businessData?.success) {
+    const business = await resolveBusinessByPrefix(subdomain);
+    if (business) {
+      return (
+        <PublicBookingPage
+          userCode={business.userCode}
+          initialServiceId={initialServiceId}
+        />
+      );
+    }
+
     notFound();
   }
 

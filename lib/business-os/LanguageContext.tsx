@@ -44,7 +44,21 @@ interface LanguageContextType {
   isRTL: boolean;
   currency: CurrencyConfig;
   currencyCode: CurrencyCode;
-  setCurrency: (code: CurrencyCode) => void;
+  /**
+   * What the BUSINESS trades in, when it has said. Undefined means unanswered —
+   * do not default it, the readiness card needs the difference.
+   *
+   * For writing a currency, not for displaying one.
+   */
+  businessCurrency?: CurrencyCode;
+  /**
+   * Save the business's default currency.
+   *
+   * Resolves `{ ok: false, error }` when the database refuses — which it does
+   * once money exists in the current currency. The local value is put back, so
+   * the screen never shows a setting that was not stored.
+   */
+  setCurrency: (code: CurrencyCode) => Promise<{ ok: boolean; error?: string }>;
   availableCurrencies: typeof CURRENCY_CONFIGS;
   formatCurrency: (amount: number | null, options?: { showFree?: boolean; currencyOverride?: CurrencyCode }) => string;
 
@@ -271,6 +285,19 @@ const translations = {
     'automation.save_failed': 'That did not save. Try again.',
     'automation.reply_to_enquiries': 'Reply to new enquiries for you',
     'automation.reply_to_enquiries_hint': 'When someone gets in touch, I send them the right booking link about 15 minutes later — enough time for you to change it or stop it.',
+    'automation.remind_about_meeting': 'Remind everyone before a meeting',
+    'automation.remind_about_meeting_hint': 'Turn this on and we email a reminder before every confirmed appointment. Leave it off and we only step in when people start missing appointments.',
+    'automation.reminder_who': 'Who gets it',
+    'automation.reminder_who_client': 'The client',
+    'automation.reminder_who_owner': 'You',
+    'automation.reminder_who_both': 'Both',
+    'automation.reminder_when': 'How long before',
+    'automation.reminder_hour': 'An hour before',
+    'automation.reminder_hours': '{n} hours before',
+    'automation.reminder_day': '1 day before',
+    'automation.reminder_days': '{n} days before',
+    'automation.reminder_saved': 'Saved',
+    'automation.reminder_needs_one': 'Pick at least one. A reminder with nobody to send it to does nothing.',
     'automation.chase_invoices': 'Chase unpaid invoices',
     'automation.chase_invoices_hint': 'A reminder on the first, third and seventh day an invoice is past due. It stops the moment the invoice is paid.',
     'automation.chase_intake': 'Remind clients about their form',
@@ -724,6 +751,33 @@ const translations = {
     'insight.modal.close': 'Close',
     'insight.tips.of': 'of',
     'insight.category.setup': 'Getting you switched on',
+    'health.this_week': 'This week',
+    'health.moving': '{improved} of {total} measures improved',
+    'health.more': 'Read the rest',
+    'health.less': 'Show less',
+    'health.of_n': 'from {n}',
+    'health.not_yet': 'Not enough data yet to measure {categories}.',
+    /*
+     * Named `measuring`, not `category`, because these are not the category
+     * headings — those already exist, in title case, above. These are the
+     * sentence fragments that slot into `health.not_yet`, and when they shared
+     * the heading keys they silently replaced them: the later definition in an
+     * object literal wins, so "Operations" became "your calendar" everywhere.
+     */
+    'health.measuring.cash_flow': 'cash flow',
+    'health.measuring.retention': 'retention',
+    'health.measuring.conversion': 'conversion',
+    'health.measuring.sales': 'replies',
+    'health.measuring.operations': 'your calendar',
+    'health.measuring.acquisition': 'how people find you',
+    'health.measuring.pricing': 'pricing',
+    'health.measure.invoices_paid_on_time': 'invoices paid on time',
+    'health.measure.clients_who_returned': 'clients who came back',
+    'health.measure.contacts_who_became_clients': 'enquiries that booked',
+    'health.measure.enquiries_replied_to': 'enquiries you answered',
+    'health.measure.calendar_filled': 'of your hours booked',
+    'health.measure.visitors_who_got_in_touch': 'visitors who got in touch',
+    'health.measure.none': 'not measured',
     'insight.seen.first': 'First time I\'ve seen this. I\'ll offer to handle it standing once it has happened a few times.',
     'insight.seen.again': 'You have seen this one before and it is still open.',
     'insight.seen.repeated': 'This keeps coming back. If it is going to keep happening, I can handle it standing.',
@@ -795,8 +849,8 @@ const translations = {
     'checklist.recommended': 'Recommended',
     'checklist.meta': 'Facebook & Instagram',
     'checklist.analytics': 'Google',
-    'readiness.title': "What's missing before this works",
-    'readiness.ready': 'Your system is ready',
+    'readiness.title': 'What is left before clients can reach you',
+    'readiness.ready': 'You are ready for clients',
     'readiness.missing': 'missing',
     'readiness.optional': 'optional',
     'readiness.completed': 'done',
@@ -954,6 +1008,10 @@ const translations = {
     'setup.services.why': 'There is nothing to book — the booking page is empty',
     'setup.services.done': '{count} active services',
     'setup.availability.todo': 'Set availability',
+    'setup.timezone.todo': 'Set your timezone',
+    'setup.timezone.done': 'Times shown in {timezone}',
+    'setup.timezone.why': 'Without it your hours are read as UTC, so clients are offered the wrong times.',
+    'setup.blocked.timezone': 'Set your hours first — a timezone with nothing to book means nothing',
     'setup.availability.why': 'No available times to show a client',
     'setup.availability.done': '{count} days open',
     'setup.payments.todo': 'Connect payments',
@@ -1167,6 +1225,10 @@ const translations = {
     'chat.budget.spent': "That's all your questions for today — you've used {limit}. They reset at midnight UTC.",
     'chat.which_one_many': 'More than one matches. Which did you mean?',
     'chat.no_match': "I couldn't find one matching that.",
+    // Asked when the write is still in flight and tapping a row finishes it —
+    // so it invites a choice rather than reporting a failure to narrow.
+    'chat.which_one_pick': 'Which one did you mean? Pick one and I\u2019ll carry on.',
+    'chat.choice_retry': "I didn't catch which one. Pick one from the list, or say cancel.",
     'chat.entity.contacts': 'contact',
     'chat.entity.bookings': 'booking',
     'chat.entity.tasks': 'task',
@@ -1775,6 +1837,7 @@ const translations = {
     'crm.booking.status.cancelled': 'Cancelled',
     'crm.booking.status.no_show': 'No Show',
     'crm.booking.status.pending': 'Awaiting payment',
+    'crm.booking.status.unconfirmed': 'Not confirmed yet',
 
     // Payment status translations
     'crm.payment.status.paid': 'Paid',
@@ -2140,6 +2203,7 @@ const translations = {
     'crm.journey.returned': 'Refunded',
     'crm.journey.kept': 'You keep',
     'crm.journey.upcoming': 'Upcoming',
+    'crm.journey.undated': 'Time not recorded',
     'crm.booking.resend_confirmation_title': 'Send confirmation again',
     'crm.booking.resend_confirmation_message': 'Send the appointment confirmation to {name} again? They will receive the details and a calendar invite.',
     'crm.booking.confirmation_sent': 'Confirmation sent',
@@ -2663,6 +2727,7 @@ const translations = {
     'invoice.line_items': 'Line Items',
     'invoice.more_items': 'more items',
     'invoice.currency': 'Currency',
+    'invoice.currency_from_service': 'set by the service on this invoice',
     'invoice.description': 'Description',
     'invoice.qty': 'Qty',
     'invoice.price': 'Price',
@@ -3007,6 +3072,10 @@ const translations = {
     'settings.profile.role': 'Role',
     'settings.profile.timezone': 'Timezone',
     'settings.profile.timezone_placeholder': 'Search timezone...',
+    'scheduling.service.currency_locked': 'This service has already been sold, so its currency cannot change — it would relabel the price, not convert it. Add a new service instead.',
+    'settings.profile.currency_locked': 'Your currency cannot change now that you have invoices or payments in it — changing it would relabel them, not convert them.',
+    'settings.profile.timezone_search': 'Type a city or zone',
+    'settings.profile.timezone_none': 'No timezone matches that',
     'settings.profile.currency': 'Currency',
     'settings.profile.language': 'Language',
     'settings.profile.save': 'Save Changes',
@@ -3266,6 +3335,14 @@ const translations = {
     'config.intake.state_draft': 'Draft — your clients are not receiving this yet',
     'setup.intake.review': 'Review and publish your intake form',
     'scheduling.booking.intake_not_published': 'Your intake form is written but not published yet — publish it in Settings → Intake.',
+    'scheduling.no_show.title': 'Mark as no-show',
+    'scheduling.slot.position': '{position} of {total} at this time',
+    'scheduling.no_show.confirm': 'This records that the client did not attend. It appears on their timeline and counts towards your no-show rate.',
+    'scheduling.no_show.confirm_named': 'This records that {name} did not attend. It appears on their timeline and counts towards your no-show rate.',
+    'scheduling.no_show.confirm_action': 'Mark as no-show',
+    'scheduling.no_show.notify_label': 'Invite them to rebook',
+    'scheduling.no_show.notify_description': 'Sends a short email with a link to pick another time. It does not mention a missed appointment or assign blame. Leave off if you would rather speak to them first.',
+    'scheduling.booking.intake_open_settings': 'Open intake settings',
     'scheduling.booking.time_already_booked': 'You already have a booking at this time.',
     'crm.drawer.no_open_tasks': 'Nothing open — every task here is done.',
     // The services tab asks questions instead of labelling columns. "Sale mode"
@@ -3283,6 +3360,7 @@ const translations = {
     'config.services.published': 'Published',
     'config.services.saved_just_now': 'saved a moment ago',
     'config.services.when_collected': 'When it is collected',
+    'config.services.currency_fixed': 'Set when the service is created. Changing it would relabel the price, not convert it.',
     'config.services.short_description': 'Short description',
     'config.services.short_description_placeholder': 'One line — who it is for, what happens',
     'config.services.saved_publish_prompt': 'Saved, but not published yet. Press Publish so your clients can see it.',
@@ -3293,6 +3371,7 @@ const translations = {
     'config.intake.load_failed': "Couldn't load your intake form. Please try again.",
     'setup.intake.review_why': 'We wrote one from what you do. Nobody receives it until you publish it.',
     'config.intake.state_published': 'Published — new bookings receive this form',
+    'config.intake.published_confirmation': 'Published. New bookings will receive this form.',
     'config.intake.empty_title': 'No intake form yet',
     'config.intake.empty_body': 'We can write one based on what you do, and you can change anything in it.',
     'config.intake.generate': 'Write my intake form',
@@ -3310,8 +3389,6 @@ const translations = {
     'config.intake.preview_conditional': 'Only shown depending on an earlier answer',
     'config.intake.preview_upload': 'Upload up to {count}',
     'config.intake.back_to_edit': 'Back to editing',
-    'config.intake.send_after_booking': 'Send it automatically after someone books',
-    'config.intake.send_after_booking_hint': 'Leave this off to send it yourself from each booking.',
     'config.intake.required': 'Required',
     'config.intake.optional': 'Optional',
     'config.intake.edit': 'Edit',
@@ -3349,6 +3426,7 @@ const translations = {
     'settings.security.blocker.active_payment_plans': 'active payment plans',
     'settings.security.blocker.scheduled_installments': 'scheduled payments not yet collected',
     'gap.fix.availability': 'Set your working hours',
+    'gap.fix.timezone': 'Set your timezone',
     'payments.stripe.unsupported_title': 'Stripe cannot take card payments here',
     'payments.stripe.unsupported_desc': 'Stripe does not offer card payments to businesses registered in this country, so a payment account cannot be created. You can still bill clients by invoice — add your invoice details and every booking will be billed that way.',
     'ledger.period': 'Period',
@@ -3736,6 +3814,19 @@ const translations = {
     'automation.save_failed': 'No se guardó. Inténtalo de nuevo.',
     'automation.reply_to_enquiries': 'Responder a nuevas consultas por ti',
     'automation.reply_to_enquiries_hint': 'Cuando alguien escribe, le envío el enlace de reserva adecuado unos 15 minutos después: tiempo suficiente para que lo cambies o lo detengas.',
+    'automation.remind_about_meeting': 'Recuerda a todos antes de una cita',
+    'automation.remind_about_meeting_hint': 'Actívalo y enviamos un recordatorio antes de cada cita confirmada. Déjalo apagado y solo intervenimos cuando la gente empieza a faltar.',
+    'automation.reminder_who': 'Quién lo recibe',
+    'automation.reminder_who_client': 'El cliente',
+    'automation.reminder_who_owner': 'Tú',
+    'automation.reminder_who_both': 'Ambos',
+    'automation.reminder_when': 'Cuánto antes',
+    'automation.reminder_hour': 'Una hora antes',
+    'automation.reminder_hours': '{n} horas antes',
+    'automation.reminder_day': '1 día antes',
+    'automation.reminder_days': '{n} días antes',
+    'automation.reminder_saved': 'Guardado',
+    'automation.reminder_needs_one': 'Elige al menos uno. Un recordatorio sin destinatario no hace nada.',
     'automation.chase_invoices': 'Reclamar facturas impagadas',
     'automation.chase_invoices_hint': 'Un recordatorio el primer, tercer y séptimo día de retraso de una factura. Se detiene en cuanto la factura se paga.',
     'automation.chase_intake': 'Recordar el formulario a los clientes',
@@ -4176,6 +4267,26 @@ const translations = {
     'insight.modal.close': 'Cerrar',
     'insight.tips.of': 'de',
     'insight.category.setup': 'Poniéndote en marcha',
+    'health.this_week': 'Esta semana',
+    'health.moving': '{improved} de {total} medidas mejoraron',
+    'health.more': 'Leer el resto',
+    'health.less': 'Mostrar menos',
+    'health.of_n': 'de {n}',
+    'health.not_yet': 'Aún no hay datos suficientes para medir {categories}.',
+    'health.measuring.cash_flow': 'flujo de caja',
+    'health.measuring.retention': 'retención',
+    'health.measuring.conversion': 'conversión',
+    'health.measuring.sales': 'respuestas',
+    'health.measuring.operations': 'tu agenda',
+    'health.measuring.acquisition': 'cómo te encuentran',
+    'health.measuring.pricing': 'precios',
+    'health.measure.invoices_paid_on_time': 'facturas pagadas a tiempo',
+    'health.measure.clients_who_returned': 'clientes que volvieron',
+    'health.measure.contacts_who_became_clients': 'consultas que reservaron',
+    'health.measure.enquiries_replied_to': 'consultas que respondiste',
+    'health.measure.calendar_filled': 'de tus horas reservadas',
+    'health.measure.visitors_who_got_in_touch': 'visitantes que contactaron',
+    'health.measure.none': 'sin medir',
     'insight.seen.first': 'Es la primera vez que veo esto. Me ofreceré a gestionarlo de forma permanente cuando ocurra algunas veces más.',
     'insight.seen.again': 'Ya has visto esto antes y sigue abierto.',
     'insight.seen.repeated': 'Esto se repite. Si va a seguir pasando, puedo encargarme de forma permanente.',
@@ -4247,8 +4358,8 @@ const translations = {
     'checklist.recommended': 'Recomendado',
     'checklist.meta': 'Facebook e Instagram',
     'checklist.analytics': 'Google',
-    'readiness.title': 'Qué falta para que esto funcione',
-    'readiness.ready': 'Tu sistema está listo',
+    'readiness.title': 'Qué falta para que los clientes lleguen a ti',
+    'readiness.ready': 'Ya puedes recibir clientes',
     'readiness.missing': 'pendientes',
     'readiness.optional': 'opcional',
     'readiness.completed': 'completado',
@@ -4391,6 +4502,10 @@ const translations = {
     'setup.services.why': 'No hay nada que reservar — la página de reservas está vacía',
     'setup.services.done': '{count} servicios activos',
     'setup.availability.todo': 'Define tu disponibilidad',
+    'setup.timezone.todo': 'Configura tu zona horaria',
+    'setup.timezone.done': 'Horarios en {timezone}',
+    'setup.timezone.why': 'Sin ella tus horas se leen como UTC y los clientes ven horarios equivocados.',
+    'setup.blocked.timezone': 'Primero define tu horario — una zona sin horas no dice nada',
     'setup.availability.why': 'No hay horarios disponibles que mostrar a un cliente',
     'setup.availability.done': '{count} días abiertos',
     'setup.payments.todo': 'Conecta los pagos',
@@ -4591,6 +4706,8 @@ const translations = {
     'chat.budget.spent': 'Has usado tus {limit} preguntas de hoy. Se renuevan a medianoche UTC.',
     'chat.which_one_many': 'Coincide más de uno. ¿A cuál te referías?',
     'chat.no_match': 'No encontré ninguno que coincida.',
+    'chat.which_one_pick': '¿A cuál te referías? Elige uno y sigo.',
+    'chat.choice_retry': 'No entendí a cuál. Elige uno de la lista, o di cancelar.',
     'chat.entity.contacts': 'contacto',
     'chat.entity.bookings': 'reserva',
     'chat.entity.tasks': 'tarea',
@@ -5190,6 +5307,7 @@ const translations = {
     'crm.booking.status.cancelled': 'Cancelada',
     'crm.booking.status.no_show': 'No Asistió',
     'crm.booking.status.pending': 'Pendiente de pago',
+    'crm.booking.status.unconfirmed': 'Sin confirmar',
 
     // Payment status translations
     'crm.payment.status.paid': 'Pagado',
@@ -5547,6 +5665,7 @@ const translations = {
     'crm.journey.returned': 'Reembolsado',
     'crm.journey.kept': 'Te queda',
     'crm.journey.upcoming': 'Próximo',
+    'crm.journey.undated': 'Hora no registrada',
     'crm.booking.resend_confirmation_title': 'Enviar la confirmación otra vez',
     'crm.booking.resend_confirmation_message': '¿Enviar de nuevo la confirmación de la cita a {name}? Recibirá los detalles y una invitación de calendario.',
     'crm.booking.confirmation_sent': 'Confirmación enviada',
@@ -6070,6 +6189,7 @@ const translations = {
     'invoice.line_items': 'Líneas de Factura',
     'invoice.more_items': 'más artículos',
     'invoice.currency': 'Moneda',
+    'invoice.currency_from_service': 'definida por el servicio de esta factura',
     'invoice.description': 'Descripción',
     'invoice.qty': 'Cant.',
     'invoice.price': 'Precio',
@@ -6410,6 +6530,10 @@ const translations = {
     'settings.profile.role': 'Rol',
     'settings.profile.timezone': 'Zona Horaria',
     'settings.profile.timezone_placeholder': 'Buscar zona horaria...',
+    'scheduling.service.currency_locked': 'Este servicio ya se ha vendido, así que su moneda no puede cambiar — reetiquetaría el precio, no lo convertiría. Crea un servicio nuevo.',
+    'settings.profile.currency_locked': 'No puedes cambiar la moneda ahora que tienes facturas o pagos en ella — cambiarla los reetiquetaría, no los convertiría.',
+    'settings.profile.timezone_search': 'Escribe una ciudad o zona',
+    'settings.profile.timezone_none': 'Ninguna zona horaria coincide',
     'settings.profile.currency': 'Moneda',
     'settings.profile.language': 'Idioma',
     'settings.profile.save': 'Guardar Cambios',
@@ -6660,6 +6784,14 @@ const translations = {
     'config.intake.state_draft': 'Borrador — tus clientes aún no lo reciben',
     'setup.intake.review': 'Revisa y publica tu formulario',
     'scheduling.booking.intake_not_published': 'Tu formulario está escrito pero sin publicar — publícalo en Ajustes → Admisión.',
+    'scheduling.no_show.title': 'Marcar como no asistió',
+    'scheduling.slot.position': '{position} de {total} a esta hora',
+    'scheduling.no_show.confirm': 'Esto registra que el cliente no asistió. Aparece en su historial y cuenta para tu tasa de inasistencia.',
+    'scheduling.no_show.confirm_named': 'Esto registra que {name} no asistió. Aparece en su historial y cuenta para tu tasa de inasistencia.',
+    'scheduling.no_show.confirm_action': 'Marcar como no asistió',
+    'scheduling.no_show.notify_label': 'Invitarle a reservar de nuevo',
+    'scheduling.no_show.notify_description': 'Envía un correo breve con un enlace para elegir otro horario. No menciona la ausencia ni culpa a nadie. Déjalo desactivado si prefieres hablar con la persona primero.',
+    'scheduling.booking.intake_open_settings': 'Abrir ajustes de admisión',
     'scheduling.booking.time_already_booked': 'Ya tienes una reserva a esta hora.',
     'crm.drawer.no_open_tasks': 'Nada pendiente: todas las tareas están hechas.',
     'config.services.q.what': '¿Qué es?',
@@ -6675,6 +6807,7 @@ const translations = {
     'config.services.published': 'Publicado',
     'config.services.saved_just_now': 'guardado hace un momento',
     'config.services.when_collected': 'Cuándo se cobra',
+    'config.services.currency_fixed': 'Se define al crear el servicio. Cambiarla reetiquetaría el precio en lugar de convertirlo.',
     'config.services.short_description': 'Descripción breve',
     'config.services.short_description_placeholder': 'Una línea: para quién es y qué incluye',
     'config.services.saved_publish_prompt': 'Guardado, pero sin publicar. Pulsa Publicar para que tus clientes lo vean.',
@@ -6685,6 +6818,7 @@ const translations = {
     'config.intake.load_failed': 'No se pudo cargar tu formulario de admisión. Inténtalo de nuevo.',
     'setup.intake.review_why': 'Escribimos uno según lo que haces. Nadie lo recibe hasta que lo publiques.',
     'config.intake.state_published': 'Publicado — las nuevas reservas reciben este formulario',
+    'config.intake.published_confirmation': 'Publicado. Las nuevas reservas recibirán este formulario.',
     'config.intake.empty_title': 'Aún no hay formulario',
     'config.intake.empty_body': 'Podemos escribir uno según lo que haces, y puedes cambiar lo que quieras.',
     'config.intake.generate': 'Escribir mi formulario',
@@ -6702,8 +6836,6 @@ const translations = {
     'config.intake.preview_conditional': 'Solo se muestra según una respuesta anterior',
     'config.intake.preview_upload': 'Sube hasta {count}',
     'config.intake.back_to_edit': 'Volver a editar',
-    'config.intake.send_after_booking': 'Enviarlo automáticamente tras la reserva',
-    'config.intake.send_after_booking_hint': 'Déjalo desactivado para enviarlo tú desde cada reserva.',
     'config.intake.required': 'Obligatoria',
     'config.intake.optional': 'Opcional',
     'config.intake.edit': 'Editar',
@@ -6741,6 +6873,7 @@ const translations = {
     'settings.security.blocker.active_payment_plans': 'planes de pago activos',
     'settings.security.blocker.scheduled_installments': 'pagos programados sin cobrar',
     'gap.fix.availability': 'Definir tu horario',
+    'gap.fix.timezone': 'Configura tu zona horaria',
     'payments.stripe.unsupported_title': 'Stripe no puede cobrar con tarjeta aquí',
     'payments.stripe.unsupported_desc': 'Stripe no ofrece pagos con tarjeta a negocios registrados en este país, así que no se puede crear una cuenta de pagos. Puedes seguir facturando a tus clientes — añade tus datos de factura y cada reserva se cobrará así.',
     'ledger.period': 'Período',
@@ -7311,6 +7444,7 @@ const translations = {
     'crm.booking.status.cancelled': 'בוטלה',
     'crm.booking.status.no_show': 'לא הגיע',
     'crm.booking.status.pending': 'ממתין לתשלום',
+    'crm.booking.status.unconfirmed': 'טרם אושר',
     // Booking timeline steps (services)
     'crm.booking.step.service': 'שירות',
     'crm.booking.step.product': 'מוצר',
@@ -7458,6 +7592,7 @@ const translations = {
     'crm.journey.returned': 'הוחזר',
     'crm.journey.kept': 'נותר אצלכם',
     'crm.journey.upcoming': 'עתידי',
+    'crm.journey.undated': 'השעה לא נרשמה',
     'crm.booking.resend_confirmation_title': 'שליחת האישור מחדש',
     'crm.booking.resend_confirmation_message': 'לשלוח שוב את אישור הפגישה ל{name}? הוא יקבל את הפרטים והזמנה ליומן.',
     'crm.booking.confirmation_sent': 'האישור נשלח',
@@ -8190,6 +8325,7 @@ const translations = {
     'invoice.line_items': 'פריטים',
     'invoice.more_items': 'פריטים נוספים',
     'invoice.currency': 'מטבע',
+    'invoice.currency_from_service': 'נקבע לפי השירות שבחשבונית',
     'invoice.description': 'תיאור',
     'invoice.qty': 'כמות',
     'invoice.price': 'מחיר',
@@ -8530,6 +8666,10 @@ const translations = {
     'settings.profile.role': 'תפקיד במערכת',
     'settings.profile.timezone': 'אזור זמן',
     'settings.profile.timezone_placeholder': 'חפש אזור זמן...',
+    'scheduling.service.currency_locked': 'השירות כבר נמכר, ולכן לא ניתן לשנות את המטבע שלו — זה רק יחליף תווית ולא ימיר את המחיר. צרו שירות חדש במקום.',
+    'settings.profile.currency_locked': 'לא ניתן לשנות את המטבע אחרי שיש חשבוניות או תשלומים בו — שינוי רק יחליף את התווית, לא ימיר את הסכומים.',
+    'settings.profile.timezone_search': 'הקלידו עיר או אזור',
+    'settings.profile.timezone_none': 'אין אזור זמן שתואם',
     'settings.profile.currency': 'מטבע',
     'settings.profile.language': 'שפה',
     'settings.profile.save': 'שמור שינויים',
@@ -8780,6 +8920,14 @@ const translations = {
     'config.intake.state_draft': 'טיוטה — הלקוחות שלכם עדיין לא מקבלים את זה',
     'setup.intake.review': 'עברו על טופס הקליטה ופרסמו אותו',
     'scheduling.booking.intake_not_published': 'טופס הקליטה שלכם נכתב אבל עדיין לא פורסם — פרסמו אותו בהגדרות ← טפסי קליטה.',
+    'scheduling.no_show.title': 'סימון כאי-הגעה',
+    'scheduling.slot.position': '{position} מתוך {total} בשעה הזו',
+    'scheduling.no_show.confirm': 'הפעולה מתעדת שהלקוח לא הגיע. היא מופיעה בהיסטוריה שלו ונספרת בשיעור אי-ההגעות.',
+    'scheduling.no_show.confirm_named': 'הפעולה מתעדת ש{name} לא הגיע. היא מופיעה בהיסטוריה שלו ונספרת בשיעור אי-ההגעות.',
+    'scheduling.no_show.confirm_action': 'סימון כאי-הגעה',
+    'scheduling.no_show.notify_label': 'הזמנה לקבוע מועד חדש',
+    'scheduling.no_show.notify_description': 'שולח מייל קצר עם קישור לבחירת מועד אחר. הוא לא מזכיר פגישה שהוחמצה ולא מטיל אשמה. השאירו כבוי אם תעדיפו לדבר קודם.',
+    'scheduling.booking.intake_open_settings': 'פתחו את הגדרות הקליטה',
     'scheduling.booking.time_already_booked': 'כבר יש לכם הזמנה בשעה הזו.',
     'crm.drawer.no_open_tasks': 'אין משימות פתוחות — הכול הושלם.',
     'config.services.q.what': 'מה זה?',
@@ -8795,6 +8943,7 @@ const translations = {
     'config.services.published': 'פורסם',
     'config.services.saved_just_now': 'נשמר לפני רגע',
     'config.services.when_collected': 'מתי נגבה',
+    'config.services.currency_fixed': 'נקבע בעת יצירת השירות. שינוי שלו היה משנה את תווית המחיר, לא ממיר אותו.',
     'config.services.short_description': 'תיאור קצר',
     'config.services.short_description_placeholder': 'שורה אחת — למי זה מתאים ומה קורה',
     'config.services.saved_publish_prompt': 'נשמר, אבל עדיין לא פורסם. לחצו על ״פרסום״ כדי שהלקוחות יראו את זה.',
@@ -8805,6 +8954,7 @@ const translations = {
     'config.intake.load_failed': 'לא הצלחנו לטעון את טופס הקליטה. נסו שוב.',
     'setup.intake.review_why': 'כתבנו אחד לפי מה שאתם עושים. אף אחד לא מקבל אותו עד שתפרסמו.',
     'config.intake.state_published': 'פורסם — הזמנות חדשות מקבלות את הטופס הזה',
+    'config.intake.published_confirmation': 'פורסם. הזמנות חדשות יקבלו את הטופס הזה.',
     'config.intake.empty_title': 'עדיין אין טופס קליטה',
     'config.intake.empty_body': 'נוכל לכתוב אחד לפי מה שאתם עושים, ותוכלו לשנות בו הכול.',
     'config.intake.generate': 'כתבו לי טופס',
@@ -8822,8 +8972,6 @@ const translations = {
     'config.intake.preview_conditional': 'מוצג רק בהתאם לתשובה קודמת',
     'config.intake.preview_upload': 'העלאה של עד {count}',
     'config.intake.back_to_edit': 'חזרה לעריכה',
-    'config.intake.send_after_booking': 'שלחו אוטומטית אחרי שנקבעת פגישה',
-    'config.intake.send_after_booking_hint': 'השאירו כבוי כדי לשלוח בעצמכם מכל הזמנה.',
     'config.intake.required': 'חובה',
     'config.intake.optional': 'רשות',
     'config.intake.edit': 'עריכה',
@@ -8861,6 +9009,7 @@ const translations = {
     'settings.security.blocker.active_payment_plans': 'תוכניות תשלום פעילות',
     'settings.security.blocker.scheduled_installments': 'תשלומים עתידיים שטרם נגבו',
     'gap.fix.availability': 'להגדרת שעות הפעילות',
+    'gap.fix.timezone': 'להגדרת אזור הזמן',
     'payments.stripe.unsupported_title': 'סטרייפ לא מאפשרת גבייה בכרטיס במדינה הזו',
     'payments.stripe.unsupported_desc': 'סטרייפ לא מציעה תשלומי כרטיס לעסקים הרשומים במדינה הזו, ולכן לא ניתן לפתוח חשבון תשלומים. עדיין אפשר לחייב לקוחות בחשבונית — משלימים את פרטי החשבונית וכל הזמנה תחויב כך.',
     'ledger.period': 'תקופה',
@@ -9019,6 +9168,19 @@ const translations = {
     'automation.save_failed': 'זה לא נשמר. נסה שוב.',
     'automation.reply_to_enquiries': 'להשיב לפניות חדשות במקומך',
     'automation.reply_to_enquiries_hint': 'כשמישהו פונה, אשלח לו את הקישור המתאים לקביעת מועד כ-15 דקות אחר כך — מספיק זמן כדי לשנות או לעצור.',
+    'automation.remind_about_meeting': 'תזכורת לכולם לפני פגישה',
+    'automation.remind_about_meeting_hint': 'אם תפעיל, נשלח תזכורת לפני כל פגישה שאושרה. אם תשאיר כבוי, ניכנס לתמונה רק כשלקוחות מתחילים לא להגיע.',
+    'automation.reminder_who': 'מי מקבל',
+    'automation.reminder_who_client': 'הלקוח',
+    'automation.reminder_who_owner': 'אתה',
+    'automation.reminder_who_both': 'שניהם',
+    'automation.reminder_when': 'כמה זמן לפני',
+    'automation.reminder_hour': 'שעה לפני',
+    'automation.reminder_hours': '{n} שעות לפני',
+    'automation.reminder_day': 'יום לפני',
+    'automation.reminder_days': '{n} ימים לפני',
+    'automation.reminder_saved': 'נשמר',
+    'automation.reminder_needs_one': 'צריך לבחור לפחות אחד. תזכורת בלי נמען לא עושה כלום.',
     'automation.chase_invoices': 'תזכורת על חשבוניות שלא שולמו',
     'automation.chase_invoices_hint': 'תזכורת ביום הראשון, השלישי והשביעי לאיחור בתשלום. היא נפסקת ברגע שהחשבונית משולמת.',
     'automation.chase_intake': 'תזכורת ללקוחות על הטופס',
@@ -9459,6 +9621,26 @@ const translations = {
     'insight.modal.close': 'סגור',
     'insight.tips.of': 'מתוך',
     'insight.category.setup': 'מדליק אותך',
+    'health.this_week': 'השבוע',
+    'health.moving': '{improved} מתוך {total} מדדים השתפרו',
+    'health.more': 'קרא את ההמשך',
+    'health.less': 'הצג פחות',
+    'health.of_n': 'מתוך {n}',
+    'health.not_yet': 'עדיין אין מספיק נתונים כדי למדוד {categories}.',
+    'health.measuring.cash_flow': 'תזרים מזומנים',
+    'health.measuring.retention': 'שימור לקוחות',
+    'health.measuring.conversion': 'המרה',
+    'health.measuring.sales': 'מענה לפניות',
+    'health.measuring.operations': 'היומן שלך',
+    'health.measuring.acquisition': 'איך מוצאים אותך',
+    'health.measuring.pricing': 'תמחור',
+    'health.measure.invoices_paid_on_time': 'חשבוניות ששולמו בזמן',
+    'health.measure.clients_who_returned': 'לקוחות שחזרו',
+    'health.measure.contacts_who_became_clients': 'פניות שהפכו להזמנה',
+    'health.measure.enquiries_replied_to': 'פניות שענית עליהן',
+    'health.measure.calendar_filled': 'מהשעות שלך תפוסות',
+    'health.measure.visitors_who_got_in_touch': 'מבקרים שיצרו קשר',
+    'health.measure.none': 'לא נמדד',
     'insight.seen.first': 'זו הפעם הראשונה שאני רואה את זה. אציע לטפל בזה באופן קבוע אחרי שזה יקרה כמה פעמים.',
     'insight.seen.again': 'כבר ראית את זה קודם, וזה עדיין פתוח.',
     'insight.seen.repeated': 'זה חוזר על עצמו. אם זה ימשיך לקרות, אני יכול לטפל בזה באופן קבוע.',
@@ -9530,8 +9712,8 @@ const translations = {
     'checklist.recommended': 'מומלץ',
     'checklist.meta': 'פייסבוק ואינסטגרם',
     'checklist.analytics': 'גוגל',
-    'readiness.title': 'מה חסר כדי שהמערכת תעבוד',
-    'readiness.ready': 'המערכת מוכנה',
+    'readiness.title': 'מה נשאר כדי שלקוחות יוכלו להגיע אליכם',
+    'readiness.ready': 'אתם מוכנים לקבל לקוחות',
     'readiness.missing': 'חסרים',
     'readiness.optional': 'אופציונלי',
     'readiness.completed': 'הושלמו',
@@ -9674,6 +9856,10 @@ const translations = {
     'setup.services.why': 'אין מה להזמין — דף ההזמנות ריק',
     'setup.services.done': '{count} שירותים פעילים',
     'setup.availability.todo': 'הגדר שעות פעילות',
+    'setup.timezone.todo': 'הגדירו אזור זמן',
+    'setup.timezone.done': 'השעות מוצגות לפי {timezone}',
+    'setup.timezone.why': 'בלעדיו השעות נקראות כ-UTC, והלקוחות מקבלים שעות שגויות.',
+    'setup.blocked.timezone': 'קודם הגדירו שעות — אזור זמן בלי שעות לא אומר כלום',
     'setup.availability.why': 'אין זמנים פנויים להצגה ללקוח',
     'setup.availability.done': '{count} ימים פתוחים',
     'setup.payments.todo': 'חבר תשלומים',
@@ -9874,6 +10060,8 @@ const translations = {
     'chat.budget.spent': 'ניצלת את {limit} השאלות שלך להיום. הן מתחדשות בחצות UTC.',
     'chat.which_one_many': 'יותר מאחד מתאים. לאיזה התכוונת?',
     'chat.no_match': 'לא מצאתי כזה.',
+    'chat.which_one_pick': 'לאיזה מהם התכוונת? בחר אחד ואמשיך.',
+    'chat.choice_retry': 'לא הבנתי לאיזה. אפשר לבחור מהרשימה, או לכתוב ביטול.',
     'chat.entity.contacts': 'איש קשר',
     'chat.entity.bookings': 'פגישה',
     'chat.entity.tasks': 'משימה',
@@ -10316,6 +10504,21 @@ const translations = {
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const [language, setLanguageState] = useState<Language>('en');
   const [currencyCode, setCurrencyCode] = useState<CurrencyCode>('USD');
+
+  /**
+   * The currency stored on the BUSINESS, as opposed to the one this browser is
+   * displaying in.
+   *
+   * Undefined until loaded, and undefined for a business that has never chosen
+   * — which is the state the readiness card exists to notice, so it must not be
+   * collapsed into a default here.
+   *
+   * Deliberately NOT what `formatCurrency` reads. Display still follows
+   * `currencyCode`; what this is for is the two modals that WRITE a currency
+   * onto an invoice, where a per-device preference becoming permanent
+   * client-visible data is the actual bug.
+   */
+  const [businessCurrency, setBusinessCurrency] = useState<CurrencyCode | undefined>(undefined);
   const [currencyInitialized, setCurrencyInitialized] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   // Deliberately not the browser's zone as the initial value. See `timezone`
@@ -10353,6 +10556,34 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
             .select('preferred_language, timezone')
             .eq('user_id', user.id)
             .single();
+
+          // The business's own default, for anything that WRITES a currency.
+          const { data: businessRow } = await supabase
+            .from('business_profiles')
+            .select('currency')
+            .eq('user_id', user.id)
+            .maybeSingle();
+
+          if (businessRow?.currency && businessRow.currency in CURRENCY_CONFIGS) {
+            setBusinessCurrency(businessRow.currency as CurrencyCode);
+
+            /*
+             * The business's own currency also seeds the DISPLAY currency.
+             *
+             * It did not, and the two states sat side by side disagreeing: the
+             * display one was derived from localStorage and then from the
+             * LANGUAGE, so a business that had stated USD and switched the
+             * interface to Hebrew read every figure with no stored currency of
+             * its own as ₪ — 73 of the 78 `formatCurrency` call sites.
+             *
+             * Only when the owner has not pinned one on this device. An
+             * explicit pick in Settings still wins, because it is an answer and
+             * this is a default.
+             */
+            if (!localStorage.getItem('business-os-currency')) {
+              setCurrencyCode(businessRow.currency as CurrencyCode);
+            }
+          }
 
           if (prefs?.timezone) {
             setTimezone(safeTimezone(prefs.timezone));
@@ -10442,19 +10673,91 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
     setLanguageState(lang);
     localStorage.setItem('business-os-language', lang);
 
-    // If currency hasn't been explicitly set by user, update to language default
-    if (!localStorage.getItem('business-os-currency')) {
+    /*
+     * The language may pick the currency only when NOTHING better has said.
+     *
+     * Order: the owner's explicit pick on this device, then the BUSINESS's own
+     * stated currency, and the language last. The business was missing from
+     * that list, so switching the interface to Hebrew re-denominated a USD
+     * business's whole dashboard to ₪ — "what language am I reading in" and
+     * "what do I charge in" are different questions, and Israel charging US
+     * clients in dollars is the case the platform is built for.
+     *
+     * Language remains a reasonable guess for a business that has stated
+     * nothing: that is where `DEFAULT_CURRENCY_BY_LANGUAGE` still applies.
+     */
+    if (!localStorage.getItem('business-os-currency') && !businessCurrency) {
       setCurrencyCode(DEFAULT_CURRENCY_BY_LANGUAGE[lang]);
     }
 
     // Sync to database for email locale
     syncLanguageToDatabase(lang);
-  }, [syncLanguageToDatabase]);
+  }, [syncLanguageToDatabase, businessCurrency]);
 
-  const setCurrency = (code: CurrencyCode) => {
-    setCurrencyCode(code);
-    localStorage.setItem('business-os-currency', code);
-  };
+  /**
+   * Persist the business's DEFAULT currency.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * This used to write `localStorage` and nothing else, while
+   * `syncLanguageToDatabase` — forty lines above, for the sister control on the
+   * same settings screen — wrote two tables. So the Currency dropdown looked
+   * like a business setting and was a per-device display preference: pick
+   * shekels on a laptop, open a phone, everything is dollars again, and two
+   * people on one account see different symbols.
+   *
+   * It could not save before now, because `business_profiles.currency` did not
+   * exist. It does now (20261004_business_default_currency.sql).
+   *
+   * A DEFAULT, NOT A CONSTRAINT. `scheduling_services.currency` remains the
+   * authority for what a client is charged — a business operating from Israel
+   * can price a US client in USD, and that must keep working. This value only
+   * pre-fills the picker for a new service and labels figures with no row
+   * behind them.
+   *
+   * The localStorage write stays. Display still reads from it, deliberately
+   * untouched here: this slice makes the value STORABLE, and moving what reads
+   * it is separate work against code that has already been carefully settled.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const setCurrency = useCallback(
+    async (code: CurrencyCode): Promise<{ ok: boolean; error?: string }> => {
+      const previous = currencyCode;
+
+      // Optimistic, because the picker has always been instant.
+      setCurrencyCode(code);
+      setBusinessCurrency(code);
+      localStorage.setItem('business-os-currency', code);
+
+      if (!userId) return { ok: true };
+
+      const { error } = await supabase
+        .from('business_profiles')
+        .update({ currency: code, updated_at: new Date().toISOString() })
+        .eq('user_id', userId);
+
+      if (error) {
+        /*
+         * PUT IT BACK.
+         *
+         * The database refuses a currency change once money exists in the old
+         * one (`business_currency_lock`, 20261008), because changing it
+         * relabels history rather than converting it. Leaving the optimistic
+         * value on screen would show a setting that was not saved — the same
+         * "looks saved, isn't" failure this control had for its whole life,
+         * arrived at from the other direction.
+         */
+        setCurrencyCode(previous);
+        setBusinessCurrency(previous);
+        localStorage.setItem('business-os-currency', previous);
+
+        console.error('Failed to save the business currency:', error);
+        return { ok: false, error: error.message };
+      }
+
+      return { ok: true };
+    },
+    [userId, currencyCode]
+  );
 
   const t = (key: string, vars?: Record<string, string | number>): string => {
     let text = translations[language][key as keyof typeof translations['en']] || key;
@@ -10516,6 +10819,7 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       isRTL,
       currency,
       currencyCode,
+      businessCurrency,
       setCurrency,
       availableCurrencies: CURRENCY_CONFIGS,
       formatCurrency,

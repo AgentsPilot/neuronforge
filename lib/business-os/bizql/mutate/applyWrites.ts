@@ -24,11 +24,102 @@
 
 import { createLogger } from '@/lib/logger';
 import { resolveEmailBranding } from '@/lib/email/branding';
+import { getActionLog } from './ActionLog';
 import { executeForEach } from './ForEachExecutor';
 import { executeMutate } from './MutateExecutor';
-import type { ForEachQuery, MutateQuery, QueryRow } from '../types';
+import type { ForEachQuery, MutateQuery, QueryContext, QueryRow } from '../types';
 
 const logger = createLogger({ module: 'BizQLApplyWrites' });
+
+/**
+ * Perform ONE write, at most once.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY A SINGLE WRITE NEEDS THIS TOO
+ *
+ * `ActionLog.claim()` was wired only into the fan-out, on the reasoning that
+ * emailing forty people twice is the expensive mistake. But a single write is
+ * reached through the same double-submittable surfaces — a double-tapped Confirm
+ * button, a double-tapped row chip, a retried request — and every guard against
+ * it lived in the client or in the ORDER of two server statements. Both are
+ * application-level "have we done this?" checks, and those lose to concurrency:
+ * two requests can each read the parked write before either clears it, and then
+ * both apply it. Marking the same invoice paid twice is survivable; charging,
+ * sending or cancelling twice is not, and the catalog is free to add such an
+ * action tomorrow.
+ *
+ * The guarantee is the UNIQUE index on `idempotency_key`, exactly as it is for
+ * the fan-out. This function is the only thing that changes: nothing decides
+ * WHETHER to act by reading a row it wrote itself.
+ *
+ * SCOPE. The key is `planId|stepId`, so it is stable for one approval and
+ * different across approvals — which is why `planId` must be the id of the thing
+ * the user approved (a confirmation, a choice, a fill, a saved-plan run) and
+ * never a per-request id. A caller with no such id has nothing to deduplicate
+ * against and should call `executeMutate` directly; see the direct-apply branch
+ * in the chat route, which says so.
+ *
+ * A FAILED write keeps its claim, like the fan-out's items do. Retrying the same
+ * approval is therefore refused — which costs nothing in practice, because every
+ * caller clears the approval before applying, so a retry always arrives under a
+ * new id.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function applyClaimedMutate(args: {
+  step: MutateQuery;
+  ctx: QueryContext;
+  /** The approval this write belongs to. Stable per approval, unique across them. */
+  planId: string;
+  /** Which step within it. Index-based when the step carries no id of its own. */
+  stepId: string;
+  options?: Parameters<typeof executeMutate>[2];
+}): Promise<{ preview: string; skipped: boolean }> {
+  const { step, ctx, planId, stepId, options = {} } = args;
+  const log = getActionLog();
+
+  const fallback = `${step.entity}.${step.action}`;
+
+  const claim = await log.claim({
+    userId: ctx.userId,
+    planId,
+    stepId,
+    entity: step.entity,
+    action: step.action,
+    target: typeof step.target === 'object' && step.target && 'id' in step.target
+      ? String((step.target as { id?: unknown }).id ?? '')
+      : undefined,
+  });
+
+  if (!claim.proceed) {
+    logger.info(
+      { userId: ctx.userId, planId, stepId, entity: step.entity, action: step.action },
+      'Write already claimed; not applying it a second time'
+    );
+
+    /*
+     * Report it as done, because it IS done — the first request did it. A dry
+     * run renders the same line the user would have seen, and falls back to the
+     * bare action name when the row has already moved past the state this write
+     * describes (an invoice marked paid cannot be previewed as being marked paid
+     * again). Either way nothing is written here.
+     */
+    try {
+      const preview = await executeMutate(step, ctx, { ...options, dryRun: true });
+      return { preview: preview.preview ?? fallback, skipped: true };
+    } catch {
+      return { preview: fallback, skipped: true };
+    }
+  }
+
+  try {
+    const result = await executeMutate(step, ctx, options);
+    await log.complete(claim.entryId, { status: 'succeeded' });
+    return { preview: result.preview ?? fallback, skipped: false };
+  } catch (err) {
+    await log.complete(claim.entryId, { status: 'failed', error: (err as Error).message });
+    throw err;
+  }
+}
 
 export interface ApplyWritesArgs {
   /** The frozen steps, exactly as the user approved them. */
@@ -95,16 +186,21 @@ export async function applyFrozenWrites(args: ApplyWritesArgs): Promise<ApplyWri
       continue;
     }
 
-    const result = await executeMutate(
-      step as MutateQuery,
-      { userId, timezone, consumer: 'chat' },
-      {
+    const result = await applyClaimedMutate({
+      step: step as MutateQuery,
+      ctx: { userId, timezone, consumer: 'chat' },
+      planId,
+      // The step's own id when it has one; its position when it does not, since
+      // `MutateQuery.id` is optional and the key must still be stable.
+      stepId: step.id ?? `s${index}`,
+      options: {
         language,
         targetName: names?.[index]?.targetName,
         referenceNames: names?.[index]?.referenceNames,
-      }
-    );
-    applied.push(result.preview ?? `${step.entity}.${step.action}`);
+      },
+    });
+
+    applied.push(result.preview);
   }
 
   logger.info({ userId, planId, steps: steps.length, partial }, 'Applied frozen writes');

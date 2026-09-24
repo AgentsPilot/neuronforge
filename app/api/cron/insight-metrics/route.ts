@@ -36,9 +36,21 @@ function verifyCronSecret(request: NextRequest): boolean {
   }
 
   // If no secret configured, allow (but log warning)
+  /*
+   * Fail closed.
+   *
+   * This returned `true` — a missing secret meant "let everyone in" on a public
+   * URL where the bearer token is the only thing separating a Vercel
+   * invocation from an arbitrary caller. `payment-reminders` has always failed
+   * closed, and it demonstrably sends in production, which is the proof that
+   * CRON_SECRET is configured and that closing this costs nothing.
+   *
+   * Refusing is also the safer failure: an unrun cron means yesterday's
+   * insights, and an unprotected one means a stranger can drive the engine.
+   */
   if (!cronSecret) {
-    logger.warn('CRON_SECRET not configured - cron endpoint is unprotected');
-    return true;
+    logger.error('CRON_SECRET not configured - refusing cron request (fail-closed)');
+    return false;
   }
 
   return authHeader === `Bearer ${cronSecret}`;

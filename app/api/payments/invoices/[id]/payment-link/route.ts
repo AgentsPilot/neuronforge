@@ -8,6 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { platformOrigin } from '@/lib/utils/origins';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
@@ -151,7 +152,7 @@ export async function GET(
       apiVersion: '2024-12-18.acacia'
     });
 
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.neuronforge.io';
+    const baseUrl = platformOrigin();
 
     try {
       const session = await stripe.checkout.sessions.create(
