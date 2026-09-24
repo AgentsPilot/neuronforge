@@ -78,7 +78,7 @@ interface SchedulingServicesListProps {
 const COLUMN_WIDTHS = ['19%', '13%', '12%', '14%', '12%', '12%', '8%', '10%'] as const;
 
 export function SchedulingServicesList({ services, onServiceClick, onServicePublished, onServicePublishedWithId, onSilentRefresh, showAddButton = false, autoStartNewRow, newRowPrefill, onAutoStartConsumed, onServiceCreatedFromChat, autoEditServiceId, onAutoEditConsumed, onServiceEdited, intakeEnabled = false, processorReady = false, hideServiceList = false, onCancelNewRow }: SchedulingServicesListProps) {
-  const { t, formatCurrency, currencyCode } = useLanguage();
+  const { t, formatCurrency, currencyCode, businessCurrency } = useLanguage();
   const [publishingId, setPublishingId] = useState<string | null>(null);
   /**
    * Why the last publish did not happen.
@@ -101,6 +101,44 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
    * sentence from "your change is not live yet", and the one the owner needs.
    */
   const [pausedByEditId, setPausedByEditId] = useState<string | null>(null);
+
+  /*
+   * The publish notice is written at the TOP of a scrolling panel, and the
+   * button that triggers it is at the bottom — so an owner who saves from
+   * where they were working is told "clients cannot book this" in a place they
+   * are not looking. They read it only if they happen to scroll back up.
+   *
+   * Being told badly is the same as not being told: the whole point of the
+   * line is that saving is only half the act.
+   */
+  const publishNoticeRef = useRef<HTMLDivElement | null>(null);
+
+  /*
+   * Bumped on every save, not derived from `recentlyEditedId`.
+   *
+   * Saving the same service twice leaves that id unchanged, so an effect keyed
+   * on it alone would scroll the first time and stay silent the second — and
+   * the second save is the one where the owner has settled in further down the
+   * panel. A counter makes every save an event.
+   */
+  const [noticeSeq, setNoticeSeq] = useState(0);
+
+  useEffect(() => {
+    if (!recentlyEditedId && !publishError) return;
+    const notice = publishNoticeRef.current;
+    if (!notice) return;
+
+    // `nearest` scrolls the minimum needed, so a notice already on screen does
+    // not yank the panel. Motion preference honoured — this is an involuntary
+    // scroll the owner did not ask for.
+    const reduceMotion = typeof window !== 'undefined'
+      && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+    notice.scrollIntoView({
+      behavior: reduceMotion ? 'auto' : 'smooth',
+      block: 'nearest',
+    });
+  }, [recentlyEditedId, publishError, noticeSeq]);
   // Row editing state - stores all editable values for a row
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
 
@@ -191,6 +229,21 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     }
     return 'ILS';
   };
+
+  /*
+   * What a NEW service is priced in.
+   *
+   * The business's own currency where it has stated one; the display currency
+   * only as a fallback. `currencyCode` is per-device, so seeding from it alone
+   * let whichever machine happened to create a service decide what it charges
+   * in — a laptop set to English and a phone set to Hebrew produced services
+   * in two different currencies for the same business.
+   *
+   * This matters more now than it did: the price row no longer offers a
+   * currency toggle, so this seed is not a first guess the owner corrects, it
+   * is the answer.
+   */
+  const defaultServiceCurrency = getValidCurrency(businessCurrency ?? currencyCode);
 
   // New row state for inline service creation
   const [isAddingNewRow, setIsAddingNewRow] = useState(false);
@@ -299,10 +352,6 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       autoStartConsumedRef.current = true;
 
       // Start adding a new row with prefill values
-      const defaultCurrency = validCurrencies.includes(currencyCode as ServiceCurrency)
-        ? currencyCode as ServiceCurrency
-        : 'ILS';
-
       setIsAddingNewRow(true);
       setNewRowFromChat(true); // Mark this as from chat for callback
       setNewRowValues({
@@ -311,7 +360,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         duration: (newRowPrefill?.duration_minutes || 60).toString(),
         buffer: (newRowPrefill?.buffer_minutes || 0).toString(),
         price: (newRowPrefill?.price || 0).toString(),
-        currency: (newRowPrefill?.currency as ServiceCurrency) || defaultCurrency,
+        currency: (newRowPrefill?.currency as ServiceCurrency) || defaultServiceCurrency,
         is_scheduled: true,
         collection: 'invoice' as ServiceCollection,
         sale_mode: 'direct' as ServiceSaleMode,
@@ -324,7 +373,11 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       // Signal that we consumed the auto-start
       onAutoStartConsumed?.();
     }
-  }, [autoStartNewRow, newRowPrefill, currencyCode, isAddingNewRow, onAutoStartConsumed, validCurrencies]);
+  // `defaultServiceCurrency` replaces the `currencyCode` + `validCurrencies`
+  // pair this used to depend on. It is a plain string, where `validCurrencies`
+  // was a fresh array every render — an unstable dependency that re-ran this
+  // effect continuously and was only held in check by `autoStartConsumedRef`.
+  }, [autoStartNewRow, newRowPrefill, defaultServiceCurrency, isAddingNewRow, onAutoStartConsumed]);
 
   // Auto-edit a specific service when triggered from chat
   const autoEditConsumedRef = useRef(false);
@@ -493,6 +546,33 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     if (togglingId) return;
 
     const newActiveState = !service.is_active;
+
+    /*
+     * `status` is not this switch's to change when the service has never been
+     * published.
+     *
+     * It used to write `status: newActiveState ? 'active' : 'inactive'`
+     * unconditionally, which quietly made the pause button a second publish
+     * button — one that skipped everything the real one does: the description
+     * check in `handlePublish`, the journey-readiness gate, and `publish()`'s
+     * own `.eq('status', 'draft')` guard. Switch a draft off and on again and
+     * it was live to clients, reviewed by nobody.
+     *
+     * The combination with editing was worse. Saving a live service returns it
+     * to `draft` but leaves `is_active` true, so the switch still read "on".
+     * Pressing it wrote `inactive` — and `publish()` deliberately "refuses to
+     * un-pause an inactive service" — so the owner's edited service could no
+     * longer be published at all. The only way out was to switch it back on,
+     * which published it without review. That is the round trip reported.
+     *
+     * Pausing and un-pausing a service that HAS been published stays this
+     * switch's job, because it is the only un-pause path there is. Promoting a
+     * draft never was.
+     */
+    const nextStatus = service.status === 'draft'
+      ? 'draft'
+      : (newActiveState ? 'active' : 'inactive');
+
     setTogglingId(service.id);
 
     // Optimistic update
@@ -507,8 +587,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           is_active: newActiveState,
-          // Sync status with is_active flag
-          status: newActiveState ? 'active' : 'inactive'
+          status: nextStatus
         })
       });
 
@@ -698,7 +777,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       duration: '60',
       buffer: '0',
       price: '0',
-      currency: getValidCurrency(currencyCode),
+      currency: defaultServiceCurrency,
       is_scheduled: true,
       collection: 'invoice' as ServiceCollection,
       sale_mode: 'direct' as ServiceSaleMode,
@@ -721,7 +800,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       duration: '60',
       buffer: '0',
       price: '0',
-      currency: getValidCurrency(currencyCode),
+      currency: defaultServiceCurrency,
       is_scheduled: true,
       collection: 'invoice' as ServiceCollection,
       sale_mode: 'direct' as ServiceSaleMode,
@@ -789,6 +868,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         // Track the new service as edited (draft) so we can warn on close
         if (newServiceId) {
           setRecentlyEditedId(newServiceId);
+        setNoticeSeq(n => n + 1); // every save is an event, even a repeat of the same one
           onServiceEdited?.(newServiceId);
         }
 
@@ -800,7 +880,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           duration: '60',
           buffer: '0',
           price: '0',
-          currency: getValidCurrency(currencyCode),
+          currency: defaultServiceCurrency,
           is_scheduled: true,
           collection: 'invoice' as ServiceCollection,
           sale_mode: 'direct' as ServiceSaleMode,
@@ -953,6 +1033,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         });
         // Highlight the row to draw attention to the publish button (persists until dialog closes)
         setRecentlyEditedId(serviceId);
+        setNoticeSeq(n => n + 1); // every save is an event, even a repeat of the same one
         if (wasLive) setPausedByEditId(serviceId);
         // Notify parent that this service was edited (now draft)
         onServiceEdited?.(serviceId);
@@ -1136,9 +1217,14 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                 ? t('config.services.new_hint')
                 : [
                     isDraft ? t('scheduling.service.draft') : t('config.services.published'),
-                    effective?.is_active
-                      ? t('scheduling.service.active')
-                      : t('scheduling.service.inactive'),
+                    /* On/off only means something once published. A draft read
+                       "Draft · Active", which are opposite answers to the one
+                       question the owner is asking — can a client book this. */
+                    isDraft
+                      ? null
+                      : effective?.is_active
+                        ? t('scheduling.service.active')
+                        : t('scheduling.service.inactive'),
                     recentlyEditedId === service?.id ? t('config.services.saved_just_now') : null,
                   ].filter(Boolean).join(' · ')}
             </p>
@@ -1161,18 +1247,27 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                     {t('scheduling.service.publish')}
                   </button>
                 )}
-                <button
-                  onClick={(e) => handleToggleActive(e, service)}
-                  disabled={togglingId === service.id}
-                  title={effective?.is_active ? t('scheduling.service.deactivate') : t('scheduling.service.activate')}
-                  aria-label={effective?.is_active ? t('scheduling.service.deactivate') : t('scheduling.service.activate')}
-                  className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-all disabled:opacity-50"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  {togglingId === service.id
-                    ? <Loader2 className="h-4 w-4 animate-spin" />
-                    : effective?.is_active ? <Pause className="h-4 w-4" /> : <Power className="h-4 w-4" />}
-                </button>
+                {/* Pause belongs to a service clients can actually reach.
+                    A draft has nothing to pause, and the switch standing there
+                    showing "on" was the lie behind the round trip described on
+                    `handleToggleActive`: an edited service reads `is_active`
+                    true while its status is `draft`, so it looked live when no
+                    client could book it. Publish is the only move a draft has,
+                    and it is already the only button shown. */}
+                {!isDraft && (
+                  <button
+                    onClick={(e) => handleToggleActive(e, service)}
+                    disabled={togglingId === service.id}
+                    title={effective?.is_active ? t('scheduling.service.deactivate') : t('scheduling.service.activate')}
+                    aria-label={effective?.is_active ? t('scheduling.service.deactivate') : t('scheduling.service.activate')}
+                    className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-all disabled:opacity-50"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    {togglingId === service.id
+                      ? <Loader2 className="h-4 w-4 animate-spin" />
+                      : effective?.is_active ? <Pause className="h-4 w-4" /> : <Power className="h-4 w-4" />}
+                  </button>
+                )}
                 <button
                   onClick={(e) => handleDeleteClick(e, service)}
                   title={t('button.delete')}
@@ -1197,6 +1292,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           {/* A publish that did not happen, said out loud. */}
           {!isNew && service && publishError?.serviceId === service.id && (
             <div
+              ref={publishNoticeRef}
               className="flex items-start gap-2.5 px-3.5 py-3 text-[12.5px]"
               style={{
                 borderRadius: 'var(--v2-radius-button)',
@@ -1213,6 +1309,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
 
           {!isNew && service && recentlyEditedId === service.id && isDraft && !publishError && (
             <div
+              ref={publishNoticeRef}
               className="flex items-start gap-2.5 px-3.5 py-3 text-[12.5px]"
               style={{
                 borderRadius: 'var(--v2-radius-button)',
@@ -1396,15 +1493,21 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               </p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {/* The price is the number being decided; the currency is
-                    picked once and rarely changed. The old row gave the two
-                    equal room and then some — a 56px dropdown beside a 56px
-                    number field — so the amount, which is the point, was the
-                    smallest thing in the group.
+                {/* The price is the number being decided. The currency is not
+                    a question here at all — it is stated, so the owner can see
+                    what they are typing into.
 
-                    Four currencies is a choice, not a list to open: shown as
-                    the same segment the questions above use, so picking one is
-                    a single click instead of open-scan-select. */}
+                    This row used to offer all four as a segment, which read as
+                    an invitation and was one: changing it does not convert
+                    anything, it relabels. 300 stays 300, so USD → ILS is a 73%
+                    price cut nobody typed, and every invoice already raised
+                    keeps the old currency, so the reports fracture with no FX
+                    rate to put them back together.
+
+                    A service is still free to be priced in another currency —
+                    an Israeli business charging a US client in USD is the case
+                    the whole design exists for. That is settled where a service
+                    is created, not edited in passing beside the amount. */}
                 <label className="flex flex-col gap-1.5 sm:col-span-2">
                   <span className="text-[12px] text-[var(--v2-text-secondary)]">
                     {t('config.services.column.price')}
@@ -1414,30 +1517,46 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                       נגבה" onto a row of its own made it read as a separate
                       setting rather than as the end of the price. */}
                   <div className="flex items-center gap-2.5 flex-wrap">
-                    <input
-                      type="number"
-                      value={values.price}
-                      onChange={(e) => setValues(prev => ({ ...prev, price: e.target.value }))}
-                      // Sized to the number it holds, not to the row it sits
-                      // in. `flex-1` made it swallow whatever the currency and
-                      // the collection segment left over — a field for four
-                      // digits stretched across half the panel.
-                      className={`${field} w-32 text-[15px] py-2.5 tabular-nums`}
+                    {/* The currency sits INSIDE the amount, on its leading
+                        edge, the way it does on a bank form — it is part of
+                        what is being typed, not a setting standing beside it.
+                        A hairline divides the fixed part from the typed part,
+                        so the two still read as one control.
+
+                        Symbol and code together: the glyph alone is ambiguous
+                        across the set we support — '$' is USD here, but an
+                        owner scanning the row cannot know that from the glyph,
+                        and USD vs ILS is the whole question.
+
+                        Logical properties (`border-e`, not `border-r`) so the
+                        affix follows the writing direction by itself. Line
+                        ~1745 below makes the same point about not branching on
+                        `isRTL` where CSS already knows.
+
+                        Sized to the number it holds, not to the row it sits in.
+                        `flex-1` made it swallow whatever the rest of the line
+                        left over, so a field for four digits stretched across
+                        half the panel. */}
+                    <div
+                      className="w-44 flex items-stretch overflow-hidden bg-[var(--v2-bg)] border border-[var(--v2-border)] focus-within:ring-1 focus-within:border-transparent"
                       style={fieldStyle}
-                    />
-                    {segment(
-                      ([
-                        ['ILS', '₪'],
-                        ['USD', '$'],
-                        ['EUR', '€'],
-                        ['GBP', '£'],
-                      ] as const).map(([code, symbol]) => ({
-                        value: code,
-                        label: symbol,
-                        active: values.currency === code,
-                        onClick: () => setValues(prev => ({ ...prev, currency: code as ServiceCurrency })),
-                      }))
-                    )}
+                    >
+                      <span
+                        className="flex items-center gap-1.5 px-3 select-none whitespace-nowrap bg-[var(--v2-surface)] border-e border-[var(--v2-border)] text-[11.5px] tracking-wide text-[var(--v2-text-secondary)]"
+                        title={t('config.services.currency_fixed')}
+                      >
+                        <span className="text-[14px] text-[var(--v2-text-primary)]">
+                          {getCurrencySymbol(values.currency)}
+                        </span>
+                        {values.currency}
+                      </span>
+                      <input
+                        type="number"
+                        value={values.price}
+                        onChange={(e) => setValues(prev => ({ ...prev, price: e.target.value }))}
+                        className="flex-1 min-w-0 bg-transparent px-3 py-2.5 text-[15px] tabular-nums text-[var(--v2-text-primary)] focus:outline-none"
+                      />
+                    </div>
 
                     {/* Nothing to collect when nothing is charged, so the
                         question simply does not appear. */}

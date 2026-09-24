@@ -94,6 +94,18 @@ interface V4Choice {
   kind: 'none' | 'ambiguous';
   entity: string;
   total: number;
+  /**
+   * Present only when the server PARKED the write while it asks.
+   *
+   * Its absence means this question cost the write — which is what 'none' still
+   * means, since there is nothing to pick from. When it is present, tapping a
+   * row finishes the original command rather than starting a new one.
+   */
+  choiceId?: string;
+  /** Positionally aligned with the rows shown above the chips. */
+  options?: Array<{ id: string; label: string }>;
+  /** True when the last reply matched no candidate and this is the second ask. */
+  retry?: boolean;
 }
 
 /**
@@ -160,9 +172,17 @@ interface ChatMessage {
     | 'confirmation'
     | 'result_list'
     | 'understood'
+    | 'choice'
     | 'pending_write';
   content: string;
   resultRows?: V4Row[];
+  /**
+   * The parked question this message is asking, so a tapped chip knows which
+   * choice it is answering. Without it the pick would have to be read off the
+   * latest response, and a user who scrolls back and taps an older list would
+   * answer the wrong question.
+   */
+  choice?: V4Choice;
   /**
    * One-tap corrections offered beside "this is what I understood".
    *
@@ -915,13 +935,17 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
    */
   const lastQuestionRef = useRef<string | null>(null);
 
-  const handleV4Send = useCallback(async (command: string, alternative?: V4Alternative) => {
-    if (!alternative) lastQuestionRef.current = command;
+  const handleV4Send = useCallback(async (
+    command: string,
+    alternative?: V4Alternative,
+    pick?: { choiceId: string; rowId: string }
+  ) => {
+    if (!alternative && !pick) lastQuestionRef.current = command;
 
     const response = await fetch('/api/business-os/chat-v4', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: command, alternative }),
+      body: JSON.stringify({ message: command, alternative, pick }),
     });
 
     const result = await response.json();
@@ -999,12 +1023,15 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
     // never pick one, and never apply the change to all of them.
     const choice = result.choice as V4Choice | undefined;
     if (choice) {
-      const question =
-        choice.kind === 'none'
+      const question = choice.retry
+        ? t('chat.choice_retry')
+        : choice.kind === 'none'
           ? t('chat.no_match')
-          : choice.total > 1
-            ? t('chat.which_one_many')
-            : t('chat.which_one');
+          : choice.choiceId
+            ? t('chat.which_one_pick')
+            : choice.total > 1
+              ? t('chat.which_one_many')
+              : t('chat.which_one');
 
       if (answer?.rows?.length) {
         setMessages(prev => [
@@ -1012,7 +1039,16 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
           { type: 'result_list', content: '', resultRows: answer.rows },
         ]);
       }
-      setMessages(prev => [...prev, { type: 'ai', content: question }]);
+
+      // A parked question gets chips: the write is still in flight, and tapping
+      // a row finishes it. Without a choiceId there is nothing to answer, so the
+      // question stays an ordinary line.
+      setMessages(prev => [
+        ...prev,
+        choice.choiceId && choice.options?.length
+          ? { type: 'choice', content: question, choice }
+          : { type: 'ai', content: question },
+      ]);
       return;
     }
 
@@ -1506,6 +1542,40 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
   );
 
   /**
+   * Tap a row in answer to "which one did you mean?".
+   *
+   * The message text is the label, so the transcript reads like the user said
+   * which one — but the server ignores it and uses the id, which it checks
+   * against the candidates it parked. Typing "the second one" instead goes
+   * through the same parked question; this is the one-tap version of it, not a
+   * separate path.
+   */
+  const applyPick = useCallback(
+    async (choice: V4Choice, rowId: string) => {
+      if (loading || !choice.choiceId) return;
+
+      const label = choice.options?.find((o) => o.id === rowId)?.label ?? '';
+
+      setMessages(prev => [...prev, { type: 'user', content: label }]);
+      setSuggestions([]);
+      setLoading(true);
+
+      try {
+        await handleV4Send(label, undefined, { choiceId: choice.choiceId, rowId });
+      } catch (err) {
+        logger.error({ err }, 'Choice failed');
+        setMessages(prev => [
+          ...prev,
+          { type: 'ai', content: "Sorry, I couldn't process that. Please try again." },
+        ]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [loading, handleV4Send]
+  );
+
+  /**
    * Attach a document to the quote on the card, then re-render the card.
    *
    * The file goes to the client the quote is FOR — the server reads that off
@@ -1721,9 +1791,28 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
             {msg.type === 'understood' && (
               <UnderstoodMessage
                 text={msg.content}
-                alternatives={msg.alternatives ?? []}
+                chips={(msg.alternatives ?? []).map((alternative) => ({
+                  key: `${alternative.stepId}.${alternative.field}.${alternative.value}`,
+                  label: alternative.label,
+                }))}
                 isHebrew={language === 'he'}
-                onPick={(alternative) => void applyCorrection(alternative)}
+                onPick={(key) => {
+                  const alternative = (msg.alternatives ?? []).find(
+                    (a) => `${a.stepId}.${a.field}.${a.value}` === key
+                  );
+                  if (alternative) void applyCorrection(alternative);
+                }}
+              />
+            )}
+            {msg.type === 'choice' && msg.choice?.choiceId && (
+              <UnderstoodMessage
+                text={msg.content}
+                chips={(msg.choice.options ?? []).map((option) => ({
+                  key: option.id,
+                  label: option.label,
+                }))}
+                isHebrew={language === 'he'}
+                onPick={(rowId) => void applyPick(msg.choice!, rowId)}
               />
             )}
             {msg.type === 'pending_write' && msg.pendingWrite && (
@@ -1853,18 +1942,24 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
  * The chips are the half that matters. Seeing that the system read "cancelled"
  * when you asked about no-shows only helps if fixing it is one tap — a user who
  * has to work out which word to change usually gives up and takes the number.
+ *
+ * Which is also why "which David did you mean?" renders through here rather than
+ * through a card of its own. Both are the same affordance — a quiet line and one
+ * tap to settle it — and a second chip style would only make them look like two
+ * different kinds of question.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 function UnderstoodMessage({
   text,
-  alternatives,
+  chips,
   isHebrew,
   onPick,
 }: {
   text: string;
-  alternatives: V4Alternative[];
+  /** `key` is what goes back to the server; `label` is what the user reads. */
+  chips: Array<{ key: string; label: string }>;
   isHebrew: boolean;
-  onPick: (alternative: V4Alternative) => void;
+  onPick: (key: string) => void;
 }) {
   return (
     <div className="flex flex-col gap-1.5 max-w-[85%]" dir={isHebrew ? 'rtl' : 'ltr'}>
@@ -1874,15 +1969,15 @@ function UnderstoodMessage({
             two sentences, not one. */}
         <span className="whitespace-pre-line">{text}</span>
       </div>
-      {alternatives.length > 0 && (
+      {chips.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
-          {alternatives.map((alternative) => (
+          {chips.map((chip) => (
             <button
-              key={`${alternative.stepId}.${alternative.field}.${alternative.value}`}
-              onClick={() => onPick(alternative)}
+              key={chip.key}
+              onClick={() => onPick(chip.key)}
               className="text-[11px] sm:text-xs px-2 py-1 rounded-full border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[#F97316] hover:border-[#F97316] transition-colors"
             >
-              {alternative.label}
+              {chip.label}
             </button>
           ))}
         </div>

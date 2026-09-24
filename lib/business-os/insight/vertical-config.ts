@@ -201,9 +201,35 @@ const DEFAULT_CONFIG: VerticalConfig = {
  * Get configuration for a specific vertical
  * Returns default config if vertical is unknown
  */
+/**
+ * The same trade under a different name.
+ *
+ * Onboarding stores what the owner picked, and those labels do not always match
+ * the keys here. `coaching` is the clearest case: a `coach` config exists, with
+ * its tone and its vocabulary, and a business that described itself as
+ * "coaching" got the generic fallback anyway — silently, because an unknown
+ * vertical is indistinguishable from no vertical at this layer.
+ *
+ * Aliases only. A trade with no config of its own belongs in VERTICAL_CONFIGS
+ * with its own tone and words, not mapped onto somebody else's.
+ */
+const VERTICAL_ALIASES: Record<string, string> = {
+  coaching: 'coach',
+  life_coach: 'coach',
+  business_coach: 'coach',
+  consulting: 'consultant',
+  therapy: 'therapist',
+  psychotherapist: 'therapist',
+  counsellor: 'therapist',
+  counselor: 'therapist',
+  hairdresser: 'salon',
+  barber: 'salon',
+};
+
 export function getVerticalConfig(vertical: string | null | undefined): VerticalConfig {
   if (!vertical) return DEFAULT_CONFIG;
-  return VERTICAL_CONFIGS[vertical] || DEFAULT_CONFIG;
+  const key = vertical.toLowerCase().trim();
+  return VERTICAL_CONFIGS[key] || VERTICAL_CONFIGS[VERTICAL_ALIASES[key]] || DEFAULT_CONFIG;
 }
 
 /**

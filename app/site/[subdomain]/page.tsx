@@ -5,6 +5,7 @@
  */
 
 import { Metadata } from 'next';
+import { platformOrigin, publicSiteDisplayHost } from '@/lib/utils/origins';
 import { notFound } from 'next/navigation';
 import { headers } from 'next/headers';
 import { WebsiteBlocks, type BlockData } from '@/components/website/blocks';
@@ -49,7 +50,7 @@ interface WebsiteData {
 }
 
 async function getWebsiteData(subdomain: string): Promise<WebsiteData | null> {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const baseUrl = platformOrigin();
 
   try {
     const response = await fetch(
@@ -293,7 +294,7 @@ function ComingSoonPage({
               style={{ background: 'var(--ap-brand)' }}
             />
             <span className="text-sm font-mono" style={{ color: 'var(--ap-text-muted)' }}>
-              {subdomain}.agentpilot.io
+              {publicSiteDisplayHost(subdomain)}
             </span>
           </div>
         </div>

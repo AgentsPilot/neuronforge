@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { wallClockToInstant } from '@/lib/scheduling/wallClock';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { activitySentence, activityMoment, activityRecord } from '@/lib/business-os/activityText';
+import { safeTimezone } from '@/lib/scheduling/businessTime';
 
 const logger = createLogger({ module: 'API', service: 'BookingReschedule' });
 
@@ -288,7 +289,11 @@ export async function POST(
       .eq('user_id', booking.user_id)
       .maybeSingle();
 
-    const timeZone = ownerPrefs?.timezone || booking.timezone || 'UTC';
+    // Validated, not merely defaulted — see the same change in
+    // `website/booking/availability`. The zone stamped on the booking stays the
+    // second choice, so a business that has since moved does not drag an
+    // already-agreed appointment with it.
+    const timeZone = safeTimezone(ownerPrefs?.timezone || booking.timezone);
 
     // The language the business works in — what its own history is written in.
     const { data: ownerProfile } = await supabaseServer

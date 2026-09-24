@@ -217,7 +217,14 @@ export class WebsitePluginExecutor extends BasePluginExecutor {
     if (params.seo_keywords !== undefined) updates.seo_keywords = params.seo_keywords;
     if (params.theme !== undefined) updates.theme = params.theme;
     if (params.subdomain !== undefined) updates.subdomain = params.subdomain;
-    if (params.custom_domain !== undefined) updates.custom_domain = params.custom_domain;
+    /*
+     * `custom_domain` is NOT in this allow-list any more.
+     *
+     * Businesses do not bring their own web address — every public page is
+     * served at `{prefix}.agentspilot.ai` — so an agent that set this changed a
+     * column nothing reads. Advertising a field that does nothing is how a
+     * caller ends up believing it worked.
+     */
     if (params.favicon_url !== undefined) updates.favicon_url = params.favicon_url;
     if (params.og_image_url !== undefined) updates.og_image_url = params.og_image_url;
     if (params.website_language !== undefined) updates.website_language = params.website_language;

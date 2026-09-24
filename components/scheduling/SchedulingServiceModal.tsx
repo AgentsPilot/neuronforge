@@ -23,7 +23,7 @@ interface SchedulingServiceModalProps {
 const SCHEDULING_COLOR = '#14B8A6';
 
 export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpdated, prefill, onServiceCreated }: SchedulingServiceModalProps) {
-  const { t, currencyCode } = useLanguage();
+  const { t, currencyCode, businessCurrency } = useLanguage();
   const [formData, setFormData] = useState({
     service_name: '',
     description: '',
@@ -133,13 +133,23 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
         setFormData(baseData);
       }
     } else {
-      // New service: use user's preferred currency as default
+      /*
+       * New service: the BUSINESS's currency, then the display one.
+       *
+       * `currencyCode` is backed by localStorage, so seeding from it alone made
+       * a new service inherit whichever device happened to create it. The
+       * business default is a stored answer; the display value is a fallback
+       * for an account that has not given one.
+       *
+       * Only a default — the picker is right there, and a business may
+       * deliberately price one service in another currency.
+       */
       const defaults = {
         service_name: '',
         description: '',
         duration_minutes: 60,
         price: 0,
-        currency: currencyCode as ServiceCurrency,
+        currency: (businessCurrency ?? currencyCode) as ServiceCurrency,
         is_scheduled: true,
         sale_mode: 'direct' as ServiceSaleMode,
         // Never 'online' by default: that would make a card processor
@@ -590,6 +600,16 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
                   <ServiceCurrencySelect
                     value={formData.currency}
                     onChange={code => setFormData(prev => ({ ...prev, currency: code }))}
+                    /*
+                      Frozen once this service has been booked, invoiced, paid
+                      or quoted. The database refuses the change either way
+                      (`service_currency_lock`); showing it here is what stops
+                      the owner meeting that rule as an error after the click.
+                      A new service is never locked — there is nothing behind it
+                      yet.
+                    */
+                    locked={Boolean(service?.currency_locked)}
+                    lockedReason={t('scheduling.service.currency_locked')}
                   />
                 </div>
               </div>

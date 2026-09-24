@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import type { BookingStatus } from '@/lib/business-os/bookingStatus';
 import {
   toBusinessLocalInput,
   fromBusinessLocalInput,
@@ -19,6 +20,12 @@ import en from 'react-phone-number-input/locale/en';
 import 'react-phone-number-input/style.css';
 import { SearchableCountrySelect } from '@/components/crm/SearchableCountrySelect';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { NoShowConfirmDialog } from '@/components/scheduling/NoShowConfirmDialog';
+import {
+  useConfigurationDialogOptional,
+  useConfigurationDialogOpen,
+} from '@/components/business-os/ConfigurationDialogProvider';
+import { clientLogger } from '@/lib/logger/client';
 import {
   businessCollectsIntake,
   intakeBlockReason,
@@ -468,6 +475,26 @@ export function SchedulingBookingModal({
   const zoneReady = timezone !== undefined;
 
   const { t, language } = useLanguage();
+  /*
+   * Lets the intake warning below open Settings on the intake tab, and re-ask
+   * whether the form is published once the owner closes it.
+   *
+   * OPTIONAL, because this modal also renders on the V1 `/scheduling` page,
+   * which has no ConfigurationDialogProvider above it. The throwing hook would
+   * take that whole page down to offer a shortcut; here the shortcut simply
+   * does not appear, and the message beside it still names where to go.
+   */
+  const configurationDialog = useConfigurationDialogOptional();
+  /*
+   * The provider's answer, which covers a dialog opened by anything — not only
+   * by the link below. It carries its own grace period past the close, so the
+   * dismissal still in flight at that moment is caught.
+   *
+   * OR'd with the local flag because this modal also renders on the V1
+   * `/scheduling` page, where there is no provider and the local one is all
+   * there is.
+   */
+  const configurationOpen = useConfigurationDialogOpen();
   // Get browser timezone synchronously as initial default
   const browserTimezone = typeof window !== 'undefined'
     ? Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -483,7 +510,7 @@ export function SchedulingBookingModal({
     end_time: '',
     timezone: browserTimezone,
     notes: '',
-    status: 'confirmed' as 'confirmed' | 'cancelled' | 'completed' | 'no_show'
+    status: 'confirmed' as BookingStatus
   });
   const [loading, setLoading] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -560,11 +587,15 @@ export function SchedulingBookingModal({
     fetchUserTimezone();
   }, [isOpen]);
 
-  // Fetch intake configuration status
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const fetchIntakeSettings = async () => {
+  /*
+   * Intake status, as a callable rather than a body inside the effect.
+   *
+   * The owner can now publish the form from inside this dialog, and when they
+   * come back the toggle has to stop saying the form is unpublished. That means
+   * asking again at a moment that is not "the dialog opened", so the question
+   * had to become something we can re-ask.
+   */
+  const refreshIntakeSettings = useCallback(async () => {
       try {
         const response = await fetch('/api/intake/settings');
         if (response.ok) {
@@ -589,12 +620,16 @@ export function SchedulingBookingModal({
           setIntakeBlock(null);
         }
       } catch (error) {
-        console.error('Failed to fetch intake settings:', error);
+        clientLogger.error({ err: error }, 'Failed to fetch intake settings');
         setIntakeConfigured(false);
       }
-    };
-    fetchIntakeSettings();
-  }, [isOpen]);
+  }, []);
+
+  // Fetch intake configuration status
+  useEffect(() => {
+    if (!isOpen) return;
+    void refreshIntakeSettings();
+  }, [isOpen, refreshIntakeSettings]);
 
   useEffect(() => {
     // Clear form errors when modal opens/closes or booking changes
@@ -924,7 +959,58 @@ export function SchedulingBookingModal({
    * clicks land, and `onInteractOutside` below stops those same clicks from
    * closing this dialog and taking the form with it.
    */
+  /*
+   * A no-show is a judgement recorded against a person, so it is confirmed
+   * rather than done on one click — and the confirmation is where the owner
+   * decides whether to invite the client back. See `NoShowConfirmDialog`.
+   */
+  const [showNoShowConfirm, setShowNoShowConfirm] = useState(false);
+
   const [configOpen, setConfigOpen] = useState(false);
+  /*
+   * The same fact as `configOpen`, readable synchronously.
+   *
+   * `onOpenChange` fires during Radix's own dismissal handling, before React
+   * has re-rendered with a new state value — so the state alone cannot answer
+   * "is this close caused by the settings dialog?" at the moment it is asked.
+   * The ref can, and it guards the close PATH rather than the two individual
+   * dismissal handlers, so it holds whichever route Radix takes.
+   */
+  const configOpenRef = useRef(false);
+
+  /**
+   * Open the configuration dialog from inside this one, and survive it.
+   *
+   * Lowering the flag when the settings dialog closes is NOT enough, and that
+   * is the whole subtlety here: the closing click is still in flight. Radix
+   * delivers it to this dialog immediately afterwards, and by then a
+   * synchronous reset has already said "settings are closed", so the guards
+   * wave the dismissal through. The booking closed, and the contact drawer
+   * behind it went too.
+   *
+   * So the flag outlives the close by a beat. The delay only has to cover the
+   * dismissal and the exit animation; a deliberate close a third of a second
+   * later behaves exactly as it always did.
+   */
+  const openConfigurationFrom = useCallback(
+    (tab: 'intake' | 'services' | 'availability' | 'payments', onClosed?: () => void) => {
+      if (!configurationDialog) return;
+
+      configOpenRef.current = true;
+      setConfigOpen(true);
+
+      configurationDialog.openConfiguration(tab, {
+        onClose: () => {
+          onClosed?.();
+          setTimeout(() => {
+            configOpenRef.current = false;
+            setConfigOpen(false);
+          }, 350);
+        },
+      });
+    },
+    [configurationDialog]
+  );
 
   const checkServiceReadiness = useCallback(async (serviceId: string) => {
     if (!serviceId) {
@@ -955,6 +1041,7 @@ export function SchedulingBookingModal({
       setServiceGaps([]);
       // Reset too: this component stays mounted between openings, so a stale
       // `true` here would leave the next booking non-modal for no reason.
+      configOpenRef.current = false;
       setConfigOpen(false);
       return;
     }
@@ -1145,7 +1232,10 @@ export function SchedulingBookingModal({
     }
   };
 
-  const handleQuickAction = async (action: 'cancel' | 'complete' | 'no-show') => {
+  const handleQuickAction = async (
+    action: 'cancel' | 'complete' | 'no-show',
+    options?: { notifyClient?: boolean }
+  ) => {
     if (!booking) return;
     setLoading(true);
 
@@ -1153,7 +1243,7 @@ export function SchedulingBookingModal({
       const response = await fetch(`/api/scheduling/bookings/${booking.id}/${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
+        body: JSON.stringify(options ?? {})
       });
 
       if (response.ok) {
@@ -1222,7 +1312,21 @@ export function SchedulingBookingModal({
   const statusStyle = STATUS_COLORS[booking?.status || 'pending'];
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose} modal={!configOpen}>
+    <Dialog
+      open={isOpen}
+      /*
+       * Radix passes the REQUESTED state. This was `onOpenChange={onClose}`,
+       * which ignored it and closed on any change at all — and it closed while
+       * the settings dialog was dismissing, taking the booking and the drawer
+       * behind it with it.
+       */
+      onOpenChange={open => {
+        if (open) return;
+        if (configOpenRef.current || configurationOpen) return;
+        onClose();
+      }}
+      modal={!(configOpen || configurationOpen)}
+    >
       {/* Wider than a form needs, because this is not only a form: it carries the
           quick-pick slot cards, the service summary and the intake panel, and at
           2xl those sat in a column narrow enough to wrap every one of them. */}
@@ -1233,10 +1337,10 @@ export function SchedulingBookingModal({
            the booking form out from under the person fixing the thing it asked
            them to fix. */
         onInteractOutside={event => {
-          if (configOpen) event.preventDefault();
+          if (configOpen || configurationOpen) event.preventDefault();
         }}
         onEscapeKeyDown={event => {
-          if (configOpen) event.preventDefault();
+          if (configOpen || configurationOpen) event.preventDefault();
         }}
       >
         {/* Sticky Header */}
@@ -1409,8 +1513,15 @@ export function SchedulingBookingModal({
               <div className="mt-3">
                 <JourneyGapNotice
                   gaps={serviceGaps}
-                  onFixOpened={() => setConfigOpen(true)}
+                  /* The ref moves with the state — see `configOpenRef`. A
+                     path that raised only one of the two would leave the close
+                     guard reading the wrong answer. */
+                  onFixOpened={() => {
+                    configOpenRef.current = true;
+                    setConfigOpen(true);
+                  }}
                   onResolved={async () => {
+                    configOpenRef.current = false;
                     setConfigOpen(false);
                     await checkServiceReadiness(formData.service_id);
                   }}
@@ -1980,7 +2091,27 @@ export function SchedulingBookingModal({
                             click from working. */}
                         {intakeBlock === 'not_published'
                           ? t('scheduling.booking.intake_not_published')
-                          : t('scheduling.booking.intake_not_configured')}
+                          : t('scheduling.booking.intake_not_configured')}{' '}
+                        {/*
+                          The way to do it, next to the sentence asking for it.
+                          Both messages end by naming Settings → Intake, and
+                          the owner was left to close this dialog, find that
+                          screen, publish, come back and start the booking
+                          again. The dialog opens on the intake tab, and the
+                          toggle re-asks on the way back — so a form that is one
+                          click from working takes one click.
+                        */}
+                        {configurationDialog && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openConfigurationFrom('intake', refreshIntakeSettings)
+                            }
+                            className="underline underline-offset-2 font-medium hover:no-underline"
+                          >
+                            {t('scheduling.booking.intake_open_settings')}
+                          </button>
+                        )}
                       </p>
                     ) : (
                       <p className="text-xs text-[var(--v2-text-muted)]">
@@ -2108,7 +2239,7 @@ export function SchedulingBookingModal({
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleQuickAction('no-show')}
+                        onClick={() => setShowNoShowConfirm(true)}
                         disabled={loading}
                         className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-amber-600 hover:bg-amber-500/10 transition-all disabled:opacity-50"
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
@@ -2238,6 +2369,19 @@ export function SchedulingBookingModal({
           }
         `}</style>
       </DialogContent>
+
+      {/*
+        Inside the booking Dialog, so it stacks above it rather than replacing
+        it: the owner confirms and returns to the booking they were looking at.
+      */}
+      <NoShowConfirmDialog
+        open={showNoShowConfirm}
+        onOpenChange={setShowNoShowConfirm}
+        clientName={[booking?.client_first_name, booking?.client_last_name].filter(Boolean).join(' ') || null}
+        onConfirm={async ({ notifyClient }) => {
+          await handleQuickAction('no-show', { notifyClient });
+        }}
+      />
     </Dialog>
   );
 }

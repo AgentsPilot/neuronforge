@@ -1,6 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
+import { marketingOrigin } from '@/lib/utils/origins';
 import { Mail, Phone, MapPin, Facebook, Instagram, Linkedin, Twitter } from 'lucide-react';
 import type { BlockRendererProps } from './types';
 
@@ -310,7 +311,7 @@ export function FooterBlock({ content, styles, theme, locale, isRTL, className }
             >
               {labels.poweredBy}{' '}
               <a
-                href="https://agentspilot.com"
+                href={marketingOrigin()}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="font-medium hover:underline"

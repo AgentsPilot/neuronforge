@@ -94,7 +94,6 @@
           "seo_keywords": { "type": "array", "items": { "type": "string" }, "description": "SEO keywords." },
           "theme": { "type": "object", "description": "Page theme (colors, fonts, spacing)." },
           "subdomain": { "type": "string", "description": "Subdomain for the page." },
-          "custom_domain": { "type": "string", "description": "Custom domain for the page." },
           "favicon_url": { "type": "string", "description": "Favicon URL." },
           "og_image_url": { "type": "string", "description": "Open Graph image URL." },
           "website_language": { "type": "string", "description": "Content language: en, es, or he." }

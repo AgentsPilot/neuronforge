@@ -400,7 +400,18 @@ export function BookingsTab({
       : { text: t('crm.booking.quoted.awaiting_quote'), ...amber };
   };
 
-  const getBookingStatusLabel = (status: string, hasSchedule = true) => {
+  const getBookingStatusLabel = (
+    status: string,
+    hasSchedule = true,
+    /**
+     * Whether money is actually outstanding on this booking.
+     *
+     * `payment_status` is written 'paid' when the price is zero or there is
+     * nothing to collect, so anything other than 'paid' is a genuine debt.
+     * Absent means unknown, and unknown must not invent one.
+     */
+    moneyOwed = false
+  ) => {
     const labels: Record<string, { text: string; color: string; bgColor: string }> = {
       confirmed: {
         text: hasSchedule
@@ -412,10 +423,29 @@ export function BookingsTab({
       completed: { text: t('crm.booking.status.completed') || 'Completed', color: 'text-green-600 dark:text-green-400', bgColor: 'bg-green-500/10' },
       cancelled: { text: t('crm.booking.status.cancelled') || 'Cancelled', color: 'text-red-600 dark:text-red-400', bgColor: 'bg-red-500/10' },
       no_show: { text: t('crm.booking.status.no_show') || 'No Show', color: 'text-slate-600 dark:text-slate-400', bgColor: 'bg-slate-500/10' },
-      // `pending` was missing, so it fell through to the fallback below and
-      // rendered the raw database value — an English "pending" sitting in the
-      // middle of a Hebrew card. It is the status every unpaid booking has.
-      pending: { text: t('crm.booking.status.pending') || 'Awaiting payment', color: 'text-orange-600 dark:text-orange-400', bgColor: 'bg-orange-500/10' }
+      /*
+       * `pending` means NOT CONFIRMED YET. It does not mean unpaid.
+       *
+       * ─────────────────────────────────────────────────────────────────────
+       * This read "Awaiting payment" unconditionally, on the stated belief that
+       * it "is the status every unpaid booking has". It is not. The public
+       * booking route writes `pending` for two reasons — a payment is owed, OR
+       * the service is quoted and nobody has said what the work costs yet — and
+       * an owner can set it by hand.
+       *
+       * So a FREE intro service sat in the drawer reading "Awaiting payment"
+       * with `payment_status: 'paid'`, no `payment_id`, no `payment_amount`, no
+       * invoice, and no payment step anywhere in the client's journey —
+       * `shouldTakePayment` is false at price 0. The badge invented a debt that
+       * exists in no column on the row.
+       *
+       * The row already knows. `payment_status` is 'paid' whenever there is
+       * nothing to collect, so anything else is a real debt.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      pending: moneyOwed
+        ? { text: t('crm.booking.status.pending') || 'Awaiting payment', color: 'text-orange-600 dark:text-orange-400', bgColor: 'bg-orange-500/10' }
+        : { text: t('crm.booking.status.unconfirmed'), color: 'text-amber-600 dark:text-amber-400', bgColor: 'bg-amber-500/10' }
     };
     return labels[status] || { text: status, color: 'text-[var(--v2-text-muted)]', bgColor: 'bg-[var(--v2-surface)]' };
   };
@@ -912,7 +942,7 @@ export function BookingsTab({
                     Boolean(quotePaid),
                     proposalStep?.metadata?.waitingOn === 'meeting'
                   )
-                : getBookingStatusLabel(booking.status, !isProduct);
+                : getBookingStatusLabel(booking.status, !isProduct, booking.payment_status !== undefined && booking.payment_status !== 'paid');
               const bookingDate = booking.start_time ? new Date(booking.start_time) : null;
               const isUpcoming = booking.status === 'confirmed' && bookingDate && bookingDate > new Date();
               const isPendingProduct = isProduct && booking.status !== 'completed' && booking.status !== 'cancelled';
@@ -1070,7 +1100,12 @@ export function BookingsTab({
                                 <div
                                   key={group.key}
                                   className="relative py-3.5 text-[11.5px] text-[var(--v2-text-muted)]"
-                                  style={{ [isRTL ? 'paddingRight' : 'paddingLeft']: '51px' }}
+                                  /* 52px = the rail gutter (40) plus the card's own
+                                     horizontal padding (12), so this line starts exactly
+                                     where the text in every card above and below it does.
+                                     It was 51px, measured against the row layout the cards
+                                     replaced. */
+                                  style={{ [isRTL ? 'paddingRight' : 'paddingLeft']: '52px' }}
                                 >
                                   {/* The rail carries through the gap: the line is
                                       still the journey, it just has nothing on it. */}
@@ -1100,8 +1135,31 @@ export function BookingsTab({
                                       </span>
                                     </>
                                   ) : (
+                                    /*
+                                     * UNDATED IS NOT THE SAME AS UPCOMING.
+                                     *
+                                     * `groupJourneyByDay` buckets every step with no
+                                     * timestamp together, on the reasonable assumption that
+                                     * a step with no date has not happened yet — the session
+                                     * ahead, an intake not yet returned. This heading then
+                                     * stated that assumption as fact.
+                                     *
+                                     * It is wrong whenever a step HAS happened and its time
+                                     * was never recorded. The payment step is the live case:
+                                     * its timestamp is `refundedAt || paidAt`, and 11 of the
+                                     * 13 paid bookings on this account have no `paid_at` on
+                                     * either the transaction or the invoice. A payment that
+                                     * has been taken was filed under "Upcoming".
+                                     *
+                                     * So the heading reads the steps it actually holds. If
+                                     * any of them is still to come, the group is upcoming.
+                                     * If they have all happened, the only honest thing to
+                                     * say is that we do not know when.
+                                     */
                                     <span className="text-[11px] text-[var(--v2-text-muted)]">
-                                      {t('crm.journey.upcoming') || 'Upcoming'}
+                                      {group.steps.some(s => s.status === 'pending' || s.status === 'active')
+                                        ? t('crm.journey.upcoming') || 'Upcoming'
+                                        : t('crm.journey.undated') || 'Time not recorded'}
                                     </span>
                                   )}
                                   <span className="flex-1 h-px bg-[var(--v2-border)]" aria-hidden="true" />
@@ -1318,7 +1376,7 @@ export function BookingsTab({
                                               // just recorded.
                                               isQuoted && booking.status === 'completed'
                                               ? t('crm.booking.quoted.meeting_held')
-                                              : getBookingStatusLabel(booking.status, !isProduct).text
+                                              : getBookingStatusLabel(booking.status, !isProduct, booking.payment_status !== undefined && booking.payment_status !== 'paid').text
                                             : new Date(booking.start_time) > new Date()
                                               ? t('crm.journey.not_yet_held') || 'Not yet held'
                                               : t('crm.journey.awaiting_outcome') || 'Awaiting an outcome'
@@ -1360,20 +1418,101 @@ export function BookingsTab({
                                     (isIntakeStep && sendingIntakeBookingId === booking.id) ||
                                     (isPaymentStep && sendingInvoiceBookingId === booking.id);
 
+                                  /*
+                                   * Does this card have anything BELOW its first line?
+                                   *
+                                   * The header only earns its band when something follows
+                                   * it: a tinted strip on a card with nothing under it is
+                                   * a lid on an empty box, and most steps — booked, paid,
+                                   * confirmed — are genuinely one line. Banding all of
+                                   * them would tint the whole journey and say nothing.
+                                   *
+                                   * Every condition below is the one guarding the block it
+                                   * names, read off the blocks themselves rather than
+                                   * inferred. If a block gains or loses a gate, this has
+                                   * to move with it — which is why they are listed one per
+                                   * line instead of collapsed.
+                                   */
+                                  /*
+                                   * The step's primary fact — "Custom Training", the client
+                                   * line, the confirmation subject, the appointment's hours.
+                                   *
+                                   * Hoisted because it decides the card's SHAPE, not just
+                                   * its text: it is the body's first line, and a step with
+                                   * neither a fact nor a block has no body at all.
+                                   */
+                                  const cardFact = isProposalStep
+                                    ? step.details || ''
+                                    : step.details ||
+                                      scheduleFact ||
+                                      (isConfirmationStep && step.status === 'completed'
+                                        ? t('crm.booking.email_sent')
+                                        : '');
+
+                                  const hasCardBody = Boolean(
+                                    cardFact ||
+                                    showAccount ||
+                                    isProposalStep ||
+                                    (showAccount && payment?.plan && step.details) ||
+                                    (isPaymentStep && payment?.plan?.stages?.length) ||
+                                    (isIntakeStep && hasIntake) ||
+                                    intakeExpandable ||
+                                    (isPaymentStep && onManagePayment) ||
+                                    (isPaymentStep &&
+                                      !hasStageDocuments &&
+                                      !!step.metadata?.canResend &&
+                                      onSendInvoice &&
+                                      booking.status !== 'cancelled') ||
+                                    (isScheduleStep && onEditSession && !isProduct && !meetingSettled) ||
+                                    // The cancelled-plan notice. Rendered by an IIFE rather
+                                    // than a `&&`, which is why it is easy to miss when
+                                    // reading the blocks off the markup — it is a body like
+                                    // any other and earns the header its rule.
+                                    (isPaymentStep &&
+                                      !!payment?.plan &&
+                                      planStates?.[booking.id]?.status === 'cancelled')
+                                  );
+
                                   return (
                                     <div key={sectionKey}>
+                                      {/* ── One step: a node on the rail, a card beside it ──
+                                          The step used to be a flat row separated from its
+                                          neighbours by a top border, with the node sitting in
+                                          the first grid column INSIDE it. Rows of equal weight
+                                          read as a table, and a booking is not a table: it is
+                                          one thing that happened over time.
+
+                                          So the rail and its nodes come out of the row and run
+                                          behind it continuously, and what happened at each node
+                                          becomes a card. The eye follows one line instead of
+                                          re-finding the left edge on every row, and a step
+                                          carrying real content (intake answers, a refund
+                                          ledger) can open without the rest of the list
+                                          inheriting its padding.
+
+                                          The inner grid is KEPT — the label column and the
+                                          content column are how every block below places
+                                          itself — but it loses the node's column, so what was
+                                          column 3 is now column 2. */}
                                       <div
-                                        className="relative grid items-baseline py-3 border-t border-[var(--v2-border)] first:border-t-0"
-                                        style={{ gridTemplateColumns: '24px 74px minmax(0, 1fr)', columnGap: '11px', rowGap: '2px' }}
+                                        className="relative"
+                                        style={{ [isRTL ? 'paddingRight' : 'paddingLeft']: '40px', paddingBottom: '8px' }}
                                       >
-                                        {/* The connector, behind the nodes. */}
+                                        {/* The rail, behind the nodes and continuous through
+                                            the gap between cards. `inset-block` rather than
+                                            top/bottom-0 so it meets the wait markers, which
+                                            draw the same line dashed. */}
                                         <span
-                                          className="absolute top-0 bottom-0 w-0.5 bg-[var(--v2-border)]"
-                                          style={{ [isRTL ? 'right' : 'left']: '11px' }}
+                                          className="absolute w-0.5 bg-[var(--v2-border)]"
+                                          style={{ [isRTL ? 'right' : 'left']: '11px', top: 0, bottom: 0 }}
                                           aria-hidden="true"
                                         />
 
-                                        {/* The node. Still the control it was. */}
+                                        {/* The node. Still the control it was — send the
+                                            intake, resend the invoice — and still carrying the
+                                            step's STATUS colour, which is the scheme the rest
+                                            of this drawer uses. It sits on the rail rather
+                                            than in the card so the line reads unbroken. */}
                                         <button
                                           type="button"
                                           onClick={e => {
@@ -1389,12 +1528,20 @@ export function BookingsTab({
                                                 ? t('crm.invoice.resend') || 'Resend invoice'
                                                 : undefined
                                           }
-                                          className={`relative z-10 justify-self-center w-[22px] h-[22px] rounded-full flex items-center justify-center border-2 ${colors.bg} ${colors.border} ${
+                                          className={`absolute z-10 w-[22px] h-[22px] rounded-full flex items-center justify-center border-2 ${colors.bg} ${colors.border} ${
                                             onNodeClick && !nodeLoading
                                               ? 'cursor-pointer hover:scale-110 transition-transform'
                                               : 'cursor-default'
                                           }`}
-                                          style={{ gridColumn: 1, gridRow: 1 }}
+                                          /* Ringed in the card's own background so the rail
+                                             appears to pass behind the node rather than
+                                             through it. `top` aligns it with the first line
+                                             of the card header, not the card's box. */
+                                          style={{
+                                            [isRTL ? 'right' : 'left']: '1px',
+                                            top: '10px',
+                                            boxShadow: '0 0 0 3px var(--v2-surface)',
+                                          }}
                                         >
                                           {nodeLoading ? (
                                             <Loader2 className={`h-3 w-3 ${colors.icon} animate-spin`} />
@@ -1403,34 +1550,75 @@ export function BookingsTab({
                                           )}
                                         </button>
 
-                                        {/* The spine: every label starts here. */}
-                                        <span
-                                          className="text-[12px] leading-[1.5] text-[var(--v2-text-muted)] break-words"
-                                          style={{ gridColumn: 2, gridRow: 1 }}
+                                        {/* The card. Everything that happened at this node.
+
+                                            `items-baseline` is kept from the row it replaces:
+                                            the label and the first line of the content have
+                                            to sit on one line, or a one-word step and a
+                                            three-line one stop agreeing. */}
+                                        <div
+                                          /* `overflow-hidden` so the header's band stops at
+                                             the rounded corners instead of squaring them off.
+                                             No longer `relative`: the clock it used to anchor
+                                             now sits in the header's own flex row. */
+                                          className="overflow-hidden rounded-[10px] border border-[var(--v2-border)] bg-[var(--v2-bg)]"
                                         >
-                                          {stepTitle}
-                                        </span>
+                                          {/* ── The header ───────────────────────────────
+                                              What this step IS, and when. Banded, with a
+                                              rule under it, exactly as the reference does:
+                                              the title with a quiet qualifier beside it, and
+                                              the content below rather than alongside.
 
-                                        {/* The clock. The day is already named
-                                            above, so the row only needs the time. */}
-                                        {(scheduleDuration || step.timestamp) && (
-                                          <span
-                                            className="absolute top-3 text-[11.5px] tabular-nums text-[var(--v2-text-muted)] whitespace-nowrap"
-                                            style={{ [isRTL ? 'left' : 'right']: '0' }}
+                                              The label used to share a line with the fact in
+                                              a 74px column, which meant a step was read left
+                                              to right as "Service | Custom Training". Read
+                                              as a header and a body it is "Service" and then
+                                              what the service was — which is the order the
+                                              owner asks the question in.
+
+                                              The rule only appears when something follows
+                                              it. A step with neither a fact nor a block is
+                                              a header alone, and a line under nothing reads
+                                              as a card that failed to load. */}
+                                          <div
+                                            className={`flex items-baseline gap-2 px-3 py-2 bg-[var(--v2-surface)] ${
+                                              hasCardBody ? 'border-b border-[var(--v2-border)]' : ''
+                                            }`}
                                           >
-                                            {scheduleDuration ?? formatTime(step.timestamp!)}
-                                          </span>
-                                        )}
+                                            <span className="text-[12px] font-medium leading-[1.5] text-[var(--v2-text-secondary)] break-words">
+                                              {stepTitle}
+                                            </span>
 
+                                            {/* The clock. In the flow now rather than
+                                                absolutely placed: it sits in a flex row that
+                                                owns its own edge, so it no longer needs a
+                                                positioned ancestor or the 46px of clearance
+                                                the content column had to reserve for it. */}
+                                            {(scheduleDuration || step.timestamp) && (
+                                              <span className="ms-auto text-[11.5px] tabular-nums text-[var(--v2-text-muted)] whitespace-nowrap">
+                                                {scheduleDuration ?? formatTime(step.timestamp!)}
+                                              </span>
+                                            )}
+                                          </div>
+
+                                          {/* ── The body ─────────────────────────────────
+                                              One column now. The label's 74px column left
+                                              with the header, so everything that used to sit
+                                              in column 2 sits in column 1 and starts at the
+                                              card's own padding. */}
+                                          <div
+                                            className="grid items-baseline px-3 py-2.5 empty:hidden empty:py-0"
+                                            style={{ gridTemplateColumns: 'minmax(0, 1fr)', rowGap: '2px' }}
+                                          >
                                         {/* What happened. */}
                                         {showAccount ? (
                                           <div
                                             className="grid items-baseline mt-0.5"
                                             style={{
-                                              gridColumn: 3,
+                                              gridColumn: 1,
                                               gridTemplateColumns: 'minmax(0, 1fr) auto',
                                               gap: '4px 18px',
-                                              maxWidth: 'min(290px, 100% - 46px)'
+                                              maxWidth: '290px'
                                             }}
                                           >
                                             {/* An account, not a number: charged,
@@ -1480,7 +1668,7 @@ export function BookingsTab({
                                         ) : (
                                           <span
                                             className="text-[14.5px] font-medium leading-[1.5] text-[var(--v2-text-primary)] break-words"
-                                            style={{ gridColumn: 3, gridRow: 1, paddingInlineEnd: '46px' }}
+                                            style={{ gridColumn: 1, gridRow: 1 }}
                                           >
                                             {/* A quote shows BOTH: the amount is
                                                 what was offered, and the state is
@@ -1495,14 +1683,14 @@ export function BookingsTab({
                                                 detail and reads on the line below,
                                                 where the payment step already puts
                                                 a plan's terms. */}
+                                            {/* `cardFact` rather than the expression repeated:
+                                                the same value decides whether this card HAS a
+                                                body, and two copies of it drift the moment one
+                                                gains a fallback. */}
                                             {isProposalStep ? (
-                                              <span className="tabular-nums">{step.details || ''}</span>
+                                              <span className="tabular-nums">{cardFact}</span>
                                             ) : (
-                                              step.details ||
-                                              scheduleFact ||
-                                              (isConfirmationStep && step.status === 'completed'
-                                                ? t('crm.booking.email_sent')
-                                                : '')
+                                              cardFact
                                             )}
                                           </span>
                                         )}
@@ -1517,7 +1705,7 @@ export function BookingsTab({
                                         {isProposalStep && (
                                           <span
                                             className="text-[12.5px] leading-[1.5] text-[var(--v2-text-muted)] break-words"
-                                            style={{ gridColumn: 3 }}
+                                            style={{ gridColumn: 1 }}
                                           >
                                             {step.metadata?.waitingOn === 'closed'
                                               ? t('crm.proposal.closed')
@@ -1573,7 +1761,7 @@ export function BookingsTab({
                                             <div
                                               className="mt-2 flex flex-col gap-px overflow-hidden"
                                               style={{
-                                                gridColumn: 3,
+                                                gridColumn: 1,
                                                 borderRadius: '10px',
                                                 border: '1px solid var(--v2-border)',
                                               }}
@@ -1694,7 +1882,7 @@ export function BookingsTab({
                                         {showAccount && payment?.plan && step.details && (
                                           <span
                                             className="text-[12.5px] leading-[1.5] text-[var(--v2-text-muted)] break-words"
-                                            style={{ gridColumn: 3 }}
+                                            style={{ gridColumn: 1 }}
                                           >
                                             {step.details}
                                           </span>
@@ -1713,7 +1901,7 @@ export function BookingsTab({
                                           part is the whole reason this renders.
                                         */}
                                         {isPaymentStep && payment?.plan?.stages?.length ? (
-                                          <div className="mt-2 flex flex-col gap-2" style={{ gridColumn: 3 }}>
+                                          <div className="mt-2 flex flex-col gap-2" style={{ gridColumn: 1 }}>
                                             {/*
                                               What the whole job is worth, before the
                                               stages that make it up.
@@ -1932,7 +2120,7 @@ export function BookingsTab({
                                           return (
                                             <span
                                               className="flex items-center gap-1.5 text-[12.5px] leading-[1.5] text-orange-600"
-                                              style={{ gridColumn: 3 }}
+                                              style={{ gridColumn: 1 }}
                                             >
                                               <Ban className="h-3.5 w-3.5 shrink-0" />
                                               <bdi>
@@ -1953,7 +2141,7 @@ export function BookingsTab({
                                         {scheduleDetail && (
                                           <span
                                             className="text-[12.5px] leading-[1.5] text-[var(--v2-text-muted)]"
-                                            style={{ gridColumn: 3 }}
+                                            style={{ gridColumn: 1 }}
                                           >
                                             {scheduleDetail}
                                           </span>
@@ -1962,7 +2150,7 @@ export function BookingsTab({
                                         {isIntakeStep && hasIntake && (
                                           <span
                                             className="text-[12.5px] leading-[1.5] text-[var(--v2-text-muted)]"
-                                            style={{ gridColumn: 3 }}
+                                            style={{ gridColumn: 1 }}
                                           >
                                             {Object.keys(booking.intake_responses?.responses || {}).length}{' '}
                                             {t('crm.intake.responses')}
@@ -1971,7 +2159,12 @@ export function BookingsTab({
 
                                         {/* State, then actions. A state is a quiet
                                             tinted word; an action is a control. */}
-                                        <div className="flex flex-wrap items-center gap-1.5 mt-2" style={{ gridColumn: 3 }}>
+                                        {/* `empty:hidden` because every child here is
+                                            conditional while the row itself was not: a step
+                                            with no state and no action still rendered this
+                                            div, and its `mt-2` put 8px of dead space under
+                                            most cards in the journey. */}
+                                        <div className="flex flex-wrap items-center gap-1.5 mt-2 empty:hidden empty:mt-0" style={{ gridColumn: 1 }}>
                                           {isIntakeStep && hasIntake && (
                                             <span className="px-2.5 py-0.5 rounded-full text-[11.5px] font-medium bg-green-500/10 text-green-600 dark:text-green-400">
                                               {t('crm.booking.intake_completed') || 'Completed'}
@@ -2147,19 +2340,31 @@ export function BookingsTab({
                                             </button>
                                           )}
                                         </div>
-                                      </div>
 
-                                      {/* The intake answers, unchanged. */}
-                                      {intakeExpandable && isSectionExpanded && (
-                                        <div
-                                          style={{ [isRTL ? 'paddingRight' : 'paddingLeft']: '109px' }}
-                                          className="pb-3"
-                                        >
-                                          <div className="p-4 bg-[var(--v2-bg)] rounded-xl border border-[var(--v2-border)] shadow-sm">
+                                        {/* The intake answers, now the CARD'S BODY.
+                                            They used to sit outside the row, indented by a
+                                            hand-measured 109px to line up under the content
+                                            column — a number that silently meant
+                                            24 + 11 + 74, and that broke the moment any of
+                                            the three changed. Inside the card it spans both
+                                            columns and needs no measurement at all.
+
+                                            This is also the one step the design opens, and
+                                            an opened card that grows its own body is what
+                                            makes that legible: the answers are part of this
+                                            step rather than a block that happens to follow
+                                            it. */}
+                                        {intakeExpandable && isSectionExpanded && (
+                                          <div
+                                            className="mt-2.5 pt-2.5 border-t border-[var(--v2-border)]"
+                                            style={{ gridColumn: '1 / -1' }}
+                                          >
                                             {buildIntakeContent(booking)}
                                           </div>
-                                        </div>
-                                      )}
+                                        )}
+                                          </div>{/* body */}
+                                        </div>{/* card */}
+                                      </div>{/* rail + node wrapper */}
                                     </div>
                                   );
                                 })}

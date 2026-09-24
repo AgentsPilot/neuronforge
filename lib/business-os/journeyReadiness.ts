@@ -46,7 +46,7 @@ export interface JourneyReadinessService {
   price?: number | null;
 }
 
-export type JourneyGapKind = 'hours' | 'processor' | 'invoicing';
+export type JourneyGapKind = 'hours' | 'timezone' | 'processor' | 'invoicing';
 
 export interface JourneyGap {
   kind: JourneyGapKind;
@@ -69,8 +69,8 @@ export interface JourneyGap {
  * Does this gap make the journey impossible, or merely worse?
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * Only `hours` blocks, and the difference is whether the client can still get
- * to the end.
+ * `hours`, `timezone` and `invoicing` block; `processor` does not. The
+ * difference is whether the client can still get to the end.
  *
  * NO WORKING HOURS is fatal. The journey keeps its `datetime` step — the
  * service says it is scheduled — and the calendar behind it is empty, so the
@@ -96,9 +96,27 @@ export interface JourneyGap {
  * and its invoicing fields. Without them the client books, the booking
  * completes, and the money has no way of being asked for. The fallback that
  * makes the processor gap harmless is the thing that has to work.
+ *
+ * NO TIMEZONE blocks, for the same reason as hours and worse.
+ *
+ * Hours with no zone are not hours: `09:00–17:00` is only an instant once you
+ * know where. Unset means the platform falls back to UTC, so a Jerusalem
+ * business publishes a page offering its clients times three hours from the
+ * ones it works, the confirmation email states an hour it is closed, and
+ * nothing anywhere reports an error. A client keeping that appointment arrives
+ * to a locked door.
+ *
+ * It is not a client-visible failure the way empty hours are — the page looks
+ * perfectly fine — which is precisely why it has to be caught before publish
+ * rather than discovered afterwards.
+ *
+ * NOTE there is no `currency` gap, deliberately. `scheduling_services.currency`
+ * is already set on the row being booked, and a business may legitimately price
+ * in a currency other than its own country's — Israel charging a US client in
+ * USD. There is nothing for a currency gate to protect.
  */
 export function isBlockingGap(gap: JourneyGap): boolean {
-  return gap.kind === 'hours' || gap.kind === 'invoicing';
+  return gap.kind === 'hours' || gap.kind === 'timezone' || gap.kind === 'invoicing';
 }
 
 /** A service asks the client to pick a time. */
@@ -139,6 +157,56 @@ export async function journeyGaps(
     if (!hasAnyAvailability(profile?.scheduling_availability)) {
       gaps.push({
         kind: 'hours',
+        services: scheduled.map(s => s.name || 'a service').filter(Boolean),
+      });
+    }
+
+    /*
+     * The zone those hours are in. Read from `user_preferences`, which is the
+     * authority — `business_profiles.timezone` does not exist, and naming it in
+     * a select makes PostgREST reject the WHOLE query, which is how a business
+     * with a full diary once showed no times at all.
+     *
+     * A STORED 'UTC' IS NOT AN ANSWER, AND THIS GATE MUST ASK FOR IT.
+     *
+     * This comment used to say the opposite — that 'UTC' was a deliberate
+     * choice to be left alone — which was true only while the column carried
+     * `DEFAULT 'UTC'` and therefore could not express "nobody said". 20261006
+     * dropped that default and 20261007 added `timezone_confirmed_at` precisely
+     * so the two could be told apart, and the check below was rewritten to
+     * require the confirmation. The comment was not, and left standing it would
+     * argue a future reader straight back into the bug.
+     *
+     * Nine of twelve accounts still sit on that inherited 'UTC'. Every one of
+     * them is asked, because UTC is wrong for almost every business and an hour
+     * offered to a client from an unasked default is wrong silently.
+     */
+    const { data: prefs } = await supabaseServer
+      .from('user_preferences')
+      .select('timezone, timezone_confirmed_at')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    /*
+     * ASKED, not merely SET.
+     *
+     * Reading the value alone could not tell a business that chose UTC from one
+     * that was never asked — the column defaulted to 'UTC' until 20261006, and
+     * 9 of 12 accounts still carry that default. A gate on the value protected
+     * nobody.
+     *
+     * `timezone_confirmed_at` is written whenever a human answers, so this is
+     * the one question with one answer. A blank timezone still counts as unset
+     * even if something marked it confirmed — the two must agree.
+     */
+    const answered =
+      Boolean(prefs?.timezone_confirmed_at) &&
+      Boolean(prefs?.timezone) &&
+      Boolean(String(prefs?.timezone).trim());
+
+    if (!answered) {
+      gaps.push({
+        kind: 'timezone',
         services: scheduled.map(s => s.name || 'a service').filter(Boolean),
       });
     }
@@ -304,10 +372,34 @@ const FIELD_LABELS = (field: string): string =>
     payment_method: 'bank details',
   } as Record<string, string>)[field] ?? field;
 
+/**
+ * Which settings tab mends this gap.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Every surface that renders a gap also renders a Fix button, and each of the
+ * four wrote the same ternary — `isInvoicing ? 'invoice' : 'availability'`.
+ * That was true while there were two blocking kinds. A third made all four
+ * wrong at once: a timezone gap would have opened the availability tab, which
+ * has hours and no timezone picker, so the owner would read "set your
+ * timezone", arrive somewhere it cannot be set, and conclude the message was
+ * broken.
+ *
+ * One mapping, named by the thing it decides, so a fourth kind is one line here
+ * rather than a hunt through the call sites.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 export function describeJourneyGap(gap: JourneyGap): string {
   switch (gap.kind) {
     case 'hours':
       return 'Your services ask clients to pick a time, but you have no working hours set.';
+
+    /*
+     * Says what goes wrong, not what is missing. "Set your timezone" reads as
+     * housekeeping and gets postponed; the reason it cannot wait is that every
+     * hour the page offers is currently the wrong one.
+     */
+    case 'timezone':
+      return 'Your working hours have no timezone, so clients would be offered the wrong times.';
 
     case 'invoicing': {
       // Names the consequence, because "invoice details are incomplete" sounds

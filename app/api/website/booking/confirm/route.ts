@@ -12,6 +12,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { SLOT_HOLDING_STATUSES } from '@/lib/business-os/bookingStatus';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -119,7 +120,10 @@ export async function POST(request: NextRequest) {
       .from('scheduling_bookings')
       .select('id')
       .eq('user_id', ownerId)
-      .neq('status', 'cancelled')
+      // A booking that will not happen does not hold its slot — that is
+      // `cancelled` AND `no_show`, which this asked as "not cancelled" and so
+      // kept a no-show's time shut. See `SLOT_HOLDING_STATUSES`.
+      .in('status', SLOT_HOLDING_STATUSES)
       .or(`and(start_time.lt.${endTime.toISOString()},end_time.gt.${startTime.toISOString()})`);
 
     if (conflicts && conflicts.length > 0) {

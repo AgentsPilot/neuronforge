@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { platformOrigin } from '@/lib/utils/origins';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { Copy, Check, QrCode, Link2, Calendar, FileText, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
@@ -33,7 +34,7 @@ export function LeadCaptureLinks({
   // Get the base URL for links
   const baseUrl = typeof window !== 'undefined'
     ? window.location.origin
-    : process.env.NEXT_PUBLIC_APP_URL || 'https://app.agentspilot.com';
+    : platformOrigin();
 
   // Build the available links based on capabilities
   const links: LeadCaptureLink[] = [];

@@ -40,6 +40,33 @@ const MIN_DAYS_TAKING_BOOKINGS = 28;
  */
 const MIN_BOOKINGS = 8;
 
+/** The stretch of calendar the percentage is measured over. */
+const WINDOW_DAYS = 28;
+
+/**
+ * Booking states that actually occupied the slot.
+ *
+ * A cancellation or a no-show freed the time, and counting them would report a
+ * calendar as busy on the strength of appointments nobody attended — the
+ * flattering direction, which is the one to be careful about.
+ */
+const OCCUPIES_A_SLOT = ['confirmed', 'completed'];
+
+/**
+ * Has the owner told us when they work?
+ *
+ * Asked separately because `calculateAvailableHours` answers 40 for missing or
+ * malformed input. That default is right for its other caller and wrong as a
+ * denominator: it would turn "we do not know your hours" into "you are 8% full".
+ */
+function hasAnyAvailability(availability: WeeklyAvailability | null | undefined): boolean {
+  if (!availability || typeof availability !== 'object') return false;
+
+  return Object.values(availability).some(
+    intervals => Array.isArray(intervals) && intervals.some(i => i?.start && i?.end)
+  );
+}
+
 /**
  * Parse an `HH:MM` string into fractional hours. Returns null for anything malformed.
  */
@@ -149,6 +176,83 @@ export class OpsUtilizationLowDetector extends BaseDetector {
     return daysTakingBookings >= MIN_DAYS_TAKING_BOOKINGS;
   }
 
+  /**
+   * How full the calendar actually was, over the window.
+   *
+   * Booked hours divided by available hours, both measured:
+   *
+   *   booked     `scheduling_bookings` that occupied time — confirmed or
+   *              completed. Cancelled and no-show bookings did not fill the
+   *              slot, and counting them would report a calendar as busy on the
+   *              strength of appointments nobody attended.
+   *   available  the owner's own weekly availability, parsed by
+   *              `calculateAvailableHours`, multiplied by the weeks in view.
+   *
+   * Returns null when there is no availability to divide by. That is the honest
+   * answer: without it there is no denominator, and the constant this used to
+   * assume (40 hours) is a working week somebody invented.
+   */
+  private async measureUtilisation(userId: string): Promise<{
+    utilisationPercent: number;
+    bookedHours: number;
+    availableHours: number;
+    availableHoursPerWeek: number;
+    weeks: number;
+  } | null> {
+    const profileRepo = new BusinessProfileRepository(this.supabase);
+    const { data: profile } = await profileRepo.findByUserId(userId);
+
+    // M2: field is absent from the generated Database type — read via a narrow
+    // shape, not `any`.
+    const weeklyAvailability =
+      (profile as { scheduling_availability?: WeeklyAvailability } | null)
+        ?.scheduling_availability;
+
+    /*
+     * `calculateAvailableHours` falls back to 40 for missing or malformed
+     * input, which is right for its other caller and wrong here — so the
+     * absence is detected before calling it rather than after.
+     */
+    if (!hasAnyAvailability(weeklyAvailability)) return null;
+
+    const availableHoursPerWeek = calculateAvailableHours(weeklyAvailability);
+    if (availableHoursPerWeek <= 0) return null;
+
+    const from = new Date(Date.now() - WINDOW_DAYS * 86_400_000).toISOString();
+
+    const { data, error } = await this.supabase
+      .from('scheduling_bookings')
+      .select('start_time, end_time, status')
+      .eq('user_id', userId)
+      .in('status', OCCUPIES_A_SLOT)
+      .gte('start_time', from)
+      .lte('start_time', new Date().toISOString());
+
+    if (error) {
+      logger.warn({ err: error, userId }, 'Could not read bookings; not reporting utilisation');
+      return null;
+    }
+
+    let bookedHours = 0;
+    for (const row of (data ?? []) as Array<{ start_time?: string; end_time?: string }>) {
+      const start = Date.parse(String(row.start_time));
+      const end = Date.parse(String(row.end_time));
+      if (Number.isNaN(start) || Number.isNaN(end) || end <= start) continue;
+      bookedHours += (end - start) / 3_600_000;
+    }
+
+    const weeks = WINDOW_DAYS / 7;
+    const availableHours = availableHoursPerWeek * weeks;
+
+    return {
+      utilisationPercent: Math.min(100, (bookedHours / availableHours) * 100),
+      bookedHours,
+      availableHours,
+      availableHoursPerWeek,
+      weeks,
+    };
+  }
+
   async evaluate(userId: string): Promise<DetectionResult | null> {
     // Check cooldown
     if (await this.isOnCooldown(userId)) {
@@ -185,15 +289,33 @@ export class OpsUtilizationLowDetector extends BaseDetector {
       return null;
     }
 
-    // Get current utilization
-    const latest = await this.getLatestMetricValue(userId, 'operations.calendar_utilization');
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * MEASURED FROM THE CALENDAR, NOT READ FROM A METRIC NOTHING FEEDS.
+     *
+     * This asked `derived_metrics` for `operations.calendar_utilization`. That
+     * metric is defined over the event `calendar.slot_filled`, which NOTHING
+     * emits — so `MetricsComputeService` upserts `value: 0, sampleSize: 0`, and
+     * zero is permanently below the 50% threshold.
+     *
+     * The detector therefore never measured a calendar. It read a fabricated
+     * zero and told owners "100% of your time stays empty" while they had
+     * appointments booked. Every row of that metric on the live database is
+     * `value: 0, n: 0` except two written by the seed script.
+     *
+     * Booked hours over available hours, both from tables that hold real rows.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const measured = await this.measureUtilisation(userId);
 
-    if (!latest) {
+    if (measured === null) {
+      // No availability configured: there is no denominator, so there is no
+      // percentage. Saying nothing beats inventing a 40-hour week.
       this.logDetection(userId, null);
       return null;
     }
 
-    const currentValue = latest.value;
+    const currentValue = measured.utilisationPercent;
     const threshold = this.definition.threshold;
 
     // Check if below threshold
@@ -202,18 +324,15 @@ export class OpsUtilizationLowDetector extends BaseDetector {
       return null;
     }
 
-    // Get baseline for context.
-    // calendar_utilization is stored at weekly/monthly granularity; 'weekly' is the
-    // finest supported period and matches this detector's weekly impact framing.
-    const baseline = await this.baselineCalculator.computeBaseline(
-      userId,
-      'operations.calendar_utilization',
-      'weekly',
-      this.getBaselineLookbackDays()
-    );
-
-    // Not enough data - but we can still surface the insight
-    const baselineMean = baseline.isSignificant ? baseline.mean : 50;
+    /*
+     * No baseline. There is nothing to compare against: the metric this used to
+     * read is empty, so `computeBaseline` had nothing either and fell through to
+     * a hardcoded 50 that was then reported as the business's usual level.
+     *
+     * The finding stands on its own — the calendar is this empty now — and
+     * `percentChange: 0` below says no change was measured.
+     */
+    const baselineMean = 0;
 
     // Calculate severity
     const severity = this.definition.severityFn(currentValue, 0);
@@ -262,34 +381,23 @@ export class OpsUtilizationLowDetector extends BaseDetector {
         ? bookingValues.reduce((sum, value) => sum + value, 0) / bookingValues.length
         : null;
 
-    // Get available hours per week from the business profile's weekly availability.
-    // (scheduling_availability is a JSONB column on business_profiles, not a table.)
-    const profileRepo = new BusinessProfileRepository(this.supabase);
-    const { data: profile } = await profileRepo.findByUserId(userId);
+    /*
+     * Both figures come from `measureUtilisation`, which read the same hours it
+     * divided by. Recomputing them from a percentage would reintroduce the
+     * 40-hour default this detector used to assume for every business.
+     */
+    const availableHoursPerWeek = measured.availableHoursPerWeek;
+    const unfilledHours = Math.max(0, measured.availableHours - measured.bookedHours) / measured.weeks;
 
-    // M2: field is absent from the generated Database type — read via a narrow shape, not `any`.
-    const weeklyAvailability =
-      (profile as { scheduling_availability?: WeeklyAvailability } | null)
-        ?.scheduling_availability;
-
-    const availableHoursPerWeek = calculateAvailableHours(weeklyAvailability);
-
-    // Calculate unfilled hours
-    const filledPercent = currentValue / 100;
-    const unfilledHours = availableHoursPerWeek * (1 - filledPercent);
     const estimatedOpportunity =
       avgBookingValue === null ? undefined : unfilledHours * avgBookingValue;
 
-    // getPercentChange returns { percentChange: number | null, baseline }; coalesce the
-    // null case (insignificant/zero baseline) to 0 since DetectionResult.percentChange is number.
-    const { percentChange: computedPercentChange } = await this.baselineCalculator.getPercentChange(
-      userId,
-      'operations.calendar_utilization',
-      'weekly',
-      currentValue,
-      this.getBaselineLookbackDays()
-    );
-    const percentChange = computedPercentChange ?? 0;
+    /*
+     * Nothing was compared. `getPercentChange` read the same empty metric as
+     * the value itself, so it could only ever answer null or a change from a
+     * fabricated baseline.
+     */
+    const percentChange = 0;
 
     const result = this.createDetectionResult({
       severity,

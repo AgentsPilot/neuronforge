@@ -286,6 +286,64 @@ const invoiceUnpaid: GapDefinition = {
     }),
 };
 
+
+/**
+ * A confirmed appointment that has not happened yet.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Not "stuck" like the other six. Nobody is waiting on anybody and nothing is
+ * overdue — this exists so the card can say how many appointments the reminder
+ * would cover, and so the enqueuer has something to schedule from.
+ *
+ * `eventAt` is the appointment's start, and it is the only date that can
+ * schedule this: the reminder is due a chosen number of hours BEFORE the
+ * meeting, where every other automation runs forward from when something got
+ * stuck. `since` stays the booking's creation, so "how long" still means what
+ * it means everywhere else.
+ *
+ * CONFIRMED ONLY. Reminding somebody about an appointment that was cancelled is
+ * worse than not reminding them at all, and `pending` means the booking is not
+ * settled — a payment outstanding, or a quote with no price yet — so a
+ * confident "see you Tuesday" would be wrong.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const meetingUpcoming: GapDefinition = {
+  id: 'meeting_upcoming',
+  // The client is who must act on it: they have to turn up. This also keeps it
+  // out of the owner's "things you must do" list while still powering the card.
+  blocksOn: 'client',
+  staleAfterHours: 0,
+  action: null,
+  find: (userId, now) =>
+    safely('meeting_upcoming', async () => {
+      const { data } = await supabaseServer
+        .from('scheduling_bookings')
+        .select('id, contact_id, start_time, created_at, service:scheduling_services(service_name), contact:crm_contacts(first_name, last_name, email)')
+        .eq('user_id', userId)
+        .eq('status', 'confirmed')
+        .gte('start_time', new Date(now).toISOString())
+        .order('start_time', { ascending: true })
+        .limit(50);
+
+      return (data || [])
+        .filter(row => row.contact_id && row.start_time)
+        .map(row => {
+          const contact = (row as { contact?: { first_name?: string; last_name?: string; email?: string } | null }).contact;
+          const service = (row as { service?: { service_name?: string } | null }).service;
+          return {
+            contactId: row.contact_id as string,
+            name: [contact?.first_name, contact?.last_name].filter(Boolean).join(' ').trim()
+              || contact?.email
+              || 'Someone',
+            note: service?.service_name ?? undefined,
+            since: (row.created_at as string) ?? (row.start_time as string),
+            eventAt: row.start_time as string,
+            entityId: row.id as string,
+          };
+        });
+    }),
+};
+
 /** Everything tracked, in the order a person would care about it. */
 export const GAP_DEFINITIONS: GapDefinition[] = [
   enquiryUnanswered,
@@ -294,6 +352,7 @@ export const GAP_DEFINITIONS: GapDefinition[] = [
   intakeOutstanding,
   quoteAwaitingClient,
   invoiceUnpaid,
+  meetingUpcoming,
 ];
 
 /* ------------------------------------------------------------------ helpers */

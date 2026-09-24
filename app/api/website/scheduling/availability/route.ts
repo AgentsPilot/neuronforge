@@ -8,6 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { SLOT_HOLDING_STATUSES } from '@/lib/business-os/bookingStatus';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -326,11 +327,29 @@ export async function GET(request: NextRequest) {
     const dayStart = date + 'T00:00:00.000Z';
     const dayEnd = date + 'T23:59:59.999Z';
 
-    // All non-cancelled bookings block their slot. The status enum is exhaustive
-    // ('confirmed' | 'cancelled' | 'completed' | 'no_show'), so listing the three
-    // non-cancelled states is equivalent to the prior `.neq('status', 'cancelled')`.
+    /*
+     * All non-cancelled bookings block their slot — INCLUDING `pending`.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This listed three states on the reasoning that the enum was exhaustive
+     * ("so listing the three non-cancelled states is equivalent to the prior
+     * `.neq('status', 'cancelled')`"). It was not exhaustive: the public booking
+     * route writes `pending` for a service awaiting payment or awaiting a quote,
+     * and that value was in neither the type nor this list.
+     *
+     * So a held slot looked FREE. A client who booked a paid service and had not
+     * yet paid, or who asked for a quote, could have their time sold to someone
+     * else — and the owner would find two people booked for one slot with
+     * nothing in the logs to explain it.
+     *
+     * `no_show` is NOT here: the owner has decided that meeting is not
+     * happening, so its time goes back on sale. `SLOT_HOLDING_STATUSES` is the
+     * single answer to "does this booking still occupy its slot", shared with
+     * the three conflict checks that used to ask it their own way.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
     const { data: existingBookings } = await schedulingBookingRepository.list(ownerId, {
-      status: ['confirmed', 'completed', 'no_show'],
+      status: [...SLOT_HOLDING_STATUSES],
       startDate: dayStart,
       endDate: dayEnd,
       limit: 500,

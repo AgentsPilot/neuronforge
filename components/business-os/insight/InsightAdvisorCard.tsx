@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Loader2, Check, Clock } from 'lucide-react';
-import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { useLanguage, type CurrencyCode } from '@/lib/business-os/LanguageContext';
 import { BeforeAfterPanel, type ProjectionColumn } from './BeforeAfterPanel';
 import type { InsightData, InsightProjection } from './InsightDetailModal';
 
@@ -50,6 +50,23 @@ export interface OperationalItem {
    */
   enabled?: boolean;
   declined?: boolean;
+  /**
+   * The settings for an automation that has any.
+   *
+   * Only the meeting reminder does. Absent on the other three, which are a
+   * plain yes or no, and the card renders its extra controls off the presence
+   * of this object rather than off the automation's id — so the next one with
+   * settings needs no change here.
+   */
+  settings?: OperationalSettings;
+}
+
+/** What the owner can choose about the meeting reminder. */
+export interface OperationalSettings {
+  /** Lead time, in hours before the appointment. */
+  hoursBefore: number;
+  notifyClient: boolean;
+  notifyOwner: boolean;
 }
 
 interface PendingInsight extends Omit<InsightData, 'eligible_for_automation'> {
@@ -71,6 +88,15 @@ interface PendingInsight extends Omit<InsightData, 'eligible_for_automation'> {
 interface InsightAdvisorCardProps {
   insights: PendingInsight[];
   /**
+   * What this business's money is in, from the server.
+   *
+   * Used for ONE thing: the fallback impact figure below, when the server sent
+   * no summary line of its own. Without it that figure takes its symbol from
+   * localStorage, so a business billing in dollars can be told it could recover
+   * "₪5,066" — a mislabel, not a conversion.
+   */
+  currency?: string | null;
+  /**
    * Undecided automations, carouselled AFTER the insights.
    *
    * After rather than before: an insight is something the business did not
@@ -78,7 +104,17 @@ interface InsightAdvisorCardProps {
    * never again, so it can wait a page.
    */
   operational?: OperationalItem[];
-  onOperationalDecide?: (id: string, approve: boolean) => Promise<void>;
+  /**
+   * `settings` is sent with the answer rather than saved separately, so the
+   * lead time an owner picked before pressing Approve is the one that takes
+   * effect. Without it the first reminder would go out at the default and the
+   * choice they made on screen would apply only from the second.
+   */
+  onOperationalDecide?: (
+    id: string,
+    approve: boolean,
+    settings?: OperationalSettings
+  ) => Promise<void>;
   currentIndex: number;
   projection?: InsightProjection;
   automationConfig?: AutomationConfig;
@@ -119,11 +155,65 @@ const RUNNING_STEP_KEYS: Record<string, string[]> = {
   default: ['insight.step.default.1', 'insight.step.default.2', 'insight.step.default.3'],
 };
 
+/**
+ * The lead times on offer, in hours before the appointment.
+ *
+ * A short list rather than a free number box. Every one of these is a sentence
+ * somebody would say out loud — "an hour before", "the day before" — and a
+ * field that accepts 37 invites an answer nobody means. The column takes
+ * anything from 1 to 168, so a value set elsewhere still displays; it simply
+ * is not one of the buttons.
+ */
+const REMINDER_LEADS = [1, 2, 3, 24, 48];
+
+/**
+ * A lead time in the words somebody would use for it.
+ *
+ * Whole days are said as days. "24 hours before" and "the day before" are the
+ * same instant, and only one of them is how anyone describes when they want to
+ * be reminded about Tuesday's appointment.
+ */
+function leadLabel(hours: number, t: (key: string) => string): string {
+  if (hours >= 24 && hours % 24 === 0) {
+    const days = hours / 24;
+    return days === 1
+      ? t('automation.reminder_day')
+      : t('automation.reminder_days').replace('{n}', String(days));
+  }
+  return hours === 1
+    ? t('automation.reminder_hour')
+    : t('automation.reminder_hours').replace('{n}', String(hours));
+}
+
+const labelStyle: React.CSSProperties = {
+  fontSize: '12.5px',
+  fontWeight: 600,
+  letterSpacing: '0.02em',
+  color: 'var(--v2-text-secondary)',
+  marginBottom: '8px',
+};
+
+/** A choice chip, selected or not. Same shape for both rows. */
+function chipStyle(selected: boolean, isRTL: boolean): React.CSSProperties {
+  return {
+    border: selected ? '1.5px solid rgba(249,115,22,0.55)' : '1.5px solid var(--v2-border)',
+    background: selected ? 'rgba(249,115,22,0.12)' : 'transparent',
+    color: selected ? 'var(--v2-text-primary)' : 'var(--v2-text-secondary)',
+    borderRadius: '999px',
+    padding: '7px 14px',
+    fontSize: '13.5px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+  };
+}
+
 // ===========================
 // Component (matching mockup .adv)
 // ===========================
 
 export function InsightAdvisorCard({
+  currency,
   insights,
   operational = [],
   onOperationalDecide,
@@ -143,6 +233,16 @@ export function InsightAdvisorCard({
     (automationConfig?.suggestedParams?.days_threshold as number) || 14
   );
   const [vertical, setVertical] = useState<string | null>(null);
+
+  /*
+   * The reminder settings while the owner is choosing them.
+   *
+   * Held locally so the controls respond immediately, and re-seeded whenever
+   * the card turns to a different page — the carousel reuses one component
+   * across every automation, so without the effect below a lead time chosen on
+   * one page would appear as the answer on the next.
+   */
+  const [reminder, setReminder] = useState<OperationalSettings | null>(null);
 
   // Fetch user's vertical for personalized advisor badge
   useEffect(() => {
@@ -185,6 +285,21 @@ export function InsightAdvisorCard({
     currentIndex >= insights.length ? operational[currentIndex - insights.length] : undefined;
 
   const totalPages = insights.length + operational.length;
+
+  /*
+   * Follow the page.
+   *
+   * Keyed on the automation's id rather than on the settings object, which is
+   * a fresh literal on every fetch and would reset the owner's half-made
+   * choice each time the dashboard refreshed.
+   */
+  const settingsFor = operationalItem?.settings;
+  const settingsOwnerId = settingsFor ? operationalItem!.id : null;
+
+  useEffect(() => {
+    setReminder(settingsFor ? { ...settingsFor } : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsOwnerId]);
 
   // Setup stage only when there is genuinely nothing to say — an automation
   // waiting to be approved is something to say.
@@ -381,10 +496,31 @@ export function InsightAdvisorCard({
   const handleDecide = useCallback(
     async (approve: boolean) => {
       if (!operationalItem || !onOperationalDecide) return;
-      await onOperationalDecide(operationalItem.id, approve);
+      // Settings ride along with the approval — see the prop's doc comment.
+      await onOperationalDecide(operationalItem.id, approve, reminder ?? undefined);
       onIndexChange(0);
     },
-    [operationalItem, onOperationalDecide, onIndexChange]
+    [operationalItem, onOperationalDecide, onIndexChange, reminder]
+  );
+
+  /**
+   * Change a setting on an automation that is already running.
+   *
+   * Saved as it is changed rather than behind a Save button: there is no other
+   * screen for these, and a control that looks like it took effect and did not
+   * is the worse failure. The carousel deliberately does NOT move — the owner
+   * is adjusting the thing in front of them, not answering a question.
+   *
+   * While it is still off, the change stays local and goes with the approval.
+   */
+  const handleSettings = useCallback(
+    (next: OperationalSettings) => {
+      setReminder(next);
+      if (operationalItem?.enabled && onOperationalDecide) {
+        void onOperationalDecide(operationalItem.id, true, next);
+      }
+    },
+    [operationalItem, onOperationalDecide]
   );
 
   // Handle automate
@@ -452,7 +588,17 @@ export function InsightAdvisorCard({
             right: {
               label: t('insight.projection.handle_it') || 'If I handle it',
               value: renderLine(projection.letMeHandleIt?.summaryLine, projection.letMeHandleIt?.summary)
-                || `~${formatCurrency(insight?.estimated_impact_usd || 0, { showFree: false })} recovered`,
+                || `~${formatCurrency(insight?.estimated_impact_usd || 0, {
+                  showFree: false,
+                  /*
+                   * The FALLBACK label only — the line above is written by the
+                   * server, which already formats money in the business's own
+                   * currency (`formatMoney` in InsightRepository). This runs
+                   * when no summary line came back, and without an override it
+                   * would wear whatever symbol this browser is set to.
+                   */
+                  currencyOverride: (currency ?? undefined) as CurrencyCode | undefined,
+                })} recovered`,
               subtext: renderLine(projection.letMeHandleIt?.detailsLine, projection.letMeHandleIt?.details),
             },
           }
@@ -764,6 +910,80 @@ export function InsightAdvisorCard({
             }}
           >
             {t('automation.waiting_now').replace('{n}', String(operationalItem.waiting))}
+          </div>
+        )}
+
+        {/*
+          The settings, for the one automation that has any.
+
+          Shown whether it is on or off. Off, they are the choice being made
+          alongside the answer; on, they are the only place to change it. An
+          owner who has to switch an automation off to adjust its timing loses
+          every reminder due in between.
+        */}
+        {operationalItem && reminder && (
+          <div
+            style={{
+              marginTop: '14px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+              border: '1.5px solid var(--v2-border)',
+              background: 'var(--v2-surface)',
+              borderRadius: '16px',
+              padding: '14px 16px',
+              fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+            }}
+          >
+            <div>
+              <div style={labelStyle}>{t('automation.reminder_when')}</div>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                {REMINDER_LEADS.map(hours => (
+                  <button
+                    key={hours}
+                    type="button"
+                    onClick={() => handleSettings({ ...reminder, hoursBefore: hours })}
+                    style={chipStyle(reminder.hoursBefore === hours, isRTL)}
+                  >
+                    {leadLabel(hours, t)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div style={labelStyle}>{t('automation.reminder_who')}</div>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                {([
+                  ['notifyClient', t('automation.reminder_who_client')],
+                  ['notifyOwner', t('automation.reminder_who_owner')],
+                ] as const).map(([key, label]) => {
+                  const on = reminder[key];
+                  /*
+                   * The last one on cannot be switched off.
+                   *
+                   * With neither audience there is nobody to send to, and the
+                   * card would go on saying the reminder was running. The
+                   * server refuses the same combination; this stops the owner
+                   * reaching for it at all.
+                   */
+                  const isLastOn = on && !(key === 'notifyClient' ? reminder.notifyOwner : reminder.notifyClient);
+
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      disabled={isLastOn}
+                      title={isLastOn ? t('automation.reminder_needs_one') : undefined}
+                      onClick={() => handleSettings({ ...reminder, [key]: !on })}
+                      style={{ ...chipStyle(on, isRTL), cursor: isLastOn ? 'default' : 'pointer' }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         )}
 

@@ -10,6 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { platformOrigin } from '@/lib/utils/origins';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import Stripe from 'stripe';
@@ -53,7 +54,7 @@ export async function GET(
      */
     if (isSettledInvoice(invoice)) {
       // Redirect to a thank you page
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.neuronforge.io';
+      const baseUrl = platformOrigin();
       return NextResponse.redirect(`${baseUrl}/invoice/${invoiceId}?status=paid`);
     }
 
@@ -169,7 +170,7 @@ export async function GET(
     if (!stripeAccountId) {
       requestLogger.warn({ invoiceId, userId: invoice.user_id }, 'No Stripe account found for this business');
       // Redirect to invoice details page with payment instructions
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.neuronforge.io';
+      const baseUrl = platformOrigin();
       return NextResponse.redirect(`${baseUrl}/invoice/${invoiceId}?payment=manual`);
     }
 
@@ -183,7 +184,7 @@ export async function GET(
       apiVersion: '2024-12-18.acacia'
     });
 
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.neuronforge.io';
+    const baseUrl = platformOrigin();
     const lineItems = invoice.line_items || [];
 
     // If no line items, create one from the total amount
@@ -261,7 +262,7 @@ export async function GET(
       // If the Stripe account is invalid/disconnected, redirect to manual payment
       if (stripeErr.code === 'account_invalid') {
         requestLogger.warn({ invoiceId, stripeAccountId }, 'Stripe account invalid, redirecting to manual payment');
-        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.neuronforge.io';
+        const baseUrl = platformOrigin();
         return NextResponse.redirect(`${baseUrl}/invoice/${invoiceId}?payment=manual`);
       }
 

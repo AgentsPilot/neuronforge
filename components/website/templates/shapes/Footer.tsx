@@ -28,6 +28,7 @@
  */
 
 import type { BlockRendererProps } from '@/components/website/blocks/types';
+import { marketingOrigin } from '@/lib/utils/origins';
 import { resolveBookingAction, bookingIsDead } from '@/components/website/blocks/bookingAction';
 
 interface FooterShape {
@@ -271,7 +272,7 @@ export function FooterSection({
         {c.show_powered_by && c.powered_by_text && (
           <span className="apc-footer-legal">
             {c.powered_by_text}{' '}
-            <a href="https://agentspilot.com" target="_blank" rel="noopener noreferrer">
+            <a href={marketingOrigin()} target="_blank" rel="noopener noreferrer">
               AgentsPilot
             </a>
           </span>

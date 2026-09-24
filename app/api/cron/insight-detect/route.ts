@@ -48,14 +48,90 @@ import { InsightRepository } from '@/lib/business-os/insight/repository';
 import { getCorrelationEngine } from '@/lib/business-os/insight/correlation';
 import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
 
+export const runtime = 'nodejs';
+
+/**
+ * The longest this run may take.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * There was no `maxDuration` and no `functions` block in `vercel.json`, so this
+ * ran on the platform default while doing, per business: a vector-maturity
+ * lookup (~12 queries), forty detector evaluations, an N+1 cooldown check, and
+ * an LLM call for every genuinely new insight plus one for the health summary.
+ *
+ * Serially, over every business on the platform. A kill at the default limit
+ * loses every user after the cut, silently, with no cursor to resume from —
+ * and the ones at the end of the list are the ones who never get insights.
+ *
+ * Five minutes plus a self-imposed budget below, which stops cleanly and says
+ * how far it got rather than being killed mid-business.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const maxDuration = 300;
+
+/**
+ * Stop starting new businesses after this long.
+ *
+ * Under `maxDuration` by a wide margin, because the check happens BETWEEN
+ * businesses and one business can take a while. Finishing cleanly and
+ * reporting `usersRemaining` beats being killed halfway through writing
+ * somebody's insights.
+ */
+const RUN_BUDGET_MS = 240_000;
+
 const logger = createLogger({ module: 'InsightDetectCron' });
 
-// Language to currency mapping
-const LANGUAGE_CURRENCY_MAP: Record<string, string> = {
-  en: 'USD',
-  es: 'EUR',
-  he: 'ILS',
-};
+/**
+ * What this business actually bills in.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * This used to be a LANGUAGE_CURRENCY_MAP — en→USD, es→EUR, he→ILS — so the
+ * currency on a correlated insight was decided by the interface language.
+ * An Israeli therapist pricing a US client in dollars was shown shekels, and a
+ * business that switched its interface to English had its money silently
+ * redenominated.
+ *
+ * `scheduling_services.currency` is the authority for what a client is charged
+ * (CLAUDE.md § Currency & Timezone), with the most recent invoice as the
+ * fallback and USD only as a last resort. The same order `ImpactProjector`
+ * already uses, so the two halves of a card cannot disagree.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function getBillingCurrency(userId: string): Promise<'USD' | 'EUR' | 'ILS'> {
+  const asKnown = (value: unknown): 'USD' | 'EUR' | 'ILS' | null => {
+    const code = String(value ?? '').toUpperCase();
+    return code === 'USD' || code === 'EUR' || code === 'ILS' ? code : null;
+  };
+
+  try {
+    const { data: service } = await supabaseServer
+      .from('scheduling_services')
+      .select('currency')
+      .eq('user_id', userId)
+      .not('currency', 'is', null)
+      .limit(1)
+      .maybeSingle();
+
+    const fromService = asKnown(service?.currency);
+    if (fromService) return fromService;
+
+    const { data: invoice } = await supabaseServer
+      .from('payment_invoices')
+      .select('currency')
+      .eq('user_id', userId)
+      .not('currency', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const fromInvoice = asKnown(invoice?.currency);
+    if (fromInvoice) return fromInvoice;
+  } catch {
+    // Unreadable: fall through to the default rather than fail the run.
+  }
+
+  return 'USD';
+}
 
 // Helper to get user's language and currency preference
 async function getUserLocale(userId: string): Promise<{ language: 'en' | 'es' | 'he'; currency: 'USD' | 'EUR' | 'ILS' }> {
@@ -69,10 +145,7 @@ async function getUserLocale(userId: string): Promise<{ language: 'en' | 'es' | 
 
     if (prefs?.preferred_language) {
       const lang = prefs.preferred_language as 'en' | 'es' | 'he';
-      return {
-        language: lang,
-        currency: (LANGUAGE_CURRENCY_MAP[lang] || 'USD') as 'USD' | 'EUR' | 'ILS',
-      };
+      return { language: lang, currency: await getBillingCurrency(userId) };
     }
 
     // Fallback to business_profiles
@@ -84,10 +157,7 @@ async function getUserLocale(userId: string): Promise<{ language: 'en' | 'es' | 
 
     if (profile?.language) {
       const lang = profile.language as 'en' | 'es' | 'he';
-      return {
-        language: lang,
-        currency: (LANGUAGE_CURRENCY_MAP[lang] || 'USD') as 'USD' | 'EUR' | 'ILS',
-      };
+      return { language: lang, currency: await getBillingCurrency(userId) };
     }
   } catch {
     // Ignore errors, return default
@@ -107,9 +177,21 @@ function verifyCronSecret(request: NextRequest): boolean {
   }
 
   // If no secret configured, allow (but log warning)
+  /*
+   * Fail closed.
+   *
+   * This returned `true` — a missing secret meant "let everyone in" on a public
+   * URL where the bearer token is the only thing separating a Vercel
+   * invocation from an arbitrary caller. `payment-reminders` has always failed
+   * closed, and it demonstrably sends in production, which is the proof that
+   * CRON_SECRET is configured and that closing this costs nothing.
+   *
+   * Refusing is also the safer failure: an unrun cron means yesterday's
+   * insights, and an unprotected one means a stranger can drive the engine.
+   */
   if (!cronSecret) {
-    logger.warn('CRON_SECRET not configured - cron endpoint is unprotected');
-    return true;
+    logger.error('CRON_SECRET not configured - refusing cron request (fail-closed)');
+    return false;
   }
 
   return authHeader === `Bearer ${cronSecret}`;
@@ -206,7 +288,27 @@ export async function GET(request: NextRequest) {
     );
 
     // Process each user
-    for (const userId of userIds) {
+    const startedAt = Date.now();
+    let usersRemaining = 0;
+
+    for (const [index, userId] of userIds.entries()) {
+      /*
+       * Out of budget: stop starting new businesses.
+       *
+       * Deliberately not a partial-business abort — a business half processed
+       * has insights written and no health summary, which reads worse than one
+       * not processed at all. The next run picks these up, and the count is
+       * logged so a growing tail is visible rather than silent.
+       */
+      if (Date.now() - startedAt > RUN_BUDGET_MS) {
+        usersRemaining = userIds.length - index;
+        requestLogger.warn(
+          { runId, usersProcessed: stats.usersProcessed, usersRemaining },
+          'Detection run out of budget; remaining businesses deferred to the next run'
+        );
+        break;
+      }
+
       try {
         /*
          * One AI action per business per run (Layer 3, FR-10, D-3): its insight,
@@ -348,6 +450,9 @@ export async function GET(request: NextRequest) {
         runId,
         duration,
         ...stats,
+        // Non-zero when the run stopped on budget. A number that keeps growing
+        // means the schedule can no longer keep up with the account count.
+        usersRemaining,
       },
     });
 

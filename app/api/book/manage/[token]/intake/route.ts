@@ -158,10 +158,16 @@ export async function GET(
      * received an intake email whose link opened this page saying there was no
      * form.
      *
-     * `resolveIntakeForSending` is the one answer now, and `forClient` is false
-     * here on purpose: the client is holding a link the business sent them, so
-     * whether the business asked us to send it AUTOMATICALLY is already
-     * answered. Requiring it would break every form sent by hand.
+     * `resolveIntakeForSending` is the one answer now, and it takes no audience
+     * argument: whether a form may be shown depends on the business having one
+     * published and enabled, which does not change with who is looking.
+     *
+     * That matters most HERE. The client is holding a link the business already
+     * sent them, so any check about whether we were asked to send it has been
+     * answered by the email existing. The `forClient` flag this used to pass
+     * was ignored anyway, but had it ever been honoured it would have broken
+     * every form sent by hand — which is exactly the failure described above,
+     * one flag later.
      */
     const { form } = await resolveIntakeForSending(booking.user_id);
 

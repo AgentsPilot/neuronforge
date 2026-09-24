@@ -134,6 +134,9 @@ export class CashRefundPatternDetector extends BaseDetector {
       const { data: contacts } = await this.supabase
         .from('crm_contacts')
         .select('id, first_name, last_name, email')
+        // Scoped: `.in('id', …)` alone is a cross-tenant read under the service
+        // role. See CashCardsExpiringDetector for the same fix.
+        .eq('user_id', userId)
         .in('id', contactIds);
 
       if (contacts) {

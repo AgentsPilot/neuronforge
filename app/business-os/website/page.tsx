@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { gapFixAction } from '@/lib/business-os/journeyGapFix';
+import { publicSiteDisplayHost, publicSiteSuffix, publicSiteUrl } from '@/lib/utils/origins';
 import { intakeReachesClient } from '@/lib/business-os/intakeReach';
 import { wantsWebsite } from '@/lib/business-os/onlinePresence';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -325,6 +327,7 @@ const LABELS = {
     publish_failed: 'Could not publish the website.',
     unpublish_failed: 'Could not unpublish the website.',
     publish_fix_availability: 'Set working hours',
+    publish_fix_timezone: 'Set your timezone',
     publish_fix_invoicing: 'Complete invoice details',
     publishing: 'Publishing...',
     view_site: 'View Site',
@@ -510,6 +513,7 @@ const LABELS = {
     publish_failed: 'No se pudo publicar el sitio.',
     unpublish_failed: 'No se pudo despublicar el sitio.',
     publish_fix_availability: 'Configurar horario',
+    publish_fix_timezone: 'Configura tu zona horaria',
     publish_fix_invoicing: 'Completar datos de factura',
     publishing: 'Publicando...',
     view_site: 'Ver Sitio',
@@ -695,6 +699,7 @@ const LABELS = {
     publish_failed: 'לא ניתן לפרסם את האתר.',
     unpublish_failed: 'לא ניתן להסיר את האתר מפרסום.',
     publish_fix_availability: 'הגדר שעות פעילות',
+    publish_fix_timezone: 'הגדירו אזור זמן',
     publish_fix_invoicing: 'השלם פרטי חשבונית',
     publishing: '...מפרסם',
     view_site: 'צפה באתר',
@@ -837,7 +842,7 @@ export default function WebsiteManagementPage() {
   // `t` as well as `language`: the guidance and the publish warning are keyed
   // strings in three languages, not the inline ternaries the rest of this file
   // uses for one-off labels.
-  const { language, t } = useLanguage();
+  const { language, t, businessCurrency, currencyCode } = useLanguage();
   const { user } = useAuth();
   const labels = LABELS[language] || LABELS.en;
 
@@ -2505,7 +2510,7 @@ export default function WebsiteManagementPage() {
 
   const copyLink = () => {
     if (page?.subdomain) {
-      navigator.clipboard.writeText(`https://${page.subdomain}.agentpilot.io`);
+      navigator.clipboard.writeText(publicSiteUrl(page.subdomain));
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 2000);
     }
@@ -3941,7 +3946,7 @@ export default function WebsiteManagementPage() {
 
   const getWebsiteUrl = () => {
     if (page?.subdomain) {
-      return `https://${page.subdomain}.agentpilot.io`;
+      return publicSiteUrl(page.subdomain);
     }
     return null;
   };
@@ -4130,7 +4135,7 @@ export default function WebsiteManagementPage() {
                             <button
                               type="button"
                               onClick={() =>
-                                openConfiguration(isInvoicing ? 'invoice' : 'availability', {
+                                openConfiguration(gapFixAction(gap.kind).tab, {
                                   // Cleared rather than re-asked: activation is a
                                   // deliberate click, and it answers freshly.
                                   onClose: () => setSmartLinkNotice(null),
@@ -4139,9 +4144,11 @@ export default function WebsiteManagementPage() {
                               className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#4F6EF7] hover:bg-[#3B5AE5] transition-colors"
                               style={{ borderRadius: 'var(--v2-radius-button)' }}
                             >
-                              {isInvoicing
+                              {gap.kind === 'invoicing'
                                 ? labels.publish_fix_invoicing
-                                : labels.publish_fix_availability}
+                                : gap.kind === 'timezone'
+                                  ? labels.publish_fix_timezone
+                                  : labels.publish_fix_availability}
                               <ArrowRight className={`w-3.5 h-3.5 ${language === 'he' ? 'rotate-180' : ''}`} />
                             </button>
                           </div>
@@ -4423,7 +4430,7 @@ export default function WebsiteManagementPage() {
                         <ShareGuide
                           language={language}
                           isRTL={language === 'he'}
-                          shareDomain={subdomain ? `${subdomain}.agentpilot.io` : undefined}
+                          shareDomain={subdomain ? publicSiteDisplayHost(subdomain) : undefined}
                           kind={link.destination_type === 'form' ? 'form' : 'booking'}
                           code={link.code}
                           prefersReducedMotion={prefersReducedMotion === true}
@@ -4642,7 +4649,7 @@ export default function WebsiteManagementPage() {
                     /* `{subdomain}.agentpilot.io/{slug}` — the route that
                        actually serves it (app/site/[subdomain]/[slug]), not the
                        internal /website-preview/{id} the eye icon opens. */
-                    target={{ kind: 'page', url: `https://${subdomain}.agentpilot.io/${p.slug}` }}
+                    target={{ kind: 'page', url: publicSiteUrl(subdomain, `/${p.slug}`) }}
                     title={p.title}
                     language={language}
                     isRTL={language === 'he'}
@@ -5187,7 +5194,7 @@ export default function WebsiteManagementPage() {
                             token: with nothing to wrap on it pushed the copy
                             button off the card instead of wrapping. */}
                         <span className="flex-1 min-w-0 break-all text-[var(--v2-text-secondary)] text-sm font-mono">
-                          {page.subdomain}.agentpilot.io
+                          {publicSiteDisplayHost(page.subdomain)}
                         </span>
                         {/*
                           Only once the site is LIVE.
@@ -5204,8 +5211,8 @@ export default function WebsiteManagementPage() {
                         */}
                         {page.status === 'live' && (
                         <ShareMenu
-                          target={{ kind: 'page', url: `https://${page.subdomain}.agentpilot.io` }}
-                          title={page.title || `${page.subdomain}.agentpilot.io`}
+                          target={{ kind: 'page', url: publicSiteUrl(page.subdomain) }}
+                          title={page.title || publicSiteDisplayHost(page.subdomain)}
                           language={language}
                           isRTL={language === 'he'}
                           compact
@@ -5400,7 +5407,7 @@ export default function WebsiteManagementPage() {
                                   <button
                                     type="button"
                                     onClick={() =>
-                                      openConfiguration(isInvoicing ? 'invoice' : 'availability', {
+                                      openConfiguration(gapFixAction(gap.kind).tab, {
                                         // The owner has just been sent to fix the very
                                         // thing this names; ask again rather than leave
                                         // the refusal asserting the old answer.
@@ -5410,9 +5417,11 @@ export default function WebsiteManagementPage() {
                                     className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#4F6EF7] hover:bg-[#3B5AE5] transition-colors"
                                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                                   >
-                                    {isInvoicing
+                                    {gap.kind === 'invoicing'
                                       ? labels.publish_fix_invoicing
-                                      : labels.publish_fix_availability}
+                                      : gap.kind === 'timezone'
+                                        ? labels.publish_fix_timezone
+                                        : labels.publish_fix_availability}
                                     <ArrowRight className={`w-3.5 h-3.5 ${language === 'he' ? 'rotate-180' : ''}`} />
                                   </button>
                                 </div>
@@ -7213,8 +7222,20 @@ export default function WebsiteManagementPage() {
                                         <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
                                           {language === 'he' ? 'מטבע' : language === 'es' ? 'Moneda' : 'Currency'}
                                         </label>
+                                        {/* The business's own currency, not a
+                                            hardcoded 'USD'. This value is what
+                                            the client is CHARGED at checkout,
+                                            so the old default quietly billed a
+                                            shekel business's customers in
+                                            dollars unless somebody noticed the
+                                            dropdown and changed it.
+
+                                            Display currency only as a fallback
+                                            for a business that has not stated
+                                            one — it is per-device, and this is
+                                            written into a payment. */}
                                         <Select
-                                          value={(editingBlockContent.currency as string) || 'USD'}
+                                          value={(editingBlockContent.currency as string) || businessCurrency || currencyCode}
                                           onValueChange={(value) => updateBlockField('currency', value)}
                                         >
                                           <SelectTrigger>
@@ -7968,7 +7989,7 @@ export default function WebsiteManagementPage() {
                     >
                       <Globe className="w-5 h-5 text-[var(--v2-text-muted)] flex-shrink-0" />
                       <span className="flex-1 text-sm font-mono text-[var(--v2-text-secondary)]">
-                        {subdomain}.agentspilot.com
+                        {publicSiteDisplayHost(subdomain)}
                       </span>
                     </div>
                     <p className="text-xs text-[var(--v2-text-muted)] mt-2">
@@ -8060,10 +8081,10 @@ export default function WebsiteManagementPage() {
                             : 'bg-[var(--v2-bg)] border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:ring-2 focus:ring-[#4F6EF7]'
                         }`}
                       />
-                      <span className="text-[var(--v2-text-muted)]">.agentpilot.io</span>
+                      <span className="text-[var(--v2-text-muted)]">{publicSiteSuffix()}</span>
                     </div>
                     <p className="mt-1 text-xs text-[var(--v2-text-muted)]">
-                      {labels.subdomain_desc} https://{subdomain || 'your-business'}.agentpilot.io
+                      {labels.subdomain_desc} {publicSiteUrl(subdomain || 'your-business')}
                     </p>
                   </div>
 
@@ -8373,7 +8394,7 @@ export default function WebsiteManagementPage() {
                   />
                 </div>
                 <p className="mt-1 text-xs text-[var(--v2-text-muted)]">
-                  {page?.subdomain}.agentpilot.io/{newPageSlug || 'your-page-slug'}
+                  {publicSiteDisplayHost(page?.subdomain || '')}/{newPageSlug || 'your-page-slug'}
                 </p>
               </div>
 
@@ -8499,7 +8520,7 @@ export default function WebsiteManagementPage() {
                 }}
                 className="flex-1 px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
               />
-              <span className="text-sm text-[var(--v2-text-muted)]">.agentpilot.io</span>
+              <span className="text-sm text-[var(--v2-text-muted)]">{publicSiteSuffix()}</span>
             </div>
 
             {/* Said plainly rather than left to a red border: the owner is about
@@ -8511,7 +8532,7 @@ export default function WebsiteManagementPage() {
                 <span className="text-red-600 dark:text-red-400">{labels.subdomain_taken}</span>
               ) : (
                 <span className="text-[var(--v2-text-muted)]">
-                  https://{publishAddressValue || 'your-business'}.agentpilot.io
+                  {publicSiteUrl(publishAddressValue || 'your-business')}
                 </span>
               )}
             </p>
@@ -8976,7 +8997,7 @@ export default function WebsiteManagementPage() {
                 />
               )}
               <span className="text-sm text-[var(--v2-text-muted)] font-mono whitespace-nowrap">
-                {publishLanding?.subdomain ? 'agentspilot.com/' : '.agentspilot.com/'}
+                {publishLanding?.subdomain ? `${publicSiteDisplayHost(publishLanding.subdomain)}/` : `${publicSiteSuffix()}/`}
               </span>
               <input
                 type="text"

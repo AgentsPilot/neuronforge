@@ -268,10 +268,22 @@ function BusinessOSContent() {
         }
       }
 
+      /*
+       * The business's timezone, carried across to the readiness items below.
+       *
+       * `my-day` is the one endpoint that reports it HONESTLY: undefined when
+       * nothing is stored, rather than the 'UTC' the column defaults to. That
+       * distinction is the whole check — a business that chose UTC is done, one
+       * that has never been asked is not, and the stored value cannot tell them
+       * apart.
+       */
+      let businessTimezone: string | undefined;
+
       if (myDayResponse.ok) {
         const myDayData = await myDayResponse.json();
         if (myDayData.success && myDayData.data) {
           setMyDay(myDayData.data);
+          businessTimezone = myDayData.data.briefing?.timezone;
         }
       }
 
@@ -413,6 +425,30 @@ function BusinessOSContent() {
               description: '',
               completed: true,
               action: 'set_hours'
+            });
+          }
+
+          /*
+           * The zone those hours are in.
+           *
+           * Only asked once there are hours to qualify, and only of a business
+           * that actually shows times — a shop selling downloads never displays
+           * one. Asking earlier is asking about nothing.
+           *
+           * Unset is not cosmetic: every hour the booking page offers is
+           * currently three hours out for a Jerusalem business, the page looks
+           * perfectly fine, and the first person to find out is a client at a
+           * locked door.
+           */
+          if ((s.scheduling?.open_days_count || 0) > 0 && (s.scheduling?.scheduled_services_count || 0) > 0) {
+            computedSetupItems.push({
+              id: 'timezone',
+              title: businessTimezone
+                ? t('setup.timezone.done', { timezone: businessTimezone })
+                : t('setup.timezone.todo'),
+              description: businessTimezone ? '' : t('setup.timezone.why'),
+              completed: Boolean(businessTimezone),
+              action: 'set_timezone',
             });
           }
 
@@ -653,7 +689,11 @@ function BusinessOSContent() {
             // same way the money is, so "2 paid" and the total beside it always
             // describe the same two payments.
             paidCount: s.payments?.payments_received_this_week || 0,
-            revenue: s.payments?.revenue_this_week || 0
+            revenue: s.payments?.revenue_this_week || 0,
+            // What that money IS, from the server — not this browser's display
+            // preference, and not the business's chosen default, which can
+            // differ from what its services actually charge.
+            currency: s.payments?.primary_currency ?? null
           });
 
           // Set real CRM pipeline stages (preferred over funnelStats)
@@ -1290,6 +1330,14 @@ function BusinessOSContent() {
                 handleQuickSetupClick('services');
               } else if (action === 'set_hours') {
                 handleQuickSetupClick('availability');
+              } else if (action === 'set_timezone') {
+                // The Business tab, where the timezone picker lives — not
+                // availability, which has the hours it qualifies and no zone.
+                //
+                // Refetched on close like the other two dialog-backed steps:
+                // without it they saved correctly and stayed drawn as
+                // outstanding until the page was reloaded.
+                openConfiguration('business', { onClose: fetchDashboardData });
               } else if (action === 'connect_payments') {
                 handleQuickSetupClick('payments');
               } else if (action === 'create_booking_link') {

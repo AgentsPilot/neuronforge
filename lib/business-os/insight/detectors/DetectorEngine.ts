@@ -59,6 +59,10 @@ import { CashClientConcentrationDetector } from './catalog/CashClientConcentrati
 import { ConvQuoteAcceptanceDropDetector } from './catalog/ConvQuoteAcceptanceDropDetector';
 import { WebMobileConversionGapDetector } from './catalog/WebMobileConversionGapDetector';
 import { WebPageNoConversionsDetector } from './catalog/WebPageNoConversionsDetector';
+import { RetPackageEndingDetector } from './catalog/RetPackageEndingDetector';
+import { RetRescheduleChurnDetector } from './catalog/RetRescheduleChurnDetector';
+import { CashCardsExpiringDetector } from './catalog/CashCardsExpiringDetector';
+import { PricingDiscountAbuseDetector } from './catalog/PricingDiscountAbuseDetector';
 import { WebLinkNotConvertingDetector } from './catalog/WebLinkNotConvertingDetector';
 import { WebLinkDeadDestinationDetector } from './catalog/WebLinkDeadDestinationDetector';
 import { ConvNoNextStepDetector } from './catalog/ConvNoNextStepDetector';
@@ -159,6 +163,20 @@ export class DetectorEngine {
       new ConvQuoteAcceptanceDropDetector(supabase),
       new WebMobileConversionGapDetector(supabase),
       new WebPageNoConversionsDetector(supabase),
+      new RetPackageEndingDetector(supabase),
+      new RetRescheduleChurnDetector(supabase),
+      /*
+       * Silent until their data exists, and registered anyway.
+       *
+       * `cash_cards_expiring` needs card expiry synced from Stripe Connect;
+       * `pricing_discount_abuse` needs a discount to be recorded anywhere. Both
+       * read an empty source and return, which costs one cheap query. They are
+       * here rather than deleted so the capability is not lost to git
+       * archaeology a second time — each file's header says exactly what would
+       * light it.
+       */
+      new CashCardsExpiringDetector(supabase),
+      new PricingDiscountAbuseDetector(supabase),
       new WebLinkNotConvertingDetector(supabase),
       new WebLinkDeadDestinationDetector(supabase),
       new ConvNoNextStepDetector(supabase),

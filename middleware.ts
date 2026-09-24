@@ -1,6 +1,6 @@
 // middleware.ts
 // Route middleware to handle:
-// 1. Subdomain routing for public websites (*.agentpilot.io)
+// 1. Subdomain routing for public websites (*.agentspilot.ai)
 // 2. Onboarding-v2 redirect for new users
 // 3. V1/V2 UI version routing
 
@@ -8,6 +8,8 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { createEdgeLogger } from '@/lib/logger/edge'
+import { isReservedPrefix } from '@/lib/business-os/reservedPrefixes'
+import { publicSiteHost, publicSitePath } from '@/lib/utils/origins'
 
 /*
  * Middleware runs in the Edge Runtime, where Pino cannot initialise — no
@@ -17,19 +19,17 @@ import { createEdgeLogger } from '@/lib/logger/edge'
  */
 const logger = createEdgeLogger({ module: 'Middleware' })
 
-// List of reserved subdomains that should NOT be treated as user websites
-const RESERVED_SUBDOMAINS = [
-  'www',
-  'app',
-  'api',
-  'admin',
-  'dashboard',
-  'localhost',
-  'staging',
-  'dev',
-  'test',
-  'preview'
-]
+/*
+ * The reserved list lives in `lib/business-os/reservedPrefixes.ts` now.
+ *
+ * It used to be declared here AND in the availability checker, and the two
+ * disagreed: `preview` was reserved here but reported available there, so a
+ * business could be told the name was free, have the write succeed, and end up
+ * with a permanently unreachable site — this file would treat `preview` as
+ * reserved and serve the platform instead. Silently, with no error anywhere.
+ *
+ * One list, three importers: this file, the checker, and the write path.
+ */
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -52,20 +52,41 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // === SUBDOMAIN ROUTING FOR PUBLIC WEBSITES ===
-  // Check if this is a subdomain request (e.g., mybusiness.agentpilot.io)
-  const isLocalhost = host.includes('localhost') || host.includes('127.0.0.1')
-  const baseHost = process.env.NEXT_PUBLIC_WEBSITE_BASE_HOST || 'agentpilot.io'
+  /*
+   * === A BUSINESS'S PUBLIC PAGES ===
+   *
+   * `joesgym.agentspilot.ai/book` is served by `/s/joesgym/book`, rewritten
+   * INTERNALLY so the visitor's address bar keeps the business's own address.
+   * `app.agentspilot.ai` is the platform and reaches none of this, because
+   * `app` is on the reserved list — which is the only thing standing between a
+   * business and the platform's own hostname.
+   *
+   * The old guard here was `!isLocalhost && host.endsWith(baseHost)`, with
+   * `baseHost` defaulting to `agentpilot.io` — a domain that was never served,
+   * and one that matched none of the three the interface displayed.
+   *
+   * Two changes. The host now comes from `publicSiteHost()`, the single place
+   * any address is decided. And the check is "is this host the configured
+   * public-site host" rather than "is this local": bailing on anything
+   * containing `localhost` meant the subdomain path could not be exercised off
+   * production, so it would have shipped having never run. With
+   * NEXT_PUBLIC_PUBLIC_SITE_HOST=lvh.me:3000, `joesgym.lvh.me:3000` now goes
+   * through this exact code on a laptop.
+   */
+  const siteHost = publicSiteHost()
 
-  if (!isLocalhost && host.endsWith(baseHost)) {
-    // Extract subdomain
-    const subdomain = host.replace(`.${baseHost}`, '').toLowerCase()
+  if (siteHost && host !== siteHost && host.endsWith(`.${siteHost}`)) {
+    const prefix = host.slice(0, -(siteHost.length + 1)).toLowerCase()
 
-    // Skip if it's a reserved subdomain or the base domain itself
-    if (subdomain && !RESERVED_SUBDOMAINS.includes(subdomain) && subdomain !== baseHost) {
-      // Rewrite to /site/[subdomain] for public website rendering
+    /*
+     * One label only. `a.b.agentspilot.ai` is not a business — the write path
+     * rejects dots in a prefix, so anything deeper than one label here is
+     * either stale DNS or someone probing, and it falls through to the app
+     * rather than being served as somebody's site.
+     */
+    if (prefix && !prefix.includes('.') && !isReservedPrefix(prefix)) {
       const url = request.nextUrl.clone()
-      url.pathname = `/site/${subdomain}${pathname === '/' ? '' : pathname}`
+      url.pathname = publicSitePath(prefix, pathname === '/' ? '' : pathname)
       return NextResponse.rewrite(url)
     }
   }

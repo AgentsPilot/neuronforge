@@ -16,7 +16,7 @@ import {
   Activity,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { useLanguage, type CurrencyCode } from '@/lib/business-os/LanguageContext';
 
 // ===========================
 // Types
@@ -41,7 +41,16 @@ interface BusinessMetrics {
   sessionsToday: number;
   sessionsThisWeek: number;
   pendingPayments: number;
+  /** In `primaryCurrency`, not a sum across currencies — see the API's type. */
   pendingPaymentsAmount: number;
+  /**
+   * What the amount above is denominated in.
+   *
+   * Without it this card formatted the figure with the DISPLAY currency, which
+   * follows the UI language — so a business billing in dollars while working in
+   * Hebrew read $412 owed as ₪412.
+   */
+  primaryCurrency?: string | null;
   activeClients: number;
 }
 
@@ -447,7 +456,12 @@ export function OperationalStatusCard({ onConfigureClick }: OperationalStatusCar
                 fontWeight: 700,
               }}
             >
-              {formatCurrency(metrics?.pendingPaymentsAmount ?? 0, { showFree: false })}
+              {/* The currency of money is a property of the money, not of the
+                  language it is being read in. */}
+              {formatCurrency(metrics?.pendingPaymentsAmount ?? 0, {
+                showFree: false,
+                currencyOverride: (metrics?.primaryCurrency as CurrencyCode | undefined) || undefined,
+              })}
             </span>
             <span className="text-[10px] text-[var(--v2-text-muted)] leading-tight">
               {t('myday.metric.pending') || 'Pending'}

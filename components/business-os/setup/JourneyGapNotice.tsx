@@ -27,6 +27,7 @@
  */
 
 import { Clock, FileText, ArrowRight } from 'lucide-react';
+import { gapFixAction } from '@/lib/business-os/journeyGapFix';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
 
@@ -85,6 +86,8 @@ export function JourneyGapNotice({ gaps, fallbackMessage, onResolved, onFixOpene
     <div className="space-y-2">
       {gaps.map(gap => {
         const isInvoicing = gap.kind === 'invoicing';
+        // Tab and label together, so they cannot point at different things.
+        const fix = gapFixAction(gap.kind);
         const GapIcon = isInvoicing ? FileText : Clock;
 
         return (
@@ -112,7 +115,7 @@ export function JourneyGapNotice({ gaps, fallbackMessage, onResolved, onFixOpene
                 type="button"
                 onClick={() => {
                   onFixOpened?.();
-                  openConfiguration(isInvoicing ? 'invoice' : 'availability', {
+                  openConfiguration(fix.tab, {
                     onClose: () => {
                       void onResolved?.();
                     },
@@ -121,9 +124,7 @@ export function JourneyGapNotice({ gaps, fallbackMessage, onResolved, onFixOpene
                 className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#4F6EF7] hover:bg-[#3B5AE5] transition-colors"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
-                {isInvoicing
-                  ? tr('gap.fix.invoicing', 'Complete invoice details')
-                  : tr('gap.fix.availability', 'Set your working hours')}
+                {tr(fix.key, fix.fallback)}
                 <ArrowRight className={`w-3.5 h-3.5 ${language === 'he' ? 'rotate-180' : ''}`} />
               </button>
             </div>

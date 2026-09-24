@@ -267,7 +267,10 @@ export class InsightCorrelationEngine {
         replacements.last_minute_issue = summary;
       } else if (result.detectorId.includes('missing_cta')) {
         replacements.cta_issue = summary;
-      } else if (result.detectorId.includes('page_underperform')) {
+      } else if (result.detectorId.includes('page_underperform') || result.detectorId.includes('page_no_conversions')) {
+        // `web_page_underperform` was replaced by `web_page_no_conversions` in
+        // the 2026-09 rebuild; the old name is kept so a stored insight from
+        // before then still fills its placeholder.
         replacements.page_issue = summary;
       } else if (result.detectorId.includes('cards_expiring')) {
         replacements.cards_issue = summary;

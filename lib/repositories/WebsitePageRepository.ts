@@ -6,6 +6,7 @@
  */
 
 import type { PageTheme } from '@/lib/website-builder/pageTheme';
+import { publicSiteHost, platformOrigin } from '@/lib/utils/origins';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 
@@ -78,7 +79,7 @@ export interface WebsitePageUpdate {
   seo_keywords?: string[];
   theme?: PageTheme | null;
   subdomain?: string | null;
-  custom_domain?: string | null;
+  /* `custom_domain` is not updatable — see the note where its methods were. */
   status?: PageStatus;
   favicon_url?: string | null;
   og_image_url?: string | null;
@@ -327,23 +328,6 @@ export class WebsitePageRepository {
     }
   }
 
-  async findByCustomDomain(domain: string): Promise<RepositoryResult<WebsitePage>> {
-    try {
-      const { data, error } = await this.supabase
-        .from('website_pages')
-        .select('*')
-        .eq('custom_domain', domain)
-        .eq('custom_domain_verified', true)
-        .eq('status', 'live')
-        .single();
-
-      if (error) throw error;
-      return { data, error: null };
-    } catch (error) {
-      logger.error({ err: error, domain }, 'Failed to find page by custom domain');
-      return { data: null, error: error as Error };
-    }
-  }
 
   async listByUser(userId: string): Promise<RepositoryResult<WebsitePage[]>> {
     try {
@@ -614,46 +598,15 @@ export class WebsitePageRepository {
     }
   }
 
-  async setCustomDomain(id: string, userId: string, domain: string): Promise<RepositoryResult<WebsitePage>> {
-    try {
-      const { data, error } = await this.supabase
-        .from('website_pages')
-        .update({
-          custom_domain: domain,
-          custom_domain_verified: false
-        })
-        .eq('id', id)
-        .eq('user_id', userId)
-        .select()
-        .single();
-
-      if (error) throw error;
-      logger.info({ pageId: id, userId, domain }, 'Set custom domain');
-      return { data, error: null };
-    } catch (error) {
-      logger.error({ err: error, id, domain }, 'Failed to set custom domain');
-      return { data: null, error: error as Error };
-    }
-  }
-
-  async verifyCustomDomain(id: string, userId: string): Promise<RepositoryResult<WebsitePage>> {
-    try {
-      const { data, error } = await this.supabase
-        .from('website_pages')
-        .update({ custom_domain_verified: true })
-        .eq('id', id)
-        .eq('user_id', userId)
-        .select()
-        .single();
-
-      if (error) throw error;
-      logger.info({ pageId: id, userId }, 'Verified custom domain');
-      return { data, error: null };
-    } catch (error) {
-      logger.error({ err: error, id }, 'Failed to verify custom domain');
-      return { data: null, error: error as Error };
-    }
-  }
+  /*
+   * `setCustomDomain` and `verifyCustomDomain` were removed here.
+   *
+   * Businesses do not bring their own web address — every public page is served
+   * at `{prefix}.agentspilot.ai` — so both were unreachable: neither had a
+   * single caller anywhere in the codebase, and `website_pages.custom_domain` is
+   * null on every row. The columns stay in the database, dormant, in case
+   * custom domains ever become something we sell.
+   */
 
   /**
    * The public hostnames this user's pages are served on.
@@ -666,20 +619,37 @@ export class WebsitePageRepository {
     try {
       const { data, error } = await this.supabase
         .from('website_pages')
-        .select('subdomain, custom_domain')
+        .select('subdomain')
         .eq('user_id', userId)
         .not('subdomain', 'is', null);
 
       if (error) throw error;
 
-      const baseHost = process.env.NEXT_PUBLIC_WEBSITE_BASE_HOST || 'agentpilot.io';
+      /*
+       * `custom_domain` is no longer read here.
+       *
+       * Businesses do not bring their own address — every page is served at
+       * `{prefix}.agentspilot.ai` — and the column is null on every row, so the
+       * branch that preferred it had never once been taken. The host itself now
+       * comes from the one resolver rather than from
+       * `NEXT_PUBLIC_WEBSITE_BASE_HOST || 'agentpilot.io'`, a default that named
+       * a domain this platform has never served.
+       */
+      const siteHost = publicSiteHost();
+      const platformHost = platformOrigin().replace(/^https?:\/\//, '');
       const hosts = new Set<string>();
 
       for (const page of (data as any[]) || []) {
-        // A custom domain is what analytics would actually report, so it counts
-        // as the same surface as the subdomain it replaces.
-        if (page.custom_domain) hosts.add(String(page.custom_domain).toLowerCase());
-        if (page.subdomain) hosts.add(`${String(page.subdomain).toLowerCase()}.${baseHost}`);
+        if (!page.subdomain) continue;
+
+        /*
+         * Without a configured public-site host there is no wildcard DNS, so
+         * every page is served from the platform's own host under a path. They
+         * collapse to one entry, which is exactly what analytics would report.
+         */
+        hosts.add(
+          siteHost ? `${String(page.subdomain).toLowerCase()}.${siteHost}` : platformHost
+        );
       }
 
       return { data: [...hosts], error: null };

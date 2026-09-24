@@ -32,7 +32,7 @@ exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) insight
       "max_tokens": 400,
       "messages": [
         {
-          "content": "sha256:b7d7e45a2b3c2520af7947ed43f6ed6711a1a22e8feb0d44a268f409b03ea2a1 (len 1614)",
+          "content": "sha256:a79845ba9da605bb4d740b2b120b1b4ee17bf4dbd866b232e95b235e0cf515e4 (len 1994)",
           "role": "user",
         },
       ],
@@ -56,7 +56,7 @@ exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) insight
       "max_tokens": 800,
       "messages": [
         {
-          "content": "sha256:7dac59c4c1d7ce15b0b9cb47856a9fe379f115b5fc24c998d3bd239d6f588c94 (len 1247)",
+          "content": "sha256:998deb02843d2fac1e274a303b547a2295a294c6dcfdc6d96aa3197b33b37dc0 (len 4611)",
           "role": "user",
         },
       ],
@@ -80,7 +80,7 @@ exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) insight
       "max_tokens": 300,
       "messages": [
         {
-          "content": "sha256:16561ac2222fdd38d623e465ef912cb8fbc897f0e2c9bd5692d7c1997c8e47b6 (len 1073)",
+          "content": "sha256:dca84e11b29d47198195a863fa0e20f7fd52d0429809ed4f098ee618dcfd99d7 (len 1453)",
           "role": "user",
         },
       ],

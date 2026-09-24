@@ -567,6 +567,28 @@ export interface ComputeResult {
   agg: { fn: string; field?: string; distinct?: boolean };
   value: number | null;
   /**
+   * What `value` is denominated in, when it is money.
+   *
+   * Present whenever the aggregated field is a money field and the rows carry a
+   * currency. Absent for counts and for anything that is not money — a count is
+   * dimensionless, and stamping a symbol on one is how "4 services" became
+   * "$4.00 services".
+   */
+  currency?: string;
+  /**
+   * Present ONLY when the rows span more than one currency.
+   *
+   * There is no FX rate anywhere in the platform, so those totals cannot be
+   * added: 300 USD + 300 ILS is not 600 of anything. When this is set, `value`
+   * is the largest single currency's total — NOT the whole — and a caller that
+   * presents `value` alone is under-reporting. Say the breakdown.
+   *
+   * Absent for the single-currency business, which is nearly all of them, so
+   * the common path is unchanged and callers can treat its presence as the
+   * signal that one number will not do.
+   */
+  currencyBreakdown?: Array<{ currency: string; value: number }>;
+  /**
    * `key` is what the group is CALLED; `id` is what it is.
    *
    * A relation grouping resolves ids to labels so the reader sees "התמחות…"

@@ -193,6 +193,24 @@ export interface AttributionWithTracking extends LeadSourceMetadata {
 }
 
 /**
+ * The `_sid` carried on a page's own address, if it has one.
+ *
+ * Tolerant of a relative path and of an unparseable value: a capture must never
+ * fail because the page url it was handed was odd. A missing session simply
+ * means the submission cannot be tied to a click, which is the pre-existing
+ * behaviour for anyone who did not arrive through a smart link.
+ */
+function sessionIdFromUrl(candidate: string | undefined, base: string): string | undefined {
+  if (!candidate) return undefined;
+
+  try {
+    return new URL(candidate, base).searchParams.get('_sid') || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Build complete attribution metadata from a request
  */
 export function buildAttributionFromRequest(
@@ -247,12 +265,37 @@ export function buildAttributionFromRequest(
   const clientIP = getClientIP(headers);
   const ipHash = clientIP ? hashIP(clientIP, new Date().toDateString()) : undefined;
 
-  // Session ID - use provided, check URL param, or generate
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE SESSION IS ON THE PAGE TOO — the same mistake as the UTMs above.
+   *
+   * `/go/[code]` appends `_sid` to the address it sends the visitor to, and
+   * that session is the ONLY thing tying a later form submission back to the
+   * smart link that produced it: the click is recorded against it in
+   * `smart_link_clicks`, and nothing else about the submission names the link.
+   *
+   * This read `url.searchParams` alone. For `/go/[code]` that is right. For
+   * every capture route it cannot work — they are POSTs to
+   * `/api/website/forms/contact` and friends, whose own URL carries no query
+   * string — so `_sid` was never found, a FRESH session id was generated
+   * instead, and the click could never be matched.
+   *
+   * The visible symptom: a client who arrived through a smart link and filled
+   * in the contact form was recorded as having come from the Website. The chip
+   * is chosen by `metadata.smart_link_id` (see `components/crm/contactSources`),
+   * which can only ever be resolved through this session.
+   *
+   * The UTM fix immediately above landed and this line was left behind, which
+   * is why tagging looked fixed while smart-link attribution stayed broken.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   let sessionId = options.sessionId;
   if (!sessionId) {
-    // Check for _sid in URL (from smart link redirect)
-    const urlSessionId = url.searchParams.get('_sid');
-    sessionId = urlSessionId || (options.generateSessionId !== false ? generateSessionId() : undefined);
+    sessionId =
+      url.searchParams.get('_sid') ||
+      sessionIdFromUrl(options.pageUrl, url.origin) ||
+      sessionIdFromUrl(refererInfo.referrer_url, url.origin) ||
+      (options.generateSessionId !== false ? generateSessionId() : undefined);
   }
 
   const metadata: AttributionWithTracking = {

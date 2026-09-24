@@ -441,12 +441,14 @@ const SITES: Array<[string, () => Promise<unknown>]> = [
           s: number,
           c: number | null,
           cs: Record<string, number>,
+          // The measured rates that replaced the insight-count score.
+          health: unknown,
           summary: unknown,
           all: Insight[],
           lang: string,
           run: string
         ): Promise<unknown>;
-      }).generateHealthNarrative(U1, 72, 3, { cash_flow: 60 }, correlationSummary, [] as Insight[], 'en', R1),
+      }).generateHealthNarrative(U1, 72, 3, { cash_flow: 60 }, { categories: [], movingUp: null, improved: 0, declined: 0, steady: 0, measured: 0, unavailable: 0 }, correlationSummary, [] as Insight[], 'en', R1),
   ],
   ['briefing/daily_narration', () => narrateBriefing(facts(), 'en', U1)],
   [

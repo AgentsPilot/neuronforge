@@ -156,6 +156,20 @@ export class CashRevenueAtRiskDetector extends BaseDetector {
 
     const contacts = new Set<string>();
     const entityIds: string[] = [];
+    /*
+     * The invoices alone, kept apart from the rest.
+     *
+     * `entityIds` is a mixed bag — invoice ids, instalment ids and proposal ids
+     * in one array — and the detection reported it as `affectedEntityType:
+     * 'contact'`, which was none of the three. The chaser paired with this
+     * detector acts on invoices, so it refused every run with a 400 the owner
+     * saw as a button that did nothing.
+     *
+     * The finding is still about all three (that is the point of this
+     * detector: everything billed or quoted and not arrived). Only the ACTION
+     * is narrower, so only the invoices travel as the entity ids.
+     */
+    const invoiceIds: string[] = [];
 
     let invoiceOwed = 0;
     for (const row of invoicesResult.data ?? []) {
@@ -163,6 +177,7 @@ export class CashRevenueAtRiskDetector extends BaseDetector {
       if (outstanding <= 0) continue;
       invoiceOwed += outstanding;
       entityIds.push(String(row.id));
+      invoiceIds.push(String(row.id));
       if (row.contact_id) contacts.add(String(row.contact_id));
     }
 
@@ -217,10 +232,37 @@ export class CashRevenueAtRiskDetector extends BaseDetector {
       currentValue: Math.round(total * 100) / 100,
       baselineValue: 0,
       thresholdValue: MIN_REPORTABLE,
-      percentChange: 100,
+      /*
+       * Nothing changed by a hundred per cent.
+       *
+       * This detector counts: there is no baseline to have moved from, and a
+       * hardcoded 100 reached the narrator as a real measurement. It produced
+       * sentences like "a 100% increase in risk compared to your usual client
+       * retention" and "a 100% increase in your expected cash flow" — arithmetic
+       * presented as a trend, about a base of zero.
+       *
+       * `hasRealBaseline` now keeps the figure out of the prompt, but that guard
+       * reads `baselineValue`, so it is the second line of defence. This is the
+       * first: a count reports no change, because none was measured.
+       */
+      percentChange: 0,
       direction: 'above',
-      affectedEntityType: 'contact',
-      affectedEntityIds: entityIds,
+      /*
+       * What the chase can actually act on. The card still counts everything
+       * outstanding; `process_parameters.entity_ids` below carries the full
+       * mixed list for the narrative.
+       */
+      /*
+       * No invoices this run, no button this run.
+       *
+       * What is outstanding can be entirely instalments and proposals, and the
+       * invoice chase can touch neither — so offering it would render a control
+       * that enqueues nothing. The FINDING still stands and is still worth
+       * showing; only the action is withheld.
+       */
+      pairedProcessId: invoiceIds.length > 0 ? this.definition.pairedProcessId : undefined,
+      affectedEntityType: 'invoice',
+      affectedEntityIds: invoiceIds,
       // The number the owner acts on is how many PEOPLE to chase, not how many
       // documents exist — one client with three unpaid instalments is one call.
       affectedCount: contacts.size,
@@ -229,6 +271,10 @@ export class CashRevenueAtRiskDetector extends BaseDetector {
       impactPeriod: 'monthly',
       processParameters: {
         currency,
+        // Everything outstanding, of all three kinds. `affectedEntityIds` above
+        // is the invoices alone, because that is all the chase can act on.
+        entity_ids: entityIds,
+        chaseable_invoices: invoiceIds.length,
         owed_total: Math.round(owed * 100) / 100,
         quoted_total: Math.round(quoted * 100) / 100,
         invoice_owed: Math.round(invoiceOwed * 100) / 100,

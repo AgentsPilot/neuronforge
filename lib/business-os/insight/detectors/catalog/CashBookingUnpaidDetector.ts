@@ -150,16 +150,58 @@ export class CashBookingUnpaidDetector extends BaseDetector {
 
     const severity = this.definition.severityFn(unpaid.length, soonestDays);
 
+    /*
+     * The invoices behind these bookings, so the chase has something to chase.
+     *
+     * This reported BOOKING ids while pairing with `chase_overdue_invoices`,
+     * which accepts invoices only — so the enqueuer refused every run and the
+     * owner saw a "Handle it for me" button that answered 400.
+     *
+     * `payment_invoices.booking_id` is the link. A booking with no invoice
+     * raised against it is still part of the finding — the money is still
+     * owed — but there is nothing to send about it, so it contributes to the
+     * count and not to the action.
+     */
+    const { data: invoiceRows } = await this.supabase
+      .from('payment_invoices')
+      .select('id, booking_id, status')
+      .eq('user_id', userId)
+      .in('booking_id', unpaid.map(row => row.id))
+      .in('status', ['sent', 'pending', 'overdue']);
+
+    const invoiceIds = (invoiceRows ?? []).map(row => String(row.id));
+
     const result = this.createDetectionResult({
       severity,
       metricKey: 'cashflow.pending_payments',
       currentValue: unpaid.length,
       baselineValue: 0,
       thresholdValue: 0,
-      percentChange: 100,
+      /*
+       * Nothing changed by a hundred per cent.
+       *
+       * This detector counts: there is no baseline to have moved from, and a
+       * hardcoded 100 reached the narrator as a real measurement. It produced
+       * sentences like "a 100% increase in risk compared to your usual client
+       * retention" and "a 100% increase in your expected cash flow" — arithmetic
+       * presented as a trend, about a base of zero.
+       *
+       * `hasRealBaseline` now keeps the figure out of the prompt, but that guard
+       * reads `baselineValue`, so it is the second line of defence. This is the
+       * first: a count reports no change, because none was measured.
+       */
+      percentChange: 0,
       direction: 'above',
-      affectedEntityType: 'booking',
-      affectedEntityIds: unpaid.map(row => row.id),
+      // Invoices, because that is what the paired chase acts on. The bookings
+      // themselves travel in `process_parameters.booking_ids` below.
+      /*
+       * Only where an invoice actually exists to chase. An unpaid booking with
+       * no invoice raised against it is still money owed and still worth
+       * showing — there is just nothing to send about it.
+       */
+      pairedProcessId: invoiceIds.length > 0 ? this.definition.pairedProcessId : undefined,
+      affectedEntityType: 'invoice',
+      affectedEntityIds: invoiceIds,
       affectedCount: unpaid.length,
       estimatedImpactUsd: Math.round(owed * 100) / 100,
       impactDirection: 'loss',

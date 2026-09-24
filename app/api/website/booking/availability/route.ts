@@ -9,11 +9,13 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { SLOT_HOLDING_STATUSES } from '@/lib/business-os/bookingStatus';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { createLogger } from '@/lib/logger';
 import { windowsForDay, hasAnyAvailability } from '@/lib/scheduling/availabilityWindows';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { stripeConnectRepository } from '@/lib/repositories/PaymentRepository';
+import { safeTimezone } from '@/lib/scheduling/businessTime';
 
 const logger = createLogger({ module: 'WebsiteBookingAvailabilityAPI' });
 
@@ -111,7 +113,17 @@ export async function GET(request: NextRequest) {
     const availabilitySettings = hasAvailabilityConfigured
       ? businessProfile?.scheduling_availability
       : null;
-    const timezone = ownerPrefs?.timezone || 'UTC';
+    /*
+     * `safeTimezone`, not `|| 'UTC'`.
+     *
+     * The bare fallback only catches null and empty. A stored zone that Intl
+     * does not recognise — a legacy IANA name, a hand-edited row, a browser
+     * guess from a locale we do not carry — passed straight through it and
+     * threw downstream, taking the slot list down over a display detail. This
+     * is the surface a CLIENT sees, so it must degrade to a diagnosably-wrong
+     * zone rather than to no times at all.
+     */
+    const timezone = safeTimezone(ownerPrefs?.timezone);
 
     // Fetch active services
     const { data: services, error: servicesError } = await supabaseServer
@@ -202,7 +214,10 @@ export async function GET(request: NextRequest) {
         .eq('user_id', ownerId)
         .gte('start_time', startDate)
         .lte('end_time', endDate)
-        .neq('status', 'cancelled');
+        // A booking that will not happen does not hold its slot — that is
+      // `cancelled` AND `no_show`, which this asked as "not cancelled" and so
+      // kept a no-show's time shut. See `SLOT_HOLDING_STATUSES`.
+      .in('status', SLOT_HOLDING_STATUSES);
 
       // Mark overlapping slots as unavailable
       if (bookings && bookings.length > 0) {
