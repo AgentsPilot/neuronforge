@@ -9,15 +9,10 @@
 
 **Branch:** `feature/business-os-tiers-admin-page`.
 
-> ⚠️ **It is NOT branched from `origin/main`, and it has to be said plainly.**
-> TL asked for a branch from current `origin/main`. The page must render the four
-> plans **from the same config the resolver uses** — and that config does not
-> exist on `main`: PR #103 is open, so `main` still ships `TIER_ORDER = []`, no
-> `presentation` block and no `chat.access`. A page built on `main` would not
-> compile against the types it needs, and if it did it would render an empty
-> list.
+> **Branched from the tier branch, before PR #103 merged — now resolved.**
+> This branch starts at `c065021e`, the head of `feature/business-os-entitlement-tiers`, which was `main` merged in plus the tier config. At the time that was necessary: the page renders the four plans **from the same config the resolver uses**, and while #103 was open `main` still shipped `TIER_ORDER = []`, no `presentation` block and no `chat.access` — a page built on it would not have compiled.
 >
-> So this branch starts at `c065021e`, the head of `feature/business-os-entitlement-tiers`, which is `main` **merged in** plus the tier config. **RM: rebase onto `main` once #103 merges** — the diff is additive (new files plus one sidebar entry), so the rebase should be clean.
+> **PR #103 is now MERGED**, so `main` carries the config and the reason is historical. The base commit is still the tier branch head, so **RM should rebase onto `main`** — the diff is additive (new files plus one sidebar entry), and the tier config it depends on is now upstream of it either way.
 >
 > Branch creation is normally RM's. Dev created it on TL's instruction, and this is the record of that deviation — the same note the entitlements workplan carries for `feature/business-os-entitlements`.
 
@@ -113,7 +108,7 @@ No `assign_tier`, no `set_cohort`, no launch. Those ops exist and are audited; t
 
 | Check | Result |
 |---|---|
-| Affected scope (`entitlements`, `api/admin/business-os`, both admin screens, authz guard, scripts, migrations) | **40 suites, 1,155 tests**, 0 failures |
+| Affected scope (`entitlements`, `api/admin/business-os`, both admin screens, authz guard, scripts, migrations) | **43 suites, 1,195 tests**, 0 failures (after the SA and QA rounds) |
 | New tests | 72 (view 17, route 6, render 12, source guard 37 — `it.each` over 6 files — nav 6, minus overlap) |
 | `test:authz-guard` | **74 passed**, no new exemption: the new route calls `requireAdmin` as its first statement |
 | Typecheck, the verified method | **2,077 on this branch, and 0 in any file this change creates or touches.** The branch base is higher than the 2,029 I reported on the tier branch because `main` was merged in before this branch started — those ~48 are `main`'s own, already present in the base commit |
@@ -129,6 +124,43 @@ No `assign_tier`, no `set_cohort`, no launch. Those ops exist and are audited; t
 1. **The account lookup takes a raw id.** There is no search-by-email, because the endpoint resolves ids and nothing in the entitlements module maps an email to an account. Worth doing when somebody asks.
 2. **No write operations**, by decision. When the user asks for buttons, they are POSTs on the accounts route that already exist and are audited.
 3. **The page cannot show the chat-surface gap.** `chat.access` appears as withheld on three plans, which is true of the config and not yet true of the product (FR-46 is Slice 2). The enforcement banner covers this by saying nothing is enforced, but once the mode is `shadow` that banner is the only thing standing between this page and a false impression.
+
+## Review rounds
+
+### SA (§13.11) — R-1, R-2, R-3 and two low items
+
+| Item | What was done |
+|---|---|
+| **R-1** the banner is not enough for `chat.access` | The caveat now sits **at the capability**, in the same chip shape as the write-ops list, and it is **self-clearing**. What drives it: `config/enforcementPoints.ts`, a registry of capability → the files that gate it, empty today because Slice 1 wired no call site. The page reads `gateBuilt` per capability and a `withheldWithoutGate` summary. It is not a note anyone must remember to delete, because the registry is checked **both ways**: every file it names must exist and contain that capability id, and a source scan fails if any product file names a capability the registry does not know about. So a gate cannot ship while the page still says none exists, and registering it is what clears the marker |
+| **R-2** the resolver re-run rebuilds the synthetic | The comment no longer claims to be "the strongest form" and says what it does prove. The synthetic is now pinned two ways: its **11 fields asserted as values** (not rebuilt), and the resolved **state and basis per preview**, which are outputs a wrong synthetic changes |
+| **R-3** the source guard only knew `@/lib/` | It now tests where a specifier **resolves**: an aliased import outside the screen, or a relative one that escapes it, both fail. With a negative control proving `../../../lib/...` is caught |
+| SA low: the lookup takes an id | The page says so, and why: an email search would make a plan-configuration screen a way to **search people**. It points at `/admin/users`, which does that properly |
+| SA low: propagate the layout-guard pattern | Written into [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md) § *If your page inherits its protection, pin the thing that provides it* — the code, why FIRST-statement rather than "the call exists", why it belongs in the dependent's suite, and the generalisation to anything whose safety lives in another file |
+
+⚠️ If §13.11 carries a **third** low item, I could not read it — the section is in neither workplan in my tree. Name it and it is done.
+
+### QA — three High, one Medium, and the finding that outlives them
+
+| Finding | Fix |
+|---|---|
+| **High-1** the page did not render: `withheldWithoutGate` / `gateBuilt` were never emitted | Confirmed and closed. Two of my edits had silently no-op'd (a `str.replace` with no assertion), so the interfaces carried the fields while the payload did not. **Now verified against the REAL payload, not a fixture** — see QA-7 |
+| **High-2** `basis` rendered as a React child | The route sends the resolver's `EntitlementBasis` **object**. `types.ts` said `string`, which is why the compiler could not see it. The type now describes the object, and the component renders `kind` plus the tier or cohort name |
+| **High-3** a second granting rule in the lookup | `value !== false` is gone. `isGrantingValue` — the one rule — now runs **server-side** in the accounts route, which sends `granting` per capability. The component cannot hold a second opinion because it is not given the means to form one |
+| **Medium** the documented 404 was unreachable | The read path now runs the **same tenancy check as the write path**, from the same two repositories, and returns 404 `not_a_business_os_account`. A test asserts both paths answer the same way, so they cannot drift |
+| **QA-7** nothing compared the page to the payload the server sends | Two new contract suites, below |
+| **Vacuity** the account test rebuilt the account it was testing | Fixed with R-2. Both QA mutations now fail: `onboardingStartedAt → null` (5 failures), `planVersion → 999` (2 failures) |
+
+#### The two contract suites, and how they would have caught the crash
+
+**`payload.contract.test.tsx`** calls `buildAdminPlansView()` — the real server module — and renders the real page against its real output. Nothing in it declares a shape. Removing `withheldWithoutGate` from the payload again turns **6 tests red**, starting with *"renders at all — the assertion that was missing"*; before it existed, that same deletion left every suite green while the page rendered nothing. It also pins the payload's keys at three levels, so a field the server stops sending is a named failure rather than a blank screen.
+
+**`accountLookup.contract.test.tsx`** does the same for the other payload, which is where High-2 and High-3 both lived. The route cannot be imported into jsdom (`next/server` needs `Request`, `ReadableStream`, `MessagePort`; polyfilling them hung the suite), so the body is **recorded verbatim** from the real route into `__fixtures__/recordedAccountBody.json`, and `routes.test.ts` asserts the route still deep-equals that recording. The component is rendered against it. The two halves meet.
+
+The recorded body is also **assigned to `AccountPayload`**, which is the check that would have caught High-2 at compile time: an object does not assign to `string`.
+
+#### Where else the same gap could be
+
+Those are the only two payloads this screen consumes. Both are now covered. The pattern worth copying elsewhere: *a fixture is a statement of what we believe the server sends; something must compare it to what the server does send.*
 
 ## SA Review Notes
 
