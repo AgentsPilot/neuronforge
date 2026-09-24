@@ -3394,6 +3394,109 @@ One connection worth recording: **M-2's guarantee is now enforced by the databas
 3. **I was wrong about why the scripts would not paste**, and said so in the record. The honest position is that nobody knows; what was done instead — strip the scripts back to plain statements with no prose — works regardless of the reason.
 4. **Nothing changed about the plans**, and the one thing still needed before enforcement can be switched on is unchanged: switching off the chat features does not yet actually stop an Essentials customer using chat.
 
+### 13.11 SA Code Review — the Business OS Tiers admin page
+
+**Reviewed by SA — 2026-09-24** (branch `feature/business-os-tiers-admin-page`, uncommitted; workplan `9dfad229`; base `c065021e`, now an ancestor of main via PR #103)
+**Status:** 🔄 **APPROVED FOR QA WITH TWO REQUIRED FIXES** (**R-1, R-2**) and three low. Neither required fix is a security or correctness defect in what ships today; both are about the screen staying true when the mode changes, which is the only job it has.
+
+**What SA ran:** the five new/affected suites — **101 tests, 0 failures**; `npm run test:authz-guard` — 74 passing, **no new exemption**; `npm run lint:hooks` — clean.
+
+---
+
+#### 1. Authorization — verified, not assumed
+
+| Check | Result |
+|---|---|
+| The page inherits the guard | ✅ `app/admin/layout.tsx` has `await requireAdminPage();` as the first statement of the layout, deliberately outside any try/catch, and `AdminChrome` renders only after it. The new page sits under that layout, so it is protected before its own first line. |
+| The route gates first | ✅ I walked the handler: only `const gate = await` precedes `requireAdmin(`. Nothing parses a query, reads config or touches a repository above it. |
+| The repo-wide guard covers it | ✅ **Checked rather than trusted.** Walking `app/api/admin/**` now finds **50 route files** (47 before this branch), so the new handler is in the scanned set; the guard's floor assertion still holds and R1 passed with **no new exemption**. No route imports `AdminAccessService`. |
+| The page does not re-implement authz | ✅ The source guard asserts the page contains no `requireAdmin`, no `AdminAccessService`, no `profiles.role`, no `app_metadata`. |
+
+**The best thing in the guard is the assertion I did not expect:** it opens `app/admin/layout.tsx` and asserts *that* file still awaits `requireAdminPage()` as its first statement. The page's safety lives in someone else's file, and this pins it there. That is the right instinct and I would like to see it copied.
+
+---
+
+#### 2. The honesty mechanism — running the resolver rather than reading the matrix
+
+**Right, and for the right reasons.** Three of them, in increasing order of importance:
+
+1. A cohort **has no row** in `TIER_MATRIX.tiers`. Describing `trial` or `champion` from the matrix would mean re-implementing "cohort base = a tier, plus adjustments" in the screen — the exact re-derivation that drifts.
+2. Row and resolution genuinely differ where a reader would be misled: the `not_built` clamp, the `beta` rule, cohort inheritance.
+3. Using the loader's own `isGrantingValue` for "Includes" means the screen's notion of *granted* is the same function that rejects a config which grants what does not exist. One definition, two consumers.
+
+**Are the synthetic accounts faithful?** I checked them field by field against `EntitlementAccount`, because a synthetic that flatters would make the screen wrong in a way tests written the same way cannot see.
+
+- **Type-complete**, which is the structural protection: every field of the interface is supplied, so a field added later fails to compile here rather than silently defaulting.
+- **Tier previews** (`basic`, `pro`): tier set, `planVersion = matrix.version` (current, so no grandfather restores — correct for "what this plan includes *today*"), both expiries null, no cohort → resolves `active`. That is a healthy subscriber.
+- **Cohort previews** (`trial`, `champion`): no tier, cohort set, `trialStartedAt = now` and `trialEndsAt = null` → a trial that has just begun; champion open-ended. Both live.
+
+**Does it flatter?** It errs consistently toward *the plan at its best* — always a live, non-degraded state. For a screen describing **plans** rather than accounts that is the correct semantic, and the one direction it cannot exaggerate is capability, because that comes from the resolver. The limitation to keep in mind: this page can never show what a plan looks like in grace or paused, and it does not claim to.
+
+---
+
+#### 3. The client/server boundary
+
+**Dev's reasoning is right and I would not accept the alternative.** "Anything importable is re-derivable, and each re-derivation drifts" is the correct generalisation of the bug this whole screen exists to avoid — a UI that says something the resolver would not. Deriving the human-readable sentences server-side, in a `server-only` module, and shipping them in the payload means there is exactly one place that turns config into words.
+
+The source guard is strong: no `@/lib/` import, no plan id, price or capability id in the screen's source (so the UI cannot hard-code a truth), no `console.*`, no `any`, no non-GET fetch, and a non-vacuity assertion that the scan actually found the files (≥6) so an empty glob cannot pass everything.
+
+**One bypass, which is the low fix R-3:** the rule tests `import.startsWith('@/lib/')`. A relative import — `../../../lib/business-os/entitlements/adminPlansView` — is the same hazard and slips the rule. In practice the CI `Build (next build)` job catches the specific server-only case (importing a `server-only` module into a client component is a build error), so the exposure is small; but a guard whose stated rule has a hole invites someone to rely on the wrong thing.
+
+---
+
+#### 4. The enforcement banner
+
+**Correct shape, and correct source.** Undismissible **by construction** rather than by intent — no `onClose`, no state, no storage key, and the render test asserts there is no button at all rather than asserting a handler is absent. It **changes its words** at `enforce` instead of disappearing, which is the behaviour that matters: a banner that vanishes when the thing becomes real is a banner that is only present when it is least needed.
+
+It reads the **live, effective** mode: the payload carries `getEntitlementMode()`, not a default, and the render tests cover all three values with distinct expected strings plus a negative assertion that the "nothing is enforced" sentence is *absent* under `enforce`. Showing the effective mode is right — if UD-2 ever downgrades `enforce` to `shadow`, the screen should say `shadow`, and the env-var line tells the reader where the raw setting lives.
+
+---
+
+#### 5. Dev's two flags
+
+**The account lookup taking a raw id only: endorsed.** Mapping an email would mean a new read against `auth.users` or `profiles` — a new PII surface on an admin screen and a place where "find one account" can become "enumerate accounts". Id-only is the conservative choice and matches the module's standing rule that an account id comes from server context or a validated parameter. The cost is real (an operator has an email, not a UUID); that belongs on the screen as a stated v1 limitation pointing at the existing admin users screen. **R-5.**
+
+**`chat.access` shown as withheld: NOT adequately covered by the banner. R-1, required.** The capability now exists in the catalog and the matrix — `false` on three plans, `true` on Autopilot — but **the surface gate that would make it true is not built** (FR-46). Today the banner's "nothing on this page is enforced" covers it, because nothing is. The problem is *when the banner's words change*: at `enforce` the page will assert that three plans have no chat while chat still works for them, with no caveat at the capability. And this page is precisely the artefact someone consults **when deciding whether to flip that switch**, so the caveat has to exist before the flip, not after.
+
+The fix is small and does not need new machinery: mark capabilities whose enforcement is not yet built at the capability — the same shape as the `writeOpsNotOnThisPage` list Dev already built for a different honesty problem. One entry today: `chat.access` (FR-46). It should disappear from that list by being implemented, which makes the list self-clearing.
+
+---
+
+#### 6. `next build`
+
+**Not required locally.** The hazard it would catch here — a client component importing the `server-only` module — is a build error, and the PR's `Build (next build)` check runs it. **Condition:** that check must be green on the PR, and it is the evidence, not the local absence of one. Closing R-3 removes the guard's part of the same hole.
+
+---
+
+#### Vacuous-test hunt
+
+**The render tests are sound.** They render a **fixture payload** ('Fixture Paid Plan', `paid-plan`, `$42`) rather than the real config, which is what makes them tests of the rendering rather than a second copy of the data — and it is why the source guard forbids real ids and prices in the screen's source. Distinct expected strings per mode, plus negative assertions.
+
+**The "resolver re-run gives the identical split" test is the one the coordinator was right to suspect.** It rebuilds the synthetic account **by hand** and re-runs the resolver. If the synthetic is wrong, the test constructs the same wrong account and agrees with itself — two copies of one mistake. It is not worthless: it would catch the real drift it is named for (someone "optimising" the module to read `TIER_MATRIX.tiers`). But its comment calls it "the strongest form of the no-disagreement property", and it is not.
+
+**R-2, required, small:** pin the **situation** the synthetic produces, not only the agreement. For each plan assert the resolved `state` and `basis` are what the preview claims to be — `basic`/`pro` → `active` with basis `{ kind: 'tier' }`, `trial` → `trial`, `champion` → `champion` with basis `{ kind: 'cohort' }`. That cannot be satisfied by copying a wrong account, and it is the property the whole screen rests on.
+
+---
+
+#### Required and low fixes
+
+| # | Fix | Priority |
+|---|---|---|
+| **R-1** | Mark capabilities whose enforcement is not yet built **at the capability**, not only in the banner. One entry today: `chat.access` (FR-46). The list should empty itself as each is implemented. | **Required** |
+| **R-2** | Pin the resolved `state` and `basis` per preview, so the synthetic account's shape is asserted independently of the module that builds it. | **Required** |
+| R-3 | The source guard's no-`@/lib/` rule is bypassable by a relative import — reject those too. | Low |
+| R-4 | Soften the "strongest form" comment once R-2 lands, so the file does not overstate its own evidence. | Low |
+| R-5 | State the id-only lookup as a deliberate v1 limitation on the screen, pointing at the admin users screen for email → id. | Low |
+
+---
+
+#### For the user
+
+1. **The page is safe and it is honest about the one thing that matters** — it says, in words that change rather than disappear, that none of this is switched on yet. It is also built so it cannot quietly disagree with the system that will do the enforcing: it asks the real resolver what each plan gets rather than describing the settings file.
+2. **One thing needs adding before you use this page to decide to switch enforcement on.** It shows "no chat" for three plans. That is what the settings say, but the part of the product that would actually stop chat has not been built yet. Right now the banner covers it, because nothing is enforced at all — the moment that changes, the page would be stating something untrue. I have asked for that caveat to sit next to the capability itself.
+3. **Looking an account up needs its id, not its email.** That is deliberate — putting email lookup on this screen would mean giving it a way to search people — but it does make the page harder to use, and it should say so and point you at the existing admin users screen.
+4. **Nothing changed about the plans or about enforcement.** The open items are unchanged: the chat gate itself, the database key rotation, and making the CI checks required.
+
 ## 14. QA Testing Report
 
 ### 14.1 Component 1 (plan records + migration) — QA, 2026-09-21
@@ -4441,3 +4544,4 @@ _RM to populate._
 | 2026-09-24 | QA of the SQL paste fix and the four plans: PASS (QA) | Added §14.13. Ran the final state: **49 suites / 934 tests**, the SQL guard + admin routes + authz guard (157), lint clean, typecheck **2,029** with 0 TS2688 and 0 in any entitlements file. **All five SA items (T-1 to T-5) verified applied**, T-1 in both halves — `chat.access` in the catalog and both tier rows, FR-46 + AC-38 in the requirement, and a new §5 Chat SURFACE row ahead of the per-capability one. **Part A:** the guard's parser is correct (a `--` inside a string is not a comment, `''` handled twice over, the negative control uses the real lines); the pre-fix offenders were reconstructed from `git show` rather than replayed (preflight 7+3, checker 2+8, all nine apostrophes on full-line comments); and the rephrasings are meaning-preserving — a filtered non-comment diff shows only `;`→`,` in display strings, three additive `counts` sub-selects and row 55, with **no predicate, threshold or status changed**. Row 55 discriminates and T-2's benign-cause text landed. **A-1 (High, verification gap):** implementing the splitter the guard's header describes shows the **fixed** preflight still splitting into 4 fragments, 3 prose-leading — one beginning with the bare word **`a`**, which is the user's exact error — while the same model says the two migrations would split into 63 and 6 fragments, and they applied cleanly. Both cannot be true, and there is no `--` inside any string literal pre-fix, so a regex comment-stripper does not explain it either. **One paste settles it**, and it is needed before the week-later checker run anyway. **A-2 (Med):** twelve semicolons remain inside `--` comments, and the fix made them live rather than dormant. A-3/A-4 (Low): the guard parses per line and has no `$$` rule. A-5: T-3 required rewording 25 comment lines and two `COMMENT ON` strings in two already-applied migrations. **Part B:** the not_built rule **re-verified against the REAL two-tier matrix** by a temporary probe (deleted) — six grant shapes refused on `basic` and `pro`, withholding accepted; presentation validated both ways (one direction via the record's enum key, message quoted); the ten-key diff test names its keys; the snapshot non-vacuity check now pins tier keys and row width, and the new shipped-matrix drift test fails when it should; `mode.ts` keeps the UD-2 mechanism alive under `isolateModules`; `decide.test.ts`'s cohort retarget is documented and does not paper over a behaviour change. **B-1 (for the user):** UD-2 no longer downgrades `enforce`, so the code-level safety net is gone while G-1 remains open. **B-2 (Low):** the write direction of the chat-surface gap — verified by me — is asserted nowhere in tests. |
 | 2026-09-24 | SA code review of the privilege fix and the rewritten scripts: APPROVED for QA, plus two SA retractions (SA) | Added §13.10 and a retraction banner on §13.9. **Retracted my own §13.9 confirmation of the paste root cause** — the apostrophe/semicolon mechanism is disproven by the probe, and I had treated evidence that was merely CONSISTENT with the theory as confirming it; also withdrew my typecheck `-1` attribution, which §4.38 disproves with the control. Ran `test:bos-entitlements` (50 suites / 960 tests) and the migration + script guards (5 suites / 217 tests) — all green. Privilege fix: diagnosis confirmed (an enumerated REVOKE goes stale when the server gains a privilege — PG17 MAINTAIN survived; a narrower GRANT does not remove what the defaults already gave, so service_role kept d/D and the migration comment was false in production); severity correctly framed as a nuisance privilege, not a read; the narrow service_role revoke endorsed over REVOKE ALL + re-grant because the failure mode of a wrong re-grant on a hand-applied migration is a module-wide outage, and the checker asserts the property rather than the string; the 20261005 fresh-environment fix is the right forward-fix-plus-source-fix pattern. Checker rewrite verified by inventory comparison rather than prose: **no predicate weakened** — A4 strengthened to "no ACL entry at all", A10 to explicit r/a/w over service_role's OWN extracted letters, A4b and B5 added, all others renamed only. The extraction via `substring(... from service_role=([a-zA-Z*]*))` is correct and is what stops A4b matching the owner's `d`. The TS privileges test is an honest pinned model — it proves the predicates on the two REAL ACL strings and says plainly it does not execute SQL; the gap it cannot close was closed by the user's production run agreeing with it in both directions. Guard retraction accurate, no stale explanation survives anywhere. Spread confirmed in all three migrations (SELECT is deliberate there, so REVOKE ALL is the WRONG fix) and correctly left out of this branch; the transferable rule is to verify the resulting ACL, not the statement. Tiers unaffected; M-2's "ends rows, never deletes" now has database-level backing it did not have when I approved it. Low: P-1 note in 20261005 that it was edited post-apply, P-2 one pointer line in 20261009. |
 | 2026-09-24 | QA of the boring rewrite, the privilege fix and the retractions: PASS (QA) | Added §14.14; added a partial-retraction note to §14.13 (its A-2 rested on the now-disproven mechanism). Ran: **50 suites / 960 tests** in the CI scope, **59 / 1,260** wider, guard + privileges **81**, lint clean, typecheck **2,029** with zero in entitlements, `supabase/migrations` or the new guard test. **Meaning preservation checked row by row:** all twenty checks survive the rewrite with identical predicates — including both non-vacuity legs (A6's `count(*) = 4`, A7's `count(*) = 2`) and the `function owners` INFO row — A4 and A5-execute are **stronger**, A4b and B5 are new, and **all 45 `fix` keys resolve to a documented runbook entry**, so the prose-to-key move adds no vacuity. **A4/A4b/A10 can each fail**, and the false-positive route I hunted is closed: `substring(... from 'service_role=([a-zA-Z*]*)')` stops at the `/`, so a grantor name containing `d` (`/supabase_admin`) cannot read as DELETE; `WITH GRANT OPTION` (`a*r*w*`) is handled because `*` is inside the class. **The privilege fix** is idempotent, privileges-only, and leaves nothing the module needs (no repository method deletes; the fact triggers run as owner). **A fresh apply of the corrected `20261005` lands on `service_role=arwxtm` — exactly the hand-fixed state — so a new environment never needs `20261009`.** **The guard's framing now claims only hygiene**, my §14.13 A-3 (multi-line strings) and A-4 (`$$` bodies) are both closed with named tests, and a sweep of the scripts, both migrations, the fix and the runbook found **no surviving statement of the disproven theory**. Three Low findings: **QA-1** the privileges test pins the SQL but its TS predicates are a re-implementation that could drift; **QA-2** `ACL_AFTER` is a transcription asserted as fact by a test that reads no database; **QA-3** the runbook's block table says block 2 returns 10 rows — it returns 9, as the user's own `6 / 8+INFO / 6` shows — and that is the number he checks the grid against on ~1 October. |
+| 2026-09-24 | SA code review of the Business OS Tiers admin page: APPROVED for QA with two required fixes (SA) | Added §13.11. Ran the five new/affected suites (101 tests), `test:authz-guard` (74, no new exemption) and `lint:hooks` — all green. Authorization verified independently: the layout awaits `requireAdminPage()` as its first statement so the page is protected before its own first line, the route gates first (only `const gate = await` precedes it), and walking `app/api/admin/**` now finds 50 route files against 47 before, so the new handler is genuinely in the guard's scanned set. The guard asserting the LAYOUT's first statement is the best thing in the change and should be copied. Endorsed: running the resolver against type-complete synthetic accounts rather than reading `TIER_MATRIX.tiers` (a cohort has no row; row and resolution differ exactly where a reader would be misled) — the synthetics err consistently toward the plan at its best, which is the right semantic for a plan screen; deriving every sentence server-side in a `server-only` module; the undismissible-by-construction banner that changes its words at `enforce` and reads the live effective mode; and the id-only account lookup. **R-1 (required):** the banner is NOT enough for `chat.access` — it is withheld in config on three plans while the surface gate (FR-46) is unbuilt, and this page is what someone consults when deciding to flip the switch, so the caveat must sit at the capability. **R-2 (required):** the resolver re-run test rebuilds the synthetic by hand, so a wrong synthetic would be copied into the test and agree with itself — pin the resolved state and basis per preview instead. Low: R-3 the no-`@/lib/` rule is bypassable by a relative import, R-4 the "strongest form" comment overclaims, R-5 state the id-only limitation on the screen. No local `next build` required — the PR's Build check covers the server-only-import hazard and must be green. |
