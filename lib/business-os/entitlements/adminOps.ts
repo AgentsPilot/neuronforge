@@ -213,7 +213,11 @@ export async function executeAdminOp(op: AdminOp, ctx: AdminOpContext): Promise<
   const { accountId, planRepository } = ctx;
 
   // ── 2. Is this a Business OS tenant at all? (RC-10) ───────────────────────
-  const isTenant = await isBusinessOsTenant(ctx);
+  const isTenant = await isBusinessOsTenant({
+    accountId: ctx.accountId,
+    profileRepository: ctx.profileRepository,
+    onboardingRepository: ctx.onboardingRepository,
+  });
   if (isTenant === null) return { ok: false, status: 500, error: 'tenant_check_failed' };
   if (!isTenant) return { ok: false, status: 404, error: 'not_a_business_os_account' };
 
@@ -250,12 +254,29 @@ export async function executeAdminOp(op: AdminOp, ctx: AdminOpContext): Promise<
 }
 
 /** RC-10: a profile OR any onboarding message makes someone a tenant. */
-async function isBusinessOsTenant(ctx: AdminOpContext): Promise<boolean | null> {
-  const profile = await ctx.profileRepository.findByUserId(ctx.accountId);
+/**
+ * Is this account a Business OS tenant at all?
+ *
+ * **Exported because the READ path needs the same answer** (QA NEW-2). It was
+ * private, so `accounts/[accountId]/route.ts` re-implemented it — and the two
+ * copies disagreed: this one short-circuits on a profile hit and never reads
+ * onboarding, while the copy read both and returned 500 if either errored. An
+ * account whose profile was found and whose onboarding read failed could be
+ * written but not read, under a comment claiming they could not disagree.
+ *
+ * `null` means the question could not be answered, which is neither yes nor no
+ * and must not be treated as either.
+ */
+export async function isBusinessOsTenant(inputs: {
+  accountId: string;
+  profileRepository: AdminOpContext['profileRepository'];
+  onboardingRepository: AdminOpContext['onboardingRepository'];
+}): Promise<boolean | null> {
+  const profile = await inputs.profileRepository.findByUserId(inputs.accountId);
   if (profile.error) return null;
   if (profile.data) return true;
 
-  const latest = await ctx.onboardingRepository.getLatestMessageAt(ctx.accountId);
+  const latest = await inputs.onboardingRepository.getLatestMessageAt(inputs.accountId);
   if (latest.error) return null;
   return latest.data !== null;
 }
