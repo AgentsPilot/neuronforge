@@ -182,6 +182,43 @@ export interface TierMatrixShape<TierName extends string, Row> {
   version: number;
   tiers: Record<TierName, Row>;
   removals: readonly MatrixRemoval<TierName>[];
+  /** What each tier is CALLED and what it COSTS. See `TierPresentation`. */
+  presentation: Record<TierName, TierPresentation>;
+}
+
+/**
+ * The commercial face of a tier: its name to a customer, and its price.
+ *
+ * Deliberately separate from the capability row. The row is a mapped type over
+ * the catalog — adding a capability must break every tier until someone decides
+ * its value — and mixing a price into that shape would make the compiler ask
+ * for a price every time the catalog changes.
+ *
+ * ── WHY THE PRICE IS HERE AT ALL, AND WHAT IT IS NOT ────────────────────────
+ * It is for DISPLAY and for an admin reading the config. **Stripe becomes the
+ * source of truth when billing ships (Slice 4)**, and at that point this field
+ * is a label, not an amount anybody is charged. Nothing in Slice 1 reads it to
+ * make a decision — no gate, no resolver path, no report arithmetic.
+ */
+export interface TierPresentation {
+  /**
+   * The customer-facing name, per locale.
+   *
+   * The internal id and the marketing name move at different speeds: renaming a
+   * plan must not rewrite the `tier` column of every stored plan row, which is
+   * why the id never appears in front of a customer and this does.
+   *
+   * (Neither is named here on purpose — FR-12's guard scans comments too, and a
+   * type is not the place to learn what the plans are called.)
+   */
+  labels: Labels;
+  /**
+   * Monthly list price in whole US dollars. `0` for a free tier.
+   *
+   * Whole dollars because that is what has been decided; if a price ever needs
+   * cents, that is a Stripe price object rather than a decimal here.
+   */
+  monthlyPriceUsd: number;
 }
 
 // ── Cohorts ─────────────────────────────────────────────────────────────────
@@ -211,6 +248,14 @@ export type CohortBase = { tier: string } | { all: true };
 
 export interface CohortConfigShape<ExplicitValues> {
   base: CohortBase;
+  /**
+   * What this cohort is CALLED to the person in it.
+   *
+   * "Test Flight" and "Founding Partner" are the names the user chose; `trial`
+   * and `champion` are internal ids that a customer must never see. There is no
+   * price: a cohort is what somebody has while they are not paying.
+   */
+  labels: Labels;
   /** Lifecycles this cohort may reach beyond `available` — in practice `['beta']`. */
   includeLifecycle: readonly CapabilityLifecycle[];
   /** Quantity / metered / fair-use values. Required for every such capability. */

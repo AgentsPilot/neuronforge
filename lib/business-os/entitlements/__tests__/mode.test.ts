@@ -75,23 +75,50 @@ describe('the mode', () => {
 });
 
 describe('UD-2 — enforce is refused while no tier is configured', () => {
-  it('downgrades enforce to shadow on the shipped config', () => {
-    // Production ships NO tiers (U-1), so this is the live behaviour today.
-    expect(TIER_ORDER.length).toBe(0);
+  it('no longer downgrades enforce, because the shipped config now HAS tiers (2026-09-23)', () => {
+    // Until 2026-09-23 production shipped an empty matrix, and this gate was the
+    // only thing standing between an operator and an unsellable enforcement.
+    // The gate has not changed — its PRECONDITION has: two tiers are configured,
+    // so the reason to refuse is gone and `enforce` is passed through.
+    expect(TIER_ORDER.length).toBeGreaterThan(0);
     expect(LAUNCH.enforceRequiresConfiguredTier).toBe(true);
 
     withMode('enforce');
-    expect(getEntitlementMode()).toBe('shadow');
+    expect(getEntitlementMode()).toBe('enforce');
+    expect(logged.error).not.toHaveBeenCalled();
   });
 
-  it('refuses LOUDLY, at error level, naming the reason', () => {
-    // A deployment that believes it is enforcing and is not is exactly the kind
-    // of thing nobody notices. The refusal is an `error`, not a `warn`.
-    withMode('enforce');
-    getEntitlementMode();
+  it('still downgrades, loudly, if the tiers ever go away again', () => {
+    // The mechanism, kept under test now that the shipped config no longer
+    // exercises it. Without this the gate would rot silently and UD-2 would be
+    // a comment rather than a behaviour.
+    jest.isolateModules(() => {
+      jest.doMock('@/lib/business-os/entitlements/config/tierMatrix', () => ({ TIER_ORDER: [] }));
+      // A fresh module graph is the point: a static import would bind the real
+      // matrix before the mock exists.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fresh = require('@/lib/business-os/entitlements/mode');
 
-    expect(logged.error).toHaveBeenCalledTimes(1);
-    expect(logged.error.mock.calls[0][0]).toMatchObject({ effectiveMode: 'shadow', reason: 'no_tier_configured' });
+      withMode('enforce');
+      expect(fresh.getEntitlementMode()).toBe('shadow');
+
+      // A deployment that believes it is enforcing and is not is exactly the
+      // kind of thing nobody notices. The refusal is an `error`, not a `warn`.
+      expect(logged.error).toHaveBeenCalledTimes(1);
+      expect(logged.error.mock.calls[0][0]).toMatchObject({
+        effectiveMode: 'shadow',
+        reason: 'no_tier_configured',
+      });
+    });
+  });
+
+  it('is NOT the thing that gates turning enforcement on today', () => {
+    // Recorded here so nobody reads the passing test above as permission: with
+    // the gate satisfied, `enforce` is still not safe to set. What blocks it is
+    // Slice 2 (nothing calls a decision yet), Slice 4 (no billing) and G-1 (the
+    // leaked service-role key). None of those is expressible in this file, and
+    // none of them is this gate.
+    expect(TIER_ORDER.length).toBeGreaterThan(0);
   });
 
   it('says nothing when the mode is a legitimate one', () => {
@@ -133,7 +160,7 @@ describe('UD-2 — enforce is allowed once a tier exists', () => {
         TIER_MATRIX: { version: 1, tiers: {}, removals: [] },
       }));
 
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { getEntitlementMode: getMode } = require('@/lib/business-os/entitlements/mode');
       withMode('enforce');
       expect(getMode()).toBe('enforce');
@@ -146,7 +173,7 @@ describe('UD-2 — enforce is allowed once a tier exists', () => {
         LAUNCH: { enforceRequiresConfiguredTier: false },
       }));
 
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { getEntitlementMode: getMode } = require('@/lib/business-os/entitlements/mode');
       withMode('enforce');
       expect(getMode()).toBe('enforce');

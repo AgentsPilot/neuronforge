@@ -135,11 +135,11 @@ jest.mock('@/lib/repositories/OnboardingConversationRepository', () => ({
   },
 }));
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const accountRoute = require('@/app/api/admin/business-os/entitlements/accounts/[accountId]/route');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const launchRoute = require('@/app/api/admin/business-os/entitlements/launch/route');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const reportRoute = require('@/app/api/admin/business-os/entitlements/shadow-report/route');
 
 function post(url: string, body: unknown): NextRequest {
@@ -353,7 +353,12 @@ describe('POST /launch (R2-1)', () => {
     expect(repositoryCalls).not.toContain('updatePlan');
   });
 
-  it('a REAL run is refused while no tier is configured (UD-2)', async () => {
+  it('a REAL run is still refused, and writes nothing (2026-09-23)', async () => {
+    // It used to be refused at 409 `launch_preconditions_unmet`, because no tier
+    // was configured. Two tiers ship from 2026-09-23, so that precondition is
+    // met and the refusal moves one line down: Slice 2 owns the execution, and
+    // half a launch is worse than none. What must NOT change either way is that
+    // a real run touches nothing.
     const response = await launchRoute.POST(
       post('/api/admin/business-os/entitlements/launch', {
         confirm: 'launch_champion_existing',
@@ -362,8 +367,8 @@ describe('POST /launch (R2-1)', () => {
       })
     );
 
-    expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ error: 'launch_preconditions_unmet' });
+    expect(response.status).toBe(501);
+    expect(await response.json()).toMatchObject({ error: 'not_implemented_until_slice_2' });
     expect(repositoryCalls).toEqual([]);
   });
 

@@ -1,7 +1,112 @@
 {
-  "generated": "2026-09-22",
+  "generated": "2026-09-23",
   "matrixVersion": 1,
-  "tiers": {},
+  "tiers": {
+    "basic": {
+      "crm.core": true,
+      "crm.documents": true,
+      "booking.calendar_sync": true,
+      "website.ai_site": true,
+      "website.branding": "unbranded",
+      "intake.forms": "ai",
+      "intake.reminders": true,
+      "payments.invoices": true,
+      "payments.card": true,
+      "payments.multi_currency": true,
+      "marketing.lead_response": true,
+      "insights.checks": true,
+      "insights.channels": true,
+      "insights.daily_briefing": true,
+      "support.level": "priority",
+      "chat.access": false,
+      "chat.marketing": false,
+      "chat.invoice_control": false,
+      "chat.email": false,
+      "chat.search": false,
+      "chat.scheduling": false,
+      "chat.quotes": false,
+      "chat.reporting": false,
+      "chat.bulk": false,
+      "ai.actions": {
+        "perMonth": 500
+      },
+      "email.volume": {
+        "ceilingPerMonth": 10000
+      },
+      "team.seats": {
+        "included": 1,
+        "purchasable": false
+      },
+      "business.locations": {
+        "included": 1,
+        "purchasable": false
+      },
+      "payments.reminders": false,
+      "marketing.mass_email": false,
+      "marketing.posts": false,
+      "sms.messages": {
+        "perMonth": 0
+      },
+      "addon.marketing_analytics": "unavailable",
+      "addon.mobile": "unavailable",
+      "addon.full_payment_cycle": "unavailable",
+      "addon.sms": "unavailable",
+      "addon.act_for_you": "unavailable",
+      "website.custom_domain": "unavailable"
+    },
+    "pro": {
+      "crm.core": true,
+      "crm.documents": true,
+      "booking.calendar_sync": true,
+      "website.ai_site": true,
+      "website.branding": "unbranded",
+      "intake.forms": "ai",
+      "intake.reminders": true,
+      "payments.invoices": true,
+      "payments.card": true,
+      "payments.multi_currency": true,
+      "marketing.lead_response": true,
+      "insights.checks": true,
+      "insights.channels": true,
+      "insights.daily_briefing": true,
+      "support.level": "priority",
+      "chat.access": true,
+      "chat.marketing": true,
+      "chat.invoice_control": true,
+      "chat.email": true,
+      "chat.search": true,
+      "chat.scheduling": true,
+      "chat.quotes": true,
+      "chat.reporting": true,
+      "chat.bulk": true,
+      "ai.actions": {
+        "perMonth": 2000
+      },
+      "email.volume": {
+        "ceilingPerMonth": 10000
+      },
+      "team.seats": {
+        "included": 1,
+        "purchasable": false
+      },
+      "business.locations": {
+        "included": 1,
+        "purchasable": false
+      },
+      "payments.reminders": false,
+      "marketing.mass_email": false,
+      "marketing.posts": false,
+      "sms.messages": {
+        "perMonth": 0
+      },
+      "addon.marketing_analytics": "unavailable",
+      "addon.mobile": "unavailable",
+      "addon.full_payment_cycle": "unavailable",
+      "addon.sms": "unavailable",
+      "addon.act_for_you": "unavailable",
+      "website.custom_domain": "unavailable"
+    }
+  },
   "removals": [],
   "histories": {
     "trial": {

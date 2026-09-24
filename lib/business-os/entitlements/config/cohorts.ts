@@ -8,15 +8,18 @@
 //
 // Requirement §6.4 / D-2 / D-4 / B-14, workplan §4.6.
 //
-// ── WHY BOTH GRANT EVERYTHING TODAY ─────────────────────────────────────────
-// `base: { all: true }` — every capability at its highest value.
+// ── BOTH POINT AT A TIER (user decision, 2026-09-23) ────────────────────────
+// `base: { tier: 'basic' }` — both cohorts resolve from the Essentials row.
 //
-// For champions that is the user's decision (B-14): design partners get the
-// whole product. For trials it is the consequence of shipping no tiers (B-13):
-// a trial is defined as "what you would get on plan X", and there is no plan X
-// yet. Pointing the trial at a real tier later is a ONE-LINE change here:
+// They used to be `{ all: true }`, because there were no tiers to point at. Now
+// there are, and pointing at one is strictly better: a cohort that enumerated
+// its own capabilities would drift from the plan it is supposed to preview, and
+// the drift would be invisible until a customer noticed.
 //
-//     base: { tier: 'growth' },
+// So a trial shows you exactly what Essentials is — including NO CHAT, which is
+// the point of a trial. And a champion gets Essentials until chat is ready for
+// design partners, at which point `champion.base` becomes `{ tier: 'pro' }` and
+// every champion has chat on the next resolve. One line, no migration.
 //
 // ── WHY THE DURATIONS ARE HISTORIES, NOT NUMBERS ────────────────────────────
 // A trial uses the entry in force when it STARTED (SA S-7). Shortening the trial
@@ -27,7 +30,14 @@
 import type { CohortConfigShape, HistoryEntry } from '../types';
 import type { CohortExplicitValues } from './catalog';
 
-export interface CohortConfig extends CohortConfigShape<CohortExplicitValues> {}
+/**
+ * A cohort's configuration, with the explicit values this catalog demands.
+ *
+ * A type alias rather than an empty `interface … extends`: the interface form
+ * declared no members of its own, which is what `@typescript-eslint/no-empty-
+ * object-type` objects to, and nothing merges into this name.
+ */
+export type CohortConfig = CohortConfigShape<CohortExplicitValues>;
 
 /**
  * Quantities, allowances and ceilings for an account that gets "everything".
@@ -53,16 +63,18 @@ export interface CohortConfig extends CohortConfigShape<CohortExplicitValues> {}
  * "we have not decided", not as "the current policy".
  */
 const CHAMPION_VALUES: CohortExplicitValues = {
-  // PLACEHOLDER (not chosen by anyone). Champions who run out ask an admin for
-  // more; they never buy boosts (D-7), so this number's only job today is to be
-  // large enough not to matter.
-  'ai.actions': { perMonth: 3000 },
+  // FIRST PASS (user decision, 2026-09-23): 1,000 AI actions a month, twice
+  // Essentials. To be reset from shadow data like every other number here —
+  // decided, but not yet measured. Champions who run out ask an admin for more;
+  // they never buy boosts (D-7).
+  'ai.actions': { perMonth: 1000 },
   // Zero because SMS is `not_built`. This one is NOT a placeholder: a feature
   // that does not exist cannot be allocated, and the loader enforces it.
   'sms.messages': { perMonth: 0 },
-  // PLACEHOLDER. A fair-use ceiling only ever alerts the platform team (B-7), so
-  // the number is an abuse threshold, not a product promise — but it is still a
-  // number nobody has chosen.
+  // FIRST PASS. A fair-use ceiling only ever alerts the platform team (B-7), so
+  // the number is an abuse threshold rather than a product promise — and it
+  // matches the tier, because email volume is not one of the two things the
+  // plans differ by.
   'email.volume': { ceilingPerMonth: 10000 },
   // NOT a placeholder: one owner seat and one location is what exists. Invites
   // and multi-location are unbuilt (§18), so these cannot be raised yet.
@@ -71,13 +83,18 @@ const CHAMPION_VALUES: CohortExplicitValues = {
 };
 
 const TRIAL_VALUES: CohortExplicitValues = {
-  // PLACEHOLDER — and the one that matters most. A one-off TOTAL, not a monthly
-  // rate: using it up ENDS THE TRIAL (D-2, FR-27). Setup AI counts against it
-  // (B-12), so too small a number ends a customer's trial on their first day.
-  // Slice 3 sets it from the S1-T15 measurement of what a real setup costs.
-  'ai.actions': { total: 150 },
+  // FIRST PASS (user decision, 2026-09-23): 250 actions, and it is the number
+  // that matters most here. A one-off TOTAL, not a monthly rate — using it up
+  // ENDS THE TRIAL (D-2, FR-27), which is the second of the two ways Test
+  // Flight can end.
+  //
+  // Setup AI counts against it (B-12), so too small a number ends a trial on
+  // the customer's first day. **Slice 3 resets this from the S1-T15 measurement
+  // of what a real setup actually costs** — that is the whole reason the shadow
+  // report measures it, and 250 is a starting point rather than an answer.
+  'ai.actions': { total: 250 },
   'sms.messages': { perMonth: 0 }, // not_built, as above
-  'email.volume': { ceilingPerMonth: 2000 }, // PLACEHOLDER
+  'email.volume': { ceilingPerMonth: 2000 }, // FIRST PASS
   'team.seats': { included: 1, purchasable: false },
   'business.locations': { included: 1, purchasable: false },
 };
@@ -91,10 +108,24 @@ const thirtyDays: readonly HistoryEntry[] = [{ effectiveFrom: SHIPPED, days: 30 
 
 export const COHORTS = {
   trial: {
-    // P-1 (pending the user's confirmation): everything, like a champion.
-    base: { all: true },
-    // Beta capabilities are included, on the same reading of "everything".
-    // Setting this to [] keeps beta for champions only — one value, no code.
+    /**
+     * Test Flight is BASIC, for fourteen days (user decision, 2026-09-23).
+     *
+     * Pointing at a tier rather than at `{ all: true }` is what stops the trial
+     * drifting: when Essentials changes, the trial changes with it, and nobody
+     * has to remember that two files describe the same product.
+     *
+     * A trial therefore has NO CHAT, exactly like the plan it previews. That is
+     * the point of a trial — it shows what you would be buying.
+     */
+    base: { tier: 'basic' },
+    // The plan NAMES are deliberately untranslated for now: all three locales
+    // carry the English string, and the user will supply Hebrew and Spanish.
+    // Present rather than optional so a missing translation shows up as a
+    // visible duplicate on a pricing page instead of an `undefined`.
+    labels: { en: 'Test Flight', he: 'Test Flight', es: 'Test Flight' },
+    // Beta capabilities are included on top of the tier row. Setting this to []
+    // keeps beta for champions only — one value, no code.
     includeLifecycle: ['beta'],
     values: TRIAL_VALUES,
     durationHistory: fourteenDays,
@@ -105,8 +136,18 @@ export const COHORTS = {
     clockStartsAt: 'first_onboarding_message',
   },
   champion: {
-    // B-14: design partners get every capability at its highest level.
-    base: { all: true },
+    /**
+     * Founding Partner is BASIC today, and becomes AUTOPILOT the day chat is
+     * ready for design partners — **which is this one line**:
+     *
+     *     base: { tier: 'pro' },
+     *
+     * That is the whole change. No code, no migration, no per-account admin
+     * operation: every champion resolves from the tier row this points at, so
+     * the next resolve after the deploy gives them chat.
+     */
+    base: { tier: 'basic' },
+    labels: { en: 'Founding Partner', he: 'Founding Partner', es: 'Founding Partner' },
     includeLifecycle: ['beta'],
     values: CHAMPION_VALUES,
     // D-4: a longer runway than a trial, because a champion who lapses is a
