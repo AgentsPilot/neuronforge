@@ -2015,6 +2015,56 @@ QA's point stands: until 2026-09-23 the UD-2 gate meant an operator could set `B
 | Typecheck, the verified method | **2,029**, equal to the measured base, 0 x TS2688, 0 in entitlements |
 | ESLint over the three touched trees, `console.*` | clean / 0 |
 
+### 4.36 The scripts rewritten to be BORING (2026-09-24) - after the second failed paste
+
+The user pasted the fixed pre-flight and got `ERROR: 42P01: relation "a" does not exist` **again**. The apostrophe-and-semicolon theory is therefore insufficient, and the hygiene guard, while worth keeping, was never going to be the fix. Stopped refining the theory.
+
+**The evidence that actually discriminates:** every plain single-statement query handed to the user ran first time. Every elaborate file of ours failed. So the approach is no longer to satisfy an unknown parser but to **give it nothing to misparse**.
+
+#### What the three pasted scripts now are
+
+| Rule | Applied |
+|---|---|
+| **No `--` comments at all** | `preflight-`, `check-`, `rollback-` contain **zero** comment markers. Every word moved to the runbook |
+| **No prose in strings** | Rows emit short plain labels and a `fix` key (`runbook B1`) that the runbook explains. No apostrophes, no semicolons, no `--` in any literal |
+| **Several small statements** | `check-` and `preflight-` are **4 statements each**, one `SET` and three standalone `SELECT` blocks, each returning its own labelled grid with its own `VERDICT` row |
+| **No single-letter aliases** | The failing token was literally `a`, the alias in `CROSS JOIN activity a`. Every table is now named in full |
+| **No `aclexplode`** | Privileges are read from `relacl` and `proacl` as text with `LIKE`, which is what the ACL is anyway. One fewer set-returning function in a file that has to parse |
+| **No `DO` blocks in the two read-only scripts** | Neither ever needed one |
+
+`rollback-` keeps its `DO $$` block, and that is deliberate: the arming check and the nine `DROP`s **must be one statement**, or a client-side split could run the drops after the guard refused. It is also the one script nobody pastes casually.
+
+`verify-` is **exempt and still carries its comments**: it is a psql script that its own header forbids pasting into the editor, and psql parses comments correctly. Stripping 213 comment lines of hard-won reasoning out of a file that never meets the failing parser would be cost with no benefit. **Say so if you disagree** - it is one command to strip.
+
+#### What is documentation now, and what is in the file
+
+| In the SQL file | In `BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md` |
+|---|---|
+| The predicate, the threshold, the status, the numbers | Why the check exists, what it protects, and what to do when it fails |
+| A short `fix` key per row | A reference table per script keyed by exactly those keys |
+| Nothing else | The two optional pre-flight queries (they were commented-out SQL), how to arm the rollback, why the drops are inside the `DO` block, why the nine objects are enumerated rather than pattern-matched, and the new section **Why the scripts are boring** |
+
+The runbook gained four reference sections - one per script - and the step 2 and step 6 instructions now describe pasting block by block. **A script that cannot be pasted is worth less than a script with no inline documentation.**
+
+#### Meaning preserved
+
+Every check keeps its predicate, its threshold and its PASS/WARN/FAIL semantics. Two shapes changed, neither of them a meaning:
+
+| Was | Is | Why it is the same question |
+|---|---|---|
+| `aclexplode` + count 9 distinct table grants | `relacl` text contains `service_role=arw` on all 3 tables | `arw` **is** select, insert, update in an ACL entry. Same question, no set-returning function |
+| `aclexplode` + count 2 distinct function grants | `proacl` text contains `service_role=X` on both callable functions | `X` **is** EXECUTE |
+| One grid with an `OVERALL` row | Three grids, each with its own `BLOCK n VERDICT` row | The verdict cannot span statements once they are separate. The runbook says all blocks must say PASS |
+| `finding` and `what_to_do` prose columns | `detail` (numbers and plain words) and `fix` (a runbook key) | The words moved, they did not disappear |
+
+#### The guard, rescoped
+
+It now says what it is and is not, in its own header: **hygiene rules that remove known hazards, not a proof that a file will paste.** Two failed pastes are named in it. A fifth rule forbids `--` comments in the three pasted scripts, and a sixth asserts each of them is split into at least three statements. **49 tests.**
+
+#### Still open
+
+The empirical probe (a two-line paste with a comment apostrophe and a string semicolon) is with the user. **Nothing in this section depends on its answer** - a file with no comments and no punctuation in its strings is unaffected either way - which is why it was not waited for.
+
 ---
 
 ## 5. Slice 2: Enforcement (outline; G-3: the addendum restates each WC as tasks + tests)

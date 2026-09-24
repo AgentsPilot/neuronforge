@@ -191,7 +191,7 @@ Two rules worth knowing before using them:
 | What does setup cost in AI actions? | `shadow-report?…&includeSetupAi=true` — sized against p90 with headroom (B-12) |
 | Applying it all | [BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md](/docs/BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md) |
 
-> **Editing any of these SQL files?** `scripts/__tests__/entitlementSqlScripts.guard.test.ts` forbids, in all four scripts **and both migrations**: a semicolon or an apostrophe inside a `--` comment, a semicolon or a `--` inside a string literal, and anything left unterminated. They are not style rules — the Supabase SQL editor splits a pasted file with a parser that does not understand comments, and each of those is a false statement boundary. One of them produced `ERROR: 42P01: relation "a" does not exist` on 2026-09-23. **Rephrase; never just delete the punctuation.**
+> **Editing any of these SQL files?** The three the operator pastes — `preflight-`, `check-` and `rollback-` — carry **no `--` comments at all** and no prose in any string. They are several small standalone statements, with no single-letter aliases, and every row emits a short `fix` key that [the runbook](/docs/BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md) explains. That is not tidiness: two pastes failed with `ERROR: 42P01: relation "a" does not exist`, the editor's parser cannot be inspected, and the answer is to stop giving it anything to misparse. `scripts/__tests__/entitlementSqlScripts.guard.test.ts` enforces it, and its header is explicit that it is **hygiene, not a proof the file will paste**.
 
 ---
 
