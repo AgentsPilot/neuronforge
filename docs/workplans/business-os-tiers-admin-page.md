@@ -108,7 +108,7 @@ No `assign_tier`, no `set_cohort`, no launch. Those ops exist and are audited; t
 
 | Check | Result |
 |---|---|
-| Affected scope (`entitlements`, `api/admin/business-os`, both admin screens, authz guard, scripts, migrations) | **43 suites, 1,195 tests**, 0 failures (after the SA and QA rounds) |
+| Affected scope (`entitlements`, `api/admin/business-os`, both admin screens, authz guard, scripts, migrations) | **43 suites, 1,217 tests**, 0 failures (after both QA rounds) |
 | New tests | 72 (view 17, route 6, render 12, source guard 37 — `it.each` over 6 files — nav 6, minus overlap) |
 | `test:authz-guard` | **74 passed**, no new exemption: the new route calls `requireAdmin` as its first statement |
 | Typecheck, the verified method | **2,077 on this branch, and 0 in any file this change creates or touches.** The branch base is higher than the 2,029 I reported on the tier branch because `main` was merged in before this branch started — those ~48 are `main`'s own, already present in the base commit |
@@ -161,6 +161,33 @@ The recorded body is also **assigned to `AccountPayload`**, which is the check t
 #### Where else the same gap could be
 
 Those are the only two payloads this screen consumes. Both are now covered. The pattern worth copying elsewhere: *a fixture is a statement of what we believe the server sends; something must compare it to what the server does send.*
+
+### QA round 2 — NEW-1 to NEW-7, QA-8, and a second recording
+
+| Finding | Fix |
+|---|---|
+| **NEW-1** (Med) 10 of the 19 "no gate yet" capabilities are `not_built` | A capability that does not exist needs no gate, so `gateBuilt` is now true for every `not_built` one. The list is **9**, all real, and `chat.access` is one chip in nine rather than one in nineteen. Three tests make the two panels unable to contradict each other again: **no capability may appear in both**, no `not_built` capability may be marked on a card, and every survivor must have a lifecycle that is not `not_built` |
+| **NEW-2** (Med) two tenancy rules that disagreed | `isBusinessOsTenant` is **exported** and the read path calls it. The difference mattered: the private one short-circuits on a profile hit, so an account with a profile and a failing onboarding read is a tenant — the re-implementation 500'd on it. Two tests pin the behaviour from both sides: a check that cannot answer is a 500 on the read path, and a profile hit with a failing onboarding read is **200 on the read and 200 on the write** |
+| **NEW-3** (Med) `tenant_check_failed` had no copy | Added, with the other missing one. The lists are now **pinned to each other**: the suite reads the GET handler's source, collects every `error: '…'` it can return, and asserts each renders as a sentence rather than a code. Demonstrated — deleting the copy again turns that case red with `Could not read that account (tenant_check_failed).` on screen |
+| **NEW-4** (Low) the lookup suite was thin for CI | The id is **pasted, not typed**: one event instead of 36 per test, and the budget is raised to 20s |
+| **NEW-5** (Low) the scan only matched quoted literals | The marker's self-clearing property is now carried by a second rule: **anything outside the module that IMPORTS it** must be registered or exempt with a reason. A gate written as `decide({ capability: CHAT_SURFACE })` is caught by that even though it writes no id. It immediately found the file the FR-46 gate will live in — `chat-v4/route.ts` — and its exemption is itself checked: the suite asserts that file still only calls `shadowChatPlan` and contains **no** `decide(`, `.check(`, `requireEntitlement` or `withEntitlement`. So "known non-gate" cannot become a place for a gate to hide |
+| **NEW-6** (Low) two controls that could not fail | Both replaced. `{...real, x: null} !== real` is true of any object; it now asserts the **written-out expectation** rejects each mutation. And the enforcement-point control now calls `hasEnforcementPoint` for real, against a registry that has an entry — which needed the function to take the registry as a parameter, since the shipped one is empty |
+| **QA-8** (Low, carry-over) the lookup printed raw JSON | One formatter now, `capabilityDisplay.ts`, server-side, used by both payloads. The lookup renders `display`; the column shows `1 seat`, not `{"included":1,"purchasable":false}` |
+| **Coverage** the no-plan-row panel was untested | Second recording: `recordedAccountBodyNoPlanRow.json`. **0 of 38 in force** where the old rule listed 14, `unknown` state, `none` basis. Both recordings are kept fresh by the route suite |
+
+**SA's R-4** (the "strongest form" comment) was already done.
+
+#### On NEW-1, which is the one a reader would have noticed
+
+The page said *"nothing asks"* about ten capabilities **that do not exist**, three lines above a panel headed *"Cannot be sold (10)"*. Both sentences were true of the code and together they were misleading: for a feature that is not built, "nothing refuses it yet" reads as *a customer can get this*. The fix is one clause in the view and three tests that make the contradiction impossible rather than merely absent.
+
+#### Re-verified
+
+| Check | Result |
+|---|---|
+| Affected scope | **43 suites, 1,217 tests**, 0 failures |
+| Typecheck, the verified method | **2,077** — the branch base — **0** in any file this change touches |
+| ESLint (screen, entitlement routes, entitlements module) | clean |
 
 ## SA Review Notes
 
