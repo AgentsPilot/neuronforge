@@ -60,12 +60,38 @@ export function bosLlmAreaKey(area: BosLlmArea): string {
 export const BOS_LLM_AREA_KEYS: readonly string[] = BOS_LLM_AREAS.map(bosLlmAreaKey);
 
 /**
+ * WHY those calls are excluded — the one authoring of that sentence (FR-14).
+ *
+ * ── One home means one WORDING, not two (RC-7) ───────────────────────────
+ * This used to be the prose of the doc block on
+ * `BOS_LLM_SETTINGS_EXCLUDED_CALLS` below. The admin screen now renders the
+ * reason to an operator, and the client may not import this module (FR-6), so
+ * the sentence has to travel on the wire — `adminSettingsView.ts` puts THIS
+ * constant on it and never re-types it. Promoting the comment while leaving a
+ * second wording beside it would have re-created, inside one file, exactly the
+ * drift this constant exists to prevent, so the comment below now points here.
+ *
+ * ── It opens with the reader's question answered ─────────────────────────
+ * "Not configurable here" is the first thing an operator looking at a greyed
+ * row needs; the mechanism follows.
+ *
+ * ⚠️ This text names CHAT specifically ("chat's area switch"), because all
+ * four excluded calls are chat's. **If a non-chat call is ever excluded, this
+ * sentence is wrong and must be revisited** — the derivation
+ * (`bosLlmExcludedCallNames`) is already generic, so only the wording would
+ * need to change.
+ */
+export const BOS_LLM_SETTINGS_EXCLUSION_REASON =
+  'Not configurable here — changing an embedding model invalidates every stored vector (the plan ' +
+  'cache and the verified questions), so it is a data migration, not a setting. These calls keep ' +
+  'the shared helpbot_embedding_model key, and chat’s area switch still stops them, because the ' +
+  'gate runs at chat route entry.';
+
+/**
  * Calls that are NOT configurable through the area rows (DEC-3).
  *
- * The four chat embeddings keep the shared `helpbot_embedding_model` key:
- * changing an embedding model invalidates every stored vector (the plan cache
- * and the verified questions), so it is a data migration, not a setting. Chat's
- * area switch still stops them, because the gate runs at chat route entry.
+ * The reason is `BOS_LLM_SETTINGS_EXCLUSION_REASON` above — stated once, there,
+ * and never restated here (FR-14 / RC-7).
  */
 export const BOS_LLM_SETTINGS_EXCLUDED_CALLS = [
   'plan_cache_lookup_embedding',
@@ -288,4 +314,17 @@ export function isSwitchableBosLlmCall(area: BosLlmArea, callName: string): bool
 /** Every configurable call name of an area, in catalog order. */
 export function bosLlmSettingsCallNames(area: BosLlmArea): readonly string[] {
   return (BOS_LLM_CALLS[area] as readonly string[]).filter((name) => !isExcludedFromBosLlmSettings(name));
+}
+
+/**
+ * The mirror of `bosLlmSettingsCallNames`: every catalogued call of an area
+ * that this layer does NOT configure, in catalog order (FR-9).
+ *
+ * ⚠️ Derived from the catalog through the same per-NAME predicate, so it is
+ * empty for the other seven areas **by data, not by an `if (area === 'chat')`**
+ * — the exclusion list happens to be typed to chat today, but nothing here
+ * assumes that, and nothing has to be edited the day it stops being true.
+ */
+export function bosLlmExcludedCallNames(area: BosLlmArea): readonly string[] {
+  return (BOS_LLM_CALLS[area] as readonly string[]).filter((name) => isExcludedFromBosLlmSettings(name));
 }

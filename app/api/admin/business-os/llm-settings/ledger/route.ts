@@ -26,6 +26,16 @@
  * is touched: the readings are never produced (not merely hidden by the
  * client), and a chat request issues no cross-tenant read at all.
  *
+ * ── ⚠️ NOT DEAD CODE, as of 2026-09-24 ──────────────────────────────────
+ * Its only UI caller — `components/LedgerCheckPanel.tsx` — is PARKED, not
+ * deleted (FR-3 of the refinements round): `AreaCard` stopped rendering the
+ * panel because every area's only reachable state today is `too_long_ago`.
+ * **Slice 3 is this route's caller**, and re-mounting the panel is one import
+ * plus one line. This endpoint, its Zod schema, its admin gate and its tests
+ * all stay. A dead-code sweep reads this file, not the requirement — so the
+ * declaration lives here as well as there.
+ *
+ * @see docs/requirements/BUSINESS_OS_LLM_ADMIN_SCREEN_REFINEMENTS_REQUIREMENT.md (FR-3, C-8)
  * @see docs/workplans/BUSINESS_OS_LLM_MODEL_SETTINGS_ADMIN_UI_WORKPLAN.md §3.4
  */
 
