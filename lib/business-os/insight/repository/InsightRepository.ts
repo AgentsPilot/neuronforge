@@ -389,15 +389,53 @@ interface BusinessContext {
   company_size: string | null;
 }
 
+/**
+ * The two ids one detection run carries for ONE business.
+ *
+ * They were a single `runId` doing both jobs, and that is what made the
+ * cross-tenant attribution bug (F-13) possible: the cron minted one value per
+ * RUN and handed it to every business, so one `token_usage.session_id` — and
+ * one `audit_trail.entity_id` — spanned N tenants.
+ *
+ * Passing a bare string no longer compiles, which is the point. Mixing the two
+ * up silently empties the usage scope: `usageScope.notifyUsage` drops a call
+ * whose `sessionId` differs from the open scope's `groupId`, increments
+ * `excluded`, logs one `warn` and never throws — so the only symptom of a
+ * half-wired change would be audit entries that quietly describe no calls at
+ * all. An object makes that a type error instead of a runtime whisper.
+ */
+export interface InsightRunIds {
+  /**
+   * The cron invocation. Run-level by design, shared by every business in the
+   * run, and stored as `insights.detection_run_id` /
+   * `business_health_summaries.detection_run_id`. NEVER an LLM grouping id.
+   */
+  runId: string;
+  /**
+   * This business's AI usage group: one per (run, business). It becomes the
+   * ledger's `session_id` and the `ai_action` audit entry's `entity_id`, so two
+   * businesses must never share one. Every `buildBosCallContext` in this file
+   * is fed from THIS field.
+   */
+  groupId: string;
+}
+
 export interface CreateInsightParams {
   userId: string;
   detection: DetectionResult;
   priorityScore: number;
   /**
-   * The detection run this insight came from. Required: it is also the
-   * grouping id every LLM call in the run is recorded under.
+   * The cron run this insight came from. Stored as `detection_run_id`.
+   *
+   * Flattened rather than nesting an `InsightRunIds`, so a call site builds one
+   * shape, not two (SA Q-3).
    */
   runId: string;
+  /**
+   * The grouping id every LLM call made for this insight is recorded under.
+   * Per (run, business) — see `InsightRunIds.groupId`.
+   */
+  groupId: string;
 }
 
 // ===========================
@@ -518,9 +556,9 @@ export class InsightRepository {
     existing: StoredInsightFacts,
     detection: DetectionResult,
     userId: string,
-    // Required, like `CreateInsightParams.runId`: it is the grouping id every
-    // LLM call in the run is recorded under, and a rewrite is one of those.
-    runId: string
+    // Required: a rewrite is an LLM call, so it must land in this business's
+    // group like every other call in the run. `ids.groupId`, never `ids.runId`.
+    ids: InsightRunIds
   ): Promise<Partial<Pick<Insight, 'title' | 'description' | 'recommendation' | 'language'>>> {
     /*
      * The three figures a sentence is built from.
@@ -546,7 +584,7 @@ export class InsightRepository {
         detection,
         userId,
         businessContext,
-        runId
+        ids
       );
 
       logger.info(
@@ -572,7 +610,7 @@ export class InsightRepository {
    */
   async create(params: CreateInsightParams): Promise<RepositoryResult<Insight>> {
     try {
-      const { userId, detection, priorityScore, runId } = params;
+      const { userId, detection, priorityScore, runId, groupId } = params;
 
       // Check if there's already an active insight for this detector
       const { data: existingInsights } = await this.supabase
@@ -624,7 +662,7 @@ export class InsightRepository {
           existingInsight as StoredInsightFacts,
           detection,
           userId,
-          runId
+          { runId, groupId }
         );
 
         const { data: updated, error: updateError } = await this.supabase
@@ -662,7 +700,7 @@ export class InsightRepository {
         detection,
         userId,
         businessContext,
-        runId
+        { runId, groupId }
       );
 
       const { data, error } = await this.supabase
@@ -820,7 +858,7 @@ export class InsightRepository {
     detection: DetectionResult,
     userId: string,
     businessContext: BusinessContext,
-    runId: string
+    ids: InsightRunIds
   ): Promise<{ title: string; description: string; recommendation: string }> {
     try {
       // Model, temperature and the on/off switch come from the insights area
@@ -961,12 +999,13 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
             ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
             max_tokens: 300,
           },
-          // Recorded against the business analysed, grouped by the detection run.
+          // Recorded against the business analysed, grouped by THIS business's
+          // group for the run — never `ids.runId`, which every business shares.
           buildBosCallContext({
             userId,
             area: 'insights',
             callName: 'insight_content',
-            groupId: runId,
+            groupId: ids.groupId,
           })
         )
       );
@@ -1013,7 +1052,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
   async createBatch(
     userId: string,
     insights: PrioritizedInsight[],
-    runId: string
+    ids: InsightRunIds
   ): Promise<RepositoryResult<Insight[]>> {
     try {
       const results: Insight[] = [];
@@ -1023,7 +1062,8 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
           userId,
           detection: insight.detection,
           priorityScore: insight.score,
-          runId,
+          runId: ids.runId,
+          groupId: ids.groupId,
         });
 
         if (result.data) {
@@ -2057,7 +2097,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     userId: string,
     correlatedInsight: CorrelatedInsight,
     childInsightIds: string[],
-    runId: string
+    ids: InsightRunIds
   ): Promise<RepositoryResult<Insight>> {
     try {
       const detectorId = `correlated_${correlatedInsight.patternId}`;
@@ -2085,7 +2125,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         const { data: updated, error: updateError } = await this.supabase
           .from('insights')
           .update({
-            detection_run_id: runId,
+            detection_run_id: ids.runId,
             severity: correlatedInsight.severity,
             estimated_impact_usd: correlatedInsight.totalImpactUsd,
             total_correlated_impact_usd: correlatedInsight.totalImpactUsd,
@@ -2130,7 +2170,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         correlatedInsight,
         userId,
         businessContext,
-        runId
+        ids
       );
 
       const { data, error } = await this.supabase
@@ -2138,7 +2178,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         .insert({
           user_id: userId,
           detector_id: `correlated_${correlatedInsight.patternId}`,
-          detection_run_id: runId,
+          detection_run_id: ids.runId,
           category: this.mapCorrelationCategoryToBusinessCategory(correlatedInsight.category),
           severity: correlatedInsight.severity,
           title,
@@ -2211,7 +2251,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     correlatedInsight: CorrelatedInsight,
     userId: string,
     businessContext: BusinessContext,
-    runId: string
+    ids: InsightRunIds
   ): Promise<{ story: string; title: string; recommendation: string }> {
     try {
       const settings = await resolveBosLlmSettings('insights', 'correlated_insight');
@@ -2301,7 +2341,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
             userId,
             area: 'insights',
             callName: 'correlated_insight',
-            groupId: runId,
+            groupId: ids.groupId,
           })
         )
       );
@@ -2415,7 +2455,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     userId: string,
     correlationSummary: CorrelationSummary,
     allInsights: Insight[],
-    runId: string
+    ids: InsightRunIds
   ): Promise<RepositoryResult<BusinessHealthSummary>> {
     try {
       const language = await this.getUserLanguage(userId);
@@ -2513,7 +2553,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         correlationSummary,
         allInsights,
         language,
-        runId
+        ids
       );
 
       // Upsert the summary
@@ -2542,7 +2582,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         critical_count: criticalCount,
         high_count: highCount,
         total_impact_usd: totalImpactUsd,
-        detection_run_id: runId,
+        detection_run_id: ids.runId,
       };
 
       const { data, error } = await this.supabase
@@ -2703,7 +2743,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     correlationSummary: CorrelationSummary,
     allInsights: Insight[],
     language: string,
-    runId: string
+    ids: InsightRunIds
   ): Promise<{
     title: string;
     narrative: string;
@@ -2931,7 +2971,7 @@ Generate in ${langName}. Respond with ONLY a JSON object:
             userId,
             area: 'insights',
             callName: 'health_summary',
-            groupId: runId,
+            groupId: ids.groupId,
           })
         )
       );
@@ -3169,7 +3209,7 @@ Generate in ${langName}. Respond with ONLY a JSON object:
     userId: string,
     correlationSummary: CorrelationSummary,
     standaloneInsightIds: Map<string, string>, // detectorId -> insightId
-    runId: string
+    ids: InsightRunIds
   ): Promise<RepositoryResult<{ correlatedInsights: Insight[]; healthSummary: BusinessHealthSummary | null }>> {
     try {
       const createdCorrelatedInsights: Insight[] = [];
@@ -3185,7 +3225,7 @@ Generate in ${langName}. Respond with ONLY a JSON object:
           userId,
           correlatedInsight,
           childInsightIds,
-          runId
+          ids
         );
 
         if (result.data) {
@@ -3213,7 +3253,7 @@ Generate in ${langName}. Respond with ONLY a JSON object:
           userId,
           correlationSummary,
           allInsights,
-          runId
+          ids
         );
         healthSummary = healthResult.data;
       }
