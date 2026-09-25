@@ -42,6 +42,11 @@ interface NavItem {
 
 interface NavSection {
   title: string;
+  /**
+   * Kept in the data but not rendered. The routes still work by URL; the
+   * section just takes no sidebar space. Flip to false to bring it back.
+   */
+  hidden?: boolean;
   items: NavItem[];
 }
 
@@ -149,8 +154,11 @@ const navigationSections: NavSection[] = [
   },
   {
     // Parked, not retired (decision D-3): every page still works at its old
-    // URL. Expanded in slice 1; slice 3 collapses it by default.
+    // URL. Hidden from the sidebar (user decision after slice 1 review,
+    // 2026-09-25): twelve always-open items forced a scrollbar for pages
+    // nobody operates day to day.
     title: 'AgentsPilot (parked)',
+    hidden: true,
     items: [
       {
         name: 'Agent execution queue',
@@ -229,6 +237,8 @@ const navigationSections: NavSection[] = [
   },
 ];
 
+const visibleSections = navigationSections.filter((section) => !section.hidden);
+
 export default function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
   const pathname = usePathname();
 
@@ -283,7 +293,7 @@ export default function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
 
           {/* Navigation */}
           <nav className="flex-1 min-h-0 p-3 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
-            {navigationSections.map((section, sectionIndex) => (
+            {visibleSections.map((section, sectionIndex) => (
               <div key={section.title} className={sectionIndex > 0 ? 'mt-6' : ''}>
                 {/* Section Title */}
                 <div className="px-3 mb-2">
@@ -345,7 +355,7 @@ export default function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
                 </div>
 
                 {/* Separator between sections (except last one) */}
-                {sectionIndex < navigationSections.length - 1 && (
+                {sectionIndex < visibleSections.length - 1 && (
                   <div className="mt-4 px-3">
                     <div className="h-px bg-white/5" />
                   </div>
