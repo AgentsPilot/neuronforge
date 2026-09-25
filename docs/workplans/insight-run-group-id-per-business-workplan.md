@@ -5,7 +5,7 @@
 **Developer:** Dev
 **Requirement / origin:** Finding **F-13** and **SA-1** in [BUSINESS_OS_ADMIN_AI_ACTIVITY_VIEW_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_ADMIN_AI_ACTIVITY_VIEW_REQUIREMENT.md) (spun out to the roadmap as *"The shared insight `runId` (F-13) — a finding for the Layer 3 / insights owners"*)
 **Branch:** `fix/insight-run-group-id-per-business` — created by RM from `main` @ `b613bb97` (PR #106 merged). Investigation for this plan was done on `main` (`52b43e6a`).
-**Status:** **Fix pass complete 2026-09-25 — SA's C-1 to C-4 and QA's QA-1 to QA-5 all addressed; awaiting SA one-pass confirmation, then RM.** No production code changed in this pass: one test-file type fix, one new test, one sharpened assertion, one type annotation and two markdown rows. See [§13.9](#139-the-fix-pass-c-1-to-c-4-and-qa-1-to-qa-5). Previously: SA code-reviewed 🔄 Fix Required on C-1/C-2, all production code approved; QA pass with one Medium blocking. See [§10.8 Code Review Comments](#108-code-review-comments) and [§11](#11-qa-testing-report). Previously: Code Complete — A-1 to A-6 applied to this document and implemented; A-7 to A-10 addressed (A-7 with a **factual correction**, A-8 found already half-satisfied). See [§13 Implementation Notes](#13-implementation-notes-dev) for the six things that turned out differently in the code.
+**Status:** ✅ **SA-APPROVED 2026-09-25 — C-1 and C-2 closed, Task 13 satisfied; the branch may be pushed and PR'd.** Confirmed against the tree at `081710aa`. Previously: **Fix pass complete — SA's C-1 to C-4 and QA's QA-1 to QA-5 all addressed.** No production code changed in this pass: one test-file type fix, one new test, one sharpened assertion, one type annotation and two markdown rows. See [§13.9](#139-the-fix-pass-c-1-to-c-4-and-qa-1-to-qa-5). Previously: SA code-reviewed 🔄 Fix Required on C-1/C-2, all production code approved; QA pass with one Medium blocking. See [§10.8 Code Review Comments](#108-code-review-comments) and [§11](#11-qa-testing-report). Previously: Code Complete — A-1 to A-6 applied to this document and implemented; A-7 to A-10 addressed (A-7 with a **factual correction**, A-8 found already half-satisfied). See [§13 Implementation Notes](#13-implementation-notes-dev) for the six things that turned out differently in the code.
 **Skills loaded:** `tenant-isolation-guard`, `business-os-insights`, `bos-llm-call-standards` (by reference — every change here is a Business OS LLM call site)
 
 ## Overview
@@ -681,6 +681,49 @@ Dev catching its own false "zero errors project-wide" before reporting it is the
 **Yes — QA proceeds now, and its current concurrent run is valid.** C-1 is a test-file declaration with no runtime effect; C-2 and C-3 are markdown. None of them changes anything QA is exercising. **C-1 and C-2 must land before RM commits.** No re-review of the rest of the diff.
 
 **On the shape of the work overall, for the record:** the production change is small, correct, placed at the root cause, and better documented than the plan required. Two of the three most valuable findings this cycle came from Dev checking the reviewer rather than applying the review — A-7's argument does not survive contact with the tree, and A-5's predicted symptom was unobservable. Both corrections are right, both are recorded in the tree rather than only in conversation, and the second one changed a test assertion for the better. That is the behaviour this gate exists to produce.
+
+---
+
+**SA one-pass confirmation — 2026-09-25 (Task 13)**
+**Status:** ✅ **Code Approved. C-1 and C-2 both closed. Task 13 satisfied — the branch may be pushed and PR'd.**
+
+Verified against the tree at `081710aa` (three commits on `fix/insight-run-group-id-per-business`: `261e0590`, `4d6aab51`, `081710aa`), not against the hand-off message. **SA changed no source file in this pass either.**
+
+| Item | Verdict |
+|---|---|
+| **C-1** | ✅ **Closed.** `restateIfChanged.test.ts` imports the real type (`:25`); both declarations read `r: InsightRunIds` (`:87`, `:176`); both bare `'run-1'` arguments are now one `const RUN_IDS: InsightRunIds` (`:46-49`) whose `groupId` is deliberately not its `runId`. The comment at `:36-45` records *why* the type is imported rather than re-typed, and names the `as unknown as` / `as never as` spelling difference that hid it — so the next reader gets the lesson, not just the fix |
+| **C-1 — proven, not asserted** | ✅ The revert proof is the right standard and the mechanism is type-level certain, so I did not re-run it destructively. I confirmed the end state independently: `typecheck:bos-llm` → **242 files in scope, 28 errors, 0 new, passed** (95.1s). It also reports one baseline entry now fixed (`onboarding/build/route.ts` TS18047) — unrelated to this diff, worth a `--update-baseline` in someone else's cycle, **not** this one |
+| **C-1 — the sweep** | ✅ **Re-swept independently, by method name, over `lib app components scripts types hooks`, for all nine changed signatures.** Every call site outside `InsightRepository.ts` passes an object (`RUN_IDS`, `INSIGHT_RUN_IDS`, `ids(…)`, `ids`, `{ runId, groupId: businessGroupId }`); every hand-written declaration reads `InsightRunIds`. **Zero bare strings, zero `r: string`.** Changing the sweep from "enumerate the string" to "enumerate the method" is the correct correction, and it is the one that would have caught the original miss |
+| **C-1 — the wider population** | ✅ Independently counted: **90** sites of `as never as {` / `as unknown as {` / `as any as {`. Six files also reference `InsightRepository`; of those, only `runningAutomations.test.ts:51-53` re-declares a repository method (`countOperationalAutomations`, **not one of the nine**, correctly untouched), and `detectorCopy.guard.test.ts:41` casts a *property* on the correlation engine, not a method. **No remaining gap in this diff.** 90 is the population the sequenced guard faces — it changes nothing about the ruling (step 1 migrate, step 2 then guard with an empty allow-list) except its size, which is the argument for doing step 1 in tranches rather than one commit |
+| **C-2** | ✅ **Closed, and verified structurally.** `:73` is back to three cells with a closing pipe; the X-2 note renders inside cell 2, after the permanence statement. Confirmed by parsing the row rather than by eye: 4 pipes, leading and trailing, identical in shape to F-12 and F-14 |
+| **C-3** | ✅ **Closed in the same line.** The superseded prose is struck (`~~…~~`), the still-open briefing half is left live and unstruck, and the Evidence cell now carries **measured** citations — `route.ts:343` (the mint), `:294` (the loop), `:372` (the `groupId`), `:227` (the run-level `runId`), `InsightRepository.ts:1008`/`:2344`/`:2974`. I re-measured all seven: **all correct.** Still exactly 2 changed lines, so X-3's footprint has not grown |
+| **C-4** | ✅ Applied — `scripts/verify-insights.ts:67` is now `const ids: InsightRunIds = { … }` with the type imported at `:13`. Optional item, taken |
+| **T8 (the A-2 log line)** | ✅ **Confirmed, and better than I asked for.** It pins three lines for three businesses, all three ids on one record, `businessGroupId !== runId`, one shared `runId`, three distinct groups, and — the part that makes it forensic rather than cosmetic — **the logged group id equals that business's `entity_id`** (`:399-403`). It also writes my §10.9 trap into the test's own comment ("three log lines against two audit entries is the expected result"), which closes that suggestion in the place a reader will hit it. A load-bearing log line with no test was the weakest point left in the diff; it is now 1 of 6 |
+| **T5 strengthened** | ✅ Noticed in passing: the response-body assertion moved from `toBeDefined()` to `toBe(idsA.runId)`, which is the difference between "a runId is reported" and "**this** runId is reported" |
+| **Re-run of the blast radius** | ✅ **90 suites, 1,240 tests, 23 snapshots — all pass** (`app/api/cron/insight-detect`, `lib/business-os/insight`, `lib/business-os/llm`, `lib/business-os/bizql`) |
+
+### Ruling on the element-access deferral — Dev's call is correct
+
+**Confirmed: do not convert this one file.** Converting `restateIfChanged.test.ts` to `repo['restateIfChanged'](…)` would be an improvement in isolation and a mistake in context. It removes one site from the step-1 migration population and leaves 89 — i.e. it starts the migration without finishing it, and a half-done migration is exactly how an exception list is born. That is the same failure mode as the two-list drift that produced §13.2 and then C-1; doing it here would be the third instance in one cycle.
+
+The right shape is the one now in the tree: **every site pinned to the real type today** (so nothing is silently wrong), **the whole population migrated in one owned cycle** (so nothing needs an exception), **then** the guard. Flagging the trade-off instead of quietly taking the locally-nicer option is the behaviour I want from Dev at this gate.
+
+One refinement to my §10.7.3 ruling, now that the population is measured at 90 rather than ~18: **step 1 should be tranched by owning area** (insights, website, intake, onboarding, …), each tranche its own small commit, with the step-2 guard added only after the last one. A single 90-site commit is unreviewable and would be waved through, which defeats the purpose.
+
+### Corrections to my own review, accepted
+
+- **My §13.8 inference was wrong.** I read `ADMIN_MODULE_BOS_REORGANISATION_REQUIREMENT.md` reappearing on disk as a concurrent session restoring it. It is a **BA rewrite authored today**; the original is still lost. I inferred from a timestamp and a byte count, which cannot distinguish "restored" from "rewritten" — I should have said so or not said it. The follow-up row stands with the corrected reading, and the durable lesson is unchanged and now sharper: **an untracked doc has no recovery path, and a rewrite is not a recovery.**
+- **Dev's retraction of the 165/166 · 2,892/2,893 figure is accepted and is the right call.** The authoritative numbers are **152/153 suites, 2,367/2,368 tests**, reproduced by QA. A number nobody can reproduce is worse than no number, and retracting one's own is the harder direction to move.
+- **Two line numbers in my §10.6 table were inferred from diff hunk offsets rather than measured** (`route.ts:337`/`:293`/`:371`). The measured values are `:343` (mint), `:294` (loop), `:372` (`groupId`) — as now cited in the requirement. The verdicts in that table are unaffected; the method was sloppier than the standard I applied to Dev's line numbers in A-10.
+
+### Task 13 — satisfied
+
+**Yes. The branch may be pushed and PR'd.** No SA item is outstanding. End state re-verified independently: `typecheck:bos-llm` 28 errors / **0 new** / passed · 90 suites / 1,240 tests / 23 snapshots green in the blast radius · the nine-signature sweep clean by method name · the requirement table structurally valid.
+
+Two notes for RM, neither blocking:
+
+- `.claude/settings.local.json` and `.gitignore` are still modified in the working tree and are **not** part of this change — commit by pathspec, do not fold them in. Four untracked docs (`ENVIRONMENTS_AND_DEPLOYMENT_STRATEGY.md`, `ADMIN_ARCHIVING_MODULE_REQUIREMENT.md`, `ADMIN_MODULE_BOS_REORGANISATION_REQUIREMENT.md`, `BUSINESS_OS_ADMIN_AI_ACTIVITY_SLICE_B0_WORKPLAN.md`, `environment-readiness-staging.md`) belong to other work and must stay out of this PR.
+- The three commits are correctly separated (fix / tests / docs) and should **not** be squashed — the middle one is the record of the five tests that defeated the type, which is the most instructive thing in the cycle.
 
 ## 11. QA Testing Report
 
