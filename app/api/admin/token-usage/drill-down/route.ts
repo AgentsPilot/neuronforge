@@ -1,15 +1,96 @@
 // app/api/admin/token-usage/drill-down/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { z } from 'zod';
 import { createLogger } from '@/lib/logger';
 import { requireAdmin } from '@/lib/admin/requireAdminRoute';
+import { bosRowFilter } from '@/lib/business-os/llm/callCatalog';
+import {
+  adminTokenUsageAnalyticsRepository,
+  ADMIN_ANALYTICS_UNPAGED_CAP,
+  type AdminAnalyticsFilters,
+} from '@/lib/repositories/AdminTokenUsageAnalyticsRepository';
 
 const logger = createLogger({ module: 'TokenUsageDrillDownAPI' });
 
+// Still used by the label lookups (profiles, agents, auth users) and by the
+// per-execution detail path. The two windowed ledger reads that the "Business
+// OS only" lens changes go through AdminTokenUsageAnalyticsRepository (slice
+// 2a); moving the rest is recorded as debt (ADMIN_IDENTIFICATION_AND_ACCESS.md
+// OI-9).
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
+
+// --- Query validation (slice 2a, SA C-4) ------------------------------------
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// eslint-disable-next-line no-control-regex -- the point is to refuse control characters
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+
+/** '' and null mean "not sent". */
+const optional = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((v) => (v === '' || v === null ? undefined : v), schema.optional());
+
+/**
+ * A dimension value. Deliberately NO identifier regex: real values include
+ * model ids with `/ . :` and endpoint paths. These only ever reach `.eq()`,
+ * never a filter string.
+ */
+const dimension = optional(
+  z.string().min(1).max(200).refine((v) => !CONTROL_CHARS.test(v), 'Control characters are not allowed')
+);
+
+export const DrillDownQuerySchema = z
+  .object({
+    breakdownBy: z
+      .enum(['provider', 'model', 'activity', 'user', 'agent', 'execution', 'request_type', 'feature', 'component', 'endpoint'])
+      .default('provider'),
+    provider: dimension,
+    model: dimension,
+    activity: dimension,
+    request_type: dimension,
+    feature: dimension,
+    component: dimension,
+    endpoint: dimension,
+    user: optional(z.string().refine((v) => v === 'system' || UUID_RE.test(v), 'Must be an account id or "system"')),
+    agent: optional(z.string().refine((v) => v === 'no-agent' || UUID_RE.test(v), 'Must be an agent id or "no-agent"')),
+    execution: optional(
+      z
+        .string()
+        .refine((v) => UUID_RE.test(v) || (v.startsWith('single-') && UUID_RE.test(v.slice(7))), 'Must be an execution id')
+    ),
+    category: optional(z.enum(['all', 'creation', 'execution', 'memory', 'system'])),
+    period: optional(z.coerce.number().int().min(1).max(365)),
+    dateFrom: optional(z.string().datetime({ offset: true })),
+    dateTo: optional(z.string().datetime({ offset: true })),
+    // 'bos' = the platform's Business OS row definition (bosRowFilter()), never
+    // a filter built from the request. The page turns it on by default.
+    scope: optional(z.enum(['bos', 'all'])),
+  })
+  .refine((q) => !q.dateFrom || !q.dateTo || Date.parse(q.dateFrom) <= Date.parse(q.dateTo), {
+    message: 'dateFrom must not be after dateTo',
+    path: ['dateFrom'],
+  });
+
+/** numeric arrives as number or string; anything unparsable counts as 0 (as before). */
+function toCostUsd(value: number | string | null): number {
+  return parseFloat(String(value)) || 0;
+}
+
+type DrillDownFilters = {
+  provider?: string;
+  model?: string;
+  activity?: string;
+  request_type?: string;
+  feature?: string;
+  component?: string;
+  endpoint?: string;
+  user?: string;
+  agent?: string;
+  category?: string;
+};
 
 export const dynamic = 'force-dynamic';
 
@@ -73,6 +154,13 @@ interface DrillDownResponse {
   categoryTotals: CategoryBreakdown;
   period: { from: string; to: string };
   comparison?: PeriodComparison;
+  /** 'bos' when the Business OS row definition was applied (slice 2a). */
+  scope: 'bos' | 'all';
+  /**
+   * The main read returned PostgREST's row cap, so the totals may be missing
+   * rows. Parked (OI-P1): the page says so rather than paging.
+   */
+  possiblyIncomplete: boolean;
 }
 
 /**
@@ -102,26 +190,28 @@ export async function GET(request: NextRequest) {
     const gate = await requireAdmin(requestLogger);
     if (gate instanceof NextResponse) return gate;
 
-    const { searchParams } = new URL(request.url);
+    const parsed = DrillDownQuerySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
+    if (!parsed.success) {
+      requestLogger.warn({ issues: parsed.error.issues.length }, 'Rejected an invalid drill-down query');
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Invalid query parameters',
+          details: process.env.NODE_ENV === 'development' ? parsed.error.flatten() : undefined,
+        },
+        { status: 400 }
+      );
+    }
+    const q = parsed.data;
 
-    const breakdownBy = searchParams.get('breakdownBy') || 'provider';
-    const provider = searchParams.get('provider');
-    const model = searchParams.get('model');
-    const activity = searchParams.get('activity');
-    const request_type = searchParams.get('request_type');
-    const feature = searchParams.get('feature');
-    const component = searchParams.get('component');
-    const endpoint = searchParams.get('endpoint');
-    const user = searchParams.get('user');
-    const agent = searchParams.get('agent');
-    const execution = searchParams.get('execution');
-    const category = searchParams.get('category') || 'all'; // 'all' | 'creation' | 'execution' | 'memory' | 'other'
+    const breakdownBy = q.breakdownBy;
+    const category = q.category ?? 'all'; // 'all' | 'creation' | 'execution' | 'memory' | 'system'
+    const scope = q.scope ?? 'all';
 
     // Date range handling
-    const periodParam = searchParams.get('period');
-    const periodDays = periodParam ? Math.min(Math.max(parseInt(periodParam, 10), 1), 365) : 30;
-    let dateFrom = searchParams.get('dateFrom');
-    const dateTo = searchParams.get('dateTo') || new Date().toISOString();
+    const periodDays = q.period ?? 30;
+    let dateFrom = q.dateFrom;
+    const dateTo = q.dateTo || new Date().toISOString();
 
     if (!dateFrom) {
       const periodStart = new Date();
@@ -129,34 +219,37 @@ export async function GET(request: NextRequest) {
       dateFrom = periodStart.toISOString();
     }
 
-    logger.info({ breakdownBy, provider, model, activity, request_type, feature, component, endpoint, user, agent, execution, category, dateFrom, dateTo }, 'BI Drill-down API called');
+    requestLogger.info(
+      { adminUserId: gate.user.id, breakdownBy, scope, category, dateFrom, dateTo, hasExecution: !!q.execution },
+      'BI Drill-down API called'
+    );
 
     // If execution is provided, return individual calls
-    if (execution) {
-      return await getExecutionCalls(execution);
+    if (q.execution) {
+      return await getExecutionCalls(q.execution);
     }
 
     // Build filters object
-    const filters = {
-      provider: provider || undefined,
-      model: model || undefined,
-      activity: activity || undefined,
-      request_type: request_type || undefined,
-      feature: feature || undefined,
-      component: component || undefined,
-      endpoint: endpoint || undefined,
-      user: user || undefined,
-      agent: agent || undefined,
+    const filters: DrillDownFilters = {
+      provider: q.provider,
+      model: q.model,
+      activity: q.activity,
+      request_type: q.request_type,
+      feature: q.feature,
+      component: q.component,
+      endpoint: q.endpoint,
+      user: q.user,
+      agent: q.agent,
       category: category !== 'all' ? category : undefined
     };
 
     // Get aggregated data with filters applied
-    const result = await getAggregatedData(breakdownBy, filters, dateFrom, dateTo, category);
+    const result = await getAggregatedData(breakdownBy, filters, dateFrom, dateTo, category, scope);
 
     return NextResponse.json(result);
 
   } catch (error) {
-    logger.error({ err: error }, 'BI Drill-down API error');
+    requestLogger.error({ err: error }, 'BI Drill-down API error');
     return NextResponse.json(
       { success: false, error: 'Internal server error' },
       { status: 500 }
@@ -195,64 +288,43 @@ const MEMORY_ACTIVITY_TYPES = [
  */
 async function getAggregatedData(
   breakdownBy: string,
-  filters: {
-    provider?: string;
-    model?: string;
-    activity?: string;
-    user?: string;
-    agent?: string;
-    category?: string;
-  },
+  filters: DrillDownFilters,
   dateFrom: string,
   dateTo: string,
-  category: string = 'all'
+  category: string = 'all',
+  scope: 'bos' | 'all' = 'all'
 ): Promise<DrillDownResponse> {
-  // Build base query with all filters
-  let query = supabase
-    .from('token_usage')
-    .select('*')
-    .gte('created_at', dateFrom)
-    .lte('created_at', dateTo);
+  // The Business OS lens: the platform's own row definition, passed as data.
+  const featureFilter = scope === 'bos' ? bosRowFilter() : undefined;
 
-  if (filters.provider) query = query.eq('provider', filters.provider);
-  if (filters.model) query = query.eq('model_name', filters.model);
-  if (filters.activity) query = query.eq('activity_type', filters.activity);
-  if (filters.request_type) query = query.eq('request_type', filters.request_type);
-  if (filters.feature) query = query.eq('feature', filters.feature);
-  if (filters.component) query = query.eq('component', filters.component);
-  if (filters.endpoint) query = query.eq('endpoint', filters.endpoint);
+  const mainFilters: AdminAnalyticsFilters = {
+    provider: filters.provider,
+    model: filters.model,
+    activity: filters.activity,
+    requestType: filters.request_type,
+    feature: filters.feature,
+    component: filters.component,
+    endpoint: filters.endpoint,
+    user: filters.user,
+    agent: filters.agent,
+    // Category filter - note: we'll filter in memory after fetching since category
+    // determination requires pattern matching on activity_type/activity_name
+    // For 'execution' category we can filter by execution_id IS NOT NULL at DB level
+    executionOnly: category === 'execution',
+    featureFilter,
+  };
 
-  // Handle user filter - "system" means NULL user_id
-  if (filters.user) {
-    if (filters.user === 'system') {
-      query = query.is('user_id', null);
-    } else {
-      query = query.eq('user_id', filters.user);
-    }
-  }
+  const { data: records, error } = await adminTokenUsageAnalyticsRepository.listRowsAllAccountsInWindow(
+    { start: dateFrom, end: dateTo },
+    mainFilters
+  );
 
-  // Handle agent filter - "no-agent" means NULL agent_id
-  if (filters.agent) {
-    if (filters.agent === 'no-agent') {
-      query = query.is('agent_id', null);
-    } else {
-      query = query.eq('agent_id', filters.agent);
-    }
-  }
-
-  // Category filter - note: we'll filter in memory after fetching since category
-  // determination requires pattern matching on activity_type/activity_name
-  // For 'execution' category we can filter by execution_id IS NOT NULL at DB level
-  if (category === 'execution') {
-    query = query.not('execution_id', 'is', null);
-  }
-
-  const { data: records, error } = await query;
-
-  if (error) {
+  if (error || !records) {
     logger.error({ err: error }, 'Failed to fetch token usage data');
-    throw error;
+    throw error ?? new Error('Token usage read returned no data');
   }
+
+  const possiblyIncomplete = records.length >= ADMIN_ANALYTICS_UNPAGED_CAP;
 
   const emptyCategoryTotals: CategoryBreakdown = {
     creation: { cost: 0, tokens: 0, calls: 0 },
@@ -275,7 +347,9 @@ async function getAggregatedData(
         agents: []
       },
       categoryTotals: emptyCategoryTotals,
-      period: { from: dateFrom, to: dateTo }
+      period: { from: dateFrom, to: dateTo },
+      scope,
+      possiblyIncomplete: false,
     };
   }
 
@@ -288,8 +362,8 @@ async function getAggregatedData(
   };
 
   for (const record of records) {
-    const recordCategory = getActivityCategory(record.activity_type || '', record.activity_name, record.category);
-    const cost = parseFloat(record.cost_usd) || 0;
+    const recordCategory = getActivityCategory(record.activity_type || '', record.activity_name ?? undefined, record.category ?? undefined);
+    const cost = toCostUsd(record.cost_usd) || 0;
     const tokens = (record.input_tokens || 0) + (record.output_tokens || 0);
     categoryTotals[recordCategory].cost += cost;
     categoryTotals[recordCategory].tokens += tokens;
@@ -300,14 +374,14 @@ async function getAggregatedData(
   let filteredRecords = records;
   if (category !== 'all' && category !== 'execution') {
     filteredRecords = records.filter(record => {
-      const recordCategory = getActivityCategory(record.activity_type || '', record.activity_name, record.category);
+      const recordCategory = getActivityCategory(record.activity_type || '', record.activity_name ?? undefined, record.category ?? undefined);
       return recordCategory === category;
     });
   }
 
   // Calculate totals from filtered records
   const totals = {
-    cost: filteredRecords.reduce((sum, r) => sum + (parseFloat(r.cost_usd) || 0), 0),
+    cost: filteredRecords.reduce((sum, r) => sum + (toCostUsd(r.cost_usd) || 0), 0),
     tokens: filteredRecords.reduce((sum, r) => sum + (r.input_tokens || 0) + (r.output_tokens || 0), 0),
     inputTokens: filteredRecords.reduce((sum, r) => sum + (r.input_tokens || 0), 0),
     outputTokens: filteredRecords.reduce((sum, r) => sum + (r.output_tokens || 0), 0),
@@ -336,35 +410,26 @@ async function getAggregatedData(
 
   let comparison: PeriodComparison | undefined;
 
-  // Build comparison query with same filters
-  let comparisonQuery = supabase
-    .from('token_usage')
-    .select('cost_usd, input_tokens, output_tokens')
-    .gte('created_at', prevPeriodFrom.toISOString())
-    .lte('created_at', prevPeriodTo.toISOString());
-
-  if (filters.provider) comparisonQuery = comparisonQuery.eq('provider', filters.provider);
-  if (filters.model) comparisonQuery = comparisonQuery.eq('model_name', filters.model);
-  if (filters.activity) comparisonQuery = comparisonQuery.eq('activity_type', filters.activity);
-  if (filters.user) {
-    if (filters.user === 'system') {
-      comparisonQuery = comparisonQuery.is('user_id', null);
-    } else {
-      comparisonQuery = comparisonQuery.eq('user_id', filters.user);
-    }
-  }
-  if (filters.agent) {
-    if (filters.agent === 'no-agent') {
-      comparisonQuery = comparisonQuery.is('agent_id', null);
-    } else {
-      comparisonQuery = comparisonQuery.eq('agent_id', filters.agent);
-    }
-  }
-
-  const { data: prevRecords } = await comparisonQuery;
+  // Comparison read. It applies the SAME filters it always did (provider,
+  // model, activity, user, agent) plus the Business OS lens, so a BOS view is
+  // compared with BOS spend. That it ignores request type, feature, component,
+  // endpoint and the category post-filter is a known defect, PARKED by the user
+  // on 2026-09-25 (slice 2 workplan, OI-P2) and deliberately not changed here.
+  const { data: prevRecords } = await adminTokenUsageAnalyticsRepository.listRowsAllAccountsInWindow(
+    { start: prevPeriodFrom.toISOString(), end: prevPeriodTo.toISOString() },
+    {
+      provider: filters.provider,
+      model: filters.model,
+      activity: filters.activity,
+      user: filters.user,
+      agent: filters.agent,
+      featureFilter,
+    },
+    'totals'
+  );
 
   if (prevRecords && prevRecords.length > 0) {
-    const prevCost = prevRecords.reduce((sum, r) => sum + (parseFloat(r.cost_usd) || 0), 0);
+    const prevCost = prevRecords.reduce((sum, r) => sum + (toCostUsd(r.cost_usd) || 0), 0);
     const prevTokens = prevRecords.reduce((sum, r) => sum + (r.input_tokens || 0) + (r.output_tokens || 0), 0);
     const prevCalls = prevRecords.length;
 
@@ -392,7 +457,9 @@ async function getAggregatedData(
     availableFilters,
     categoryTotals,
     period: { from: dateFrom, to: dateTo },
-    comparison
+    comparison,
+    scope,
+    possiblyIncomplete,
   };
 }
 
@@ -491,7 +558,7 @@ async function aggregateByDimension(
   // Group records
   for (const record of records) {
     let key: string;
-    let metadata: Record<string, unknown> = {};
+    const metadata: Record<string, unknown> = {};
 
     switch (breakdownBy) {
       case 'provider':
