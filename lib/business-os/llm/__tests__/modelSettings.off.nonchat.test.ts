@@ -120,7 +120,7 @@ import { AI_UNAVAILABLE_WEBSITE_WRITING } from '../aiUnavailableMessages';
 import { __resetModelFallbackForTests } from '../modelFallback';
 
 import { InsightRepository } from '@/lib/business-os/insight/repository/InsightRepository';
-import type { Insight } from '@/lib/business-os/insight/repository/InsightRepository';
+import type { Insight, InsightRunIds } from '@/lib/business-os/insight/repository/InsightRepository';
 import type { DetectionResult } from '@/lib/business-os/insight/detectors/types';
 import type { CorrelatedInsight, CorrelationSummary } from '@/lib/business-os/insight/correlation/types';
 import { narrateBriefing } from '@/lib/business-os/briefing/BriefingNarrator';
@@ -137,6 +137,18 @@ import type { BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
 const U1 = profile.user_id;
 const G1 = '33333333-3333-4333-8333-333333333333';
 const R1 = '66666666-6666-4666-8666-666666666666';
+/** The insight run's PER-BUSINESS group. Never `R1`, which the whole run shares. */
+const INSIGHT_GROUP = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+/*
+ * The insight generators take `InsightRunIds { runId, groupId }`, not a bare run
+ * id (F-13). The REAL type is imported rather than re-declared: these `as never
+ * as` casts defeat the compiler completely, so when the parameter changed every
+ * call below kept compiling and started passing a string where an object was
+ * expected — `ids.groupId` then reads `undefined` and the ledger row records no
+ * group at all.
+ */
+const INSIGHT_RUN_IDS: InsightRunIds = { runId: R1, groupId: INSIGHT_GROUP };
+
 const owner: BosLlmOwner = { userId: U1, groupId: G1 };
 
 const chatCompletion = jest.fn();
@@ -240,8 +252,8 @@ function post(url: string, body: Record<string, unknown>): NextRequest {
 
 function insights() {
   return new InsightRepository({} as unknown as SupabaseClient) as never as {
-    generateLocalizedContent(d: unknown, u: string, c: unknown, r: string): Promise<Record<string, string>>;
-    generateCorrelatedContent(i: unknown, u: string, c: unknown, r: string): Promise<Record<string, string>>;
+    generateLocalizedContent(d: unknown, u: string, c: unknown, r: InsightRunIds): Promise<Record<string, string>>;
+    generateCorrelatedContent(i: unknown, u: string, c: unknown, r: InsightRunIds): Promise<Record<string, string>>;
     generateHealthNarrative(
       u: string,
       s: number,
@@ -252,7 +264,7 @@ function insights() {
       summary: unknown,
       all: Insight[],
       lang: string,
-      run: string
+      run: InsightRunIds
     ): Promise<Record<string, unknown>>;
   };
 }
@@ -275,7 +287,7 @@ describe('T2-O: insights off → the translated templates', () => {
   beforeEach(() => mockGetByKeys.mockResolvedValue(rowsWithOff('insights')));
 
   it('insight content falls back to the template and calls no provider', async () => {
-    const result = await insights().generateLocalizedContent(detection, U1, businessContext, R1);
+    const result = await insights().generateLocalizedContent(detection, U1, businessContext, INSIGHT_RUN_IDS);
 
     expect(chatCompletion).not.toHaveBeenCalled();
     expect(typeof result.title).toBe('string');
@@ -284,7 +296,7 @@ describe('T2-O: insights off → the translated templates', () => {
   });
 
   it('correlated insight falls back to the template and calls no provider', async () => {
-    const result = await insights().generateCorrelatedContent(correlated, U1, businessContext, R1);
+    const result = await insights().generateCorrelatedContent(correlated, U1, businessContext, INSIGHT_RUN_IDS);
 
     expect(chatCompletion).not.toHaveBeenCalled();
     expect(typeof result.story).toBe('string');
@@ -302,7 +314,7 @@ describe('T2-O: insights off → the translated templates', () => {
       correlationSummary,
       [] as Insight[],
       'en',
-      R1
+      INSIGHT_RUN_IDS
     );
 
     expect(chatCompletion).not.toHaveBeenCalled();

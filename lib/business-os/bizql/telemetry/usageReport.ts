@@ -132,6 +132,28 @@ function median(values: number[]): number | null {
  *
  * Pure, so it can be tested without a database — the arithmetic here is the part
  * worth being sure about.
+ *
+ * ── PRECONDITION ON THE CALLER (do not weaken) ─────────────────────────────
+ *
+ * This groups `session_id` across WHATEVER ROWS IT IS GIVEN, with no account
+ * key anywhere in the arithmetic. `getChatUsage` may read every account
+ * (`listChatCallsAllAccountsInWindow`), so this is the one genuinely
+ * cross-account grouping in the tree.
+ *
+ * It is correct only because BOTH of its read branches pin `BOS_CHAT_FEATURE`,
+ * and a chat turn id is minted per turn per user — so one `session_id` can never
+ * belong to two accounts. That is a property of the CALLER, not of this
+ * function.
+ *
+ * Hand it rows from a feature whose grouping id is not minted per account and it
+ * will silently merge tenants: `turnIds`, the cache-layer vote and the repair
+ * count would each count one group once across several businesses. The insight
+ * cron was exactly that shape until F-13 was fixed (one group id per run, shared
+ * by every business) — insight rows can never enter here, but the next feature
+ * that shares a group across accounts would break this first.
+ *
+ * `usage-report.reads.test.ts` ("reads one account through the per-account
+ * method…") is what holds the feature pin in place. Do not relax it.
  */
 export function summarise(rows: UsageRow[], from: string, to: string): ChatUsageSummary {
   const withTurn = rows.filter((r) => r.session_id);

@@ -22,6 +22,7 @@
  */
 
 import { InsightRepository } from '../InsightRepository';
+import type { InsightRunIds } from '../InsightRepository';
 import type { DetectionResult } from '../../detectors/types';
 
 jest.mock('@/lib/logger', () => ({
@@ -29,6 +30,23 @@ jest.mock('@/lib/logger', () => ({
 }));
 
 jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: {} }));
+
+/*
+ * The ids a rewrite is attributed under.
+ *
+ * Typed with the REAL `InsightRunIds` rather than re-declared, because a
+ * rewrite is a tracked LLM call: this is the same fourth parameter the F-13 fix
+ * turned from a bare `runId: string` into `{ runId, groupId }`. A hand-written
+ * `r: string` here keeps compiling while the production signature moves — the
+ * hole that hid four sibling files, spelled `as unknown as` in this one instead
+ * of `as never as`, which is why the first sweep walked past it.
+ *
+ * `groupId` is deliberately NOT `runId`: one business's group, never the run's.
+ */
+const RUN_IDS: InsightRunIds = {
+  runId: '9c1d4f0e-1111-4111-8111-111111111111',
+  groupId: 'b7a3e6d2-2222-4222-8222-222222222222',
+};
 
 const STORED = {
   id: 'i1',
@@ -66,8 +84,8 @@ function repo() {
 
   const restate = (stored: typeof STORED, fresh: DetectionResult) =>
     (repository as unknown as {
-      restateIfChanged: (s: unknown, d: DetectionResult, u: string, r: string) => Promise<Record<string, unknown>>;
-    }).restateIfChanged(stored, fresh, 'user-1', 'run-1');
+      restateIfChanged: (s: unknown, d: DetectionResult, u: string, r: InsightRunIds) => Promise<Record<string, unknown>>;
+    }).restateIfChanged(stored, fresh, 'user-1', RUN_IDS);
 
   return { restate, narrate };
 }
@@ -155,8 +173,8 @@ describe('restateIfChanged', () => {
       jest.fn().mockRejectedValue(new Error('offline'));
 
     const result = await (repository as unknown as {
-      restateIfChanged: (s: unknown, d: DetectionResult, u: string, r: string) => Promise<Record<string, unknown>>;
-    }).restateIfChanged(STORED, withOverrides({ currentValue: 2105 }), 'user-1', 'run-1');
+      restateIfChanged: (s: unknown, d: DetectionResult, u: string, r: InsightRunIds) => Promise<Record<string, unknown>>;
+    }).restateIfChanged(STORED, withOverrides({ currentValue: 2105 }), 'user-1', RUN_IDS);
 
     expect(result).toEqual({});
   });

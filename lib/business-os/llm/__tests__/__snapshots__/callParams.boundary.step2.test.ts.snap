@@ -42,7 +42,7 @@ exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) insight
     {
       "component": "correlated_insight",
       "feature": "business-os-insights",
-      "sessionId": "<run>",
+      "sessionId": "<insight-group>",
       "userId": "<user>",
     },
   ],
@@ -66,7 +66,7 @@ exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) insight
     {
       "component": "health_summary",
       "feature": "business-os-insights",
-      "sessionId": "<run>",
+      "sessionId": "<insight-group>",
       "userId": "<user>",
     },
   ],
@@ -90,7 +90,7 @@ exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) insight
     {
       "component": "insight_content",
       "feature": "business-os-insights",
-      "sessionId": "<run>",
+      "sessionId": "<insight-group>",
       "userId": "<user>",
     },
   ],
