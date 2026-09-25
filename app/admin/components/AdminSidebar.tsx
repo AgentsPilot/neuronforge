@@ -14,11 +14,9 @@ import {
   Settings,
   Gift,
   FileText,
-  Sliders,
   Brain,
   Activity,
   Palette,
-  Database,
   BarChart3,
   DollarSign,
   MessageCircle,
@@ -28,6 +26,7 @@ import {
   Bot,
   Layers
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
 interface AdminSidebarProps {
   isOpen: boolean;
@@ -37,7 +36,7 @@ interface AdminSidebarProps {
 interface NavItem {
   name: string;
   href: string;
-  icon: any;
+  icon: LucideIcon;
   description: string;
 }
 
@@ -46,109 +45,78 @@ interface NavSection {
   items: NavItem[];
 }
 
+/**
+ * Sidebar IA, slice 1 of ADMIN_MODULE_BOS_REORGANISATION_REQUIREMENT.md (§4, §7).
+ *
+ * Sections follow the job, not the system: Monitor, then Businesses, then
+ * Settings, with the parked AgentsPilot product last. Only labels and
+ * descriptions were changed; every href is the route it always was, so no
+ * bookmark breaks. Labels are honest about which product a page serves: a
+ * page that only configures or shows AgentsPilot says so.
+ *
+ * Exchange Rates is deliberately NOT listed (requirement §4.3): it writes to
+ * the database straight from the browser, so surfacing it would widen exposure.
+ *
+ * Pinned by `app/admin/components/__tests__/AdminSidebar.nav.test.ts` (section
+ * order, one entry per admin page) and by the per-page nav tests next to the
+ * Business OS pages.
+ */
 const navigationSections: NavSection[] = [
   {
-    title: 'Overview',
+    title: 'Monitor',
     items: [
       {
         name: 'Dashboard',
         href: '/admin',
         icon: LayoutDashboard,
-        description: 'Overview & Analytics'
+        // Still today's dashboard until the Health landing ships (slice 4).
+        // Its totals are mostly agents, AIS and memory, hence the wording.
+        description: 'Totals, mostly AgentsPilot'
       },
       {
-        name: 'Queue Monitor',
-        href: '/admin/queues',
-        icon: Server,
-        description: 'Job Processing'
-      },
-      {
-        name: 'System Flow',
-        href: '/admin/system-flow',
-        icon: Activity,
-        description: 'Live System Visualization'
-      },
-      {
-        name: 'Cost Analytics',
+        name: 'AI cost & usage',
         href: '/admin/analytics',
         icon: TrendingUp,
-        description: 'Usage & Performance'
+        description: 'Token spend, both products'
+      },
+      {
+        name: 'Audit trail',
+        href: '/admin/audit-trail',
+        icon: FileText,
+        description: 'System event history'
       },
     ]
   },
   {
-    title: 'Users',
+    title: 'Businesses',
     items: [
       {
-        name: 'User Management',
+        // Stays "Users" until slice 2 adds the business panel: today the
+        // detail view shows agents and plugins, not a business.
+        name: 'Users',
         href: '/admin/users',
         icon: Users,
-        description: 'Platform Users'
+        description: 'Platform accounts'
       },
       {
-        name: 'Onboarding',
-        href: '/admin/onboarding',
-        icon: UserCheck,
-        description: 'Free Tier & User Status'
+        name: 'Plans & entitlements',
+        href: '/admin/business-os-tiers',
+        icon: Layers,
+        // Names the product so it is never mistaken for the AgentsPilot free
+        // tier on the onboarding page.
+        description: 'Business OS plans, read-only'
       },
       {
         name: 'Messages',
         href: '/admin/messages',
         icon: MessageSquare,
-        description: 'Contact Inquiries'
-      },
-      {
-        name: 'Reward Config',
-        href: '/admin/reward-config',
-        icon: Gift,
-        description: 'Credit Rewards Management'
+        description: 'Contact inquiries'
       },
     ]
   },
   {
-    title: 'AI System',
+    title: 'Settings',
     items: [
-      {
-        name: 'Agent Generation',
-        href: '/admin/agent-generation-config',
-        icon: Sparkles,
-        description: 'Workflow Generation Models'
-      },
-      {
-        name: 'Orchestration',
-        href: '/admin/orchestration-config',
-        icon: Brain,
-        description: 'Routing & Workflows'
-      },
-      {
-        name: 'AIS Config',
-        href: '/admin/ais-config',
-        icon: Settings,
-        description: 'Intensity System Settings'
-      },
-      {
-        name: 'Memory & Insights',
-        href: '/admin/memory-config',
-        icon: Brain,
-        description: 'Memory & Learning Config'
-      },
-      {
-        name: 'Memory Dashboard',
-        href: '/admin/learning-system',
-        icon: BarChart3,
-        description: 'Monitoring & ROI'
-      },
-    ]
-  },
-  {
-    title: 'Configuration',
-    items: [
-      {
-        name: 'System Config',
-        href: '/admin/system-config',
-        icon: DollarSign,
-        description: 'Pricing & Billing'
-      },
       {
         name: 'Business OS AI',
         href: '/admin/business-os-llm',
@@ -160,51 +128,102 @@ const navigationSections: NavSection[] = [
         description: 'Models & temperatures'
       },
       {
-        name: 'Business OS Tiers',
-        href: '/admin/business-os-tiers',
-        icon: Layers,
-        description: 'Plans & Entitlements'
+        name: 'Model pricing & billing',
+        href: '/admin/system-config',
+        icon: DollarSign,
+        description: 'Pricing, grace period, boosts'
       },
       {
-        name: 'Storage Config',
-        href: '/admin/storage-config',
-        icon: HardDrive,
-        description: 'User Storage Management'
+        name: 'Free tier & onboarding',
+        href: '/admin/onboarding',
+        icon: UserCheck,
+        description: 'Free-tier grant & signups'
       },
       {
-        name: 'Executions Config',
-        href: '/admin/executions-config',
-        icon: BarChart3,
-        description: 'User Execution Quotas'
-      },
-      {
-        name: 'UI Config',
-        href: '/admin/ui-config',
-        icon: Palette,
-        description: 'Design System & Version'
-      },
-      {
-        name: 'HelpBot Config',
-        href: '/admin/helpbot-config',
-        icon: MessageCircle,
-        description: 'AI Assistant Settings'
+        name: 'Admin users',
+        href: '/admin/settings',
+        icon: Settings,
+        description: 'Who can open admin'
       },
     ]
   },
   {
-    title: 'Admin',
+    // Parked, not retired (decision D-3): every page still works at its old
+    // URL. Expanded in slice 1; slice 3 collapses it by default.
+    title: 'AgentsPilot (parked)',
     items: [
       {
-        name: 'Audit Trail',
-        href: '/admin/audit-trail',
-        icon: FileText,
-        description: 'System Event History'
+        name: 'Agent execution queue',
+        href: '/admin/queues',
+        icon: Server,
+        description: 'AgentsPilot agent runs'
       },
       {
-        name: 'Settings',
-        href: '/admin/settings',
+        name: 'System flow',
+        href: '/admin/system-flow',
+        icon: Activity,
+        description: 'AgentsPilot pipeline explainer'
+      },
+      {
+        name: 'Agent generation',
+        href: '/admin/agent-generation-config',
+        icon: Sparkles,
+        description: 'AgentsPilot workflow models'
+      },
+      {
+        name: 'Orchestration',
+        href: '/admin/orchestration-config',
+        icon: Brain,
+        description: 'AgentsPilot model routing'
+      },
+      {
+        name: 'AIS config',
+        href: '/admin/ais-config',
         icon: Settings,
-        description: 'Admin Users & Access'
+        description: 'AgentsPilot agent intensity'
+      },
+      {
+        // Not Business OS Insights: this is agent memory, hence the rename.
+        name: 'Agent memory config',
+        href: '/admin/memory-config',
+        icon: Brain,
+        description: 'AgentsPilot memory settings'
+      },
+      {
+        name: 'Agent memory dashboard',
+        href: '/admin/learning-system',
+        icon: BarChart3,
+        description: 'AgentsPilot memory & ROI'
+      },
+      {
+        name: 'Reward config',
+        href: '/admin/reward-config',
+        icon: Gift,
+        description: 'AgentsPilot sharing rewards'
+      },
+      {
+        name: 'Storage config',
+        href: '/admin/storage-config',
+        icon: HardDrive,
+        description: 'AgentsPilot storage tiers'
+      },
+      {
+        name: 'Executions config',
+        href: '/admin/executions-config',
+        icon: BarChart3,
+        description: 'AgentsPilot execution quotas'
+      },
+      {
+        name: 'UI config',
+        href: '/admin/ui-config',
+        icon: Palette,
+        description: 'AgentsPilot app UI version'
+      },
+      {
+        name: 'HelpBot config',
+        href: '/admin/helpbot-config',
+        icon: MessageCircle,
+        description: 'AgentsPilot help assistant'
       },
     ]
   },
@@ -334,31 +353,6 @@ export default function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
               </div>
             ))}
           </nav>
-
-          {/* System Status */}
-          <div className="p-3 border-t border-white/10">
-            <div className="bg-slate-800/50 rounded-lg p-3">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
-                <span className="text-xs font-medium text-white">System</span>
-              </div>
-
-              <div className="space-y-1 text-xs text-slate-400">
-                <div className="flex justify-between">
-                  <span>API</span>
-                  <span className="text-green-400">OK</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Queue</span>
-                  <span className="text-green-400">OK</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>DB</span>
-                  <span className="text-green-400">OK</span>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     </>
