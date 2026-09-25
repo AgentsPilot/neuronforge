@@ -32,6 +32,8 @@ import {
   ChevronUp
 } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
+import { BusinessOsPanel } from './components/BusinessOsPanel';
+import type { RowBusiness } from './types';
 
 const logger = createLogger({ module: 'AdminUsersPage' });
 
@@ -47,6 +49,18 @@ interface User {
   updated_at?: string;
   providers: string[];
   role: string;
+  /**
+   * The login's Business OS business (one login = one business). `null` = it
+   * has none; `undefined` = the lookup failed, so the page says "unknown".
+   */
+  business?: RowBusiness | null;
+}
+
+/** The business line of a row: the business name, or why there is none. */
+function businessLabel(user: User): { text: string; muted: boolean } {
+  if (user.business === undefined) return { text: 'Business unknown', muted: true };
+  if (user.business === null) return { text: 'No Business OS business', muted: true };
+  return { text: user.business.companyName || 'Unnamed business', muted: !user.business.companyName };
 }
 
 interface UserLoginStats {
@@ -406,7 +420,7 @@ export default function UsersPage() {
       {/* Header */}
       <header className="flex items-center justify-between border-b border-slate-700 pb-4">
         <div className="flex items-center gap-4">
-          <h1 className="text-xl font-semibold text-white">User Management</h1>
+          <h1 className="text-xl font-semibold text-white">Businesses</h1>
           {stats && (
             <>
               <span className="text-xs px-2 py-1 rounded bg-blue-500/20 text-blue-400">
@@ -576,7 +590,7 @@ export default function UsersPage() {
           <table className="w-full">
             <thead className="bg-slate-900/50">
               <tr className="text-left text-xs text-slate-400 uppercase tracking-wider">
-                <th className="px-4 py-3 font-medium">User</th>
+                <th className="px-4 py-3 font-medium">Business / user</th>
                 <th className="px-4 py-3 font-medium">Contact</th>
                 <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium">Login Activity</th>
@@ -617,8 +631,15 @@ export default function UsersPage() {
                               <ChevronUp className="w-4 h-4 text-slate-500 flex-shrink-0 rotate-180" />
                             )}
                             <div>
+                              {/* Business name and user name together (user decision, 2026-09-25). */}
+                              <p
+                                data-testid="row-business"
+                                className={`text-sm font-semibold ${businessLabel(user).muted ? 'text-slate-400 italic' : 'text-white'}`}
+                              >
+                                {businessLabel(user).text}
+                              </p>
                               <div className="flex items-center gap-2">
-                                <p className="text-sm font-medium text-white">
+                                <p data-testid="row-user" className="text-sm text-slate-200">
                                   {user.full_name || 'No name'}
                                 </p>
                                 {user.email_confirmed && (
@@ -745,6 +766,9 @@ export default function UsersPage() {
                                 transition={{ duration: 0.2 }}
                                 className="space-y-6"
                               >
+                                {/* Business OS first (slice 2b): business, plan, AI spend, AI failures. */}
+                                <BusinessOsPanel accountId={user.id} userName={user.full_name} />
+
                                 {/* User Information Grid */}
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                   <div className="bg-gradient-to-br from-slate-700/40 to-slate-700/20 p-5 rounded-xl border border-white/5">
@@ -891,8 +915,21 @@ export default function UsersPage() {
                                   </div>
                                 )}
 
-                                {/* Automations List - Full Width */}
+                                {/* AgentsPilot facts, folded away (slice 2b; user decision: only the
+                                    agents list and agent executions fold). Nothing is removed. */}
                                 {userDetailedStats[user.id] && (
+                                  <details data-testid="agentspilot-details" className="rounded-xl border border-white/5 bg-slate-800/30 p-4">
+                                    <summary className="cursor-pointer text-sm font-semibold text-slate-300">
+                                      AgentsPilot details (agents and agent executions)
+                                    </summary>
+                                    <div className="mt-4 space-y-4">
+                                    <div className="bg-slate-800/50 p-4 rounded-lg w-fit">
+                                      <p className="text-xs text-slate-400">Agent executions (30 days)</p>
+                                      <p className="text-xl font-bold text-white">{userDetailedStats[user.id].executions.total_30d}</p>
+                                      <p className="text-xs text-green-400">
+                                        {userDetailedStats[user.id].executions.success_rate}% success
+                                      </p>
+                                    </div>
                                   <div className="bg-gradient-to-br from-green-500/10 to-emerald-500/10 p-6 rounded-xl border border-green-500/20">
                                     <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
                                       <Activity className="w-5 h-5 text-green-400" />
@@ -948,6 +985,8 @@ export default function UsersPage() {
                                       <p className="text-slate-400 text-sm text-center py-4">No automations created</p>
                                     )}
                                   </div>
+                                    </div>
+                                  </details>
                                 )}
 
                                 {/* Subscription Info - Full Width */}
@@ -1044,18 +1083,11 @@ export default function UsersPage() {
                                   <div className="bg-gradient-to-br from-cyan-500/10 to-teal-500/10 p-6 rounded-xl border border-cyan-500/20">
                                     <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
                                       <TrendingUp className="w-5 h-5 text-cyan-400" />
-                                      Token Consumption & Costs (Last 30 Days)
+                                      AI spend, all products (30 days; may be incomplete above 1,000 calls)
                                     </h3>
 
                                     {/* Summary Stats */}
-                                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-                                      <div className="bg-slate-800/50 p-4 rounded-lg">
-                                        <p className="text-xs text-slate-400">Executions</p>
-                                        <p className="text-xl font-bold text-white">{userDetailedStats[user.id].executions.total_30d}</p>
-                                        <p className="text-xs text-green-400">
-                                          {userDetailedStats[user.id].executions.success_rate}% success
-                                        </p>
-                                      </div>
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
                                       <div className="bg-slate-800/50 p-4 rounded-lg">
                                         <p className="text-xs text-slate-400">Input Tokens</p>
                                         <p className="text-xl font-bold text-white">{formatNumber(userDetailedStats[user.id].tokens.total_input_tokens)}</p>

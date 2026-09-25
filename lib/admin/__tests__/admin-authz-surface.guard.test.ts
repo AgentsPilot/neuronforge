@@ -31,16 +31,19 @@
  *
  * The system is **unified for enforcement, not yet for implementation**, and
  * this guard's job is to hold that line rather than certify a finished state.
- * As of 2026-09-25, of **72 handlers** across the 44 `app/api/admin/**` route
- * files:
+ * Re-measured 2026-09-25 (admin reorganisation slice 2): **80 handlers**
+ * across 51 `app/api/admin/**` route files:
  *
- *   66  on the canonical `requireAdmin` gate
+ *   74  on the canonical `requireAdmin` gate
  *    6  correct, but each hand-rolling its own AdminAccessService check
  *    0  open
  *
- * (2026-09-21: 65 + 7. Admin reorganisation slice 2c converted
- * `audit-trail#GET` because it had to change the route anyway; its R1 and R2
- * entries were deleted and both caps went 7 -> 6 in the same commit.)
+ * (The 2026-09-21 figure was 72 handlers / 44 files, 65 + 7. Routes added
+ * since, all gated from birth, had not been counted here: the base of slice 2
+ * measured 79 handlers / 50 files, 72 + 7. Slice 2c converted
+ * `audit-trail#GET`, deleting its R1 and R2 entries and taking both caps
+ * 7 -> 6 in the same commit; slice 2b added
+ * `business-os/accounts/[accountId]/summary#GET`, gated from birth.)
  *
  * All 21 `/admin` pages are guarded on the server too (slice 5).
  *

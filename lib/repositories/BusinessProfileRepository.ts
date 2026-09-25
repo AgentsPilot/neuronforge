@@ -16,6 +16,23 @@ export interface BusinessProfileRepositoryResult<T> {
   error: Error | null;
 }
 
+/**
+ * What an admin screen may know about a business: its name and vertical
+ * (admin reorganisation slice 2b). Everything else in the row can be owner text.
+ */
+export interface BusinessAdminIdentity {
+  user_id: string;
+  company_name: string | null;
+  vertical: string;
+  sub_vertical: string | null;
+}
+
+/** The only columns the admin identity reads select. Exported for tests. */
+export const BUSINESS_ADMIN_IDENTITY_COLUMNS = 'user_id, company_name, vertical, sub_vertical';
+
+/** Ids per `.in()` request in `findAdminIdentitiesByUserIds`. */
+export const ADMIN_IDENTITY_CHUNK = 200;
+
 /** Most businesses `searchForAdmin` returns. */
 export const BUSINESS_SEARCH_MAX_LIMIT = 50;
 
@@ -571,6 +588,63 @@ export class BusinessProfileRepository {
       return { data: (data ?? []) as Array<{ user_id: string; company_name: string | null }>, error: null };
     } catch (error) {
       logger.error({ err: error }, 'Admin business search failed');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * ADMIN ONLY (admin reorganisation slice 2b). The business's identity, and
+   * nothing else: name and vertical. Never `select('*')`, because the full row
+   * carries owner-written text an admin screen must not show.
+   *
+   * Callers: `app/api/admin/**` only, after `requireAdmin` (source guard in
+   * lib/repositories/__tests__/adminReadMethods.guard.test.ts). Still scoped by
+   * `.eq('user_id', …)`: the account is admin-selected, not the caller.
+   * `data: null, error: null` when the account has no business profile.
+   */
+  async findAdminIdentity(userId: string): Promise<BusinessProfileRepositoryResult<BusinessAdminIdentity>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('business_profiles')
+        .select(BUSINESS_ADMIN_IDENTITY_COLUMNS)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      return { data: (data as BusinessAdminIdentity | null) ?? null, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Admin business identity read failed');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * ADMIN ONLY. The same identity for many accounts at once (the Businesses
+   * list shows each row's business name). One `.in()` per chunk of
+   * ADMIN_IDENTITY_CHUNK ids, never one read per row, and chunked so the
+   * request URL stays short. Accounts without a profile are simply absent.
+   * Same callers and guard as `findAdminIdentity`.
+   */
+  async findAdminIdentitiesByUserIds(
+    userIds: readonly string[]
+  ): Promise<BusinessProfileRepositoryResult<BusinessAdminIdentity[]>> {
+    try {
+      const unique = [...new Set(userIds)];
+      const found: BusinessAdminIdentity[] = [];
+      for (let i = 0; i < unique.length; i += ADMIN_IDENTITY_CHUNK) {
+        const chunk = unique.slice(i, i + ADMIN_IDENTITY_CHUNK);
+        const { data, error } = await this.supabase
+          .from('business_profiles')
+          .select(BUSINESS_ADMIN_IDENTITY_COLUMNS)
+          .in('user_id', chunk);
+        if (error) throw error;
+        found.push(...((data ?? []) as BusinessAdminIdentity[]));
+      }
+      // Counts only: business names are not logged.
+      logger.debug({ requested: unique.length, found: found.length }, 'Admin business identities read');
+      return { data: found, error: null };
+    } catch (error) {
+      logger.error({ err: error, requested: userIds.length }, 'Admin business identities read failed');
       return { data: null, error: error as Error };
     }
   }

@@ -14,6 +14,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import type { AgentRepositoryResult as RepositoryResult } from './types';
+import { escapeIlikePattern } from './BusinessProfileRepository';
 
 /**
  * Subset of the `profiles` table columns used for building UserContext.
@@ -26,6 +27,29 @@ export interface UserProfile {
   company: string | null;
   timezone: string | null;
 }
+
+/** One row of the admin Businesses list (slice 2b). Never `select('*')`. */
+export interface AdminProfileListRow {
+  id: string;
+  full_name: string | null;
+  company: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export const ADMIN_PROFILE_LIST_COLUMNS = 'id, full_name, company, created_at, updated_at';
+
+export interface AdminProfileListQuery {
+  /** Free text. Matched with single-operator ILIKE calls, never an `.or()` string. */
+  search?: string;
+  /** Extra account ids to include when searching (e.g. accounts whose business name matched). */
+  extraIds?: readonly string[];
+  sortBy: 'created_at' | 'full_name';
+  ascending: boolean;
+  limit: number;
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export class UserProfileRepository {
   private supabase: SupabaseClient;
@@ -56,6 +80,65 @@ export class UserProfileRepository {
       return { data: data as UserProfile | null, error: null };
     } catch (error) {
       this.logger.error({ err: error, userId }, 'Failed to fetch user profile');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * ADMIN ONLY (admin reorganisation slice 2b): the account list behind
+   * /admin/users. Every account, by design — the only caller is
+   * `app/api/admin/users/route.ts`, behind `requireAdmin` (source guard in
+   * lib/repositories/__tests__/adminReadMethods.guard.test.ts).
+   *
+   * The search used to be interpolated into an `.or()` filter string, which let
+   * a search term inject PostgREST filter syntax. It is now matched with
+   * separate single-operator reads (`.ilike`, `.eq`, `.in`) whose values are
+   * parameters, and the results are merged here.
+   */
+  async listForAdmin(q: AdminProfileListQuery): Promise<RepositoryResult<AdminProfileListRow[]>> {
+    try {
+      const limit = Math.min(Math.max(Math.trunc(q.limit) || 1, 1), 1000);
+      const ordered = <T extends { order: (c: string, o: { ascending: boolean }) => T }>(query: T): T =>
+        query.order(q.sortBy, { ascending: q.ascending });
+
+      const search = q.search?.trim();
+      if (!search) {
+        const { data, error } = await ordered(this.supabase.from('profiles').select(ADMIN_PROFILE_LIST_COLUMNS)).limit(limit);
+        if (error) throw error;
+        return { data: (data ?? []) as AdminProfileListRow[], error: null };
+      }
+
+      const pattern = `%${escapeIlikePattern(search)}%`;
+      const reads = [
+        this.supabase.from('profiles').select(ADMIN_PROFILE_LIST_COLUMNS).ilike('full_name', pattern).limit(limit),
+        this.supabase.from('profiles').select(ADMIN_PROFILE_LIST_COLUMNS).ilike('company', pattern).limit(limit),
+      ];
+      if (UUID_PATTERN.test(search)) {
+        reads.push(this.supabase.from('profiles').select(ADMIN_PROFILE_LIST_COLUMNS).eq('id', search).limit(1));
+      }
+      const extraIds = [...new Set(q.extraIds ?? [])].filter((id) => UUID_PATTERN.test(id));
+      if (extraIds.length > 0) {
+        reads.push(this.supabase.from('profiles').select(ADMIN_PROFILE_LIST_COLUMNS).in('id', extraIds).limit(limit));
+      }
+
+      const results = await Promise.all(reads);
+      const byId = new Map<string, AdminProfileListRow>();
+      for (const { data, error } of results) {
+        if (error) throw error;
+        for (const row of (data ?? []) as AdminProfileListRow[]) byId.set(row.id, row);
+      }
+
+      const rows = [...byId.values()].sort((a, b) => {
+        const av = (a[q.sortBy] ?? '') as string;
+        const bv = (b[q.sortBy] ?? '') as string;
+        const cmp = av.localeCompare(bv);
+        return q.ascending ? cmp : -cmp;
+      });
+      // The search text is not logged: it is usually a person's or business's name.
+      this.logger.debug({ searchLength: search.length, results: rows.length }, 'Admin profile search');
+      return { data: rows.slice(0, limit), error: null };
+    } catch (error) {
+      this.logger.error({ err: error }, 'Admin profile list failed');
       return { data: null, error: error as Error };
     }
   }

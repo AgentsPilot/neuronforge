@@ -26,7 +26,6 @@ const supabase = createClient(
 // --- Query validation (slice 2a, SA C-4) ------------------------------------
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-// eslint-disable-next-line no-control-regex -- the point is to refuse control characters
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
 /** '' and null mean "not sent". */
@@ -42,7 +41,7 @@ const dimension = optional(
   z.string().min(1).max(200).refine((v) => !CONTROL_CHARS.test(v), 'Control characters are not allowed')
 );
 
-export const DrillDownQuerySchema = z
+const DrillDownQuerySchema = z
   .object({
     breakdownBy: z
       .enum(['provider', 'model', 'activity', 'user', 'agent', 'execution', 'request_type', 'feature', 'component', 'endpoint'])

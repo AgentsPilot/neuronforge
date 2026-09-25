@@ -1,11 +1,28 @@
 // app/api/admin/users/route.ts
+//
+// The admin Businesses list (/admin/users): every login, each with its Business
+// OS business name when it has one (one login = one business, OQ-3).
+//
+// Admin reorganisation slice 2b rewrote the GET body (user decision,
+// 2026-09-25): structured Pino with a correlation id instead of console.*, no
+// error text in production responses, Zod-validated inputs, and the search no
+// longer interpolated into a PostgREST `.or()` filter string (it could inject
+// filter syntax). Reads go through repositories; the business names come from
+// ONE batched read, never one per row.
+
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { z } from 'zod';
 import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import { createLogger } from '@/lib/logger';
+import { userProfileRepository } from '@/lib/repositories/UserProfileRepository';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 
 const logger = createLogger({ module: 'UsersAdminAPI' });
 
+// Auth admin API only (emails, sign-in times): there is no table to put behind
+// a repository here. Service role, because listing every auth user is an admin
+// operation by definition; the caller is gated by requireAdmin.
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY! // Use service role for admin access
@@ -13,6 +30,49 @@ const supabase = createClient(
 
 // Mark as dynamic since it uses request.url and searchParams
 export const dynamic = 'force-dynamic';
+
+/** Most accounts one list request returns. */
+const LIST_LIMIT = 1000;
+
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+
+const UsersListQuerySchema = z.object({
+  search: z
+    .string()
+    .max(100)
+    .refine((v) => !CONTROL_CHARS.test(v), 'Control characters are not allowed')
+    .optional()
+    .default(''),
+  status: z.enum(['all', 'active', 'inactive']).optional().default('all'),
+  sortBy: z.enum(['created_at', 'full_name']).optional().default('created_at'),
+  sortOrder: z.enum(['asc', 'desc']).optional().default('desc'),
+});
+
+/** The business shown on a row. `null` = the login has no Business OS business. */
+interface RowBusiness {
+  companyName: string | null;
+  vertical: string;
+}
+
+/** The fields this route reads from an auth user. */
+interface AuthUser {
+  id: string;
+  email?: string;
+  email_confirmed_at?: string | null;
+  last_sign_in_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  phone?: string | null;
+  role?: string;
+  app_metadata?: { providers?: string[] };
+}
+
+function isRecentlyActive(lastSignInAt: string | null | undefined, now: Date): boolean {
+  if (!lastSignInAt) return false;
+  const thirtyDaysAgo = new Date(now);
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  return new Date(lastSignInAt) > thirtyDaysAgo;
+}
 
 export async function GET(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
@@ -25,109 +85,131 @@ export async function GET(request: NextRequest) {
     if (gate instanceof NextResponse) return gate;
 
     const { searchParams } = new URL(request.url);
-    const search = searchParams.get('search') || '';
-    const status = searchParams.get('status') || 'all'; // all, active, inactive
-    const sortBy = searchParams.get('sortBy') || 'created_at';
-    const sortOrder = searchParams.get('sortOrder') || 'desc';
-
-    console.log('Admin users API called with params:', { search, status, sortBy, sortOrder });
-
-    // Fetch users from auth.users with profiles data
-    let query = supabase
-      .from('profiles')
-      .select('*')
-      .order(sortBy, { ascending: sortOrder === 'asc' });
-
-    // Apply search filter
-    if (search && search.trim() !== '') {
-      query = query.or(`
-        full_name.ilike.%${search}%,
-        company.ilike.%${search}%,
-        id.ilike.%${search}%
-      `);
+    const parsed = UsersListQuerySchema.safeParse({
+      search: searchParams.get('search') ?? undefined,
+      status: searchParams.get('status') ?? undefined,
+      sortBy: searchParams.get('sortBy') ?? undefined,
+      sortOrder: searchParams.get('sortOrder') ?? undefined,
+    });
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Invalid query parameters',
+          details: process.env.NODE_ENV === 'development' ? parsed.error.flatten() : undefined,
+        },
+        { status: 400 }
+      );
     }
+    const { search, status, sortBy, sortOrder } = parsed.data;
+    const term = search.trim();
 
-    const { data: profiles, error: profilesError } = await query.limit(1000);
-
-    if (profilesError) {
-      console.error('Database query error:', profilesError);
-      return NextResponse.json({
-        error: 'Failed to fetch users',
-        details: profilesError.message
-      }, { status: 500 });
-    }
-
-    console.log(`Fetched ${profiles?.length || 0} user profiles`);
-
-    // Enrich with auth metadata (email, last_sign_in, etc.)
-    let enrichedUsers = profiles || [];
-
-    if (profiles && profiles.length > 0) {
-      try {
-        // Fetch from auth.users using admin API
-        const { data: authUsers, error: authError } = await supabase.auth.admin.listUsers();
-
-        if (!authError && authUsers) {
-          // Create a map for quick lookup
-          const authUsersMap = new Map(authUsers.users.map(u => [u.id, u]));
-
-          enrichedUsers = profiles.map(profile => {
-            const authUser = authUsersMap.get(profile.id);
-            return {
-              ...profile,
-              email: authUser?.email || 'N/A',
-              email_confirmed: authUser?.email_confirmed_at ? true : false,
-              last_sign_in_at: authUser?.last_sign_in_at || null,
-              created_at: authUser?.created_at || profile.created_at,
-              updated_at: authUser?.updated_at || profile.updated_at,
-              phone: authUser?.phone || null,
-              providers: authUser?.app_metadata?.providers || [],
-              role: authUser?.role || 'authenticated',
-            };
-          });
-
-          console.log(`Enriched ${enrichedUsers.length} users with auth data`);
-        }
-      } catch (enrichError) {
-        console.log('Could not enrich with auth data, continuing with profile data:', enrichError);
+    // A search also matches business names: those accounts' ids are added to
+    // the profile search as parameters (never interpolated into a filter).
+    let businessMatchIds: string[] = [];
+    if (term) {
+      const matches = await businessProfileRepository.searchForAdmin(term, 50);
+      if (matches.error) {
+        requestLogger.warn({ err: matches.error }, 'Business-name search failed; searching people only');
+      } else {
+        businessMatchIds = (matches.data ?? []).map((m) => m.user_id);
       }
     }
 
-    // Apply status filter
-    let filteredUsers = enrichedUsers;
-    if (status === 'active') {
-      // Consider users active if they've signed in within the last 30 days
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      filteredUsers = enrichedUsers.filter(u =>
-        u.last_sign_in_at && new Date(u.last_sign_in_at) > thirtyDaysAgo
-      );
-    } else if (status === 'inactive') {
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      filteredUsers = enrichedUsers.filter(u =>
-        !u.last_sign_in_at || new Date(u.last_sign_in_at) <= thirtyDaysAgo
+    const profilesResult = await userProfileRepository.listForAdmin({
+      search: term,
+      extraIds: businessMatchIds,
+      sortBy,
+      ascending: sortOrder === 'asc',
+      limit: LIST_LIMIT,
+    });
+    if (profilesResult.error || !profilesResult.data) {
+      requestLogger.error({ err: profilesResult.error, adminUserId: gate.user.id }, 'Admin user list read failed');
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Failed to fetch users',
+          details: process.env.NODE_ENV === 'development' ? profilesResult.error?.message : undefined,
+        },
+        { status: 500 }
       );
     }
+    const profiles = profilesResult.data;
 
-    // Calculate stats
+    // Business names: ONE batched read for the whole list (chunked inside).
+    const businesses = new Map<string, RowBusiness>();
+    let businessLookup: 'ok' | 'failed' = 'ok';
+    if (profiles.length > 0) {
+      const identities = await businessProfileRepository.findAdminIdentitiesByUserIds(profiles.map((p) => p.id));
+      if (identities.error || !identities.data) {
+        businessLookup = 'failed';
+        requestLogger.error({ err: identities.error }, 'Business name lookup failed; list continues without it');
+      } else {
+        for (const identity of identities.data) {
+          businesses.set(identity.user_id, { companyName: identity.company_name, vertical: identity.vertical });
+        }
+      }
+    }
+
+    // Enrich with auth metadata (email, last sign-in, etc.)
+    let authUsersMap = new Map<string, AuthUser>();
+    try {
+      const { data: authUsers, error: authError } = await supabase.auth.admin.listUsers();
+      if (authError) {
+        requestLogger.warn({ err: authError }, 'Auth user enrichment failed; continuing with profile data');
+      } else if (authUsers) {
+        authUsersMap = new Map((authUsers.users as AuthUser[]).map((u) => [u.id, u]));
+      }
+    } catch (enrichError) {
+      requestLogger.warn({ err: enrichError }, 'Auth user enrichment threw; continuing with profile data');
+    }
+
+    const enrichedUsers = profiles.map((profile) => {
+      const authUser = authUsersMap.get(profile.id);
+      return {
+        ...profile,
+        email: authUser?.email || 'N/A',
+        email_confirmed: authUser?.email_confirmed_at ? true : false,
+        last_sign_in_at: authUser?.last_sign_in_at || null,
+        created_at: authUser?.created_at || profile.created_at,
+        updated_at: authUser?.updated_at || profile.updated_at,
+        phone: authUser?.phone || null,
+        providers: authUser?.app_metadata?.providers || [],
+        role: authUser?.role || 'authenticated',
+        // null = no Business OS business for this login. Undefined when the
+        // lookup itself failed, so the page can say "unknown", not "none".
+        business: businessLookup === 'ok' ? (businesses.get(profile.id) ?? null) : undefined,
+      };
+    });
+
+    const now = new Date();
+    let filteredUsers = enrichedUsers;
+    if (status === 'active') {
+      filteredUsers = enrichedUsers.filter((u) => isRecentlyActive(u.last_sign_in_at, now));
+    } else if (status === 'inactive') {
+      filteredUsers = enrichedUsers.filter((u) => !isRecentlyActive(u.last_sign_in_at, now));
+    }
+
+    const today = new Date(now);
+    today.setHours(0, 0, 0, 0);
     const stats = {
       totalUsers: filteredUsers.length,
-      activeUsers: enrichedUsers.filter(u => {
-        if (!u.last_sign_in_at) return false;
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-        return new Date(u.last_sign_in_at) > thirtyDaysAgo;
-      }).length,
-      newUsersToday: enrichedUsers.filter(u => {
-        if (!u.created_at) return false;
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        return new Date(u.created_at) >= today;
-      }).length,
+      activeUsers: enrichedUsers.filter((u) => isRecentlyActive(u.last_sign_in_at, now)).length,
+      newUsersToday: enrichedUsers.filter((u) => !!u.created_at && new Date(u.created_at) >= today).length,
     };
 
-    console.log(`Successfully processed ${filteredUsers.length} users`);
+    // Counts only: no names, emails or search text.
+    requestLogger.info(
+      {
+        adminUserId: gate.user.id,
+        status,
+        searchLength: term.length,
+        rows: filteredUsers.length,
+        withBusiness: businesses.size,
+        businessLookup,
+      },
+      'Admin user list served'
+    );
 
     return NextResponse.json({
       success: true,
@@ -136,16 +218,19 @@ export async function GET(request: NextRequest) {
       pagination: {
         total: filteredUsers.length,
         page: 1,
-        limit: 1000
-      }
+        limit: LIST_LIMIT,
+      },
     });
-
   } catch (error) {
-    console.error('Admin users API error:', error);
-    return NextResponse.json({
-      error: 'Internal server error',
-      message: error instanceof Error ? error.message : 'Unknown error'
-    }, { status: 500 });
+    requestLogger.error({ err: error }, 'Admin users API error');
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Internal server error',
+        details: process.env.NODE_ENV === 'development' && error instanceof Error ? error.message : undefined,
+      },
+      { status: 500 }
+    );
   }
 }
 
