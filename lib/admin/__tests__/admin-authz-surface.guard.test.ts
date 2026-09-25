@@ -31,12 +31,19 @@
  *
  * The system is **unified for enforcement, not yet for implementation**, and
  * this guard's job is to hold that line rather than certify a finished state.
- * As of 2026-09-21, of **72 handlers** across the 44 `app/api/admin/**` route
- * files:
+ * Re-measured 2026-09-25 (admin reorganisation slice 2): **80 handlers**
+ * across 51 `app/api/admin/**` route files:
  *
- *   65  on the canonical `requireAdmin` gate
- *    7  correct, but each hand-rolling its own AdminAccessService check
+ *   74  on the canonical `requireAdmin` gate
+ *    6  correct, but each hand-rolling its own AdminAccessService check
  *    0  open
+ *
+ * (The 2026-09-21 figure was 72 handlers / 44 files, 65 + 7. Routes added
+ * since, all gated from birth, had not been counted here: the base of slice 2
+ * measured 79 handlers / 50 files, 72 + 7. Slice 2c converted
+ * `audit-trail#GET`, deleting its R1 and R2 entries and taking both caps
+ * 7 -> 6 in the same commit; slice 2b added
+ * `business-os/accounts/[accountId]/summary#GET`, gated from birth.)
  *
  * All 21 `/admin` pages are guarded on the server too (slice 5).
  *
@@ -51,7 +58,7 @@
  * build. Neither can happen by accident.
  *
  * What this guard does NOT claim: that the admin surface is HARDENED. Every
- * handler requires an admin, but 7 still reach that answer their own way, and
+ * handler requires an admin, but 6 still reach that answer their own way, and
  * most admin routes still use a service-role client directly — gated, not
  * isolated. See docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md § What is NOT true.
  *
@@ -96,9 +103,10 @@
  *   • **Precedence, not just presence (D-5 + D-Q2).** R1 asks whether a handler
  *     body CONTAINS `requireAdmin(`. It does not prove the gate runs FIRST, and
  *     it does not prove the gate is reached at all — a gate inside a closure
- *     that is never invoked satisfies R1. Every one of the 65 gated handlers is
- *     correct today (verified by hand and by the oracle), but that is a
- *     measurement, not an invariant.
+ *     that is never invoked satisfies R1. 74 handlers are gated as of
+ *     2026-09-25: the 65 counted on 2026-09-21 were verified by hand and by the
+ *     oracle; the 9 added since are covered only by their own route tests.
+ *     Either way that is a measurement, not an invariant.
  *     QA's refinement, which must not be lost: closing this needs the ORACLE's
  *     instrumentation extended to cover the **body parse**, because
  *     `mockTablesTouched` records DB/RPC/auth-API calls and not `request.json()`.
@@ -238,7 +246,7 @@ const fileOf = (id: string) => id.split('#')[0];
  * build. Raising a cap is a visible act in a diff that a reviewer must accept.
  */
 
-/** R1 — admin route handlers not on `requireAdmin`. 7 inline copies, 0 open. */
+/** R1 — admin route handlers not on `requireAdmin`. 6 inline copies, 0 open. */
 const R1_PARKED: ReadonlyArray<Exemption> = [
   /*
    * ── 27 entries removed 2026-09-21 (slices 2, 3 and 5) ──────────────────
@@ -257,7 +265,7 @@ const R1_PARKED: ReadonlyArray<Exemption> = [
    *
    * ── What REMAINS below, and why it is not the same thing ───────────────
    *
-   * These 7 handlers are NOT open. Each performs a correct admin check — they
+   * These 7 handlers (6 since slice 2c, 2026-09-25) are NOT open. Each performs a correct admin check — they
    * simply hand-roll it with `AdminAccessService` instead of calling
    * `requireAdmin`. They are exempted from R1 because R1 requires the canonical
    * gate, and de-duplicating them (slice 4) is hygiene, not risk reduction.
@@ -267,7 +275,9 @@ const R1_PARKED: ReadonlyArray<Exemption> = [
    * validate an admin", which is still not literally true in use.
    */
   { id: 'app/api/admin/agents/route.ts#GET', why: 'PARKED 2026-09-20 — inline AdminAccessService copy. Behaviour already correct. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
-  { id: 'app/api/admin/audit-trail/route.ts#GET', why: 'PARKED 2026-09-20 — inline AdminAccessService copy. Behaviour already correct. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
+  // audit-trail#GET removed 2026-09-25 (admin reorganisation slice 2c): the
+  // route changed (account filter), so it moved to requireAdmin, and
+  // CAPS.R1.parked went 7 -> 6 in the same commit.
   { id: 'app/api/admin/business-os/llm-usage/route.ts#GET', why: 'PARKED 2026-09-20 — the inline precedent (lines 49-64) that requireAdminRoute.ts was extracted from. Slice 4 would have removed it; slice 4 is parked, so it remains. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
   { id: 'app/api/admin/business-os/llm-usage/businesses/route.ts#GET', why: 'PARKED 2026-09-20 — inline AdminAccessService copy. Behaviour already correct. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
   { id: 'app/api/admin/chat-usage/route.ts#GET', why: 'PARKED 2026-09-20 — inline AdminAccessService copy. Behaviour already correct. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
@@ -281,7 +291,8 @@ const R1_PERMANENT: ReadonlyArray<Exemption> = [];
 /** R2 — `route.ts` files importing `AdminAccessService` directly. */
 const R2_PARKED: ReadonlyArray<Exemption> = [
   { id: 'app/api/admin/agents/route.ts', why: 'PARKED 2026-09-20 — inline copy, replaced by requireAdmin. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
-  { id: 'app/api/admin/audit-trail/route.ts', why: 'PARKED 2026-09-20 — inline copy, replaced by requireAdmin. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
+  // audit-trail/route.ts removed 2026-09-25 (slice 2c): no longer imports
+  // AdminAccessService; CAPS.R2.parked went 7 -> 6 in the same commit.
   { id: 'app/api/admin/business-os/llm-usage/route.ts', why: 'PARKED 2026-09-20 — inline copy, replaced by requireAdmin. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
   { id: 'app/api/admin/business-os/llm-usage/businesses/route.ts', why: 'PARKED 2026-09-20 — inline copy, replaced by requireAdmin. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
   { id: 'app/api/admin/chat-usage/route.ts', why: 'PARKED 2026-09-20 — inline copy, replaced by requireAdmin. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
@@ -389,8 +400,8 @@ const R8_PERMANENT: ReadonlyArray<Exemption> = [];
 // Derived from the tree on 2026-09-20 and asserted below. See THE RATCHET RULE
 // above: removing an exemption MUST lower the matching cap in the same commit.
 const CAPS = {
-  R1: { parked: 7, permanent: 0 },
-  R2: { parked: 7, permanent: 1 },
+  R1: { parked: 6, permanent: 0 },
+  R2: { parked: 6, permanent: 1 },
   R3: { parked: 0, permanent: 0 },
   R4: { parked: 2, permanent: 0 },
   R5: { parked: 0, permanent: 0 },

@@ -149,6 +149,10 @@ export const AdminAuditTrailQuerySchema = z.object({
   date_from: optionalFreeText(dateFilter),
   date_to: optionalFreeText(dateFilter),
   search: optionalFreeText(z.string().max(MAX_SEARCH_CHARS)),
+  // One account's rows (admin reorganisation slice 2c): the Businesses panel
+  // links "this business's AI failures" here. A UUID, because it reaches
+  // .eq('user_id', …) on a uuid column.
+  user_id: optionalFreeText(z.string().uuid()),
   page: positiveInt(1),
   page_size: positiveInt(50, MAX_ADMIN_PAGE_SIZE),
 });

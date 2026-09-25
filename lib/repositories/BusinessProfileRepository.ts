@@ -16,16 +16,55 @@ export interface BusinessProfileRepositoryResult<T> {
   error: Error | null;
 }
 
+/**
+ * What an admin screen may know about a business: its name and vertical
+ * (admin reorganisation slice 2b). Everything else in the row can be owner text.
+ */
+export interface BusinessAdminIdentity {
+  user_id: string;
+  company_name: string | null;
+  vertical: string;
+  sub_vertical: string | null;
+}
+
+/** The only columns the admin identity reads select. Exported for tests. */
+export const BUSINESS_ADMIN_IDENTITY_COLUMNS = 'user_id, company_name, vertical, sub_vertical';
+
+/** Ids per `.in()` request in `findAdminIdentitiesByUserIds`. */
+export const ADMIN_IDENTITY_CHUNK = 200;
+
 /** Most businesses `searchForAdmin` returns. */
 export const BUSINESS_SEARCH_MAX_LIMIT = 50;
 
 /**
  * Escape text for use inside an ILIKE pattern: `\` first, then `%` and `_`, so
- * they match literally. (`*` cannot be escaped through PostgREST; see
- * `searchForAdmin`.)
+ * they match literally. (`*` cannot be escaped through PostgREST; for
+ * user-typed search text use `ilikeContainsPattern` + `matchesLiterally`.)
  */
 export function escapeIlikePattern(text: string): string {
   return text.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
+/**
+ * A "contains" ILIKE pattern for user-typed search text, with every character
+ * taken literally (admin reorganisation slice 2, QA E-1).
+ *
+ * PostgREST rewrites EVERY `*` in a like/ilike operand to `%` before Postgres
+ * sees it, and there is no escape for that, so a search for `*` used to match
+ * every row. A `*` is therefore sent as `_` (exactly one character, which
+ * includes a literal `*`), and the caller drops the extra rows with
+ * `matchesLiterally`. `\`, `%` and `_` are escaped as before.
+ */
+export function ilikeContainsPattern(text: string): string {
+  return `%${escapeIlikePattern(text).replace(/\*/g, '_')}%`;
+}
+
+/**
+ * The literal, case-insensitive "contains" test that `ilikeContainsPattern`
+ * approximates on the server. Only needed when the text contains `*`.
+ */
+export function matchesLiterally(value: string | null | undefined, text: string): boolean {
+  return typeof value === 'string' && value.toLowerCase().includes(text.toLowerCase());
 }
 
 /**
@@ -544,8 +583,9 @@ export class BusinessProfileRepository {
    * Selects ONLY `user_id, company_name`. The search goes through `.ilike()` (a
    * single operator argument, so commas and parentheses are harmless) with
    * `\`, `%` and `_` escaped; it is never built into an `.or()` string.
-   * PostgREST also reads `*` as a wildcard and it cannot be escaped, so a `*`
-   * widens this admin-only, capped search (accepted, Layer 1.1 Q-4).
+   * PostgREST reads `*` as a wildcard and it cannot be escaped, so a `*` is
+   * sent as a one-character wildcard and the rows are then filtered literally
+   * (QA E-1; before that a `*` widened the search to every business).
    */
   async searchForAdmin(
     search: string | undefined,
@@ -557,7 +597,7 @@ export class BusinessProfileRepository {
       let query = this.supabase.from('business_profiles').select('user_id, company_name');
 
       if (search) {
-        query = query.ilike('company_name', `%${escapeIlikePattern(search)}%`);
+        query = query.ilike('company_name', ilikeContainsPattern(search));
       }
 
       const { data, error } = await query
@@ -566,11 +606,71 @@ export class BusinessProfileRepository {
 
       if (error) throw error;
 
+      let rows = (data ?? []) as Array<{ user_id: string; company_name: string | null }>;
+      if (search && search.includes('*')) rows = rows.filter((row) => matchesLiterally(row.company_name, search));
+
       // Search text and names are not logged: a search is usually a business name.
-      logger.debug({ hasSearch: !!search, results: data?.length ?? 0 }, 'Admin business search');
-      return { data: (data ?? []) as Array<{ user_id: string; company_name: string | null }>, error: null };
+      logger.debug({ hasSearch: !!search, results: rows.length }, 'Admin business search');
+      return { data: rows, error: null };
     } catch (error) {
       logger.error({ err: error }, 'Admin business search failed');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * ADMIN ONLY (admin reorganisation slice 2b). The business's identity, and
+   * nothing else: name and vertical. Never `select('*')`, because the full row
+   * carries owner-written text an admin screen must not show.
+   *
+   * Callers: `app/api/admin/**` only, after `requireAdmin` (source guard in
+   * lib/repositories/__tests__/adminReadMethods.guard.test.ts). Still scoped by
+   * `.eq('user_id', …)`: the account is admin-selected, not the caller.
+   * `data: null, error: null` when the account has no business profile.
+   */
+  async findAdminIdentity(userId: string): Promise<BusinessProfileRepositoryResult<BusinessAdminIdentity>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('business_profiles')
+        .select(BUSINESS_ADMIN_IDENTITY_COLUMNS)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      return { data: (data as BusinessAdminIdentity | null) ?? null, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Admin business identity read failed');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * ADMIN ONLY. The same identity for many accounts at once (the Businesses
+   * list shows each row's business name). One `.in()` per chunk of
+   * ADMIN_IDENTITY_CHUNK ids, never one read per row, and chunked so the
+   * request URL stays short. Accounts without a profile are simply absent.
+   * Same callers and guard as `findAdminIdentity`.
+   */
+  async findAdminIdentitiesByUserIds(
+    userIds: readonly string[]
+  ): Promise<BusinessProfileRepositoryResult<BusinessAdminIdentity[]>> {
+    try {
+      const unique = [...new Set(userIds)];
+      const found: BusinessAdminIdentity[] = [];
+      for (let i = 0; i < unique.length; i += ADMIN_IDENTITY_CHUNK) {
+        const chunk = unique.slice(i, i + ADMIN_IDENTITY_CHUNK);
+        const { data, error } = await this.supabase
+          .from('business_profiles')
+          .select(BUSINESS_ADMIN_IDENTITY_COLUMNS)
+          .in('user_id', chunk);
+        if (error) throw error;
+        found.push(...((data ?? []) as BusinessAdminIdentity[]));
+      }
+      // Counts only: business names are not logged.
+      logger.debug({ requested: unique.length, found: found.length }, 'Admin business identities read');
+      return { data: found, error: null };
+    } catch (error) {
+      logger.error({ err: error, requested: userIds.length }, 'Admin business identities read failed');
       return { data: null, error: error as Error };
     }
   }

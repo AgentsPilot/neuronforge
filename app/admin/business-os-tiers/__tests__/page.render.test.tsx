@@ -247,7 +247,7 @@ describe('the account lookup says why it wants an id', () => {
     const lookup = screen.getByTestId('account-lookup');
     expect(lookup).toHaveTextContent(/not an email/i);
     expect(lookup).toHaveTextContent(/look people up/i);
-    expect(within(lookup).getByRole('link', { name: /Users/ })).toHaveAttribute('href', '/admin/users');
+    expect(within(lookup).getByRole('link', { name: /Businesses/ })).toHaveAttribute('href', '/admin/users');
   });
 });
 

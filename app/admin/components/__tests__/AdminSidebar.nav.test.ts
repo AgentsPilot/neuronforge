@@ -149,6 +149,12 @@ describe('labels are honest', () => {
     expect(queue?.name).toBe('Agent execution queue');
   });
 
+  it('the account list is called "Businesses" now that each row shows its business (slice 2b)', () => {
+    const item = sections.flatMap((s) => s.items).find((i) => i.href === '/admin/users');
+    expect(item?.name).toBe('Businesses');
+    expect(item?.description).toContain('Business OS');
+  });
+
   it('item names are unique (they are the React keys)', () => {
     const names = sections.flatMap((s) => s.items.map((i) => i.name));
     expect(new Set(names).size).toBe(names.length);

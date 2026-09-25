@@ -96,12 +96,13 @@ const navigationSections: NavSection[] = [
     title: 'Businesses',
     items: [
       {
-        // Stays "Users" until slice 2 adds the business panel: today the
-        // detail view shows agents and plugins, not a business.
-        name: 'Users',
+        // Renamed in slice 2b, once each row shows its business and the detail
+        // opens on a Business OS panel. The list still holds every login
+        // (one login = one business); a login with no business says so.
+        name: 'Businesses',
         href: '/admin/users',
         icon: Users,
-        description: 'Platform accounts'
+        description: 'Every login and its Business OS business'
       },
       {
         name: 'Plans & entitlements',

@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   RefreshCw,
@@ -135,7 +136,16 @@ interface DrillDownResponse {
   categoryTotals?: CategoryTotals;
   period?: { from: string; to: string };
   comparison?: PeriodComparison;
+  scope?: 'bos' | 'all';
+  /** The unpaged read hit the 1,000-row cap; totals may be missing rows. */
+  possiblyIncomplete?: boolean;
 }
+
+/** 'bos' = the platform's Business OS row definition, applied by the route. */
+type Scope = 'bos' | 'all';
+
+/** PostgREST's row cap on the (unpaged) ledger read. Parked: see the notes on screen. */
+const UNPAGED_ROW_CAP = 1000;
 
 type BreakdownDimension = 'provider' | 'model' | 'activity' | 'user' | 'agent' | 'execution' | 'request_type' | 'feature' | 'component' | 'endpoint';
 
@@ -195,10 +205,32 @@ function ContextChips({ item, breakdownBy }: { item: DrillDownItem; breakdownBy:
   return <div className="flex gap-1 flex-wrap mt-1">{chips}</div>;
 }
 
+// useSearchParams needs a Suspense boundary in Next 14.
 export default function AdminCostAnalytics() {
+  return (
+    <Suspense fallback={null}>
+      <AdminCostAnalyticsContent />
+    </Suspense>
+  );
+}
+
+function AdminCostAnalyticsContent() {
+  // Null outside the App Router (e.g. a unit test); treated as "no deep link".
+  const searchParams = useSearchParams();
+  // "Business OS only" is ON by default (user decision, 2026-09-25). A link
+  // can ask for ?scope=all, or narrow to one account with ?user=<id>.
+  const [scope, setScope] = useState<Scope>(() => (searchParams?.get('scope') === 'all' ? 'all' : 'bos'));
+  const [possiblyIncomplete, setPossiblyIncomplete] = useState(false);
+  const [dateRangeError, setDateRangeError] = useState<string | null>(null);
   const [breakdownBy, setBreakdownBy] = useState<BreakdownDimension>('provider');
-  const [filters, setFilters] = useState<Filters>({});
-  const [filterLabels, setFilterLabels] = useState<FilterLabels>({});
+  const [filters, setFilters] = useState<Filters>(() => {
+    const user = searchParams?.get('user');
+    return user ? { user } : {};
+  });
+  const [filterLabels, setFilterLabels] = useState<FilterLabels>(() => {
+    const user = searchParams?.get('user');
+    return user ? { user: `Account ${user.slice(0, 8)}` } : {};
+  });
   const [items, setItems] = useState<DrillDownItem[]>([]);
   const [totals, setTotals] = useState({ cost: 0, tokens: 0, inputTokens: 0, outputTokens: 0, calls: 0 });
   const [availableFilters, setAvailableFilters] = useState<AvailableFilters>({
@@ -235,7 +267,7 @@ export default function AdminCostAnalytics() {
       setLoading(true);
       setError(null);
 
-      const queryParams = new URLSearchParams({ breakdownBy });
+      const queryParams = new URLSearchParams({ breakdownBy, scope });
 
       if (filters.provider) queryParams.set('provider', filters.provider);
       if (filters.model) queryParams.set('model', filters.model);
@@ -261,7 +293,13 @@ export default function AdminCostAnalytics() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to fetch data');
+        // A 400 is the route refusing the query (e.g. a date range it cannot
+        // use), not a server failure: say which.
+        throw new Error(
+          response.status === 400
+            ? 'The selected filters or dates are not valid. Check the date range and try again.'
+            : 'Failed to fetch data'
+        );
       }
 
       const result: DrillDownResponse = await response.json();
@@ -272,6 +310,7 @@ export default function AdminCostAnalytics() {
 
       setItems(result.items);
       setTotals(result.totals);
+      setPossiblyIncomplete(result.possiblyIncomplete === true);
       setAvailableFilters(result.availableFilters);
       if (result.executionDetails) {
         setExecutionDetails(result.executionDetails);
@@ -295,7 +334,7 @@ export default function AdminCostAnalytics() {
     } finally {
       setLoading(false);
     }
-  }, [breakdownBy, filters, period, appliedDateRange]);
+  }, [breakdownBy, filters, period, appliedDateRange, scope]);
 
   useEffect(() => {
     if (period === -1) {
@@ -424,6 +463,13 @@ export default function AdminCostAnalytics() {
 
   const handleApplyDateRange = () => {
     if (customDateFrom && customDateTo) {
+      // Caught here with a clear message rather than sent to the route, which
+      // refuses it with a 400 (QA E-3). ISO dates compare correctly as strings.
+      if (customDateFrom > customDateTo) {
+        setDateRangeError('The start date is after the end date. Choose a start on or before the end.');
+        return;
+      }
+      setDateRangeError(null);
       setAppliedDateRange({ from: customDateFrom, to: customDateTo });
     }
   };
@@ -483,6 +529,22 @@ export default function AdminCostAnalytics() {
           <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400">BI System</span>
         </div>
         <div className="flex items-center gap-4">
+          {/* Business OS lens (slice 2a). The route applies the platform's own
+              definition of a Business OS row, legacy-tagged rows included. */}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={scope === 'bos'}
+            data-testid="scope-toggle"
+            onClick={() => setScope((prev) => (prev === 'bos' ? 'all' : 'bos'))}
+            className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
+              scope === 'bos'
+                ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-200'
+                : 'border-slate-700 text-slate-400 hover:text-white'
+            }`}
+          >
+            Business OS only
+          </button>
           {/* Period Selector - Inline Button Group */}
           <div className="flex items-center gap-1 bg-slate-800 border border-slate-700 rounded-lg p-1">
             {PERIOD_OPTIONS.map((option) => (
@@ -515,6 +577,25 @@ export default function AdminCostAnalytics() {
         </div>
       </header>
 
+      {/* What these numbers are, and are not (slice 2a). */}
+      <div data-testid="scope-notes" className="space-y-1 text-xs text-slate-400">
+        {scope === 'bos' ? (
+          <p>
+            <span className="px-2 py-0.5 mr-2 rounded bg-emerald-500/20 text-emerald-300">Business OS only</span>
+            Includes legacy-tagged Business OS rows. Costs are USD, estimated from the model pricing table.
+          </p>
+        ) : (
+          <p>Both products. Costs are USD, estimated from the model pricing table.</p>
+        )}
+        <p>Totals may be incomplete above {UNPAGED_ROW_CAP.toLocaleString('en-US')} calls in the selected period.</p>
+        {possiblyIncomplete && (
+          <p data-testid="incomplete-banner" className="text-amber-300">
+            This period reached {UNPAGED_ROW_CAP.toLocaleString('en-US')} calls, so the totals below are a lower
+            bound. Narrow the period for an exact figure.
+          </p>
+        )}
+      </div>
+
       {/* Custom Date Range Picker */}
       {showCustomDatePicker && (
         <div className="flex items-center gap-3 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2">
@@ -538,6 +619,11 @@ export default function AdminCostAnalytics() {
           >
             Apply
           </button>
+          {dateRangeError && (
+            <span data-testid="date-range-error" role="alert" className="text-sm text-amber-300">
+              {dateRangeError}
+            </span>
+          )}
         </div>
       )}
 
@@ -547,7 +633,9 @@ export default function AdminCostAnalytics() {
         <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm text-slate-400">Total Spend</span>
-            <span className="text-xs px-2 py-0.5 rounded bg-slate-600/50 text-slate-400">All</span>
+            <span className="text-xs px-2 py-0.5 rounded bg-slate-600/50 text-slate-400">
+              {scope === 'bos' ? 'Business OS' : 'All'}
+            </span>
           </div>
           <div className="text-2xl font-bold text-white mb-1">{formatCost(totals.cost)}</div>
           <div className="text-sm text-slate-400">{formatNumber(totals.tokens)} tokens</div>
