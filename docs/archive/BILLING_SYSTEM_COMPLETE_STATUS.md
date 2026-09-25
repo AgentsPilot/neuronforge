@@ -1,3 +1,45 @@
+# ARCHIVED — Complete Billing System Status & Stripe Integration Plan (2025-01-05)
+
+> **Archived**: 2026-09-26 (S-0, RD-10)
+> **Superseded by**: [BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md](/docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md)
+
+## Why this is archived rather than corrected
+
+**Its central claim was false, and it was being read as input.** The document's
+executive summary said the platform has:
+
+| It said | The truth, verified 2026-09-25 |
+|---|---|
+| ❌ No Stripe integration ("was removed") | **Stripe is integrated and live.** `app/api/stripe/webhook/route.ts` serves real Connect payments today |
+| ❌ No subscription billing / recurring charges | **Recurring billing exists**, and four subscription rows were last touched 2026-07-19 |
+| ❌ No dunning | **Dunning exists** — `invoice.payment_failed` is handled |
+
+Anyone planning from those three lines would rebuild working software. That is
+not a stale document; it is a document that produces wrong work, which is why
+RD-10 put correcting it **first** in the slice rather than last.
+
+## Why the body was not simply fixed
+
+The billing it describes belongs to the **agent platform, which is being
+parked** (E-2, the user's decision of 2026-09-25). A corrected 691-line status
+report on a parked product is a document that still should not be planned from,
+and one somebody would have to keep true. The useful residue is a pointer.
+
+## Where to look instead
+
+| Question | Answer |
+|---|---|
+| What exists in billing today, and what is reusable? | [The reuse plan](/docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md) §2 and §3 — 19 verified findings and a reuse ledger |
+| What is Business OS's plan model? | [BUSINESS_OS_ENTITLEMENTS.md](/docs/architecture/BUSINESS_OS_ENTITLEMENTS.md) |
+| What is being built, and in what order? | The reuse plan §6 (S-0 → S-2 → S-4a → S-5 → S-3 → S-4b) |
+| Is the credit purchase path staying? | No — the reuse plan §4.6 retires it (WS-3 of S-4a) |
+
+The original text is kept below the line, unedited, as the record of what was
+believed on 2025-01-05. **Nothing below this line is a statement about the
+system as it is now.**
+
+---
+
 # Complete Billing System Status & Stripe Integration Plan
 
 **Date**: 2025-01-05

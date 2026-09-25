@@ -67,7 +67,20 @@ function repositories(rows: BusinessOsAccountPlan[], events: BusinessOsShadowEve
         return { data: page, error: null };
       },
       async findTenantsMissingPlanRow() {
-        return { data: { checked: rows.length + missing.length, missing, truncated: false }, error: null };
+        return {
+          data: {
+            checked: rows.length + missing.length,
+            // The SQL counts; the sample is bounded. Here they happen to match
+            // because the fixture is small.
+            count: missing.length,
+            missing,
+            withProfile: missing.length,
+            onboardingOnly: 0,
+            truncated: false,
+            scope: 'every tenant: a business profile OR any onboarding message (exhaustive anti-join)',
+          },
+          error: null,
+        };
       },
       async findRecentOnboardedPlans(options: { limit?: number } = {}) {
         // Mirrors the repository: onboarded only, newest first, capped.
@@ -143,7 +156,15 @@ describe('the static section', () => {
     });
 
     expect(report.static.anomalies).toEqual([{ accountId: 'a1', anomaly: 'no_assignment' }]);
-    expect(report.static.tenantsWithoutPlanRow).toMatchObject({ count: 2, sample: ['ghost-1', 'ghost-2'] });
+    expect(report.static.tenantsWithoutPlanRow).toMatchObject({
+      scanFailed: false,
+      count: 2,
+      sample: ['ghost-1', 'ghost-2'],
+      // S-0: the scan says what it scanned and the report repeats it verbatim
+      // rather than describing it. The old string said "accounts with a business
+      // profile", which was true and was the defect.
+      scope: expect.stringContaining('exhaustive'),
+    });
   });
 
   it('pages rather than reading everything at once (RC-12)', async () => {
@@ -161,7 +182,18 @@ describe('the static section', () => {
           return { data: page, error: null };
         },
         async findTenantsMissingPlanRow() {
-          return { data: { checked: 0, missing: [], truncated: false }, error: null };
+          return {
+            data: {
+              checked: 0,
+              count: 0,
+              missing: [],
+              withProfile: 0,
+              onboardingOnly: 0,
+              truncated: false,
+              scope: 'exhaustive',
+            },
+            error: null,
+          };
         },
         async findRecentOnboardedPlans() {
           return { data: [], error: null };
@@ -172,6 +204,200 @@ describe('the static section', () => {
 
     expect(report.static.accountsScanned).toBe(1200);
     expect(pages).toBe(3); // 500 + 500 + 200
+  });
+
+  it('S-0: reports the exhaustive scope and the split, not a sample length', async () => {
+    // The count is the SQL count and the sample is bounded, so the two are no
+    // longer the same number. A report that derived the count from the sample
+    // would under-report on any database large enough to matter.
+    const report = await buildShadowReport({
+      config: readCodeConfig(),
+      now,
+      planRepository: {
+        async pagePlans() {
+          return { data: [], error: null };
+        },
+        async findTenantsMissingPlanRow() {
+          return {
+            data: {
+              checked: 5000,
+              count: 37,
+              missing: ['g1', 'g2'],
+              withProfile: 5,
+              onboardingOnly: 32,
+              truncated: true,
+              scope: 'every tenant: a business profile OR any onboarding message (exhaustive anti-join)',
+            },
+            error: null,
+          };
+        },
+        async findRecentOnboardedPlans() {
+          return { data: [], error: null };
+        },
+      } as never,
+      shadowRepository: { async findWindow() { return { data: [], error: null }; } } as never,
+    });
+
+    expect(report.static.tenantsWithoutPlanRow).toMatchObject({
+      scanFailed: false,
+      checked: 5000,
+      count: 37,
+      withProfile: 5,
+      // The half the previous scan was blind to, reported on its own so the
+      // difference between two reports is readable.
+      onboardingOnly: 32,
+      truncated: true,
+    });
+    expect(report.static.tenantsWithoutPlanRow.sample).toHaveLength(2);
+  });
+
+  /**
+   * The switch-on gate, as a predicate (SA S0-1).
+   *
+   * The workplan words it *"do not set enforce while missing_count is above
+   * zero"*. Written against numbers alone that is satisfied by a scan that never
+   * ran — which is the S-0 defect class itself, one layer above where S-0 fixed
+   * it. Both conditions, in the order a caller must read them.
+   */
+  const gateSatisfied = (section: { scanFailed: boolean; count: number | null }): boolean =>
+    section.scanFailed === false && section.count === 0;
+
+  const failingScanReport = async () =>
+    buildShadowReport({
+      config: readCodeConfig(),
+      now,
+      planRepository: {
+        async pagePlans() {
+          return { data: [], error: null };
+        },
+        async findTenantsMissingPlanRow() {
+          return { data: null, error: new Error('function does not exist') };
+        },
+        async findRecentOnboardedPlans() {
+          return { data: [], error: null };
+        },
+      } as never,
+      shadowRepository: { async findWindow() { return { data: [], error: null }; } } as never,
+    });
+
+  const cleanScanReport = async () =>
+    buildShadowReport({
+      config: readCodeConfig(),
+      now,
+      planRepository: {
+        async pagePlans() {
+          return { data: [], error: null };
+        },
+        async findTenantsMissingPlanRow() {
+          return {
+            data: {
+              checked: 1200,
+              count: 0,
+              missing: [],
+              withProfile: 0,
+              onboardingOnly: 0,
+              truncated: false,
+              scope: 'every tenant: a business profile OR any onboarding message (exhaustive anti-join)',
+            },
+            error: null,
+          };
+        },
+        async findRecentOnboardedPlans() {
+          return { data: [], error: null };
+        },
+      } as never,
+      shadowRepository: { async findWindow() { return { data: [], error: null }; } } as never,
+    });
+
+  it('S0-1: a failed scan is distinguishable from nothing missing — by a FLAG, not by prose', async () => {
+    // The repository guarantees a failure never looks like zero. This section
+    // used to undo that: `count: 0` with the distinction carried in an English
+    // `scope` string, which no machine can read.
+    const section = (await failingScanReport()).static.tenantsWithoutPlanRow;
+
+    expect(section.scanFailed).toBe(true);
+    // Not 0. Every number is absent, because the scan produced none of them.
+    expect(section.count).toBeNull();
+    expect(section.checked).toBeNull();
+    expect(section.withProfile).toBeNull();
+    expect(section.onboardingOnly).toBeNull();
+    // The prose stays — it is useful to a human. It is no longer the only thing
+    // carrying the distinction.
+    expect(section.scope).toContain('unavailable');
+    expect(section.truncated).toBe(true);
+  });
+
+  it('S0-1: the switch-on gate REFUSES a failed scan and accepts a real zero', async () => {
+    // The two cases the gate has to tell apart, against the same predicate.
+    // Before the fix both returned `count: 0` and both passed.
+    const failed = (await failingScanReport()).static.tenantsWithoutPlanRow;
+    const clean = (await cleanScanReport()).static.tenantsWithoutPlanRow;
+
+    expect(gateSatisfied(failed)).toBe(false);
+    expect(gateSatisfied(clean)).toBe(true);
+  });
+
+  it('S0-1: the OLD shape would have passed the gate — which is why the type changed', async () => {
+    // The negative control, and the whole argument in one assertion. `count: 0`
+    // with a prose scope is exactly what this section used to emit on failure.
+    expect(gateSatisfied({ scanFailed: false, count: 0 })).toBe(true);
+
+    // And a caller who checked only the number, ignoring the flag, is why
+    // `null` alone was not enough: `null > 0` is false in JavaScript, so the
+    // naive form of the gate ALSO passes a failed scan.
+    const failed = (await failingScanReport()).static.tenantsWithoutPlanRow;
+
+    expect(Number(failed.count) > 0).toBe(false);
+    expect(gateSatisfied(failed)).toBe(false);
+  });
+
+  it('S0-1: nothing else in the static section fabricates a zero on failure', async () => {
+    // SA asked whether the same shape exists elsewhere. The other three failure
+    // paths already avoid it, and this pins that:
+    //   • a failed plan PAGE sets `truncated: true` on the section — a flag;
+    //   • an unreadable shadow window returns `truncated: true` beside its empty
+    //     rows, while a genuinely empty window returns `false`;
+    //   • an unreadable setup-AI sample leaves the section absent altogether,
+    //     which is the strongest form of all.
+    const report = await buildShadowReport({
+      // Both optional sections requested, or their failure paths never run and
+      // the assertions below would pass on sections that were simply skipped.
+      from: '2026-09-01T00:00:00.000Z',
+      to: '2026-09-26T00:00:00.000Z',
+      includeSetupAi: true,
+      config: readCodeConfig(),
+      now,
+      planRepository: {
+        async pagePlans() {
+          return { data: null, error: new Error('page read failed') };
+        },
+        async findTenantsMissingPlanRow() {
+          return { data: null, error: new Error('function does not exist') };
+        },
+        async findRecentOnboardedPlans() {
+          return { data: null, error: new Error('sample read failed') };
+        },
+      } as never,
+      shadowRepository: {
+        async findWindow() {
+          return { data: null, error: new Error('window read failed') };
+        },
+      } as never,
+    });
+
+    // A partial walk is flagged, so `accountsScanned: 0` cannot be read as
+    // "no accounts".
+    expect(report.static.truncated).toBe(true);
+    expect(report.static.accountsScanned).toBe(0);
+    // The shadow window says it did not finish rather than reporting silence.
+    expect(report.observed?.truncated).toBe(true);
+    // The setup-AI section is ABSENT rather than zeroed. Weaker than a flag —
+    // absence does not distinguish "not requested" from "could not be read" —
+    // but it fabricates no number and feeds no gate, so it is recorded in the
+    // workplan rather than changed here.
+    expect(report.setupAi).toBeUndefined();
+    // And the row S0-1 is about.
+    expect(report.static.tenantsWithoutPlanRow.scanFailed).toBe(true);
   });
 
   it('a failed page degrades to a partial section rather than throwing', async () => {

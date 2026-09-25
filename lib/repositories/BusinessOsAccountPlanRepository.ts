@@ -157,6 +157,40 @@ const OVERRIDE_COLUMNS =
  */
 export const BOS_ENTITLEMENT_BATCH_LIMIT = 100;
 
+/**
+ * The answer from `business_os_tenants_missing_plan_row`.
+ *
+ * `withProfile` and `onboardingOnly` split the same total: `onboardingOnly` is
+ * the population the pre-S-0 scan could not see at all, reported on its own so
+ * the difference between two reports is readable rather than inferred.
+ *
+ * `truncated` refers to the **sample**. `count` is exact either way.
+ */
+export interface BusinessOsMissingPlanRowScan {
+  checked: number;
+  count: number;
+  missing: string[];
+  withProfile: number;
+  onboardingOnly: number;
+  truncated: boolean;
+  scope: string;
+}
+
+/**
+ * The row as PostgREST delivers it.
+ *
+ * Counts are typed as `number | string` because a `bigint` arrives as a string;
+ * that is the reason the coercion above exists rather than an accident.
+ */
+interface MissingPlanRowScanRow {
+  tenants_checked: number | string | null;
+  missing_count: number | string | null;
+  missing_with_profile: number | string | null;
+  missing_onboarding_only: number | string | null;
+  missing_sample: string[] | null;
+  truncated: boolean | null;
+}
+
 /** Rows a plan-row write may never set from a caller-supplied object. */
 const PATCH_FIELDS: ReadonlyArray<keyof BusinessOsAccountPlanPatch> = [
   'tier',
@@ -317,73 +351,85 @@ export class BusinessOsAccountPlanRepository {
   }
 
   /**
-   * Business OS tenants that have **no** plan row (workplan §4.10, report §1).
+   * Every tenant with no plan record — **exhaustive since S-0**.
    *
-   * Every tenant should have one: two triggers create it on the first
-   * onboarding message or the first business profile, and the backfill covered
-   * everyone who existed at rollout. A non-empty answer here therefore means a
-   * trigger failed — which the fact triggers do SILENTLY by design (S-8(i): they
-   * swallow their own error so a customer's write is never lost), so this read
-   * is one of the two places that failure becomes visible at all.
+   * ── Why this is one RPC and not a PostgREST walk ───────────────────────
+   * The question is `tenants (business_profiles UNION onboarding_conversations)
+   * ANTI JOIN business_os_account_plans`. PostgREST cannot express a union of
+   * two tables, let alone an anti-join across it, so this used to read
+   * `business_profiles` and then ask about plan rows 100 ids at a time — which
+   * made a tenant who started onboarding and never created a business profile
+   * **invisible**, and capped the answer at the fetch limit besides.
    *
-   * ── WHAT IT SCANS, AND WHAT IT DOES NOT ───────────────────────────────────
-   * Tenants that have a **business profile**. It does not scan
-   * `onboarding_conversations`, which holds one row per message and has no
-   * DISTINCT through PostgREST — an anti-join across both tables needs SQL, and
-   * SQL here would mean an RPC this slice does not otherwise need. The gap is
-   * covered from two directions instead: `scripts/check-…` row B1 does the full
-   * anti-join at apply time, and the report's own "no end date" list shows
-   * onboarding-only accounts from the other side (S1-T11a).
+   * Harmless while nothing is enforced. Under `enforce` an account with no plan
+   * record resolves to no entitlements, so an uncounted tenant is **a real
+   * customer refused something they are entitled to**. That is why it had to be
+   * exhaustive before switch-on rather than after.
    *
-   * Bounded twice: `maxAccounts` rows of profiles, checked 100 ids at a time
-   * (RC-12), so a report on a large database is a predictable number of small
-   * queries rather than one enormous one.
+   * The counting now happens in SQL, which is also what
+   * `scripts/check-bos-entitlements-migration.sql` row B1 does — so the report
+   * and the checker can no longer disagree about a number that gates a launch.
    *
-   * ⚠️ **This must become exhaustive before enforcement is switched on** (SA,
-   * component 4 review — recorded as a blocking item in workplan §5). The gap is
-   * harmless while nothing is enforced: a missing plan row costs nobody
-   * anything. Under enforcement it resolves to the `no_plan_row` anomaly, which
-   * DENIES owner-paid capabilities — so a bookkeeping failure we could not see
-   * becomes a real customer refused something they are entitled to. The fix is
-   * an RPC doing the anti-join in SQL, the same one `scripts/check-…` row B1
-   * already performs at apply time.
+   * ── The one guarantee to preserve ──────────────────────────────────
+   * **A failure must never look like "nothing is missing".** The operator
+   * applies migrations by hand, so a missing function is a live possibility, and
+   * "nothing is missing" is the green light for switching enforcement on. Both
+   * failure shapes — an error, and a result set with no row — return an error
+   * here. Callers must not paper over that: see the `scanFailed` flag on the
+   * report section.
+   *
+   * @param options.maxAccounts Bounds the returned **sample**, not the count.
+   *   Clamped to 1..20000. Clamped here as well as in the function because the
+   *   function is callable from the SQL editor by somebody who never read this.
    */
   async findTenantsMissingPlanRow(
     options: { maxAccounts?: number } = {}
-  ): Promise<RepositoryResult<{ checked: number; missing: string[]; truncated: boolean }>> {
+  ): Promise<RepositoryResult<BusinessOsMissingPlanRowScan>> {
     const maxAccounts = Math.min(Math.max(options.maxAccounts ?? 2000, 1), 20000);
 
     try {
-      const { data, error } = await this.supabase
-        .from('business_profiles')
-        .select('user_id')
-        .order('user_id', { ascending: true })
-        .limit(maxAccounts + 1);
+      const { data, error } = await this.supabase.rpc('business_os_tenants_missing_plan_row', {
+        p_limit: maxAccounts,
+      });
 
       if (error) throw error;
 
-      const ids = [...new Set(((data ?? []) as Array<{ user_id: string }>).map((row) => row.user_id))];
-      const truncated = ids.length > maxAccounts;
-      const scanned = truncated ? ids.slice(0, maxAccounts) : ids;
+      // A table-returning function comes back as an array of rows; some
+      // PostgREST versions hand back the single row itself. Both mean the same.
+      const row = (Array.isArray(data) ? data[0] : data) as MissingPlanRowScanRow | undefined | null;
 
-      const missing: string[] = [];
-
-      for (let i = 0; i < scanned.length; i += BOS_ENTITLEMENT_BATCH_LIMIT) {
-        const chunk = scanned.slice(i, i + BOS_ENTITLEMENT_BATCH_LIMIT);
-        const { data: plans, error: planError } = await this.supabase
-          .from('business_os_account_plans')
-          .select('user_id')
-          .in('user_id', chunk);
-
-        if (planError) throw planError;
-
-        const present = new Set(((plans ?? []) as Array<{ user_id: string }>).map((row) => row.user_id));
-        for (const id of chunk) if (!present.has(id)) missing.push(id);
+      if (!row) {
+        // NOT an empty list. The function returns exactly one row, so no row
+        // means it did not answer — the same trap as a missing function,
+        // arriving by a different route.
+        throw new Error('business_os_tenants_missing_plan_row returned no row');
       }
 
-      return { data: { checked: scanned.length, missing, truncated }, error: null };
+      // PostgREST sends `bigint` as a string. Counting is the entire purpose of
+      // this method, so a string here makes `"37" + 1` into `"371"`.
+      const scan: BusinessOsMissingPlanRowScan = {
+        checked: Number(row.tenants_checked ?? 0),
+        count: Number(row.missing_count ?? 0),
+        missing: row.missing_sample ?? [],
+        withProfile: Number(row.missing_with_profile ?? 0),
+        onboardingOnly: Number(row.missing_onboarding_only ?? 0),
+        truncated: Boolean(row.truncated),
+        // The scope travels with the answer rather than being written at the
+        // reader. The old value of this field said "accounts with a business
+        // profile", which was accurate and was the defect.
+        scope: 'every tenant: a business profile OR any onboarding message (exhaustive anti-join)',
+      };
+
+      if (scan.count > 0) {
+        this.logger.warn(
+          { missing: scan.count, withProfile: scan.withProfile, onboardingOnly: scan.onboardingOnly },
+          'Tenants without a Business OS plan record'
+        );
+      }
+
+      return { data: scan, error: null };
     } catch (error) {
-      this.logger.error({ err: error }, 'Failed to look for tenants without a plan row');
+      this.logger.error({ err: error }, 'Failed to look for tenants without a plan record');
       return { data: null, error: error as Error };
     }
   }
