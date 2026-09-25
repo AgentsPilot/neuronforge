@@ -79,12 +79,16 @@ import { bosLlmAreaKey } from '../modelSettingsPolicy';
 import { SEEDED_ROWS } from '../__fixtures__/seededRows';
 import { __resetModelFallbackForTests } from '../modelFallback';
 import { InsightRepository } from '@/lib/business-os/insight/repository/InsightRepository';
+import type { InsightRunIds } from '@/lib/business-os/insight/repository/InsightRepository';
 import type { DetectionResult } from '@/lib/business-os/insight/detectors/types';
 import { IntakeGenerationService } from '@/lib/services/IntakeGenerationService';
 
 const U1 = profile.user_id;
 const G1 = '33333333-3333-4333-8333-333333333333';
 const R1 = '66666666-6666-4666-8666-666666666666';
+/** The insight run's PER-BUSINESS group. Distinct from `R1` so the two cannot be confused. */
+const INSIGHT_GROUP = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const RUN_IDS: InsightRunIds = { runId: R1, groupId: INSIGHT_GROUP };
 
 /** A model that is priced (the mock says so) but that the key cannot serve. */
 const CONFIGURED = 'gpt-4o-mini-2099';
@@ -138,9 +142,19 @@ function modelNotFound(): Error & { status: number; code: string } {
   return Object.assign(new Error('The model does not exist'), { status: 404, code: 'model_not_found' });
 }
 
+/*
+ * The insight generators take `InsightRunIds { runId, groupId }`, not a bare run
+ * id (F-13): the group must be per business, the run id is shared by the run.
+ *
+ * The REAL type is imported rather than re-declared. These helpers cast through
+ * `never` onto a hand-written signature, which defeats the compiler completely —
+ * when the parameter changed, every call here kept compiling and started passing
+ * a string where an object was expected, so `ids.groupId` was `undefined` and the
+ * ledger row recorded NO group. Only the `session_id` assertion caught it.
+ */
 function insights() {
   return new InsightRepository({} as unknown as SupabaseClient) as never as {
-    generateLocalizedContent(d: unknown, u: string, c: unknown, r: string): Promise<Record<string, string>>;
+    generateLocalizedContent(d: unknown, u: string, c: unknown, r: InsightRunIds): Promise<Record<string, string>>;
   };
 }
 
@@ -170,7 +184,7 @@ describe('T2-R: a refused model is retried once on the code default (AC-8, at th
       .mockRejectedValueOnce(modelNotFound())
       .mockResolvedValue({ choices: [{ message: { content: INSIGHT_JSON } }] });
 
-    const result = await insights().generateLocalizedContent(detection, U1, businessContext, R1);
+    const result = await insights().generateLocalizedContent(detection, U1, businessContext, RUN_IDS);
 
     expect(models()).toEqual([CONFIGURED, INSIGHTS_DEFAULT]);
     // The owner still gets the written insight, not the template.
@@ -193,7 +207,7 @@ describe('T2-R: a refused model is retried once on the code default (AC-8, at th
     mockGetByKeys.mockResolvedValue(rowsWithModel('insights', CONFIGURED));
     chatCompletion.mockRejectedValue(Object.assign(new Error('rate limited'), { status: 429, code: 'rate_limit' }));
 
-    const result = await insights().generateLocalizedContent(detection, U1, businessContext, R1);
+    const result = await insights().generateLocalizedContent(detection, U1, businessContext, RUN_IDS);
 
     expect(models()).toEqual([CONFIGURED]);
     // The site's own catch runs: templates, as it always did.
@@ -277,7 +291,7 @@ describe('T2-M-I: the insights ledger row carries the model that ran', () => {
     mockGetByKeys.mockResolvedValue(rowsWithModel('insights', CONFIGURED));
     chatCompletion.mockResolvedValue({ choices: [{ message: { content: INSIGHT_JSON } }] });
 
-    await insights().generateLocalizedContent(detection, U1, businessContext, R1);
+    await insights().generateLocalizedContent(detection, U1, businessContext, RUN_IDS);
 
     expect(tracked).toHaveLength(1);
     expect(tracked[0]).toMatchObject({
@@ -286,7 +300,7 @@ describe('T2-M-I: the insights ledger row carries the model that ran', () => {
       user_id: U1,
       feature: 'business-os-insights',
       component: 'insight_content',
-      session_id: R1,
+      session_id: INSIGHT_GROUP, // the per-business GROUP, never the shared run id
       success: true,
     });
   });
@@ -297,7 +311,7 @@ describe('T2-M-I: the insights ledger row carries the model that ran', () => {
       .mockRejectedValueOnce(modelNotFound())
       .mockResolvedValue({ choices: [{ message: { content: INSIGHT_JSON } }] });
 
-    await insights().generateLocalizedContent(detection, U1, businessContext, R1);
+    await insights().generateLocalizedContent(detection, U1, businessContext, RUN_IDS);
 
     // Two rows: the 0-token failure on the refused model, then the real call.
     expect(tracked.map((row) => [row.model_name, row.success])).toEqual([
