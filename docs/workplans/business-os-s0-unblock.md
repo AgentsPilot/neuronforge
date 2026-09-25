@@ -12,6 +12,7 @@
 
 - [1. Overview](#1-overview)
 - [2. Scope, and what is deliberately outside it](#2-scope-and-what-is-deliberately-outside-it)
+  - [2.1 Exit criteria](#21-exit-criteria)
 - [3. Analysis summary](#3-analysis-summary)
 - [4. Implementation approach and the decisions taken](#4-implementation-approach-and-the-decisions-taken)
 - [5. Files created / modified](#5-files-created--modified)
@@ -57,6 +58,22 @@ Referenced above so the slice's status is honest rather than silently incomplete
 
 **Also out of scope:** TK-3 (the disposition of `free_tier_expires_at`, S-4a/WS-3), TK-4 (the webhook's Pino conversion — see §9), TK-5, TK-6.
 
+### 2.1 Exit criteria
+
+Worded so that none of them can be read as more than it is. **"Done" here means "the code is right and the gap is closed in the repository" — it does not mean a number is now known.**
+
+| # | Criterion | The wording that matters |
+|---|---|---|
+| 1 | The missing-plan-row scan is an exhaustive anti-join **in code**, and is **exhaustive in production only once the migration is applied there** | ⚠️ Not "the count is now known". Until `20261010` is pasted (runbook step 10), production still has no exhaustive scan, and **nobody knows what `missing_onboarding_only` is.** While the function is absent the repository answers with an **error**, never a zero |
+| 2 | The trim list exists as a list and a mechanism | **Nobody has been trimmed**, and no account changed |
+| 3 | The three misleading documents are corrected, and guarded so they cannot silently revert | — |
+| 4 | H-7 is recorded in the document that would cause the mistake | — |
+| 5 | RD-9 is settled as an executable rule | The cron is still **unscheduled and still blind**; what changed is that it can no longer become scheduled-and-blind unnoticed |
+| 6 | TK-2's inventory is confirmed | A **confirmation**, not a deletion. Nothing was deleted |
+| 7 | G-1, G-2 and TK-1 are **untouched and referenced** | The slice merges without them. The honest status while they are outstanding is **"built, not switched on"** |
+
+> **The one sentence to carry forward:** *the exhaustive anti-join is done in code; the scan becomes exhaustive in production when the migration is applied there, and the count is unknown until then.*
+
 ## 3. Analysis summary
 
 | Area | What S-0 touches |
@@ -93,6 +110,13 @@ Consequences worth stating:
 - **A missing function is an error, not a zero.** The operator applies migrations by hand, so "nothing is missing" and "the check was never installed" *must* look different — the first is a green light to switch enforcement on. An empty result set is treated the same way.
 - `bigint` arrives from PostgREST as a string. Counting is the entire purpose of the method, so every number is coerced with `Number(...)` and there is a test for it (`"37" + 1 === "371"` is the bug).
 - `p_limit` is clamped **1..20000** in both the repository and the function. Two clamps rather than one: the function is callable from the SQL editor by an operator who did not read the repository.
+
+**Two properties SA confirmed that I had not claimed — both make the change bigger than I described it:**
+
+| Property | Why it matters |
+|---|---|
+| **The widening is strict *by construction*** | The profile side of the union is unchanged, so the new result is a **superset** of the old one — it cannot miss anyone the old scan caught, only add. That is what makes this a safe replacement rather than a different answer, and it is stronger than "the two agree on a fixture where every tenant has a profile". Asserted over five fixtures in the migration guard |
+| **The old count was *also* bounded by its fetch limit** | The old code read `business_profiles` with `.order('user_id').limit(maxAccounts + 1)` and sliced to 2,000, so on a database with more than 2,000 profiles it **under-reported even on the profile side** — and because the ordering is stable it dropped **the same tenants on every run**, which is why re-running never surfaced them. So the fix is not only "it now sees onboarding-only tenants": **the count was a partial and is now exact**, with `p_limit` bounding the returned sample only. Asserted with a 2,500-tenant fixture |
 
 ### 4.2 The trim list is a list and a mechanism, never a cut (item 2)
 
@@ -285,10 +309,10 @@ Run from the worktree (which has no `node_modules` of its own):
 
 | Suite | Tests | Result |
 |---|---|---|
-| `lib/business-os/entitlements/__tests__/report.test.ts` | 33 | ✅ |
+| `lib/business-os/entitlements/__tests__/report.test.ts` | **36** | ✅ — +3 for S0-1 |
 | `lib/business-os/entitlements/__tests__/dormantChampions.test.ts` | 14 | ✅ new |
 | `lib/repositories/__tests__/BusinessOsAccountPlanRepository.test.ts` | 36 | ✅ |
-| `supabase/migrations/__tests__/business-os-tenants-missing-plan-row.test.ts` | 16 | ✅ new |
+| `supabase/migrations/__tests__/business-os-tenants-missing-plan-row.test.ts` | **18** | ✅ new — +2 for SA's two confirmations |
 | `scripts/__tests__/entitlementSqlScripts.guard.test.ts` | 70 | ✅ |
 | `app/api/cron/__tests__/freeTierExpiration.rd9.guard.test.ts` | 5 | ✅ new |
 | `docs/__tests__/billingDocsCorrected.rd10.guard.test.ts` | 13 | ✅ new |
@@ -302,14 +326,14 @@ scripts/__tests__  app/api/cron/__tests__  docs/__tests__
 app/admin/business-os-tiers  app/api/admin/business-os
 ```
 
-**70 suites, 1,425 tests, all passing.** 85s.
+**70 suites, 1,430 tests, all passing.** 81s. (SA's own run of the eleven S-0 suites: **270 tests, 0 failures**, before the five fixes below.)
 
 ### 10.2 Typecheck and lint
 
 | Check | Result |
 |---|---|
 | `tsc --noEmit` over the whole repository | **2,077 errors** |
-| In any file S-0 creates or modifies | **0** |
+| In any file S-0 creates or modifies | **0** — unchanged after the SA round, and the repository-wide total did not move either |
 | In the directories S-0 touches | 5, all in files it does not touch: `lib/repositories/CalibrationSessionRepository.ts`, `lib/repositories/WebsiteContentRepository.ts`, `scripts/__tests__/check-bos-llm-literals.test.ts` (×3) |
 | ESLint on the nine changed `.ts` files | **0 errors**, 3 warnings — all three are pre-existing `any`s in the repository test's PostgREST builder stub (lines 48 and 71), outside every hunk of this diff |
 
@@ -324,7 +348,16 @@ The first full run went **red on RC-15** (`businessOsEntitlements.imports.guard.
 | The RD-9 guard listed `businessOsAccountPlanRepository` as one of three signals that a route consults entitlement state | RC-15 forbids application code from naming those symbols at all — so the third signal was describing a path that **cannot legitimately exist** | **Removed the third signal.** The two remaining ones (the table name, the module path) are exhaustive *because* RC-15 closes the third. That interlock is now written in the function's doc comment, along with the fact that RC-15 is what taught it |
 | `dormantChampions.test.ts` names the repository in the **path** of an `import type` | RC-15's match is symbol-shaped but a module path contains the class name, so a type-only import trips it | **Added the test to `ALLOWED`** with the reason. The alternative — importing the type through the `@/lib/repositories` barrel — would have passed by hiding the referrer, which is the exact evasion RC-15's own header warns about |
 
-Recorded because the second one is a **small imprecision in RC-15 worth knowing**: it says it is symbol-level, and for a type-only import it is really path-level. Not changed here (it fails safe, and widening a security guard is not an S-0 change), but it is the kind of thing that makes the next person think they have done something wrong when they have not.
+#### Tracked item, outside S-0 — RC-15's type-only-import precision
+
+SA ruled the guard **stands as-is** (S0-2): the `ALLOWED` entry beat routing through the barrel, and removing the third RD-9 signal with the interlock documented was right. What was wrong was the **header**, which claimed symbol-level precision for both cases. It now says, in place: **symbol-level for a value import, path-level for a type-only import**, because `import type` erases and only the module path survives to be matched.
+
+| | |
+|---|---|
+| **The item** | Refine RC-15's match so a type-only import is not reported as a referrer — e.g. strip `import type { … } from '…'` lines before scanning, or match the imported **binding** rather than the whole file's text |
+| **Why not in S-0** | Widening a security guard is not a change to make inside a slice that is not about it. It **fails safe** today: it over-reports, never under-reports |
+| **Why it is worth doing** | It costs a declaration every time somebody imports a row type, and it makes the next person think they have done something wrong when they have not |
+| **Where it is recorded** | Here, **and pointed at from the guard's own header** — so a reader who trips it finds the explanation in the file that tripped them, not only in a workplan |
 
 ## 11. What QA must run against production
 
@@ -337,7 +370,7 @@ S-0's central claim — *the scan is exhaustive* — is the one thing that canno
 | 3 | The hand-written union/anti-join in runbook step 10 | `missing` **equals** `missing_count` from step 2 | A difference means the function's logic is wrong, and step 3 is the authority |
 | 4 | Checker **block 3**, row **B1** | Agrees with both | B1 is the pre-existing check. Three-way agreement is the point of the slice |
 | 5 | Record `missing_onboarding_only` | **Any number ≥ 0 — nobody knows this yet** | This is the population the old code could not see. If it is above zero, the old report was **wrong on production**, and that number is the evidence |
-| 6 | If `missing_count > 0`: re-apply `20261005b` (re-runnable), then repeat 2–4 | `missing_count` → 0 | — |
+| 6 | If `missing_count > 0`: **record the count, re-apply `20261005b` (re-runnable), record it again**, then repeat 2–4 | The count **falls to 0** | **A count that does not fall is a different problem with a different fix.** The backfill is not what is failing — the plan-row triggers are. Re-running the backfill will not help: check the database log (runbook step 6b) and checker row `trigger rows`, which must be above `0` once new tenants exist |
 | 7 | Load the admin shadow report and read `tenantsWithoutPlanRow` | Same `count`, and its `scope` says "exhaustive" | A mismatch means the route is not reading the new scan |
 | 8 | Read the report's `dormantChampions` | A list, with an `endAccessOp` per account, **and nothing changed** | Any state change is a defect: this section must write nothing |
 
@@ -452,6 +485,38 @@ This is a plan edit, not an S-0 code change. **S0-5** (low): raise it against th
 4. **On the 168 log statements in the payment webhook — I agree with Dev, strongly.** They should be their own task, not a rider on the retirement. Mixing a mechanical logging rewrite into a deletion, inside the one file that handles live money, means a reviewer cannot tell the two apart — and that is how a retirement removes one line too many. Do the deletion on its own, with the smallest possible diff, and convert the logging separately where the whole change is uninteresting and therefore easy to check.
 5. **Unchanged and still waiting on you:** the database key rotation, and making the CI checks required. Everything before the switch-on can be built and merged while those wait.
 
+### 12.10 Dev response — SA round 1 applied
+
+| # | Finding | What was done |
+|---|---|---|
+| **S0-1** | **Required**, and it is the S-0 defect class one layer up from where S-0 fixed it | **Both remedies, not one.** `tenantsWithoutPlanRow` gains **`scanFailed: boolean`**, and all four counts become `number \| null` — on failure every one is `null`, so no number is fabricated. The gate is restated as **`scanFailed === false && count === 0`** and asserted three ways (§12.11). `scanFailed` is the primary signal because **`null > 0` is `false` in JavaScript**: nullability without a flag is the same trap in a different hat. The prose `scope` string stays for human readers and is no longer load-bearing |
+| **S0-2** | Low | RC-15's header corrected in place, and the refinement recorded as a tracked item outside S-0 — §10.3, pointed at **from the guard header**, so a reader who trips it finds the explanation in the file that tripped them |
+| **S0-3** | Low | Runbook step 10 now warns that `CREATE OR REPLACE FUNCTION` **cannot change a return type** (`42P13`), and that adding a column to a `RETURNS TABLE` counts as changing it. **Safe to re-run is not the same as safe to edit** |
+| **S0-4** | Low | Done in **both** places — §11 step 6 and runbook step 10 — each with the three outcomes. **A count that does not fall is a different problem with a different fix:** the backfill is not what is failing, the plan-row triggers are (runbook step 8, checker row `trigger rows`) |
+| **S0-5** | Low, a plan edit | New **§4.6b** in `docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md` at its committed path — an **integration-points** line, not a 36th ledger row. Evidence re-verified here: 48 `connectAccountId`, 14 `stripeAccount:`, importers in payments / scheduling / booking, zero *Dies* patterns. Its **`getOrCreateCustomer` is `private` (`:65`) and is NOT the one Q-T8 splits** (`StripeService.ts:37`) — splitting the wrong one would put a Business OS subscriber onto a business's Stripe account |
+| **Exit criteria** | Wording | §2.1, in SA's words, plus one carry-forward sentence |
+| **SA's two confirmations** | Unclaimed properties | Stated in §4.1 **and made executable** — the strict widening over five fixtures, the fetch-limit under-report with a 2,500-tenant fixture |
+
+### 12.11 How S0-1 is asserted
+
+Three tests, because the finding has three parts:
+
+| Assertion | What it pins |
+|---|---|
+| `a failed scan is distinguishable from nothing missing — by a FLAG, not by prose` | `scanFailed === true`, and `count` / `checked` / `withProfile` / `onboardingOnly` all **`null`, not `0`** |
+| `the switch-on gate REFUSES a failed scan and accepts a real zero` | The gate written **once, as a predicate**, run against both cases. Before the fix both produced `count: 0` and both passed |
+| `the OLD shape would have passed the gate — which is why the type changed` | The negative control: `{ scanFailed: false, count: 0 }` — the exact object the failure branch used to emit — **passes the gate**. Plus the proof that `null` alone was not enough: `Number(failed.count) > 0` is `false`, so the naive numeric gate admits a failed scan too |
+
+**SA's "fix the same shape anywhere else":** the report has three other failure paths and **none has this defect** — pinned by a fourth test that makes all four reads fail at once.
+
+| Path | On failure | Verdict |
+|---|---|---|
+| A failed plan **page** (`pagePlans`) | `truncated: true` on the static section | Already a flag — `accountsScanned: 0` cannot be read as "no accounts" |
+| An unreadable **shadow window** | `rows: []` **with** `truncated: true`; a genuinely empty window returns `false` | Already distinguishable |
+| An unreadable **setup-AI sample** | The section is **absent** rather than zeroed | The strongest form of all |
+
+> One weaker spot **observed and deliberately not changed:** the setup-AI section's absence does not distinguish "not requested" from "could not be read". It fabricates no number and feeds no gate, so it is recorded here rather than fixed inside a slice that is not about it.
+
 ## 13. QA Testing Report
 
 _QA will populate this section._
@@ -467,5 +532,6 @@ _RM will populate this section._
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-09-26 | Created | S-0 items 1–6 implemented; TK-2 confirmed read-only with two corrections to my own first pass and none to §4.6; `console.*` flagged in six files, none of which S-0 modifies |
+| 2026-09-26 | SA round 1 applied (S0-1 required + S0-2..S0-5 low) | S0-1: the report no longer emits `count: 0` on a failed scan — `scanFailed: boolean` plus nullable counts, the gate restated as a predicate and asserted three ways, and the other three failure paths checked for the same shape. S0-2 RC-15 header corrected and the refinement tracked outside S-0. S0-3 runbook `DROP FUNCTION` warning. S0-4 before-and-after counts in both places. S0-5 §4.6b in the plan. Exit criteria §2.1 worded so "done" cannot read as "the count is known". SA's two confirmations stated and made executable. |
 | 2026-09-26 | RC-15 findings resolved | The RD-9 guard's third signal removed (RC-15 makes it unreachable, and the interlock is now documented in the function); `dormantChampions.test.ts` declared in `ALLOWED` rather than routed through the barrel. §10.3 |
 | 2026-09-26 | SA code review: APPROVED for QA with S0-1 (SA) | Added §12. Ran the eleven S-0 suites (270 tests, green). The anti-join is correct: `UNION` dedupes on the pair so the `bool_or` fold is necessary and present, `NOT EXISTS` is NULL-safe, and — the design point that matters — `missing_count` is UNCLAMPED while only the sample is capped, so the number the gate reads can never be silently short. INVOKER/STABLE/`search_path=""`/REVOKE-then-GRANT posture matches WC-9. **Widening verified strict**: the profile side of the union is unchanged, so the new result is a superset by construction; and the old count was itself bounded by its fetch limit, so it could under-report — a bigger fix than Dev claimed. **S0-1 (required):** the repository genuinely guarantees "a failure is an error, never zero" (it throws on error AND on a missing row, with explicit bigint coercion, both pinned by tests) but the REPORT undoes it — its failure branch emits `count: 0` with the distinction only in a prose `scope` string, so the gate as worded is satisfied by a check that never ran. Make it machine-readable and restate the gate. RD-10's three decisions endorsed (archive what would be believed, banner what still has value, keep the original text) and the guard pins the right things. **RC-15 ruling: stands as-is** — adding the test to ALLOWED beats laundering through the barrel, and the claim is symbol-level for value imports but path-level for type-only ones, which fails safe; correct the header (S0-2) and track the refinement outside S-0. **StripeInvoiceService: a boundary note in the billing plan's integration points, not a 36th ledger row** — it is entirely Connect-side and has its own separate `getOrCreateCustomer` that could be confused with Q-T8's (S0-5). Scope is clean; the one thing S-0 cannot close alone is that the scan is only exhaustive in production once applied, which §11 does. Agreed with Dev that the webhook's 168 log statements must be their own task, not a rider on the retirement. |
