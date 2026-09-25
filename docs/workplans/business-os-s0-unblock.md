@@ -347,7 +347,110 @@ S-0's central claim — *the scan is exhaustive* — is the one thing that canno
 
 ## 12. SA Review Notes
 
-_SA will populate this section._
+### SA Code Review — S-0 Unblock
+
+**Reviewed by SA — 2026-09-26** (branch `feature/business-os-s0-unblock`, implementation uncommitted; workplan `7f14f258`; base `fa64e384`)
+**Status:** 🔄 **APPROVED FOR QA WITH ONE REQUIRED FIX (S0-1).** Four low items. The SQL is right, the widening is genuinely strict, and the verification strategy is the best available without a database — but the one guarantee this slice exists to create is undone one layer above where it is made.
+
+**What SA ran:** the eleven S-0 suites — **270 tests, 0 failures**.
+
+### 12.1 The anti-join
+
+**The SQL is correct, and two details are better than they had to be.**
+
+| Property | Verdict |
+|---|---|
+| The union and the fold | ✅ `UNION` dedupes on the **pair**, so a tenant with both a profile and onboarding rows appears twice with different flags — which is exactly why `folded`'s `bool_or` is necessary, and it is there. Getting this wrong would have double-counted every established tenant. |
+| The anti-join | ✅ `NOT EXISTS`, which is NULL-safe. `NOT IN` against a nullable column is the classic version of this bug and it is not what was written. |
+| **The count is unclamped; only the sample is capped** | ✅ **This is the design decision that matters.** `missing_count` counts all of `missing`; `LIMIT` applies to `sampled` alone; `truncated` reports that the *list* is partial. So the number the gate reads can never be silently short — which is precisely how the old implementation could under-report. |
+| Posture | ✅ `SECURITY INVOKER` (right: the only caller holds the service role, so definer rights buy nothing and would become an escalation if a REVOKE were ever dropped), `STABLE`, `SET search_path = ''` with every reference schema-qualified, `REVOKE ALL` from PUBLIC/anon/authenticated then `GRANT EXECUTE` to `service_role`. Matches the convention and WC-9. |
+| Paste rules | ✅ No `--` comments; the trailing `SELECT` gives the operator a visible confirmation row. |
+| The clamp | ✅ `least(greatest(coalesce(p_limit, 2000), 1), 20000)` — a NULL, a zero and a silly number all land somewhere sane. |
+
+**Is the widening strict? Yes, and I checked rather than accepted it.** The profile side of the union is unchanged (`SELECT profiles.user_id FROM public.business_profiles`), so every row the old scan could return is still returned: the new result is a superset by construction. **The new scan cannot miss anything the old one caught.**
+
+And a second improvement the workplan does not claim: the old scan's count was **itself** bounded by its fetch limit, so on a large database it could under-report the size of the problem. The new count cannot. That is a bigger fix than "it now sees onboarding-only tenants".
+
+**One low note:** `CREATE OR REPLACE FUNCTION` cannot change a return type. If these six output columns ever change, this migration will fail with *cannot change return type of existing function* and will need a `DROP FUNCTION` first. Worth a line in the runbook so it is diagnosed in seconds rather than minutes. **S0-3.**
+
+### 12.2 S0-1 (required) — the guarantee is made at the repository and undone at the report
+
+**At the repository the claim holds, and it is properly tested.** `if (error) throw error` covers a missing function, a missing grant and an unapplied migration; `if (!row) throw new Error('… returned no row')` covers an RPC that answers nothing; and the `bigint` → string coercion is explicit, which is a real trap avoided (PostgREST serialises `count(*)` as a string). The boundary suite pins both the *function does not exist* case and the *returned no row* case. So: **a failure at that layer can never look like zero.** ✅
+
+**The report then turns it back into a zero.** Its failure branch emits:
+
+```
+{ checked: 0, count: 0, sample: [], withProfile: 0, onboardingOnly: 0,
+  truncated: true, scope: 'unavailable — the read failed' }
+```
+
+The distinction lives **only in a prose string in a sibling field**. So:
+
+- The gate as §11 words it — *do not set `enforce` while `missing_count` is above zero* — **is satisfied when the read failed**, because the count is `0`.
+- No test and no machine can check "was this a real zero?", because the answer is English.
+- This is the exact class of defect S-0 exists to close: a bookkeeping failure of ours that nobody can see.
+
+The comment above that branch says the row "must never be confused with 'nothing is missing'". The intent is right; the mechanism cannot carry it.
+
+**Required fix:** make the failure machine-readable — a `scanFailed: boolean`, or `count: number | null` — and restate the gate as **"`scanFailed` is false AND `count === 0`"**. Add the assertion to the report suite. §11 step 7 (which checks `scope` says "exhaustive") partially compensates today, and that is why this is a required fix rather than a blocking one: the runbook catches it, the type does not.
+
+### 12.3 What QA must run on production (§11)
+
+**Sound, ordered correctly, and the three-way agreement is the right instrument.** Step 3 nominating the hand-written union as **the authority** is the important choice: when a function and a model disagree, the plain SQL a human can read is what settles it, not the thing under test.
+
+**`missing_onboarding_only` is exactly the right evidence** — it is, by construction, the population the old scan could not see, so it is the number that says whether the previous report was wrong on production and by how much. Recording it as "any number ≥ 0, nobody knows this yet" is the honest framing.
+
+**The gate is not quite sufficient as worded** — see S0-1. With `scanFailed` it becomes sufficient. One addition worth making while there: step 6 says re-apply `20261005b` if the count is above zero, which is right, but it should also say **record the before and after numbers**, because a count that does not fall to zero after a re-run means the triggers are failing rather than the backfill having been missed — a different problem with a different fix. **S0-4.**
+
+### 12.4 RD-10 — all three decisions right
+
+**Archive the one that is actively wrong; banner the two that still have value.** That is the correct split, and the reasoning generalises: a document that would be *believed* is more dangerous than one that is merely old, and `BILLING_SYSTEM_COMPLETE_STATUS.md` claimed completeness for a system that bills the wrong thing. Keeping the original text under a correction table, rather than deleting it, preserves the record of what was thought — which matters when the next person asks why anyone believed it.
+
+**The guard pins the right things, and Dev's description of it is accurate.** It asserts the three specific false claims are named, the banner sits **directly under the title** (placement, not presence), the H-7 text is where the mistake would be made, and that the `plans` table has no callers. It deliberately does not police general wording — which is the difference between a guard and a spellchecker, and the reason it will still be useful in a year.
+
+### 12.5 SA ruling on RC-15
+
+**Dev's observation is correct, the handling was right, and it stands as-is.**
+
+- **The handling:** adding the test file to `ALLOWED` with a written reason, rather than routing the import through the barrel, is the right call and I would have insisted on it. A barrel import is the evasion the guard's own header warns about; **a declared referrer is auditable, a hidden one is not.** Removing the third RD-9 signal because RC-15 forbids naming it, and documenting the interlock, is also right — an interlock nobody wrote down is a trap for whoever next tries to add a signal.
+- **The claim:** RC-15 *is* symbol-level for value imports and only **path-level for a type-only import**, because `import type { X }` erases at compile time and what survives in the source text is the path. Dev is right that it fails safe — it over-reports and forces a declaration.
+- **The ruling:** the **behaviour stands** (widening or refining a security guard is not an S-0 change, and a guard that over-reports is the safe direction). But the guard's own header must stop claiming a precision it does not have: say *symbol-level for value imports; path-level for type-only imports, which fails safe*. **S0-2.** The refinement — skipping `import type` lines, or resolving symbols properly — becomes a **tracked item outside S-0**. A guard that overstates its own precision is what §13.10 of the entitlements workplan was about; correcting the claim costs one sentence.
+
+### 12.6 TK-2 and `StripeInvoiceService`
+
+**Dev's retraction of its own "missing files" flag is right, and worth noting as behaviour:** the paths were invented, Dev checked and withdrew it. §4.6 of the plan needs no correction.
+
+**The `StripeInvoiceService` gap is real. My ruling: it belongs in the plan as a boundary note in §12 (Integration points), not as a 36th ledger row.** I read it: every method takes a `connectAccountId` and calls with `stripeAccount:`, and its six importers are payments, scheduling and booking lifecycle. It is **entirely Connect-side — invoicing the business's own clients** — so it is not a reuse candidate for platform subscription billing at all, and a ledger row would imply it is.
+
+What the plan needs is one line saying so, because two hazards follow from its position:
+1. It sits in the same folder as `StripeService` and shares the Stripe account, so someone asking "how do we create an invoice?" will find this first and use the wrong one.
+2. **It has its own separate `getOrCreateCustomer`**, keyed by connect account — which could easily be mistaken for the one Q-T8 says to split. Naming both stops that.
+
+This is a plan edit, not an S-0 code change. **S0-5** (low): raise it against the billing plan.
+
+### 12.7 Scope
+
+**Nothing in S-0 that should not be in S-0.** Every item is either a gate on switch-on, a correction to a document that would cause a wrong decision, or a guard replacing a comment that cannot exist. The `console.*` calls were flagged and not converted, which is the correct reading of the rule for a file this slice does not otherwise change.
+
+**One thing S-0 delivers but cannot close by itself:** the scan is only *exhaustive in production* once the migration is applied there. S-0 ships the mechanism; §11 closes it. The workplan says so, so this is honest rather than a gap — but the S-0 exit criteria should state it in those words, so nobody reads "exhaustive anti-join: done" as "the count is now known".
+
+### 12.8 Required and low fixes
+
+| # | Fix | Priority |
+|---|---|---|
+| **S0-1** | Make a failed scan machine-readable (`scanFailed`, or `count: number \| null`) and restate the gate as *`scanFailed` is false AND `count === 0`*. Assert it in the report suite. A prose `scope` string cannot carry a gate condition. | **Required** |
+| S0-2 | Correct the RC-15 guard's header: symbol-level for value imports, path-level for type-only imports, fails safe. Track the refinement outside S-0. | Low |
+| S0-3 | Note in the runbook that changing the function's return columns needs a `DROP FUNCTION` first, because `CREATE OR REPLACE` cannot change a return type. | Low |
+| S0-4 | §11 step 6: record the count before **and** after the backfill re-run — a count that does not fall to zero means the triggers are failing, which is a different problem. | Low |
+| S0-5 | Add `StripeInvoiceService` to the billing plan's integration points as Connect-only, naming its separate `getOrCreateCustomer` so it is not confused with Q-T8's. | Low |
+
+### 12.9 For the user
+
+1. **This slice closes the thing I made binding before you switch enforcement on**, and it closes it properly: the count of accounts missing a plan record is now worked out by the database in one exhaustive pass instead of a partial scan, and it counts *everyone* rather than only accounts that got as far as creating a business.
+2. **One fix before it counts as done.** If that check ever fails to run, the report currently shows "0 missing" with the explanation in a different column — so the rule "don't switch on while any are missing" would be satisfied by a check that never ran. That needs to be a flag a machine can read, not a sentence.
+3. **The trim list cuts nobody.** It lists the dormant free accounts and, for each, the exact operation that would end its access. Deciding is yours; nothing happens until you ask for it.
+4. **On the 168 log statements in the payment webhook — I agree with Dev, strongly.** They should be their own task, not a rider on the retirement. Mixing a mechanical logging rewrite into a deletion, inside the one file that handles live money, means a reviewer cannot tell the two apart — and that is how a retirement removes one line too many. Do the deletion on its own, with the smallest possible diff, and convert the logging separately where the whole change is uninteresting and therefore easy to check.
+5. **Unchanged and still waiting on you:** the database key rotation, and making the CI checks required. Everything before the switch-on can be built and merged while those wait.
 
 ## 13. QA Testing Report
 
@@ -365,3 +468,4 @@ _RM will populate this section._
 |------|--------|---------|
 | 2026-09-26 | Created | S-0 items 1–6 implemented; TK-2 confirmed read-only with two corrections to my own first pass and none to §4.6; `console.*` flagged in six files, none of which S-0 modifies |
 | 2026-09-26 | RC-15 findings resolved | The RD-9 guard's third signal removed (RC-15 makes it unreachable, and the interlock is now documented in the function); `dormantChampions.test.ts` declared in `ALLOWED` rather than routed through the barrel. §10.3 |
+| 2026-09-26 | SA code review: APPROVED for QA with S0-1 (SA) | Added §12. Ran the eleven S-0 suites (270 tests, green). The anti-join is correct: `UNION` dedupes on the pair so the `bool_or` fold is necessary and present, `NOT EXISTS` is NULL-safe, and — the design point that matters — `missing_count` is UNCLAMPED while only the sample is capped, so the number the gate reads can never be silently short. INVOKER/STABLE/`search_path=""`/REVOKE-then-GRANT posture matches WC-9. **Widening verified strict**: the profile side of the union is unchanged, so the new result is a superset by construction; and the old count was itself bounded by its fetch limit, so it could under-report — a bigger fix than Dev claimed. **S0-1 (required):** the repository genuinely guarantees "a failure is an error, never zero" (it throws on error AND on a missing row, with explicit bigint coercion, both pinned by tests) but the REPORT undoes it — its failure branch emits `count: 0` with the distinction only in a prose `scope` string, so the gate as worded is satisfied by a check that never ran. Make it machine-readable and restate the gate. RD-10's three decisions endorsed (archive what would be believed, banner what still has value, keep the original text) and the guard pins the right things. **RC-15 ruling: stands as-is** — adding the test to ALLOWED beats laundering through the barrel, and the claim is symbol-level for value imports but path-level for type-only ones, which fails safe; correct the header (S0-2) and track the refinement outside S-0. **StripeInvoiceService: a boundary note in the billing plan's integration points, not a 36th ledger row** — it is entirely Connect-side and has its own separate `getOrCreateCustomer` that could be confused with Q-T8's (S0-5). Scope is clean; the one thing S-0 cannot close alone is that the scan is only exhaustive in production once applied, which §11 does. Agreed with Dev that the webhook's 168 log statements must be their own task, not a rider on the retirement. |
