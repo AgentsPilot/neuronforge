@@ -309,15 +309,57 @@ export async function GET(request: NextRequest) {
         break;
       }
 
+      /*
+       * ───────────────────────────────────────────────────────────────────
+       * ONE AI GROUP PER BUSINESS PER RUN — minted HERE, inside the loop.
+       *
+       * One AI action per business per run (Layer 3, FR-10, D-3): this
+       * business's insight, correlated-insight and health-summary calls share
+       * THIS group and become ONE entry, on the platform actor, trigger
+       * `scheduled`. A throw is recorded as that business's FAILED entry and
+       * rethrown unchanged to the catch below, which logs it and moves on to
+       * the next business (WC-8). A business with no detections makes no call
+       * and writes no entry.
+       *
+       * WHY IT IS MINTED INSIDE THE LOOP (F-13)
+       *
+       * It used to be `runId` — one value per RUN, handed to every business.
+       * The group id becomes the ledger's `token_usage.session_id` AND the
+       * `ai_action` audit entry's `entity_id`, so one value spanned N tenants:
+       * grouping AI spend by that id alone merged several businesses' cost into
+       * one action, and `audit_trail` was not unique on
+       * `(entity_type, entity_id)` across tenants. `validateIdentities` does not
+       * catch it — a shared-but-valid UUID passes.
+       *
+       * The invariant to preserve on both sides: one group id ⇔ exactly one
+       * (business, AI action). Shared WITHIN one business's run; never ACROSS
+       * two. Fragmenting it per call would write three entries per business
+       * instead of one, which is the opposite anti-goal.
+       *
+       * Declared OUTSIDE the try so the catch below can name it: a business
+       * that failed is the one whose group you most want to look up.
+       * ───────────────────────────────────────────────────────────────────
+       */
+      const businessGroupId = crypto.randomUUID();
+
+      /*
+       * Load-bearing, not a convenience.
+       *
+       * The group id is random, so THIS LINE is the only record tying a run to
+       * the groups it produced — nothing derives one from the other, and
+       * nothing stores them together. Without it a run cannot be reconstructed
+       * from the ledger or the audit trail at all. A deterministic id was
+       * considered and rejected (SA Q-1): it would make a business's insight
+       * rows derivable from an admin row, which NFR-2 does not want.
+       *
+       * All three ids on ONE record, so a single log line correlates them.
+       */
+      requestLogger.info(
+        { runId, userId, businessGroupId },
+        'Business AI usage group for this detection run'
+      );
+
       try {
-        /*
-         * One AI action per business per run (Layer 3, FR-10, D-3): its insight,
-         * correlated-insight and health-summary calls share the run's group and
-         * become ONE entry, on the platform actor, trigger `scheduled`. A throw is
-         * recorded as that business's FAILED entry and rethrown unchanged to the
-         * catch below, which logs it and moves on to the next business (WC-8). A
-         * business with no detections makes no call and writes no entry.
-         */
         /*
          * Declared out here so the sweep below can see it. `detections` itself
          * lives inside the audited action, and the sweep deliberately does not
@@ -327,7 +369,7 @@ export async function GET(request: NextRequest) {
         let ranDetectorIds: string[] = [];
 
         await runAiAction(
-          { area: 'insights', actionType: 'insight_run', groupId: runId, trigger: 'scheduled', accountId: userId, correlationId },
+          { area: 'insights', actionType: 'insight_run', groupId: businessGroupId, trigger: 'scheduled', accountId: userId, correlationId },
           async () => {
             // Get user's locale preferences for localized content
             const userLocale = await getUserLocale(userId);
@@ -355,7 +397,7 @@ export async function GET(request: NextRequest) {
               const prioritized = await prioritizer.getTopInsights(userId, detections, 10);
 
               // Store individual insights first
-              const result = await repository.createBatch(userId, prioritized, runId);
+              const result = await repository.createBatch(userId, prioritized, { runId, groupId: businessGroupId });
 
               if (result.data) {
                 stats.insightsCreated += result.data.length;
@@ -372,7 +414,7 @@ export async function GET(request: NextRequest) {
                   userId,
                   correlationSummary,
                   detectorToInsightId,
-                  runId
+                  { runId, groupId: businessGroupId }
                 );
 
                 if (correlationResult.data) {
@@ -389,7 +431,7 @@ export async function GET(request: NextRequest) {
                     userId,
                     correlationSummary,
                     allInsights,
-                    runId
+                    { runId, groupId: businessGroupId }
                   );
                   if (healthResult.data) {
                     stats.healthSummariesCreated++;
@@ -426,7 +468,9 @@ export async function GET(request: NextRequest) {
 
       } catch (error) {
         requestLogger.error(
-          { err: error, userId, runId },
+          // `businessGroupId` too: this business's FAILED audit entry is keyed
+          // on it, so the log and the entry can be matched up.
+          { err: error, userId, runId, businessGroupId },
           'Failed to process user for detection'
         );
         stats.errors++;
