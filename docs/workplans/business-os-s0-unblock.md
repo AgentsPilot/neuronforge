@@ -6,7 +6,8 @@
 **Requirement:** [BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md](/docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md) §6.3 (S-0), RD-9, RD-10, H-7, TK-2
 **Branch:** `feature/business-os-s0-unblock` (from `origin/main` at `fa64e384`)
 **Date:** 2026-09-26
-**Status:** Code Complete — awaiting SA review
+**Status:** Code Complete — SA approved, re-applied after a tree reset, awaiting QA
+**WIP commit:** `a572d432` (the implementation; committed on purpose — §10.4)
 
 ## Table of Contents
 
@@ -21,6 +22,7 @@
 - [8. How the exhaustive scan is verified without a database](#8-how-the-exhaustive-scan-is-verified-without-a-database)
 - [9. `console.*` in the touch set — flagged, not converted](#9-console-in-the-touch-set--flagged-not-converted)
 - [10. Test and typecheck numbers](#10-test-and-typecheck-numbers)
+  - [10.4 The reset, the recovery, and what it proved](#104-the-reset-the-recovery-and-what-it-proved)
 - [11. What QA must run against production](#11-what-qa-must-run-against-production)
 - [12. SA Review Notes](#12-sa-review-notes)
 - [13. QA Testing Report](#13-qa-testing-report)
@@ -312,7 +314,7 @@ Run from the worktree (which has no `node_modules` of its own):
 | `lib/business-os/entitlements/__tests__/report.test.ts` | **36** | ✅ — +3 for S0-1 |
 | `lib/business-os/entitlements/__tests__/dormantChampions.test.ts` | 14 | ✅ new |
 | `lib/repositories/__tests__/BusinessOsAccountPlanRepository.test.ts` | 36 | ✅ |
-| `supabase/migrations/__tests__/business-os-tenants-missing-plan-row.test.ts` | **18** | ✅ new — +2 for SA's two confirmations |
+| `supabase/migrations/__tests__/business-os-tenants-missing-plan-row.test.ts` | **22** | ✅ new — +2 for SA's two confirmations, +4 for QA's read-level findings (§10.4) |
 | `scripts/__tests__/entitlementSqlScripts.guard.test.ts` | 70 | ✅ |
 | `app/api/cron/__tests__/freeTierExpiration.rd9.guard.test.ts` | 5 | ✅ new |
 | `docs/__tests__/billingDocsCorrected.rd10.guard.test.ts` | 13 | ✅ new |
@@ -326,7 +328,7 @@ scripts/__tests__  app/api/cron/__tests__  docs/__tests__
 app/admin/business-os-tiers  app/api/admin/business-os
 ```
 
-**70 suites, 1,430 tests, all passing.** 81s. (SA's own run of the eleven S-0 suites: **270 tests, 0 failures**, before the five fixes below.)
+**70 suites, 1,434 tests, all passing.** 80s. (SA's own run of the eleven S-0 suites: **270 tests, 0 failures**, before the five fixes below.)
 
 ### 10.2 Typecheck and lint
 
@@ -358,6 +360,53 @@ SA ruled the guard **stands as-is** (S0-2): the `ALLOWED` entry beat routing thr
 | **Why not in S-0** | Widening a security guard is not a change to make inside a slice that is not about it. It **fails safe** today: it over-reports, never under-reports |
 | **Why it is worth doing** | It costs a declaration every time somebody imports a row type, and it makes the next person think they have done something wrong when they have not |
 | **Where it is recorded** | Here, **and pointed at from the guard's own header** — so a reader who trips it finds the explanation in the file that tripped them, not only in a workplan |
+
+### 10.4 The reset, the recovery, and what it proved
+
+On 2026-09-26 a QA mutation batch ran `git checkout -- lib docs supabase` between mutations, seventeen times, against a tree whose implementation was **uncommitted**. Every change to a **tracked** file was destroyed. Recorded here because two things came out of it that are worth keeping.
+
+#### The guards specified the code well enough to rebuild it
+
+Not a consolation prize — a measurable property. Each surviving suite was red, and each went green on the first run against a rewrite driven only by the suite:
+
+| Recovered from its own guard | Result |
+|---|---|
+| `report.ts` — the `dormantChampions` section | `dormantChampions.test.ts` **14/14, first run** |
+| The three RD-10 document corrections | `billingDocsCorrected.rd10.guard.test.ts` **13/13, first run** |
+| The migration SQL | Its guard named five of the seven defects below by line |
+
+The cost was the prose, not the logic: comments and doc-block reasoning had to be re-written from scratch, because no test pins a comment. That is the honest boundary of guard-as-specification.
+
+#### ⚠️ The untracked files survived deletion but **not mutation**
+
+`git checkout` cannot restore an untracked file — and by the same token it cannot revert one. The migration SQL was the mutation **subject** and was left carrying **seven live mutants**:
+
+| # | Mutant found in the file | Caught by |
+|---|---|---|
+| 1 | `SECURITY DEFINER` instead of `SECURITY INVOKER` | the guard |
+| 2 | `SET search_path = ''` deleted | the guard |
+| 3 | Clamp cap `200000` instead of `20000` | the guard |
+| 4 | Second `UNION` arm reading `public.business_profiles` **twice** instead of `onboarding_conversations` — i.e. the S-0 defect restored | the guard |
+| 5 | `GROUP BY tenants.user_id` deleted from the fold | the guard |
+| 6 | `missing_count` taken from **`sampled`** rather than `missing` | **nothing** |
+| 7 | `tenants_checked` taken from the **raw union** rather than `folded` | **nothing** |
+| 8 | `truncated` direction reversed (`<` for `>`) | **nothing** |
+
+Numbers 6, 7 and 8 are **precisely the three arithmetic properties QA reported as unasserted** — so that finding is not a review opinion, it is three mutants that survived a batch. All three are now asserted, and the assertions say what the wrong version would do rather than only what the right one looks like:
+
+| Assertion | What the mutant would have caused |
+|---|---|
+| `counts the MISSING, not the sample` | `count(*) FROM sampled` is bounded by `LIMIT cap`, so on any database with more missing tenants than the cap the count would report `cap` and stop — a capped number where the whole point was an exact one |
+| `counts tenants from the FOLDED set — accounts, not rows` | An account that sent 40 onboarding messages counted as 40 tenants, and `tenants_checked` disagreeing with the checker for a reason nobody could see |
+| `flags truncation in the right DIRECTION` | `true` on a healthy database and `false` on the one database where the sample really is incomplete — the single worst way for this flag to be wrong |
+
+#### QA's third finding: a NULL `user_id`
+
+**Not reachable today.** Both tenant tables declare `user_id UUID … NOT NULL` — `20260721_create_business_profiles.sql:7` and `20260721_create_onboarding_conversations.sql:7`. Added `WHERE user_id IS NOT NULL` to both `UNION` arms anyway, with an assertion: a NULL would survive the `UNION`, fold to its own group, match no plan record, and be reported as a missing tenant that does not exist. The constraint lives in a migration a different change could alter; the filter costs nothing and does not depend on it.
+
+#### The stray-escape sweep
+
+Six `\'` sequences inside **block comments** (the fingerprint of a scripted edit, where the escape has no meaning and renders as a literal backslash) were in the destroyed versions and are gone from the rewrite. The four remaining matches in this slice are inside single-quoted string literals, where the escape is correct. Verified with a fixed-string sweep over all nine files.
 
 ## 11. What QA must run against production
 
@@ -532,6 +581,7 @@ _RM will populate this section._
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-09-26 | Created | S-0 items 1–6 implemented; TK-2 confirmed read-only with two corrections to my own first pass and none to §4.6; `console.*` flagged in six files, none of which S-0 modifies |
+| 2026-09-26 | Re-applied after a tree reset; QA read-level findings folded in | A QA reset loop destroyed every uncommitted change to a tracked file. Rebuilt from the surviving guards (`dormantChampions` 14/14 and RD-10 13/13 on the first run). **The untracked SQL survived deletion but carried seven live mutants**, three of which — `missing_count` from the sample, `tenants_checked` from the raw union, and a reversed `truncated` — were exactly the arithmetic properties QA had reported as unasserted, and are now asserted. `WHERE user_id IS NOT NULL` added to both UNION arms (unreachable today; both tables are NOT NULL). Stray `\'` escapes swept. **Committed as WIP `a572d432`.** §10.4 |
 | 2026-09-26 | SA round 1 applied (S0-1 required + S0-2..S0-5 low) | S0-1: the report no longer emits `count: 0` on a failed scan — `scanFailed: boolean` plus nullable counts, the gate restated as a predicate and asserted three ways, and the other three failure paths checked for the same shape. S0-2 RC-15 header corrected and the refinement tracked outside S-0. S0-3 runbook `DROP FUNCTION` warning. S0-4 before-and-after counts in both places. S0-5 §4.6b in the plan. Exit criteria §2.1 worded so "done" cannot read as "the count is known". SA's two confirmations stated and made executable. |
 | 2026-09-26 | RC-15 findings resolved | The RD-9 guard's third signal removed (RC-15 makes it unreachable, and the interlock is now documented in the function); `dormantChampions.test.ts` declared in `ALLOWED` rather than routed through the barrel. §10.3 |
 | 2026-09-26 | SA code review: APPROVED for QA with S0-1 (SA) | Added §12. Ran the eleven S-0 suites (270 tests, green). The anti-join is correct: `UNION` dedupes on the pair so the `bool_or` fold is necessary and present, `NOT EXISTS` is NULL-safe, and — the design point that matters — `missing_count` is UNCLAMPED while only the sample is capped, so the number the gate reads can never be silently short. INVOKER/STABLE/`search_path=""`/REVOKE-then-GRANT posture matches WC-9. **Widening verified strict**: the profile side of the union is unchanged, so the new result is a superset by construction; and the old count was itself bounded by its fetch limit, so it could under-report — a bigger fix than Dev claimed. **S0-1 (required):** the repository genuinely guarantees "a failure is an error, never zero" (it throws on error AND on a missing row, with explicit bigint coercion, both pinned by tests) but the REPORT undoes it — its failure branch emits `count: 0` with the distinction only in a prose `scope` string, so the gate as worded is satisfied by a check that never ran. Make it machine-readable and restate the gate. RD-10's three decisions endorsed (archive what would be believed, banner what still has value, keep the original text) and the guard pins the right things. **RC-15 ruling: stands as-is** — adding the test to ALLOWED beats laundering through the barrel, and the claim is symbol-level for value imports but path-level for type-only ones, which fails safe; correct the header (S0-2) and track the refinement outside S-0. **StripeInvoiceService: a boundary note in the billing plan's integration points, not a 36th ledger row** — it is entirely Connect-side and has its own separate `getOrCreateCustomer` that could be confused with Q-T8's (S0-5). Scope is clean; the one thing S-0 cannot close alone is that the scan is only exhaustive in production once applied, which §11 does. Agreed with Dev that the webhook's 168 log statements must be their own task, not a rider on the retirement. |
