@@ -183,7 +183,15 @@ None. The change is static data only.
 
 ## Commit Info
 
-_RM to populate._
+**RM — 2026-09-25**
+
+| Field | Value |
+|---|---|
+| Branch | `feature/admin-module-bos-reorganisation` (on `b613bb97`; `origin/main` had not moved, so no merge was needed) |
+| Commit | `252623a6` feat(admin): regroup the admin sidebar around Business OS (slice 1) |
+| Files | `AdminSidebar.tsx`, `components/__tests__/AdminSidebar.nav.test.ts` (new), `business-os-llm/__tests__/nav.test.ts`, `business-os-tiers/__tests__/nav.test.ts`, this workplan |
+| PR | [#107](https://github.com/AgentsPilot/neuronforge/pull/107), not merged |
+| Merge gate | Browser checks M-1 to M-5 are owed by the user (listed in the PR test plan). The merge needs explicit user approval |
 
 ---
 
@@ -193,3 +201,4 @@ _RM to populate._
 |------|--------|---------|
 | 2026-09-25 | Created | Slice 1 implemented, uncommitted, handed to SA and QA |
 | 2026-09-25 | QA report | PASS: 24/24 sidebar tests, 299/299 `app/admin` tests, and tsc shows no new errors against a clean baseline. Browser checks M-1 to M-5 owed by user |
+| 2026-09-25 | RM commit | Committed as `252623a6`, PR #107 opened against `main`; not merged |
