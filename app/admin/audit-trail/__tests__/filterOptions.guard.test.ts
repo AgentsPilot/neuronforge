@@ -59,8 +59,20 @@ describe('the audit page holds no hardcoded catalogue literal', () => {
 
   it('builds both lists from the shared catalogue module instead', () => {
     expect(source).toContain("from '@/lib/audit/filterOptions'");
-    expect(source).toContain('buildActionFilterGroups()');
     expect(source).toContain('buildEntityTypeFilterOptions()');
+  });
+
+  it('restricts the Action list by the explicit audience map, not by a list of its own (slice 2c)', () => {
+    // The operator list is catalogue minus the events TAGGED agentspilot in
+    // lib/audit/eventAudience.ts. The page must not grow its own exclusions.
+    expect(source).toContain('buildActionFilterGroups({ audiences: OPERATOR_AUDIENCES })');
+    expect(source).toContain("from '@/lib/audit/eventAudience'");
+    expect(source).not.toMatch(/\.filter\(\s*\(?\s*\w+\s*\)?\s*=>\s*!\s*\[/);
+  });
+
+  it('builds the BOS AI failures preset from the catalogue constant, not a literal', () => {
+    expect(source).toContain('AUDIT_EVENTS.BUSINESS_AI_ACTION_FAILED');
+    expect(source).not.toContain("'BUSINESS_AI_ACTION_FAILED'");
   });
 });
 
