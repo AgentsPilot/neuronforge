@@ -14,6 +14,25 @@
  * counts as a string" is how the two rules drift apart.
  *
  * Its unit tests stay in the surface guard, next to the rules that depend on it.
+ *
+ * ── The OTHER normaliser, and why it is not folded in here ────────────────
+ * `flattened()` in `tests/helpers/bos-llm-literal-rules.ts` also normalises
+ * source before a scan, and the two look adjacent enough that someone will
+ * eventually try to merge them. They are OPPOSITE operations:
+ *
+ *   `blankStringLiterals` ERASES string content, so a scan for a CODE SHAPE
+ *   cannot be fooled by a decoy inside a literal (D-Q1).
+ *   `flattened`           JOINS `'…' + '…'` and collapses whitespace, so a
+ *   scan for a PHRASE can see a literal the author wrapped (CR-1).
+ *
+ * Run `flattened` first and the phrase scans below match nothing; run
+ * `blankStringLiterals` first and the phrase rules lose the exact text they
+ * exist to find. And they cannot share an implementation even in principle:
+ * this one preserves LENGTH by contract (callers slice the original text by
+ * offsets computed on the scaffold — see `literalSpanAt` and the "preserves
+ * offsets" unit test), while `flattened` deletes characters on purpose.
+ *
+ * So: two normalisers, one each, by design. A third would be the drift.
  */
 
 /** Characters that open a string. */

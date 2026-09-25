@@ -24,10 +24,16 @@
  * @see docs/workplans/BUSINESS_OS_LLM_MODEL_SETTINGS_ADMIN_UI_WORKPLAN.md §5
  */
 
-/** Which level a resolved field came from. Rendered as a provenance badge. */
+/** Which level a resolved field came from. Drives the FR-6 markers. */
 export type ProvenanceLevel = 'call' | 'area' | 'default';
 
-/** The four settable fields, in the order the payload reports them. */
+/**
+ * The four settable fields, in the order the payload reports them.
+ *
+ * All four still arrive and all four still carry provenance — the screen
+ * RENDERS two of them (`markers.ts`), which is a presentation decision, so
+ * slice 3 can render more without a route change.
+ */
 export type SettingField = 'enabled' | 'provider' | 'model' | 'temperature';
 
 export interface SettingIssue {
@@ -88,6 +94,18 @@ export interface CallView {
   defaults: { provider: string; model: string; temperature: number | null };
 }
 
+/**
+ * A catalogued call this page cannot configure (FR-9).
+ *
+ * Both fields are server-derived: the client may not import the policy module
+ * (FR-6), so it can neither know which calls are excluded nor write the reason
+ * itself. See `ExcludedCallView` in `lib/business-os/llm/adminSettingsView.ts`.
+ */
+export interface ExcludedCallView {
+  callName: string;
+  reason: string;
+}
+
 export interface AreaView {
   area: string;
   key: string;
@@ -98,6 +116,7 @@ export interface AreaView {
   updatedAt: string | null;
   lastChangedBy: LastChangedBy;
   calls: CallView[];
+  excludedCalls: ExcludedCallView[];
   areaIssues: SettingIssue[];
   temperatureBounds: { min: number; max: number };
   modelOptions: AreaModelOptions;

@@ -3,6 +3,23 @@
 /**
  * FR-18 / FR-19 — the ledger check, and everything it cannot tell you.
  *
+ * ── ⚠️ PARKED 2026-09-24 — built, tested, NOT MOUNTED (FR-3) ─────────────
+ * `AreaCard` no longer renders this component. Nothing below has changed: the
+ * component, `ledgerCheckCopy.ts`, the `…/ledger` route and all of their tests
+ * stay and stay green, so this is "built, tested, not mounted" rather than
+ * dead code. Re-mounting is ONE import plus ONE line in `AreaCard.tsx`.
+ *
+ * WHY: the check is bounded to a change made in the last 24 hours and every
+ * stored row is older than that, so every area's only reachable state today is
+ * `too_long_ago` — eight identical shrugs on a page that this round is
+ * quietening. It becomes informative again when slice 3 makes the page a
+ * writer and a change can be minutes old.
+ *
+ * ⚠️ SLICE 3 (R-D): while this panel is parked, the ~60-second propagation
+ * statement is carried by `PAGE_STANDING_NOTE` in the page header. Re-mounting
+ * this component without revisiting that line renders the propagation fact
+ * TWICE. Both compose the same private `PROPAGATION_CLAUSE` in `copy.ts`.
+ *
  * ── The panel writes no READINGS of its own ──────────────────────────────
  * Every reading, and the caveat, comes from
  * `lib/business-os/llm/ledgerCheckCopy.ts` — the same module the route imports,

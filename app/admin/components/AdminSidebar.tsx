@@ -153,7 +153,11 @@ const navigationSections: NavSection[] = [
         name: 'Business OS AI',
         href: '/admin/business-os-llm',
         icon: Bot,
-        description: 'Models & Switches'
+        // FR-12: the page no longer mirrors the on/off switch (runbook §4 is
+        // the switch's door), so the previous description named a surface that
+        // is not there. Pinned by `business-os-llm/__tests__/nav.test.ts`,
+        // scoped to THIS entry, so it cannot drift back unnoticed.
+        description: 'Models & temperatures'
       },
       {
         name: 'Business OS Tiers',

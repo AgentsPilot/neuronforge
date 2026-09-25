@@ -277,3 +277,32 @@ describe('RC-D: a refusal is a state, not an error', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * R-T19 / FR-20 / C-2 — ADDED 2026-09-24, and the only reason it is an
+ * addition rather than an edit.
+ *
+ * `PROPAGATION_NOTE` had exactly one rendered assertion, and it was on the
+ * PAGE (S2-T11, reached through `getByTestId('ledger-panel')`), not here.
+ * Parking the panel (FR-3) re-points that assertion at the page header — where
+ * only the ~60-second clause survives, because the constant's second clause is
+ * ledger-specific. Without this test the sentence "the ledger check only starts
+ * counting after that" would have no coverage at all for as long as the panel
+ * is unmounted, which is precisely the accident R-D exists to catch, one layer
+ * down.
+ *
+ * Nothing else in this file is touched: SA F-6's eight-branch table and RC-D's
+ * neutral-tone assertion render the component DIRECTLY, so parking does not
+ * reach them.
+ */
+describe('R-T19: the parked panel still carries the whole propagation note', () => {
+  it('states the ~60 seconds AND what the ledger check does with it', async () => {
+    answer(200, reading('stopped_with_before', { after: 0, before: 30 }));
+    render(<LedgerCheckPanel area="insights" since={SINCE} />);
+
+    const panel = await screen.findByTestId('ledger-panel');
+    expect(panel).toHaveTextContent('Running instances pick a change up within about 60 seconds');
+    expect(panel).toHaveTextContent('The ledger check only starts counting after that');
+    expect(panel).toHaveTextContent('a check run sooner has nothing to count yet');
+  });
+});

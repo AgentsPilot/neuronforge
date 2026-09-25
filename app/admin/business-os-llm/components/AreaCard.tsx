@@ -1,45 +1,60 @@
 'use client';
 
 /**
- * One area, collapsed to the four things that matter at a glance and expanded
- * to everything the resolver knows about it.
+ * One area, collapsed to what matters at a glance and expanded to everything
+ * the resolver knows about it.
  *
  * ── The chip never says an area is OFF ───────────────────────────────────
  * It says "Configured: off" (FR-16). The distinction is the whole point of the
  * screen: `isBosLlmAreaEnabled` fails open, so the row saying `false` and the
  * fleet honouring it are two different facts, and only one of them is on this
- * page. The fail-open notice sits beside the chip for exactly that reason
- * (FR-17) and cannot be dismissed.
+ * page. `PAGE_STANDING_NOTE` carries that once, at the top, and the caveat
+ * beside this chip carries it again on the one card where it bites.
+ *
+ * ── The switch CONTROL is no longer mirrored (FR-1) ──────────────────────
+ * Decision, 2026-09-24: the page deliberately no longer mirrors the on/off
+ * switch. `Configured: on` and `Cannot be switched off` are gone; the switch
+ * itself is UNCHANGED and remains script-only (runbook §4). What is kept is
+ * the STATE, as an exception — the off chip here, the per-call chip in
+ * `CallRow`, and the collapsed roll-up between them. **Slice 3 must restore
+ * the full FR-17 treatment (the banner, the inline sentence and the
+ * confirmation sentence) in the same change that puts a real control on the
+ * page**; that obligation is recorded in the approved requirement under FR-17
+ * and AC-16, not only here (FR-16), because slice 3 is the change most likely
+ * to rewrite this comment.
+ *
+ * ── An off area is the card's ONLY off statement (RC-4, RC-6) ────────────
+ * `areaShowsOff` guards the roll-up AND the per-call chips. With the area off
+ * every switchable call inherits `enabled: false` while every LOCKED call
+ * still resolves `enabled: true` — so an unguarded card would read
+ * "Configured: off", mark `analysis` and leave `planner` bare, which reads as
+ * "planner is still running". The state the call-level chip exists for is
+ * *area on, calls off*: the `--include-calls` trap, where `--enabled true`
+ * restores the area flag and leaves the call flags off.
  */
 
-import { ChevronDown, ChevronRight, Lock } from 'lucide-react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import {
+  AREA_OFF_CAVEAT,
   ISSUE_GLOSS,
-  LOCK_AREA_FAIL_OPEN,
-  LOCK_AREA_NOT_SWITCHABLE,
+  MARKER_LEGEND,
   NO_STORED_ROW,
   READ_ONLY_NOTE,
+  setPerCallTitle,
 } from '../copy';
+import { callsSetPerCall } from '../markers';
 import type { AreaView } from '../types';
 import { CallRow } from './CallRow';
 import { Chip } from './Chip';
-import { FailOpenNotice } from './FailOpenNotice';
+import { ExcludedCallRow } from './ExcludedCallRow';
 import { LastChangedLine } from './LastChangedLine';
-import { LedgerCheckPanel } from './LedgerCheckPanel';
 import { StoredRowPanel } from './StoredRowPanel';
 
 interface Props {
   area: AreaView;
   expanded: boolean;
   onToggle: () => void;
-}
-
-/** How many calls have at least one field set on the call itself. */
-function overrideCount(area: AreaView): number {
-  return area.calls.filter((call) =>
-    Object.values(call.provenance).some((level) => level === 'call')
-  ).length;
 }
 
 /**
@@ -54,8 +69,52 @@ function areaModelSummary(area: AreaView): string {
   return models.length === 1 ? models[0] : `varies by call (${models.length})`;
 }
 
+/**
+ * The same shape for the provider (FR-8), deliberately — the two summaries sit
+ * on one line, and a reader should not have to learn two conventions.
+ *
+ * ── Why it is derived, and why it defends itself ─────────────────────────
+ * The provider was 22 repetitions of one word in the page's most expensive
+ * space. It moves here because every call in every area resolves to the same
+ * one today — a precondition that was CHECKED, not assumed. It is also checked
+ * on every render: the day two calls in one area genuinely differ (a second
+ * entry in the policy's allowed providers, which is a code change with its own
+ * test) the header says so and the per-call field comes back automatically,
+ * with its issues, through `renderedFieldsFor`.
+ *
+ * ⚠️ The condition is `size > 1` and must NEVER be a comparison against a
+ * provider NAME — a literal here would be both a lie in the browser bundle and
+ * a rule that stops working the day it matters. `source.guard.test.ts` makes
+ * that enforceable (FR-13); until this round, nothing would have caught it.
+ */
+function areaProviderSummary(area: AreaView): string {
+  const providers = Array.from(new Set(area.calls.map((call) => call.resolved.provider)));
+  if (providers.length === 0) return 'no configurable calls';
+  return providers.length === 1 ? providers[0] : `varies by call (${providers.length})`;
+}
+
 export function AreaCard({ area, expanded, onToggle }: Props) {
-  const overrides = overrideCount(area);
+  /** One guard, not a second copy of the condition (RC-4). */
+  const areaShowsOff = area.switchable && !area.configuredEnabled;
+  const setPerCall = callsSetPerCall(area);
+  const offCalls = areaShowsOff
+    ? 0
+    : area.calls.filter((call) => !call.resolved.enabled).length;
+  /*
+   * QA EDGE-1: ONE tolerant binding, not a `?? []` at each of the two sites.
+   *
+   * A payload without `excludedCalls` blanked the whole page (the area heading
+   * never rendered), and nothing would have caught it: the `AreaView` wire pin
+   * is one-directional (§8.1), `next.config.js` ignores type errors, and jest
+   * is type-blind. Not reachable while client and server ship in one Vercel
+   * deployment — but a missing list should cost a row, not the screen.
+   */
+  const excludedCalls = area.excludedCalls ?? [];
+  /* FR-9: the chip answers "what does this area do", so it counts every
+     catalogued call — including the ones this page cannot configure. */
+  const callCount = area.calls.length + excludedCalls.length;
+  const showPerCallProvider =
+    new Set(area.calls.map((call) => call.resolved.provider)).size > 1;
 
   return (
     <article
@@ -78,27 +137,25 @@ export function AreaCard({ area, expanded, onToggle }: Props) {
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-semibold text-white">{area.area}</h3>
 
-            {/* FR-16: the chip describes the CONFIGURATION, and says so. */}
-            {!area.switchable ? (
-              <Chip tone="neutral" testId="state-chip">
-                <Lock className="h-3 w-3" aria-hidden="true" /> Cannot be switched off
-              </Chip>
-            ) : area.configuredEnabled ? (
-              <Chip tone="info" testId="state-chip">
-                Configured: on
-              </Chip>
-            ) : (
+            {/* FR-2 / FR-16: the chip describes the CONFIGURATION, says so,
+                and renders only in the exception. */}
+            {areaShowsOff && (
               <Chip tone="warn" testId="state-chip">
                 Configured: off
               </Chip>
             )}
 
-            <Chip tone="quiet">
-              {area.calls.length} {area.calls.length === 1 ? 'call' : 'calls'}
+            <Chip tone="quiet" testId="call-count-chip">
+              {callCount} {callCount === 1 ? 'call' : 'calls'}
             </Chip>
-            {overrides > 0 && (
-              <Chip tone="accent" testId="override-chip">
-                {overrides} with a call override
+            {setPerCall > 0 && (
+              <Chip tone="accent" title={setPerCallTitle(setPerCall)} testId="set-per-call-chip">
+                {setPerCall} set per call
+              </Chip>
+            )}
+            {offCalls > 0 && (
+              <Chip tone="warn" testId="calls-off-chip">
+                {offCalls} {offCalls === 1 ? 'call' : 'calls'} configured off
               </Chip>
             )}
             {area.areaIssues.length > 0 && (
@@ -109,9 +166,18 @@ export function AreaCard({ area, expanded, onToggle }: Props) {
             )}
           </div>
 
-          <p className="truncate text-xs text-slate-400">
+          <p className="truncate text-xs text-slate-400" data-testid="area-summary">
+            provider <span className="font-mono text-slate-300">{areaProviderSummary(area)}</span>
+            {' · '}
             model <span className="font-mono text-slate-300">{areaModelSummary(area)}</span>
           </p>
+
+          {/* On the one card where it bites, and nowhere else. */}
+          {areaShowsOff && (
+            <p data-testid="area-off-caveat" className="text-xs text-amber-300/90">
+              {AREA_OFF_CAVEAT}
+            </p>
+          )}
 
           {/* FR-7 and FR-14 are mutually exclusive by construction: no row
               means no attribution line, and `LastChangedLine` renders nothing
@@ -128,31 +194,11 @@ export function AreaCard({ area, expanded, onToggle }: Props) {
 
       {expanded && (
         <div className="space-y-4 border-t border-slate-700 p-4">
-          <div className="space-y-2">
-            {/* FR-17: beside the switch state of every area that HAS a switch,
-                whenever the card is open. The word "always" belonged to the
-                BANNER, which sits above the cards and is never collapsed (SA
-                F-7) — this copy is the same claim at the point of use. Slice 3
-                must place it adjacent to the real control and in the FR-15
-                confirmation, where "beside every switch" becomes literal.
-
-                The non-switchable area gets its own line INSTEAD (QA DEF-S2-4):
-                telling an operator a switch-off is not a guarantee, one line
-                above telling them the switch-off cannot exist, is a flat
-                contradiction — and it was the most prominent text on the one
-                card where the warning cannot apply. What does still apply there
-                is the fail-open behaviour of the MODEL, which is that area's
-                only lever, so that is what its line says. */}
-            {area.switchable ? (
-              <FailOpenNotice variant="inline" />
-            ) : (
-              <div data-testid="area-lock-reason" className="space-y-1 text-xs text-amber-300/90">
-                <p>{LOCK_AREA_NOT_SWITCHABLE}</p>
-                <p className="text-slate-400">{LOCK_AREA_FAIL_OPEN}</p>
-              </div>
-            )}
-            <p className="text-xs text-slate-500">{READ_ONLY_NOTE}</p>
-          </div>
+          {/* RC-8: this line shared its wrapper with the two notices FR-1 and
+              FR-5 deleted, and nothing asserted it. It stays, verbatim. */}
+          <p data-testid="read-only-note" className="text-xs text-slate-500">
+            {READ_ONLY_NOTE}
+          </p>
 
           {area.areaIssues.length > 0 && (
             <ul className="space-y-1">
@@ -171,12 +217,48 @@ export function AreaCard({ area, expanded, onToggle }: Props) {
 
           <div className="space-y-2">
             <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Calls</h4>
+            {/* At the point of use: only one card expands at a time, so exactly
+                one legend is ever on screen. A page-header legend would be far
+                from the marks, read once, then forgotten. */}
+            <p data-testid="marker-legend" className="text-[11px] leading-relaxed text-slate-500">
+              {MARKER_LEGEND}
+            </p>
             {area.calls.map((call) => (
-              <CallRow key={call.callName} call={call} />
+              <CallRow
+                key={call.callName}
+                call={call}
+                showProvider={showPerCallProvider}
+                areaShowsOff={areaShowsOff}
+              />
+            ))}
+            {/* FR-9: catalogued, not configurable here. Below the configurable
+                calls, and quiet. */}
+            {excludedCalls.map((call) => (
+              <ExcludedCallRow key={call.callName} call={call} />
             ))}
           </div>
 
-          <LedgerCheckPanel area={area.area} since={area.updatedAt} />
+          {/*
+           * PARKED 2026-09-24 (FR-3) — `<LedgerCheckPanel area={…} since={…} />`
+           * used to render here.
+           *
+           * WHY: the check is bounded to a change made in the last 24 hours and
+           * every stored row is older than that, so every area's only reachable
+           * state today is `too_long_ago` — eight identical shrugs. The panel
+           * becomes informative again when slice 3 makes this page a writer.
+           *
+           * NOT DELETED: `components/LedgerCheckPanel.tsx`,
+           * `lib/business-os/llm/ledgerCheckCopy.ts`, the `…/ledger` route and
+           * all of their tests stay and stay green. Re-mounting is ONE import
+           * plus ONE line.
+           *
+           * ⚠️ SLICE 3, READ THIS FIRST (R-D): while the panel is parked, the
+           * ~60-second propagation statement is carried by `PAGE_STANDING_NOTE`
+           * in the page header. Re-mounting the panel without revisiting that
+           * line renders the propagation fact TWICE. Both compose the same
+           * private `PROPAGATION_CLAUSE` in `copy.ts`, so the fix is a copy
+           * decision, not a merge.
+           */}
 
           <StoredRowPanel area={area} />
         </div>

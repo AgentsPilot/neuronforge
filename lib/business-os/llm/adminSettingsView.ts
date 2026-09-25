@@ -37,7 +37,9 @@ import {
 } from '@/lib/business-os/llm/modelSettings';
 import {
   BOS_LLM_AREA_LOCKS,
+  BOS_LLM_SETTINGS_EXCLUSION_REASON,
   bosLlmAreaKey,
+  bosLlmExcludedCallNames,
   bosLlmSettingsCallNames,
   getBosLlmCallPolicy,
   isSwitchableBosLlmCall,
@@ -98,6 +100,23 @@ export interface CallView {
   defaults: { provider: string; model: string; temperature: number | null };
 }
 
+/**
+ * A catalogued call this layer does not configure (FR-9).
+ *
+ * ── Why this is on the wire at all ───────────────────────────────────────
+ * The screen may import no server module (FR-6), so it cannot know which calls
+ * are excluded or why. Without this field the page would keep implying that
+ * chat makes two AI calls when it makes six.
+ *
+ * `reason` is `BOS_LLM_SETTINGS_EXCLUSION_REASON`, REFERENCED and never
+ * re-typed (FR-14): the policy's reason and the screen's reason are one
+ * sentence, and `__tests__/adminSettingsView.test.ts` asserts they are equal.
+ */
+export interface ExcludedCallView {
+  callName: string;
+  reason: string;
+}
+
 export interface AreaView {
   area: BosLlmArea;
   key: string;
@@ -111,6 +130,8 @@ export interface AreaView {
   updatedAt: string | null;
   lastChangedBy: LastChangedBy;
   calls: CallView[];
+  /** Catalogued but not configurable here — rendered read-only (FR-9). */
+  excludedCalls: ExcludedCallView[];
   /** Issues not attached to any one call (row- and area-level). */
   areaIssues: BosLlmSettingIssue[];
   /**
@@ -280,6 +301,13 @@ export async function buildAdminSettingsView(): Promise<{
         updatedAt: row?.updated_at ?? null,
         lastChangedBy: lastChangedByFor(row, adminEmailById),
         calls: toCallViews(area, validation),
+        // Generic by construction: the same per-NAME predicate the configurable
+        // list filters on, so this is empty for the other seven areas by data
+        // rather than by an area check (FR-9 / W-5).
+        excludedCalls: bosLlmExcludedCallNames(area).map((callName) => ({
+          callName,
+          reason: BOS_LLM_SETTINGS_EXCLUSION_REASON,
+        })),
         areaIssues: validation.rejected
           .concat(validation.adjusted)
           .filter((issue) => issue.callName === undefined),
