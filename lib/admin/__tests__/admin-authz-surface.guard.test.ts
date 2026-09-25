@@ -493,9 +493,11 @@ function listEveryFileUnconditionally(dir: string): string[] {
  * shell rendered to any caller.
  *
  * It was never branch-local. Over the 2,524 files this guard scans,
- * `origin/main`'s copy truncates 16 files / 64,700 characters (including
- * `BusinessProfileRepository.ts`, −36,546) — so R1-R5 have been deciding on
- * mangled source in production CI, not just here.
+ * `origin/main`'s copy truncates **36 files / 62,594 characters** (including
+ * `BusinessProfileRepository.ts`, which loses 97% of its content) — so R1-R5
+ * have been deciding on mangled source in production CI, not just here.
+ * (Supersedes an earlier "16 / 64,700": that reference stripper shared the
+ * implementation's missing regex-literal state. See `tests/helpers/source-scan.ts`.)
  *
  * The replacement is one left-to-right pass that recognises comments BEFORE
  * strings. Its unit tests stay below, with QA's regressions added.
@@ -1163,8 +1165,9 @@ describe('repo-wide guard: the admin authorization surface', () => {
      * comment used to open a phantom string, swallow the closing `*<slash>`, and
      * delete real code up to the next one anywhere later in the file.
      *
-     * Not branch-local — `origin/main`'s copy truncates 16 files / 64,700
-     * characters of the corpus this guard scans. Measured, not reasoned.
+     * Not branch-local — `origin/main`'s copy truncates 36 files / 62,594
+     * characters of the corpus this guard scans. Measured, not reasoned,
+     * against a TypeScript-parser oracle (supersedes "16 / 64,700").
      */
     it("D1: an apostrophe inside a one-line block comment does not eat the code below it", () => {
       const src = ["/* the admin user's list */", 'const keep = 1;', 'const alsoKeep = 2;'].join('\n');

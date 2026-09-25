@@ -216,12 +216,27 @@ export function literalSpanAt(scaffold: string, from: number): LiteralSpan | nul
  * that a hand-written reference can share the implementation's blind spot:
  * `origin/main`'s version truncates **36 files / 62,594 characters**, so R1-R5 have been deciding on mangled source in production CI.
  *
- * Two corrections to figures reported earlier on this branch, recorded because a
- * wrong zero is worse than an honest number:
- *   * the precedence fix alone left **28 files / 1,952 characters** truncated
- *     (SA's measurement), NOT the "0 / 0" first reported — that zero came from a
- *     reference which, like the implementation, had no regex-literal state;
- *   * with the regex state added below the figure is **0 files / 0 characters**.
+ * The full measured sequence, against that same oracle:
+ *   * `origin/main`, committed today:         **36 files / 62,594 characters**
+ *   * the precedence fix alone:               **27 files /  1,840 characters**
+ *   * the precedence fix AND the regex state: ** 0 files /      0 characters**
+ *
+ * The middle figure independently reproduces SA's **28 files / 1,952 characters**
+ * by a different method (the delta is CRLF accounting and one excluded file),
+ * which is the confirmation that matters — two methods, one answer.
+ *
+ * Two figures reported EARLIER on this branch are SUPERSEDED, recorded because a
+ * wrong zero is worse than an honest number: **"16 files / 64,700"** and the
+ * first **"0 / 0"**. Both were measured against hand-written reference strippers
+ * that shared the implementation's blind spot — no regex-literal state — so a
+ * scanner that was still broken scored as perfect. A reference that can agree
+ * with the bug is not a reference.
+ *
+ * NOT yet true of `main`: PR #104 merged (`d45a6cca`, 2026-09-24) WITHOUT this
+ * file's `stripComments`. `main`'s copy still lives at
+ * `lib/admin/__tests__/admin-authz-surface.guard.test.ts:466` and still blanks
+ * strings first, so the 36 / 62,594 above is the LIVE state of the required
+ * check until the follow-up branch merges.
  *
  * ── The fix is smaller, not cleverer ──────────────────────────────────────
  * One left-to-right pass with explicit state. Inside a comment a quote is just
