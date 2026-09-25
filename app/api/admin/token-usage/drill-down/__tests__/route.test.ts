@@ -153,7 +153,7 @@ describe('validation (SA C-4)', () => {
     mockListRows.mockResolvedValue({ data: [], error: null });
     const res = await call('?model=openai%2Fgpt-4o%3A2024.1&endpoint=%2Fapi%2Fv2%2Frun');
     expect(res.status).toBe(200);
-    expect(mockListRows.mock.calls[0][1]).toMatchObject({ model: 'openai/gpt-4o:2024.1', endpoint: '/api/v2/run' });
+    expect(mockListRows.mock.calls[0][2]).toMatchObject({ model: 'openai/gpt-4o:2024.1', endpoint: '/api/v2/run' });
   });
 
   it('does not leak validation detail outside development', async () => {
@@ -172,11 +172,25 @@ describe('scope=bos', () => {
     expect(res.status).toBe(200);
 
     expect(mockListRows).toHaveBeenCalledTimes(2);
-    for (const [, filters] of mockListRows.mock.calls) {
+    for (const [, , filters] of mockListRows.mock.calls) {
       expect(filters.featureFilter).toEqual(bosRowFilter());
     }
     const body = await res.json();
     expect(body.scope).toBe('bos');
+  });
+
+  it('passes the request correlation id and the admin id to every ledger read (N-2)', async () => {
+    asAdmin();
+    mockListRows.mockResolvedValue({ data: BOS_ROWS, error: null });
+    await GET(
+      new NextRequest('http://localhost/api/admin/token-usage/drill-down?scope=bos', {
+        headers: { 'x-correlation-id': 'corr-123' },
+      })
+    );
+    expect(mockListRows).toHaveBeenCalledTimes(2);
+    for (const [context] of mockListRows.mock.calls) {
+      expect(context).toEqual({ correlationId: 'corr-123', adminId: ADMIN.id });
+    }
   });
 
   it('totals equal the BOS LLM usage report arithmetic over the same rows (legacy rows included)', async () => {
@@ -194,11 +208,11 @@ describe('scope=bos', () => {
     expect(body.totals.tokens).toBe(report.total.tokens);
     expect(body.totals.cost).toBeCloseTo(report.total.estimatedCostUsd, 10);
     expect(report.total.calls).toBe(4);
-    expect(mockListRows.mock.calls[0][0]).toEqual({
+    expect(mockListRows.mock.calls[0][1]).toEqual({
       start: '2026-09-01T00:00:00.000Z',
       end: '2026-09-08T00:00:00.000Z',
     });
-    expect(mockListRows.mock.calls[0][1]).toMatchObject({ user: ACCOUNT });
+    expect(mockListRows.mock.calls[0][2]).toMatchObject({ user: ACCOUNT });
   });
 
   it('flags possiblyIncomplete when the unpaged read returns the 1,000-row cap', async () => {
@@ -215,7 +229,7 @@ describe('scope=all (the old view)', () => {
     asAdmin();
     mockListRows.mockResolvedValue({ data: BOS_ROWS, error: null });
     const body = await (await call('')).json();
-    for (const [, filters] of mockListRows.mock.calls) {
+    for (const [, , filters] of mockListRows.mock.calls) {
       expect(filters.featureFilter).toBeUndefined();
     }
     expect(body.scope).toBe('all');
@@ -226,7 +240,7 @@ describe('scope=all (the old view)', () => {
     asAdmin();
     mockListRows.mockResolvedValue({ data: BOS_ROWS, error: null });
     await call('?feature=business-os-chat&component=c&provider=openai');
-    const [main, comparison] = mockListRows.mock.calls.map((c) => c[1]);
+    const [main, comparison] = mockListRows.mock.calls.map((c) => c[2]);
     expect(main).toMatchObject({ feature: 'business-os-chat', component: 'c', provider: 'openai' });
     expect(comparison.feature).toBeUndefined();
     expect(comparison.component).toBeUndefined();

@@ -37,6 +37,7 @@ const SUMMARY = {
     aiSpend30d: {
       status: 'complete',
       currency: 'USD',
+      readCeiling: 5000,
       window: { start: '2026-08-26T00:00:00.000Z', end: '2026-09-25T00:00:00.000Z' },
       total: { calls: 12, tokens: 3400, estimatedCostUsd: 0.1234 },
       lines: [{ key: 'insights', kind: 'area', calls: 12, tokens: 3400, estimatedCostUsd: 0.1234 }],
@@ -120,7 +121,7 @@ describe('BusinessOsPanel', () => {
     expect(screen.queryByTestId('bos-panel-spend')).toBeNull();
   });
 
-  it('still shows the plan when the summary fails', async () => {
+  it('still shows the plan when the summary fails, under a neutral header (N-4)', async () => {
     mockFetch({
       [`/entitlements/accounts/${ACCOUNT}`]: { status: 200, body: recordedAccountBody },
       [`/accounts/${ACCOUNT}/summary`]: { status: 500, body: { success: false, error: 'Internal server error' } },
@@ -129,16 +130,23 @@ describe('BusinessOsPanel', () => {
 
     expect((await screen.findByTestId('bos-panel-summary-error')).textContent).toContain('failed on the server');
     expect(screen.getByTestId('account-result')).toBeTruthy();
+    expect(screen.getByTestId('bos-panel-business').textContent).toBe('Business OS');
+    expect(screen.getByTestId('bos-panel-user').textContent).toBe('Dana Cohen');
   });
 
-  it('marks an incomplete 30-day total as a lower bound', async () => {
-    const incomplete = { ...SUMMARY, data: { ...SUMMARY.data, aiSpend30d: { ...SUMMARY.data.aiSpend30d, status: 'incomplete' } } };
+  it('marks an incomplete 30-day total as a lower bound, quoting the ceiling from the payload (N-6)', async () => {
+    const incomplete = {
+      ...SUMMARY,
+      data: { ...SUMMARY.data, aiSpend30d: { ...SUMMARY.data.aiSpend30d, status: 'incomplete', readCeiling: 1234 } },
+    };
     mockFetch({
       [`/entitlements/accounts/${ACCOUNT}`]: { status: 200, body: recordedAccountBody },
       [`/accounts/${ACCOUNT}/summary`]: { status: 200, body: incomplete },
     });
     render(<BusinessOsPanel accountId={ACCOUNT} userName="Dana Cohen" />);
-    expect((await screen.findByTestId('bos-panel-spend-incomplete')).textContent).toContain('lower bound');
+    const note = (await screen.findByTestId('bos-panel-spend-incomplete')).textContent;
+    expect(note).toContain('lower bound');
+    expect(note).toContain('1,234');
   });
 });
 
@@ -202,6 +210,13 @@ describe('the Businesses list', () => {
     expect(folded.tagName).toBe('DETAILS');
     expect(folded.hasAttribute('open')).toBe(false);
     expect(document.body.textContent).toContain('may be incomplete above 1,000 calls');
+  });
+
+  it('says when the business-name search was capped (E-4)', async () => {
+    const body = { ...listBody(), search: { businessSearch: 'ok', businessMatchesCapped: true, businessMatchLimit: 50 } };
+    mockFetch({ '/api/admin/users?': { status: 200, body } });
+    render(<UsersPage />);
+    expect((await screen.findByTestId('business-search-capped')).textContent).toContain('Refine the search');
   });
 
   it('shows the error state when the list fails', async () => {

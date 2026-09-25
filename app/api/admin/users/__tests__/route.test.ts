@@ -41,6 +41,7 @@ jest.mock('@/lib/repositories/UserProfileRepository', () => ({
 const mockIdentities = jest.fn();
 const mockSearchBusinesses = jest.fn();
 jest.mock('@/lib/repositories/BusinessProfileRepository', () => ({
+  BUSINESS_SEARCH_MAX_LIMIT: 50,
   businessProfileRepository: {
     findAdminIdentitiesByUserIds: (...a: unknown[]) => mockIdentities(...a),
     searchForAdmin: (...a: unknown[]) => mockSearchBusinesses(...a),
@@ -134,6 +135,29 @@ describe('the list', () => {
     expect(mockListForAdmin).toHaveBeenCalledWith(
       expect.objectContaining({ search: 'acme%),id.neq.(x', extraIds: [WITH_BUSINESS] })
     );
+  });
+});
+
+describe('the business-name search cap (QA E-4)', () => {
+  it('says when business-name matches reached the cap, instead of dropping them silently', async () => {
+    asAdmin();
+    const fifty = Array.from({ length: 50 }, (_, i) => ({
+      user_id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+      company_name: `Acme ${i}`,
+    }));
+    mockSearchBusinesses.mockResolvedValue({ data: fifty, error: null });
+    const body = await (await call('?search=acme')).json();
+    expect(mockSearchBusinesses).toHaveBeenCalledWith('acme', 50);
+    expect(body.search).toEqual({ businessSearch: 'ok', businessMatchesCapped: true, businessMatchLimit: 50 });
+  });
+
+  it('is not capped below the limit, and reports a failed business search', async () => {
+    asAdmin();
+    mockSearchBusinesses.mockResolvedValue({ data: [{ user_id: WITH_BUSINESS, company_name: 'Acme' }], error: null });
+    expect((await (await call('?search=acme')).json()).search.businessMatchesCapped).toBe(false);
+
+    mockSearchBusinesses.mockResolvedValue({ data: null, error: new Error('boom') });
+    expect((await (await call('?search=acme')).json()).search.businessSearch).toBe('failed');
   });
 });
 

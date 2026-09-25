@@ -40,6 +40,8 @@ export interface AccountSummaryPayload {
     status: 'complete' | 'incomplete' | 'error';
     /** Always USD: the model pricing table's currency. Never converted. */
     currency: 'USD';
+    /** Most calls the read counts; `status: 'incomplete'` means it reached this. */
+    readCeiling: number;
     window: { start: string; end: string };
     total: { calls: number; tokens: number; estimatedCostUsd: number };
     lines: AreaTotalsLineView[];

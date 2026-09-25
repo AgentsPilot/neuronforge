@@ -187,6 +187,7 @@ describe('the summary', () => {
 
     const expected = computeAreaTotals(readOk({ rows: CALLS.map(classifyCallRow), incomplete: false }));
     expect(data.aiSpend30d.currency).toBe('USD');
+    expect(data.aiSpend30d.readCeiling).toBe(5000);
     expect(data.aiSpend30d.status).toBe('complete');
     expect(data.aiSpend30d.total).toEqual(expected.total);
     expect(mockListCalls.mock.calls[0][0]).toBe(ACCOUNT);

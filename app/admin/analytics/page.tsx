@@ -221,6 +221,7 @@ function AdminCostAnalyticsContent() {
   // can ask for ?scope=all, or narrow to one account with ?user=<id>.
   const [scope, setScope] = useState<Scope>(() => (searchParams?.get('scope') === 'all' ? 'all' : 'bos'));
   const [possiblyIncomplete, setPossiblyIncomplete] = useState(false);
+  const [dateRangeError, setDateRangeError] = useState<string | null>(null);
   const [breakdownBy, setBreakdownBy] = useState<BreakdownDimension>('provider');
   const [filters, setFilters] = useState<Filters>(() => {
     const user = searchParams?.get('user');
@@ -292,7 +293,13 @@ function AdminCostAnalyticsContent() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to fetch data');
+        // A 400 is the route refusing the query (e.g. a date range it cannot
+        // use), not a server failure: say which.
+        throw new Error(
+          response.status === 400
+            ? 'The selected filters or dates are not valid. Check the date range and try again.'
+            : 'Failed to fetch data'
+        );
       }
 
       const result: DrillDownResponse = await response.json();
@@ -456,6 +463,13 @@ function AdminCostAnalyticsContent() {
 
   const handleApplyDateRange = () => {
     if (customDateFrom && customDateTo) {
+      // Caught here with a clear message rather than sent to the route, which
+      // refuses it with a 400 (QA E-3). ISO dates compare correctly as strings.
+      if (customDateFrom > customDateTo) {
+        setDateRangeError('The start date is after the end date. Choose a start on or before the end.');
+        return;
+      }
+      setDateRangeError(null);
       setAppliedDateRange({ from: customDateFrom, to: customDateTo });
     }
   };
@@ -605,6 +619,11 @@ function AdminCostAnalyticsContent() {
           >
             Apply
           </button>
+          {dateRangeError && (
+            <span data-testid="date-range-error" role="alert" className="text-sm text-amber-300">
+              {dateRangeError}
+            </span>
+          )}
         </div>
       )}
 

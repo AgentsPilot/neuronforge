@@ -124,6 +124,12 @@ interface AuditLogEntry {
   created_at: string;
 }
 
+interface SearchInfo {
+  businessSearch: 'ok' | 'failed' | 'skipped';
+  businessMatchesCapped: boolean;
+  businessMatchLimit: number;
+}
+
 interface UserStats {
   totalUsers: number;
   activeUsers: number;
@@ -133,6 +139,9 @@ interface UserStats {
 export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [stats, setStats] = useState<UserStats | null>(null);
+  // What the list route says about its own search (QA E-4): a capped
+  // business-name search, or one that failed, is stated, never hidden.
+  const [searchInfo, setSearchInfo] = useState<SearchInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
@@ -201,6 +210,7 @@ export default function UsersPage() {
 
       setUsers(result.data || []);
       setStats(result.stats || null);
+      setSearchInfo(result.search || null);
 
       logger.debug(
         { totalUsers: result.data?.length || 0 },
@@ -212,6 +222,7 @@ export default function UsersPage() {
       setError(error instanceof Error ? error.message : 'Unknown error occurred');
       setUsers([]);
       setStats(null);
+      setSearchInfo(null);
     } finally {
       setLoading(false);
     }
@@ -583,6 +594,18 @@ export default function UsersPage() {
           )}
         </div>
       </div>
+
+      {searchInfo?.businessMatchesCapped && (
+        <p data-testid="business-search-capped" className="text-sm text-amber-300">
+          More than {searchInfo.businessMatchLimit} businesses match this search; only the first{' '}
+          {searchInfo.businessMatchLimit} by name are included. Refine the search to see the rest.
+        </p>
+      )}
+      {searchInfo?.businessSearch === 'failed' && (
+        <p data-testid="business-search-failed" className="text-sm text-amber-300">
+          Business names could not be searched just now; these results match people only.
+        </p>
+      )}
 
       {/* Users Table */}
       <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">

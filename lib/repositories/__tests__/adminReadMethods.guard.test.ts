@@ -30,7 +30,8 @@ import {
   ADMIN_IDENTITY_CHUNK,
 } from '../BusinessProfileRepository';
 import { AuditTrailRepository, ADMIN_AI_FAILURE_COLUMNS } from '../AuditTrailRepository';
-import { UserProfileRepository, ADMIN_PROFILE_LIST_COLUMNS } from '../UserProfileRepository';
+import { UserProfileRepository, ADMIN_PROFILE_LIST_COLUMNS, compareForAdminList } from '../UserProfileRepository';
+import { ilikeContainsPattern, matchesLiterally } from '../BusinessProfileRepository';
 
 type Call = { method: string; args: unknown[] };
 
@@ -149,6 +150,39 @@ describe('UserProfileRepository.listForAdmin', () => {
       { method: 'ilike', args: ['company', '%x\\%),id.neq.(y%'] },
     ]);
     expect(result.data?.map((r) => r.id)).toEqual(['b', 'a']); // merged, sorted by full_name asc
+  });
+
+  it('a `*` is literal: sent as a one-character wildcard, then only literal matches are kept (QA E-1)', async () => {
+    const rows = [
+      { id: 'lit', full_name: 'Star * Clinic', company: null, created_at: '2026-01-01', updated_at: null },
+      { id: 'wild', full_name: 'Starx Clinic', company: null, created_at: '2026-01-02', updated_at: null },
+    ];
+    const { client, queries } = recordingClient((calls) => {
+      const ilike = calls.find((c) => c.method === 'ilike');
+      return { data: ilike?.args[0] === 'full_name' ? rows : [], error: null };
+    });
+    const result = await new UserProfileRepository(client).listForAdmin({
+      search: 'Star *',
+      sortBy: 'created_at',
+      ascending: true,
+      limit: 100,
+    });
+    expect(queries.flat().filter((c) => c.method === 'ilike').map((c) => c.args[1])).toEqual(['%Star _%', '%Star _%']);
+    expect(result.data?.map((r) => r.id)).toEqual(['lit']);
+  });
+
+  it('a lone `*` no longer matches every account', () => {
+    expect(ilikeContainsPattern('*')).toBe('%_%');
+    expect(matchesLiterally('Acme', '*')).toBe(false);
+    expect(matchesLiterally('A*cme', '*')).toBe(true);
+  });
+
+  it('sorts a merged search the way the database sorts the list: missing values last ascending, first descending (N-3b)', () => {
+    const named = { id: 'n', full_name: 'Bea', company: null, created_at: null, updated_at: null };
+    const unnamed = { id: 'u', full_name: null, company: null, created_at: null, updated_at: null };
+    const alpha = { id: 'a', full_name: 'Ann', company: null, created_at: null, updated_at: null };
+    expect([unnamed, named, alpha].sort((x, y) => compareForAdminList(x, y, 'full_name', true)).map((r) => r.id)).toEqual(['a', 'n', 'u']);
+    expect([alpha, unnamed, named].sort((x, y) => compareForAdminList(x, y, 'full_name', false)).map((r) => r.id)).toEqual(['u', 'n', 'a']);
   });
 
   it('matches a full account id exactly, and includes extra ids (business-name matches)', async () => {

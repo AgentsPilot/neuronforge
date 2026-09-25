@@ -103,9 +103,10 @@
  *   • **Precedence, not just presence (D-5 + D-Q2).** R1 asks whether a handler
  *     body CONTAINS `requireAdmin(`. It does not prove the gate runs FIRST, and
  *     it does not prove the gate is reached at all — a gate inside a closure
- *     that is never invoked satisfies R1. Every one of the 65 gated handlers is
- *     correct today (verified by hand and by the oracle), but that is a
- *     measurement, not an invariant.
+ *     that is never invoked satisfies R1. 74 handlers are gated as of
+ *     2026-09-25: the 65 counted on 2026-09-21 were verified by hand and by the
+ *     oracle; the 9 added since are covered only by their own route tests.
+ *     Either way that is a measurement, not an invariant.
  *     QA's refinement, which must not be lost: closing this needs the ORACLE's
  *     instrumentation extended to cover the **body parse**, because
  *     `mockTablesTouched` records DB/RPC/auth-API calls and not `request.json()`.

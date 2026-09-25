@@ -14,7 +14,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import type { AgentRepositoryResult as RepositoryResult } from './types';
-import { escapeIlikePattern } from './BusinessProfileRepository';
+import { ilikeContainsPattern, matchesLiterally } from './BusinessProfileRepository';
 
 /**
  * Subset of the `profiles` table columns used for building UserContext.
@@ -50,6 +50,28 @@ export interface AdminProfileListQuery {
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The in-memory order of a merged search, made to match the database order of
+ * the unsearched list (QA N-3b). Postgres puts NULLs LAST when ascending and
+ * FIRST when descending, so a missing value sorts as greater than any value.
+ * Exported for its test.
+ */
+export function compareForAdminList(
+  a: AdminProfileListRow,
+  b: AdminProfileListRow,
+  sortBy: AdminProfileListQuery['sortBy'],
+  ascending: boolean
+): number {
+  const av = a[sortBy];
+  const bv = b[sortBy];
+  let cmp: number;
+  if (av == null && bv == null) cmp = 0;
+  else if (av == null) cmp = 1;
+  else if (bv == null) cmp = -1;
+  else cmp = av.localeCompare(bv);
+  return ascending ? cmp : -cmp;
+}
 
 export class UserProfileRepository {
   private supabase: SupabaseClient;
@@ -108,7 +130,8 @@ export class UserProfileRepository {
         return { data: (data ?? []) as AdminProfileListRow[], error: null };
       }
 
-      const pattern = `%${escapeIlikePattern(search)}%`;
+      // Every character literal, `*` included (QA E-1): see ilikeContainsPattern.
+      const pattern = ilikeContainsPattern(search);
       const reads = [
         this.supabase.from('profiles').select(ADMIN_PROFILE_LIST_COLUMNS).ilike('full_name', pattern).limit(limit),
         this.supabase.from('profiles').select(ADMIN_PROFILE_LIST_COLUMNS).ilike('company', pattern).limit(limit),
@@ -121,19 +144,27 @@ export class UserProfileRepository {
         reads.push(this.supabase.from('profiles').select(ADMIN_PROFILE_LIST_COLUMNS).in('id', extraIds).limit(limit));
       }
 
-      const results = await Promise.all(reads);
+      const [byName, byCompany, ...exact] = await Promise.all(reads);
       const byId = new Map<string, AdminProfileListRow>();
-      for (const { data, error } of results) {
+      // A `*` went to the server as a one-character wildcard: keep literal matches only.
+      const literalOnly = search.includes('*');
+      for (const [result, column] of [
+        [byName, 'full_name'],
+        [byCompany, 'company'],
+      ] as const) {
+        if (result.error) throw result.error;
+        for (const row of (result.data ?? []) as AdminProfileListRow[]) {
+          if (literalOnly && !matchesLiterally(row[column], search)) continue;
+          byId.set(row.id, row);
+        }
+      }
+      // Exact-id and business-name matches are exact already.
+      for (const { data, error } of exact) {
         if (error) throw error;
         for (const row of (data ?? []) as AdminProfileListRow[]) byId.set(row.id, row);
       }
 
-      const rows = [...byId.values()].sort((a, b) => {
-        const av = (a[q.sortBy] ?? '') as string;
-        const bv = (b[q.sortBy] ?? '') as string;
-        const cmp = av.localeCompare(bv);
-        return q.ascending ? cmp : -cmp;
-      });
+      const rows = [...byId.values()].sort((a, b) => compareForAdminList(a, b, q.sortBy, q.ascending));
       // The search text is not logged: it is usually a person's or business's name.
       this.logger.debug({ searchLength: search.length, results: rows.length }, 'Admin profile search');
       return { data: rows.slice(0, limit), error: null };

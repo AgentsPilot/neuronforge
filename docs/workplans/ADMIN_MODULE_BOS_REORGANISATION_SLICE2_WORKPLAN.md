@@ -471,6 +471,24 @@ In line with CLAUDE.md ("don't reformat files you aren't working on"), untouched
 | `next build` (the CI job's placeholder env) | **exit 0**, "Compiled successfully". `/admin/analytics`, `/admin/audit-trail` and `/admin/users` build as dynamic (ƒ); the `useSearchParams` + `<Suspense>` wrappers raise no error. The `DYNAMIC_SERVER_USAGE` lines it logs come from `requireAdminPage` in the admin layout during static probing, for every admin page, and are pre-existing |
 | `git diff --stat` per commit | checked for deletion without insertion; none |
 
+### 12.6 Review follow-ups (Dev, 2026-09-25)
+
+After SA (approved with nits) and QA (PASS). Not re-reviewed yet.
+
+| # | Finding | Fix |
+|---|---|---|
+| N-1 | Stale "65 gated handlers" prose | Guard comment and the admin access doc (the As-Built table, Known gaps twice, OI-8) now say 74 gated as of 2026-09-25, and that only the 65 counted on 2026-09-21 were verified by hand and oracle; the 9 since are covered by their own route tests. The 2026-09-21 history rows are left as history |
+| N-2 | The template repository's log line could not be joined to the request | `listRowsAllAccountsInWindow` now takes a **required** `AdminReadContext { correlationId, adminId }` as its first argument; every log line of the read carries both, and a read without it is refused before any query. The drill-down passes the request's correlation id and `gate.user.id` to both reads |
+| N-3a / E-4 | Business-name matches silently capped at 50 | The route reports `search: { businessSearch, businessMatchesCapped, businessMatchLimit }`; the page shows "More than 50 businesses match this search … Refine the search" when capped, and "Business names could not be searched just now" when that search failed |
+| N-3b | Merged search sorted nulls differently from the unsearched list | `compareForAdminList` matches Postgres: missing values last ascending, first descending |
+| N-4 | "Unnamed business" above a summary error | The header is "Business OS" while loading, when the summary failed or the profile does not exist yet; "Unnamed business" only for an existing business with no name. The user name stays beside it |
+| N-6 | Panel error copy not tied to route codes; "5,000" duplicated | `SUMMARY_ERROR_COPY` is exported and a contract test (`summaryErrors.contract.test.ts`) reads the summary route's source and fails on a code without a sentence. The route sends `aiSpend30d.readCeiling` (= `LLM_USAGE_LIMITS.READ_CEILING`) and the panel quotes it |
+| E-1 | `*` matched every account | PostgREST rewrites every `*` in a like operand to `%` and it cannot be escaped, so `ilikeContainsPattern` sends a `*` as `_` (one character, which includes a literal `*`) and `matchesLiterally` drops the extra rows. Applied to the Businesses search and to `BusinessProfileRepository.searchForAdmin` (which also serves the LLM usage business picker). QA's wire test `escaped()` helper was updated to expect `_` for `*` |
+| E-3 | Reversed custom range showed "Failed to fetch data" | The page refuses it before sending ("The start date is after the end date…"), and any 400 now reads "The selected filters or dates are not valid" |
+| E-2 / N-5, E-5 | — | Left as they are, per the coordinator (manual check M-8; the 200-character cap is accepted) |
+
+Verification after the follow-ups: Jest over `app/admin lib/audit app/api/admin lib/repositories lib/admin lib/business-os/usage` **85 suites, 84 passed, 1 failed; 1,646 tests, 1,645 passed, 1 failed** (the parked C-13 assertion, unchanged). Authz guard 106/106. `typecheck:bos-llm` passed, 249 files, 0 new. Literal gate passed, 0 violations. ESLint 0 errors on touched files. Scoped `tsc`: 0 new diagnostics (the 24 in `app/admin/analytics/page.tsx` are the pre-existing ones).
+
 ### 12.5 For TL (not done by Dev)
 
 - `CLAUDE.md` says "7 handlers still hand-roll"; after merge it is **6** (and 80 handlers, not 72). Dev does not edit `CLAUDE.md` (C-6e): raise with the user before merge.
@@ -593,9 +611,231 @@ In line with CLAUDE.md ("don't reformat files you aren't working on"), untouched
 
 ---
 
+**Code Review by SA — 2026-09-25**
+**Status:** ✅ Code Approved, with nits (APPROVED WITH NITS)
+
+Reviewed `ddcbb43d..f44fec53` on `feature/admin-bos-step2` (4 local commits, not pushed), in the worktree only. U-1 to U-5 are treated as binding. **C-1 and C-2 were waived by the user (U-5)**, not by SA; they are checked only against the replacement promised in U-5 (OI-P1/OI-P2 recorded, notes on screen).
+
+#### What SA re-ran (real output)
+
+| Check | Result |
+|---|---|
+| `git diff --stat ddcbb43d..HEAD` | 40 files, +4,376 / −428. The only file with more deletions than insertions is `AccountLookup.tsx` (+5 / −100). SA compared it line by line: every removed line is in `EntitlementSnapshot.tsx`, apart from 3 renamed lines (`ERROR_COPY` → `ENTITLEMENT_ERROR_COPY`, and the "Users" → "Businesses" link copy). **No deletion without a matching insertion** |
+| `npx jest app/admin lib/audit app/api/admin lib/repositories lib/admin lib/business-os/usage` | **81 suites: 80 passed, 1 failed. 1,593 tests: 1,592 passed, 1 failed.** The failure is `tokenUsageRepository.contract.test.ts:84` › "pins every public method and its arity". Its diff is exactly one extra name, `summariseFeatureAllAccountsInWindow`. This is the same single parked assertion (C-13). `TokenUsageRepository`'s only change is at module level (`buildFeatureFilterOrExpression`), so no method or arity that the failing expect masks has changed |
+| `npm run test:authz-guard` | **106 / 106 passed** |
+| `npm run typecheck:bos-llm` | **passed**: 247 files in scope, 28 errors, **0 new**. The baseline file is not in the diff (C-8). It reports one unrelated baseline entry as fixed (`app/api/onboarding/build/route.ts`) |
+| `npm run check:bos-llm-literals` | **passed**: 45 files, 0 violations |
+| D-6 census (SA's own count) | **51** route files under `app/api/admin`, **80** exported handlers. **6** handlers have no `requireAdmin(` call: `agents`, `business-os/llm-usage`, `business-os/llm-usage/businesses`, `chat-usage`, `users/[id]/audit-logs`, `users/[id]/login-stats`. That gives **80 = 74 + 6 + 0**, matching the guard caps (R1 6/0, R2 6/1), the guard header, and the access doc's table and register rows 73–80 |
+| `console.*` in touched non-test files | 0 (the only match is a comment in `users/route.ts:7`) |
+| `.message` in touched routes | All 5 are behind `NODE_ENV === 'development'` |
+
+Not re-run by SA: `next build` and ESLint. Dev reports both green (§12.4), and QA re-runs them.
+
+#### Priority review items (Dev's §12.3 order)
+
+1. **`app/api/admin/users/route.ts` + `UserProfileRepository.listForAdmin` (D-1, D-2): approved.**
+   - `requireAdmin` is the first statement.
+   - Zod enums on `status` / `sortBy` / `sortOrder`. `search` is limited to 100 characters with control characters refused. The 400 carries details in development only.
+   - All 7 `console.*` calls are gone, and both leaks are closed.
+   - **Injection fix:** there is no `.or()` string anywhere. The search runs as separate `.ilike` reads, escaped by the existing `escapeIlikePattern`, plus `.eq('id')` for a full UUID and `.in('id', extraIds)`, where `extraIds` is UUID-filtered. Every value is a PostgREST parameter. The hostile-string test (`x%),id.neq.(y`) pins that no `.or` is ever called.
+   - The profile read is now an explicit 5-column allow-list. Every field the page's `User` type reads is still supplied (profile columns + auth enrichment).
+   - **Batched lookup:** it is `findAdminIdentitiesByUserIds`, with one `.in()` per 200 ids (at most 5 requests for 1,000 rows), never one per row. It is tested at 201 ids → 2 queries. A failed lookup gives `business: undefined`, shown as "Business unknown", and the list still loads.
+   - **D-2:** a search also matches business names through the existing `searchForAdmin` (escaped `ilike`). Accepted as a behaviour change.
+   - The logs carry counts only, never names or search text.
+   - Nits: N-3.
+2. **`AdminTokenUsageAnalyticsRepository` against C-3: approved as the OI-9 template.**
+   - (a) The header states the service role, why RLS cannot serve the read, the only permitted caller, and the `requireAdmin` requirement.
+   - (b) `AllAccounts` is in the method name.
+   - (c) No `lib/business-os` import, asserted by test.
+   - (d) An isolation guard scans for the symbol names, not the path, so a barrel import is caught.
+   - (e) An `info` log per read. It now carries `possiblyTruncated` instead of `pages` / `reachedCeiling`, which is consistent with the waiver.
+   - (f) Returns `{ data, error }` and never throws. The shared builder carries the guard.
+   - (g) Singleton + barrel export. The OI-9 line is added to the access doc.
+   - The unpaged read is stated in the header as parked (OI-P1).
+   - Nit: N-2.
+3. **`filterOptions.ts` header + `eventAudience.ts` (R-5, C-11): approved. SA's R-5 sign-off stands.**
+   - The header records the reversal, the reason, and why the EventMetadata route was rejected (122 of 157; WC-12).
+   - The module header states honestly that Jest is not run in CI and that `satisfies` is not CI-enforced.
+   - One entry per event, `as const satisfies Record<AuditEvent, AuditAudience>`.
+   - An untagged event stays visible.
+   - The 15 / 58 / 84 split is pinned, with ⊇ / ⊆ checks and a synthetic unregistered event.
+   - `lib/audit/__tests__/filterOptions.test.ts` has 0 deleted lines, so the existing FR-A3 partition tests are byte-for-byte unchanged.
+   - The one changed page-guard assertion (`buildActionFilterGroups()` → the `audiences` call) is the intended change.
+4. **Summary route (C-5): approved.**
+   - (a) `requireAdmin` runs before the `try` block and before any read, and the 401/403 tests assert zero repository calls.
+   - (b) 400 → 409 (`isPlatformAccount`, pure) → `isBusinessOsTenant` (500 / 404) → three reads in parallel.
+   - (c) `projectAiFailure` picks named fields, each type-checked, with strings capped at 80 characters. The injected `prompt` / `message` / `callNames` test passes.
+   - (d) Child logger with `correlationId` + `adminId`. The info line holds only id, statuses and counts, and a test asserts the business name is never logged.
+   - (e) Error blocks are `{ status: 'error' }`; the top-level 500 carries details in development only.
+   - (f) `runtime = 'nodejs'`, `dynamic = 'force-dynamic'`.
+   - Spend reuses `listCallsInWindow` → `classifyCallRow` → `computeAreaTotals` with `LLM_USAGE_LIMITS`, labelled USD.
+5. **D-6 counts: approved.** They match SA's independent census, above. Nit: N-1 (stale "65" prose).
+
+#### Remaining conditions
+
+| # | Verdict | Evidence |
+|---|---|---|
+| C-1 | **Waived by the user (U-5)** | The replacement is delivered. OI-P2 is recorded with a fix shape. `scope=bos` is applied to the comparison read. A route test pins the parked behaviour (`keeps the parked comparison behaviour`). The `category` enum is exactly `all \| creation \| execution \| memory \| system`, and the stale `'other'` comment is fixed |
+| C-2 | **Waived by the user (U-5)** | OI-P1 is recorded with the measured 7,658 / 3,015 rows. The notes are always on screen, with a stronger banner on `possiblyIncomplete`. The panel's own spend is still paged at 5,000 |
+| C-3 | ✅ | See item 2 |
+| C-4 | ✅ | Dimensions are `min(1).max(200)` with control characters refused and **no identifier regex**, tested with `/ . :` values. `user` / `agent` / `execution` shapes, `period` 1–365, `datetime({ offset: true })` with the `dateFrom <= dateTo` refinement, and `scope` defaulting to `all` all match the condition. Validation runs after `requireAdmin` and before any read. The 400 carries details in development only |
+| C-5 | ✅ | See item 4 |
+| C-6 | ✅ with N-1 | (a) the `getUser` / `AdminAccessService` imports are gone. (b) There is a `correlationId` child logger. (c) The R1 and R2 entries are removed and both caps went 7 → 6 in the 2c commit. (d) The counts are re-derived (D-6 supersedes "73/67/45"). (e) The CLAUDE.md figure is flagged to TL in §12.5 and is **still owed before merge** |
+| C-7 | ✅ | `AuditTrailRepository`'s header names the one admin exception and its caller. All four admin methods carry "Admin" in their names. `adminReadMethods.guard.test.ts` confirms each has at least one caller, and that every caller is under `app/api/admin/**`. `findAdminIdentity*` / `listAdminAiFailures` keep `.eq('user_id')` / `.in('user_id')`. `listForAdmin` is all-accounts by design and documented as such |
+| C-8 | ✅ | 0 new errors. Baseline untouched |
+| C-9 | ✅ | The label reads "AI spend, all products (30 days; may be incomplete above 1,000 calls)". The `stats` route is untouched |
+| C-10 | ✅ | §6.4 wording is fixed. The live check is QA's job, and it is known to hold only below 1,000 rows (OI-P1) |
+| C-11 | ✅ | See item 3 |
+| C-12 | ✅ | The 4 ordered commits are reviewable one at a time. The Q-1 (b)-style list change ships in this PR by **user** decision (U-1), which overrides SA's "separate PR" preference. It is confined to the 2b commit, and SA accepts it |
+| C-13 | ✅ | Same single assertion, re-run by SA (above) |
+
+**Deviations D-1 to D-9:** all accepted. D-1 and D-2 are reviewed above. D-3's "No Business OS business" versus the panel's real tenancy verdict is the honest split. D-4 and D-5 follow U-5. D-6 is verified. D-7 is the required Suspense wrap. D-8 is a lint fix plus copy. D-9 (OI-18, `.from('users')`) stays recorded.
+
+**CLAUDE.md standards:**
+- Repository pattern: new reads go through repositories. The remaining inline reads (audit read, drill-down labels and execution detail, auth `listUsers`) are recorded under OI-9.
+- `user_id` scoping or a documented service-role use: yes.
+- Zod on every changed route: yes.
+- Pino with no `console.*`: yes.
+- No leaked error details: yes.
+- Currency: AI cost is labelled "USD, estimated". Nothing reads `business_profiles.currency` or `LanguageContext`, and nothing is summed across currencies (source guard in `app/admin/users/__tests__/source.guard.test.ts`).
+- No owner text or prompts are displayed: the profile read is 4 columns, the failures read is 4 columns projected to 6 named fields, and the ledger reads are allow-listed.
+
+#### Code Review Comments
+
+| # | Location | Issue | Priority |
+|---|---|---|---|
+| N-1 | `lib/admin/__tests__/admin-authz-surface.guard.test.ts:106`; `docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md:80, 211 (twice), 474` | The prose still says "65 gated handlers" (C-6(c) residue; the OI-25 prose-drift class). Do **not** simply write 74: "all 65 are correct … verified by hand and by the oracle" is a measurement, and the 9 newer handlers were not part of it. Reword to "74 gated; the 65 measured on 2026-09-21 were verified by hand and oracle, the 9 since by their own route tests", or re-measure. Comment and doc only, fix before the PR opens | Low |
+| N-2 | `lib/repositories/AdminTokenUsageAnalyticsRepository.ts:167-178` | The comment says the `info` line is "the accountability trail … who read how much", but the line carries no `correlationId` or admin id, so it cannot be joined to the route's `adminUserId` line. Because this is the OI-9 **template**, the next admin repository will copy it. Either soften the comment, or (preferred, can be a follow-up) accept an optional parent logger in the method options so the line inherits the request's `correlationId` | Low |
+| N-3 | `app/api/admin/users/route.ts:111`; `lib/repositories/UserProfileRepository.ts:131-136` | (a) Business-name matches are silently capped at 50 (`BUSINESS_SEARCH_MAX_LIMIT`), so a broad term can miss accounts. (b) Merged search results are sorted in memory with null names first on ascending order, while the unsearched path sorts in the database (nulls last on ascending). Neither is a security issue. Record them, or fix them cheaply | Low |
+| N-4 | `app/admin/users/components/BusinessOsPanel.tsx:114` | When the summary fails (`platform_account`, `tenant_check_failed`, 500), the header reads "Unnamed business" above an error sentence. Show a neutral title (e.g. "Business OS") in that case | Low |
+| N-5 | `app/api/admin/token-usage/drill-down/route.ts:58-62` | `execution=single-<uuid>` depends on `token_usage.id` being a UUID. The repo has no DDL, but the evidence says it is (`credit_transactions.token_usage_id UUID REFERENCES token_usage(id)`). No test covers the `single-` shape. **QA:** open one single-call execution row live and confirm there is no 400 | Low |
+| N-6 | `BusinessOsPanel.tsx:33-39, 184` | `SUMMARY_ERROR_COPY` is not pinned to the summary route's codes the way `accountLookup.contract` pins the entitlements codes. The "5,000 calls" copy duplicates `LLM_USAGE_LIMITS.READ_CEILING`, which the panel cannot import under its source guard. A future tidy-up could return the ceiling in the payload | Info |
+
+#### Optimisation Suggestions (non-blocking)
+- The drill-down still shows "vs previous period" percentages when either read may be truncated. This is accepted under U-5; OI-P2's fix shape already covers it.
+- `supabase.auth.admin.listUsers()` in `users/route.ts:157` uses the default page size, so emails beyond the first page show "N/A". This is pre-existing and was already recorded as debt in the workplan review.
+- The per-row `<details>` block in `users/page.tsx` has inconsistent JSX indentation. Style only.
+
+#### Owed before merge (not code)
+- **TL:** CLAUDE.md still says "7 handlers still hand-roll" and "72 admin handlers" (C-6(e)). The user decides before merge, or the PR body records the drift.
+- **BA:** the requirement's change history should record U-1 to U-5, and that C-10 holds only below 1,000 rows.
+
+### Code Approved for QA: **Yes.** N-1 should be fixed before the PR opens (comment and doc only; it does not need SA re-review). N-2 to N-6 may be fixed or recorded at Dev's discretion. N-5 is added to QA's live checks.
+
+---
+
 ## QA Testing Report
 
-*(QA to populate)*
+**QA — 2026-09-25**
+**Test mode:** full
+**Strategy used:** A (unit: event audience, repositories) and B (route integration). B used mocked repositories and, new with this report, the real repositories and the real supabase-js client over a stubbed `fetch`, so the exact PostgREST request is asserted. There were no live checks: this session had no sanctioned read-only script, so nothing touched production. Every live check is listed below as owed by the user
+**Focus:** api, security, schema, ui (render tests only)
+**Skipped:** E2E (not set up in this repo); the live "totals match" and browser checks (production, owed by the user, M-1 to M-14); `npm run schema:check` (the worktree has no `.env.local`; Dev's T0a zero-row selects stand)
+**Input source:** prompt keywords (TL brief), plus workplan §6 and the SA conditions
+**Where:** worktree `neuronforge-admin-bos-reorg`, branch `feature/admin-bos-step2` @ `f44fec53` (4 local commits). The main checkout was not touched. No database writes and no production reads
+
+### Gate results (real output)
+
+| Check | Result |
+|---|---|
+| `npx jest app/admin lib/audit app/api/admin lib/repositories lib/admin lib/business-os/usage` (as delivered) | **81 suites: 80 passed, 1 failed. 1,593 tests: 1,592 passed, 1 failed.** Matches Dev §12.4 |
+| Same command, with QA's 3 new suites | **84 suites: 83 passed, 1 failed. 1,629 tests: 1,628 passed, 1 failed** (+36 QA tests, all green) |
+| C-13 parked red test | `tokenUsageRepository.contract.test.ts:84` › "pins every public method and its arity". On **this branch**: 1 failed / 4 passed, and the diff is one extra name, `summariseFeatureAllAccountsInWindow`. On the **base `ddcbb43d`**: **1 failed / 4 passed, with the identical one-line diff**. The base run used a temporary detached worktree in the session scratchpad, removed afterwards; the branch worktree was never modified. Same single assertion, no second reason ✅ |
+| `npm run test:authz-guard` | **106 / 106 passed** |
+| `npm run typecheck:bos-llm` | **passed**: 247 files, 28 errors, 0 new. Re-run with QA's tests: **249 files** (two QA tests import in-scope routes), **0 new**. Baseline untouched |
+| `npm run check:bos-llm-literals` | **passed**: 45 files, 2 exempt, 0 violations |
+| ESLint, every `.ts`/`.tsx` file in `ddcbb43d..HEAD` | **0 errors**, 35 warnings (pre-existing `any` / unused). QA's 3 new files: clean |
+| `next build` (CI placeholder env from `build.yml`) | **exit 0**, "Compiled successfully". `/admin/analytics`, `/admin/audit-trail`, `/admin/users` and the new summary route build as dynamic (ƒ). The 56 `DYNAMIC_SERVER_USAGE` log lines come from static probing and are pre-existing |
+
+### Test Coverage
+
+| Acceptance criterion (requirement §7 Slice 2) | Tested? | Result | Notes |
+|---|---|---|---|
+| BOS preset totals match the LLM usage report for the same window | ⚠️ | Partial | At code level, the route test proves that totals = `computeAreaTotals(classifyCallRow(rows))`, over a fixture with current, legacy, bare `business-os` and typo rows. The live comparison is **owed (M-9, M-10)**, and it holds **only below 1,000 rows** (OI-P1, parked; Dev measured 7,658 / 3,015 rows in the last 30 days) |
+| Legacy-tagged BOS rows are included | ✅ | Pass | QA wire test: **both** ledger reads send `or=(feature.like.business-os*,feature.in.("insight-generation","correlated-insight-generation","health-summary-generation","business-os","landing-page-generation","lead-reply"))`. It is built from `bosRowFilter()`, never from the request |
+| The panel shows plan/cohort and "which layer decided" exactly as the entitlements API returns them | ✅ | Pass (render) | The panel renders the extracted `EntitlementSnapshot` from the unchanged entitlements route (F-5/F-6). The render test checks tier, cohort and `decidedBy`. Live cross-check owed (M-4) |
+| No prompt, message body or owner text is displayed | ✅ | Pass | The route test injects `prompt`, `message` and `callNames`. **QA added:** a `details` value stored as a string (older rows) is dropped entirely; owner text in an allow-listed key is capped at 80 characters; wrong types become null; unlisted keys (`outcome`, `models`) never appear. The reads are allow-listed: 4 + 4 columns, plus the 17-column ledger list. The QA wire test confirms no `*` in the select and no payload, metadata or error column |
+| Non-admin access is refused | ✅ | Pass | All four routes return 401 when signed out and 403 for a non-admin, with **zero reads before the gate**. Summary: zero repository calls. Users: **QA added** zero requests of any kind, even with a hostile search. Audit trail: `auditAdminGate.test.ts` plus the ordering tests. Drill-down: no ledger read. Pages: `app/admin/layout.tsx` calls `requireAdminPage()` first (source guard). Authz guard 106/106 |
+| The Action Type dropdown shows no AgentsPilot-only events | ✅ | Pass | QA's independent count via `tsx`: the operator list has **73 options** (15 + 58) and **0** `agentspilot` events; the no-argument list still has 157. The render test confirms the DOM |
+| "All Actions" still returns every row | ✅ | Pass (code) | The page sends no `action` when "all" is selected. Route test: `action=all` → no `.eq`. The route never filters by audience: the hidden `AGENT_CREATED` still filters. The live row-count comparison is owed (M-12) |
+| Every catalogue event is classified; the test fails on an unclassified one | ✅ | Pass | 157 events → **15 bos / 58 shared / 84 agentspilot**, 0 untagged (QA's own count). **Negative test:** QA temporarily added `QA_TEMP_UNTAGGED_EVENT` to `AUDIT_EVENTS`. `eventAudience.test.ts` then **failed** on "tags every registered event" and on the 15/58/84 pin (2 failed / 62 passed across the 5 audit suites). The event **stayed visible** in the operator dropdown (74 options, the temporary event included). Reverted with `git checkout`; the SHA-1 of `events.ts` was identical before and after (`83c7c910…`) |
+| Happy path plus one failure path tested | ✅ | Pass | Every new or changed route has happy, 401, 403, 400 and 500-without-detail tests (see the per-route table) |
+
+**Per-route matrix** (✅ = asserted by a test; *QA* = test added by QA)
+
+| Route | Happy | 401 | 403 | Nothing read before the gate | 400 (Zod) | No detail outside development |
+|---|---|---|---|---|---|---|
+| `GET /api/admin/users` | ✅ | ✅ | ✅ | ✅ (+*QA*: no request at all, hostile search) | ✅ status, sortBy, sortOrder, length, control character (+*QA*: newline) | ✅ 500 in production and development |
+| `GET /api/admin/audit-trail` | ✅ incl. `user_id` | ✅ | ✅ | ✅ | ✅ `user_id=abc`, page, dates, action shape, severity, page size; 401/403 beat 400 | ✅ 500 and 400 |
+| `GET /api/admin/token-usage/drill-down` | ✅ (+*QA* wire) | ✅ | ✅ (403 beats 400) | ✅ | ✅ scope, period, user, agent, category, breakdownBy, date order, control character | ✅ fixed 500 body; 400 without details |
+| `GET /api/admin/business-os/accounts/[accountId]/summary` | ✅ | ✅ (+*QA*: beats 400) | ✅ (+*QA*: beats 400) | ✅ zero repository calls | ✅ (+*QA*: `' OR 1=1`, `../`, UUID with a suffix) | **Gap closed by QA:** the top-level `catch` (a *thrown* error) was untested. *QA:* production returns only `{ success:false, error:'Internal server error' }`; development adds the details |
+
+**Search injection (task 3).** The new suite `app/api/admin/users/__tests__/searchInjection.qa.test.ts` drives the real route through the real `UserProfileRepository` and `BusinessProfileRepository` and the real supabase-js client, capturing each PostgREST URL. It tries 14 hostile terms: `acme,id.neq.0`, `acme)`, `(acme`, `or=(id.neq.0)`, `acme%),id.neq.(x`, `x,and(id.gt.0,id.lt.z)`, `%`, `_`, `a\b`, `*`, `x&or=(id.gt.0)&id=eq.1`, `"acme","x"`, `acme%2Cid.neq.0` and `full_name.eq.x`. For every one:
+- exactly 3 GETs are sent (business name, `full_name`, `company`);
+- there is **no `or` or `and` parameter**, and no parameter outside the allow-list;
+- no `id` filter is added;
+- the term arrives byte-for-byte as one escaped `ilike.%…%` operand.
+
+A full UUID adds exactly one `id=eq.<uuid>`; a UUID followed by `,id.neq.0` does not. **The injection is closed.** There is one behaviour edge (E-1, `*`).
+
+**2a.** The toggle defaults on: in `scope.render.test`, the first request carries `scope=bos`. The route's own default stays `all` (QA wire test). `bosRowFilter()` is used, and legacy rows are included (see above). The note "Totals may be incomplete above 1,000 calls" is always shown, and a stronger banner appears when `possiblyIncomplete` is set (render test). Cost is labelled "USD, estimated".
+
+**2b.**
+- No prompts or owner text (see above).
+- The "USD (estimated)" label is shown, and the source guard shows no read of `business_profiles.currency` or `LanguageContext`.
+- A row with `business: null` says "No Business OS business", and one whose lookup failed says "Business unknown" (route and render tests).
+- **Batched lookup:** `findAdminIdentitiesByUserIds` is called once for the whole list (route test: called once, with every id). The repository makes one `.in()` per 200 ids (201 ids → 2 queries).
+- The panel makes 2 requests per **expanded** row and none per listed row.
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+None. No High or Medium defect found.
+
+#### Performance Issues (should fix)
+None new. OI-P1 (the 1,000-row cutoff) is parked by the user; the on-screen notes are present and tested.
+
+#### Edge Cases (nice to fix)
+1. **E-1: `*` acts as a wildcard in the Businesses search.** `lib/repositories/UserProfileRepository.ts:111`: `escapeIlikePattern` cannot escape `*`, and PostgREST turns `*` into `%` inside `like`/`ilike`. Searching `*` lists every account, and `a*b` matches `a…b`. This is not an injection (the operand stays one parameter, and the route is admin-only), but the result is surprising. Severity: Low. Fix shape: strip `*`, or refuse it in the Zod schema (`app/api/admin/users/route.ts:40`)
+2. **E-2: `execution=single-<id>` assumes `token_usage.id` is a UUID.** `app/api/admin/token-usage/drill-down/route.ts:61` (SA N-5). Not verified live. If the assumption is wrong, opening a single-call row returns 400 and the page shows its generic error. Severity: Low (the evidence says UUID). Owed: M-8
+3. **E-3: a reversed custom date range now returns 400**, shown as the generic "Failed to fetch data" instead of an empty result. `drill-down/route.ts:72` + `app/admin/analytics/page.tsx:283-285`. Severity: Low
+4. **E-4: business-name matches are capped at 50.** `app/api/admin/users/route.ts:111` (SA N-3a). Severity: Low
+5. **E-5: a dimension value longer than 200 characters** (e.g. a long endpoint path) returns 400 on drill-in. `drill-down/route.ts:40`. Severity: Low
+6. Already raised by SA, confirmed by QA, not repeated here: N-3b (null sort order), N-4 ("Unnamed business" header above an error), N-6
+
+Pre-existing and outside this slice, recorded only:
+- The drill-down's execution-detail path (`drill-down/route.ts:990-999`) still selects agent `user_prompt`, `system_prompt` and `input_data` (AgentsPilot view, unchanged).
+- The audit route's `.from('users')` join always yields null names (D-9 / OI-18).
+
+### QA test files added (in the worktree, uncommitted, for Dev/RM to include)
+
+| File | Tests | Covers |
+|---|---|---|
+| `app/api/admin/users/__tests__/searchInjection.qa.test.ts` | 21 | Wire-level injection probes (14 terms + 2 id cases); 400s before any request; 401/403 with zero requests |
+| `app/api/admin/token-usage/drill-down/__tests__/wire.qa.test.ts` | 4 | The `or=` group on both reads, with every legacy value; explicit select; a hostile `feature` value stays on `.eq`; `scope=all` and the default send no predicate |
+| `app/api/admin/business-os/accounts/[accountId]/summary/__tests__/route.qa.test.ts` | 11 | Thrown-error 500 (production and development); 401/403 beat 400; hostile ids; the projection against string `details`, wrong types, oversized values and unlisted keys; the spend error block carries no text |
+
+### Manual checks owed by the user (after deploy, signed in as a platform admin)
+
+1. **M-1** The sidebar and page title say **Businesses**. Each row shows the business name and the user name. An AgentsPilot-only login says "No Business OS business"
+2. **M-2** Search for a known business name and for a person's name: both are found. Then search for `acme,id.neq.0`, then for `%`: no error, and no unrelated rows. (`*` returns everyone, see E-1)
+3. **M-3** Expand a Business OS row. The **Business OS** panel comes first, showing the business, vertical, plan, 30-day spend "USD (estimated)" and recent failures. "AgentsPilot details (agents and agent executions)" is **closed**. Plugins, subscription, login activity, the audit log and "AI spend, all products (30 days; may be incomplete above 1,000 calls)" are open. **No prompt or message text appears anywhere in the panel**
+4. **M-4** For the same account, open `/admin/business-os-tiers`, look the account up, and compare tier, cohort, state and each capability's "decided by" with the panel. They must be identical
+5. **M-5** Expand an AgentsPilot-only login. It shows "Not a Business OS account…", with no spend and no failures
+6. **M-6** In the panel, click "View in audit trail", then one failure row's link. The audit trail opens filtered to `BUSINESS_AI_ACTION_FAILED`, with an "Account xxxxxxxx…" chip (and the group id in the search box). Clicking × on the chip shows every account again
+7. **M-7** Click "Open in AI cost & usage". `/admin/analytics?scope=bos&user=…` opens with the toggle on and scoped to that account
+8. **M-8** On `/admin/analytics`, drill Provider → Model → Activity → Agent → Execution, then open one **single-call** execution row (`single-…`). It must not error (E-2 / SA N-5). Also apply a custom date range
+9. **M-9** Totals match (C-10). Pick a Business OS account with fewer than 1,000 calls, and a **fixed past** window of 7 days or less. The totals {calls, tokens, cost} from `drill-down?scope=bos&user=<id>&dateFrom=<start>&dateTo=<end>` must equal `areaTotals.total` from `/api/admin/business-os/llm-usage?accountId=<id>&since=<start>`, compared at display precision. Repeat for a second account
+10. **M-10** The panel's 30-day spend equals `drill-down?scope=bos&user=<id>` over the same 30-day window (transitive to M-9; holds only below 1,000 calls)
+11. **M-11** A fresh `/admin/analytics` opens with **Business OS only ON**. It shows "Includes legacy-tagged Business OS rows…" and "Totals may be incomplete above 1,000 calls…". With the default 30 days, the stronger "reached 1,000 calls" banner is expected (7,658 / 3,015 rows). Turning the toggle off shows "Both products", with totals at least as large as the Business OS totals
+12. **M-12** On `/admin/audit-trail`, the Action Type list has no Agent, AgentKit, Pilot, Memory, Workflow or Approval groups, and has "Business OS AI" and "Business OS Entitlements". "BOS AI failures" filters in one click. With **All Actions** over a fixed window, `pagination.total` equals the count before deploy for the same window
+13. **M-13** Open `/admin/audit-trail?action=AGENT_CREATED`. The select shows "… (hidden from this list)" rather than a blank, and the rows are filtered
+14. **M-14** Sign in as a **non-admin** (or use a private window). `/admin/users` is refused, and `GET /api/admin/business-os/accounts/<any-uuid>/summary` returns 403 (401 when signed out)
+
+### Final Status
+- [x] All acceptance criteria pass at code level. The two live criteria ("totals match" and the "All Actions" row count) are owed by the user as M-9, M-10 and M-12. **Verdict: PASS.** Ready for commit, with the three QA test files included
+- [ ] Issues found — Dev must address before commit (none blocking; E-1 to E-5 are Low)
+- Owed before merge, not QA's to close: SA N-1 (the stale "65" prose), the CLAUDE.md "7 handlers / 72" drift (C-6e, TL and the user), and the requirement change history (BA)
 
 ---
 
@@ -611,4 +851,7 @@ In line with CLAUDE.md ("don't reformat files you aren't working on"), untouched
 |------|--------|---------|
 | 2026-09-25 | Created (Dev) | Slice 2 (2a, 2b, 2c) planned as one PR against `ddcbb43d`. 22-point verification log, including: the drill-down's silent 1,000-row cap (V-4), its comparison read ignoring four filters (V-5), the LLM usage report being per account and at most 7 days (V-3), the audit route being one of the 7 inline admin checks (V-7), and 157 events of which 122 have metadata (V-8). Proposes an exhaustive per-event audience map (15 BOS / 58 shared / 84 AgentsPilot), a cross-account admin analytics repository, and one summary route for the Business OS panel. 11 SA forks, 3 user questions |
 | 2026-09-25 | Implemented (Dev) | Four local commits on `feature/admin-bos-step2` (2c, 2a, 2b, docs), not pushed. User decisions U-1 to U-5 applied: rename with business + user name (touching the users list route: Pino, leaks, Zod, injection fix, batched lookup), BOS lens on by default, C-1/C-2 waived and recorded as OI-P1/OI-P2 (PARKED). Deviations D-1 to D-9. Measured authz counts 80 = 74 + 6 + 0 over 51 files (the register had fallen 7 handlers behind before this PR). Verification in §12.4 |
+| 2026-09-25 | Review follow-ups (Dev) | N-1, N-2, N-3 (a and b), N-4, N-6, E-1, E-3 and E-4 fixed as listed in §12.6; E-2/N-5 and E-5 left as agreed. QA's three test suites committed; their `escaped()` helper now expects `*` as `_`. Jest 84/85 suites, 1,645/1,646 tests (only the parked C-13 failure) |
+| 2026-09-25 | QA | **PASS.** Jest 83/84 suites and 1,628/1,629 tests, with 36 new QA tests in 3 suites. The one failure is the parked C-13 assertion, identical on base `ddcbb43d`. Authz guard 106/106; `typecheck:bos-llm` 0 new (249 files); literal gate 0; ESLint 0 errors; `next build` exit 0. Wire-level injection probes (14 terms) confirm the search is closed. 157 events split 15/58/84; a temporary untagged event failed the test and stayed visible (reverted). No bugs; edge cases E-1 to E-5 (Low). Live checks M-1 to M-14 owed by the user |
+| 2026-09-25 | SA code review | **Approved with nits.** SA re-ran the suites: Jest 80/81 suites and 1,592/1,593 tests, the one failure being the parked contract assertion, unchanged (C-13). Authz guard 106/106. `typecheck:bos-llm` 0 new. Literal gate 0 violations. SA's own census gives 80 handlers = 74 + 6 + 0 over 51 files. C-1 and C-2 were waived by the user (U-5); C-3 to C-13 pass. D-1 to D-9 are accepted, including the users-list rewrite (parameterised search, batched name lookup). Nits N-1 to N-6: N-1 (stale "65" prose) is to be fixed before the PR opens; N-5 is added to QA's live checks |
 | 2026-09-25 | SA workplan review | Approved with conditions C-1 to C-13. All 11 forks ruled, following Dev's recommendations with corrections: F-3 has no identifier regex on dimension values, and F-9 also shares the category post-filter. R-1 was measured at 8 errors, all removed by T8, so it drops from High to Low. New findings: the comparison read also skips the category filter; the Users all-products spend is capped at 1,000 rows (C-9); CLAUDE.md's "7 handlers" figure goes stale on merge (C-6e). Technical implications of Q-1 to Q-3 recorded; the questions themselves were left to the user |

@@ -22,6 +22,11 @@
 //     guard refuses any value that could inject filter syntax.
 //   - Only allow-listed columns are selected: never payloads, metadata or
 //     error text.
+//   - Every method takes an AdminReadContext FIRST and REQUIRED: the request's
+//     correlation id and the admin's id go on every log line, so the read can
+//     be joined to the route's own log line (who read how much, for which
+//     request). Required, not optional, because an unattributed cross-tenant
+//     read is exactly what the accountability trail exists to prevent.
 //   - Methods never throw: they return `{ data, error }`.
 //
 // KNOWN AND PARKED (user, 2026-09-25; slice 2 workplan, Open Issues OI-P1):
@@ -100,6 +105,13 @@ export interface AdminAnalyticsFilters {
   featureFilter?: TokenUsageFeatureFilter;
 }
 
+/** Who is reading, for which request. Put on every log line of the read. */
+export interface AdminReadContext {
+  correlationId: string;
+  /** The admin's user id (from `requireAdmin`). Never an email. */
+  adminId: string;
+}
+
 /** An ISO window. `start <= end`. */
 export interface AdminAnalyticsWindow {
   start: string;
@@ -145,11 +157,20 @@ export class AdminTokenUsageAnalyticsRepository {
    * (see the header: capped at ADMIN_ANALYTICS_UNPAGED_CAP rows by PostgREST).
    */
   async listRowsAllAccountsInWindow(
+    context: AdminReadContext,
     window: AdminAnalyticsWindow,
     filters: AdminAnalyticsFilters,
     columns: AdminAnalyticsColumns = 'aggregate'
   ): Promise<RepositoryResult<AdminAnalyticsRow[]>> {
+    const log = this.logger.child({
+      correlationId: context?.correlationId,
+      adminId: context?.adminId,
+      method: 'listRowsAllAccountsInWindow',
+    });
     try {
+      if (!context?.correlationId || !context?.adminId) {
+        throw new Error('An admin read context (correlationId, adminId) is required');
+      }
       if (!window || !window.start || !window.end || Date.parse(window.start) > Date.parse(window.end)) {
         throw new Error('A valid window (start <= end) is required');
       }
@@ -166,9 +187,8 @@ export class AdminTokenUsageAnalyticsRepository {
       const rows = (data ?? []) as unknown as AdminAnalyticsRow[];
       // info, not debug: this is a cross-tenant read, and who read how much is
       // the accountability trail. No values from the rows are logged.
-      this.logger.info(
+      log.info(
         {
-          method: 'listRowsAllAccountsInWindow',
           columns,
           rows: rows.length,
           scoped: !!filters.featureFilter,
@@ -178,7 +198,7 @@ export class AdminTokenUsageAnalyticsRepository {
       );
       return { data: rows, error: null };
     } catch (error) {
-      this.logger.warn({ err: error, method: 'listRowsAllAccountsInWindow' }, 'Admin analytics ledger read failed');
+      log.warn({ err: error }, 'Admin analytics ledger read failed');
       return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
     }
   }

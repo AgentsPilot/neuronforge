@@ -16,7 +16,7 @@ import { z } from 'zod';
 import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import { createLogger } from '@/lib/logger';
 import { userProfileRepository } from '@/lib/repositories/UserProfileRepository';
-import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { businessProfileRepository, BUSINESS_SEARCH_MAX_LIMIT } from '@/lib/repositories/BusinessProfileRepository';
 
 const logger = createLogger({ module: 'UsersAdminAPI' });
 
@@ -106,13 +106,21 @@ export async function GET(request: NextRequest) {
 
     // A search also matches business names: those accounts' ids are added to
     // the profile search as parameters (never interpolated into a filter).
+    // The business-name search is capped; when it returns the cap there may be
+    // more matches, and the page says so rather than dropping them silently
+    // (QA E-4 / SA N-3a).
     let businessMatchIds: string[] = [];
+    let businessMatchesCapped = false;
+    let businessSearch: 'ok' | 'failed' | 'skipped' = 'skipped';
     if (term) {
-      const matches = await businessProfileRepository.searchForAdmin(term, 50);
+      const matches = await businessProfileRepository.searchForAdmin(term, BUSINESS_SEARCH_MAX_LIMIT);
       if (matches.error) {
+        businessSearch = 'failed';
         requestLogger.warn({ err: matches.error }, 'Business-name search failed; searching people only');
       } else {
+        businessSearch = 'ok';
         businessMatchIds = (matches.data ?? []).map((m) => m.user_id);
+        businessMatchesCapped = businessMatchIds.length >= BUSINESS_SEARCH_MAX_LIMIT;
       }
     }
 
@@ -207,6 +215,8 @@ export async function GET(request: NextRequest) {
         rows: filteredUsers.length,
         withBusiness: businesses.size,
         businessLookup,
+        businessSearch,
+        businessMatchesCapped,
       },
       'Admin user list served'
     );
@@ -215,6 +225,8 @@ export async function GET(request: NextRequest) {
       success: true,
       data: filteredUsers,
       stats,
+      // Shown on the page: a capped business-name search may be missing matches.
+      search: { businessSearch, businessMatchesCapped, businessMatchLimit: BUSINESS_SEARCH_MAX_LIMIT },
       pagination: {
         total: filteredUsers.length,
         page: 1,

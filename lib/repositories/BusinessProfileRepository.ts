@@ -38,11 +38,33 @@ export const BUSINESS_SEARCH_MAX_LIMIT = 50;
 
 /**
  * Escape text for use inside an ILIKE pattern: `\` first, then `%` and `_`, so
- * they match literally. (`*` cannot be escaped through PostgREST; see
- * `searchForAdmin`.)
+ * they match literally. (`*` cannot be escaped through PostgREST; for
+ * user-typed search text use `ilikeContainsPattern` + `matchesLiterally`.)
  */
 export function escapeIlikePattern(text: string): string {
   return text.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
+/**
+ * A "contains" ILIKE pattern for user-typed search text, with every character
+ * taken literally (admin reorganisation slice 2, QA E-1).
+ *
+ * PostgREST rewrites EVERY `*` in a like/ilike operand to `%` before Postgres
+ * sees it, and there is no escape for that, so a search for `*` used to match
+ * every row. A `*` is therefore sent as `_` (exactly one character, which
+ * includes a literal `*`), and the caller drops the extra rows with
+ * `matchesLiterally`. `\`, `%` and `_` are escaped as before.
+ */
+export function ilikeContainsPattern(text: string): string {
+  return `%${escapeIlikePattern(text).replace(/\*/g, '_')}%`;
+}
+
+/**
+ * The literal, case-insensitive "contains" test that `ilikeContainsPattern`
+ * approximates on the server. Only needed when the text contains `*`.
+ */
+export function matchesLiterally(value: string | null | undefined, text: string): boolean {
+  return typeof value === 'string' && value.toLowerCase().includes(text.toLowerCase());
 }
 
 /**
@@ -561,8 +583,9 @@ export class BusinessProfileRepository {
    * Selects ONLY `user_id, company_name`. The search goes through `.ilike()` (a
    * single operator argument, so commas and parentheses are harmless) with
    * `\`, `%` and `_` escaped; it is never built into an `.or()` string.
-   * PostgREST also reads `*` as a wildcard and it cannot be escaped, so a `*`
-   * widens this admin-only, capped search (accepted, Layer 1.1 Q-4).
+   * PostgREST reads `*` as a wildcard and it cannot be escaped, so a `*` is
+   * sent as a one-character wildcard and the rows are then filtered literally
+   * (QA E-1; before that a `*` widened the search to every business).
    */
   async searchForAdmin(
     search: string | undefined,
@@ -574,7 +597,7 @@ export class BusinessProfileRepository {
       let query = this.supabase.from('business_profiles').select('user_id, company_name');
 
       if (search) {
-        query = query.ilike('company_name', `%${escapeIlikePattern(search)}%`);
+        query = query.ilike('company_name', ilikeContainsPattern(search));
       }
 
       const { data, error } = await query
@@ -583,9 +606,12 @@ export class BusinessProfileRepository {
 
       if (error) throw error;
 
+      let rows = (data ?? []) as Array<{ user_id: string; company_name: string | null }>;
+      if (search && search.includes('*')) rows = rows.filter((row) => matchesLiterally(row.company_name, search));
+
       // Search text and names are not logged: a search is usually a business name.
-      logger.debug({ hasSearch: !!search, results: data?.length ?? 0 }, 'Admin business search');
-      return { data: (data ?? []) as Array<{ user_id: string; company_name: string | null }>, error: null };
+      logger.debug({ hasSearch: !!search, results: rows.length }, 'Admin business search');
+      return { data: rows, error: null };
     } catch (error) {
       logger.error({ err: error }, 'Admin business search failed');
       return { data: null, error: error as Error };

@@ -29,8 +29,12 @@ import {
 import type { AccountPayload } from '@/app/admin/business-os-tiers/types';
 import type { AccountSummaryPayload } from '../types';
 
-/** Every refusal the summary route can return, as a sentence. */
-const SUMMARY_ERROR_COPY: Record<string, string> = {
+/**
+ * Every refusal the summary route can return, as a sentence. Kept complete by a
+ * test that reads the route's source and fails on a code with no copy here
+ * (SA N-6, modelled on accountLookup.contract).
+ */
+export const SUMMARY_ERROR_COPY: Record<string, string> = {
   not_a_business_os_account: 'Not a Business OS account. This login has no Business OS business.',
   platform_account: 'This is the platform account. Its AI usage is not one business’s spend.',
   invalid_account_id: 'That does not look like an account id.',
@@ -100,8 +104,15 @@ export function BusinessOsPanel({ accountId, userName }: Props) {
     (plan.state === 'error' && plan.code === 'not_a_business_os_account') ||
     (summary.state === 'error' && summary.code === 'not_a_business_os_account');
 
-  const businessName =
-    summary.state === 'ok' && summary.data.business.status === 'ok' ? summary.data.business.companyName : null;
+  // The header never guesses (SA N-4): a name only when the summary produced
+  // one; "Unnamed business" only for a business whose profile has no name; a
+  // neutral title while loading, when the profile does not exist yet, or when
+  // the summary failed.
+  let headerTitle = 'Business OS';
+  if (notBos) headerTitle = 'No Business OS business';
+  else if (summary.state === 'ok' && summary.data.business.status === 'ok') {
+    headerTitle = summary.data.business.companyName || 'Unnamed business';
+  }
 
   return (
     <section
@@ -111,7 +122,7 @@ export function BusinessOsPanel({ accountId, userName }: Props) {
       <header className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <Briefcase className="h-5 w-5 text-emerald-400 self-center" aria-hidden="true" />
         <h3 data-testid="bos-panel-business" className="text-lg font-bold text-white">
-          {notBos ? 'No Business OS business' : businessName || (loading ? 'Business OS' : 'Unnamed business')}
+          {headerTitle}
         </h3>
         <span data-testid="bos-panel-user" className="text-sm text-slate-400">
           {userName || 'No name'}
@@ -181,7 +192,8 @@ export function BusinessOsPanel({ accountId, userName }: Props) {
                     </p>
                     {summary.data.aiSpend30d.status === 'incomplete' && (
                       <p data-testid="bos-panel-spend-incomplete" className="mt-1 text-xs text-amber-300">
-                        More than 5,000 calls in 30 days: this total is a lower bound.
+                        More than {summary.data.aiSpend30d.readCeiling.toLocaleString('en-US')} calls in 30 days:
+                        this total is a lower bound.
                       </p>
                     )}
                     {summary.data.aiSpend30d.lines.length > 0 && (

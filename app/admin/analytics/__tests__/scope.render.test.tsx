@@ -51,8 +51,8 @@ function okBody(extra: Record<string, unknown> = {}) {
   };
 }
 
-function mockRoute(response: { ok: boolean; body: unknown }): jest.Mock {
-  const fetchMock = jest.fn(async () => ({ ok: response.ok, json: async () => response.body }));
+function mockRoute(response: { ok: boolean; status?: number; body: unknown }): jest.Mock {
+  const fetchMock = jest.fn(async () => ({ ok: response.ok, status: response.status, json: async () => response.body }));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- jsdom has no fetch; standard test stub
   (global as any).fetch = fetchMock;
   return fetchMock;
@@ -108,5 +108,31 @@ describe('the Business OS lens', () => {
     mockRoute({ ok: false, body: { success: false, error: 'Invalid query parameters' } });
     render(<AdminCostAnalytics />);
     await waitFor(() => expect(document.body.textContent).toContain('Failed to fetch data'));
+  });
+
+  it('a 400 from the route says the query was not valid, not "Failed to fetch data"', async () => {
+    mockRoute({ ok: false, status: 400, body: { success: false, error: 'Invalid query parameters' } });
+    render(<AdminCostAnalytics />);
+    await waitFor(() => expect(document.body.textContent).toContain('not valid'));
+    expect(document.body.textContent).not.toContain('Failed to fetch data');
+  });
+});
+
+describe('a custom date range with the start after the end (QA E-3)', () => {
+  it('shows a clear message and does not send the reversed range', async () => {
+    const fetchMock = mockRoute({ ok: true, body: okBody() });
+    render(<AdminCostAnalytics />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Custom/ }));
+    await waitFor(() => expect(document.querySelectorAll('input[type="date"]')).toHaveLength(2));
+    const [from, to] = Array.from(document.querySelectorAll('input[type="date"]')) as HTMLInputElement[];
+    fireEvent.change(from, { target: { value: '2026-09-20' } });
+    fireEvent.change(to, { target: { value: '2026-09-01' } });
+    const callsBefore = fetchMock.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    expect((await screen.findByTestId('date-range-error')).textContent).toContain('start date is after the end date');
+    expect(fetchMock.mock.calls.length).toBe(callsBefore);
+    expect(urls(fetchMock).some((u) => u.includes('2026-09-20') && u.includes('2026-09-01'))).toBe(false);
   });
 });

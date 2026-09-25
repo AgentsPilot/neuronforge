@@ -9,6 +9,7 @@ import {
   adminTokenUsageAnalyticsRepository,
   ADMIN_ANALYTICS_UNPAGED_CAP,
   type AdminAnalyticsFilters,
+  type AdminReadContext,
 } from '@/lib/repositories/AdminTokenUsageAnalyticsRepository';
 
 const logger = createLogger({ module: 'TokenUsageDrillDownAPI' });
@@ -243,7 +244,8 @@ export async function GET(request: NextRequest) {
     };
 
     // Get aggregated data with filters applied
-    const result = await getAggregatedData(breakdownBy, filters, dateFrom, dateTo, category, scope);
+    const readContext: AdminReadContext = { correlationId, adminId: gate.user.id };
+    const result = await getAggregatedData(readContext, breakdownBy, filters, dateFrom, dateTo, category, scope);
 
     return NextResponse.json(result);
 
@@ -286,6 +288,7 @@ const MEMORY_ACTIVITY_TYPES = [
  * Get aggregated data with BI-style filtering
  */
 async function getAggregatedData(
+  readContext: AdminReadContext,
   breakdownBy: string,
   filters: DrillDownFilters,
   dateFrom: string,
@@ -314,6 +317,7 @@ async function getAggregatedData(
   };
 
   const { data: records, error } = await adminTokenUsageAnalyticsRepository.listRowsAllAccountsInWindow(
+    readContext,
     { start: dateFrom, end: dateTo },
     mainFilters
   );
@@ -415,6 +419,7 @@ async function getAggregatedData(
   // endpoint and the category post-filter is a known defect, PARKED by the user
   // on 2026-09-25 (slice 2 workplan, OI-P2) and deliberately not changed here.
   const { data: prevRecords } = await adminTokenUsageAnalyticsRepository.listRowsAllAccountsInWindow(
+    readContext,
     { start: prevPeriodFrom.toISOString(), end: prevPeriodTo.toISOString() },
     {
       provider: filters.provider,

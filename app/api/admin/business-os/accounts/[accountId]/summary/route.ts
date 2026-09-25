@@ -167,6 +167,9 @@ export async function GET(request: NextRequest, context: { params: { accountId: 
     const aiSpend30d = {
       status: totals.status,
       currency: 'USD' as const,
+      // The ceiling the read stops at, sent so the panel's "lower bound" note
+      // quotes the real number instead of a copy of it (SA N-6).
+      readCeiling: LLM_USAGE_LIMITS.READ_CEILING,
       window: { start: start.toISOString(), end: end.toISOString() },
       total: totals.total,
       lines: totals.status === 'error' ? [] : totals.lines.filter((line) => line.calls > 0),

@@ -8,10 +8,15 @@ import * as path from 'path';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: {} }));
+const mockChildBindings: Array<Record<string, unknown>> = [];
+const mockInfo = jest.fn();
 jest.mock('@/lib/logger', () => {
   const make = (): Record<string, unknown> => {
-    const logger: Record<string, unknown> = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
-    logger.child = () => logger;
+    const logger: Record<string, unknown> = { info: mockInfo, warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
+    logger.child = (bindings: Record<string, unknown>) => {
+      mockChildBindings.push(bindings);
+      return logger;
+    };
     return logger;
   };
   return { createLogger: () => make() };
@@ -43,6 +48,7 @@ function recordingClient(result: { data: unknown; error: unknown }) {
   return { client, calls };
 }
 
+const CTX = { correlationId: 'corr-1', adminId: '11111111-1111-4111-8111-111111111111' };
 const WINDOW = { start: '2026-09-01T00:00:00.000Z', end: '2026-09-08T00:00:00.000Z' };
 const BOS_FILTER = {
   featurePrefix: 'business-os',
@@ -76,7 +82,7 @@ describe('listRowsAllAccountsInWindow', () => {
     const { client, calls } = recordingClient({ data: [{ cost_usd: '0.1', input_tokens: 1, output_tokens: 2 }], error: null });
     const repo = new AdminTokenUsageAnalyticsRepository(client);
 
-    const result = await repo.listRowsAllAccountsInWindow(WINDOW, {
+    const result = await repo.listRowsAllAccountsInWindow(CTX, WINDOW, {
       provider: 'openai',
       model: 'openai/gpt-4o:2024',
       activity: 'chat',
@@ -106,30 +112,51 @@ describe('listRowsAllAccountsInWindow', () => {
     expect(calls).toContainEqual({ method: 'or', args: [buildFeatureFilterOrExpression(BOS_FILTER)] });
   });
 
+  it('logs each read with the request correlation id and the admin id, and no row values', async () => {
+    mockChildBindings.length = 0;
+    mockInfo.mockClear();
+    const { client } = recordingClient({ data: [{ cost_usd: '0.1', input_tokens: 1, output_tokens: 2 }], error: null });
+    await new AdminTokenUsageAnalyticsRepository(client).listRowsAllAccountsInWindow(CTX, WINDOW, {});
+    expect(mockChildBindings).toContainEqual(expect.objectContaining(CTX));
+    expect(mockInfo).toHaveBeenCalledTimes(1);
+    expect(mockInfo.mock.calls[0][0]).toMatchObject({ rows: 1, possiblyTruncated: false });
+  });
+
   it('applies no feature predicate when no feature filter is given', async () => {
     const { client, calls } = recordingClient({ data: [], error: null });
-    await new AdminTokenUsageAnalyticsRepository(client).listRowsAllAccountsInWindow(WINDOW, {}, 'totals');
+    await new AdminTokenUsageAnalyticsRepository(client).listRowsAllAccountsInWindow(CTX, WINDOW, {}, 'totals');
     expect(calls.some((c) => c.method === 'or')).toBe(false);
     expect(calls).toContainEqual({ method: 'select', args: [ADMIN_ANALYTICS_COLUMNS.totals] });
   });
 
   it('returns { data: null, error } on a database error and never throws', async () => {
     const { client } = recordingClient({ data: null, error: { message: 'boom' } });
-    const result = await new AdminTokenUsageAnalyticsRepository(client).listRowsAllAccountsInWindow(WINDOW, {});
+    const result = await new AdminTokenUsageAnalyticsRepository(client).listRowsAllAccountsInWindow(CTX, WINDOW, {});
     expect(result.data).toBeNull();
     expect(result.error).toBeInstanceOf(Error);
+  });
+
+  it('refuses to read without an admin read context (N-2: every cross-tenant read is attributed)', async () => {
+    const { client, calls } = recordingClient({ data: [], error: null });
+    const result = await new AdminTokenUsageAnalyticsRepository(client).listRowsAllAccountsInWindow(
+      { correlationId: '', adminId: '' },
+      WINDOW,
+      {}
+    );
+    expect(result.data).toBeNull();
+    expect(calls).toHaveLength(0);
   });
 
   it('refuses a bad feature filter or a reversed window before any query', async () => {
     const { client, calls } = recordingClient({ data: [], error: null });
     const repo = new AdminTokenUsageAnalyticsRepository(client);
 
-    const badFilter = await repo.listRowsAllAccountsInWindow(WINDOW, {
+    const badFilter = await repo.listRowsAllAccountsInWindow(CTX, WINDOW, {
       featureFilter: { featurePrefix: 'x,y', features: [] },
     });
     expect(badFilter.data).toBeNull();
 
-    const reversed = await repo.listRowsAllAccountsInWindow({ start: WINDOW.end, end: WINDOW.start }, {});
+    const reversed = await repo.listRowsAllAccountsInWindow(CTX, { start: WINDOW.end, end: WINDOW.start }, {});
     expect(reversed.data).toBeNull();
     expect(calls.filter((c) => c.method === 'from')).toHaveLength(1); // only the bad-filter attempt reached from()
   });
