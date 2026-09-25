@@ -1,6 +1,6 @@
 # Workplan: Business OS AI Admin Screen — Refinements from First Use
 
-> **Last Updated**: 2026-09-24
+> **Last Updated**: 2026-09-25
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_LLM_ADMIN_SCREEN_REFINEMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_ADMIN_SCREEN_REFINEMENTS_REQUIREMENT.md) — 15 FRs (FR-10 withdrawn), 23 ACs. **SA-approved for a Dev workplan** after a full review and a targeted re-check, subject to **RC-1 … RC-4** plus the **Q-5** pre-implementation check, all of which this workplan folds in.
@@ -8,7 +8,7 @@
 **Branch:** **`feature/business-os-llm-admin-screen-refinements`** (cut by RM off `main` `a34f2572`; confirmed with `git branch --show-current` before the first edit — T1).
 **Original branch note:** **RM creates `feature/business-os-llm-admin-screen-refinements` off `main` `a34f2572`.** This workplan was written on `main` with **no code written and nothing committed** — Dev confirmed `git branch --show-current` → `main` and stopped at the plan, per the instruction that RM creates the branch after SA approves this document.
 **Date:** 2026-09-24
-**Status:** **✅ SA-approved code · ✅ QA PASS · ✅ CR-1, CR-2, QA BUG-1 and QA EDGE-1 all closed 2026-09-24 ([§15](#15-the-final-fix-pass--cr-1-cr-2-bug-1-edge-1)).** Mutation matrix re-run in full: **12 of 12 red** — and the re-run found **M7 surviving** for CR-1's exact reason, now fixed ([§15.2](#152--new-finding--m7-was-surviving-too-for-cr-1s-exact-reason)). **Nothing is committed.** Next: the user's own view of the screen, then RM. Prior status: SA code-reviewed 2026-09-24 — approved for QA, conditional on CR-1 (one test edit) and CR-2 (one doc correction); see [§14](#14-sa-review-notes--phase-2-code). SA approved the plan with changes on 2026-09-24; **RC-5 … RC-11 are folded in and each is evidenced in [§13](#13-how-rc-5--rc-11-were-satisfied)**. All gates measured in [§8](#8-gates-and-verification); the mutation matrix ran at ten rows and **all ten turned a named test red**. Nothing is committed — the commit is the user's gate and RM's job.
+**Status:** **✅ `origin/main` merged into the branch 2026-09-25 — one conflict, resolved and staged, UNCOMMITTED ([§16](#16-the-merge-with-originmain-33-commits-one-conflict)).** · **✅ SA-approved code · ✅ QA PASS · ✅ CR-1, CR-2, QA BUG-1 and QA EDGE-1 all closed 2026-09-24 ([§15](#15-the-final-fix-pass--cr-1-cr-2-bug-1-edge-1)).** Mutation matrix re-run in full: **12 of 12 red** — and the re-run found **M7 surviving** for CR-1's exact reason, now fixed ([§15.2](#152--new-finding--m7-was-surviving-too-for-cr-1s-exact-reason)). **Nothing is committed.** Next: the user's own view of the screen, then RM. Prior status: SA code-reviewed 2026-09-24 — approved for QA, conditional on CR-1 (one test edit) and CR-2 (one doc correction); see [§14](#14-sa-review-notes--phase-2-code). SA approved the plan with changes on 2026-09-24; **RC-5 … RC-11 are folded in and each is evidenced in [§13](#13-how-rc-5--rc-11-were-satisfied)**. All gates measured in [§8](#8-gates-and-verification); the mutation matrix ran at ten rows and **all ten turned a named test red**. Nothing is committed — the commit is the user's gate and RM's job.
 
 ---
 
@@ -1255,6 +1255,98 @@ Two rules also carry their planted rejections **inside the suite**, so they are 
 | 2 | SA CR-4 — `markers.ts:92`'s redundant `field as SettingField` | **Left**, same reasoning: SA said "when next in the file", and `markers.ts` needed no change this pass. |
 | 3 | QA EDGE-2 / SA CR-6 — `ISSUE_GLOSS.adjusted` | **Left.** Pre-existing at `a34f2572`, byte-identical, outside this round's scope. Both reviewers recorded it for the next `copy.ts` edit rather than asking for it here. |
 
+
+---
+
+## 16. The merge with `origin/main` (33 commits, one conflict)
+
+**Date:** 2026-09-25 - **Command:** `git fetch origin && git merge origin/main` - **Result:** resolved and **staged, not committed** - the user reads the resolution first.
+
+The branch was cut off `a34f2572`; `origin/main` had advanced **33 commits** (PRs #103 entitlements, #104 admin-guard hardening + lint, #105 the Tiers admin page) and GitHub reported the PR as `CONFLICTING`.
+
+### 16.1 What actually conflicted
+
+**One file, one hunk: the import block of `app/admin/business-os-llm/__tests__/source.guard.test.ts`.**
+
+Both sides had learned the same lesson from opposite directions. This branch fixed two dead guards **in place** (CR-1's wrapped-literal blindness and 15.2's value-comparison-proves-nothing). PR #104's `5b127e35` **extracted** the S2-T1 page-guard assertion into two new shared helpers - `tests/helpers/admin-page-guard.ts` (`adminLayoutGuardVerdict`) and `tests/helpers/source-scan.ts` (`blankStringLiterals`) - and deleted the local copy. Neither helper existed on this branch.
+
+Git auto-merged everything else correctly, which is why only the import line collided: this branch's four new `describe` blocks sit **above** the S2-T1 block and its one deletion sits **below** it, so #104's rewrite of the block itself applied cleanly.
+
+| Region | Outcome |
+|---|---|
+| Import block | **Conflict.** Resolved by taking #104's `admin-page-guard` import **verbatim** and adding `flattened` to the existing `bos-llm-literal-rules` import. Nothing re-inlined. |
+| The `S2-T1` guard block | Auto-merged to **#104's extracted-helper version**, unchanged - verified by reading the merged file, not assumed. |
+| This branch's four new `describe`s + the deleted `S2-T8` block | Auto-merged, intact. |
+| `app/admin/components/AdminSidebar.tsx` | **Auto-merged cleanly, verified both ways:** this branch's FR-12 `Models & temperatures` description survives, and #105's `Business OS Tiers` entry (plus its `Layers` icon import) is present. Both suites' nav pins pass. |
+| `docs/workplans/BUSINESS_OS_LLM_MODEL_SETTINGS_ADMIN_UI_WORKPLAN.md` | **Auto-merged cleanly, verified**: #104's three F-2/OI-21 update boxes landed beside this branch's slice-2 status edit; no text lost on either side. |
+
+### 16.2 `blankStringLiterals` does NOT cover CR-1, and must not be extended to
+
+The plan for this merge assumed `blankStringLiterals` might already be solving the wrapped-string-literal problem. **It is not - the two are opposite operations, and folding either into the other would break it:**
+
+| Helper | Does | Serves |
+|---|---|---|
+| `blankStringLiterals` (`source-scan.ts`) | **ERASES** string content, preserving length | a **code-shape** scan that must not be fooled by a decoy inside a literal (D-Q1) |
+| `flattened` (`bos-llm-literal-rules.ts`) | **JOINS** two concatenated literals and collapses whitespace | a **phrase** scan that must see text the author wrapped (CR-1) |
+
+Run `blankStringLiterals` before this branch's phrase rules and they match nothing - the propagation clause and the exclusion reason **are** string content, which is exactly what it deletes. And they cannot share one implementation even in principle: `blankStringLiterals` preserves **length** by contract (its callers compute offsets on the scaffold and slice the original text - `literalSpanAt`, and the surface guard's own *"blanks contents but preserves offsets"* unit test), while `flattened` deletes characters on purpose.
+
+So **no fix was re-applied and nothing was duplicated**: this branch's two fixes live in code #104 never touched (`flattened()` in the already-shared `bos-llm-literal-rules.ts`, plus the four new `describe`s), and #104's structure was taken wholesale for the block it rewrote.
+
+### 16.3 The `bos-llm-literal-rules.ts` / `source-scan.ts` overlap - measured, not assumed
+
+Checked for the "two helpers doing the same normalisation" defect one level up. **There is no overlap:** `source-scan.ts` exports `blankStringLiterals` and `literalSpanAt` and no comment stripper; `bos-llm-literal-rules.ts` exports `codeOf`, `flattened`, `FEATURE_ROOTS` and `LITERAL_RULES` and no scaffold builder. `main` already composes across the two - #104's `adminLayoutGuardVerdict(source, codeOf)` takes the stripper as a required parameter precisely so each caller supplies its own.
+
+**Consolidation would have been the wrong move** (16.2), so what was added instead is the thing that actually prevents a third copy: a **bidirectional cross-reference** in both helper headers, naming the other normaliser, stating the opposite polarity, and recording the length contract as the reason they cannot merge. Doc-only; no behaviour changed. *Deliberately not moved:* relocating `flattened` into `source-scan.ts` would split it from `codeOf` - the other generic primitive, which several suites import from `bos-llm-literal-rules.ts` - and is a refactor across a file `main` shipped a day earlier. Logged as a follow-up, not done here.
+
+### 16.4 The acceptance test - all twelve mutations re-run against the merged tree
+
+Every row re-applied to the merged working tree, the full 25-suite scope run, then restored from an in-memory copy (never `git checkout` - the merge is uncommitted). **12 of 12 still red.** Restoration verified by MD5 on every row.
+
+| # | Mutation | Red | Named test(s) |
+|---|---|---|---|
+| M1 | Hand-written four-name filter back in `CallRow` | **8** | both `RC-9` source rules + all six `R-T2 / AC-2` cases |
+| M2 | Drop `aria-hidden` + the `sr-only` span from `Marker` | 1 | `R-T11 > exposes the whole phrase to assistive technology...` |
+| M3a | Widen the roll-up to render when the area is off | 1 | `R-T7 > says it once, at area level, when the area itself is off` |
+| M3b | Drop the `areaShowsOff` guard from the per-call chip | 1 | `R-T7 > says it once, at area level...` |
+| M4 | `providers.size > 1` to a comparison against a provider name | 1 | `R-T17 > AreaCard.tsx names no provider` |
+| **M5** | Propagation clause re-typed inline, **wrapped across two concatenated literals** | 1 | `R-T3 > the propagation clause is composed, never re-typed` |
+| M6 | Render `c` for a policy-locked temperature | 3 | `R-T9` x2, `R-T8` |
+| **M7** | Exclusion reason re-typed **byte-identically but wrapped** | 1 | `R-T13 > does not re-type the sentence in its own source - it imports it` |
+| M8 | Move the `*` from the field label to the value | 2 | `R-T10 > sits inside the field LABEL...`; `R-T9` |
+| M9 | A third `MARKED_FIELDS` entry with no matching body | **40** | `TypeError` from `FIELD_BODIES[field](call)` |
+| M10 | Restore the old `c` hover that promised the code value | 2 | `R-T9 > ...adjusted, not refused`; `R-T11 > says the CONSEQUENCE on hover` |
+| M11 | Drop the `?? []` tolerance on `excludedCalls` | 1 | `R-T14 > renders the card, not a blank page...` |
+
+**M7 is the row that mattered most, and it was run twice.** A truncated re-type turns **two** tests red - the value assertion catches it as drift - which would have proved nothing about the new rule. Re-run **byte-identical to the policy constant and only re-wrapped**, the value assertion stays green and exactly **one** test goes red: the source rule added in 15.2. The "an equality assertion against a shared constant never proves the constant was used" property survives the merge intact.
+
+### 16.5 Gates, re-measured on the merged tree
+
+| Gate | Before the merge (15.4) | After the merge | Verdict |
+|---|---|---|---|
+| jest - the four touched paths | 25 suites / 644 tests / 0 failures | **25 suites / 660 tests / 0 failures** (22.2 s), 23 snapshots | **+16, -0** - #104's two fixture corpora (`DISABLED_ADMIN_LAYOUTS`, `GUARDED_ADMIN_LAYOUTS`) now run through this suite too |
+| jest - the required `admin-authz-surface` guard, plus #105's five Tiers suites | 74 tests | **6 suites / 186 tests / 0 failures** | green, including the new **R8** rule over this screen |
+| **jest - the ENTIRE repo** | not previously run | **521 suites / 8294 tests: 24 failed, 489 passed, 8 skipped** | see the next row |
+| **jest - the ENTIRE repo on `origin/main` `445986f1`** (baseline worktree) | - | **521 suites / 8197 tests: 24 failed, 489 passed, 8 skipped** | **the same 24 failing suites and the same 143 failing tests on both sides.** This branch adds **+98 passing tests and zero new failures** |
+| `npm run typecheck:bos-llm` | `234 files, 28 errors, 0 new` | **`242 files in scope, 28 errors, 0 new (84.8s)` - `passed`** | scope grew by 8 (main's entitlements/tiers files); baseline untouched |
+| `npm run check:bos-llm-literals -- --list` | `43 / 2 exempt / 1 included` | **identical**, exit 0 | unmoved |
+| `npm run lint:hooks` | exit 0 | **exit 0**, silent | clean |
+| `npx eslint` over the touched files | 0 errors / 5 warnings | **0 errors / 5 warnings - the same five sites** | nothing new |
+| `npm run build` | exit 0; route dynamic at 5.48 kB / 93.3 kB | **Compiled successfully, exit 0; `/admin/business-os-llm` still dynamic at 5.48 kB / 93.3 kB** | unchanged |
+
+### 16.6 What the 33 incoming commits mean for this branch
+
+| # | Incoming change | Effect here |
+|---|---|---|
+| 1 | **#104 extracted the page guard** to `tests/helpers/admin-page-guard.ts` + `source-scan.ts` | The only conflict. Resolved by taking their structure (16.1). **This branch no longer owns the `/admin` layout guard assertion** - it consumes the shared one, which is also what the required CI gate now uses. |
+| 2 | **#104 added rule R8** to the required `Admin authz surface guard`: every render entry point under `app/admin/**` must be a client component with no `async` default export | **This screen passes** - `page.tsx` is a client component. Verified by running the required suite, not by inspection. Worth knowing for slice 3: a Server Component admin page now fails a **required** check. |
+| 3 | **#104 replaced `next lint` with `eslint .`** in `package.json` | **W-9 is now false as written** - `npm run lint` runs. It is still **not** a CI gate (no workflow invokes it; `react-hooks-guard.yml` runs only `lint:hooks`) and the repo-wide backlog is out of this branch's scope, so the gate measured here remains `npx eslint` over the touched files. Section 8's W-9 note should be read as superseded. |
+| 4 | **#105 added `/admin/business-os-tiers`** and a sidebar entry | Auto-merged into `AdminSidebar.tsx` beside this branch's FR-12 description change. Both nav pins pass. No shared code. |
+| 5 | **#103 entitlements** (tier matrix, plans route, migrations) | No overlap with this screen. Adds 8 files to `typecheck:bos-llm`'s scope (234 to 242) with **0 new errors**. |
+| 6 | `.gitignore` gained `.eslint-report.json` | Merged. The user's local uncommitted `.claude/launch.json` line was preserved as an **unstaged** edit, exactly as it was before the merge. |
+
+**Nothing in the 33 commits breaks this branch** - proved by the whole-repo baseline comparison in 16.5, not by reading the diff.
+
 ---
 
 ## Commit Info
@@ -1267,6 +1359,7 @@ Two rules also carry their planted rejections **inside the suite**, so they are 
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-09-25 | **Merged `origin/main` (33 commits) - one conflict, resolved and staged, uncommitted (16)** | Only `source.guard.test.ts`'s **import block** conflicted. PR #104 had **extracted** the `/admin` layout-guard assertion into `tests/helpers/admin-page-guard.ts` + `source-scan.ts` while this branch fixed two dead guards in place; **#104's structure was taken wholesale** and nothing re-inlined - the guard block auto-merged to their version and this branch's four new `describe`s sit around it untouched. **`blankStringLiterals` does NOT cover CR-1 and must not be extended to:** it **erases** string content preserving length (for code-shape scans), `flattened` **joins** wrapped literals (for phrase scans) - opposite polarity, and `blankStringLiterals`'s length contract (`literalSpanAt`) forbids a merge. **No overlap** between the two helper modules either, so instead of consolidating, a bidirectional cross-reference was added to both headers so a third copy is not written. `AdminSidebar.tsx` and the ADMIN_UI workplan auto-merged - **verified both ways**, not assumed. **All 12 mutations re-run against the merged tree: 12 of 12 red**, with **M7 re-run byte-identically** so only the source rule fires and the value assertion stays green. **Gates:** scoped jest **25 suites / 660 tests / 0 failures** (+16 from #104's fixture corpora); required authz guard + #105's Tiers suites **6 / 186 / 0**; `typecheck:bos-llm` **242 files / 28 errors / 0 new, passed**; literals **unmoved**; `lint:hooks` exit 0; `npx eslint` **0 errors / 5 pre-existing warnings**; `npm run build` exit 0, route still dynamic at 5.48 kB. **Whole-repo jest compared against an `origin/main` baseline worktree: the same 24 failing suites and the same 143 failing tests on both - +98 passing, zero new failures.** Notable incoming: **R8** now requires every `/admin` render entry point to be a client component (this screen passes), and **W-9 is superseded** - `npm run lint` runs again, though it is still not a CI gate. Nothing committed. |
 | 2026-09-24 | **Final fix pass — CR-1, CR-2, QA BUG-1, QA EDGE-1 all closed; matrix re-run 12/12 red (§15)** | **CR-1:** `flattened()` (concat seams stripped, whitespace collapsed) added **beside `codeOf()` in the shared helper**, not in the screen's test file, because it is now the normalisation three rules in two suites depend on. The propagation rule gains three `mustMatch` samples (single-line, concat-wrapped, template-wrapped); `FIELD_LIST_RULE` gains a wrapped planted sample and is asserted clean raw **and** flattened; both rules also assert their wrapped sample **escapes without** the normalisation, so deleting it turns a test red. **M5 re-run in its original wrapped form → red.** **CR-2:** §8.1's "one line" claim corrected in a superseding box — the reverse `Satisfies` **does not compile** (the client widens `area: string` against `BosLlmArea` by design), the pin stays one-directional, and a two-way option is a **key-set** pin for a later slice. **QA BUG-1:** `MARKER_TITLE.code` no longer promises a value — *"the value this call uses does not come from the stored row"* and *"takes precedence as soon as it is in force"* replace the two clauses SA and QA flagged; true in all three `default` paths, and it no longer contradicts the value line's "provider default". R-T9's `adjusted` case pins it as **two properties, not a string compare**. **QA EDGE-1:** `AreaCard` reads `excludedCalls` through **one tolerant binding** feeding both sites, with a render test that deletes the field at runtime. ⚠️ **NEW FINDING (§15.2): M7 was surviving too** — a byte-identical wrapped re-type of the exclusion reason left all 25 suites green, because the FR-14 assertion is a **value** comparison and catches drift, not duplication. `adminSettingsView.test.ts` gains the source half (clause count 0, constant referenced, flattened, proved against a planted wrapped re-type); M7 now red. **Gates:** jest **25 suites / 644 tests / 0 failures** (+5, −0 from 639); `typecheck:bos-llm` **234 / 28 / 0 new, passed**; literals `43 / 2 exempt / 1 included` **unmoved**; `lint:hooks` exit 0; `npx eslint` over 21 files **0 errors / 5 pre-existing warnings**; `npm run build` exit 0. **Left open on purpose, all Low and all "when next in that file" per the reviewers:** SA CR-3 (`ExcludedCallRow` doc block), CR-4 (`markers.ts:92` redundant cast), EDGE-2 / CR-6 (`ISSUE_GLOSS.adjusted`, pre-existing). **`--update-baseline` deliberately NOT folded in.** Nothing committed. |
 | 2026-09-24 | **SA Phase 2 (code) review — ✅ Approved for QA, conditional on CR-1 + CR-2** | Reviewed against the working tree, not §13's narrative. Gates re-measured independently by SA and matching on every row run: `typecheck:bos-llm` **234 / 28 / 0 new**; literals `43 / 2 exempt / 1 included` **unmoved**; `lint:hooks` exit 0; `npx eslint` **0 errors / 5 pre-existing warnings**; jest **25 suites / 639 tests / 0 failures** over the touched paths (`build` accepted on Dev's measurement, not re-run). **Rulings on the seven referred items:** (1) the one-directional `AreaView` pin is a real, bounded gap and the finding is correct — but the proposed reverse `Satisfies` is **rejected**: it does not compile, because the client deliberately widens `area: string` against `BosLlmArea`. Pin stays as-is; a two-way option is a **key-set** pin for a later slice. (2) **M5 is a real hole, not a malformed mutation** — the propagation rule scans raw source for a single-line clause while every multi-clause string in `copy.ts` is written wrapped, and it is the only rule in that file with neither a `mustMatch` nor a planted rejection → **CR-1**. (3) RC-5's new hover **confirmed true on all three paths**, with two Low imprecisions on the unreachable `adjusted` path; Dev's second false-sentence catch was correct and SA had missed it. (4) RC-6 verified at source and in R-T7 — one `areaShowsOff` binding, three consumers, exactly one off statement on an off card. (5) the singular `1 call configured off` deviation **confirmed**. (6) RC-7 **confirmed**, and better than the ruling asked — pointer comment, file-wide uniqueness assertion, plus the fixture pinned to the policy constant. (7) `CallRow.tsx` **genuinely holds no array literal of field names** — verified by reading the file. **Also verified:** nine deleted `copy.ts` exports have no live reference and no load-bearing sentence was lost; the ledger route and panel are declared parked where the sweep looks and **no `/ledger` fetch is issued**; excluded rows carry no values and no markers; zero `console.*`, no `any`, no new pattern, no RLS/Zod/repository surface touched; the `fireEvent` + 30 s change removes no assertion and cannot turn a red test green. **Two conditions before RM: CR-1** (normalise the two source regexes, add the wrapped planted sample, re-run M5 in its original form) and **CR-2** (correct §8.1's "one line" claim). **No second SA pass; SA made no code changes.** |
 | 2026-09-24 | **Implemented (uncommitted)** | T1–T15 done on `feature/business-os-llm-admin-screen-refinements`. **RC-5…RC-11 folded in and evidenced in §13.** Created `markers.ts`, `components/Marker.tsx`, `components/ExcludedCallRow.tsx`; deleted `components/FailOpenNotice.tsx` and nine copy exports; parked `LedgerCheckPanel` with dated notes in the component, the caller and the route. One payload addition (`AreaView.excludedCalls`, from two additive policy exports). **Gates (§8):** `typecheck:bos-llm` 234/28/**0 new**; literals `43 / 2 exempt / 1 included` — **unmoved**; `lint:hooks` clean; `next build` exit 0 with the route still dynamic; `npx eslint` **0 errors** and no new warnings against a `git show HEAD:` baseline; jest **26 suites / 713 tests, 0 failures** (from 547). **Mutation matrix: 10 of 10 red**, including RC-9's ninth (a body-less `MARKED_FIELDS` entry is a runtime `TypeError`) and RC-6's per-call chip. **FR-15 proved, not asserted:** dropping the field from the SERVER type fails the gate with `TS2344` while jest over that very file passes 2/2. **New finding raised for SA:** the `AreaView` wire pin is **one-directional**, so a field removed from the CLIENT type is invisible to the gate (§8.1) |

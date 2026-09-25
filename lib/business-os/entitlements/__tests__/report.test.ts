@@ -380,15 +380,42 @@ describe('asTier — "what would tier X cost this account?" (AC-7)', () => {
     });
   });
 
-  it('refuses to replay when there are no tiers, and says which error it is', async () => {
-    // Production today. The report is still useful; the replay simply has
-    // nothing to replay against.
+  it('replays against a SHIPPED tier now that production has two (2026-09-23)', async () => {
+    // The question the report exists to answer — "what would Essentials cost
+    // these accounts?" — is answerable against production for the first time.
+    // These events are chat, and Essentials has no chat, so it must name losses.
     const report = await buildShadowReport({
       config: readCodeConfig(),
       now,
       from: '2026-09-01',
       to: '2026-09-30',
-      asTier: 'growth',
+      asTier: 'basic',
+      ...repositories([planRow()], events),
+    });
+
+    expect(report.asTierError).toBeUndefined();
+    expect(report.asTier?.tier).toBe('basic');
+    expect(report.asTier?.wouldLose.map((l) => l.capability)).toEqual(
+      expect.arrayContaining(['chat.search', 'chat.marketing'])
+    );
+    // …and `crm.core`, which Essentials DOES have, is not counted as a loss.
+    expect(report.asTier?.wouldLose.map((l) => l.capability)).not.toContain('crm.core');
+  });
+
+  it('reports which tiers are configured, so the reader knows what a replay could ask for', () => {
+    expect(readCodeConfig().tierOrder).toEqual(['basic', 'pro']);
+  });
+
+  it('refuses to replay when there are no tiers, and says which error it is', async () => {
+    // The refusal, kept under test with an emptied config now that the shipped
+    // one has tiers. It separates "you named a tier that does not exist" from
+    // "there are no tiers at all", which are different things to tell an admin.
+    const report = await buildShadowReport({
+      config: { ...readCodeConfig(), tierOrder: [] },
+      now,
+      from: '2026-09-01',
+      to: '2026-09-30',
+      asTier: 'basic',
       ...repositories([planRow()], events),
     });
 

@@ -208,6 +208,9 @@ const historySchema = z
  * @param tierOrder the configured tiers, which the schema validates against
  * @param allowRenewalGrandfather Slice 4 only — see below
  */
+/** The three languages every customer-facing string carries. */
+const labelsSchema = z.object({ en: z.string().min(1), he: z.string().min(1), es: z.string().min(1) }).strict();
+
 export function tierMatrixSchema(
   tierOrder: readonly string[],
   catalog: CatalogLike = CAPABILITIES,
@@ -239,6 +242,19 @@ export function tierMatrixSchema(
           })
           .strict()
       ),
+      // A tier a customer can be put on must have a name a customer can read
+      // and a price somebody decided. Both are checked here rather than left to
+      // the UI, because a missing name shows up as `undefined` on a pricing
+      // page and a missing price shows up as free.
+      presentation: z.record(
+        tierName,
+        z
+          .object({
+            labels: labelsSchema,
+            monthlyPriceUsd: z.number().int().nonnegative(),
+          })
+          .strict()
+      ),
     })
     .strict()
     .superRefine((matrix, ctx) => {
@@ -247,9 +263,25 @@ export function tierMatrixSchema(
       const configured = new Set(tierOrder);
       const rows = new Set(Object.keys(matrix.tiers as Record<string, unknown>));
 
+      const presented = new Set(Object.keys((matrix as { presentation: Record<string, unknown> }).presentation));
+
       for (const tier of configured) {
         if (!rows.has(tier)) {
           ctx.addIssue({ code: z.ZodIssueCode.custom, message: `tier "${tier}" has no row in the matrix` });
+        }
+        if (!presented.has(tier)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `tier "${tier}" has no presentation entry (a customer-facing name and a price)`,
+          });
+        }
+      }
+      for (const tier of presented) {
+        if (!configured.has(tier)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `presentation names tier "${tier}", which is not in TIER_ORDER`,
+          });
         }
       }
       for (const tier of rows) {
@@ -314,6 +346,7 @@ export function cohortsSchema(tierOrder: readonly string[], catalog: CatalogLike
   const cohort = z
     .object({
       base,
+      labels: labelsSchema,
       includeLifecycle: z.array(z.enum(['available', 'beta', 'not_built'])),
       // `.strict()` both ways: every explicit-value capability must be present
       // (so adding a metered capability fails until champions get a number), and
@@ -393,7 +426,7 @@ export function lifecycleSchema(catalog: CatalogLike = CAPABILITIES): z.ZodTypeA
   const send = z
     .object({
       id: z.string().min(1),
-      labels: z.object({ en: z.string().min(1), he: z.string().min(1), es: z.string().min(1) }).strict(),
+      labels: labelsSchema,
       messageClass: z.enum(['transactional', 'marketing']),
       initiator: z.enum(['client', 'system']),
       capability: capabilityIdSchema(catalog).optional(),
@@ -457,7 +490,7 @@ export function launchSchema(): z.ZodTypeAny {
 
 /** The catalog itself: the one schema not derived from the catalog. */
 export function catalogSchema(): z.ZodTypeAny {
-  const labels = z.object({ en: z.string().min(1), he: z.string().min(1), es: z.string().min(1) }).strict();
+  const labels = labelsSchema;
 
   const shape = z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('boolean') }).strict(),

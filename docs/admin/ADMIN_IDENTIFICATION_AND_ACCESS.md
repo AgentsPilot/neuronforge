@@ -158,7 +158,9 @@ the right unit for the register.
 
 `.github/workflows/admin-authz-guard.yml` runs `lib/admin/__tests__/admin-authz-surface.guard.test.ts` on every PR to `main`, with **no `paths:` filter** (a filtered workflow would be defeated by the very change it guards).
 
-Six rules: **R1** admin handler without `requireAdmin` · **R2** any `route.ts` importing `AdminAccessService` · **R3** a `route.ts` under `app/admin/**` · **R4** an access decision on a `role` value · **R5** a migration adding an RLS policy on `profiles.role` · **R6** the `/admin` layout without its server guard.
+Seven rules: **R1** admin handler without `requireAdmin` · **R2** any `route.ts` importing `AdminAccessService` · **R3** a `route.ts` under `app/admin/**` · **R4** an access decision on a `role` value · **R5** a migration adding an RLS policy on `profiles.role` · **R6** the `/admin` layout whose **first statement** is not the page guard · **R8** a render entry point under `app/admin/**` that is server-rendered and does not guard itself.
+
+> **There is no R7, on purpose.** R7 is reserved for the *inverted* rule described under [Known gaps](#known-gaps-in-the-guard-itself) — "is anything that **behaves** like an admin route gated, wherever it lives?" — which is parked deliberately. The rule closing OI-21 was numbered **R8** rather than taking the free number, so the parked decision is not retired by accident.
 
 Exemptions live in two separate lists per rule — **PARKED** (an open hole someone decided not to close yet) and **PERMANENT** (an architectural exception). Each list has an **asserted cap**, and **the ratchet rule** applies: *any commit that removes an exemption must lower that list's cap by the same number, in the same commit.* Adding an exemption therefore requires raising a cap, which is a visible act in a diff.
 
@@ -171,7 +173,8 @@ Current caps, after slices 2, 3 and 5:
 | **R3** | 0 | 0 | Genuinely zero — no `route.ts` under `app/admin/**`, which is what keeps the page guard airtight. |
 | **R4** | 2 | 0 | Both in files slice 7 would delete; neither reads `profiles`. |
 | **R5** | 0 | 0 | Genuinely zero. |
-| **R6** | **0** (was 1) | 0 | The `/admin` layout now carries its server guard. |
+| **R6** | **0** (was 1) | 0 | The `/admin` layout carries its server guard **as the first statement of its body** (strengthened 2026-09-24; proved against twelve disabling shapes and nine correct ones). |
+| **R8** | 0 | 0 | Genuinely zero — every render entry point under `app/admin/**` is a client component **or awaits the guard as its own first statement**. Added 2026-09-24. |
 
 > **The ratchet in action.** Slices 2, 3 and 5 gated 27 handlers and guarded the
 > pages, so R1 dropped **34 → 7** and R6 **1 → 0** *in the same commit*. The caps
@@ -187,8 +190,9 @@ Current caps, after slices 2, 3 and 5:
 
 | Gap | Detail |
 |---|---|
-| **Precedence, not presence** | R1 checks that a handler *contains* `requireAdmin(`. It does not prove the gate runs **first**, nor that it runs at all (a gate inside a never-invoked closure satisfies it). All 65 gated handlers are correct today — verified by hand and by the oracle — but that is a measurement, not an invariant. **Closing it also requires extending the oracle's instrumentation to cover the body parse**, since `mockTablesTouched` records DB/RPC/auth-API calls and not `request.json()`.<br><br>📌 **SA condition (2026-09-20): this is the FIRST thing built when the parked slices resume.** The reasoning is that the guard's authority *grows* once it becomes a required status check — and precedence is the one place where a green run does not mean what a reader will assume it means. The longer it is green-but-shallow, the more weight it carries unearned. Tracked as **OI-20**. |
-| **The `/admin` page guard can be bypassed by a client-supplied header, and what makes that harmless is UNASSERTED** | Measured 2026-09-24 (QA of the Business OS AI screen, P6/P7). An **unauthenticated** request that simply carries a crafted `Next-Router-State-Tree` header claiming it is already inside `/admin` returns **200 with no `NEXT_REDIRECT`**: React re-uses the cached layout segment, so `app/admin/layout.tsx` is not re-rendered and **`requireAdminPage()` never runs**. The caller does not have to have entered the subtree — it only has to *say* it did.<br><br>```bash\n# 200, no redirect, guard never invoked (no cookies at all)\ncurl -s -o /dev/null -w '%{http_code}' http://localhost:3000/admin/business-os-llm \\\n  -H 'RSC: 1' -H 'Next-Router-State-Tree: %5B%22%22%2C%7B%22children%22%3A%5B%22admin%22%2C%7B%7D%5D%7D%5D'\n```<br><br>**Nothing leaks today, and the reason is two properties, NEITHER of which is asserted anywhere:** (1) **every `app/admin/**/page.tsx` is `'use client'` and takes no server props**, so no admin page has server-rendered data in its payload — verified by hand across all 22 pages, not by a test; and (2) **every `/api/admin/*` handler requires an admin**, which is the actual security boundary (both routes behind that screen answer 401 unauthenticated). **The day one admin page becomes a Server Component, or fetches on the server, property 1 breaks and this becomes a real disclosure — silently, with every check still green.**<br><br>⚠️ This also **falsifies the stated reason** the soft-navigation escape (E2, `lib/admin/requireAdminPage.ts:26-29`) was judged harmless — *"the caller already passed the guard on entry to the subtree"*. The conclusion stands; the reason does not, because entry is claimed in a header rather than proved.<br><br>📌 **Nearly free to close, and it belongs with OI-20:** the surface guard's scanner already computes `isClient` per page (`lib/admin/__tests__/admin-authz-surface.guard.test.ts:1567`), so asserting *"every `/admin` page is a client component with no server props"* is a rule over data the guard already has — and it turns a silent break into a red required check. Tracked as **OI-21**. |
+| **Precedence, not presence** | R1 checks that a handler *contains* `requireAdmin(`. It does not prove the gate runs **first**, nor that it runs at all (a gate inside a never-invoked closure satisfies it). All 65 gated handlers are correct today — verified by hand and by the oracle — but that is a measurement, not an invariant. **Closing it also requires extending the oracle's instrumentation to cover the body parse**, since `mockTablesTouched` records DB/RPC/auth-API calls and not `request.json()`.<br><br>📌 **SA condition (2026-09-20): this is the FIRST thing built when the parked slices resume.** The reasoning is that the guard's authority *grows* once it becomes a required status check — and precedence is the one place where a green run does not mean what a reader will assume it means. The longer it is green-but-shallow, the more weight it carries unearned. Tracked as **OI-20**.<br><br>⚠️ **Still open for the 65 `/api/admin/*` handlers — the *page* half is now closed.** Since 2026-09-24, R6 asserts that `requireAdminPage()` is the **first statement** of `app/admin/layout.tsx`, by parsing the default export over a string-blanked scaffold (the same primitive R1 uses for D-Q1, shared via `tests/helpers/source-scan.ts`). That is precedence for **one** file and **a different guard**. It does **not** discharge OI-20's SA condition: the precedence gap over the gated route handlers still needs the oracle instrumented for the **body parse**, and it is still the first thing built when the parked slices resume. |
+| **The `/admin` page guard can be bypassed by a client-supplied header, and what makes that harmless is UNASSERTED** | Measured 2026-09-24 (QA of the Business OS AI screen, P6/P7). An **unauthenticated** request that simply carries a crafted `Next-Router-State-Tree` header claiming it is already inside `/admin` returns **200 with no `NEXT_REDIRECT`**: React re-uses the cached layout segment, so `app/admin/layout.tsx` is not re-rendered and **`requireAdminPage()` never runs**. The caller does not have to have entered the subtree — it only has to *say* it did.<br><br>```bash\n# 200, no redirect, guard never invoked (no cookies at all)\ncurl -s -o /dev/null -w '%{http_code}' http://localhost:3000/admin/business-os-llm \\\n  -H 'RSC: 1' -H 'Next-Router-State-Tree: %5B%22%22%2C%7B%22children%22%3A%5B%22admin%22%2C%7B%7D%5D%7D%5D'\n```<br><br>**Nothing leaks today, and the reason is two properties, NEITHER of which is asserted anywhere:** (1) **every `app/admin/**/page.tsx` is `'use client'` and takes no server props**, so no admin page has server-rendered data in its payload — verified by hand across all 22 pages, not by a test; and (2) **every `/api/admin/*` handler requires an admin**, which is the actual security boundary (both routes behind that screen answer 401 unauthenticated). **The day one admin page becomes a Server Component, or fetches on the server, property 1 breaks and this becomes a real disclosure — silently, with every check still green.**<br><br>⚠️ This also **falsifies the stated reason** the soft-navigation escape (E2, `lib/admin/requireAdminPage.ts:26-29`) was judged harmless — *"the caller already passed the guard on entry to the subtree"*. The conclusion stands; the reason does not, because entry is claimed in a header rather than proved.<br><br>📌 **Nearly free to close, and it belongs with OI-20:** the surface guard's scanner already computes `isClient` per page (`lib/admin/__tests__/admin-authz-surface.guard.test.ts:1567`), so asserting *"every `/admin` page is a client component with no server props"* is a rule over data the guard already has — and it turns a silent break into a red required check. Tracked as **OI-21**.<br><br>✅ **Property (1) is ASSERTED as of 2026-09-24 — rule R8, in the required check.** It covers every Next.js render entry point under `app/admin/**` (`page`, `layout`, `template`, `default`, `loading`, `error`, `not-found`, `global-error` — not only `page.tsx`, because a nested `layout.tsx` renders *inside* the bypassed segment), requires each to be a client component **or** to await the guard as its own first statement, and exempts nothing. The self-guarding shape is accepted because it is **immune** to this bypass — the crafted header re-uses the cached `/admin` **layout** segment and never skips the page's own render — and a page whose guard runs *after* a read is still an offender.<br><br>⚠️ **The bypass itself is NOT fixed.** The `curl` above still returns 200 with `requireAdminPage()` never running. What changed is that the condition making that harmless can no longer break **silently**. The actual fix is a middleware check on the `/admin` path prefix, which runs before routing and cannot be skipped by a router header — not built, and it belongs with the parked admin-authz work. |
+| **STOP HARDENING THE PAGE-GUARD ASSERTION — the durable fix is behavioural** | Five rounds were spent on one textual assertion over `app/admin/layout.tsx`. Rounds 4 and 5 each closed a real hole — a decoy component **signature**, then a decoy **import**, both hidden inside template literals — and each also opened a way to **reject correct code**, which is the more dangerous failure: a required check that fails a correct file is a check somebody switches off. A textual rule over this property cannot be finished, only extended.<br><br>**The durable fix is behavioural: one test that renders `AdminLayout` as a non-admin and asserts the redirect.** It is immune to all twelve known disabling shapes and to the thirteenth nobody has thought of, and it does not care how the call is written. **That test should LEAD the parked admin-authz work — not a v7 of the parser.** Written down here because the next person's instinct will be another regex. See `tests/helpers/admin-page-guard.ts` and [ADMIN_GUARD_HARDENING_AND_LINT_WORKPLAN.md](/docs/workplans/ADMIN_GUARD_HARDENING_AND_LINT_WORKPLAN.md). |
 | **Path-scoped** | R1 only looks under `app/api/admin/**`. An admin capability elsewhere is caught only if it imports `AdminAccessService` (R2). The inverted rule that would close this ("is anything that *behaves* like an admin route gated, wherever it lives?") is **parked deliberately**: R2 already catches the realistic recurrence, and a false positive on a *required* check is the single thing most likely to get the check switched off. |
 
 
@@ -364,6 +368,55 @@ const recipients = await AdminAccessService.getInstance().listAdminEmails();
 
 After granting/revoking an admin out-of-band, call `invalidateCache()` so the 60s cache doesn't mask the change.
 
+### If your page inherits its protection, pin the thing that provides it
+
+**Pattern, worth copying.** Every page under `/admin` is protected by
+`app/admin/layout.tsx`, which awaits `requireAdminPage()` before any page's RSC
+payload is produced. That is the right design — protection is a property of the
+route tree, so page 23 is guarded before its author writes a line of it — and it
+has one consequence people miss:
+
+> **The safety of your page lives in a file you did not write, that you will
+> never open, and that nothing stops someone editing.**
+
+A page that adds no guard of its own is correct *and* has no local evidence that
+it is protected. So the page's own test suite should assert the property it
+depends on:
+
+```typescript
+it('the layout that protects it still awaits the guard as its FIRST statement', () => {
+  const layout = codeOf(read('app/admin/layout.tsx'));
+  const opener = /export default async function AdminLayout\s*\([\s\S]*?\)\s*\{/.exec(layout);
+  expect(opener).not.toBeNull();
+
+  const body = layout.slice(opener.index + opener[0].length).trim();
+  const end = Math.min(
+    ...[body.indexOf(';'), body.indexOf('{')].filter((i) => i >= 0).concat([body.length])
+  );
+
+  expect(body.slice(0, end).trim()).toMatch(/await\s+requireAdminPage\s*\(\s*\)/);
+});
+```
+
+**Why FIRST statement and not "the call exists".** The weaker version was tried
+and defeated three times: commenting the call out, wrapping it in
+`try { … } catch {}` — which swallows the redirect, because `requireAdminPage`
+redirects by THROWING — and putting an early `return` above it. Asserting the
+call is the first statement subsumes all four known mutations, because the `try`
+or the `if` becomes the first statement instead.
+
+**Where it lives.** In the page's suite, not only in the layout's: a failure
+should reach the person whose screen becomes public, and a test that only exists
+next to the layout is a test nobody reads when they add a page. Two live
+examples: `app/admin/business-os-llm/__tests__/source.guard.test.ts` (which also
+exercises the rule against synthetic disabled layouts) and
+`app/admin/business-os-tiers/__tests__/source.guard.test.ts`.
+
+**Generalise it.** This is not about admin pages. Any time a component's safety
+is provided by a different file — a layout, a middleware, a wrapper, a cron
+runner — the dependent should assert the property, in the shape that cannot be
+satisfied by the guard merely being *present*.
+
 ---
 
 ## Bootstrapping Admins
@@ -402,7 +455,7 @@ Either path is idempotent (keyed on `email`) and re-activates a soft-revoked row
 | 7 | **Error-response conformance across the admin surface.** | ⬜ Todo | **26 of 44** admin route files put a raw error `.message` into a response body with **no `NODE_ENV` guard** — two shapes: `details: <err>.message` (4 files) and `message: error instanceof Error ? … ` (16 files). Only 4 use the guarded form. Contradicts the Security Rule *"never expose internal error details to client in production"*. Severity is reduced on gated routes (admin-only now) but not closed. |
 | 8 | **Guard precedence gap.** | ⬜ Todo | R1 proves a gate is **present**, not that it runs **first** or runs at all. Applies to all 65 gated handlers. Closing it needs the oracle's instrumentation extended to cover the **body parse** — `mockTablesTouched` records DB/RPC/auth-API calls, not `request.json()` — otherwise a precedence check is only half a check. |
 | 9 | **Admin routes repository-pattern migration.** | ⬜ Todo | **38 of 44** admin route files do direct DB access (25 construct their own service-role client at module scope), violating CLAUDE.md mandatory rule 1. They are **gated, not isolated**. 14 tables already have an owning repository to reuse; 6 table groups would need a new one. ⚠️ Blocked on a design decision: these are cross-user admin reads **by design**, so they need methods that are *not* the `.eq('user_id', userId)` shape the repository layer exists to enforce. Full write-up in [admin-authz-unification.md](/docs/workplans/admin-authz-unification.md). |
-| 11 | **Assert what makes the `/admin` page-guard bypass harmless (OI-21).** A crafted `Next-Router-State-Tree` header skips the layout render, so `requireAdminPage()` never runs — demonstrated unauthenticated. It is contained **only** because every `/admin` page is `'use client'` with no server props **and** every admin API is gated; the first of those is a hand-verified property that a future Server Component page would break with no test failing. | ⬜ **Todo — with OI-20** | The guard's scanner already computes `isClient` (`admin-authz-surface.guard.test.ts:1567`), so the rule is nearly free and lands in a **required** check. See [Known gaps in the guard itself](#known-gaps-in-the-guard-itself). Found by QA of the Business OS AI admin screen, 2026-09-24. |
+| 11 | **Assert what makes the `/admin` page-guard bypass harmless (OI-21).** A crafted `Next-Router-State-Tree` header skips the layout render, so `requireAdminPage()` never runs — demonstrated unauthenticated. It is contained **only** because every `/admin` page is `'use client'` with no server props **and** every admin API is gated; the first of those is a hand-verified property that a future Server Component page would break with no test failing. | ✅ **Done 2026-09-24** — rule **R8**, in the required check | Built on the `isClient` the scanner already computed (now read from *stripped* source, so a comment mentioning the directive cannot fake it). Covers every render entry point, not only `page.tsx`; accepts a self-guarding server page and rejects a lookalike; nothing exempted. **The header bypass itself remains open** — what is closed is that the property containing it can no longer break silently. See [Known gaps in the guard itself](#known-gaps-in-the-guard-itself). Found by QA of the Business OS AI admin screen, 2026-09-24. |
 | 10 | **`app/admin/learning-system/page.tsx:233` still uses `console.error`.** | ⬜ Todo | Rule-3 cleanup around the `user-emails` feature is incomplete. |
 
 ---
@@ -415,6 +468,29 @@ Either path is idempotent (keyed on `email`) and re-activates a soft-revoked row
 
 ---
 
+## Lint enforcement of the admin standards — what is NOT enforced
+
+Recorded here because two of this document's rules are, in practice, enforced only by review.
+
+**`npm run lint` did not run at all until 2026-09-24.** `next lint` on Next 14 ignores the flat `eslint.config.mjs` and drops into an interactive setup wizard, so the repo had no working full-lint entry point — the **second** time a broken lint entry point hid findings here (the first was `eslint.config.js` shadowing the flat config, fixed in PR #76). It is now `eslint .`, which **runs and reports** but is deliberately **not wired into CI**: the repo has **420 errors and 9,909 warnings**, so wiring it today would turn `main` red for everyone.
+
+**`no-console` is not an enabled rule, so CLAUDE.md's mandatory rule 3 ("never `console.*`, always Pino") has had zero automated enforcement.** The `// eslint-disable-next-line no-console` comments scattered through the repo are decorative — there is no enabled rule to disable. Measured with ESLint itself, because that is what a ratchet compares:
+
+```bash
+npx eslint app lib components hooks --rule '{"no-console":"error"}'
+```
+
+**4,658 findings across 410 files** (2026-09-24). It therefore **cannot** simply be flipped to `error`.
+
+**The ratchet order, so the next person does not rediscover it:**
+
+1. **Ignore `archive/`** — `tsconfig.json` already excludes it. Errors **420 → 253**, and it holds the only fatal parse error.
+2. **Clear the `no-require-imports` and `prefer-const` errors** — mechanical, mostly `jest.mock` factories; `prefer-const` is auto-fixable.
+3. **Take the counted `no-console` baseline above and enable the rule as a ratchet**, not as an error.
+4. **Only then** make it a required status check.
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -422,7 +498,9 @@ Either path is idempotent (keyed on `email`) and re-activates a soft-revoked row
 | 2026-07-01 | Initial | Documented the `admin_users` source of truth, `AdminUserRepository` + `AdminAccessService`, env/SQL bootstrap, and open follow-ups. Prerequisite for the Admin Agent Health Dashboard (Q1). |
 | 2026-07-01 | Added runtime flows | Added Architecture diagram, Runtime Flows (3-step `isAdmin` resolution, `listAdminEmails` union, caching), and Lifecycle Scenarios sections. |
 | 2026-07-01 | Added unit tests | 21 passing tests for `AdminUserRepository` + `AdminAccessService` (query shape, self-heal, fail-closed, union, caching). |
+| 2026-09-24 | **R6 strengthened to a first-statement assertion, and R8 added to assert OI-21's containing property** | **R6** asserted `toContain('requireAdminPage')`, which the **import line** satisfies — the call could be deleted with the required check still green. It now asserts the guard is the **first statement** of the layout body, that it **is** the call rather than merely containing it, and that the identifier is bound by exactly one import of the canonical module — by parsing the default export over a **string-blanked scaffold** (R1's D-Q1 primitive, shared via `tests/helpers/source-scan.ts` rather than copied). Proved against **twelve** disabling shapes (deleted · `//`- and block-commented · try/catch · after an early return · `&&` · ternary · local no-op · default-valued parameter · decoy **signature** in a template literal · decoy **import** in a template literal · nested-template variant · aliased-away binding) and **nine** correct shapes it must not reject. **R8** asserts every render entry point under `app/admin/**` is a client component or guards itself. Guard suite **74 → 106** tests; no exemption, cap or ratchet widened, and `R8` is capped 0/0. ⚠️ **Further hardening of this assertion is closed** — see the stop entry under Known gaps. |
 | 2026-09-24 | **OI-21 recorded: the `/admin` page guard is bypassable by a client-supplied header, and the two properties that make that harmless are unasserted** | Found by QA while testing the Business OS AI admin screen (P6/P7) and escalated by SA. An unauthenticated `curl` with a crafted `Next-Router-State-Tree` gets **200 with no redirect** — the layout segment is not re-rendered, so `requireAdminPage()` never runs. Contained today only because **(1)** all 22 `/admin` pages are `'use client'` with no server props and **(2)** every admin API is `requireAdmin`-gated; property (1) is hand-verified and a future Server Component page would break it **silently**. Also falsifies the stated reason for E2's ✅ in `requireAdminPage.ts` (entry is *claimed* in a header, not proved). Recorded as a guard gap with the exploit, as open item **11 (OI-21)** to be built with **OI-20**, and noted as nearly free — the surface guard already computes `isClient` per page. |
 | 2026-09-21 | **Slices 2, 3 and 5 — the admin surface closed** | **27 open handlers gated and all 21 `/admin` pages guarded.** Slice 2: 14 cross-tenant reads (every platform user, any named user’s usage, per-user LLM spend, platform metrics, the message log, and the 3 `HEAD` probes that confirmed route existence to anonymous callers) + 9 internal-config GETs. Slice 3: the 4 catalogue GETs — `reward-config` was the one with **live customer callers**, so its gate and the replacement projection `GET /api/rewards/agent-sharing` (a new `ConfigRepository.isRewardActive`, `{ isActive }` only, no migration, no second store) ship in the **same commit**; both agent-detail pages repointed. Slice 5: `app/admin/layout.tsx` became an async Server Component awaiting `requireAdminPage()`, with the chrome moved verbatim to `AdminChrome.tsx` — **none of the 21 pages edited**, protection is inherited. **The ratchet fired as designed: R1 34 → 7 and R6 1 → 0 in the same commit**, and the published figures moved with it (**72 = 65 gated + 7 inline + 0 open**). Truth tables re-flipped in BOTH directions: "all 21 pages protected on the server" and "every handler requires an admin" are now ✅ — while **"one way to validate" is still NOT literally true in use**, because the 7 correct-but-inline copies remain (slice 4 parked), and the surface is **gated, not isolated** (service-role clients, error-message leakage). Tests: guard 74/74, oracle 293/293, admin surface 508/508. |
+| 2026-09-24 | Added the inherit-protection pattern | A page guarded by `app/admin/layout.tsx` has no local evidence that it is protected, so its own suite should pin the layout's FIRST statement — the form that survives commenting out, `try/catch` (which swallows the redirect) and an early return. Generalised to anything whose safety lives in another file |
 | 2026-09-20 | **Corrected to the as-built state (slice 8)** | Added [As-Built State](#as-built-state--read-this-first) with the **72-row per-handler table** (38 gated / 7 inline / **27 knowingly open**) — the handler, not the file, is the unit, because slice 1 gated write verbs and left read verbs open in the *same* files. Replaced six claims that would have been **false** if written as originally planned: "all 44 route files are behind the gate", "this class of gap cannot recur" (true for **new** surfaces only), "all 21 `/admin` pages are protected on the server" (**there is no server page guard at all**), "one way to validate" (one way exists and is enforced for new code; 7 inline copies remain in use), "the Settings screen is retired" (it is **non-functional and gated**, never retired), and the reward-config mirror drift (moot — the live fact is that the full reward ruleset including abuse caps is **anonymously readable**). Documented CI enforcement, the PARKED/PERMANENT split, the ratchet rule, and the guard's own two known gaps. Open items reworked: 1 is **partly** closed (app-code side enforced; the write and the live `pg_policies` read remain), 2 is **38/72**, and new items 7–10 record error-response conformance (**26 of 44** files), the precedence gap, the repository-pattern migration, and a stray `console.error`. |
 | 2026-09-20 | `profiles.role` self-promotion closed | Recorded the database guard (`20261002_profiles_role_privilege_guard.sql`), the route and UI changes, and the cleanup of the three live `admin` rows. Corrected the "nothing reads `profiles.role` for access" claim, which was true of the code but not of history — a dropped `system_settings_config` policy and the profile PUT both trusted it. Added the inherited-normaliser rule for any future reader, and the two knowingly-unclamped spelling classes. |

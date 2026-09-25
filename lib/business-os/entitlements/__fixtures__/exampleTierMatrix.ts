@@ -49,6 +49,7 @@ const COMMON: Pick<
   | 'website.ai_site'
   | 'payments.invoices'
   | 'payments.card'
+  | 'chat.access'
   | 'chat.email'
   | 'chat.scheduling'
   | 'addon.sms'
@@ -61,6 +62,10 @@ const COMMON: Pick<
   'website.ai_site': true,
   'payments.invoices': true, // (?) B-1
   'payments.card': true, // (?) B-1
+  // Every fixture tier has SOME chat, so every one may open the surface. The
+  // production matrix is the interesting case (Essentials has none) and it is
+  // asserted where it belongs, in productionConfig.test.ts.
+  'chat.access': true,
   'chat.email': true,
   'chat.scheduling': true,
   'addon.sms': 'unavailable', // sheet: purchasable — not_built (no SMS path)
@@ -141,4 +146,12 @@ export const FIXTURE_TIER_MATRIX: TierMatrixShape<FixtureTierId, TierRow> = {
   version: 1,
   tiers: { basic, growth, pro },
   removals: [],
+  // The presentation metadata the real matrix carries (2026-09-23). Deliberately
+  // NOT the production names: a fixture that reused "Essentials" would make a
+  // test failure read like a pricing statement.
+  presentation: {
+    basic: { labels: { en: 'Fixture Basic', he: 'Fixture Basic', es: 'Fixture Basic' }, monthlyPriceUsd: 10 },
+    growth: { labels: { en: 'Fixture Growth', he: 'Fixture Growth', es: 'Fixture Growth' }, monthlyPriceUsd: 20 },
+    pro: { labels: { en: 'Fixture Pro', he: 'Fixture Pro', es: 'Fixture Pro' }, monthlyPriceUsd: 30 },
+  },
 };

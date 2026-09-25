@@ -67,8 +67,11 @@ export async function POST(request: NextRequest) {
     const config = getEntitlementConfig();
     const dryRun = parsed.data.dryRun !== false;
 
-    // The precondition, and the reason the real run is not in Slice 1: with no
-    // tier configured there is nothing for a champion to be an alternative to.
+    // The precondition: with no tier configured there is nothing for a champion
+    // to be an alternative to. Two tiers ship from 2026-09-23, so this is met
+    // today — it stays because an emptied matrix must not launch anything, and
+    // because it is cheaper to check than to undo. The real run is still refused
+    // one branch below, now for the only remaining reason: Slice 2 owns it.
     if (!dryRun && config.tierOrder.length === 0) {
       requestLogger.warn({}, 'Launch refused: no tier is configured');
       return NextResponse.json(

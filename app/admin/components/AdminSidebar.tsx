@@ -25,7 +25,8 @@ import {
   HardDrive,
   UserCheck,
   Sparkles,
-  Bot
+  Bot,
+  Layers
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -157,6 +158,12 @@ const navigationSections: NavSection[] = [
         // is not there. Pinned by `business-os-llm/__tests__/nav.test.ts`,
         // scoped to THIS entry, so it cannot drift back unnoticed.
         description: 'Models & temperatures'
+      },
+      {
+        name: 'Business OS Tiers',
+        href: '/admin/business-os-tiers',
+        icon: Layers,
+        description: 'Plans & Entitlements'
       },
       {
         name: 'Storage Config',

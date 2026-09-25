@@ -1,6 +1,6 @@
 # Workplan: Business OS Subscription & Entitlements Module
 
-> **Last Updated**: 2026-09-22
+> **Last Updated**: 2026-09-23
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md), committed on this branch (`df5cc116`), including B-13 to B-15, FR-43 to FR-45, AC-36/AC-37, the pending items P-1/P-2, and §21 SA Review with WC-1 to WC-22.
@@ -8,9 +8,11 @@
 **Status:** **Rev 3** — revised for the merge of `main` into this branch (`92580639`), the **user-approved component breakdown** (§4.0), and **three user-confirmed additions** (§1.5: tier expiry, the three-step decision contract, the plan-state reset op). Rev 2 was **SA-cleared for Slice 1 implementation** with conditions R2-1 to R2-4 (§13.1), which are folded into the tasks here. **Waiting for the SA re-check listed in §0** before implementation starts. No implementation code has been written.
 **Branch:** `feature/business-os-entitlements`, created from `origin/main` at `94f9cfcd` (WC-1), with `main` merged in at `92580639` (2026-09-21). Dev created the branch on TL's instruction. The Dev role normally leaves branch creation to RM, and this deviation is recorded here for RM.
 
+**Current branch:** `feature/business-os-entitlement-tiers`, from `origin/main` after PR #93 merged (546807d7). It carries §4.32 (the four plans configured) and §4.33 (the SQL scripts made paste-safe), and nothing else.
+
 ## Overview
 
-Business OS has no commercial gating today. This workplan builds the **infrastructure** for subscriptions and entitlements in the four slices of the requirement (§16): a capability catalog, a tier-matrix *mechanism*, cohorts, a pure resolver with a three-step decision contract, per-account plan rows, admin operations, and a shadow-mode usage and "what would be gated" report. Under the user's scope change, **production config ships with no commercial tiers**. Eyal's example matrix exists only as a test fixture. Champions get every capability, and every existing account becomes a champion at rollout. Slice 1 is planned in full, ships as **five separate PRs** (§4.0), sits behind a server-only flag, and changes nothing customers see. Slices 2 to 4 (enforcement, metering, billing) are outlined, and each gets an SA-reviewed addendum that restates its WCs as tasks and tests (G-3). Every WC, RC and addition is traced in §9.
+Business OS has no commercial gating today. This workplan builds the **infrastructure** for subscriptions and entitlements in the four slices of the requirement (§16): a capability catalog, a tier-matrix *mechanism*, cohorts, a pure resolver with a three-step decision contract, per-account plan rows, admin operations, and a shadow-mode usage and "what would be gated" report. Slice 1 shipped with **no commercial tiers** in production config, by design. **That changed on 2026-09-23** (§4.32): production now ships two tiers — Essentials and Autopilot — and the `trial` and `champion` cohorts point at Essentials. Eyal's example matrix remains a test fixture. Every existing account is still a champion, and nothing is enforced. Slice 1 is planned in full, ships as **five separate PRs** (§4.0), sits behind a server-only flag, and changes nothing customers see. Slices 2 to 4 (enforcement, metering, billing) are outlined, and each gets an SA-reviewed addendum that restates its WCs as tasks and tests (G-3). Every WC, RC and addition is traced in §9.
 
 ---
 
@@ -1798,6 +1800,472 @@ The three Low findings from §14.12, plus the free one. Implementation stays unc
 
 **Slice 1 is code-complete.** Next is the user's review and the PR to main — not Slice 2.
 
+### 4.32 The four plans configured (2026-09-23) - the first real tier matrix
+
+The user's decision, taken after PR #93 merged and both migrations were applied to production. Implementation is **uncommitted**, on `feature/business-os-entitlement-tiers`, branched from current `origin/main`.
+
+| Internal | Customer-facing | Chat | AI actions | Ends | Price |
+|---|---|---|---|---|---|
+| `trial` | Test Flight | no | 250 (one-off **total**) | 14 days, or credits exhausted | $0 |
+| `champion` | Founding Partner | no | 1,000 / month | never (an admin may set a date) | $0 |
+| `basic` | Essentials | no | 500 / month | while paid | $79 |
+| `pro` | Autopilot | **yes** | 2,000 / month | while paid | $129 |
+
+**Only `basic` and `pro` are tiers.** `trial` and `champion` are cohorts with `base: { tier: 'basic' }`, so they inherit Essentials rather than enumerating their own capabilities and drifting from it.
+
+#### What the config now says
+
+| File | Change |
+|---|---|
+| `config/tierMatrix.ts` | `TIER_ORDER = ['basic', 'pro']`. One `BASE` row - every `available` capability at its maximum, every `not_built` one withheld - then `basic = BASE` with the eight `chat.*` off, and `pro = BASE` with `ai.actions: { perMonth: 2000 }`. New `presentation` block: name per locale and monthly price. The file header carries the four-plan table and the add-a-tier procedure. |
+| `config/cohorts.ts` | Both cohorts `{ all: true }` -> `{ tier: 'basic' }`, each with `labels`. `champion` 1,000/month, `trial` 250 total, both marked FIRST PASS. Champion's doc comment spells out the **one-line flip** to `{ tier: 'pro' }` for when chat is ready for design partners. |
+| `types.ts` | `TierPresentation { labels; monthlyPriceUsd }`, `TierMatrixShape.presentation`, `CohortConfigShape.labels`. |
+| `schema.ts` | `presentation` validated (record over the tier names, `.strict()`, non-negative integer price) and cross-checked **both ways** - a tier with no presentation entry, and a presentation entry naming a tier that is not configured. `labelsSchema` defined once and reused three times. |
+| `__fixtures__/exampleTierMatrix.ts` | A `presentation` block with deliberately non-production names and prices, so a fixture failure never reads as a pricing statement. |
+
+Everything that exists is in **both** paid tiers; nothing `not_built` is in either. The only differences are the eight `chat.*` capabilities and `ai.actions` - asserted exactly, as a set of nine keys, so a third difference fails the suite.
+
+#### The credit numbers are a first pass
+
+250 / 500 / 1,000 / 2,000 are decisions, not measurements, and are marked FIRST PASS in both config files. Slice 3 resets them from the shadow report: the setup-AI measurement (S1-T15) sizes the trial total (B-12), observed usage sizes the rest. Nothing meters anything until then, so no account is blocked by a number nobody has counted.
+
+#### The finding: "Essentials has no chat" was not expressible - now it is, as config
+
+Turning the eight per-operation `chat.*` capabilities off **does not close the chat surface**. Under the configured read rule (`domain_group`), an Essentials owner's chat question about their own contacts maps to `crm.core` - which Essentials has - so it resolves to `allowed`. SA widened this on review: the same mapping is the default for **every** operation, so it is not only reads - an Essentials owner could **write** through chat too.
+
+SA's diagnosis of why the config could not say it: `chat.*` was never one thing. It is four feature areas reachable through chat, three modalities and one marketing capability - and **nothing meant "may use the chat surface at all"**.
+
+**Resolved as FR-46** (requirement updated 2026-09-24): a new capability `chat.access`, off for Essentials and on for Autopilot, shipped **now** in the catalog and both tier rows. **Nothing reads it until Slice 2**, which gates the chat entry point on it once per turn, before any per-capability check, and refuses as `not_entitled` with a specified customer-visible message rather than an improvised one. See §5 for the addendum entry, and §4.34 for what shipped here.
+
+The two tests in `productionConfig.test.ts` still pin the gap in both directions - they are what proves the gate is still needed, because `chat.access: false` alone changes nothing until something reads it.
+
+#### Q-B1 is settled as pricing and live as enforcement
+
+Q-B1 asked whether a **lower plan** may ask chat questions about the areas it includes. There is no lower plan: chat is all-or-nothing. So the pricing question is moot - and the read rule turns out to be the lever that decides the gap above. Under `domain_group` Essentials' chat reads are allowed; under `read_only_plans_need_search` they are refused.
+
+**Nothing was simplified away.** The dual recording in shadow mode is the only measurement that can answer it, so it stays, and the reasoning is now recorded in `chatActionMap.ts` rather than left implicit.
+
+#### What changed now that a tier exists
+
+Until today, "no tiers configured" was the *only* production behaviour, and several paths existed solely to handle it. Each was re-checked and its test rewritten so the **mechanism** is still covered with an emptied config while the **shipped** behaviour is asserted as it now is:
+
+| Path | Before | Now |
+|---|---|---|
+| `mode.ts` / UD-2 | `enforce` self-downgraded to `shadow`, at `error` | Passes through to `enforce`. The downgrade is still tested via `jest.isolateModules` and an empty `TIER_ORDER`. A third test records that this gate is **not** what makes `enforce` safe - Slice 2, Slice 4 and G-1 are |
+| `adminOps.assign_tier` | 400 `no_tiers_configured` always | Assigns a real tier. The refusal keeps its test with `{ ...readCodeConfig(), tierOrder: [] }`, and a new test covers what was unreachable before: the body schema now **enumerates** the real tiers, so `champion` or `growth` is a 400 at the boundary (Q-13) |
+| `report.asTier` | `no_tiers_configured` | Replays against `basic` and names the chat losses; `crm.core` is correctly not a loss. The error path keeps its test with an emptied config |
+| `POST /launch` real run | 409 `launch_preconditions_unmet` | 501 `not_implemented_until_slice_2` - the precondition is met, so the refusal moves one line down. **It still writes nothing**, which is what the test asserts |
+| Drift snapshot | `tiers: {}` - the histories were the whole guard | Regenerated: 2 tiers x every capability. The suite now also proves a **lowered value in the shipped matrix** is caught, not only in the fixture |
+| `resolver.lowestTierFor` | Always `null` | `pro` for chat, `basic` for everything else, `null` for `not_built` - so an upgrade prompt has something true to say |
+| `decide.test.ts` | Cohorts derived `{ all: true }` | The suite points the cohorts at the fixture's middle row, because production's `basic` lands on the fixture's deliberately thin `basic` and step a would refuse before the state overlay ran. The change is in the test, not the code |
+
+Enforcement remains blocked on Slice 4 and G-1, and the `trial` cohort has **nothing assigned to it** - no signup path writes it yet.
+
+#### Also in this branch: the chat-map drift that was red on `main`
+
+The entitlements CI job had been red since 546807d7 (`chatActionMap.invariant.test.ts`). While Slice 1 was open, `agents` and `agent_runs` left the Business OS chat catalog on `main`, taking the planner surface from 107 actions to 103.
+
+The same fix landed on `main` in parallel as PR #99 (b4481293), arrived at independently. This branch therefore **matches `main`** on `chatActionMap.ts` (the `ENTITY_DOMAIN` block) and on `chatActionMap.invariant.test.ts` byte for byte, keeps `main`'s B-8 test in `planCapabilities.test.ts`, and adds two of its own: that **nothing** in the shipped map is classified `ungated`, and that the `ungated` branch itself still behaves (via `jest.isolateModules`, faking only the classification, never the code under test). The hard-coded count of 103 stays as the tripwire that caught it, with a comment saying where the number comes from.
+
+**Why it reached `main`:** the entitlements job is not a required status check (**G-2**, a repo setting - the user's / Offir's to change), so a stale branch merged green-ish.
+
+#### Verified
+
+| Check | Result |
+|---|---|
+| `npm run test:bos-entitlements` scope, reconciled against current `origin/main` | **49 suites, 930 tests, 0 failures** (main's own run on the same scope: 49 / 915) |
+| That scope **plus** the admin entitlement routes and `scripts/__tests__` | **53 suites, 1,072 tests, 0 failures** |
+| `npm run test:authz-guard` | **74 passed**, no new exemption |
+| Typecheck, the verified method | **2,029** - one **below** the 2,030 baseline, 0 x TS2688, **0** in `lib/business-os/entitlements` and 0 under `app/api/admin/business-os`. The -1 is in the safe direction and not attributable to a file in this change set; the narrowed `TIER_MATRIX` type (from an empty `tiers` object to two named rows) is the likely cause |
+| ESLint on every changed file + `lint:hooks` scope | clean. Fixed while here: three `eslint-disable` directives in `mode.test.ts` named a rule that does not exist in this config (`no-var-requires`, not `no-require-imports`), so the `require()` calls were erroring anyway - two of the three pre-date this branch |
+| `console.*` in the touch set | 0 |
+
+**One pre-existing lint error left alone**, in a file this branch touches: `config/cohorts.ts:33`, `export interface CohortConfig extends CohortConfigShape<...> {}` trips `@typescript-eslint/no-empty-object-type`. It is on `main`, the fix is a one-line change to a type alias, and it is a different decision (interfaces stay open to merging) - flagged for SA rather than taken silently.
+
+---
+
+### 4.33 The four SQL scripts made paste-safe (2026-09-23) - and a guard
+
+**What happened.** The user pasted `preflight-bos-entitlements-migration.sql` into the Supabase SQL editor and got `ERROR: 42P01: relation "a" does not exist`; the checker gave `relation "it" does not exist`. Neither word is an identifier in either file - both are English prose from the comments.
+
+> ⚠️ **RETRACTED 2026-09-24. The mechanism below is DISPROVEN** — see §4.37. The user pasted a two-line file containing both ingredients into the same editor and it ran. Everything in this section about apostrophes and string semicolons is a hypothesis that turned out to be wrong; the rephrasings and the guard are kept as hygiene, not as a fix. What the files actually hit is an open question.
+
+**Root cause, tested rather than assumed — and later disproven.** The hypothesis was that the editor's client-side splitter tracks string literals but not `--` comments:
+
+1. An apostrophe in a comment (`the backfill's FK`) looks like the start of a literal and **inverts** the parser's idea of what is quoted.
+2. With that inversion, a semicolon that is genuinely **inside** a string literal now looks like a statement terminator.
+3. The one big `SELECT` is cut there; the tail fragment starts mid-query, and a prose word lands where a relation name is expected.
+
+The hypothesis handed to me was the apostrophes alone. **That is not sufficient** — and as of §4.37 the two-ingredient version is not correct either. The evidence in this repo that the apostrophes alone are not enough still stands: the two migrations that applied cleanly on the same day contain 20 and 5 comment apostrophes (14 and 5 odd-parity lines between them) and 2 string semicolons. Neither ingredient is fatal alone - it is the **combination**, and which of the two comes first. That is luck, and not a thing to leave to luck in a file whose only job is to be pasted into that editor.
+
+**The fix** - rephrase, never delete the letter (`the backfills FK` is a typo the next person corrects straight back into a bug):
+
+| Script | Comment apostrophes rephrased | Semicolons removed from literals |
+|---|---|---|
+| `preflight-...` | 7 | 3 |
+| `check-...` | 2 | 7 |
+| `verify-...` | 16 | 4 |
+| `rollback-...` | 8, including the arming instruction, which had **both** a quote and a semicolon inside one comment | - |
+
+**It would have caught this before the user did.** The two rules were replayed over the pre-fix copies of both files: `preflight-...` had **7** comment apostrophes and **3** string semicolons - including the exact pair at L230/L282 that produced `relation "a"` - and `check-...` had **2** and **8**. Both files fail the guard as they stood when the user pasted them.
+
+**The guard** - `scripts/__tests__/entitlementSqlScripts.guard.test.ts`, 18 tests. Four rules per file: no apostrophe in a `--` comment, no semicolon inside a string literal, no `--` inside a string literal (a regex-based comment stripper would eat the closing quote), and balanced quotes over the whole file. Its helpers parse the **correct** way - a `--` inside a string is not a comment - so the rules mean what they say. It also guards itself: four non-trivial files, and a negative control built from the two real offending lines from 2026-09-23.
+
+**Also folded in**, since the user needs the checker again for section 4.20 step 8:
+
+- The `counts` CTE now reports the raw sizes (`business_profiles`, `onboarding_conversations`, `auth.users`) the ad-hoc queries were being used for.
+- A new row 55 `B5 no plan rows without a tenant`, WARN when `plan_rows > tenants`.
+- Row 30 names both prefixes explicitly: the **triggers** are `business_os_plan_on_onboarding` / `business_os_plan_on_profile`; the **functions** they call are `business_os_plan_fact_*`. Searching `pg_trigger` for the function prefix finds nothing, which reads like a failed migration and is not one. The runbook says the same under step 6b.
+
+### 4.34 SA review fixes applied (2026-09-24) - T-1 and five smaller items
+
+SA approved §4.32 and §4.33 and cleared them for QA (§13.9), and widened the chat-surface finding to **writes**, not only reads. Implementation stays uncommitted.
+
+> ⚠️ **One word of that clearance has since been retracted by SA (§13.10):** §13.9 also said it had independently confirmed the paste root cause. It had not - it treated evidence that was *consistent* with the theory as evidence that established it, and the theory was later disproven (§4.37). **Nothing in this section depends on that**: every item below is a config or test change, and T-1 stands on the chat-surface finding, which is unaffected.
+
+| # | What changed |
+|---|---|
+| **T-1** (required) | **The chat-surface gap is now a requirement, not a test comment.** `FR-46` in the requirement, with SA's five points spelled out: (a) one capability, `chat.access`; (b) gated **once per turn at the entry point**, before any per-capability check, so the refusal never depends on which entity the planner picked; (c) refused as `not_entitled` naming Autopilot, with the **customer-visible wording written out** rather than left to be improvised - and both plan names read from the `presentation` config so a rename carries; (d) the per-operation map kept, because it still decides what an Autopilot account may do inside chat and it feeds the report and metering; (e) the surface decision **recorded in shadow**, because without it the report cannot count *accounts that would lose chat entirely*, which is the number the price difference rests on. Plus `AC-38`, a §5.3 catalog row, and a Slice 2 addendum row in §5. |
+| **`chat.access` in the catalog NOW** | **Chosen: add it now.** The catalog is a claim about what the CODE delivers, and the chat surface exists - so `available` is the honest lifecycle, and the `not_built` rule has nothing to object to. Putting it in the catalog and both tier rows today means Slice 2 is a **wiring** change rather than a pricing one, and it means the commercial difference is stated exactly once, in `tierMatrix.ts`, where a reviewer can see it. The alternative - hold it until Slice 2 - would have left the config saying Essentials has chat for as long as the gate took to build. Shape is `boolean`, not `group`: a group is "a named set of fine-grained operations on one surface", and this is the surface. Catalog is now **38** capabilities (`catalog.invariant` count updated deliberately), the paid tiers differ by **ten** keys (nine `chat.*` + `ai.actions`), and the drift snapshot was refreshed - an ADDITION, so no `removals` entry and no version bump (B-10). |
+| **Row 55** | Names the benign cause first: a tenant is counted from the union of business profiles and onboarding messages, so **someone who legitimately reset or deleted their onboarding transcript, with no business profile yet, stops being counted while their plan row correctly stays**. The message says to check that before looking for an admin `ensure_plan_row` on the wrong id, and says it is only worth investigating if the gap is large or the rows are recent. |
+| **Guard extended to the migrations** | The two applied migrations are now in the guard: they carried **20 and 5** comment apostrophes and **2** string semicolons between them, which is one careless line from the same failure - and the next migration will be written by copying one of them. Cleaning them up is **comments only, plus two `COMMENT ON` strings** where a semicolon became "and". ⚠️ Those two table comments now differ in production by one punctuation mark, because the migrations are already applied and are not being re-run. Harmless, recorded here rather than silently fixed. Guard is now **27 tests over six files**, with an explicit case asserting both migrations are still in the list. |
+| **`cohorts.ts:33`** | `export interface CohortConfig extends CohortConfigShape<...> {}` is now a **type alias**, clearing the standing `@typescript-eslint/no-empty-object-type` error (SA's call). Nothing merges into that name, so the alias loses nothing. |
+| **Untranslated names** | Both config files now say plainly that the plan names are **deliberately untranslated for now** - all three locales carry the English string, the user will supply Hebrew and Spanish, and they are present rather than optional so a missing translation is a visible duplicate rather than an `undefined`, and so the day they arrive is a data change. |
+| **`ungated` branch** | **Kept**, per SA. It has no production instance now that the agent-platform entities have left the chat catalog, and it is covered by the mocked-classification test in `planCapabilities.test.ts`. |
+
+**Typecheck baseline is now 2,029**, refreshed as SA asked. The previous standing number was 2,030; nothing in this change set accounts for the -1 and it is in the safe direction, so it is adopted as the baseline rather than explained away. Future runs on this branch are measured against **2,029**.
+
+#### Re-verified
+
+| Check | Result |
+|---|---|
+| `npm run test:bos-entitlements` scope | **49 suites, 934 tests, 0 failures** (was 930 before this round) |
+| That scope plus the admin entitlement routes and `scripts/__tests__` | **53 suites, 1,085 tests, 0 failures** |
+| `npm run test:authz-guard` | **74 passed**, no new exemption |
+| Typecheck, the verified method | **2,029** - the refreshed baseline, matched exactly - 0 x TS2688, **0** in `lib/business-os/entitlements` and 0 under `app/api/admin/business-os` |
+| ESLint over `lib/business-os/entitlements`, `app/api/admin/business-os` and `scripts/__tests__` | **clean, 0 problems** |
+| `console.*` in the touch set | 0 |
+
+**One more pre-existing defect cleared while here.** The same wrong rule name (`@typescript-eslint/no-var-requires`, which does not exist in this config, instead of `no-require-imports`) appeared in **four** Slice 1 test files - `mode.test.ts`, `adminOps.test.ts`, `routes.test.ts` and `shadow.test.ts` - so eight `require()` calls were erroring and eight disable directives were dead. All are one-token corrections; `shadow.test.ts` is the only one this branch would not otherwise have touched, and it is included because the alternative is a module whose lint is still red for a typo.
+
+### 4.35 QA fixes applied (2026-09-24) - A-2, A-3, A-4, B-2, and the baseline measured
+
+QA passed (§14.13) with one open empirical question and four fixable findings. All four are closed. Implementation stays uncommitted.
+
+> ⚠️ **The reasoning in this section is superseded by §4.37.** The comment-semicolon rule was the right hygiene and QA was right that it was live, but it is **not** the explanation of the failure either: the fixed pre-flight failed again, and the probe then disproved the whole quote-tracking mechanism. Read the fragment counts below as "the model we had at the time", not as a diagnosis.
+
+#### A-2 (Med) - semicolons inside `--` comments. QA was right, and it was worse than reported.
+
+QA found twelve across the four scripts. Scanning the **six** files (the migrations are in the guard now) found **31**: preflight 6, checker 3, verify 8, rollback 3, migration 9, backfill 2. Eight had prose after them, and several were commented-out SQL ending in a terminator (`-- LIMIT 20;`), which is the worst shape of all - a splitter blind to comments reads it as a real boundary.
+
+**All 31 rephrased**, never merely deleted: prose semicolons became full stops or commas, and a semicolon that only terminated a commented-out snippet was dropped, because a comment runs nothing.
+
+This is now the **first** rule of the guard, and it is stated first in the header too, because it needs no theory: a `;` in a comment is a boundary to any splitter that does not parse comments. The apostrophe/string-semicolon pair remains as the second mechanism. The header no longer claims to know which one the editor did - it says both ingredients are removed and why that is the right response to a parser nobody can inspect.
+
+**What my own splitter model reports afterwards** (quote-tracking, comment-blind - the model in the guard's header):
+
+| File | Fragments | Fragments starting mid-prose |
+|---|---|---|
+| `preflight-...` | **3** | **0** |
+| `check-...` | **2** | **0** |
+| `verify-...` | 281 | **0** |
+| `rollback-...` | 26 | **0** |
+| `20261005_...` | 57 | **0** |
+| `20261005b_...` | 7 | **0** |
+
+Preflight is **3, not 1**, and that is correct: the file genuinely contains two statements (`SET default_transaction_read_only = on;` and the one big `WITH ... SELECT;`), plus a trailing comments-only fragment after the final semicolon, which is an empty query. **The number that matters is the second column.** Before this round preflight cut into 4 fragments, 3 of them prose-leading, one beginning with the bare word `a` - the user's exact error. That is now zero, in every file.
+
+The large counts for `verify-`, `rollback-` and the migrations come entirely from `$$` function bodies, which a comment-blind, dollar-blind model cuts at every internal semicolon. The real editor plainly does understand `$$` - those two migrations applied cleanly - which is one more reason the model is a lower bound on safety, not a simulation of the editor.
+
+#### A-3 and A-4 (Low) - the guard's own parser
+
+Rewritten as **one stateful scan of the whole file** instead of a scan per line:
+
+- **A-3:** a string literal may span lines. A per-line parser reads its second line as code, and a `--` inside it as the start of a comment - so it would report the opposite of the truth on exactly the construct most likely to hide a violation. There is a test with a two-line literal containing both `--` and `;`.
+- **A-4:** the scanner understands `$tag$` dollar quoting, **and recurses into the body**, because that is where most of the comments in the two migrations live - a rule that stopped at the `$$` would be blind to the lines that matter most. It also reports anything left unterminated (string, dollar quote, nested block comment), and a separate rule asserts dollar-tag parity, so an odd `$$` is named rather than swallowed.
+
+The guard is now **43 tests over six files**: five rules per file (comment semicolon, comment apostrophe, string semicolon, string `--`, everything closed, dollar parity) plus a guard-on-guard block with the real offending lines as the negative control, a positive control that legitimate SQL punctuation is NOT flagged, and the A-3/A-4 parser tests.
+
+#### B-2 (Low) - the write direction is asserted now
+
+`capabilityForOp('contacts', 'create')` is `crm.core` under **both** readings, and Essentials has `crm.core`, so an Essentials owner could have the assistant **change** their data. The new test pins it, together with the fact that no config value can change it - both readings agree on a write, so unlike the read half there is no read-rule lever at all. Only the FR-46 surface gate closes it.
+
+#### The typecheck baseline, measured instead of inferred
+
+QA was right to stop me refreshing it on a story. The base tree was measured directly - the branch's production files and test files restored to `HEAD`, full typecheck, then restored:
+
+| Tree | Diagnostics | `lib/repositories` |
+|---|---|---|
+| Base (`HEAD`, no tier work) | **2,029** | 2 |
+| Base production config + this branch's tests | 2,043 | 2 |
+| **This branch, complete** | **2,029** | 2 |
+
+So **this change set is net zero**, and the baseline for the branch is **2,029** because that is what the base measures - not because something here removed a diagnostic. The `-1` against the 2,030 recorded in §4.31 predates this branch, and so does the `lib/repositories` control moving from 3 to 2: `CRMContactRepository.ts` is clean at the base commit with the tier work absent, so the "3" in §13.9 and in the component-1 notes is stale. **SA's attribution of the `-1` to the `never` diagnostic is not supported** - it would have had to show up in the second row above, and it does not. **SA withdrew that attribution in §13.10** on the strength of this control, so nothing now rests on it either way.
+
+#### B-1 (proposal only, not implemented) - `enforce` needs a second key
+
+QA's point stands: until 2026-09-23 the UD-2 gate meant an operator could set `BOS_ENTITLEMENTS_MODE=enforce` and get shadow anyway. Now that a tier is configured, **one environment variable on one Vercel project is the only thing between production and live enforcement**, while G-1 (the leaked service-role key) is still open and Slice 2 has not wired a single call site.
+
+**Proposal:** `enforce` additionally requires `BOS_ENTITLEMENTS_ENFORCE_CONFIRM` to equal a literal that names what is being done (e.g. `i-have-read-the-switch-on-checklist`). Anything else logs at `error` and downgrades to `shadow`, exactly as UD-2 did. Cost: about fifteen lines in `mode.ts`, three tests, one runbook line, and two variables to set on the day instead of one.
+
+**Worth it, with a caveat.** The value is not that it is hard to type two variables - it is that **no single edit, and no accidental copy of an env block between projects, can switch enforcement on**, which is the realistic failure. It is also the cheapest possible substitute for the safety UD-2 used to provide for free, and it can be deleted the day Slice 2 ships with its own switch-on checklist. The caveat: it protects against an accident, not against an operator who means it, and it must not become a reason to skip the real switch-on gates (G-1, the exhaustive missing-plan-row check, the launch operation). **SA and the user decide; I have not implemented it.**
+
+#### Re-verified
+
+| Check | Result |
+|---|---|
+| `npm run test:bos-entitlements` scope | **49 suites, 935 tests, 0 failures** |
+| That scope plus admin entitlement routes and `scripts/__tests__` | **53 suites, 1,102 tests, 0 failures** |
+| The SQL paste guard alone | **43 tests over 6 files** |
+| `npm run test:authz-guard` | **74 passed** |
+| Typecheck, the verified method | **2,029**, equal to the measured base, 0 x TS2688, 0 in entitlements |
+| ESLint over the three touched trees, `console.*` | clean / 0 |
+
+### 4.36 The scripts rewritten to be BORING (2026-09-24) - after the second failed paste
+
+The user pasted the fixed pre-flight and got `ERROR: 42P01: relation "a" does not exist` **again**. The apostrophe-and-semicolon theory is therefore insufficient, and the hygiene guard, while worth keeping, was never going to be the fix. Stopped refining the theory.
+
+**The evidence that actually discriminates:** every plain single-statement query handed to the user ran first time. Every elaborate file of ours failed. So the approach is no longer to satisfy an unknown parser but to **give it nothing to misparse**.
+
+#### What the three pasted scripts now are
+
+| Rule | Applied |
+|---|---|
+| **No `--` comments at all** | `preflight-`, `check-`, `rollback-` contain **zero** comment markers. Every word moved to the runbook |
+| **No prose in strings** | Rows emit short plain labels and a `fix` key (`runbook B1`) that the runbook explains. No apostrophes, no semicolons, no `--` in any literal |
+| **Several small statements** | `check-` and `preflight-` are **4 statements each**, one `SET` and three standalone `SELECT` blocks, each returning its own labelled grid with its own `VERDICT` row |
+| **No single-letter aliases** | The failing token was literally `a`, the alias in `CROSS JOIN activity a`. Every table is now named in full |
+| **No `aclexplode`** | Privileges are read from `relacl` and `proacl` as text with `LIKE`, which is what the ACL is anyway. One fewer set-returning function in a file that has to parse |
+| **No `DO` blocks in the two read-only scripts** | Neither ever needed one |
+
+`rollback-` keeps its `DO $$` block, and that is deliberate: the arming check and the nine `DROP`s **must be one statement**, or a client-side split could run the drops after the guard refused. It is also the one script nobody pastes casually.
+
+`verify-` is **exempt and still carries its comments**: it is a psql script that its own header forbids pasting into the editor, and psql parses comments correctly. Stripping 213 comment lines of hard-won reasoning out of a file that never meets the failing parser would be cost with no benefit. **Say so if you disagree** - it is one command to strip.
+
+#### What is documentation now, and what is in the file
+
+| In the SQL file | In `BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md` |
+|---|---|
+| The predicate, the threshold, the status, the numbers | Why the check exists, what it protects, and what to do when it fails |
+| A short `fix` key per row | A reference table per script keyed by exactly those keys |
+| Nothing else | The two optional pre-flight queries (they were commented-out SQL), how to arm the rollback, why the drops are inside the `DO` block, why the nine objects are enumerated rather than pattern-matched, and the new section **Why the scripts are boring** |
+
+The runbook gained four reference sections - one per script - and the step 2 and step 6 instructions now describe pasting block by block. **A script that cannot be pasted is worth less than a script with no inline documentation.**
+
+#### Meaning preserved
+
+Every check keeps its predicate, its threshold and its PASS/WARN/FAIL semantics. Two shapes changed, neither of them a meaning:
+
+| Was | Is | Why it is the same question |
+|---|---|---|
+| `aclexplode` + count 9 distinct table grants | `relacl` text contains `service_role=arw` on all 3 tables | `arw` **is** select, insert, update in an ACL entry. Same question, no set-returning function |
+| `aclexplode` + count 2 distinct function grants | `proacl` text contains `service_role=X` on both callable functions | `X` **is** EXECUTE |
+| One grid with an `OVERALL` row | Three grids, each with its own `BLOCK n VERDICT` row | The verdict cannot span statements once they are separate. The runbook says all blocks must say PASS |
+| `finding` and `what_to_do` prose columns | `detail` (numbers and plain words) and `fix` (a runbook key) | The words moved, they did not disappear |
+
+#### The guard, rescoped
+
+It now says what it is and is not, in its own header: **hygiene rules that remove known hazards, not a proof that a file will paste.** Two failed pastes are named in it. A fifth rule forbids `--` comments in the three pasted scripts, and a sixth asserts each of them is split into at least three statements. **49 tests.**
+
+#### The probe came back, and it changes nothing here
+
+The empirical probe (a two-line paste with a comment apostrophe and a string semicolon) **ran successfully** - see §4.37. It disproves the mechanism §4.33 proposed, and it leaves the cause an open question. **Nothing in this section depends on that**, which is why it was not waited for: a file with no comments and no punctuation in its strings is unaffected either way.
+
+### 4.37 The probe: what is now RULED OUT, and what is still open (2026-09-24)
+
+The user ran this in the same Supabase SQL editor that had failed twice on our files:
+
+```sql
+-- comment with an apostrophe: the editor's parser
+select 'semi ; inside a string' as a_test, 1 as n;
+```
+
+**It ran and returned its row.**
+
+#### Ruled out - do not re-run this experiment
+
+| Hypothesis | Status |
+|---|---|
+| An apostrophe in a `--` comment flips the editor's quote state | **DISPROVEN.** Present in the probe, which ran |
+| A semicolon inside a string literal is read as a statement terminator | **DISPROVEN.** Present in the probe, which ran |
+| The two together are what cut our files | **DISPROVEN.** Both were in the probe, in that order, in one file |
+| A semicolon inside a `--` comment (QA A-2) | **Not tested by the probe, and not the explanation either** - removing all 31 did not make the pre-flight paste |
+
+So §4.33's mechanism and §4.35's fragment model are **retracted as explanations**. Both sections now carry a retraction note. The rules they produced are kept as **hygiene**: a semicolon inside a comment is a bad idea whatever the editor does with it, and it costs nothing to forbid.
+
+#### Still open, and honestly recorded as such
+
+**We do not know what the editor did to those files.** Two failing tokens are all the evidence there is: `a` in the pre-flight and `it` in the checker, both ordinary English words from our own prose. A fragment therefore began **mid-comment** in both files. Nothing known explains why, and the parser cannot be inspected from here.
+
+**What was done instead of a diagnosis** (§4.36): the three pasted scripts contain no comments, no prose in any string, no single-letter aliases and no `aclexplode`, and each is several small standalone statements. That is not a theory about the parser - it is giving it nothing to misparse.
+
+#### The sharper signal next time
+
+**All prose is now out of the three pasted scripts.** If a paste fails again it cannot be prose that a fragment starts in, because there is none: the only English left in those files is inside short label strings like `3 of 3 tables present`. A recurrence therefore points at a **construct** - a CTE, a `FILTER`, a `VALUES` list, `to_regclass`, a `$$` body - and the failing token will name it. That is a much sharper signal than `a`, and it is the reason the rewrite is worth having even if it turns out the files now paste cleanly.
+
+If block 1 of the new checker runs, the practical problem is solved and the cause stays an open question. If it does not, the next step is bisecting that one block, not another theory.
+
+### 4.38 A4 found a real defect on production (2026-09-24) - the privilege fix
+
+The rewritten checker **ran** in the Supabase editor. Block 1 returned 4 PASS and 1 FAIL, and **the FAIL is a true positive.** The ACL on all three entitlement tables, from the user database:
+
+```
+postgres=arwdDxtm/postgres
+anon=m/postgres
+authenticated=m/postgres
+service_role=arwdDxtm/postgres
+```
+
+#### Two defects, one cause
+
+| Defect | Cause |
+|---|---|
+| `anon` and `authenticated` hold **`m`** | `m` is MAINTAIN (VACUUM, ANALYZE, REINDEX, CLUSTER, REFRESH MATERIALIZED VIEW, LOCK TABLE), added in PostgreSQL 17. The Supabase default privileges granted it at `CREATE TABLE` time. Our REVOKE enumerated SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES and TRIGGER, so it never took `m` away |
+| `service_role` holds **`d`** and **`D`** | A GRANT naming SELECT, INSERT and UPDATE does not remove what the defaults already gave. The comment beside that GRANT said DELETE was deliberately not granted - **false in production**, so M-2 (the reset ENDS rows, it does not remove them) rested on the function body alone rather than on privileges |
+
+**The cause is the enumeration, not the missing entry.** A database gains privileges over time - a major upgrade, a vendor default - and a list written today silently stops covering them. Enumerate the GRANT, which states what we intend. Never the REVOKE, which states what we forbid.
+
+**No data exposure.** RLS is on with zero policies and neither client role has SELECT, so `m` is a nuisance privilege rather than a read. This is a fix to schedule, not an incident.
+
+#### What shipped
+
+| File | Change |
+|---|---|
+| `supabase/migrations/20261009_business_os_entitlements_privilege_fix.sql` | **NEW.** 33 plain statements, no comments, pastes under the new rules. Its pointer is the final `SELECT` rather than a `--` line (SA P-2, see below). `REVOKE ALL ... FROM anon / authenticated / PUBLIC` on all three tables, `REVOKE DELETE, TRUNCATE ... FROM service_role`, then the positive `GRANT SELECT, INSERT, UPDATE` restated. Safe to re-run: every statement is a REVOKE or a GRANT, and a REVOKE from a role holding nothing is a no-op. Number chosen after checking `origin/main`, where the highest is `20261008` |
+| `supabase/migrations/20261005_business_os_entitlements.sql` | Corrected so a fresh environment never has the gap: `REVOKE ALL` for the client roles, an explicit `REVOKE DELETE, TRUNCATE` from `service_role`, and a comment recording **why the enumeration is the trap** rather than just what changed. The four function REVOKEs became `REVOKE ALL` too |
+| `scripts/check-bos-entitlements-migration.sql` | **A4 strengthened**: it asserts the client roles have **no ACL entry at all**, not the absence of particular privileges - the production entry was `anon=m`, and a check looking for `anon=r` would have passed. The row now prints the offending ACL. **A4b added**: `service_role` holds neither `d` nor `D`. **A10 hardened**: letter by letter through the extracted privilege string, so a grant carrying `WITH GRANT OPTION` (`a*r*w*`) still counts |
+
+The `service_role` REVOKE is deliberately narrow (`DELETE, TRUNCATE`) rather than `REVOKE ALL` followed by a re-GRANT: it is the minimal change that closes the defect, and it cannot strip a privilege some operation depends on that nobody remembered. Say so if you would rather have the strict version.
+
+#### How it was verified without a database
+
+Both halves are in `supabase/migrations/__tests__/business-os-entitlements-privileges.test.ts` (24 tests):
+
+1. **Text assertions** over both migrations: `REVOKE ALL` per table per client role, the `DELETE, TRUNCATE` revoke, the restated grant, **no enumerated revoke may come back**, every statement is a REVOKE/GRANT/BEGIN/COMMIT/SET, and nothing destructive.
+2. **The checker predicates, evaluated against the two REAL ACL strings** - production as it is, and production as it will be (`anon` and `authenticated` gone entirely, because PostgreSQL drops an ACL entry once it carries no privileges; `service_role=arwxtm`). A4 **false then true**, A4b **false then true**, A10 **true in both** so the fix cannot be mistaken for a regression, plus a non-vacuity leg where A10 genuinely fails.
+
+This does **not** execute SQL - there is no database here. What keeps the re-implementation honest is a first test asserting each predicate appears **verbatim** in the checker: change the SQL without mirroring it and that test fails rather than a stale model passing.
+
+#### The same mistake elsewhere - reported, not fixed
+
+Three other applied migrations use the identical enumeration, covering **15 more tables**:
+
+| Migration | Tables | Note |
+|---|---|---|
+| `20261004_payment_tables_write_lockdown.sql` | 12 payment and ledger tables | Keeps SELECT **on purpose** |
+| `20261001_user_subscriptions_write_lockdown.sql` | `user_subscriptions` | Keeps SELECT on purpose |
+| `20260920a_lock_system_settings_and_pricing_rls.sql` | `ai_model_pricing`, `system_settings_config` | Keeps SELECT on purpose |
+
+**`REVOKE ALL` is NOT the right fix for those three**, because SELECT is kept deliberately. The correct shape is `REVOKE ALL` followed by `GRANT SELECT`, or adding MAINTAIN to the list. Severity is low for the same reason as ours - PostgREST cannot issue VACUUM or LOCK TABLE - and **it is unverified against the live database**: nothing measures those tables today, and our checker only covers our three. Out of scope here, worth one small migration and one check of its own.
+
+> ### The rule to carry into that work (SA, §13.10)
+>
+> **Verify the resulting permissions, not the statement that sets them.**
+>
+> Every artefact we had said the right thing. The migration said `REVOKE`, the comment said DELETE was not granted, and a text test asserted both. All three were true about the *statement* and false about the *database*, because a REVOKE only removes what it names and a GRANT only adds. The defect was invisible until something read the ACL back.
+>
+> So a privilege migration is not finished when the statement is written. It is finished when a check reads `relacl` and says what the role actually holds - which is why A4 found this and three years of review did not. **Whoever picks up the 15 tables should write that check first**, run it before the migration to see the defect, and run it after to see it gone.
+
+Nothing else in the module enumerates: the four function REVOKEs had no gap to begin with, because EXECUTE is the only privilege a function can carry. They were changed to `REVOKE ALL` as habit, where it is free.
+
+### 4.39 SA fixes applied (2026-09-24) - P-1, P-2, and two retractions recorded
+
+SA approved the privilege fix and the rewritten scripts and cleared them for QA (§13.10), with no required changes and two low-priority items. Both applied. Implementation stays uncommitted.
+
+#### P-1 - the applied migration now says it was edited afterwards
+
+`20261005_business_os_entitlements.sql` opens with a warning block, because the file no longer matches the SQL the live database received and somebody will eventually read it as a record of what ran:
+
+| | |
+|---|---|
+| **What production got** | the file as it stood on 2026-09-23, whose REVOKE **enumerated** seven privileges, **plus** `20261009_business_os_entitlements_privilege_fix.sql`, which repairs the two gaps the enumeration left |
+| **What this file is** | the corrected version. A fresh apply of it alone reaches the same end state and does **not** need `20261009` |
+
+It names both gaps, points at the follow-up, and points at check A4 as the thing that tells you which state a given database is in.
+
+#### P-2 - the pointer is SQL, not a comment
+
+**Chosen: no `--` line.** `20261009` is pasted by hand, so it is in `PASTE_SCRIPTS` and held to the no-comment rule - and that rule exists precisely because we **cannot explain** the failure it guards against. Adding the first comment back into a file the user pastes, to save one line of documentation, is the wrong side of that trade.
+
+Instead the pointer is the **last statement**:
+
+```sql
+SELECT 'business_os entitlements privilege fix' AS migration,
+       'revokes ALL from anon authenticated and PUBLIC and takes DELETE and TRUNCATE from service_role' AS what_it_does,
+       'see docs BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md step 9' AS why,
+       'safe to re-run' AS notes;
+```
+
+A reader sees it at the bottom of the file, and the operator sees it as the **confirmation grid** after running - which a comment would not have given them. It has no `FROM`, so it reads nothing. A test asserts the file still has no `--`, that the pointer is present, and that exactly one statement is a `SELECT`.
+
+#### SA's two retractions, and where they touch this workplan
+
+| Retraction | Effect here |
+|---|---|
+| §13.9's claim to have **independently confirmed** the paste root cause is withdrawn - SA treated evidence that was *consistent* with the theory as evidence that *established* it | §4.34 cited that confirmation in its first line. It now states what the clearance actually covered, and carries the retraction inline. Nothing in §4.34 depended on it: every item is a config or test change, and T-1 rests on the chat-surface finding, which is unaffected |
+| SA's attribution of the typecheck `-1` to a `never` diagnostic is withdrawn, on the strength of the §4.38 control | §4.35 had recorded the attribution as "not supported". It now records it as **withdrawn**, so nothing rests on it in either direction |
+
+I checked the rest of my sections for the same lean: §4.33 and §4.35 already carry retraction banners from §4.37, and no other section of mine cites either claim.
+
+#### The rule worth carrying forward
+
+SA's transferable lesson from the privilege defect is now stated once, in §4.38, next to the queued 15-table work where the next person will meet it: **verify the resulting permissions, not the statement that sets them.** Every artefact we had said the right thing about the statement and the wrong thing about the database. Write the check that reads `relacl` first, run it before the migration to see the defect and after to see it gone.
+
+#### Re-verified
+
+| Check | Result |
+|---|---|
+| Migration guards plus the SQL paste guard | **120 tests**, 0 failures |
+| Full affected scope | **54 suites, 1,142 tests**, 0 failures |
+| Typecheck, the verified method | **2,029**, equal to the measured base |
+
+### 4.40 QA fixes applied (2026-09-24) - QA-1, QA-2, QA-3
+
+QA passed round 8 (§14.14) with no High and three Low. All three fixed.
+
+#### QA-3 - the runbook told the operator the wrong grid size
+
+`BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md` said block 2 returns `BLOCK 2 VERDICT` **+ 10 rows**. It returns **9**. That table is what the user reads on ~1 Oct to tell whether a grid came back SHORT, and a wrong number there turns a truncated result into a normal-looking one - worse than no number at all.
+
+Counted from the file, every block:
+
+| Block | Rows | = verdict + checks |
+|---|---|---|
+| 1 | **7** | 1 + 6 (A1, A2, A3, A4, A4b, A10) |
+| 2 | **10** | 1 + 9 (A8, A6, A7, A5 x2, A10, owners, A9, A11) |
+| 3 | **10** | 1 + 9 (B1-B5, Q5, counts, trigger rows, read-only) |
+
+The table now gives the arithmetic rather than a bare number, and a note says **counts are rows, not passes** - the user's field run reported 6 / 8+INFO / 6, which are status tallies, and block 1 legitimately returned 6 rows that day because A4b was added afterwards.
+
+**It cannot drift again:** a new test derives all three counts from the SQL and asserts the runbook line for each block contains that number. It counts `SELECT <n>` rows by their trailing comma, which is what tells a row apart from the line-leading `SELECT 1` inside an `EXISTS` - an earlier version of the counter read that as a row, and there is now a test pinning the distinction.
+
+#### QA-1 - the pin was one-way. Chosen: make it two-way, not just honest.
+
+QA was right: `expect(checker).toContain("acl_text LIKE '%anon=%'")` proves the SQL still says what it said. It proves **nothing** about whether the TypeScript beside it still means the same thing, so editing the two regexes alone left every assertion passing.
+
+**I took the two-way version** rather than the honest comment, because it is not fragile - it removes the second copy instead of documenting it. The four `LIKE` patterns, the `substring` pattern and the privilege letters are now **extracted from the checker at run time**, with a small `likeToRegExp` translator (the one piece of logic this file owns, with its own tests). Edit the SQL and the test changes with it; there is nothing left to keep in step by hand.
+
+Two guards make the extraction non-vacuous: one asserts exactly what was extracted (`['%anon=%', '%authenticated=%', '=%', '% =%']`, `service_role=([a-zA-Z*]*)`, `['d','D']`, `['r','a','w']`), and the letters are de-duplicated because every predicate appears twice in the SQL by construction - once in the `CASE`, once in the `FILTER`.
+
+**Demonstrated rather than claimed:** weakening the SQL from `LIKE '%anon=%'` to `LIKE '%anon=r%'` - exactly the change that would have made A4 pass on the real database - turns **two** tests red, including the behavioural one. Under the old one-way pin it turned none. The file was restored immediately afterwards.
+
+#### QA-2 - the ACL fixtures are transcriptions, and now say so
+
+Both are labelled inline. `ACL_NOW` is what the user reported from production; `ACL_AFTER` is one step further removed - what the migration *should* leave behind, derived by hand from what it revokes, never observed. The note says what the fixtures do prove (**that the predicates discriminate**, answering differently before and after) and what they do not (that the database is in either state). The thing that reads the real ACL is check A4, run by the operator - which is the §4.38 rule applied to this file: verify the resulting permissions, not the statement that sets them.
+
+#### On the workplan sweep
+
+QA is right that its in-progress §14 edits were carried into `3190dc37` and `3e30789a`. Nothing was lost - both are additive sections in a file we both append to - but it is my `git add <file>` that did it. **From here I stage hunks** (`git add -p`, or a path-scoped add after checking `git diff` for someone else's work) whenever the workplan is open for concurrent editing.
+
+#### Re-verified
+
+| Check | Result |
+|---|---|
+| Full affected scope | **54 suites, 1,148 tests**, 0 failures |
+| Migration guards plus the SQL paste guard | **224 tests** |
+| Typecheck, the verified method | **2,029**, equal to the measured base |
+| ESLint over both test trees | clean |
+
 ---
 
 ## 5. Slice 2: Enforcement (outline; G-3: the addendum restates each WC as tasks + tests)
@@ -1807,6 +2275,7 @@ The three Low findings from §14.12, plus the free one. Implementation stays unc
 | **Prerequisites** | (1) **T-8 (WC-17)**, as the first PR: `chat` and `chat-command` return 410; the `chat-v2` toggle is removed and the route returns 410 (or becomes admin-only server-side). It is never mapped through the catalog. (2) Addendum SA-reviewed (G-3). (S-12 is already closed: the skill was fixed on `main`.) |
 | Mode | `enforce` becomes selectable. `mode.ts` refuses it while `TIER_ORDER` is empty (UD-2). Every surface is wired in `shadow` first. |
 | Route wrapper | `withEntitlement(capability \| { ungated: reason }, handler, { surfaceKind })`. **S-11 statuses:** `not_entitled` → **403**; `read_only` → **409**; `entitlement_unavailable` → **503** + `Retry-After`. Clients branch on the body `error` code. The addendum checks that no global fetch wrapper treats 403 as signed-out. Route-declaration test over §10.2 + C-5 + C-6 (WC-22c). |
+| **Chat SURFACE (FR-46, added 2026-09-24)** | **The FIRST chat check, before the one below.** `chat.access` is resolved **once per turn at the entry point**, before a plan is built and before any per-capability check. Refusal is `not_entitled` with `lowestTier` from `lowestTierFor('chat.access')`, rendered as a **normal assistant message** (FR-46c wording, both plan names read from the tier `presentation` config, never hard-coded), so the conversation stays usable and says what the owner can still do on the screens. The turn records its surface decision in shadow, and `asTier` gains a **distinct-accounts-that-would-lose-chat-entirely** count (FR-46e) — the number the price difference rests on. Tasks + tests in the addendum; AC-38. **Why it cannot wait for the per-capability layer:** every chat operation maps to the capability of the DOMAIN it touches, so an Essentials account reading *or writing* its own contacts through chat resolves to `crm.core`, which it has. |
 | Chat | Gate at execution in `MutateExecutor`/`ForEachExecutor`, including the confirm turn and `saved-plans/[id]/run`. The per-turn snapshot is passed down. Enforcement calls are **awaited** (unlike shadow). |
 | Crons (WC-13) | `durable-queue-drain` skill. Batch resolve (≤100 per chunk). A suppressed row gets a terminal `suppressed` status + `suppressed_reason` and is never re-sent (B-11). A lookup failure defers. Per-cron declarations. |
 | **Send registry (S-1)** | Every automated client send is declared by **send id** with `messageClass` + `initiator`. The surface kind is derived from the entry, and `sendPolicyOverrides` is keyed by send id (Q-B4). Unclassified sends fail FR-8. |
@@ -2725,6 +3194,309 @@ Every condition I set in earlier rounds is present and behaves as specified:
 3. **Nothing about the product has changed.** The feature is off, no plan exists, and no customer sees anything different.
 4. **The two things still waiting on you** are the production apply, and rotating the database key before enforcement is ever switched on. The second is the one that matters most: until it is done, the guarantee that only the server can change what an account is entitled to does not really hold.
 
+### 13.9 SA Code Review — the SQL paste fix and the four plans
+
+> ⚠️ **PARTIALLY RETRACTED 2026-09-24 by SA — see §13.10.** Section A of this review ("Dev's root cause is correct, and I reasoned it through independently") is **wrong**: the apostrophe-plus-semicolon mechanism was **disproven** by a two-line probe in the user's own editor (§4.37). I treated the `relation "a"` / `relation "it"` errors as corroboration when they were merely *consistent* with the theory, which is not the same thing. The tier review (section B, the chat-surface finding and T-1) is unaffected and still stands. My attribution of the typecheck `-1` to a `never` diagnostic is also withdrawn — §4.38 disproves it with the control.
+
+**Reviewed by SA — 2026-09-24** (branch `feature/business-os-entitlement-tiers`, uncommitted; docs at `a4a69bbd`; Slice 1 merged via PR #93 and applied to production)
+**Status:** ✅ **APPROVED — CLEARED FOR QA.** One **required** item (**T-1**), which is a requirement/documentation fix rather than a code change, and four low ones. The code is sound.
+
+**What SA ran:** `npm run test:bos-entitlements` — **49 suites, 930 tests, 0 failures**; the new `entitlementSqlScripts.guard.test.ts` — **18 passing**; `npm run lint:hooks` — clean.
+
+---
+
+#### A. The SQL scripts
+
+**Dev's root cause is correct, and more precise than my earlier hypothesis.** I reasoned it through independently and it holds — and, importantly, it explains the *specific* errors the user saw rather than just the class:
+
+1. A naive splitter that tracks `'` but does not understand `--` sees the apostrophe in `the backfill's READ cost` and flips into "inside a string".
+2. While inverted, real statement-ending semicolons are **ignored**, so statements merge rather than split — harmless on its own.
+3. The next genuine opening quote flips it back to "outside a string" — now inverted *against* reality: it believes it is outside a literal while actually inside one.
+4. A semicolon **inside** that literal now reads as a terminator, cutting the statement mid-sentence. The next fragment begins with whatever English word followed the semicolon.
+
+That last step is the corroboration: `relation "a"` and `relation "it"` are exactly what Postgres reports when a fragment starts with a bare English word. **Both conditions are necessary**, which is why the two migrations — comment apostrophes, but no string semicolon after an inversion — pasted without complaint. Confirmed.
+
+**The four guard rules are correct and can fail.** `splitComment` mirrors the *correct* parse (a `--` only starts a comment outside a string), which is what makes "this comment contains an apostrophe" a true statement rather than a guess; `stringLiterals` handles `''` escaping. The negative control uses the **two real offending lines from 2026-09-23** and a legitimate line that must not be flagged — so the guard is proven to fire on the shapes that broke and stay quiet on the shape that did not. Dev's replay over the pre-fix copies (preflight 7+3, checker 2+8) is the right evidence.
+
+The rules are stricter than strictly necessary — forbidding *either* condition would break the chain — and that is the right call: we do not control or get to inspect the editor's splitter, so removing both ingredients is the honest response.
+
+**The rephrasings preserve meaning.** I read the diff: semicolons inside literals became commas or full stops, and `a user''s own INSERT` became `an INSERT by the owner`. No predicate, threshold, count or status changed. The checker additions are sound: raw sizes in `counts` give the week-later run its denominators, row 30 naming both the trigger prefix and the function prefix removes a real ambiguity when reading the grid, and **row 55 (B5)** is a genuine new check — the complement of B1, catching plan rows that belong to no tenant, correctly a WARN rather than a FAIL.
+
+---
+
+#### B. The chat-surface gap — **confirmed, and wider than reported**
+
+**Dev is right, and the finding is understated.** Under the configured `domain_group` reading, `ENTITY_DOMAIN` is the default *for every operation on an entity, reads included*. So on Essentials:
+
+- `contacts.find` → `crm.core` → **allowed** (Dev's case), and equally
+- `contacts.create`, `tasks.update`, `pages.*`, `insights.find` → `crm.core` / `website.ai_site` / `insights.checks` → **allowed**.
+
+An Essentials owner can therefore not only *ask* chat about their data — they can **change it through chat**. Turning off the eight `chat.*` capabilities cannot close a surface those eight never collectively represented.
+
+**Why the config cannot express it.** `chat.*` is not one thing. Four entries are feature areas that happen to be reachable through chat (`invoice_control`, `scheduling`, `quotes`, `email`), three are chat *modalities* (`search`, `reporting`, `bulk`), and one is marketing. **No capability means "may use the chat surface at all".** That capability does not exist, so no combination of values can withhold it. The assertion in `productionConfig.test.ts` — in both directions, with the honest comment that this test should change when the gate lands — is the right way to hold the gap until it is closed.
+
+**What Slice 2 must do, precisely.** This is the whole $50/month difference between the two paid plans, so it is a commercial requirement:
+
+| # | Requirement |
+|---|---|
+| 1 | **Add one catalog capability** — `chat.access`, boolean, `available`, audience `owner`, `atLimit: 'none'`. `basic: false`, `pro: true`. The entire commercial difference, expressed once, in config. |
+| 2 | **Gate the chat surface on it once per turn**, at the entry point in `chat-v4` where the shadow hook sits, **before** any per-capability check. Per-step gating would make the refusal depend on which entity the planner happened to choose. |
+| 3 | **The refusal is `not_entitled` carrying `lowestTier: 'pro'`**, and chat **explains** it in the owner's language rather than erroring (FR-17 / AC-9). This is the customer-visible half of the price difference and must be specified, not improvised. |
+| 4 | **Keep the per-capability map.** It still decides what an *Autopilot* account may do inside chat, and it feeds the report and, later, metering. |
+| 5 | **Shadow must record the surface decision**, or the report cannot say how many accounts would lose chat entirely — which is exactly the number that justifies the price. |
+| 6 | It is stated as an FR in the requirement (BA), not only as a test comment. **T-1.** |
+
+**Dev's decision not to simplify away the dual read-rule recording: agreed.** Q-B1 is moot *as pricing* — no plan is sold on "search" any more — but the read rule still decides which capability a read maps to, which decides what an Autopilot account is refused once enforcement is on, and what happens inside chat for any tier that has access. One extra column preserves the ability to settle that with data instead of opinion. Keeping it is the cheaper mistake.
+
+---
+
+#### C. The rest
+
+| Item | Verdict |
+|---|---|
+| Four tiers, BASE ± nine keys | ✅ The `BASE` + "subtract the eight `chat.*`, change the allowance" shape makes the difference between plans readable at a glance, and the nine-key diff test **names the exact keys**, so a tenth difference or a missing one fails. Non-vacuous. |
+| `presentation` block | ✅ Sound, and the loader rejecting a tier with no entry is the right invariant. See T-5. |
+| Cohorts `{ all: true }` → `{ tier: 'basic' }` | ✅ Correct now that a tier exists: cohorts can no longer drift from the plan they are meant to mirror, and the test pins it. |
+| `mode.ts` UD-2 passthrough | ✅ `enforce` is no longer self-downgraded now a tier is configured — which is the gate working as designed, not a weakening. **G-1 and G-2 still bind**, and neither is met. |
+| `adminOps.assign_tier`, `report.asTier`, `lowestTierFor`, regenerated snapshot, `decide.test.ts` cohort change | ✅ All follow mechanically from a tier existing; the snapshot diff is the record of the decision. |
+| Two `jest.isolateModules` mocks | ✅ Acceptable: test-only, scoped, and each documents that it fakes the **classification** and not the behaviour. |
+| The now-unreachable `ungated` branch | ✅ **Keep it.** The type, the gap reason and the invariant are the only expression of B-8's answer if chat ever re-lists the agent platform, and `planCapabilities.test.ts` proves the behaviour with a synthetic entity — so it is not vacuous despite nothing real being classified that way. |
+| Typecheck 2,029 vs baseline 2,030 | ✅ Expected: a `never`-related diagnostic disappeared when `TIER_ORDER` stopped being empty. Refresh the baseline so the gate does not sit permanently one below (low, housekeeping). |
+| `config/cohorts.ts:33` `no-empty-object-type` | **Call: fix it.** `export interface CohortConfig extends CohortConfigShape<CohortExplicitValues> {}` is a legitimate "name a specialisation" pattern, but the modern idiom is a type alias, which clears the error with no behaviour change. It is pre-existing, but this branch already edits the file. **T-4.** |
+
+---
+
+#### Required and low fixes
+
+| # | Fix | Priority |
+|---|---|---|
+| **T-1** | **Write the chat-surface gap into the requirement as an FR, and into the Slice 2 addendum with the six points above.** It currently lives in a test comment and a workplan note. It is the entire difference between the two paid plans, so it must be a requirement someone can be held to — not a discovery the next person makes. | **Required** (BA + the Slice 2 addendum; not code) |
+| T-2 | Row 55's `what_to_do` should name the benign cause: a tenant who reset their onboarding transcript and has no business profile yet drops out of the "tenants" union while keeping their plan row. Without it the user chases a phantom on the week-later run. | Low |
+| T-3 | Extend the SQL guard's `SCRIPTS` list to the two entitlement migrations — they carry comment apostrophes today and are one string-semicolon away from the same failure — or to any file the runbook tells someone to paste. | Low |
+| T-4 | `cohorts.ts:33` → type alias. | Low |
+| T-5 | Note in `presentation` that the plan names are brand names, deliberately identical across en/he/es — otherwise the next reader files it as a missing translation. | Low |
+
+---
+
+#### For the user
+
+1. **The paste failures are understood and fixed, and the fix is now enforced.** The cause was a comment apostrophe plus a semicolon inside a sentence — together, not separately — which is why the two migrations went in fine while the check scripts broke. A test now refuses any of these four files that could break the same way, and it is proven against the exact lines that failed on your screen.
+2. **The two plans are not yet different in the way you are selling them.** Essentials and Autopilot currently differ by nine settings, but switching off the chat features does **not** actually stop an Essentials customer using chat — they can still ask about, and change, their contacts, tasks, website and insights through it. Nothing is enforced yet, so no customer is affected today, but **this is the whole £/$50 difference between your two paid plans** and it needs one small addition before enforcement is switched on. I have written exactly what that is.
+3. **Nothing else about the product changed.** No tier is enforced, and the feature remains off.
+4. **Still waiting on you, unchanged:** rotating the database key before enforcement is ever switched on, and making the CI checks required.
+
+### 13.10 SA Code Review — the privilege fix, the rewritten scripts, and two retractions of my own
+
+**Reviewed by SA — 2026-09-24** (branch `feature/business-os-entitlement-tiers`, uncommitted; docs `6b7f2931`, `72180a3d`, `455c0f47`)
+**Status:** ✅ **APPROVED — CLEARED FOR QA.** Two low-priority fixes (**P-1, P-2**). No required changes. The tier config cleared in §13.9 is untouched and still stands.
+
+**What SA ran:** `npm run test:bos-entitlements` — **50 suites, 960 tests, 0 failures**; the migration and script guards — **5 suites, 217 tests, 0 failures**.
+
+---
+
+#### Two things I got wrong, corrected before anything else
+
+**1. I confirmed a root cause that was not true.** In §13.9 I wrote that I had "reasoned it through independently" and treated `relation "a"` / `relation "it"` as corroboration. Those errors were *consistent* with the apostrophe-plus-semicolon mechanism; they did not establish it, and I presented consistency as confirmation. The two-line probe settles it in the other direction. §13.9 now carries a retraction banner. The lesson is worth keeping in the record: **a theory that explains the evidence is not the same as a theory the evidence forces**, and the cheap experiment — paste the two ingredients and see — was available to me and I did not ask for it.
+
+**2. My typecheck attribution was a guess.** §4.38 shows the base itself measures 2,029 and the `lib/repositories` control moved 3 → 2, so the `-1` cannot be the `never` diagnostic I named. Withdrawn. Dev is right to have checked rather than accepted it.
+
+Both retractions matter more than the code below, because the workplan is the project record and an SA "confirmed" is load-bearing.
+
+---
+
+#### 1. The privilege fix
+
+**The diagnosis is correct and the evidence is the strongest kind we have** — the checker failed against production, the fix was applied, and the re-run passed. That is a closed loop, which nothing in this review can match.
+
+**Why it happened, stated exactly:** the original migration **enumerated** the privileges it revoked. Supabase's default privileges grant `ALL` at CREATE time, and on PostgreSQL 17 `ALL` includes `MAINTAIN` — a privilege that did not exist when the enumeration idiom was written. The list of seven did not name it, so `m` survived on `anon` and `authenticated`. Separately, a **narrower `GRANT` does not remove what a wider default already gave**, so `service_role` kept `d`/`D` despite the grant naming only SELECT, INSERT and UPDATE — which made the migration's own comment false in production.
+
+**Severity, honestly:** `m` on an RLS-protected table with zero policies and no SELECT is a nuisance privilege, not a read — Dev's framing is accurate and I would not inflate it. **The finding that matters is the pattern, not the letter**: an enumeration is a list that silently goes stale when the server gains a privilege.
+
+**Dev's call to revoke narrowly from `service_role` (`DELETE, TRUNCATE`) rather than `REVOKE ALL` + re-grant: right, and for the right reason.** `REVOKE ALL` + re-grant produces a tidier ACL, but its failure mode — an incomplete re-grant on a hand-applied production migration — is a module-wide outage. The narrow revoke cannot do that: it removes exactly the two verbs we never want and cannot take away anything the module needs. What `service_role` retains (`x`, `t`, `m`) is harmless on a trusted server role. Crucially the **checker asserts the property, not the string** — "can read and write" plus "cannot delete or truncate" — so the check and the fix agree by construction rather than by coincidence. One consequence to keep straight: "service_role has exactly SELECT/INSERT/UPDATE" is **not** true and must never be written down; I checked the corrected comment in `20261005` and it now says the right thing.
+
+**Idempotency:** `REVOKE`/`GRANT` are idempotent by nature, so a re-run is a no-op. Adding `FROM PUBLIC` closes the pathway I raised as "free defence in depth" back in §13.3 and then let go in §13.4 — which, with hindsight, is where this should have been caught.
+
+**The fix to `20261005` is right:** a fresh environment now reaches the same end state as production did after `20261009` (`REVOKE ALL FROM PUBLIC, anon, authenticated`, then the narrow service_role revoke, then the positive grant). Forward-fix for applied environments plus source-fix for new ones is the correct pattern. **P-1:** the file does not say it was edited *after* being applied to production — add one line, or the next person assumes production matches the file and re-runs it expecting a no-op.
+
+---
+
+#### 2. The rewritten scripts — did any check weaken?
+
+**No. Two were strengthened and two were added.** I compared the check inventory before and after rather than reading the prose:
+
+| Check | Before → after |
+|---|---|
+| A4 | "client roles have no grant" → **"no ACL entry at all"** — strictly stronger, and the one that caught the real defect |
+| A10 (tables) | "service_role can work" → **`r` and `a` and `w` each present** in service_role's own extracted letters — more precise, and deliberately tolerant of `x`/`t`/`m`, which is what makes it consistent with the narrow revoke |
+| A4b | **new** — no `d`/`D` for service_role |
+| B5 | **new** — plan rows with no tenant (WARN) |
+| A1, A2, A3, A5 ×2, A6, A7, A8, A9, A10 (functions), A11, B1–B4 | Renamed to prose-free labels; **predicates unchanged** |
+
+**The extraction is correct, and this was my main worry.** `substring(acl_text from 'service_role=([a-zA-Z*]*)')` isolates the service_role entry's letters, so A4b cannot pick up the `d` in the **owner's** `postgres=arwdDxtm` — which a naive `LIKE '%d%'` over the whole ACL would have done, and would have made A4b fail forever and be switched off. The PUBLIC detection (`LIKE '=%'` for a leading empty grantee, `LIKE '% =%'` for a later one) covers both positions an empty-grantee entry can take. A NULL `relacl` yields no client entry (PASS, correct — it means only the owner has anything) and an empty service_role string (A10 FAILs, also correct).
+
+**Moving explanation into the runbook lost no meaning.** Each row now carries a `fix` key pointing at the runbook section, so the grid stays terse while the reasoning stays written down — and the runbook is where an operator is already looking. That is a better split than prose inside a file that must survive an uninspectable parser.
+
+---
+
+#### 3. `business-os-entitlements-privileges.test.ts` as a pattern
+
+**Honest about what it is, and the honesty is in the file rather than in a commit message.** The header says plainly that it does not execute SQL, and the design answer to "then what is it worth?" is the right one: **each predicate is asserted to be present verbatim in the SQL before it is evaluated**, so the model cannot drift silently — a change to the checker that is not mirrored here fails the pin, not the assertion.
+
+**What it proves:** that the predicates, as written, give the right verdict on the two real ACL strings — production before the fix and production after it. Using the *actual* strings rather than invented ones is what makes it evidence rather than decoration.
+
+**What it cannot prove:** that the TypeScript re-implementation is semantically identical to the SQL. A verbatim pin catches textual drift, not a divergence between `position()` and `includes()`, or between what the CTE feeds the predicate and what the test feeds it. **That gap is closed by something better than a test: the user ran the real checker against production and it agreed with the model in both directions** — A4 failed before, passed after. That closed loop is the validation, and it should be cited whenever this pattern is reused.
+
+As a pattern for a repo whose CI has no database, I endorse it: a pinned model plus one real run beats either alone.
+
+---
+
+#### 4. The guard rewrite and the retractions
+
+**Accurate, and unusually well done.** The guard's header leads with what it is *not* — "these rules did not fix the problem and do not explain it" — before anything else, which is the only framing that stops a future reader citing it as a root cause. "Do not re-run that experiment, and do not repair the theory" is the right instruction: the temptation with a disproven mechanism is to patch it into a more complicated one that also fits.
+
+I checked for survivors of the old explanation. The runbook (line 185) states the theory was **tested and disproven** rather than repeating it; §4.33 and §4.35 carry retraction notes; §13.9 now carries mine. **No stale confirmation remains** — the only place the mechanism is still described is inside explicit retractions, which is where it belongs.
+
+The substantive change is not the guard at all: the three pasted scripts now carry no `--` comments, no prose, no single-letter aliases and several small statements. **Giving an uninspectable parser nothing to misparse is a better engineering answer than a theory**, and it is honest about being a mitigation rather than a diagnosis. Keeping the rules as hygiene is right — a semicolon inside a comment is a bad idea whatever the editor does with it.
+
+---
+
+#### 5. The spread — diagnosis confirmed, and correctly out of scope
+
+I checked the three migrations myself. All three use the same shape: `REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER` — **deliberately omitting SELECT**, which `authenticated` is meant to keep. So on PG17 the same `m` will have survived on ~15 tables across payments, `user_subscriptions`, settings and pricing.
+
+**Dev is right that `REVOKE ALL` is the wrong fix there** — it would strip a SELECT that is doing real work, and a wrong re-grant on those tables breaks reads for live users. The fix is either to add `MAINTAIN` to the enumeration or to `REVOKE ALL` and re-grant SELECT explicitly, and it needs its own before/after verification against production. **Keeping it out of this branch is correct**: it is a platform-wide privilege change with a different fix and a different blast radius, and bundling it into an entitlements branch would make both harder to review and to revert.
+
+**The transferable rule, which belongs in the queued work:** *an enumerated REVOKE is a list that goes stale when the server gains a privilege — so verify the resulting ACL rather than trusting the statement.* The checker's A4 is the practice that caught this; the queued work should carry the same "assert the ACL" check rather than only fixing the statements.
+
+---
+
+#### 6. Effect on the four tiers
+
+**None invalidated.** §13.9's clearance of the tier config stands, and T-1 (the chat-surface gap) remains the one open required item from that review.
+
+One connection worth recording: **M-2's guarantee is now enforced by the database as well as the code.** I approved "the reset ends override rows, it does not delete them" in §13.4 on the strength of the function body — and until today `service_role` actually held DELETE, so the defence in depth I assumed was not there. It is now.
+
+---
+
+#### Low-priority fixes
+
+| # | Fix |
+|---|---|
+| **P-1** | `20261005_…sql` should say in its header that it was **edited after being applied to production**, and that production received `20261009` instead. Without it the next reader assumes the file and production match, and may re-run it expecting a no-op. |
+| **P-2** | `20261009_…sql` carries no comments at all (correct for a pasted file) — add a single pointer line to §4.38 or to the privileges test, so the file is not a record with no explanation attached. A one-line `--` at the top is safe here: nothing about this migration is prose-heavy. |
+
+---
+
+#### For the user
+
+1. **The checker earned its keep on its first real run.** It found two genuine problems in the live database that every review — including both of mine — had missed: two roles kept a leftover permission, and the server role could delete rows the design says can never be deleted. Both are fixed and re-verified. Nothing was exposed and no data was at risk.
+2. **The reason we missed it is worth knowing**, because the same mistake is sitting in three other already-applied migrations covering about fifteen payment and settings tables: the migrations listed the permissions to take away, and PostgreSQL 17 added a new one that the list does not name. That is queued as separate work with a different fix — the entitlements fix would be wrong there, because those tables are meant to keep read access.
+3. **I was wrong about why the scripts would not paste**, and said so in the record. The honest position is that nobody knows; what was done instead — strip the scripts back to plain statements with no prose — works regardless of the reason.
+4. **Nothing changed about the plans**, and the one thing still needed before enforcement can be switched on is unchanged: switching off the chat features does not yet actually stop an Essentials customer using chat.
+
+### 13.11 SA Code Review — the Business OS Tiers admin page
+
+**Reviewed by SA — 2026-09-24** (branch `feature/business-os-tiers-admin-page`, uncommitted; workplan `9dfad229`; base `c065021e`, now an ancestor of main via PR #103)
+**Status:** 🔄 **APPROVED FOR QA WITH TWO REQUIRED FIXES** (**R-1, R-2**) and three low. Neither required fix is a security or correctness defect in what ships today; both are about the screen staying true when the mode changes, which is the only job it has.
+
+**What SA ran:** the five new/affected suites — **101 tests, 0 failures**; `npm run test:authz-guard` — 74 passing, **no new exemption**; `npm run lint:hooks` — clean.
+
+---
+
+#### 1. Authorization — verified, not assumed
+
+| Check | Result |
+|---|---|
+| The page inherits the guard | ✅ `app/admin/layout.tsx` has `await requireAdminPage();` as the first statement of the layout, deliberately outside any try/catch, and `AdminChrome` renders only after it. The new page sits under that layout, so it is protected before its own first line. |
+| The route gates first | ✅ I walked the handler: only `const gate = await` precedes `requireAdmin(`. Nothing parses a query, reads config or touches a repository above it. |
+| The repo-wide guard covers it | ✅ **Checked rather than trusted.** Walking `app/api/admin/**` now finds **50 route files** (47 before this branch), so the new handler is in the scanned set; the guard's floor assertion still holds and R1 passed with **no new exemption**. No route imports `AdminAccessService`. |
+| The page does not re-implement authz | ✅ The source guard asserts the page contains no `requireAdmin`, no `AdminAccessService`, no `profiles.role`, no `app_metadata`. |
+
+**The best thing in the guard is the assertion I did not expect:** it opens `app/admin/layout.tsx` and asserts *that* file still awaits `requireAdminPage()` as its first statement. The page's safety lives in someone else's file, and this pins it there. That is the right instinct and I would like to see it copied.
+
+---
+
+#### 2. The honesty mechanism — running the resolver rather than reading the matrix
+
+**Right, and for the right reasons.** Three of them, in increasing order of importance:
+
+1. A cohort **has no row** in `TIER_MATRIX.tiers`. Describing `trial` or `champion` from the matrix would mean re-implementing "cohort base = a tier, plus adjustments" in the screen — the exact re-derivation that drifts.
+2. Row and resolution genuinely differ where a reader would be misled: the `not_built` clamp, the `beta` rule, cohort inheritance.
+3. Using the loader's own `isGrantingValue` for "Includes" means the screen's notion of *granted* is the same function that rejects a config which grants what does not exist. One definition, two consumers.
+
+**Are the synthetic accounts faithful?** I checked them field by field against `EntitlementAccount`, because a synthetic that flatters would make the screen wrong in a way tests written the same way cannot see.
+
+- **Type-complete**, which is the structural protection: every field of the interface is supplied, so a field added later fails to compile here rather than silently defaulting.
+- **Tier previews** (`basic`, `pro`): tier set, `planVersion = matrix.version` (current, so no grandfather restores — correct for "what this plan includes *today*"), both expiries null, no cohort → resolves `active`. That is a healthy subscriber.
+- **Cohort previews** (`trial`, `champion`): no tier, cohort set, `trialStartedAt = now` and `trialEndsAt = null` → a trial that has just begun; champion open-ended. Both live.
+
+**Does it flatter?** It errs consistently toward *the plan at its best* — always a live, non-degraded state. For a screen describing **plans** rather than accounts that is the correct semantic, and the one direction it cannot exaggerate is capability, because that comes from the resolver. The limitation to keep in mind: this page can never show what a plan looks like in grace or paused, and it does not claim to.
+
+---
+
+#### 3. The client/server boundary
+
+**Dev's reasoning is right and I would not accept the alternative.** "Anything importable is re-derivable, and each re-derivation drifts" is the correct generalisation of the bug this whole screen exists to avoid — a UI that says something the resolver would not. Deriving the human-readable sentences server-side, in a `server-only` module, and shipping them in the payload means there is exactly one place that turns config into words.
+
+The source guard is strong: no `@/lib/` import, no plan id, price or capability id in the screen's source (so the UI cannot hard-code a truth), no `console.*`, no `any`, no non-GET fetch, and a non-vacuity assertion that the scan actually found the files (≥6) so an empty glob cannot pass everything.
+
+**One bypass, which is the low fix R-3:** the rule tests `import.startsWith('@/lib/')`. A relative import — `../../../lib/business-os/entitlements/adminPlansView` — is the same hazard and slips the rule. In practice the CI `Build (next build)` job catches the specific server-only case (importing a `server-only` module into a client component is a build error), so the exposure is small; but a guard whose stated rule has a hole invites someone to rely on the wrong thing.
+
+---
+
+#### 4. The enforcement banner
+
+**Correct shape, and correct source.** Undismissible **by construction** rather than by intent — no `onClose`, no state, no storage key, and the render test asserts there is no button at all rather than asserting a handler is absent. It **changes its words** at `enforce` instead of disappearing, which is the behaviour that matters: a banner that vanishes when the thing becomes real is a banner that is only present when it is least needed.
+
+It reads the **live, effective** mode: the payload carries `getEntitlementMode()`, not a default, and the render tests cover all three values with distinct expected strings plus a negative assertion that the "nothing is enforced" sentence is *absent* under `enforce`. Showing the effective mode is right — if UD-2 ever downgrades `enforce` to `shadow`, the screen should say `shadow`, and the env-var line tells the reader where the raw setting lives.
+
+---
+
+#### 5. Dev's two flags
+
+**The account lookup taking a raw id only: endorsed.** Mapping an email would mean a new read against `auth.users` or `profiles` — a new PII surface on an admin screen and a place where "find one account" can become "enumerate accounts". Id-only is the conservative choice and matches the module's standing rule that an account id comes from server context or a validated parameter. The cost is real (an operator has an email, not a UUID); that belongs on the screen as a stated v1 limitation pointing at the existing admin users screen. **R-5.**
+
+**`chat.access` shown as withheld: NOT adequately covered by the banner. R-1, required.** The capability now exists in the catalog and the matrix — `false` on three plans, `true` on Autopilot — but **the surface gate that would make it true is not built** (FR-46). Today the banner's "nothing on this page is enforced" covers it, because nothing is. The problem is *when the banner's words change*: at `enforce` the page will assert that three plans have no chat while chat still works for them, with no caveat at the capability. And this page is precisely the artefact someone consults **when deciding whether to flip that switch**, so the caveat has to exist before the flip, not after.
+
+The fix is small and does not need new machinery: mark capabilities whose enforcement is not yet built at the capability — the same shape as the `writeOpsNotOnThisPage` list Dev already built for a different honesty problem. One entry today: `chat.access` (FR-46). It should disappear from that list by being implemented, which makes the list self-clearing.
+
+---
+
+#### 6. `next build`
+
+**Not required locally.** The hazard it would catch here — a client component importing the `server-only` module — is a build error, and the PR's `Build (next build)` check runs it. **Condition:** that check must be green on the PR, and it is the evidence, not the local absence of one. Closing R-3 removes the guard's part of the same hole.
+
+---
+
+#### Vacuous-test hunt
+
+**The render tests are sound.** They render a **fixture payload** ('Fixture Paid Plan', `paid-plan`, `$42`) rather than the real config, which is what makes them tests of the rendering rather than a second copy of the data — and it is why the source guard forbids real ids and prices in the screen's source. Distinct expected strings per mode, plus negative assertions.
+
+**The "resolver re-run gives the identical split" test is the one the coordinator was right to suspect.** It rebuilds the synthetic account **by hand** and re-runs the resolver. If the synthetic is wrong, the test constructs the same wrong account and agrees with itself — two copies of one mistake. It is not worthless: it would catch the real drift it is named for (someone "optimising" the module to read `TIER_MATRIX.tiers`). But its comment calls it "the strongest form of the no-disagreement property", and it is not.
+
+**R-2, required, small:** pin the **situation** the synthetic produces, not only the agreement. For each plan assert the resolved `state` and `basis` are what the preview claims to be — `basic`/`pro` → `active` with basis `{ kind: 'tier' }`, `trial` → `trial`, `champion` → `champion` with basis `{ kind: 'cohort' }`. That cannot be satisfied by copying a wrong account, and it is the property the whole screen rests on.
+
+---
+
+#### Required and low fixes
+
+| # | Fix | Priority |
+|---|---|---|
+| **R-1** | Mark capabilities whose enforcement is not yet built **at the capability**, not only in the banner. One entry today: `chat.access` (FR-46). The list should empty itself as each is implemented. | **Required** |
+| **R-2** | Pin the resolved `state` and `basis` per preview, so the synthetic account's shape is asserted independently of the module that builds it. | **Required** |
+| R-3 | The source guard's no-`@/lib/` rule is bypassable by a relative import — reject those too. | Low |
+| R-4 | Soften the "strongest form" comment once R-2 lands, so the file does not overstate its own evidence. | Low |
+| R-5 | State the id-only lookup as a deliberate v1 limitation on the screen, pointing at the admin users screen for email → id. | Low |
+
+---
+
+#### For the user
+
+1. **The page is safe and it is honest about the one thing that matters** — it says, in words that change rather than disappear, that none of this is switched on yet. It is also built so it cannot quietly disagree with the system that will do the enforcing: it asks the real resolver what each plan gets rather than describing the settings file.
+2. **One thing needs adding before you use this page to decide to switch enforcement on.** It shows "no chat" for three plans. That is what the settings say, but the part of the product that would actually stop chat has not been built yet. Right now the banner covers it, because nothing is enforced at all — the moment that changes, the page would be stating something untrue. I have asked for that caveat to sit next to the capability itself.
+3. **Looking an account up needs its id, not its email.** That is deliberate — putting email lookup on this screen would mean giving it a way to search people — but it does make the page harder to use, and it should say so and point you at the existing admin users screen.
+4. **Nothing changed about the plans or about enforcement.** The open items are unchanged: the chat gate itself, the database key rotation, and making the CI checks required.
+
 ## 14. QA Testing Report
 
 ### 14.1 Component 1 (plan records + migration) — QA, 2026-09-21
@@ -3553,6 +4325,192 @@ One note for RM: my P-1/P-2 fixes to the rollback script from the last round are
 - [x] **Slice 1 is code-complete.** Four exit criteria met, one knowingly replaced, two pending the apply and the PR.
 - [x] **Still true: no script, migration or route in this slice has been run against any database.**
 
+### 14.13 QA — the SQL paste fix and the four plans (2026-09-24)
+
+> ⚠️ **PARTIALLY RETRACTED by QA, 2026-09-24 — see §14.14.** Finding **A-1** was right that the stated mechanism and the evidence could not both be true, and the probe (§4.37) settled it: the mechanism is **disproven**. Finding **A-2** (the twelve comment semicolons) was therefore framed on a model that does not hold — the rule is kept as hygiene, not as a cause, and the scripts have since been rewritten to contain no comments at all. The fragment counts in A-1/A-2 are "the model we had at the time", not a diagnosis. Everything in Part B (the tiers) stands.
+
+**Test mode:** full. **Strategy:** **A + B + E** — suites run independently, the splitter failure **reconstructed and simulated** rather than replayed, and the tier rules **probed against the real config** with a temporary test that was deleted afterwards.
+**Reviewed against:** docs `a4a69bbd` + §13.9 (T-1..T-5); Slice 1 merged (PR #93) and applied to production.
+**Timing:** Dev applied SA's fixes while I reviewed. **All five (T-1 to T-5) landed before I finished**, the last at 00:19; every number and quotation below is from the tree at **00:21**.
+
+**Verdict: ✅ PASS — ready for the user's code review and for RM to commit, with one open verification question that costs one paste to settle.**
+- **The tier configuration is sound**, and the user's "a feature that does not exist cannot be allocated" rule **re-verified by me against the real two-tier matrix**, not the old empty one.
+- **The SQL guard is well built and its parser is correct** — but I could not reconcile its stated mechanism with the evidence, and under that mechanism **the fixed scripts would still break**. See **A-1**; it is the one thing in this round I would not sign off from a desk.
+- **The chat-surface gap is confirmed in both directions**, and T-1 is now a requirement (FR-46 + AC-38) and a Slice 2 row rather than a test comment.
+
+#### 14.13.1 What QA ran (final state)
+
+| Command | Result |
+|---|---|
+| `npm run test:bos-entitlements` | ✅ **49 suites, 934 tests** (SA saw 930 before the T-fixes) |
+| The SQL guard + the admin routes + the authz guard | ✅ **5 suites, 157 tests**; the guard now covers **six** files and says so |
+| Hooks ESLint over the module and the admin routes | ✅ exit 0 |
+| Typecheck, the verified method | ✅ **2,029**, 0 × TS2688, **0 in any entitlements file**. ⚠️ The control also moved, **3 → 2 errors in `lib/repositories`**, so the −1 is not obviously the `never` diagnostic §13.9 attributes it to. Worth one look before the baseline is refreshed. |
+| Scope | ✅ The named files, plus **both migrations** — comment rewording for T-3, see A-5 |
+
+#### 14.13.2 Part A — the four SQL scripts and the guard
+
+**The guard's parser is correct.** I checked the three things that would make it lie: a `--` inside a string is not treated as a comment (`splitComment` consumes quotes before testing for `--`); `''` is handled twice over — explicitly in `stringLiterals`, and in `splitComment` by toggling twice, which lands in the right state; and the negative control uses the two **real** offending lines plus a legitimate `RAISE EXCEPTION '…';` that must not be flagged. The meta-test now asserts six non-trivial files and, separately, that both migrations are still in the list.
+
+**The rules do fail on the pre-fix content — reconstructed, not replayed.** I re-derived the offenders from `git show HEAD:` myself: preflight **7** comment-apostrophe lines and **3** string-semicolons; checker **2** and **8**. All nine apostrophe offenders were **full-line** comments, none trailing.
+
+**Meaning is preserved.** I filtered the diff to non-comment lines and inspected every one: `;` → `,` inside display strings, three additive sub-selects in `counts`, and the new row 55. **No predicate, threshold, count or status changed.** Row 30's extra sentence is text only. **Row 55 discriminates**: `plan_rows` and `tenants` are counted independently, it fires on the real hazard (an admin `ensure_plan_row` against a wrong id), and it is a `WARN` not a `FAIL`. **T-2 landed** — its `what_to_do` names the benign cause first.
+
+| # | Sev | Finding |
+|---|---|---|
+| **A-1** | **High (verification gap, not a code defect)** | **The stated mechanism and the observed evidence cannot both be true, so the fix is not provably the fix.** I implemented the splitter the guard's header describes (tracks `'`, knows nothing about `--`) and ran it over the files. It says: the **fixed** `preflight` still splits into **4** fragments, **3** of them beginning with English prose — `read \`what_to_do\``, **`a missing role aborts it.`**, `the insert adds the write on top. SET …`; the fixed checker into **3** (2 prose-leading); the rollback into **26**. The middle one is striking: a fragment whose first token is the bare word **`a`** is exactly what produces `relation "a" does not exist`, the error the user saw. **But the same model says the two migrations would split into 63 and 6 fragments — and they applied to production cleanly.** So either (i) the model is right and the scripts are still broken, or (ii) the model is wrong and we do not actually know which ingredient mattered. I could not find a third model that fits both: there is **no `--` inside any string literal** in the pre-fix files (I checked — 0 in both), so a regex comment-stripper cannot explain the inversion either. **What settles it costs nothing: paste the fixed pre-flight into the editor and report what happens.** The user has to run it again before the week-later checker anyway. Until then, "the scripts are paste-safe" is a hypothesis with a test in front of it, not a verified property. |
+| **A-2** | **Medium** | **Twelve semicolons sit inside `--` comments across the three pasted scripts** (preflight 6, checker 3, rollback 3), eight of them with prose after the semicolon. Under the guard's own model each is an independent trigger of the same failure, and **the fix made them live rather than dormant**: before, the inverted quote state masked them (the pre-fix preflight cut into 2 fragments); now the quote state is honest everywhere, so every one of them is a cut point (4 fragments). If A-1 resolves toward "the model is right", this is the remaining half of the fix: a third rule — no `;` inside a `--` comment — and twelve rephrasings. |
+| **A-3** | Low | `entitlementSqlScripts.guard.test.ts:53-93` parses **per line**, so a string literal spanning two lines would be misread in both directions. None exists today, and rule 4's file-level quote parity is a partial backstop — but a *pair* of odd lines passes it. One sentence in the header, or a per-line parity assertion. |
+| **A-4** | Low | **No rule covers `$$` dollar-quoting**, which the rollback's `DO $$ … $$` block (26 fragments under the naive model) and both migrations depend on entirely. The only evidence the editor handles it is that the migrations applied — the same single observation A-1 turns on. |
+| **A-5** | Note | **T-3 landed, and it was not a one-liner:** covering the migrations required rewording **25** comment lines and two `COMMENT ON … IS '…'` strings in files that are **already applied to production**. The rewording is safe (nobody re-applies them) but the two table comments in the database now differ from the file. Worth one line in the workplan so a future reader diffing `pg_description` against the file is not surprised. |
+
+#### 14.13.3 Part B — the four plans
+
+**The user's rule, re-verified against the REAL matrix.** §13.9 and the existing suite prove it on the *fixture*; the question was whether it still holds now that production has tiers. I wrote a temporary probe (deleted immediately; the tree is unchanged) that mutates the **shipped** config: granting `marketing.posts`, `website.custom_domain: 'included'`, `addon.mobile: 'purchasable'`, `sms.messages: {perMonth:100}` or `payments.reminders: true` to the **real `basic` or `pro` row** is refused every time, withholding the same capability is accepted, and the shipped config validates as-is. **Nine of my ten probes passed;** the tenth failed only because I asserted the wrong error *message* — a presentation entry for an unconfigured tier **is** refused, by the record's enum key (`Invalid enum value. Expected 'basic' | 'pro', received 'enterprise' at presentation.enterprise`), which means the `superRefine` branch for that direction is belt-and-braces rather than the live path. The other direction — a tier with no presentation entry — is refused by the `superRefine` with its own message.
+
+| Check | Verdict |
+|---|---|
+| "Exactly N keys differ" | ✅ Non-vacuous: it `toEqual`s a **named, sorted list**, so a tenth difference *and* a missing one both fail. Note it is now **ten**, not nine — `chat.access` joined the eight `chat.*` plus `ai.actions`. |
+| The nine-chat sweep | ✅ Derives the list from the `pro` row, asserts `toHaveLength(9)` **and** `toContain('chat.access')`, then checks both directions per capability — so a tenth chat capability cannot be silently skipped. |
+| Drift snapshot honest? | ✅ The non-vacuity check was upgraded with the matrix: it now asserts the snapshot's tier keys equal the live matrix's **and** that every row carries every capability. The new **"a lowered value in the SHIPPED matrix is caught"** test flips `crm.core` to `false` on a live tier and asserts the finding names that tier and mentions `removals` — it fails when it should. |
+| `mode.ts` UD-2 | ✅ The change is asserted as the new expectation **and** the old mechanism is kept alive under `jest.isolateModules` with an empty `TIER_ORDER`, so the gate cannot rot. The added `expect(logged.error).not.toHaveBeenCalled()` is a real assertion. |
+| `decide.test.ts` cohort retarget | ✅ **Not papering over anything.** The fixture's `basic` is deliberately thin, so a cohort pointed at it would be refused at step (a) and the state overlay — the subject of that suite — would never run. It is retargeted to the fixture's `growth` with the reason written down, and the **production** pointing is asserted in `productionConfig.test.ts`. The only cost is that this suite no longer exercises the production cohort shape, which is covered elsewhere. |
+| `adminOps.assign_tier`, `report.asTier`, `lowestTierFor` | ✅ Follow mechanically; `lowestTier: 'pro'` is asserted in the chat-gap test, which is the one that matters commercially. |
+
+| # | Sev | Finding |
+|---|---|---|
+| **B-1** | **For the user — a change in risk posture, not a defect** | **UD-2 no longer downgrades `enforce`.** That is correct (its precondition was "no tier configured", and there are now two), and the gate is still tested. But it was the *code-level* reason an accidental `BOS_ENTITLEMENTS_MODE=enforce` was harmless, and that reason is gone. What stands between production and live enforcement today is the env var being unset — G-1 (key rotation) and G-2 (required checks) are process gates, not code. Worth stating plainly in the PR rather than discovering later. |
+| **B-2** | Low | **The write direction of the chat-surface gap is asserted nowhere.** `productionConfig.test.ts:283-340` pins the read (`contacts.find` → `crm.core` → allowed, both readings, with the upsell). SA's widening — that an Essentials owner can **change** contacts, tasks, pages and insights through chat — lives only in review prose and the §5 row. I verified it independently (`ENTITY_DOMAIN` is the default for *every* op, and `capabilityForOp('contacts','create')` → `crm.core`, which `basic` has). One more case in the same block would pin the half that is actually worse. |
+
+**The chat-surface gap, verified in both directions, and T-1.** Reads: confirmed by the existing test and by me. Writes: confirmed by me from the mapping, as SA describes. **T-1 landed in full during this review** — `chat.access` is in the catalog (38 capabilities) and in both tier rows; **FR-46** with its five parts and **AC-38** are in the requirement with a change-history entry; and §5 has a new **"Chat SURFACE"** row placed *before* the per-capability row, specifying the once-per-turn entry-point check, the refusal shape, the `presentation`-sourced wording, the shadow recording and the `asTier` count. That is more precise than the six points SA asked for. **T-2, T-4 and T-5 are also applied** (benign cause named; `cohorts.ts` type alias with its reasoning; the brand-name note).
+
+#### 14.13.4 Needs the user
+
+1. **A-1 — one paste settles it.** Before the week-later checker run, paste `scripts/preflight-bos-entitlements-migration.sql` into the SQL editor and report what comes back. If it runs, the model behind the guard is wrong but harmless and we say so; if it fails again — most likely at `a missing role aborts it.` — then A-2 is the rest of the fix. **Nothing else in this branch depends on the answer.**
+2. **B-1 — the `enforce` safety net is now off.** No customer is affected (the flag is unset), but the belt-and-braces refusal is gone while **G-1, the service-role key rotation, is still open**. That ordering is worth a decision rather than a default.
+3. Everything else here is configuration that changes nothing until enforcement is switched on.
+
+#### 14.13.5 Final Status
+
+- [x] **PASS — ready for the user's code review and for RM to commit.** 49 suites / 934 tests, guard + routes + authz 157, lint clean, typecheck 2,029 with 0 in this module.
+- [x] **All five SA items (T-1 to T-5) verified applied**, T-1 in both halves.
+- [x] **Six findings: A-1 High (a verification gap settled by one paste), A-2 Medium, A-3/A-4/A-5 Low, B-1 for the user, B-2 Low.** None blocks the commit.
+- [x] **Still true: nothing in this branch has been run against any database**, and the four scripts remain unproven against the editor that broke them.
+
+### 14.14 QA — the boring rewrite, the privilege fix and the retractions (2026-09-24)
+
+**Test mode:** full. **Strategy:** **A + B + E** — suites run independently, the rewritten checker compared **check by check** against the last committed version, the ACL predicates reasoned through against real ACL strings, and the runbook read as the operator.
+**Reviewed against:** docs `6b7f2931`, `72180a3d`, `455c0f47` (§4.36–§4.38). SA's §13.10 was landing in parallel; nothing below depends on it.
+
+**Verdict: ✅ PASS — ready for the user's code review and for RM to commit.**
+- **Meaning is preserved across all twenty checks**, two are strengthened, two added, and **no check passes vacuously** — including the new prose-to-key indirection, which I verified end to end.
+- **A4, A4b and A10 can all fail**, and the one false-positive route I went looking for is closed by the extraction.
+- **The privilege fix is correct, idempotent and complete**, and a fresh apply of the corrected `20261005` now lands in exactly the state the hand-fix achieved — a new environment never needs the follow-up.
+- **Three findings, all Low.** One is a wrong row count in the runbook table the operator uses to tell whether a grid came back whole.
+
+#### 14.14.1 What QA ran
+
+| Command | Result |
+|---|---|
+| `npm run test:bos-entitlements` | ✅ **50 suites, 960 tests** |
+| The SQL guard + the new privileges suite | ✅ **2 suites, 81 tests** |
+| Everything above + admin routes + `lib/admin` + `scripts/__tests__` | ✅ **59 suites, 1,260 tests, 0 failures** |
+| Hooks ESLint over the module and the admin routes | ✅ exit 0 |
+| Typecheck, the verified method | ✅ **2,029**, 0 × TS2688, **0 in entitlements, 0 under `supabase/migrations`, 0 in the new guard test**. The three `scripts/__tests__` diagnostics are all in `check-bos-llm-literals.test.ts` — pre-existing and unrelated |
+
+#### 14.14.2 Meaning preservation — check by check
+
+I mapped every row of the last committed checker onto the rewrite. **Twenty checks, all present, none weakened:**
+
+| Old row | New row | Predicate |
+|---|---|---|
+| A1 / A2 / A3 | same | identical (`table_oid IS NULL`, `NOT rls_on`, `policy_count.total = 0`) |
+| **A4 client roles have no grant** | **A4 client roles have no acl entry at all** | **Strengthened** — the production entry was `anon=m`, which a check looking for particular privileges would have passed |
+| — | **A4b service_role has no delete or truncate** | **New** |
+| A10 service_role can work | A10 service role can read and write | same question, letters instead of `aclexplode` |
+| A8 / A6 / A7 / A5 invoker / A5 execute / A10 functions | same | **including both non-vacuity legs**: A6 keeps `count(*) = 4 AND …`, A7 keeps `count(*) = 2 AND …` |
+| **26 function owners (INFO)** | **preserved** | the row QA asked for in the very first round is still there |
+| A9 / A11 | same | `trigger_bindings.bound = 2`, `constraint_matches.matched = 3` |
+| B1 / B2 / B3 / B4 / Q-5 / B5 / C counts / 61 / read-only | same | predicates character-for-character equivalent (`counts.missing = 0`, `counts.tenant_count = 0 OR counts.backfilled > 0`, `counts.plan_rows <= counts.tenant_count`, `trigger_origin_rows > 0 → PASS else INFO`) |
+
+**The one I checked hardest — A5 no client execute — is not weaker, it is broader.** The old version's `proacl IS NULL` leg (for a function, a null ACL *is* `EXECUTE TO PUBLIC`) survives as `acl_is_null`, and the rewrite adds explicit PUBLIC-entry detection that the old `aclexplode` version got from `grantee = 'PUBLIC'`.
+
+**Does the prose-to-key move create vacuity?** No, and I checked it rather than assuming: **all 45 `fix` keys emitted by the three pasted scripts resolve to a documented entry in the runbook.** Zero dangling pointers. The three `BLOCK n VERDICT` rows each aggregate their own block with the same FAIL > WARN > PASS precedence the single `OVERALL` row had.
+
+#### 14.14.3 Can A4, A4b and A10 fail?
+
+| Check | Verdict |
+|---|---|
+| **A4** | ✅ Proven in the field. Its four patterns cover `anon=`, `authenticated=` and PUBLIC **both when first (`'=%'`) and when later (`'% =%'`)** — correct precisely because `acl_text` is `array_to_string(relacl, ' ')`, so entries are space-separated. A NULL `relacl` yields `''` → no client entry → PASS, which is right for a table (unlike a function). |
+| **A4b** | ✅ Fails on `arwdDxtm`, passes on `arwxtm`. **The false-positive route I went looking for is closed:** `substring(acl_text from 'service_role=([a-zA-Z*]*)')` stops at the `/`, so a grantor name containing a `d` — `/supabase_admin` is the realistic one — can never be read as a DELETE privilege. |
+| **A10** | ✅ `WITH GRANT OPTION` is handled: `*` is inside the character class, so `a*r*w*` is captured whole and `position()` still finds each letter. It fails when the grant is genuinely missing (no entry → `''` → 0 of 3). |
+
+**One thing to carry forward, not a defect:** A4b checks `d` and `D` only, so `x`, `t` and `m` on `service_role` are deliberately unchecked — consistent with the narrow revoke §4.38 chose and offered to change. If the strict version is ever taken, A4b has to widen with it.
+
+#### 14.14.4 The privilege fix
+
+| Question | Answer |
+|---|---|
+| Idempotent / safe to re-run? | ✅ Every statement is `REVOKE` or `GRANT`; a revoke from a role holding nothing is a no-op, a grant already held is a no-op. |
+| Anything beyond REVOKE/GRANT? | ✅ No. `BEGIN`, `SET LOCAL lock_timeout`, `COMMIT` and 38 privilege statements. No DDL, no DML. |
+| Does the narrow `service_role` revoke leave anything the module needs? | ✅ Nothing. No repository method deletes — `endOverride` updates, the reset RPC ends and upserts — and the fact triggers run as DEFINER (owner), so they need no `service_role` privilege at all. |
+| **Does a FRESH apply now land where the hand-fix landed?** | ✅ **Yes, and this is the important one.** `20261005` now does `REVOKE ALL … FROM PUBLIC, anon, authenticated` (so a future privilege like `m` is covered by construction), `REVOKE DELETE, TRUNCATE … FROM service_role`, then the positive `GRANT SELECT, INSERT, UPDATE`. Starting from Supabase's `arwdDxtm` default that yields `service_role=arwxtm` — character for character the state the user re-verified live. **A new environment never needs `20261009`.** |
+
+#### 14.14.5 The privileges test
+
+**The verbatim pinning is real and load-bearing.** Nine exact SQL fragments are asserted present in the checker, including the whole `substring(plan_table_acl.acl_text from 'service_role=([a-zA-Z*]*)')` expression and both `position(...)` calls — so the SQL cannot change without this suite going red. The non-vacuity legs are there (A10 fails when the grant is missing; A4 passes once the entries are gone), and `touches privileges only` carries `statements.length > 20` so it cannot pass on an empty parse.
+
+**Two limits worth recording, since the brief asked what the test cannot know:**
+
+| # | Sev | Finding |
+|---|---|---|
+| **QA-1** | Low | **The TS predicates are a re-implementation, and only the SQL side is pinned.** `hasClientEntry` / `serviceRolePrivs` (`business-os-entitlements-privileges.test.ts:168-171`) happen to mirror the four `LIKE`s and the `substring` exactly — I checked each — but the pin asserts the *SQL contains those strings*, not that the TS matches them. A future edit to the regexes alone would drift silently. One way to close it: derive the TS predicates from the pinned strings, or assert both directions on a shared table of ACL fixtures. |
+| **QA-2** | Low (note) | **`ACL_AFTER` is a transcription, asserted as fact.** `expect(privs).toBe('arwxtm')` (`:212`) encodes what the user reported after applying the fix. It matches his live re-verification today, so it is accurate — but the suite would pass just the same if the real ACL differed, because nothing here reads a database. The comment explains *why* the entries disappear (PostgreSQL drops an ACL entry once it carries no privileges), which is correct and is the justification for A4's "no entry at all" framing. |
+
+
+**Re-read after Dev edited the file mid-report (15:11).** `business-os-entitlements-privileges.test.ts` grew from 214 to 228 lines while I was writing this, so I re-ran and re-read it. The change is **an improvement**: A10 gained a non-vacuity leg (`serviceRolePrivs('postgres=arwdDxtm/postgres')` must NOT satisfy r+a+w), and the suite is now **82 tests, all passing** with the guard. **QA-1 survives the edit and is now slightly sharper:** the new doc comment above the predicates says *"If the SQL changes and this does not, the first `expect` in each block fails"* - which is true in that one direction only. Edit the two TS regexes alone and every assertion still passes, because nothing compares the TS to the SQL. The comment reads as a two-way guarantee the code does not give.
+
+#### 14.14.6 The guard and the retractions
+
+**The framing now claims only what it can support.** The header says the rules are *"hygiene … not a fix and not a proof that a file will paste"*, and names both failed pastes. **Two findings of mine from §14.13 are closed properly rather than papered over:** the scanner now reads a **multi-line string literal as one string** (my A-3) and a **`$$` body as one unit including the comments inside it** (my A-4), each with its own named test, and there is a test for an unterminated dollar quote. Seven files are covered, four of them hand-pasted, with a meta-test that pins the count and another that keeps the migrations in the list.
+
+**The retraction sweep is complete.** I grepped the three pasted scripts, both migrations, the privilege fix and the runbook for any surviving statement of the disproven mechanism — **none**. §4.33, §4.35 and §13.9 all carry retraction notes. **The one gap was my own §14.13**, whose A-2 was framed on that model; I have added a retraction line to it pointing here.
+
+#### 14.14.7 The runbook, read as the operator
+
+**It stands alone, and step 9 is the right shape** — it states the two defects, says plainly that no data was exposed and that this is "a fix at your convenience, not an incident", gives the paste, says it is safe to re-run, and tells him exactly what A4 and A4b should say afterwards, including *why A10 reads the same before and after* so the fix cannot look like a regression. **Step 8 is exactly the week-later check he will run unaided:** block 3 again, row 61 above `0`, and a `business_os_plan_fact_` log search that comes back empty. The two-names note (triggers are `business_os_plan_on_…`, functions are `business_os_plan_fact_…`) is the kind of thing that saves a confused half hour.
+
+| # | Sev | Finding |
+|---|---|---|
+| **QA-3** | Low | **The block table says block 2 returns `BLOCK 2 VERDICT` + 10 rows; it returns 9.** `BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md:104`. I counted the file (block 1: 6, block 2: 9, block 3: 9) and the user's own field report agrees — he saw **6 / 8+INFO / 6**, and 8+INFO is 9. Blocks 1 and 3 are right. It matters because this is the table he uses to tell whether a grid came back whole; a grid that is one row short of the documented count is exactly what should make someone stop. The block-2 reference table below it correctly lists all nine including `owners`. |
+
+#### 14.14.8 Needs the user
+
+1. **Nothing blocking.** QA-1 and QA-2 are test-quality notes; QA-3 is a one-character fix in the runbook, worth making before the ~1 October run because it is the number he will check the grid against.
+2. **The field evidence closed my §14.13 A-1**, and I have retracted the part of that section that rested on the disproven model. The honest position is now recorded in three places consistently: the rules are hygiene, the cause is unknown, and the scripts avoid the problem by having nothing to misparse.
+3. **Unchanged and still open:** G-1 (the service-role key rotation) before enforcement is ever switched on, and G-2 (the required CI checks). Neither moved this round.
+
+#### 14.14.9 Final Status
+
+- [x] **PASS — ready for the user's code review and for RM to commit.** 50 suites / 960 tests in the CI scope, 59 / 1,260 in the wider one, guard + privileges 81, lint clean, typecheck 2,029 with zero in any file this branch touches.
+- [x] **Meaning preserved across all twenty checks**, two strengthened, two added, and all 45 runbook keys resolve.
+- [x] **A4 / A4b / A10 can each fail**, and the grantor-name false positive is closed by the extraction.
+- [x] **Three Low findings: QA-1, QA-2, QA-3.**
+- [x] **Still true: the entitlement module enforces nothing**, and the only production changes so far are the schema, the backfill and the privilege fix.
+
+---
+
+### 14.15 QA — the Business OS Tiers admin page, both rounds (2026-09-24)
+
+The page lives on its own branch and has its own workplan, so both QA rounds are written there in full: **[business-os-tiers-admin-page.md](/docs/workplans/business-os-tiers-admin-page.md) § QA Testing Report**. This is the pointer, per the single-source rule.
+
+| Round | Verdict | What it found |
+|---|---|---|
+| **1** (§ QA Testing Report) | **NOT ready** — three High | The page **did not render at all**: `types.ts` and the components consumed `gateBuilt` / `withheldWithoutGate` while the server produced neither, and a **green 764-test run** hid it. The account lookup threw a second way — the resolver's `basis` **object** rendered as a React child — and counted "capabilities in force" with `value !== false`, saying **26 of 38** where the resolver says **19**, next to a card on the same screen saying 19. Plus: an agent-platform-only id returned 200 with a confident panel instead of the documented 404 |
+| **2** (§ QA Testing Report — round 2) | **Ready for the user's review; two small fixes before commit** | All three High and the Medium **closed and attacked** — eight mutations, every one caught, three matching Dev's claimed failure counts exactly (6 / 5 / 2). Dev's compile-time claim independently verified: forcing `basis` back to `string` yields `TS2352`. Four new findings, the sharpest being **NEW-1** — the new "no gate yet" marker fires on the **ten `not_built` capabilities**, telling a reader the product currently allows features that **do not exist** — and **NEW-3**, the error vocabulary, which is the same "nothing compares the two sides" gap one layer down, and which a code added *in this very fix* (`tenant_check_failed`) already fell through |
+
+**The lesson worth carrying out of this module**, and the reason round 1's finding matters more than any individual bug: *a fixture is a statement of what we believe the server sends; something must compare it to what the server does send.* Two suites can both be green, thorough and well-written and still never meet. Round 2 confirms the fix generalises — the plans contract is closed at runtime, the accounts contract at compile time **and** runtime, and both fail in both directions when probed.
+
 ## 15. Commit Info
 
 _RM to populate._
@@ -3595,3 +4553,9 @@ _RM to populate._
 | 2026-09-22 | SA code review of component 5: APPROVED for QA — Slice 1 code-complete (SA) | Added §13.8. Ran `test:bos-entitlements` (48 suites / 912 tests), `test:authz-guard` (74, no new exemption) and `lint:hooks` — all green; confirmed all five §13.7 fixes landed. Authorization verified independently rather than from test names: the gate is the first statement in all four handlers with the `try` opening after it (so no error path precedes it), no route imports AdminAccessService, and walking `app/api/admin/**` myself found 47 route files against the census 44 — the three new ones are in the guard's scanned set and its assertion is a floor, not an equality, so they are counted rather than excluded. Noted that the audit entry records the target as `userId` and the admin as `actorId`, and that `actorId` is a real persisted column — better than the workplan's original shape. Every write-op condition verified (R2-2, RC-4/A-1, R2-3 — the projection replicates paired-expiry clearing and uses `tierInForce`, so an expired tier is not a basis — Q-15, Q-6/M-3/M-4, C3-2 grant refused but revoke allowed, RC-10, A-3's four guards, WC-7 flush-before-response asserted as an order); tenant isolation follows the M1/G3 pattern end to end. The vacuity class Dev self-reported is structurally closed: 16 refusal assertions name their error code, none asserts a bare `ok: false`. All four of Dev's calls endorsed (501 for a real launch run, `isTest` decided first in the guard, adminOps EXEMPT, additive audit events). The architecture doc is workable for someone adding a tier in six months. Slice 1 exit: code-complete, every criterion not requiring a database met; three open purely by dependency (the production apply, a week of shadow, the PR's first CI run) plus the deliberately replaced probe criterion. Low: C5-1 add the not_built rule to the doc's add-a-tier step, C5-2 drop the silent `AUDIT_EVENTS` fallback. The CLAUDE.md row is now present on disk, so §4.30.5's awaiting-the-user note is stale. |
 | 2026-09-22 | QA of component 5 (admin ops + docs) and Slice 1 exit: PASS (QA) | Added §14.12. Ran it all: **48 suites / 912 tests** in the CI scope and **56 / 1,077** with the admin routes, audit and admin guards; authz guard 74 with no new exemption; lint clean; 0 `console.*`/`any`; typecheck at the unchanged **2,030** baseline with **0** in entitlements and **0** under `app/api/admin/business-os`. **Authorization verified by my own walk**: four handlers, four literal `requireAdmin(` calls with the `try` opening after and nothing above but a logger argument; `find` counts **47** admin route files of which **40** are gated (the 7 that are not are the documented parked ones) and the guard's census is a floor, so the new routes are counted; the 401/403/throwing-check tests assert **no repository call and no audit entry**, not just the status; the audit actor is genuinely persisted (`AuditTrailService:123,128` → `actor_id`, selected in `AuditTrailRepository:30,36`); and a non-admin can learn nothing, because the gate precedes every read so 404/409 distinctions are admin-only. **Dev's self-reported vacuous-refusal class is genuinely fixed** — 16 refusals, 16 specific error codes, several also asserting the write never happened; the unknown-tier case now lives in Zod enums built from config. `wouldLeaveNoBasis` correctly replicates the paired-expiry clearing and treats an expired tier as no basis; C3-2 refuses a granting override on a `not_built` capability while still allowing revoke; WC-7's log→flush→respond **order** is asserted. Three Low findings: **QA-1** the audit field is named `deletedOverrides` and two comments say the rows are "GONE", but since M-2 the reset **ends** them and never deletes — three artefacts contradict the code in the record read during an incident; **QA-2** SA's C5-2 (`AUDIT_EVENTS[...] ?? action` fallback) is still open and no test asserts every emitted action is registered; **QA-3** SA's C5-1 is still open — the add-a-tier procedure still never mentions the `not_built` rule that will stop the next person. The CLAUDE.md row was checked claim by claim and is accurate; §4.30.5's "awaiting the user" line is stale. **Slice 1 exit: code-complete** — four criteria met, one (the probe suite) knowingly replaced with S-8(i) left argued rather than demonstrated, two pending the apply and the PR's first CI run. §14.12.5 carries the definitive unproven list for the PR description, with **G-1 (key rotation)** as the only security dependency on it. |
 | 2026-09-22 | QA fixes QA-1 to QA-3 + the audit nit — Slice 1 ready for the user's review (Dev) | §4.31. **QA-3 (SA C5-1):** the `not_built` rule is now **step 3 of the add-a-tier procedure**, with a boxed subsection giving what counts as granting on every shape (including `'purchasable'` on an add-on and `purchasable: true` on a zero quantity), the **verbatim error message**, and the two fixes in the order they are usually right — it rejected eight capabilities in Eyal's draft the first time it ran, so it belongs where someone following the steps will hit it rather than two sections away. **QA-1:** `deletedOverrides` → **`endedOverrides`**, with both comments and the audit-event description corrected — since M-2 the reset **ends** overrides and contains no `DELETE` (the Jest guard asserts it), so three artefacts were describing the opposite of the code in the record someone reads during an incident. **QA-2 (SA C5-2):** two tests make the `AUDIT_EVENTS[…] ?? action` fallback unreachable — a source sweep over every `'BOS_ENTITLEMENT_*'` literal (matching the plain-string form too, since three reach `writePatch` as an argument and a sweep that missed those would have been vacuous, with `Set(actions).size === 7` as the non-vacuity leg) plus an executed leg running all seven op variants. The fallback stays, documented: a row named oddly beats no row. **Nit:** the 403 and throwing-admin cases now assert the audit is empty too. **§4.30.5 retitled ✅ APPLIED** — the user approved the CLAUDE.md row and TL added it. **55 suites / 1,054 tests green**; authz guard 74, no new exemption; typecheck 2,030 — unchanged baseline, 0 in entitlements and 0 under `app/api/admin/business-os`; hooks lint clean; 0 `console.*`. **Slice 1 is code-complete; next is the user's review and the PR to main.** Code uncommitted. |
+| 2026-09-24 | SA code review of the SQL paste fix and the four plans: APPROVED for QA (SA) | Added §13.9. Ran `test:bos-entitlements` (49 suites / 930 tests), the new SQL guard (18) and `lint:hooks` — all green. Confirmed the root cause independently: a comment apostrophe inverts a naive splitter, real semicolons are then ignored, the next genuine quote re-inverts it, and a semicolon INSIDE a literal cuts the statement mid-sentence — which is exactly why the errors were `relation "a"` and `relation "it"`, and why the migrations survived. Both conditions are necessary; the guard forbidding both is the right response to a splitter we cannot inspect. Rephrasings verified meaning-preserving; row 55, row 30 and the raw sizes endorsed. **Chat-surface gap CONFIRMED and wider than reported:** under `domain_group` the entity domain is the default for every operation, so an Essentials owner can not only ask chat about contacts/tasks/website/insights but CHANGE them through it — no capability means "may use chat at all", so no combination of values can withhold it. Slice 2 must add one `chat.access` capability, gate the surface once per turn before per-capability checks, refuse as `not_entitled` with `lowestTier: pro` and have chat explain it, keep the per-capability map, and record the surface decision in shadow. Dev's decision to keep the dual read-rule recording endorsed (moot as pricing, live as enforcement). Required: T-1 write the gap into the requirement as an FR and into the Slice 2 addendum — it is the entire difference between the two paid plans and currently lives only in a test comment. Low: T-2 name the benign cause in row 55, T-3 extend the SQL guard to the migrations, T-4 cohorts.ts:33 type alias, T-5 mark the plan names as deliberately untranslated. Keep the unreachable `ungated` branch; the isolateModules mocks are acceptable; the typecheck sitting one below baseline is expected and the baseline should be refreshed. |
+| 2026-09-24 | QA of the SQL paste fix and the four plans: PASS (QA) | Added §14.13. Ran the final state: **49 suites / 934 tests**, the SQL guard + admin routes + authz guard (157), lint clean, typecheck **2,029** with 0 TS2688 and 0 in any entitlements file. **All five SA items (T-1 to T-5) verified applied**, T-1 in both halves — `chat.access` in the catalog and both tier rows, FR-46 + AC-38 in the requirement, and a new §5 Chat SURFACE row ahead of the per-capability one. **Part A:** the guard's parser is correct (a `--` inside a string is not a comment, `''` handled twice over, the negative control uses the real lines); the pre-fix offenders were reconstructed from `git show` rather than replayed (preflight 7+3, checker 2+8, all nine apostrophes on full-line comments); and the rephrasings are meaning-preserving — a filtered non-comment diff shows only `;`→`,` in display strings, three additive `counts` sub-selects and row 55, with **no predicate, threshold or status changed**. Row 55 discriminates and T-2's benign-cause text landed. **A-1 (High, verification gap):** implementing the splitter the guard's header describes shows the **fixed** preflight still splitting into 4 fragments, 3 prose-leading — one beginning with the bare word **`a`**, which is the user's exact error — while the same model says the two migrations would split into 63 and 6 fragments, and they applied cleanly. Both cannot be true, and there is no `--` inside any string literal pre-fix, so a regex comment-stripper does not explain it either. **One paste settles it**, and it is needed before the week-later checker run anyway. **A-2 (Med):** twelve semicolons remain inside `--` comments, and the fix made them live rather than dormant. A-3/A-4 (Low): the guard parses per line and has no `$$` rule. A-5: T-3 required rewording 25 comment lines and two `COMMENT ON` strings in two already-applied migrations. **Part B:** the not_built rule **re-verified against the REAL two-tier matrix** by a temporary probe (deleted) — six grant shapes refused on `basic` and `pro`, withholding accepted; presentation validated both ways (one direction via the record's enum key, message quoted); the ten-key diff test names its keys; the snapshot non-vacuity check now pins tier keys and row width, and the new shipped-matrix drift test fails when it should; `mode.ts` keeps the UD-2 mechanism alive under `isolateModules`; `decide.test.ts`'s cohort retarget is documented and does not paper over a behaviour change. **B-1 (for the user):** UD-2 no longer downgrades `enforce`, so the code-level safety net is gone while G-1 remains open. **B-2 (Low):** the write direction of the chat-surface gap — verified by me — is asserted nowhere in tests. |
+| 2026-09-24 | SA code review of the privilege fix and the rewritten scripts: APPROVED for QA, plus two SA retractions (SA) | Added §13.10 and a retraction banner on §13.9. **Retracted my own §13.9 confirmation of the paste root cause** — the apostrophe/semicolon mechanism is disproven by the probe, and I had treated evidence that was merely CONSISTENT with the theory as confirming it; also withdrew my typecheck `-1` attribution, which §4.38 disproves with the control. Ran `test:bos-entitlements` (50 suites / 960 tests) and the migration + script guards (5 suites / 217 tests) — all green. Privilege fix: diagnosis confirmed (an enumerated REVOKE goes stale when the server gains a privilege — PG17 MAINTAIN survived; a narrower GRANT does not remove what the defaults already gave, so service_role kept d/D and the migration comment was false in production); severity correctly framed as a nuisance privilege, not a read; the narrow service_role revoke endorsed over REVOKE ALL + re-grant because the failure mode of a wrong re-grant on a hand-applied migration is a module-wide outage, and the checker asserts the property rather than the string; the 20261005 fresh-environment fix is the right forward-fix-plus-source-fix pattern. Checker rewrite verified by inventory comparison rather than prose: **no predicate weakened** — A4 strengthened to "no ACL entry at all", A10 to explicit r/a/w over service_role's OWN extracted letters, A4b and B5 added, all others renamed only. The extraction via `substring(... from service_role=([a-zA-Z*]*))` is correct and is what stops A4b matching the owner's `d`. The TS privileges test is an honest pinned model — it proves the predicates on the two REAL ACL strings and says plainly it does not execute SQL; the gap it cannot close was closed by the user's production run agreeing with it in both directions. Guard retraction accurate, no stale explanation survives anywhere. Spread confirmed in all three migrations (SELECT is deliberate there, so REVOKE ALL is the WRONG fix) and correctly left out of this branch; the transferable rule is to verify the resulting ACL, not the statement. Tiers unaffected; M-2's "ends rows, never deletes" now has database-level backing it did not have when I approved it. Low: P-1 note in 20261005 that it was edited post-apply, P-2 one pointer line in 20261009. |
+| 2026-09-24 | QA of the boring rewrite, the privilege fix and the retractions: PASS (QA) | Added §14.14; added a partial-retraction note to §14.13 (its A-2 rested on the now-disproven mechanism). Ran: **50 suites / 960 tests** in the CI scope, **59 / 1,260** wider, guard + privileges **81**, lint clean, typecheck **2,029** with zero in entitlements, `supabase/migrations` or the new guard test. **Meaning preservation checked row by row:** all twenty checks survive the rewrite with identical predicates — including both non-vacuity legs (A6's `count(*) = 4`, A7's `count(*) = 2`) and the `function owners` INFO row — A4 and A5-execute are **stronger**, A4b and B5 are new, and **all 45 `fix` keys resolve to a documented runbook entry**, so the prose-to-key move adds no vacuity. **A4/A4b/A10 can each fail**, and the false-positive route I hunted is closed: `substring(... from 'service_role=([a-zA-Z*]*)')` stops at the `/`, so a grantor name containing `d` (`/supabase_admin`) cannot read as DELETE; `WITH GRANT OPTION` (`a*r*w*`) is handled because `*` is inside the class. **The privilege fix** is idempotent, privileges-only, and leaves nothing the module needs (no repository method deletes; the fact triggers run as owner). **A fresh apply of the corrected `20261005` lands on `service_role=arwxtm` — exactly the hand-fixed state — so a new environment never needs `20261009`.** **The guard's framing now claims only hygiene**, my §14.13 A-3 (multi-line strings) and A-4 (`$$` bodies) are both closed with named tests, and a sweep of the scripts, both migrations, the fix and the runbook found **no surviving statement of the disproven theory**. Three Low findings: **QA-1** the privileges test pins the SQL but its TS predicates are a re-implementation that could drift; **QA-2** `ACL_AFTER` is a transcription asserted as fact by a test that reads no database; **QA-3** the runbook's block table says block 2 returns 10 rows — it returns 9, as the user's own `6 / 8+INFO / 6` shows — and that is the number he checks the grid against on ~1 October. |
+| 2026-09-24 | SA code review of the Business OS Tiers admin page: APPROVED for QA with two required fixes (SA) | Added §13.11. Ran the five new/affected suites (101 tests), `test:authz-guard` (74, no new exemption) and `lint:hooks` — all green. Authorization verified independently: the layout awaits `requireAdminPage()` as its first statement so the page is protected before its own first line, the route gates first (only `const gate = await` precedes it), and walking `app/api/admin/**` now finds 50 route files against 47 before, so the new handler is genuinely in the guard's scanned set. The guard asserting the LAYOUT's first statement is the best thing in the change and should be copied. Endorsed: running the resolver against type-complete synthetic accounts rather than reading `TIER_MATRIX.tiers` (a cohort has no row; row and resolution differ exactly where a reader would be misled) — the synthetics err consistently toward the plan at its best, which is the right semantic for a plan screen; deriving every sentence server-side in a `server-only` module; the undismissible-by-construction banner that changes its words at `enforce` and reads the live effective mode; and the id-only account lookup. **R-1 (required):** the banner is NOT enough for `chat.access` — it is withheld in config on three plans while the surface gate (FR-46) is unbuilt, and this page is what someone consults when deciding to flip the switch, so the caveat must sit at the capability. **R-2 (required):** the resolver re-run test rebuilds the synthetic by hand, so a wrong synthetic would be copied into the test and agree with itself — pin the resolved state and basis per preview instead. Low: R-3 the no-`@/lib/` rule is bypassable by a relative import, R-4 the "strongest form" comment overclaims, R-5 state the id-only limitation on the screen. No local `next build` required — the PR's Build check covers the server-only-import hazard and must be green. |
+| 2026-09-24 | QA re-verification of the Business OS Tiers admin page: three High closed, four new findings (QA) | Added §14.15 as a pointer to the page workplan, where both rounds live in full. Round 2 attacked every fix by mutation: eight mutations, all caught, three matching Dev's claimed counts exactly. Verified independently that forcing `AccountPayload.basis` back to `string` produces TS2352, so the recorded-body assignment really is a compile-time check; and that both payload contracts fail in both directions. New: NEW-1 the "no gate yet" marker fires on the ten `not_built` capabilities and reads as "the product allows this"; NEW-2 the tenancy rule is a second copy that diverges under a repository error; NEW-3 the error vocabulary has no contract and `tenant_check_failed` has no copy; NEW-4..7 Lows including two negative controls that cannot fail. 30 suites / 789 tests, authz guard 74, lint clean, typecheck 2,077 with zero in this branch. |
