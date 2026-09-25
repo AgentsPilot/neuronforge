@@ -7,7 +7,9 @@
  *      exactly one sidebar entry, and no entry points at a page that is not
  *      there. The page list is read from the filesystem, so a new admin page
  *      fails this test until it is given a place in the sidebar;
- *   3. the hardcoded status footer is gone and nothing else claims status.
+ *   3. the hardcoded status footer is gone and nothing else claims status;
+ *   4. the parked AgentsPilot section is kept in the data but hidden, so it
+ *      takes no sidebar space while every one of its routes still works by URL.
  *
  * Source scan, like the per-page nav tests: the component is a client
  * component importing next/image and framer-motion, and the navigation lives
@@ -35,6 +37,7 @@ interface ParsedItem {
 }
 interface ParsedSection {
   title: string;
+  hidden: boolean;
   items: ParsedItem[];
 }
 
@@ -49,7 +52,8 @@ const sections: ParsedSection[] = navBlock
     while ((m = itemRe.exec(chunk)) !== null) {
       items.push({ name: m[1], href: m[2], description: m[3] });
     }
-    return { title, items };
+    const hidden = /^[^']*',\s*hidden: true,/.test(chunk);
+    return { title, hidden, items };
   });
 
 const allHrefs = sections.flatMap((s) => s.items.map((i) => i.href));
@@ -159,5 +163,24 @@ describe('the hardcoded status footer is gone', () => {
 
   it('nothing in the sidebar claims a status of OK', () => {
     expect(sidebar).not.toMatch(/\bOK\b/);
+  });
+});
+
+describe('the parked AgentsPilot section is hidden, not removed', () => {
+  it('only the parked section carries hidden: true', () => {
+    expect(sections.filter((s) => s.hidden).map((s) => s.title)).toEqual(['AgentsPilot (parked)']);
+    expect(navBlock.match(/hidden: true/g)).toHaveLength(1);
+  });
+
+  it('keeps all twelve parked items in the data (routes are untouched)', () => {
+    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(12);
+  });
+
+  it('renders only the visible sections, and draws separators between those alone', () => {
+    expect(sidebar).toContain('navigationSections.filter((section) => !section.hidden)');
+    expect(sidebar).toContain('visibleSections.map((section, sectionIndex)');
+    expect(sidebar).toContain('sectionIndex < visibleSections.length - 1');
+    // No render path iterates the unfiltered list.
+    expect(sidebar).not.toContain('navigationSections.map(');
   });
 });
