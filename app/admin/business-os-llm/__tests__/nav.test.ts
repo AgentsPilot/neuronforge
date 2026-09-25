@@ -44,13 +44,24 @@ describe('the screen is reachable from the admin sidebar', () => {
     expect(sidebar).not.toContain('Models & Switches');
   });
 
-  it('sits beside System Config, where an operator looks for configuration', () => {
-    const systemConfigAt = sidebar.indexOf("href: '/admin/system-config'");
+  /**
+   * Admin reorganisation, slice 1 (ADMIN_MODULE_BOS_REORGANISATION_REQUIREMENT
+   * §4.2): this entry now LEADS the Settings section, ahead of System Config
+   * (renamed "Model pricing & billing"). The original pin required it to come
+   * after System Config; what it was protecting was "same group as the other
+   * configuration", which is what is asserted now, plus the new first place.
+   */
+  it('leads the Settings section, in the same group as System Config', () => {
+    const settingsAt = sidebar.indexOf("title: 'Settings'");
     const oursAt = sidebar.indexOf("href: '/admin/business-os-llm'");
-    expect(systemConfigAt).toBeGreaterThan(-1);
-    expect(oursAt).toBeGreaterThan(systemConfigAt);
-    // Same group: no other section title intervenes.
-    expect(sidebar.slice(systemConfigAt, oursAt)).not.toContain('title:');
+    const systemConfigAt = sidebar.indexOf("href: '/admin/system-config'");
+    expect(settingsAt).toBeGreaterThan(-1);
+    expect(oursAt).toBeGreaterThan(settingsAt);
+    expect(systemConfigAt).toBeGreaterThan(oursAt);
+    // First in its section: no other href between the title and ours.
+    expect(sidebar.slice(settingsAt, oursAt)).not.toContain("href: '");
+    // Same group as System Config: no other section title intervenes.
+    expect(sidebar.slice(oursAt, systemConfigAt)).not.toContain('title:');
   });
 
   it('the page it points at exists', () => {

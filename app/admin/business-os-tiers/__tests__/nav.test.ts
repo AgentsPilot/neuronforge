@@ -4,8 +4,8 @@
  * The user asked for this page **because** the agent platform's free tier lives
  * on `/admin/onboarding`, and he did not want the two products confused. The
  * sidebar is where that confusion would start, so the entry says "Business OS"
- * in its name, sits with the other Business OS screen, and the onboarding entry
- * is left exactly as it was.
+ * in its description, sits under Businesses (slice 1 of the admin
+ * reorganisation), and the onboarding entry still points where it did.
  */
 
 import * as fs from 'fs';
@@ -21,19 +21,33 @@ describe('the screen is reachable from the admin sidebar', () => {
     expect(sidebar.match(/\/admin\/business-os-tiers/g)).toHaveLength(1);
   });
 
+  /**
+   * Admin reorganisation, slice 1 (ADMIN_MODULE_BOS_REORGANISATION_REQUIREMENT
+   * §4.2): the entry is renamed "Plans & entitlements" and moves to the
+   * Businesses section. The product name moves from the label to the
+   * description, so the entry as a whole still says "Business OS" and cannot
+   * be mistaken for the AgentsPilot free tier.
+   */
   it('names the product, so it cannot be mistaken for the agent platform tier', () => {
-    const entry = sidebar.slice(sidebar.indexOf("name: 'Business OS Tiers'"), sidebar.indexOf("href: '/admin/business-os-tiers'") + 60);
-    expect(entry).toContain('Business OS');
+    const hrefAt = sidebar.indexOf("href: '/admin/business-os-tiers'");
+    const nameAt = sidebar.lastIndexOf("name: '", hrefAt);
+    // The entry runs from its name to the start of the next one.
+    const entry = sidebar.slice(nameAt, sidebar.indexOf("name: '", hrefAt));
+    expect(entry).toContain("name: 'Plans & entitlements'");
+    expect(entry).toMatch(/description: '[^']*Business OS[^']*'/);
   });
 
-  it('sits beside the other Business OS screen', () => {
-    const llmAt = sidebar.indexOf("href: '/admin/business-os-llm'");
+  it('sits in the Businesses section, apart from the free-tier settings', () => {
+    const businessesAt = sidebar.indexOf("title: 'Businesses'");
     const oursAt = sidebar.indexOf("href: '/admin/business-os-tiers'");
+    const onboardingAt = sidebar.indexOf("href: '/admin/onboarding'");
 
-    expect(llmAt).toBeGreaterThan(-1);
-    expect(oursAt).toBeGreaterThan(llmAt);
+    expect(businessesAt).toBeGreaterThan(-1);
+    expect(oursAt).toBeGreaterThan(businessesAt);
     // Same group: no section title intervenes.
-    expect(sidebar.slice(llmAt, oursAt)).not.toContain('title:');
+    expect(sidebar.slice(businessesAt + 1, oursAt)).not.toContain('title:');
+    // The agent platform's free tier is in a different section.
+    expect(sidebar.slice(oursAt, onboardingAt)).toContain('title:');
   });
 
   it('the page it points at exists', () => {
