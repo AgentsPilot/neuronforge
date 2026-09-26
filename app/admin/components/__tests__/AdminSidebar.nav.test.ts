@@ -86,7 +86,13 @@ describe('section order', () => {
   });
 
   it('puts the pages the requirement names in the first three sections', () => {
-    expect(hrefsOf('Monitor')).toEqual(['/admin', '/admin/analytics', '/admin/audit-trail']);
+    // Archiving sits directly under Audit trail (Admin Archiving, condition C-2).
+    expect(hrefsOf('Monitor')).toEqual([
+      '/admin',
+      '/admin/analytics',
+      '/admin/audit-trail',
+      '/admin/archiving',
+    ]);
     expect(hrefsOf('Businesses')).toEqual([
       '/admin/users',
       '/admin/business-os-tiers',
@@ -118,7 +124,7 @@ describe('every admin page is reachable, exactly once', () => {
   it('lists every page except the deliberately unlisted ones', () => {
     const expected = onDisk.filter((r) => !UNLISTED.includes(r));
     expect([...allHrefs].sort()).toEqual(expected);
-    expect(allHrefs).toHaveLength(22);
+    expect(allHrefs).toHaveLength(23);
   });
 
   it('never lists the same page twice', () => {
