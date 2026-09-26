@@ -1,6 +1,6 @@
 {
  "generated": "2026-09-16",
- "count": 124,
+ "count": 126,
  "levels": {
   "admin_users": "never",
   "advisor_reports": "never",
@@ -19,6 +19,8 @@
   "agentkit_analytics": "never",
   "agents": "optional:agents",
   "api_keys": "never",
+  "archive_runs": "never",
+  "archived_records": "optional:activityHistory",
   "audit_logs": "never",
   "audit_trail": "optional:activityHistory",
   "automation_slas": "never",

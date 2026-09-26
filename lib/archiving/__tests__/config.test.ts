@@ -10,7 +10,9 @@ import * as path from 'path';
 
 import {
   ARCHIVE_RUNS_ENABLED,
+  ARCHIVE_RUN_STATUSES,
   ARCHIVE_SOURCES,
+  STALE_RUN_AFTER_MS,
   ARCHIVE_SOURCE_KEYS,
   DEFAULT_RETENTION_DAYS,
   RETENTION_DAYS_OPTIONS,
@@ -56,6 +58,24 @@ describe('source registry', () => {
 
   it('U-C5: runs stay switched off until Slice 3 (condition C-5)', () => {
     expect(ARCHIVE_RUNS_ENABLED).toBe(false);
+  });
+
+  it('Slice 2: each source carries its batch size (1,000, TQ-3) and no database function name', () => {
+    expect(ARCHIVE_SOURCES[0].batchSize).toBe(1000);
+    for (const source of ARCHIVE_SOURCES) {
+      // The function name lives in the server-only repository (SA Q-6).
+      expect(JSON.stringify(source)).not.toMatch(/archive_.*_batch/);
+    }
+  });
+});
+
+describe('runs (Slice 2)', () => {
+  it('statuses are exactly the four the archive_runs CHECK allows, in order', () => {
+    expect([...ARCHIVE_RUN_STATUSES]).toEqual(['running', 'succeeded', 'partial', 'failed']);
+  });
+
+  it('a run is stale after five minutes of silence, well past the 60 s route limit', () => {
+    expect(STALE_RUN_AFTER_MS).toBe(300_000);
   });
 });
 

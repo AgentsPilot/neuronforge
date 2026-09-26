@@ -1,5 +1,5 @@
 /**
- * ArchiveRepository, Slice 1 (read-only): U-R1 to U-R10.
+ * ArchiveRepository: Slice 1 U-R1 to U-R10, Slice 2a R-1 to R-3 (still read-only).
  *
  * A fake PostgREST builder records every call, including ones the repository
  * must never make, so "read-only" is asserted rather than assumed (U-R10).
@@ -19,8 +19,10 @@ jest.mock('@/lib/logger', () => {
 });
 jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: {} }));
 
+import * as fs from 'fs';
+import * as path from 'path';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { ArchiveRepository } from '../ArchiveRepository';
+import { ARCHIVE_RUN_COLUMNS, ArchiveRepository } from '../ArchiveRepository';
 
 type Call = [string, ...unknown[]];
 
@@ -187,33 +189,167 @@ describe('countAuditTrailBeforeAllAccounts', () => {
   });
 });
 
-describe('U-R10: read-only', () => {
+describe('countArchivedAllAccounts (Slice 2a)', () => {
+  it('R-1: counts archived_records of one source with an exact head count', async () => {
+    const { client, calls } = fakeClient({ count: 4321 });
+
+    const result = await new ArchiveRepository(client).countArchivedAllAccounts('audit_trail');
+
+    expect(result).toEqual({ data: 4321, error: null });
+    expect(calls).toEqual([
+      ['from', 'archived_records'],
+      ['select', 'id', { count: 'exact', head: true }],
+      ['eq', 'source', 'audit_trail'],
+    ]);
+  });
+
+  it('R-1: a real zero is zero; a missing count is an error, never a zero', async () => {
+    expect(await new ArchiveRepository(fakeClient({ count: 0 }).client).countArchivedAllAccounts('audit_trail')).toEqual({
+      data: 0,
+      error: null,
+    });
+
+    const missing = await new ArchiveRepository(fakeClient({ count: null }).client).countArchivedAllAccounts('audit_trail');
+    expect(missing.data).toBeNull();
+    expect(missing.error).toBeInstanceOf(Error);
+  });
+
+  it('R-1: a Supabase error comes back as an error result, logged, without throwing', async () => {
+    const result = await new ArchiveRepository(
+      fakeClient({ error: { message: 'relation does not exist' } }).client
+    ).countArchivedAllAccounts('audit_trail');
+
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('relation does not exist');
+    expect(logged.some((entry) => entry.level === 'error')).toBe(true);
+  });
+});
+
+describe('listRuns (Slice 2a)', () => {
+  it('R-2: names its columns (never * and never payload), newest first, 20 by default', async () => {
+    const { client, calls } = fakeClient({ data: [{ id: 'run-1' }] });
+
+    const result = await new ArchiveRepository(client).listRuns();
+
+    expect(result).toEqual({ data: [{ id: 'run-1' }], error: null });
+    expect(calls).toEqual([
+      ['from', 'archive_runs'],
+      ['select', ARCHIVE_RUN_COLUMNS],
+      ['order', 'started_at', { ascending: false }],
+      ['limit', 20],
+    ]);
+    expect(ARCHIVE_RUN_COLUMNS).not.toMatch(/\*|payload/);
+  });
+
+  it('R-2: honours a limit and returns [] for no runs', async () => {
+    const { client, calls } = fakeClient({ data: null });
+    expect(await new ArchiveRepository(client).listRuns({ limit: 5 })).toEqual({ data: [], error: null });
+    expect(calls).toContainEqual(['limit', 5]);
+  });
+
+  it('R-2: a Supabase error comes back as an error result', async () => {
+    const result = await new ArchiveRepository(fakeClient({ error: { message: 'nope' } }).client).listRuns();
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('nope');
+  });
+
+  it('R-2: the selected columns are exactly the archive_runs columns M1 creates', () => {
+    // Closes the schema-check blind spot for this select: a renamed or missing
+    // column would otherwise surface only as a PROD 400.
+    const sql = fs.readFileSync(
+      path.join(process.cwd(), 'supabase/migrations/20261010_admin_archiving_runs.sql'),
+      'utf8'
+    );
+    const start = sql.indexOf('CREATE TABLE public.archive_runs (');
+    const statement = sql.slice(start, sql.indexOf(');', start));
+    const created = [...statement.matchAll(/^\s{2}([a-z_]+)\s+/gm)].map((m) => m[1]);
+    expect(ARCHIVE_RUN_COLUMNS.split(',').map((c) => c.trim()).sort()).toEqual([...created].sort());
+  });
+});
+
+describe('getLatestCutoff (Slice 2a)', () => {
+  it('R-3: reads the latest cutoff of a SUCCEEDED run of the source, ordered by cutoff (SA Q-5)', async () => {
+    const { client, calls } = fakeClient({ data: [{ cutoff: '2025-09-26T12:00:00+00:00' }] });
+
+    const result = await new ArchiveRepository(client).getLatestCutoff('audit_trail');
+
+    expect(result).toEqual({ data: '2025-09-26T12:00:00+00:00', error: null });
+    expect(calls).toEqual([
+      ['from', 'archive_runs'],
+      ['select', 'cutoff'],
+      ['eq', 'source', 'audit_trail'],
+      ['eq', 'status', 'succeeded'],
+      ['order', 'cutoff', { ascending: false }],
+      ['limit', 1],
+    ]);
+  });
+
+  it('R-3: none yet is null without an error', async () => {
+    expect(await new ArchiveRepository(fakeClient({ data: [] }).client).getLatestCutoff('audit_trail')).toEqual({
+      data: null,
+      error: null,
+    });
+  });
+
+  it('R-3: a Supabase error comes back as an error result', async () => {
+    const result = await new ArchiveRepository(fakeClient({ error: { message: 'x' } }).client).getLatestCutoff(
+      'audit_trail'
+    );
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('x');
+  });
+});
+
+describe('U-R10 / R-10: still read-only in Slice 2a', () => {
   it('no method writes, deletes or calls a function', async () => {
-    const { client, calls } = fakeClient({ count: 1, data: [{ created_at: '2024-01-01T00:00:00Z' }] });
+    const { client, calls } = fakeClient({
+      count: 1,
+      data: [{ created_at: '2024-01-01T00:00:00Z', cutoff: '2024-01-01T00:00:00Z' }],
+    });
     const repo = new ArchiveRepository(client);
 
     await repo.countAuditTrailAllAccounts();
     await repo.getOldestAuditTrailCreatedAtAllAccounts();
     await repo.countAuditTrailBeforeAllAccounts(new Date('2025-01-01T00:00:00Z'));
+    await repo.countArchivedAllAccounts('audit_trail');
+    await repo.listRuns();
+    await repo.getLatestCutoff('audit_trail');
 
     expect(calls.length).toBeGreaterThan(0);
     for (const method of methodsCalled(calls)) {
       expect(WRITES).not.toContain(method);
     }
-    // Only the audit trail is ever touched.
     expect(calls.filter((call) => call[0] === 'from').map((call) => call[1])).toEqual([
       'audit_trail',
       'audit_trail',
       'audit_trail',
+      'archived_records',
+      'archive_runs',
+      'archive_runs',
     ]);
+    // No select ever names the archived payload (AC-14).
+    for (const call of calls.filter((c) => c[0] === 'select')) {
+      expect(String(call[1])).not.toMatch(/payload|\*/);
+    }
   });
 
-  it('every public method is named for its all-accounts reach', () => {
+  it('method count is pinned at 6; account-data methods end in AllAccounts, run-log methods do not need to (SA Q-7)', () => {
     const methods = Object.getOwnPropertyNames(ArchiveRepository.prototype).filter(
       (name) => name !== 'constructor'
     );
-    expect(methods.length).toBe(3);
-    for (const name of methods) {
+    // Deliberate pin move: 3 in Slice 1, 6 in Slice 2a, 11 in Slice 2b.
+    expect(methods.sort()).toEqual(
+      [
+        'countArchivedAllAccounts',
+        'countAuditTrailAllAccounts',
+        'countAuditTrailBeforeAllAccounts',
+        'getLatestCutoff',
+        'getOldestAuditTrailCreatedAtAllAccounts',
+        'listRuns',
+      ].sort()
+    );
+    const runLogMethods = ['getLatestCutoff', 'listRuns'];
+    for (const name of methods.filter((m) => !runLogMethods.includes(m))) {
       expect(name).toMatch(/AllAccounts$/);
     }
   });
