@@ -121,6 +121,7 @@ lib/repositories/
 ├── AgentLogsRepository.ts         # Agent execution output logs
 ├── AgentMetricsRepository.ts      # Agent performance metrics
 ├── AgentStatsRepository.ts        # Agent run statistics and costs
+├── ArchiveRepository.ts           # Admin archiving: all-accounts counts over archivable sources (read-only in slice 1)
 ├── ConfigRepository.ts            # System and reward configuration
 ├── ExecutionRepository.ts         # Agent execution records and token usage
 ├── ExecutionLogRepository.ts      # Step-by-step execution logs (legacy path)
@@ -367,6 +368,28 @@ interface CreateExecutionLogInput {
   phase: 'documents' | 'prompt' | 'validation' | string;
 }
 ```
+
+---
+
+### ArchiveRepository
+**Location:** `lib/repositories/ArchiveRepository.ts`
+
+**Purpose:** Data access for the Admin Archiving module (`/admin/archiving`). Reads the archivable sources — today only `audit_trail` — across **all accounts** for the admin overview. See [ADMIN_ARCHIVING_MODULE_REQUIREMENT.md](/docs/requirements/ADMIN_ARCHIVING_MODULE_REQUIREMENT.md).
+
+**Service role, intentionally:** it uses `supabaseServer` and has no `user_id` filter, because the admin overview counts every account's rows. It is called only from `requireAdmin`-gated routes (`app/api/admin/archiving/**`). Methods are suffixed `…AllAccounts` so the missing user scope is visible at every call site.
+
+**Key Responsibilities:**
+- Count rows, and rows older than a cutoff, with `count: 'exact', head: true` (no row content is read)
+- Return an error — never `0` — when the database gives no count
+
+**Key Methods:**
+| Method | Description |
+|--------|-------------|
+| `countAuditTrailAllAccounts()` | Total `audit_trail` rows |
+| `getOldestAuditTrailCreatedAtAllAccounts()` | `created_at` of the oldest `audit_trail` row (null when empty) |
+| `countAuditTrailBeforeAllAccounts(cutoff)` | Rows with `created_at` before the cutoff (the archive-eligible count) |
+
+**Planned (slice 2):** run lifecycle methods (create, continue, stale takeover, run batch via the `archive_audit_trail_batch` function, finish, list runs, archived total). **Slice 3:** `deleteArchivedForUser` and `listArchivedForUser` for GDPR erasure and export.
 
 ## Type Definitions
 
@@ -738,3 +761,4 @@ When creating a new repository:
 | 2026-02-13 | Added `PluginConnectionRepository` | Extracted all direct Supabase queries from `UserPluginConnections` into a dedicated repository with 11 methods. Deleted legacy `lib/plugins/savePluginConnection.ts`. Added `UpsertPluginConnectionInput` type. |
 | 2026-02-13 | Extracted `OAuthTokenService` | Moved OAuth HTTP plumbing (`exchangeCodeForTokens`, `refreshAccessToken`, `fetchUserProfile`, `calculateExpiresAt`) from `UserPluginConnections` into `lib/services/OAuthTokenService.ts`. Consolidated duplicated PKCE logic. |
 | 2026-02-13 | Cleaned up `UserPluginConnections` | Removed dead code (`hasPluginPermission`, `cleanupExpiredConnections`), removed `getPluginDisplayName` hack, replaced all `any` types with proper types (`NextRequest`, `Record<string, unknown>`), extracted `audit()` helper with static import, added bounded token validation cache (max 100 entries). |
+| 2026-09-26 | Added `ArchiveRepository` | Admin Archiving slice 1: three read-only, all-accounts count methods over `audit_trail`, service role documented. Added to the structure tree and the catalog. |

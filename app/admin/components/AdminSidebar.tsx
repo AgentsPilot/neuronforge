@@ -25,7 +25,8 @@ import {
   Sparkles,
   Bot,
   Layers,
-  HeartPulse
+  HeartPulse,
+  Archive
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -94,6 +95,12 @@ const navigationSections: NavSection[] = [
         href: '/admin/audit-trail',
         icon: FileText,
         description: 'System event history'
+      },
+      {
+        name: 'Archiving',
+        href: '/admin/archiving',
+        icon: Archive,
+        description: 'Move old audit records out'
       },
     ]
   },

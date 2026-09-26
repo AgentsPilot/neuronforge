@@ -89,7 +89,13 @@ describe('section order', () => {
   });
 
   it('puts the pages the requirement names in the first three sections', () => {
-    expect(hrefsOf('Monitor')).toEqual(['/admin', '/admin/analytics', '/admin/audit-trail']);
+    // Archiving sits directly under Audit trail (Admin Archiving, condition C-2).
+    expect(hrefsOf('Monitor')).toEqual([
+      '/admin',
+      '/admin/analytics',
+      '/admin/audit-trail',
+      '/admin/archiving',
+    ]);
     expect(hrefsOf('Businesses')).toEqual([
       '/admin/users',
       '/admin/business-os-tiers',
@@ -118,9 +124,11 @@ describe('every admin page is reachable, exactly once', () => {
   const onDisk = adminPageRoutes();
 
   it('found the admin pages on disk (guards the scan itself)', () => {
-    // 24 pages since slice 4 (the legacy dashboard moved to its own route).
-    // If this drops, the scan broke rather than the sidebar.
-    expect(onDisk.length).toBeGreaterThanOrEqual(24);
+    // 25 pages: slice 4 moved the legacy dashboard to its own route, and Admin
+    // Archiving slice 1 added /admin/archiving. If this drops, the scan broke
+    // rather than the sidebar.
+    expect(onDisk.length).toBeGreaterThanOrEqual(25);
+    expect(onDisk).toContain('/admin/archiving');
     expect(onDisk).toContain('/admin/platform-dashboard');
     expect(onDisk).toContain('/admin');
     expect(onDisk).toContain('/admin/exchange-rates');
@@ -129,7 +137,8 @@ describe('every admin page is reachable, exactly once', () => {
   it('lists every page except the deliberately unlisted ones', () => {
     const expected = onDisk.filter((r) => !UNLISTED.includes(r));
     expect([...allHrefs].sort()).toEqual(expected);
-    expect(allHrefs).toHaveLength(23);
+    // 22 before, + the legacy dashboard (slice 4) + Archiving (Admin Archiving slice 1).
+    expect(allHrefs).toHaveLength(24);
   });
 
   it('never lists the same page twice', () => {
