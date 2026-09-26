@@ -376,11 +376,12 @@ interface CreateExecutionLogInput {
 
 **Purpose:** Data access for the Admin Archiving module (`/admin/archiving`). Reads the archivable sources — today only `audit_trail` — across **all accounts** for the admin overview. See [ADMIN_ARCHIVING_MODULE_REQUIREMENT.md](/docs/requirements/ADMIN_ARCHIVING_MODULE_REQUIREMENT.md).
 
-**Service role, intentionally:** it uses `supabaseServer` and has no `user_id` filter, because the admin overview counts every account's rows. It is called only from `requireAdmin`-gated routes (`app/api/admin/archiving/**`). Methods are suffixed `…AllAccounts` so the missing user scope is visible at every call site.
+**Service role, intentionally:** it uses `supabaseServer` and has no `user_id` filter, because the admin overview counts every account's rows. It is called only from `requireAdmin`-gated routes (`app/api/admin/archiving/**`). Methods that read account data across accounts (`audit_trail`, `archived_records`) are suffixed `…AllAccounts` so the missing user scope is visible at every call site. Methods over `archive_runs` (the run log) have plain names: that table holds no account data and has no `user_id` at all.
 
 **Key Responsibilities:**
 - Count rows, and rows older than a cutoff, with `count: 'exact', head: true` (no row content is read)
 - Return an error — never `0` — when the database gives no count
+- Read the run log with a named column list; never select `archived_records.payload`
 
 **Key Methods:**
 | Method | Description |
@@ -388,8 +389,11 @@ interface CreateExecutionLogInput {
 | `countAuditTrailAllAccounts()` | Total `audit_trail` rows |
 | `getOldestAuditTrailCreatedAtAllAccounts()` | `created_at` of the oldest `audit_trail` row (null when empty) |
 | `countAuditTrailBeforeAllAccounts(cutoff)` | Rows with `created_at` before the cutoff (the archive-eligible count) |
+| `countArchivedAllAccounts(source)` | Rows of one source now in `archived_records` (slice 2a) |
+| `listRuns({ limit })` | The newest `archive_runs` rows, newest first, 20 by default (slice 2a) |
+| `getLatestCutoff(source)` | The latest cutoff among **succeeded** runs of a source (everything before it is archived), or null (slice 2a) |
 
-**Planned (slice 2):** run lifecycle methods (create, continue, stale takeover, run batch via the `archive_audit_trail_batch` function, finish, list runs, archived total). **Slice 3:** `deleteArchivedForUser` and `listArchivedForUser` for GDPR erasure and export.
+**Still read-only after slice 2a.** **Planned (slice 2b):** run lifecycle methods (create, claim for continue, stale takeover, run batch via the `archive_audit_trail_batch` database function, finish). **Slice 3:** `deleteArchivedForUser` and `listArchivedForUser` for GDPR erasure and export.
 
 ## Type Definitions
 
@@ -761,4 +765,5 @@ When creating a new repository:
 | 2026-02-13 | Added `PluginConnectionRepository` | Extracted all direct Supabase queries from `UserPluginConnections` into a dedicated repository with 11 methods. Deleted legacy `lib/plugins/savePluginConnection.ts`. Added `UpsertPluginConnectionInput` type. |
 | 2026-02-13 | Extracted `OAuthTokenService` | Moved OAuth HTTP plumbing (`exchangeCodeForTokens`, `refreshAccessToken`, `fetchUserProfile`, `calculateExpiresAt`) from `UserPluginConnections` into `lib/services/OAuthTokenService.ts`. Consolidated duplicated PKCE logic. |
 | 2026-02-13 | Cleaned up `UserPluginConnections` | Removed dead code (`hasPluginPermission`, `cleanupExpiredConnections`), removed `getPluginDisplayName` hack, replaced all `any` types with proper types (`NextRequest`, `Record<string, unknown>`), extracted `audit()` helper with static import, added bounded token validation cache (max 100 entries). |
+| 2026-09-26 | `ArchiveRepository`: archive-side reads | Admin Archiving slice 2a: `countArchivedAllAccounts`, `listRuns`, `getLatestCutoff` over the new `archived_records` / `archive_runs` tables; still read-only. Naming rule clarified: `…AllAccounts` for account data, plain names for the run log |
 | 2026-09-26 | Added `ArchiveRepository` | Admin Archiving slice 1: three read-only, all-accounts count methods over `audit_trail`, service role documented. Added to the structure tree and the catalog. |
