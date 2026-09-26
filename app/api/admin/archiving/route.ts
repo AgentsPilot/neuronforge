@@ -13,15 +13,24 @@
  * refetch (C-9d). All cutoffs come from one `now`, so the three counts agree
  * with each other and with the cutoff dates the page prints.
  *
- * Any failed read fails the whole response (500). A partly-filled card would
- * present a missing number as if it were known.
+ * Slice 2a adds the archive side, read from the tables migration M1 creates:
+ * the archived total and the latest fully-archived cutoff per source, the last
+ * run, and the run history (newest 20). Each run says whether it is stale: a
+ * `running` run silent for longer than STALE_RUN_AFTER_MS belongs to a dead
+ * request. This route only REPORTS that; it never writes. Recovering a stale
+ * run is the POST's job (Slice 2b).
  *
- * ── Read-only (Slice 1) ───────────────────────────────────────────────────
- * No POST, no input, so no Zod here: query strings are ignored, not parsed.
- * No audit event: reading counts is not a state change. Runs, their audit
- * events and `POST /api/admin/archiving/runs` arrive in Slice 2.
+ * Any failed COUNT or run read fails the whole response (500): a partly-filled
+ * card would present a missing number as if it were known. The one exception is
+ * the admin email shown beside a run: it is a label, not a measurement, so if
+ * the admin list cannot be read the run shows a short id instead.
+ *
+ * ── Read-only ─────────────────────────────────────────────────────────────
+ * No input, so no Zod here: query strings are ignored, not parsed. No audit
+ * event: reading counts is not a state change.
  *
  * @see docs/workplans/ADMIN_ARCHIVING_SLICE_1_UI_WORKPLAN.md
+ * @see docs/workplans/ADMIN_ARCHIVING_SLICE_2_RUNS_WORKPLAN.md §2.6
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -29,18 +38,30 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import {
   ARCHIVE_RUNS_ENABLED,
+  ARCHIVE_RUN_STATUSES,
   ARCHIVE_SOURCES,
+  ARCHIVE_SOURCE_KEYS,
   RETENTION_DAYS_OPTIONS,
+  RUN_HISTORY_LIMIT,
+  STALE_RUN_AFTER_MS,
   cutoffFor,
+  isRetentionDays,
+  type ArchiveRunStatus,
   type ArchiveSourceKey,
 } from '@/lib/archiving/config';
 import type {
+  ArchiveRunSummary,
   ArchiveSourceOverview,
   ArchivingOverview,
   RetentionOptionCount,
 } from '@/lib/archiving/types';
-import { createLogger } from '@/lib/logger';
-import { archiveRepository, type ArchiveRepository } from '@/lib/repositories/ArchiveRepository';
+import { createLogger, type Logger } from '@/lib/logger';
+import { adminUserRepository } from '@/lib/repositories/AdminUserRepository';
+import {
+  archiveRepository,
+  type ArchiveRepository,
+  type ArchiveRunRow,
+} from '@/lib/repositories/ArchiveRepository';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -63,7 +84,7 @@ function measuredCount(result: { data: number | null; error: Error | null }, wha
 type SourceReader = (
   repo: ArchiveRepository,
   now: Date
-) => Promise<Omit<ArchiveSourceOverview, 'key' | 'label'>>;
+) => Promise<Pick<ArchiveSourceOverview, 'totalRows' | 'oldestRecordAt' | 'options' | 'archivedTotal' | 'latestCutoff'>>;
 
 /**
  * One reader per registered source. Typed as a full `Record`, so a registry
@@ -71,16 +92,20 @@ type SourceReader = (
  */
 const SOURCE_READERS: Record<ArchiveSourceKey, SourceReader> = {
   audit_trail: async (repo, now) => {
-    const [total, oldest, ...eligible] = await Promise.all([
+    const [total, oldest, archived, latest, ...eligible] = await Promise.all([
       repo.countAuditTrailAllAccounts(),
       repo.getOldestAuditTrailCreatedAtAllAccounts(),
+      repo.countArchivedAllAccounts('audit_trail'),
+      repo.getLatestCutoff('audit_trail'),
       ...RETENTION_DAYS_OPTIONS.map((days) =>
         repo.countAuditTrailBeforeAllAccounts(cutoffFor(days, now))
       ),
     ]);
 
     if (oldest.error) throw oldest.error;
+    if (latest.error) throw latest.error;
     const totalRows = measuredCount(total, 'total');
+    const archivedTotal = measuredCount(archived, 'archived');
 
     const options: RetentionOptionCount[] = RETENTION_DAYS_OPTIONS.map((days, index) => ({
       retentionDays: days,
@@ -88,9 +113,65 @@ const SOURCE_READERS: Record<ArchiveSourceKey, SourceReader> = {
       eligibleRows: measuredCount(eligible[index], `eligible_${days}`),
     }));
 
-    return { totalRows, oldestRecordAt: oldest.data, options };
+    return { totalRows, oldestRecordAt: oldest.data, options, archivedTotal, latestCutoff: latest.data };
   },
 };
+
+function isRunStatus(value: string): value is ArchiveRunStatus {
+  return (ARCHIVE_RUN_STATUSES as readonly string[]).includes(value);
+}
+
+function isSourceKey(value: string): value is ArchiveSourceKey {
+  return (ARCHIVE_SOURCE_KEYS as readonly string[]).includes(value);
+}
+
+/** "Admin 1a2b3c4d": for a run whose admin is no longer on the active list. */
+function shortAdminLabel(userId: string): string {
+  return `Admin ${userId.slice(0, 8)}`;
+}
+
+/**
+ * A run row as the page shows it. A value the database constraints should make
+ * impossible (an unknown status, a non-numeric count) is thrown, not guessed:
+ * the history must never show a run as something it is not.
+ */
+function toRunSummary(row: ArchiveRunRow, now: Date, labels: Map<string, string>): ArchiveRunSummary {
+  if (!isRunStatus(row.status)) throw new Error(`Archive run ${row.id}: unknown status`);
+  if (!isSourceKey(row.source)) throw new Error(`Archive run ${row.id}: unknown source`);
+  if (!isRetentionDays(row.retention_days)) throw new Error(`Archive run ${row.id}: unknown retention`);
+  const rowsArchived = Number(row.rows_archived);
+  if (!Number.isFinite(rowsArchived)) throw new Error(`Archive run ${row.id}: rows_archived is not a number`);
+
+  const lastSignOfLife = new Date(row.last_batch_at ?? row.started_at).getTime();
+  return {
+    id: row.id,
+    source: row.source,
+    status: row.status,
+    retentionDays: row.retention_days,
+    cutoff: row.cutoff,
+    rowsArchived,
+    batches: row.batches,
+    startedBy: row.started_by,
+    startedByLabel: labels.get(row.started_by) ?? shortAdminLabel(row.started_by),
+    startedAt: row.started_at,
+    lastBatchAt: row.last_batch_at,
+    finishedAt: row.finished_at,
+    errorCode: row.error_code,
+    isStale: row.status === 'running' && now.getTime() - lastSignOfLife > STALE_RUN_AFTER_MS,
+  };
+}
+
+/** Active admins' emails by auth user id. A failure is logged and yields no labels. */
+async function adminLabels(requestLogger: Logger): Promise<Map<string, string>> {
+  const { data, error } = await adminUserRepository.listActive();
+  if (error || !data) {
+    requestLogger.warn({ err: error }, 'Could not read admin labels; runs show a short id');
+    return new Map();
+  }
+  return new Map(
+    data.filter((admin) => admin.user_id).map((admin) => [admin.user_id as string, admin.email])
+  );
+}
 
 export async function GET(request: NextRequest) {
   const gate = await requireAdmin(logger.child({ route: 'admin-archiving' }));
@@ -102,28 +183,46 @@ export async function GET(request: NextRequest) {
   try {
     const now = new Date();
 
-    const sources: ArchiveSourceOverview[] = await Promise.all(
-      ARCHIVE_SOURCES.map(async (source) => ({
-        key: source.key,
-        label: source.label,
-        ...(await SOURCE_READERS[source.key](archiveRepository, now)),
-      }))
-    );
+    const [sourceParts, runRows] = await Promise.all([
+      Promise.all(
+        ARCHIVE_SOURCES.map(async (source) => ({
+          key: source.key,
+          label: source.label,
+          ...(await SOURCE_READERS[source.key](archiveRepository, now)),
+        }))
+      ),
+      archiveRepository.listRuns({ limit: RUN_HISTORY_LIMIT }),
+    ]);
+
+    if (runRows.error || !runRows.data) {
+      throw runRows.error ?? new Error('Archiving overview: run list missing without an error');
+    }
+
+    const labels = runRows.data.length > 0 ? await adminLabels(requestLogger) : new Map<string, string>();
+    const runs = runRows.data.map((row) => toRunSummary(row, now, labels));
+
+    const sources: ArchiveSourceOverview[] = sourceParts.map((source) => ({
+      ...source,
+      lastRun: runs.find((run) => run.source === source.key) ?? null,
+    }));
 
     const overview: ArchivingOverview = {
       generatedAt: now.toISOString(),
       runsEnabled: ARCHIVE_RUNS_ENABLED,
       sources,
+      runs,
     };
 
-    // Counts only: never row content, never the admin's email.
+    // Counts only: never row content, never an email.
     requestLogger.info(
       {
         sources: sources.map((source) => ({
           source: source.key,
           totalRows: source.totalRows,
+          archivedTotal: source.archivedTotal,
           eligible: source.options.map((option) => option.eligibleRows),
         })),
+        runs: runs.length,
       },
       'Archiving overview read'
     );

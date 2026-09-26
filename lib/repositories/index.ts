@@ -79,6 +79,7 @@ export {
 } from './AdminTokenUsageAnalyticsRepository';
 // Admin Archiving, read-only in Slice 1 (docs/workplans/ADMIN_ARCHIVING_SLICE_1_UI_WORKPLAN.md)
 export { ArchiveRepository, archiveRepository } from './ArchiveRepository';
+export type { ArchiveRunRow } from './ArchiveRepository';
 // S-6 free-tier grant (docs/workplans/ALLOCATE_FREE_TIER_S6_FIX_WORKPLAN.md)
 export { UserSubscriptionRepository, userSubscriptionRepository } from './UserSubscriptionRepository';
 export type {

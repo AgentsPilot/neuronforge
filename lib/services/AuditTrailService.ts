@@ -11,11 +11,9 @@ import {
   AuditQueryParams,
   AuditQueryResult,
   GDPRExport,
-  RetentionPolicy,
-  ChangeSet,
 } from '../audit/types';
 import { getEventMetadata } from '../audit/events';
-import { generateDiff, sanitizeChanges, summarizeChanges } from '../audit/diff';
+import { sanitizeChanges, summarizeChanges } from '../audit/diff';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ service: 'AuditTrailService' });
@@ -43,11 +41,9 @@ class AuditTrailService {
       batchSize: config.batchSize ?? 100,
       batchIntervalMs: config.batchIntervalMs ?? 5000,
       silent: config.silent ?? true, // Never throw by default
-      retentionPolicy: config.retentionPolicy ?? {
-        defaultDays: 365,
-        criticalEventsDays: 2555, // 7 years
-        gdprMaxDays: 90,
-      },
+      // No retention policy here any more: old audit rows are MOVED, not
+      // deleted, by the Admin Archiving module (archive_audit_trail_batch), which
+      // is the only path that removes audit_trail rows by age (FR-16, C-13).
       enableTamperDetection: config.enableTamperDetection ?? false,
       enableCompression: config.enableCompression ?? false,
     };
@@ -460,28 +456,6 @@ class AuditTrailService {
     });
 
     return count;
-  }
-
-  /**
-   * Apply retention policy - delete old logs
-   */
-  public async applyRetentionPolicy(policy?: RetentionPolicy): Promise<number> {
-    const retentionPolicy = policy || this.config.retentionPolicy;
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - retentionPolicy.defaultDays);
-
-    const { data, error } = await this.supabase
-      .from('audit_trail')
-      .delete()
-      .lt('created_at', cutoffDate.toISOString())
-      .neq('severity', 'critical') // Keep critical events longer
-      .select('id');
-
-    if (error) {
-      throw new Error(`Failed to apply retention policy: ${error.message}`);
-    }
-
-    return data?.length || 0;
   }
 
   /**

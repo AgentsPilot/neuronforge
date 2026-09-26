@@ -1,9 +1,10 @@
 /**
- * GET /api/admin/archiving (Slice 1): I-1 to I-10.
+ * GET /api/admin/archiving (Slice 1: I-1 to I-10; Slice 2a: A-1 to A-8).
  *
  * The gate (401 → 403 → fail closed, nothing read before it answers), the
- * payload shape (three options, one `now`, no archived/run fields), the
- * all-or-nothing 500, and the source rules the CI guard cannot see: that
+ * payload shape (three options, one `now`; since Slice 2a the archived total,
+ * latest cutoff, last run and run history), the all-or-nothing 500, and the
+ * source rules the CI guard cannot see: that
  * `requireAdmin` is the FIRST statement (OI-20), and that the route has no
  * write verb and no direct database access.
  *
@@ -43,12 +44,23 @@ jest.mock('@/lib/logger', () => {
 const countAll = jest.fn();
 const oldest = jest.fn();
 const countBefore = jest.fn();
+const countArchived = jest.fn();
+const latestCutoff = jest.fn();
+const listRuns = jest.fn();
 jest.mock('@/lib/repositories/ArchiveRepository', () => ({
   archiveRepository: {
     countAuditTrailAllAccounts: () => countAll(),
     getOldestAuditTrailCreatedAtAllAccounts: () => oldest(),
     countAuditTrailBeforeAllAccounts: (cutoff: Date) => countBefore(cutoff),
+    countArchivedAllAccounts: (source: string) => countArchived(source),
+    getLatestCutoff: (source: string) => latestCutoff(source),
+    listRuns: (options: unknown) => listRuns(options),
   },
+}));
+
+const listActiveAdmins = jest.fn();
+jest.mock('@/lib/repositories/AdminUserRepository', () => ({
+  adminUserRepository: { listActive: () => listActiveAdmins() },
 }));
 
 // jest.mock calls are hoisted above this import, so the route loads with the fakes.
@@ -84,7 +96,35 @@ function eligibleByCutoff(byDays: Record<number, number>) {
 }
 
 const repoCalls = () =>
-  countAll.mock.calls.length + oldest.mock.calls.length + countBefore.mock.calls.length;
+  countAll.mock.calls.length +
+  oldest.mock.calls.length +
+  countBefore.mock.calls.length +
+  countArchived.mock.calls.length +
+  latestCutoff.mock.calls.length +
+  listRuns.mock.calls.length +
+  listActiveAdmins.mock.calls.length;
+
+const ADMIN_UUID = 'aaaaaaaa-1111-4111-8111-111111111111';
+const FORMER_ADMIN_UUID = 'bbbbbbbb-2222-4222-8222-222222222222';
+
+/** An archive_runs row as the repository returns it. */
+function runRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'run-1',
+    source: 'audit_trail',
+    status: 'succeeded',
+    retention_days: 365,
+    cutoff: '2025-09-26T12:00:00.000Z',
+    rows_archived: '1200',
+    batches: 2,
+    started_by: ADMIN_UUID,
+    started_at: '2026-09-26T11:00:00.000Z',
+    last_batch_at: '2026-09-26T11:00:30.000Z',
+    finished_at: '2026-09-26T11:00:31.000Z',
+    error_code: null,
+    ...overrides,
+  };
+}
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -94,6 +134,13 @@ beforeEach(() => {
   countAll.mockResolvedValue({ data: 5000, error: null });
   oldest.mockResolvedValue({ data: '2024-03-01T08:00:00+00:00', error: null });
   eligibleByCutoff({ 365: 1200, 180: 2500, 90: 3900 });
+  countArchived.mockResolvedValue({ data: 0, error: null });
+  latestCutoff.mockResolvedValue({ data: null, error: null });
+  listRuns.mockResolvedValue({ data: [], error: null });
+  listActiveAdmins.mockResolvedValue({
+    data: [{ id: 'row-1', user_id: ADMIN_UUID, email: 'ops@example.com', is_active: true }],
+    error: null,
+  });
 });
 
 afterEach(() => {
@@ -133,7 +180,7 @@ describe('the gate', () => {
 });
 
 describe('the overview', () => {
-  it('I-4: returns the audit-trail source with all three options, in order, and no run fields', async () => {
+  it('I-4: returns the audit-trail source with all three options, in order, plus the archive fields', async () => {
     asAdmin();
 
     const res = await GET(req());
@@ -153,9 +200,23 @@ describe('the overview', () => {
     expect(source.options.map((o: { retentionDays: number }) => o.retentionDays)).toEqual([365, 180, 90]);
     expect(source.options.map((o: { eligibleRows: number }) => o.eligibleRows)).toEqual([1200, 2500, 3900]);
 
-    // Absent, not zero: nothing can be known about archived rows or runs yet (SA Q-3).
-    expect(Object.keys(body.data).sort()).toEqual(['generatedAt', 'runsEnabled', 'sources']);
-    expect(Object.keys(source).sort()).toEqual(['key', 'label', 'oldestRecordAt', 'options', 'totalRows']);
+    // Slice 2a: the archive fields exist now, because M1's tables can be read.
+    // Deliberate change of the Slice 1 pin, which asserted their absence (SA Q-3).
+    expect(Object.keys(body.data).sort()).toEqual(['generatedAt', 'runs', 'runsEnabled', 'sources']);
+    expect(Object.keys(source).sort()).toEqual([
+      'archivedTotal',
+      'key',
+      'label',
+      'lastRun',
+      'latestCutoff',
+      'oldestRecordAt',
+      'options',
+      'totalRows',
+    ]);
+    expect(source.archivedTotal).toBe(0);
+    expect(source.latestCutoff).toBeNull();
+    expect(source.lastRun).toBeNull();
+    expect(body.data.runs).toEqual([]);
   });
 
   it('I-5: every cutoff is the same now minus N days, and that Date is what the repository gets', async () => {
@@ -269,6 +330,133 @@ describe('failures', () => {
     expect((await res.json()).error).toBe('Could not read the archiving overview');
     const errorLog = logs.find((entry) => entry.level === 'error');
     expect(errorLog?.ctx.err).toBeInstanceOf(Error);
+  });
+});
+
+describe('Slice 2a: the archive side', () => {
+  it('A-1: reads the archived total and latest cutoff for audit_trail, and 20 runs', async () => {
+    asAdmin();
+    countArchived.mockResolvedValue({ data: 4321, error: null });
+    latestCutoff.mockResolvedValue({ data: '2025-09-26T12:00:00.000Z', error: null });
+
+    const source = (await (await GET(req())).json()).data.sources[0];
+
+    expect(countArchived).toHaveBeenCalledWith('audit_trail');
+    expect(latestCutoff).toHaveBeenCalledWith('audit_trail');
+    expect(listRuns).toHaveBeenCalledWith({ limit: 20 });
+    expect(source.archivedTotal).toBe(4321);
+    expect(source.latestCutoff).toBe('2025-09-26T12:00:00.000Z');
+  });
+
+  it('A-2: maps each run, newest first, with the admin email and a numeric count', async () => {
+    asAdmin();
+    listRuns.mockResolvedValue({
+      data: [
+        runRow({ id: 'run-2', status: 'partial', started_at: '2026-09-26T11:30:00.000Z', finished_at: '2026-09-26T11:30:46.000Z' }),
+        runRow(),
+      ],
+      error: null,
+    });
+
+    const data = (await (await GET(req())).json()).data;
+
+    expect(data.runs.map((run: { id: string }) => run.id)).toEqual(['run-2', 'run-1']);
+    expect(data.runs[1]).toEqual({
+      id: 'run-1',
+      source: 'audit_trail',
+      status: 'succeeded',
+      retentionDays: 365,
+      cutoff: '2025-09-26T12:00:00.000Z',
+      rowsArchived: 1200,
+      batches: 2,
+      startedBy: ADMIN_UUID,
+      startedByLabel: 'ops@example.com',
+      startedAt: '2026-09-26T11:00:00.000Z',
+      lastBatchAt: '2026-09-26T11:00:30.000Z',
+      finishedAt: '2026-09-26T11:00:31.000Z',
+      errorCode: null,
+      isStale: false,
+    });
+    expect(data.sources[0].lastRun.id).toBe('run-2');
+  });
+
+  it('A-3: a former admin shows a short id, not a guess', async () => {
+    asAdmin();
+    listRuns.mockResolvedValue({ data: [runRow({ started_by: FORMER_ADMIN_UUID })], error: null });
+
+    const run = (await (await GET(req())).json()).data.runs[0];
+
+    expect(run.startedByLabel).toBe('Admin bbbbbbbb');
+  });
+
+  it('A-4: an unreadable admin list only costs the labels, not the page', async () => {
+    asAdmin();
+    listRuns.mockResolvedValue({ data: [runRow()], error: null });
+    listActiveAdmins.mockResolvedValue({ data: null, error: new Error('admin_users down') });
+
+    const res = await GET(req());
+    const run = (await res.json()).data.runs[0];
+
+    expect(res.status).toBe(200);
+    expect(run.startedByLabel).toBe('Admin aaaaaaaa');
+    expect(logs.some((entry) => entry.level === 'warn')).toBe(true);
+  });
+
+  it('A-5: the admin list is not read when there are no runs', async () => {
+    asAdmin();
+    await GET(req());
+    expect(listActiveAdmins).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['silent for more than 5 minutes', { last_batch_at: new Date(NOW.getTime() - 5 * 60_000 - 1).toISOString() }, true],
+    ['silent for exactly 5 minutes', { last_batch_at: new Date(NOW.getTime() - 5 * 60_000).toISOString() }, false],
+    ['never batched, started 6 minutes ago', { last_batch_at: null, started_at: new Date(NOW.getTime() - 6 * 60_000).toISOString() }, true],
+    ['never batched, started 1 minute ago', { last_batch_at: null, started_at: new Date(NOW.getTime() - 60_000).toISOString() }, false],
+  ])('A-6: a running run %s is stale = %p', async (_label, overrides, stale) => {
+    asAdmin();
+    listRuns.mockResolvedValue({
+      data: [runRow({ status: 'running', finished_at: null, ...overrides })],
+      error: null,
+    });
+
+    const run = (await (await GET(req())).json()).data.runs[0];
+
+    expect(run.isStale).toBe(stale);
+  });
+
+  it('A-6: a finished run is never stale, however old', async () => {
+    asAdmin();
+    listRuns.mockResolvedValue({
+      data: [runRow({ status: 'failed', last_batch_at: '2020-01-01T00:00:00.000Z', error_code: 'batch_failed' })],
+      error: null,
+    });
+    const run = (await (await GET(req())).json()).data.runs[0];
+    expect(run.isStale).toBe(false);
+    expect(run.errorCode).toBe('batch_failed');
+  });
+
+  it.each([
+    ['the archived count errors', () => countArchived.mockResolvedValue({ data: null, error: new Error('x') })],
+    ['the archived count is null with no error', () => countArchived.mockResolvedValue({ data: null, error: null })],
+    ['the latest cutoff errors', () => latestCutoff.mockResolvedValue({ data: null, error: new Error('x') })],
+    ['the run list errors', () => listRuns.mockResolvedValue({ data: null, error: new Error('x') })],
+    ['a run has an unknown status', () => listRuns.mockResolvedValue({ data: [runRow({ status: 'weird' })], error: null })],
+    ['a run count is not a number', () => listRuns.mockResolvedValue({ data: [runRow({ rows_archived: 'lots' })], error: null })],
+  ])('A-7: 500 with no partial data when %s', async (_label, fail) => {
+    asAdmin();
+    fail();
+
+    const res = await GET(req());
+    const body = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(body.success).toBe(false);
+    expect(body).not.toHaveProperty('data');
+  });
+
+  it('A-8: GET never writes: it reports staleness but takes nothing over', () => {
+    expect(routeCode).not.toMatch(/takeOver|createRun|claimRun|finishRun|runBatch|\.insert\(|\.update\(|\.delete\(|\.rpc\(/);
   });
 });
 

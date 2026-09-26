@@ -208,16 +208,6 @@ export interface GDPRExport {
 }
 
 /**
- * Retention policy configuration
- */
-export interface RetentionPolicy {
-  defaultDays: number; // Default retention for all logs
-  criticalEventsDays?: number; // Extended retention for critical events
-  gdprMaxDays?: number; // GDPR compliance limit
-  autoAnonymizeDays?: number; // Auto-anonymize PII after X days
-}
-
-/**
  * Audit trail service configuration
  */
 export interface AuditServiceConfig {
@@ -225,7 +215,6 @@ export interface AuditServiceConfig {
   batchSize?: number; // Number of logs to batch before writing
   batchIntervalMs?: number; // Max time to wait before flushing batch
   silent?: boolean; // Suppress all errors (never throw)
-  retentionPolicy?: RetentionPolicy;
   enableTamperDetection?: boolean; // Cryptographic chaining
   enableCompression?: boolean; // Compress details/changes JSON
 }

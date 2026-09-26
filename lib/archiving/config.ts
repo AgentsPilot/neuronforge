@@ -35,12 +35,17 @@ export function isRetentionDays(value: unknown): value is RetentionDays {
 }
 
 /**
- * Archivable sources. Slice 1 carries only `key` and `label`; the batch function
- * name and batch size arrive with Slice 2, where they are first read (SA Q-2).
- * There is deliberately no `exclusions` field: exclusions live in each source's
- * SQL function (condition C-9b).
+ * Archivable sources.
+ *
+ * `batchSize` is the row count one call of the source's move function takes
+ * (TQ-3: 1,000). The function NAME is deliberately not here: it lives in the
+ * server-only repository, so no database object name reaches the browser bundle
+ * (Slice 2 SA Q-6). There is no `exclusions` field: exclusions live in each
+ * source's SQL function (condition C-9b).
  */
-export const ARCHIVE_SOURCES = [{ key: 'audit_trail', label: 'Audit trail' }] as const;
+export const ARCHIVE_SOURCES = [
+  { key: 'audit_trail', label: 'Audit trail', batchSize: 1000 },
+] as const;
 
 export type ArchiveSourceKey = (typeof ARCHIVE_SOURCES)[number]['key'];
 
@@ -55,6 +60,20 @@ export const ARCHIVE_SOURCE_KEYS = ARCHIVE_SOURCES.map((source) => source.key) a
  * var, so switching runs on is a reviewed diff with no dependency on Vercel access.
  */
 export const ARCHIVE_RUNS_ENABLED = false;
+
+/** A run's lifecycle. Mirrors the `archive_runs.status` CHECK (pinned by the migration test). */
+export const ARCHIVE_RUN_STATUSES = ['running', 'succeeded', 'partial', 'failed'] as const;
+
+export type ArchiveRunStatus = (typeof ARCHIVE_RUN_STATUSES)[number];
+
+/**
+ * A `running` run with no sign of life for this long belongs to a dead request:
+ * the route's `maxDuration` is 60 s, so no live request can be this quiet (TQ-1).
+ */
+export const STALE_RUN_AFTER_MS = 5 * 60_000;
+
+/** How many runs the overview lists, newest first. */
+export const RUN_HISTORY_LIMIT = 20;
 
 const MS_PER_DAY = 86_400_000;
 

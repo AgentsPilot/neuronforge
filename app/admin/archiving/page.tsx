@@ -2,7 +2,7 @@
 
 /**
  * Archiving — how much of the audit trail is old enough to move out, under each
- * retention choice. Read-only in Slice 1.
+ * retention choice, and what earlier runs archived. Read-only (Slice 2a).
  *
  * ── Why this page adds no guard of its own ──────────────────────────────────
  * `app/admin/layout.tsx` awaits `requireAdminPage()` before this page's RSC
@@ -11,14 +11,16 @@
  * first were optional (condition C-2).
  *
  * ── Why nothing here can start a run ────────────────────────────────────────
- * There is no run to start until Slice 2, and runs stay switched off until
- * Slice 3 (C-5). The Archive button is disabled with no handler, and the only
- * request this page makes is the overview GET (AC-15).
+ * The route that starts a run arrives in Slice 2b, and runs stay switched off
+ * until Slice 3 (C-5). The Archive button is disabled with no handler, and the
+ * only request this page makes is the overview GET (AC-15).
  *
- * ── Why "Not available yet" rather than 0 ───────────────────────────────────
- * The archived total, the last run and the run history do not exist until
- * Slice 2 creates the tables. The payload does not carry them, and the page
- * says so plainly instead of showing a zero nobody measured.
+ * ── The archive side (Slice 2a) ─────────────────────────────────────────────
+ * The archived total, the "archived before" cutoff, the last run and the run
+ * history are read from the tables migration M1 creates, so a 0 or "No runs
+ * yet" is now a measured fact, not a guess. Each run's status is a text badge,
+ * never colour alone (§7 accessibility). A `running` run whose request has died
+ * shows as "Stalled"; Slice 2b adds the Continue that recovers it.
  *
  * ── The dropdown ────────────────────────────────────────────────────────────
  * The overview carries the eligible count for every option, so changing the
@@ -45,10 +47,42 @@ import {
   isRetentionDays,
   type RetentionDays,
 } from '@/lib/archiving/config';
-import type { ArchiveSourceOverview, ArchivingOverview } from '@/lib/archiving/types';
+import type {
+  ArchiveRunSummary,
+  ArchiveSourceOverview,
+  ArchivingOverview,
+} from '@/lib/archiving/types';
 
-const NOT_AVAILABLE = 'Not available yet';
 const LOAD_FAILED = 'Could not read the archiving overview';
+
+/**
+ * A run's status as the admin reads it: a word first, colour second. The `!`
+ * overrides follow the dark-shell rule explained at `DARK_SELECT`.
+ */
+function statusBadge(run: ArchiveRunSummary): { label: string; className: string } {
+  if (run.status === 'running' && run.isStale) {
+    return { label: 'Stalled', className: '!bg-amber-500/20 !text-amber-300' };
+  }
+  switch (run.status) {
+    case 'running':
+      return { label: 'Running', className: '!bg-sky-500/20 !text-sky-300' };
+    case 'succeeded':
+      return { label: 'Succeeded', className: '!bg-emerald-500/20 !text-emerald-300' };
+    case 'partial':
+      return { label: 'Partial', className: '!bg-amber-500/20 !text-amber-300' };
+    case 'failed':
+      return { label: 'Failed', className: '!bg-rose-500/20 !text-rose-300' };
+  }
+}
+
+function RunStatus({ run }: { run: ArchiveRunSummary }) {
+  const { label, className } = statusBadge(run);
+  return (
+    <Badge data-testid={`run-status-${run.id}`} className={`!rounded ${className}`}>
+      {label}
+    </Badge>
+  );
+}
 
 /**
  * Dark colours for the shared Select on the admin shell (SA Q-4). The primitive
@@ -164,9 +198,7 @@ export default function ArchivingPage() {
                 Run history
               </h2>
             </header>
-            <p className="text-sm text-slate-400">
-              {NOT_AVAILABLE}. Runs are recorded once archiving is switched on.
-            </p>
+            <RunHistory runs={overview.runs} />
           </section>
         </>
       )}
@@ -206,14 +238,28 @@ function SourceCard({ source }: { source: ArchiveSourceOverview }) {
         </div>
         <div>
           <dt className="text-xs uppercase tracking-wide text-slate-500">Archived total</dt>
-          <dd data-testid="archived-total" className="mt-1 text-sm text-slate-400">
-            {NOT_AVAILABLE}
+          <dd data-testid="archived-total" className="mt-1 text-lg font-semibold text-slate-100">
+            {formatCount(source.archivedTotal)}
+          </dd>
+          <dd data-testid="archived-before" className="text-xs text-slate-400">
+            {source.latestCutoff
+              ? `Everything before ${formatUtc(source.latestCutoff)} is archived`
+              : 'Archived before: none yet'}
           </dd>
         </div>
         <div>
           <dt className="text-xs uppercase tracking-wide text-slate-500">Last run</dt>
-          <dd data-testid="last-run" className="mt-1 text-sm text-slate-400">
-            {NOT_AVAILABLE}
+          <dd data-testid="last-run" className="mt-1 text-sm text-slate-200">
+            {source.lastRun ? (
+              <span className="flex flex-wrap items-center gap-2">
+                <RunStatus run={source.lastRun} />
+                <span>
+                  {formatUtc(source.lastRun.startedAt)} · {formatCount(source.lastRun.rowsArchived)} rows
+                </span>
+              </span>
+            ) : (
+              <span className="text-slate-400">No runs yet</span>
+            )}
           </dd>
         </div>
       </dl>
@@ -263,7 +309,7 @@ function SourceCard({ source }: { source: ArchiveSourceOverview }) {
               </p>
             </>
           ) : (
-            <p className="mt-1 text-sm text-slate-400">{NOT_AVAILABLE}</p>
+            <p className="mt-1 text-sm text-slate-400">Not available</p>
           )}
         </div>
 
@@ -284,5 +330,51 @@ function SourceCard({ source }: { source: ArchiveSourceOverview }) {
         </div>
       </div>
     </section>
+  );
+}
+
+/** The run log, newest first. Counts and times only: no archived content (AC-14). */
+function RunHistory({ runs }: { runs: ArchiveRunSummary[] }) {
+  if (runs.length === 0) {
+    return <p className="text-sm text-slate-400">No runs yet.</p>;
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-sm text-slate-300">
+        <thead className="text-xs uppercase tracking-wide text-slate-500">
+          <tr>
+            <th scope="col" className="py-2 pr-4 font-medium">Started</th>
+            <th scope="col" className="py-2 pr-4 font-medium">By</th>
+            <th scope="col" className="py-2 pr-4 font-medium">Retention</th>
+            <th scope="col" className="py-2 pr-4 font-medium">Cutoff</th>
+            <th scope="col" className="py-2 pr-4 text-right font-medium">Rows archived</th>
+            <th scope="col" className="py-2 pr-4 text-right font-medium">Batches</th>
+            <th scope="col" className="py-2 pr-4 font-medium">Status</th>
+            <th scope="col" className="py-2 pr-4 font-medium">Finished</th>
+            <th scope="col" className="py-2 font-medium">Error</th>
+          </tr>
+        </thead>
+        <tbody>
+          {runs.map((run) => (
+            <tr key={run.id} data-testid={`run-${run.id}`} className="border-t border-slate-700/60">
+              <td className="py-2 pr-4 whitespace-nowrap">{formatUtc(run.startedAt)}</td>
+              <td className="py-2 pr-4">{run.startedByLabel}</td>
+              <td className="py-2 pr-4 whitespace-nowrap">{run.retentionDays} days</td>
+              <td className="py-2 pr-4 whitespace-nowrap">{formatUtc(run.cutoff)}</td>
+              <td className="py-2 pr-4 text-right">{formatCount(run.rowsArchived)}</td>
+              <td className="py-2 pr-4 text-right">{formatCount(run.batches)}</td>
+              <td className="py-2 pr-4">
+                <RunStatus run={run} />
+              </td>
+              <td className="py-2 pr-4 whitespace-nowrap">
+                {run.finishedAt ? formatUtc(run.finishedAt) : '—'}
+              </td>
+              <td className="py-2">{run.errorCode ?? '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
