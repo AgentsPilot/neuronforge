@@ -78,7 +78,7 @@ Measured on `feature/admin-bos-health-landing` @ `8ff11095`. The live database h
 | V-19 | `audit_trail` has single-column indexes on `action`, `severity`, `created_at DESC` and `(user_id, created_at DESC)` **in the repo script**; the table was dashboard-created, so live indexes are unverified (B0 SA correction 3) | `supabase/SQL Scripts/create_audit_trail.sql:39-47` | Audit head-counts should be index-served. Owed check L-3 lists the live indexes |
 | V-20 | **Cost Analytics' drill-down is capped at 1,000 rows** (unpaged, OI-P1, parked) and its "vs previous period" ignores most filters (OI-P2, parked). Under `scope=bos` the comparison read *is* BOS-scoped (Slice 2 D-5) | `lib/repositories/AdminTokenUsageAnalyticsRepository.ts:32-36, 162-200`; `app/api/admin/token-usage/drill-down/route.ts:211-250, 409-441`; Slice 2 workplan §13 | The spend tile must not reuse that read or copy its comparison (§3, facts 2-3) |
 | V-21 | The "existing aggregate" reads do **not** fit a cross-account window: `business_os_usage_summary` is an RPC keyed on **one** `p_user_id`; the LLM usage report is per account, at most 7 days, paged to a 5,000 ceiling; the one existing all-accounts ledger read is `listChatCallsAllAccountsInWindow` (chat only), paged with ceiling 10,000 and a `reachedCeiling` flag. PostgREST aggregates are disabled (`PGRST123`) | `supabase/migrations/20260929_usage_summary.sql:44-80`; `lib/business-os/usage/llmUsageReport.ts:100-130`; `lib/repositories/TokenUsageRepository.ts:13-17, 118-135, 441-480` | No existing aggregate can answer "BOS spend, all accounts, last 7 days". The plan follows the chat report's proven shape: **paged narrow read + exact count + ceiling + honest "at least"** (F-1) |
-| V-22 | `token_usage` has **no index usable for a cross-account window** (only `(user_id, created_at DESC)`, `(execution_id)`, `(agent_id, execution_id)` in the repo) | `20260929_usage_summary.sql:98-99`; B0 workplan V-3 (on branch `docs/ai-activity-b0-workplan`, commit `5bea0b5b`) | Every spend page is a sequential scan today. Bounded by the ceiling and the stop rule (§7) |
+| V-22 | `token_usage` has **no index usable for a cross-account window** (only `(user_id, created_at DESC)`, `(execution_id)`, `(agent_id, execution_id)` in the repo) | `20260929_usage_summary.sql:98-99`; B0 workplan V-3 (on branch `docs/ai-activity-b0-workplan`, commit `5bea0b5b`) | Every spend page is a sequential scan today. Bounded by the ceiling and the stop rule (§7) **Superseded 2026-09-26 by L-3/L-5 (§15.8): the live DB has `idx_token_usage_created_at`; the read is an index range scan (1.6 ms).** |
 | V-23 | Last measured volume: **7,658** `token_usage` rows in 30 days, **3,015** Business OS (≈100/day) | Slice 2 workplan T0b | A 14-day BOS window is ≈1,400 rows today: **2 pages** of 1,000. The 7-day window (≈700) is still under Cost Analytics' 1,000 cap, so "same number" holds today and will stop holding as volume grows |
 | V-24 | Cost Analytics reads `?scope` and `?user` from the URL but **not a period or a window**; its presets are 24h / 7d / 30d / 90d / Custom (date-only) | `app/admin/analytics/page.tsx:152-158, 219-243, 284-289` | For the spend tile's link to land on the same window, the page gains a `dateFrom`/`dateTo` deep link (F-8) |
 | V-25 | Entitlements mode: `getEntitlementMode()` returns the **effective** mode; it downgrades a refused `enforce` to `shadow` and an unrecognised value to `off`, logging at `error`. The raw value is not exported | `lib/business-os/entitlements/mode.ts:44-89` | Tile 5 shows the effective mode. Detecting "enforce was asked for and refused" needs one small new export (F-6) |
@@ -578,7 +578,7 @@ The user's answers of 2026-09-26 to the first version's Q-1 to Q-6. These decisi
 
 | # | Risk | Severity | Mitigation |
 |---|---|---|---|
-| R-1 | Spend read cost grows with the whole ledger: no `created_at` index (V-22), and every page and the count scan the whole table | Med | Narrow columns; ceiling 10,000 (≤ 11 scans); per-read deadline (C-4); timing logs; pre-merge L-5/L-6 (C-14); the §7.4 escalation path |
+| R-1 | Spend read cost grows with the whole ledger: no `created_at` index (V-22), and every page and the count scan the whole table | Med | Narrow columns; ceiling 10,000 (≤ 11 scans); per-read deadline (C-4); timing logs; pre-merge L-5/L-6 (C-14); the §7.4 escalation path **Closed 2026-09-26: live index exists, L-5 = 1.6 ms (§15.8).** |
 | R-2 | "Same number" drift: offsetless audit links resolved in the DB timezone; Cost Analytics' 1,000 cap | Med | Fixed minute-floored windows (C-3); exact-bound links (F-8, C-9); L-4 before merge; the OI-P1 note appears exactly when calls exceed 1,000 |
 | R-3 | "Configured off" is not "off": the AI kill switch fails open | Med | Figures say "configured off"; the rule description ("AI switched off somewhere") is amber, never red |
 | R-4 | The critical-events tile is amber most days (routine critical events, V-16) | Low–Med | Accepted by the user (U-5); the link shows which events; FU-2 |
@@ -729,7 +729,7 @@ The only accepted pre-existing failure is the parked C-13 contract assertion, **
 - [x] T13: Run every command in §12.4; paste real output; name the C-13 baseline failure by test name
 - [x] T14 (docs done; the BA hand-off is for TL): C-13 docs (register row 81, re-measured counts in `ADMIN_IDENTIFICATION_AND_ACCESS.md` and `CLAUDE.md`); hand the requirement amendments (U-1, U-6, link exceptions) to BA via TL
 - [x] T15: Implementation record, deviations, "what SA should look at first"; notify TL. **No commit** (standing user rule)
-- [ ] T16 (user, before merge): L-2 to L-6 recorded (C-14)
+- [x] T16 (user): L-2 to L-6 recorded 2026-09-26, just after merge; all pass (§15.8)
 
 ---
 
@@ -864,6 +864,22 @@ SELECT count(*) AS token_usage_rows,
 ```
 
 **Note on L-5:** `EXPLAIN ANALYZE` runs the `SELECT` for real, and it is still read-only.
+
+---
+
+### 15.8 Live check results (user, 2026-09-26, recorded after merge of PR #115)
+
+The PR was merged before these were recorded; the user ran them immediately after. **All pass.**
+
+| Check | Result | Verdict |
+|---|---|---|
+| L-2 | 512 BOS rows in the 14-day window | ✅ ≤ 10,000 (exact, 1 page) |
+| L-3 | `token_usage` **has** `idx_token_usage_created_at` (btree `created_at`), plus `(feature, created_at DESC)`, `(user_id, created_at DESC)` and others; `audit_trail` has `idx_audit_trail_created_at` (btree `created_at DESC`), plus `action`, `severity`, `user_id` and others | ✅ Recorded; see correction below |
+| L-4 | `SHOW timezone` = `UTC` | ✅ Audit links are correct as built |
+| L-5 | `Index Scan Backward using idx_token_usage_created_at`, 512 rows, 47 removed by filter, **Execution Time 1.637 ms** | ✅ ≪ ~1 s |
+| L-6 | 25,453 rows, 34 MB total | ✅ Recorded |
+
+**Correction to V-22, R-1 and the SA's F-1 caveat:** the claim that `token_usage` has no index usable for a cross-account window was derived from repo migration files. The live database has `idx_token_usage_created_at`, created outside the repo (B0's SA review had warned that the repo is not the source of truth for this table's indexes). The spend read is therefore an index range scan over the window, not a whole-table scan, and its cost grows with the window, not with the ledger. The ceiling, deadline and scan cap stay as defence in depth. L-1 (route timing after deploy) is still owed.
 
 ---
 
@@ -1050,7 +1066,7 @@ QA's three probe files are kept in the working tree, uncommitted: `app/api/admin
 | C-11 | ✅ | Tests read `HEALTH_RULES`. The header of `rules.ts` states the data/code boundary and the monotonicity sentence |
 | C-12 | ✅ | Re-run by SA; see below |
 | C-13 | ✅ | SA's own census: **52 route files, 81 exported handlers, 75 `await requireAdmin(` call sites; 24 `page.tsx` under `app/admin`.** This matches `CLAUDE.md` and `ADMIN_IDENTIFICATION_AND_ACCESS.md` (row 81, truth table, Change History) |
-| C-14 | ⬜ **Open: merge gate** | L-2 to L-6 are owed by the user. The SQL is in §15.6 |
+| C-14 | ✅ Closed 2026-09-26 | L-2 to L-6 recorded by the user just after merge; all pass. See §15.8 |
 | C-15 | ✅ | (a) The pill and the card follow `countLabels(filter)`. (b) The debug line logs only `success` and `rows`. (c) `row-user` is on the name text only (on the "No name" span when there is no name). (d) `toStatusFilter` narrows the select value, so there is no cast |
 | C-16 | ✅ | No-name row: red visible text, an `aria-hidden` icon and an `sr-only` " — needs attention". The verified tick has an `sr-only` "Email verified". Health: a text label per status, `aria-hidden` icons, `aria-label` = `linkLabel` (which keeps "at least"), `aria-busy` on Refresh, and `section` + `aria-labelledby`. The sidebar description has no "OK" |
 | C-17 | ⬜ **Open: user decision** | `userName.ts:46` `ACTIVE_BADGE_MODE = 'green'` (option c) until the user picks. All three modes are render-tested. Note for the user's choice: the email-verified tick (`UserNameLine.tsx:84`, `text-green-400`) is also green, on the line under a red "No name". It is beside the email, as U-3 asked, but the user should see both greens in the diff review |
@@ -1269,6 +1285,7 @@ _(RM to populate. Nothing is committed until the user has reviewed the code and 
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-09-26 | Live checks recorded (§15.8) | PR #115 merged, then the user ran L-2 to L-6: 512 BOS rows in 14 days, UTC, 1.637 ms via `idx_token_usage_created_at`, 25,453 rows / 34 MB. All pass. V-22 and R-1 corrected: a `created_at` index exists live (not in the repo), so the spend read is an index range scan. T16 and C-14 closed. L-1 still owed after deploy |
 | 2026-09-26 | User choices applied (Dev), uncommitted | **U-7:** `ACTIVE_BADGE_MODE = 'neutral'` (the Active badge is never green; the email tick stays green), TODO removed, B-2 re-worded, the value pinned by a test. **U-8:** "today" → "in the last 24 hours" in three rule descriptions and their tests. **U-9:** the "Auth role" column is removed (header, cell, tooltip, colSpan 7 → 6); C-23 is satisfied by removal. Jest (app/admin, lib/admin, health-summary, entitlements), authz guard, ESLint and next build re-run |
 | 2026-09-26 | Review follow-ups (Dev), uncommitted | B-1/SA-1 (settings reduction isolated), SA-2/E-4a (closing line from the evaluator, honest about lower bounds), SA-3 (header wording), SA-4 (no preset highlight under a linked window; clearing strips it from the URL), SA-5 (`warn`), E-1 (integer micro-unit comparisons; $2.39 + $2.75 → $15.42 test), E-3 (users-page debug logs reduced to facts). QA's 3 probe files kept. Jest 134/135 suites (only the C-13 baseline), bos-entitlements 58/58, authz 119/119, typecheck:bos-llm 0 new, literal gate 0, lint:hooks 0, ESLint 0 errors, next build exit 0 (§15.7) |
 | 2026-09-26 | QA testing (full) | PASS (conditional). Jest 131/132 suites, 2,945/2,946 tests; the only failure is the parked contract assertion, identical on `8ff11095`. bos-entitlements 57/57, authz guard 119/119, typecheck:bos-llm 0 new, literal gate 0, lint:hooks 0, ESLint 0 errors, next build exit 0 (303/303). 39 QA probe tests added, uncommitted, all passing. One Medium bug (B-1, the same as SA comment 1: a malformed settings view 500s the page); four edge cases (float ratio boundary, exact-ceiling lower bound, two leftover debug lines, wording). Merge still gated on T16 (L-2 to L-6) and C-17 |
