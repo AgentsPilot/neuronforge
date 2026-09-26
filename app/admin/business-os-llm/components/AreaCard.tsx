@@ -43,6 +43,7 @@ import {
   READ_ONLY_NOTE,
   setPerCallTitle,
 } from '../copy';
+import { areaOffSummary } from '../areaState';
 import { callsSetPerCall } from '../markers';
 import type { AreaView } from '../types';
 import { CallRow } from './CallRow';
@@ -94,12 +95,13 @@ function areaProviderSummary(area: AreaView): string {
 }
 
 export function AreaCard({ area, expanded, onToggle }: Props) {
-  /** One guard, not a second copy of the condition (RC-4). */
-  const areaShowsOff = area.switchable && !area.configuredEnabled;
+  /**
+   * One guard, not a second copy of the condition (RC-4). It lives in
+   * `areaState.ts` because the admin Health landing counts with the same rule
+   * (slice 4, SA C-6), so this card and that tile cannot disagree.
+   */
+  const { areaShowsOff, offCalls } = areaOffSummary(area);
   const setPerCall = callsSetPerCall(area);
-  const offCalls = areaShowsOff
-    ? 0
-    : area.calls.filter((call) => !call.resolved.enabled).length;
   /*
    * QA EDGE-1: ONE tolerant binding, not a `?? []` at each of the two sites.
    *

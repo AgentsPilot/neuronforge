@@ -24,7 +24,8 @@ import {
   UserCheck,
   Sparkles,
   Bot,
-  Layers
+  Layers,
+  HeartPulse
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -59,6 +60,10 @@ interface NavSection {
  * bookmark breaks. Labels are honest about which product a page serves: a
  * page that only configures or shows AgentsPilot says so.
  *
+ * Slice 4 made `/admin` the Health landing and moved the old AgentsPilot
+ * dashboard to `/admin/platform-dashboard`, listed only in the hidden parked
+ * section (URL-only, user decision U-6).
+ *
  * Exchange Rates is deliberately NOT listed (requirement §4.3): it writes to
  * the database straight from the browser, so surfacing it would widen exposure.
  *
@@ -71,12 +76,12 @@ const navigationSections: NavSection[] = [
     title: 'Monitor',
     items: [
       {
-        name: 'Dashboard',
+        name: 'Health',
         href: '/admin',
-        icon: LayoutDashboard,
-        // Still today's dashboard until the Health landing ships (slice 4).
-        // Its totals are mostly agents, AIS and memory, hence the wording.
-        description: 'Totals, mostly AgentsPilot'
+        icon: HeartPulse,
+        // Slice 4: the landing answers "is anything wrong?" in red / amber /
+        // grey tiles. The description must never claim that all is well.
+        description: 'Is anything wrong? Business OS'
       },
       {
         name: 'AI cost & usage',
@@ -161,6 +166,16 @@ const navigationSections: NavSection[] = [
     title: 'AgentsPilot (parked)',
     hidden: true,
     items: [
+      {
+        // The old `/admin` landing, moved in slice 4 when Health replaced it.
+        // URL-only by user decision (U-6): this entry exists so every admin
+        // page keeps exactly one sidebar entry, and it is hidden with its
+        // section. Nothing else links to it.
+        name: 'Platform dashboard (legacy)',
+        href: '/admin/platform-dashboard',
+        icon: LayoutDashboard,
+        description: 'AgentsPilot totals (old landing)'
+      },
       {
         name: 'Agent execution queue',
         href: '/admin/queues',
