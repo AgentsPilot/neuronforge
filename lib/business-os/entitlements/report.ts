@@ -211,11 +211,36 @@ export interface DormantChampionRow {
 }
 
 export interface DormantChampionSection {
-  /** Distinct accounts, not rows — the unit somebody would act in. */
-  accounts: number;
+  /**
+   * `true` when the plan walk **failed**, as opposed to finishing or being
+   * capped (QA-4).
+   *
+   * Without this the section reports `accounts: 0, rows: []` for a failed read
+   * and for a genuinely empty list alike — the same asymmetry S0-1 removed one
+   * field along, in a section this slice added. `truncated` does not cover it:
+   * it is also `true` after a healthy walk that hit `MAX_ACCOUNTS`, so it
+   * cannot distinguish "capped" from "broken".
+   *
+   * Read it before `accounts`, which is `null` while this is `true`.
+   */
+  walkFailed: boolean;
+  /**
+   * Distinct accounts, not rows — the unit somebody would act in.
+   *
+   * `null` when `walkFailed`: how many dormant champions exist is not knowable
+   * from a walk that stopped on an error, and `0` would be a claim. Any rows
+   * already collected are still listed below — each one is individually true,
+   * and the list simply is not complete.
+   */
+  accounts: number | null;
   rows: DormantChampionRow[];
-  /** `true` when the plan walk did not finish, so the list is partial. */
+  /** `true` when the plan walk did not finish — capped OR failed — so the list is partial. */
   truncated: boolean;
+  /**
+   * Set only when the list is not the whole picture, and says so in words
+   * (QA-4). `null` on a healthy report, so its presence is the signal.
+   */
+  incomplete: string | null;
   /** What happens after the date in `endAccessOp`, so it is not read as harsher than it is. */
   afterExpiry: string;
   /** What this section is, on the section itself. */
@@ -438,6 +463,9 @@ async function buildStatic(
 
   let scanned = 0;
   let truncated = false;
+  // Distinct from `truncated`, which a healthy walk also sets when it reaches
+  // MAX_ACCOUNTS (QA-4). Only a read that ERRORED sets this.
+  let walkFailed = false;
   let after: string | null = null;
 
   // Keyset paging (RC-12): an offset walk silently skips or repeats rows when
@@ -448,6 +476,7 @@ async function buildStatic(
     if (page.error || !page.data) {
       logger.error({ err: page.error, after }, 'Report: plan page failed; static section is partial');
       truncated = true;
+      walkFailed = true;
       break;
     }
 
@@ -532,7 +561,7 @@ async function buildStatic(
           truncated: true,
           scope: 'unavailable — the read failed',
         },
-    dormantChampions: dormantChampionSection(dormant, truncated, now),
+    dormantChampions: dormantChampionSection(dormant, truncated, walkFailed, now),
   };
 }
 
@@ -554,20 +583,33 @@ async function buildStatic(
 function dormantChampionSection(
   rows: BusinessOsAccountPlan[],
   truncated: boolean,
+  walkFailed: boolean,
   now: Date
 ): DormantChampionSection {
   const placeholderExpiry = new Date(now.getTime() + 30 * MS_PER_DAY).toISOString();
 
   return {
+    walkFailed,
     // Accounts, not rows. One account has one plan record, so these agree
     // today; counting in the unit somebody acts in keeps it true if that ever
     // stops being so.
-    accounts: new Set(rows.map((row) => row.user_id)).size,
+    //
+    // `null` rather than a partial count when the walk failed (QA-4): a number
+    // here is read as "how many there are", and after a failed read nobody
+    // knows. `rows.length` is still available to anyone who wants "how many we
+    // managed to find".
+    accounts: walkFailed ? null : new Set(rows.map((row) => row.user_id)).size,
     rows: rows.map((row) => ({
       accountId: row.user_id,
       since: row.created_at,
       origin: row.origin,
-      dormantDays: Math.floor((now.getTime() - new Date(row.created_at).getTime()) / MS_PER_DAY),
+      // Clamped at zero: a record created in the future (clock skew, or a
+      // seeded fixture) would otherwise report a NEGATIVE dormancy, which reads
+      // as nonsense in a list somebody is meant to act on.
+      dormantDays: Math.max(
+        0,
+        Math.floor((now.getTime() - new Date(row.created_at).getTime()) / MS_PER_DAY)
+      ),
       onboardingStartedAt: row.onboarding_started_at ?? null,
       endAccessOp: {
         method: 'POST',
@@ -583,6 +625,9 @@ function dormantChampionSection(
       },
     })),
     truncated,
+    incomplete: walkFailed
+      ? 'The plan walk FAILED part way through. This list is whatever was read before the error, the account count is not available, and nothing here should be treated as the whole picture.'
+      : null,
     afterExpiry:
       'At that date the champion cohort lapses and the account enters the 30 days of champion grace ' +
       'configured in the lifecycle, after which it has whatever the tier layer gives it. ' +

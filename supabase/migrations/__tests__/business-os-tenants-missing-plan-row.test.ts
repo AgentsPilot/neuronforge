@@ -76,6 +76,26 @@ describe('the SQL says what it has to say', () => {
     expect(sql).toMatch(/missing_onboarding_only bigint/);
   });
 
+  it('computes each half from the RIGHT side of the predicate', () => {
+    // The fourth member of the S0-1 family (QA-1), and the one that matters
+    // most for the reason section 11 gives: `missing_onboarding_only` is the
+    // number nobody knows yet, and the whole argument for this migration is
+    // that it is the population the old scan could not see.
+    //
+    // Swapped, both numbers stay plausible and their sum is unchanged, so
+    // `missing_count` is unaffected and the three-way agreement in steps 3 and
+    // 4 of the runbook passes. The evidence would then say the opposite of
+    // what happened, and nothing downstream could tell.
+    //
+    // QA proved the gap by swapping them: all 22 tests stayed green.
+    expect(sql).toMatch(
+      /\(SELECT count\(\*\) FROM missing WHERE missing\.has_business_profile\) AS missing_with_profile/
+    );
+    expect(sql).toMatch(
+      /\(SELECT count\(\*\) FROM missing WHERE NOT missing\.has_business_profile\) AS missing_onboarding_only/
+    );
+  });
+
   /**
    * The three arithmetic properties (QA, 2026-09-26).
    *

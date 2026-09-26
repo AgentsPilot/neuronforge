@@ -83,6 +83,7 @@ describe('who is on the list', () => {
   it('is a champion with no end date who never created a business profile', async () => {
     const { static: section } = await report([planRow({ user_id: 'dormant' })]);
 
+    expect(section.dormantChampions.walkFailed).toBe(false);
     expect(section.dormantChampions.accounts).toBe(1);
     expect(section.dormantChampions.rows.map((row) => row.accountId)).toEqual(['dormant']);
   });
@@ -135,6 +136,17 @@ describe('what each row gives somebody to act on', () => {
     expect(section.dormantChampions.rows[0].origin).toBe('backfill');
   });
 
+  it('never reports a NEGATIVE dormancy (QA-5)', async () => {
+    // A record created in the future — clock skew, or a seeded fixture — would
+    // otherwise produce a negative number of days in a list somebody is meant
+    // to read and act on.
+    const { static: section } = await report([
+      planRow({ user_id: 'from-the-future', created_at: '2027-01-01T00:00:00.000Z' }),
+    ]);
+
+    expect(section.dormantChampions.rows[0].dormantDays).toBe(0);
+  });
+
   it('carries the operation that ends THIS account, addressed to this account', async () => {
     const { static: section } = await report([planRow({ user_id: 'dormant-7' })]);
     const [row] = section.dormantChampions.rows;
@@ -180,8 +192,14 @@ describe('what the section is not', () => {
 
   it('writes nothing — the report is a read, and this section is part of it', async () => {
     // Asserted through the repository: a section that could cut anybody would
-    // need a write method, and the stub has none. If one ever appears, this
-    // test is where the design change surfaces.
+    // need a write method, and the stub has none.
+    //
+    // An ALLOW-LIST, not a denylist of name patterns (QA observation). A
+    // denylist only rejects the write names somebody thought of; this rejects
+    // everything that is not one of the three reads the report is allowed to
+    // perform, so a NEW method added to the stub fails by default rather than
+    // sliding past a regular expression.
+    const READS_ALLOWED = ['pagePlans', 'findTenantsMissingPlanRow', 'findRecentOnboardedPlans'];
     const calls: string[] = [];
 
     await buildShadowReport({
@@ -211,7 +229,56 @@ describe('what the section is not', () => {
       } as never,
     });
 
-    expect(calls.filter((call) => /update|reset|ensure|create|end/i.test(call))).toEqual([]);
+    expect(calls.filter((call) => !READS_ALLOWED.includes(call))).toEqual([]);
+    // Non-vacuity: the stub really was exercised, so an empty `calls` array is
+    // not what made the line above pass.
+    expect(calls).toContain('pagePlans');
+  });
+
+  it('QA-4: a FAILED walk does not report itself as "nobody is dormant"', async () => {
+    // The same asymmetry S0-1 removed, one field along and in a section this
+    // slice added. Before this, a failed read gave `accounts: 0, rows: []` —
+    // indistinguishable from a healthy database with no dormant champions.
+    const failedWalk = await buildShadowReport({
+      config: readCodeConfig(),
+      now: () => NOW,
+      planRepository: {
+        async pagePlans() {
+          return { data: null, error: new Error('page read failed') };
+        },
+        async findTenantsMissingPlanRow() {
+          return {
+            data: { checked: 0, count: 0, missing: [], withProfile: 0, onboardingOnly: 0, truncated: false, scope: 'x' },
+            error: null,
+          };
+        },
+        async findRecentOnboardedPlans() {
+          return { data: [], error: null };
+        },
+      } as never,
+      shadowRepository: { async findWindow() { return { data: [], error: null }; } } as never,
+    });
+
+    const section = failedWalk.static.dormantChampions;
+
+    expect(section.walkFailed).toBe(true);
+    // Not 0 — how many dormant champions exist is not knowable from a walk
+    // that stopped on an error.
+    expect(section.accounts).toBeNull();
+    // And it says so in words as well, for whoever reads the report rather
+    // than a field.
+    expect(section.incomplete).toMatch(/FAILED/);
+  });
+
+  it('QA-4: a CAPPED walk is not confused with a broken one', async () => {
+    // `truncated` alone could not carry this: a healthy walk that reaches
+    // MAX_ACCOUNTS sets it too. The two states must be distinguishable, or the
+    // flag means "something or other happened".
+    const { static: section } = await report([planRow({ user_id: 'dormant' })]);
+
+    expect(section.dormantChampions.walkFailed).toBe(false);
+    expect(section.dormantChampions.accounts).toBe(1);
+    expect(section.dormantChampions.incomplete).toBeNull();
   });
 
   it('is empty on a database with no dormant champions, and says so as zero rather than as absent', async () => {

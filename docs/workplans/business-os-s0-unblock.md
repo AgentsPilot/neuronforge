@@ -26,6 +26,7 @@
 - [11. What QA must run against production](#11-what-qa-must-run-against-production)
 - [12. SA Review Notes](#12-sa-review-notes)
 - [13. QA Testing Report](#13-qa-testing-report)
+  - [13.10 Dev response — QA round 1](#1310-dev-response--qa-round-1)
 - [14. Commit Info](#14-commit-info)
 - [Change History](#change-history)
 
@@ -66,7 +67,7 @@ Worded so that none of them can be read as more than it is. **"Done" here means 
 
 | # | Criterion | The wording that matters |
 |---|---|---|
-| 1 | The missing-plan-row scan is an exhaustive anti-join **in code**, and is **exhaustive in production only once the migration is applied there** | ⚠️ Not "the count is now known". Until `20261010` is pasted (runbook step 10), production still has no exhaustive scan, and **nobody knows what `missing_onboarding_only` is.** While the function is absent the repository answers with an **error**, never a zero |
+| 1 | The missing-plan-row scan is an exhaustive anti-join **in code**, and is **exhaustive in production only once the migration is applied there** | ⚠️ Not "the count is now known". Until `20261010` is pasted (runbook step 10), production still has no exhaustive scan, and **nobody knows what `missing_onboarding_only` is.** While the function is absent the repository answers with an **error**, never a zero — and the switch-on gate is **`scanFailed === false && count === 0`**, both conditions, because a failed scan is not a zero |
 | 2 | The trim list exists as a list and a mechanism | **Nobody has been trimmed**, and no account changed |
 | 3 | The three misleading documents are corrected, and guarded so they cannot silently revert | — |
 | 4 | H-7 is recorded in the document that would cause the mistake | — |
@@ -312,12 +313,12 @@ Run from the worktree (which has no `node_modules` of its own):
 | Suite | Tests | Result |
 |---|---|---|
 | `lib/business-os/entitlements/__tests__/report.test.ts` | **36** | ✅ — +3 for S0-1 |
-| `lib/business-os/entitlements/__tests__/dormantChampions.test.ts` | 14 | ✅ new |
+| `lib/business-os/entitlements/__tests__/dormantChampions.test.ts` | **17** | ✅ new — +3 for QA-4 and QA-5 |
 | `lib/repositories/__tests__/BusinessOsAccountPlanRepository.test.ts` | 36 | ✅ |
-| `supabase/migrations/__tests__/business-os-tenants-missing-plan-row.test.ts` | **22** | ✅ new — +2 for SA's two confirmations, +4 for QA's read-level findings (§10.4) |
+| `supabase/migrations/__tests__/business-os-tenants-missing-plan-row.test.ts` | **23** | ✅ new — +2 SA confirmations, +4 QA read-level, +1 QA-1 |
 | `scripts/__tests__/entitlementSqlScripts.guard.test.ts` | 70 | ✅ |
 | `app/api/cron/__tests__/freeTierExpiration.rd9.guard.test.ts` | 5 | ✅ new |
-| `docs/__tests__/billingDocsCorrected.rd10.guard.test.ts` | 13 | ✅ new |
+| `docs/__tests__/billingDocsCorrected.rd10.guard.test.ts` | **14** | ✅ new — +1 for QA-3 |
 | `lib/repositories/__tests__/businessOsEntitlements.imports.guard.test.ts` | 8 | ✅ — see §10.3 |
 
 ### 10.1 Full affected scope
@@ -328,7 +329,7 @@ scripts/__tests__  app/api/cron/__tests__  docs/__tests__
 app/admin/business-os-tiers  app/api/admin/business-os
 ```
 
-**70 suites, 1,434 tests, all passing.** 80s. (SA's own run of the eleven S-0 suites: **270 tests, 0 failures**, before the five fixes below.)
+**70 suites, 1,439 tests, all passing.** 85s. (SA's own run of the eleven S-0 suites: **270 tests, 0 failures**, before the five fixes below.)
 
 ### 10.2 Typecheck and lint
 
@@ -423,7 +424,20 @@ S-0's central claim — *the scan is exhaustive* — is the one thing that canno
 | 7 | Load the admin shadow report and read `tenantsWithoutPlanRow` | Same `count`, and its `scope` says "exhaustive" | A mismatch means the route is not reading the new scan |
 | 8 | Read the report's `dormantChampions` | A list, with an `endAccessOp` per account, **and nothing changed** | Any state change is a defect: this section must write nothing |
 
-> **Gate:** do **not** set `BOS_ENTITLEMENTS_MODE=enforce` while `missing_count` is above zero. An account with no plan row resolves to no entitlements, so under enforcement it is a customer who is refused. G-1 and G-2 both remain outstanding regardless.
+> ### Gate: TWO conditions, not one
+>
+> **Do not set `BOS_ENTITLEMENTS_MODE=enforce` unless BOTH are true:**
+>
+> | | Condition | Where to read it |
+> |---|---|---|
+> | 1 | **The scan ran.** | Step 2 returned a row; `tenantsWithoutPlanRow.scanFailed` is `false` |
+> | 2 | **And found nothing missing.** | `missing_count` is `0`; in the report `count` is `0`, **not `null`** |
+>
+> **A failed scan is not a zero** — that is S0-1, and it applies to the sentence stating the gate as much as to the code behind it. An account with no plan record resolves to no entitlements, so under enforcement it is a customer who is refused; a gate written against the number alone is satisfied by a check that never ran.
+>
+> For anyone automating it: **`scanFailed === false && count === 0`**.
+>
+> G-1 and G-2 both remain outstanding regardless.
 
 **Verifiable without production:** everything in §10, plus the guard tests. **Not verifiable without production:** items 1–8 above.
 
@@ -694,6 +708,23 @@ Nothing to decide, and nothing here changes what §11 asks him to run. **QA-2 is
 - [x] **Ready for the user's code review.** S0-1 holds under attack, the anti-join's arithmetic is pinned except for QA-1, the recovery is faithful, and nothing in S-0 writes anything.
 - [ ] **Two lines before commit:** **QA-1** (pin the profile/onboarding predicates — the guard already has the shape) and **QA-2** (restate §11's gate in both conditions). **QA-3** should follow soon after; QA-4 and QA-5 are follow-ups that need not hold the commit.
 
+### 13.10 Dev response — QA round 1
+
+All five closed, plus both observations. QA passed on the committed tree: 20 mutations, 19 caught, 209 tests across the eight S-0 suites (report `d9aea623`).
+
+| # | Finding | What was done |
+|---|---|---|
+| **QA-1** | Medium. The `missing_with_profile` / `missing_onboarding_only` predicates were unpinned — swapping them passed all 22 tests | **The fourth member of the S0-1 family, now pinned.** Two `toMatch`es assert which predicate feeds which column. **Proof, not assertion:** I reproduced QA's swap, watched the new test go red (1 failed, 22 passed), reverted, and confirmed the file is byte-identical to `HEAD` via `git diff --stat`. The comment records why the three-way agreement in runbook steps 3–4 cannot catch it: the sum is unchanged, so `missing_count` is unaffected, and both numbers stay plausible while the evidence says the opposite of what happened |
+| **QA-2** | Medium, and the only one that reaches the user. The gate was still stated as `missing_count > 0` alone — the exact wording SA called insufficient | **Restated as two conditions in both documents**, in the operator's words, as a table: *(1) the scan ran — `scanFailed` is `false`; (2) and it found nothing — `count` is `0`, not `null`*, with **"a failed scan is not a zero"** on its own line and `scanFailed === false && count === 0` for anyone automating it. Also fixed the runbook's "what to do if the count is above zero" to rule out a failed scan first, and its change-history line. QA is right that leaving the gate as the one prose-only distinction would have been S-0 contradicting itself |
+| **QA-3** | Low. Two FACT pins were literal phrases, so better wording failed CI | Both now use one shared `NO_CALLERS` matcher that accepts the natural ways to say it. **The three banner pins stay exact** — a banner has an identity, and that is a different kind of claim. A new test proves the matcher is not merely permissive: six better phrasings pass, three statements of the opposite (*"has two callers"*, *"Business OS reads the `plans` table"*) fail. That control immediately earned itself — it caught my own first regex, which missed *"nothing has ever called it"* |
+| **QA-4** | Low, re-raised. The trim list reported a failed walk as `accounts: 0, rows: []` | **Fixed rather than justified.** `DormantChampionSection` gains `walkFailed: boolean`, `accounts` becomes `number \| null`, and a new `incomplete` string says so in words for whoever reads the report rather than a field. `truncated` could not carry this: a healthy walk that reaches `MAX_ACCOUNTS` sets it too, so it cannot tell "capped" from "broken" — which is why there are now two tests, one per state. Rows collected before the error are still listed: each is individually true, the list is simply not complete |
+| **QA-5** | Low. `Math.max(0, …)` was lost on `dormantDays` in the re-application | Restored, with a comment saying what it is for, and a test using a record created in 2027. Noted for the record: QA found this to be **the only** difference between the recovered implementation and what it had reviewed before the reset |
+
+**Both observations taken:**
+
+- **The no-write test is now an allow-list** over the three reads the report may perform, rather than a denylist of write-sounding name patterns. A denylist only rejects the names somebody thought of; this fails by default on any new method added to the stub. Plus a non-vacuity assertion that the stub was exercised at all.
+- **RD-9's detector no longer accepts a mention.** It now requires the table inside a `.from('…')` call or the module inside an `import … from '…'`, with three decorative cases asserted to fail — the realistic one being `// TODO: skip accounts in business_os_account_plans`, which is exactly the sort of line sitting in a route somebody is about to schedule.
+
 ## 14. Commit Info
 
 _RM will populate this section._
@@ -710,3 +741,4 @@ _RM will populate this section._
 | 2026-09-26 | RC-15 findings resolved | The RD-9 guard's third signal removed (RC-15 makes it unreachable, and the interlock is now documented in the function); `dormantChampions.test.ts` declared in `ALLOWED` rather than routed through the barrel. §10.3 |
 | 2026-09-26 | SA code review: APPROVED for QA with S0-1 (SA) | Added §12. Ran the eleven S-0 suites (270 tests, green). The anti-join is correct: `UNION` dedupes on the pair so the `bool_or` fold is necessary and present, `NOT EXISTS` is NULL-safe, and — the design point that matters — `missing_count` is UNCLAMPED while only the sample is capped, so the number the gate reads can never be silently short. INVOKER/STABLE/`search_path=""`/REVOKE-then-GRANT posture matches WC-9. **Widening verified strict**: the profile side of the union is unchanged, so the new result is a superset by construction; and the old count was itself bounded by its fetch limit, so it could under-report — a bigger fix than Dev claimed. **S0-1 (required):** the repository genuinely guarantees "a failure is an error, never zero" (it throws on error AND on a missing row, with explicit bigint coercion, both pinned by tests) but the REPORT undoes it — its failure branch emits `count: 0` with the distinction only in a prose `scope` string, so the gate as worded is satisfied by a check that never ran. Make it machine-readable and restate the gate. RD-10's three decisions endorsed (archive what would be believed, banner what still has value, keep the original text) and the guard pins the right things. **RC-15 ruling: stands as-is** — adding the test to ALLOWED beats laundering through the barrel, and the claim is symbol-level for value imports but path-level for type-only ones, which fails safe; correct the header (S0-2) and track the refinement outside S-0. **StripeInvoiceService: a boundary note in the billing plan's integration points, not a 36th ledger row** — it is entirely Connect-side and has its own separate `getOrCreateCustomer` that could be confused with Q-T8's (S0-5). Scope is clean; the one thing S-0 cannot close alone is that the scan is only exhaustive in production once applied, which §11 does. Agreed with Dev that the webhook's 168 log statements must be their own task, not a rider on the retirement. |
 | 2026-09-26 | QA round 1: PASS with three findings (QA) | Added §13. Twenty mutations against the claims, nineteen caught, tree byte-clean before and after. S0-1 holds by every route: `scanFailed: false`, bare zeros beside the flag, the sample length as the count, a no-row answer turned into a clean zero at the repository, and a NULL count coerced by `?? 0` are each caught by a named test. A1/A2/A3 and the NULL guards now bite. **QA-1 (Medium):** the `missing_with_profile` / `missing_onboarding_only` predicates are unpinned — swapping them passes all 22 SQL tests, and `missing_onboarding_only` is what §11 step 5 calls the evidence. **QA-2 (Medium):** §11:426 still gates on "`missing_count` is above zero" alone; the two-condition form appears only in a code comment and a test predicate. **QA-3 (Low):** the RD-10 guard pins "zero callers" as a literal phrase, so rewording it better fails CI. QA-4/QA-5 low. RD-10 cross-checked against the merged reuse plan rather than against itself; TK-2 line references spot-checked exact; S0-3 present at runbook:212. 65 suites / 1,354 tests, lint 0, tsc 2,077 with zero in S-0 files. |
+| 2026-09-26 | QA round 1 closed (Dev) | QA-1: the two split predicates pinned — QA's swap reproduced, watched go red, reverted, tree byte-identical. QA-2: the switch-on gate restated as TWO conditions in the workplan and the runbook, in the operator's words, because leaving the gate as the one prose-only distinction would be S-0 contradicting itself. QA-3: the two fact pins share a matcher that survives better wording and still rejects the opposite — its control caught my own first regex. QA-4: `walkFailed` + `accounts: number \| null` + an `incomplete` sentence, with a test for the failed walk AND the capped walk. QA-5: the clamp restored. Both observations taken: allow-list for the no-write check, and RD-9 now requires a query or an import rather than a mention. **70 suites / 1,439 tests**, lint 0 errors, tsc 2,077 with zero in S-0 files. |

@@ -201,7 +201,9 @@ WHERE NOT EXISTS (
 | `missing_sample` | Up to `p_limit` ids, for looking at |
 | `truncated` | Whether the sample was cut. The counts are still exact when it is `true` |
 
-**What to do if `missing_count` is above zero.** Write the number down, then apply `supabase/migrations/20261005b_business_os_entitlements_backfill.sql` again — it is re-runnable — and re-run the function. **Write the new number down too.** Row B1 is the same check and has the same answer.
+**What to do if the scan failed, or `missing_count` is above zero.** A failed scan is the first case to rule out: if step 2 returned no row at all, the function is not installed and nothing below applies — go back and paste the migration.
+
+**If the count itself is above zero.** Write the number down, then apply `supabase/migrations/20261005b_business_os_entitlements_backfill.sql` again — it is re-runnable — and re-run the function. **Write the new number down too.** Row B1 is the same check and has the same answer.
 
 | After the re-run | What it means |
 |---|---|
@@ -211,7 +213,18 @@ WHERE NOT EXISTS (
 
 > ⚠️ **If you ever need to change what columns this function returns, `DROP FUNCTION public.business_os_tenants_missing_plan_row(integer);` first.** `CREATE OR REPLACE FUNCTION` **cannot change a return type** — it fails with `42P13 cannot change return type of existing function`, and adding a column to a `RETURNS TABLE` counts as changing it. The migration is written as `CREATE OR REPLACE` so it is safe to re-run as it stands; that is a different thing from being safe to edit.
 
-> **Do not switch `BOS_ENTITLEMENTS_MODE` to `enforce` while `missing_count` is above zero.** An account with no plan row resolves to no entitlements, so in `enforce` mode it is a customer who is refused. That is the whole reason this scan had to stop being approximate.
+> ### The switch-on gate: TWO conditions, not one
+>
+> **Do not switch `BOS_ENTITLEMENTS_MODE` to `enforce` unless BOTH of these are true:**
+>
+> | | Condition | How you check it |
+> |---|---|---|
+> | 1 | **The scan actually ran.** | Step 2 returned a row. In the admin report, `tenantsWithoutPlanRow.scanFailed` is `false` |
+> | 2 | **And it found nothing missing.** | `missing_count` is `0`. In the report, `count` is `0` — not `null` |
+>
+> **A failed scan is not a zero.** If the function is missing or errors, the report says `scanFailed: true` and every count is `null` rather than `0` — precisely so that "we checked and nobody is missing" and "we never checked" cannot be mistaken for each other. Reading the number on its own is the mistake this whole migration exists to make impossible: an account with no plan record resolves to no entitlements, so under `enforce` it is **a customer who is refused**.
+>
+> In one line, for anyone automating it: **`scanFailed === false && count === 0`**.
 
 If the function is missing, the report says so and returns **an error, not zero**. "Nothing is missing" and "the check was never installed" must never look the same, because the first is a green light.
 
@@ -391,7 +404,7 @@ The reason it is quarantined is not the rollback at the end — every write is i
 
 | Date | Change | Details |
 |------|--------|---------|
-| 2026-09-26 | Added step 10 | `20261010_business_os_tenants_missing_plan_row.sql`: the missing-plan-row count now comes from SQL rather than from TypeScript over `business_profiles` alone, so the admin report and checker row B1 can no longer disagree. Includes the two queries that verify one against the other, and the rule that `enforce` may not be switched on while the count is above zero |
+| 2026-09-26 | Added step 10 | `20261010_business_os_tenants_missing_plan_row.sql`: the missing-plan-row count now comes from SQL rather than from TypeScript over `business_profiles` alone, so the admin report and checker row B1 can no longer disagree. Includes the two queries that verify one against the other, and the two-condition switch-on gate: the scan must have RUN (`scanFailed` false) **and** found nothing (`count` 0), because a failed scan is not a zero |
 | 2026-09-24 | Step 9 added: the privilege fix | The rewritten checker ran on production and **A4 failed for real**: `anon` and `authenticated` retained PostgreSQL 17's `MAINTAIN` privilege, and `service_role` retained DELETE and TRUNCATE, both because the migration **enumerated** what it revoked. `20261009_business_os_entitlements_privilege_fix.sql` corrects the live database, `20261005` is corrected for fresh environments, and A4 now asserts the client roles have no ACL entry at all, with a new A4b for the `service_role` DELETE/TRUNCATE case |
 | 2026-09-24 | The scripts are comment-free and block-per-paste | After two failed pastes (`relation "a" does not exist`), the checking script was rewritten as four standalone statements with **no `--` comments and no prose in any string**. Every word of explanation moved into this document: a new reference section per script, keyed by the `fix` column of each row, plus [Why the scripts are boring](#why-the-scripts-are-boring). No check changed its predicate, its threshold or its PASS/WARN/FAIL meaning |
 | 2026-09-22 | Created | Extracted from the workplan (§4.20.3) as a self-contained hand-off for the production apply, written for the operator rather than the team |

@@ -62,7 +62,16 @@ const routeSource = readFileSync(join(process.cwd(), ROUTE_FILE), 'utf8');
  * on the first run, which is the guard working.
  */
 function excludesBusinessOsPayers(source: string): boolean {
-  return source.includes('business_os_account_plans') || source.includes('business-os/entitlements');
+  // A MENTION is not an exclusion (QA observation). The first version of this
+  // accepted `source.includes('business_os_account_plans')`, which a comment
+  // reading "TODO: skip business_os_account_plans" satisfies — and a TODO is
+  // the single most likely thing to be sitting in a route somebody is about to
+  // schedule. So the table has to appear where it is being QUERIED, and the
+  // module where it is being IMPORTED.
+  const queriesThePlanTable = /\.from\(\s*['"`]business_os_account_plans['"`]\s*\)/.test(source);
+  const importsTheModule = /from\s+['"`][^'"`]*business-os\/entitlements[^'"`]*['"`]/.test(source);
+
+  return queriesThePlanTable || importsTheModule;
 }
 
 const scheduled = (vercelConfig.crons ?? []).some((cron) => cron.path === CRON_PATH);
@@ -116,6 +125,17 @@ describe('RD-9 — the free-tier expiration cron', () => {
     // Both accepted signals, so neither half of the condition is dead code.
     expect(excludesBusinessOsPayers(viaTheTable)).toBe(true);
     expect(excludesBusinessOsPayers(viaTheModule)).toBe(true);
+
+    // And the reason the rule is not a substring search: each of these MENTIONS
+    // the right thing and excludes nobody. The first is the realistic one — a
+    // TODO left in a route that is then scheduled.
+    for (const decorative of [
+      blindRoute + "\n// TODO: skip accounts in business_os_account_plans",
+      blindRoute + "\nconst TABLE = 'business_os_account_plans';",
+      blindRoute + "\n/* see lib/business-os/entitlements for the plan model */",
+    ]) {
+      expect(excludesBusinessOsPayers(decorative)).toBe(false);
+    }
   });
 
   it('every other cron in vercel.json is left alone', () => {

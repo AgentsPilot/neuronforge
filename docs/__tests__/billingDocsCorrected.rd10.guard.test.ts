@@ -35,6 +35,22 @@ import { join } from 'path';
 const root = process.cwd();
 const read = (relative: string): string => readFileSync(join(root, relative), 'utf8');
 
+/**
+ * "The `plans` table has no callers", however it is phrased (QA-3).
+ *
+ * The banner pins elsewhere in this file are deliberately exact — a banner has
+ * an identity, and "did somebody delete the NEVER BUILT heading?" is a question
+ * about a specific string. This is different: it pins a **fact**, and a fact
+ * that is restated more clearly is an improvement, not a regression. Pinning
+ * the literal phrase made "no callers anywhere in the repository" — strictly
+ * better English — turn the suite red.
+ *
+ * So: any of the ways somebody would naturally write it, and none of the ways
+ * somebody would write the OPPOSITE. The negative control below proves the
+ * second half, because a matcher this permissive is worth suspecting.
+ */
+const NO_CALLERS = /(zero|no)\s+(known\s+)?callers\b|nothing\s+(has\s+ever\s+)?call(s|ed)?\s+it|never\s+been\s+called/i;
+
 const ARCHIVED = 'docs/archive/BILLING_SYSTEM_COMPLETE_STATUS.md';
 const PRICING = 'docs/PRICING_SYSTEM_IMPLEMENTATION_PLAN.md';
 const STRIPE_STATUS = 'docs/STRIPE_BILLING_DATABASE_STATUS.md';
@@ -84,9 +100,10 @@ describe('RD-10 — the three billing documents that produced wrong work', () =>
     });
 
     it('records that the `plans` table it designs has no callers', () => {
+      // The fact, not the phrasing — see NO_CALLERS.
       const text = read(PRICING);
 
-      expect(text).toMatch(/zero callers/i);
+      expect(text).toMatch(NO_CALLERS);
       expect(text).toContain(REUSE_PLAN.replace('docs/', '/docs/'));
     });
 
@@ -117,7 +134,31 @@ describe('RD-10 — the three billing documents that produced wrong work', () =>
     });
 
     it('does not leave `plans` sitting in the same list as the live tables', () => {
-      expect(read(STRIPE_STATUS)).toMatch(/ZERO callers/i);
+      expect(read(STRIPE_STATUS)).toMatch(NO_CALLERS);
+    });
+
+    it('the fact matcher accepts better wording and still rejects the opposite', () => {
+      // Non-vacuity for a deliberately loose matcher. It has to survive a
+      // rewrite and still fail if somebody ever writes that the table IS used
+      // — which is the sentence H-7 exists to prevent.
+      for (const better of [
+        'the table has zero callers',
+        'the `plans` table has no callers anywhere in the repository',
+        'no known callers',
+        'nothing calls it',
+        'nothing has ever called it',
+        'it has never been called',
+      ]) {
+        expect(better).toMatch(NO_CALLERS);
+      }
+
+      for (const wrong of [
+        'the `plans` table has two callers',
+        'Business OS reads the `plans` table',
+        'the table is called by the webhook',
+      ]) {
+        expect(wrong).not.toMatch(NO_CALLERS);
+      }
     });
   });
 
