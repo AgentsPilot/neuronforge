@@ -9,7 +9,10 @@
  *      fails this test until it is given a place in the sidebar;
  *   3. the hardcoded status footer is gone and nothing else claims status;
  *   4. the parked AgentsPilot section is kept in the data but hidden, so it
- *      takes no sidebar space while every one of its routes still works by URL.
+ *      takes no sidebar space while every one of its routes still works by URL;
+ *   5. (slice 4) `/admin` is the Health landing, and the old dashboard moved to
+ *      `/admin/platform-dashboard`, listed only in the hidden parked section
+ *      (URL-only, user decision U-6).
  *
  * Source scan, like the per-page nav tests: the component is a client
  * component importing next/image and framer-motion, and the navigation lives
@@ -100,8 +103,14 @@ describe('section order', () => {
     ]);
   });
 
-  it('parks the other twelve AgentsPilot pages', () => {
-    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(12);
+  it('parks the thirteen AgentsPilot pages, the legacy dashboard included (slice 4)', () => {
+    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(13);
+    expect(hrefsOf('AgentsPilot (parked)')).toContain('/admin/platform-dashboard');
+  });
+
+  it('the landing entry is Health (slice 4)', () => {
+    const landing = sections.flatMap((s) => s.items).find((i) => i.href === '/admin');
+    expect(landing?.name).toBe('Health');
   });
 });
 
@@ -109,8 +118,10 @@ describe('every admin page is reachable, exactly once', () => {
   const onDisk = adminPageRoutes();
 
   it('found the admin pages on disk (guards the scan itself)', () => {
-    // 23 pages today. If this drops, the scan broke rather than the sidebar.
-    expect(onDisk.length).toBeGreaterThanOrEqual(23);
+    // 24 pages since slice 4 (the legacy dashboard moved to its own route).
+    // If this drops, the scan broke rather than the sidebar.
+    expect(onDisk.length).toBeGreaterThanOrEqual(24);
+    expect(onDisk).toContain('/admin/platform-dashboard');
     expect(onDisk).toContain('/admin');
     expect(onDisk).toContain('/admin/exchange-rates');
   });
@@ -118,7 +129,7 @@ describe('every admin page is reachable, exactly once', () => {
   it('lists every page except the deliberately unlisted ones', () => {
     const expected = onDisk.filter((r) => !UNLISTED.includes(r));
     expect([...allHrefs].sort()).toEqual(expected);
-    expect(allHrefs).toHaveLength(22);
+    expect(allHrefs).toHaveLength(23);
   });
 
   it('never lists the same page twice', () => {
@@ -178,8 +189,8 @@ describe('the parked AgentsPilot section is hidden, not removed', () => {
     expect(navBlock.match(/hidden: true/g)).toHaveLength(1);
   });
 
-  it('keeps all twelve parked items in the data (routes are untouched)', () => {
-    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(12);
+  it('keeps all thirteen parked items in the data (routes are untouched)', () => {
+    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(13);
   });
 
   it('renders only the visible sections, and draws separators between those alone', () => {

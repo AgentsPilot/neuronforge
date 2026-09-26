@@ -16,7 +16,14 @@ function codeOf(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
 
-const SCREEN_FILES = [`${ROOT}/page.tsx`, `${ROOT}/components/BusinessOsPanel.tsx`, `${ROOT}/types.ts`];
+const SCREEN_FILES = [
+  `${ROOT}/page.tsx`,
+  `${ROOT}/components/BusinessOsPanel.tsx`,
+  `${ROOT}/types.ts`,
+  // Slice 4
+  `${ROOT}/components/UserNameLine.tsx`,
+  `${ROOT}/userName.ts`,
+];
 
 describe('the screen is protected by the layout it inherits from', () => {
   it('app/admin/layout.tsx still awaits requireAdminPage() as its FIRST statement', () => {
