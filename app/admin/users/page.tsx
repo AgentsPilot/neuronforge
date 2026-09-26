@@ -18,8 +18,6 @@ import {
   Phone,
   Building,
   Shield,
-  Ban,
-  UserCheck,
   Database,
   AlertTriangle,
   MapPin,
@@ -33,6 +31,8 @@ import {
 } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 import { BusinessOsPanel } from './components/BusinessOsPanel';
+import { UserNameLine } from './components/UserNameLine';
+import { countLabels, toStatusFilter, type StatusFilter } from './userName';
 import type { RowBusiness } from './types';
 
 const logger = createLogger({ module: 'AdminUsersPage' });
@@ -149,7 +149,9 @@ export default function UsersPage() {
   const [userAuditLogs, setUserAuditLogs] = useState<Record<string, AuditLogEntry[]>>({});
   const [userDetailedStats, setUserDetailedStats] = useState<Record<string, UserDetailedStats>>({});
   const [loadingUserDetails, setLoadingUserDetails] = useState<Record<string, boolean>>({});
-  const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  // Opens on active logins (user feedback on slice 2 check M-2, 2026-09-26).
+  // The list route already accepts status=active; its own default stays 'all'.
+  const [filter, setFilter] = useState<StatusFilter>('active');
   const [searchTerm, setSearchTerm] = useState('');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [auditFilters, setAuditFilters] = useState<Record<string, 'all' | 'login' | 'security' | 'settings'>>({});
@@ -178,7 +180,8 @@ export default function UsersPage() {
         search: searchTerm
       });
 
-      logger.debug({ queryParams: queryParams.toString() }, 'Fetching admin users');
+      // Facts only: the search text may be a person's name or email (QA E-3).
+      logger.debug({ status: filter, hasSearch: searchTerm.trim() !== '', searchLength: searchTerm.length }, 'Fetching admin users');
 
       const response = await fetch(`/api/admin/users?${queryParams}`, {
         method: 'GET',
@@ -202,7 +205,11 @@ export default function UsersPage() {
       }
 
       const result = await response.json();
-      logger.debug({ result }, 'Admin users raw response');
+      // Counts only: the raw body holds every login's name and email (SA C-15 (b)).
+      logger.debug(
+        { success: result?.success === true, rows: Array.isArray(result?.data) ? result.data.length : 0 },
+        'Admin users response parsed'
+      );
 
       if (!result.success) {
         throw new Error(result.error || 'API returned unsuccessful response');
@@ -237,6 +244,9 @@ export default function UsersPage() {
         user.email?.toLowerCase().includes(term) ||
         user.full_name?.toLowerCase().includes(term) ||
         user.company?.toLowerCase().includes(term) ||
+        // The route also matches Business OS business names (slice 2); without
+        // this, a row found by its business name was hidden again here.
+        user.business?.companyName?.toLowerCase().includes(term) ||
         user.id.toLowerCase().includes(term)
       );
     }
@@ -316,9 +326,17 @@ export default function UsersPage() {
       // Process detailed stats (agents, tokens, etc.)
       if (detailedStatsResponse.ok) {
         const detailedData = await detailedStatsResponse.json();
-        logger.debug({ detailedData }, 'User detailed stats response');
+        // Facts only: the payload holds agent names, plugin connections and
+        // spend for one person (QA E-3). Never the payload itself.
+        logger.debug(
+          {
+            success: detailedData?.success === true,
+            agents: detailedData?.data?.agents?.total ?? null,
+            plugins: detailedData?.data?.plugins?.total ?? null,
+          },
+          'User detailed stats response'
+        );
         if (detailedData.success) {
-          logger.debug({ plugins: detailedData.data?.plugins }, 'User plugins data');
           setUserDetailedStats(prev => ({ ...prev, [user.id]: detailedData.data }));
         }
       } else {
@@ -434,8 +452,8 @@ export default function UsersPage() {
           <h1 className="text-xl font-semibold text-white">Businesses</h1>
           {stats && (
             <>
-              <span className="text-xs px-2 py-1 rounded bg-blue-500/20 text-blue-400">
-                {stats.totalUsers} total
+              <span data-testid="count-pill" className="text-xs px-2 py-1 rounded bg-blue-500/20 text-blue-400">
+                {stats.totalUsers} {countLabels(filter).pill}
               </span>
               <span className="text-xs px-2 py-1 rounded bg-green-500/20 text-green-400">
                 {stats.activeUsers} active
@@ -466,7 +484,9 @@ export default function UsersPage() {
           <div className="bg-slate-800 border border-blue-500/30 rounded-xl p-5">
             <div className="flex items-center gap-3 mb-3">
               <UsersIcon className="w-5 h-5 text-blue-400" />
-              <h3 className="text-sm font-medium text-white">Total Users</h3>
+              <h3 data-testid="count-card-label" className="text-sm font-medium text-white">
+                {countLabels(filter).card}
+              </h3>
             </div>
             <p className="text-2xl font-bold text-white">{formatNumber(stats.totalUsers)}</p>
           </div>
@@ -507,7 +527,7 @@ export default function UsersPage() {
 
             <select
               value={filter}
-              onChange={(e) => setFilter(e.target.value as any)}
+              onChange={(e) => setFilter(toStatusFilter(e.target.value))}
               className="bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none"
             >
               <option value="all">All Users</option>
@@ -615,7 +635,9 @@ export default function UsersPage() {
               <tr className="text-left text-xs text-slate-400 uppercase tracking-wider">
                 <th className="px-4 py-3 font-medium">Business / user</th>
                 <th className="px-4 py-3 font-medium">Contact</th>
-                <th className="px-4 py-3 font-medium">Status</th>
+                {/* No status/role column (U-9, 2026-09-26): the Active badge sits
+                    beside the name, and the Supabase sign-in role it would have
+                    held is not an admin indicator (admins: admin_users only). */}
                 <th className="px-4 py-3 font-medium">Login Activity</th>
                 <th className="px-4 py-3 font-medium">Last Sign In</th>
                 <th className="px-4 py-3 font-medium">Joined</th>
@@ -625,10 +647,29 @@ export default function UsersPage() {
             <tbody className="divide-y divide-slate-700/50">
               {filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-slate-400">
+                  <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
                     <Database className="w-12 h-12 mx-auto mb-4 text-slate-600" />
-                    <p className="text-lg font-medium">No users found</p>
-                    <p className="text-sm">Try adjusting your search or filter criteria</p>
+                    {searchTerm.trim() !== '' && filter !== 'all' ? (
+                      <>
+                        {/* U-4: never widen a search silently; offer it in one click. */}
+                        <p data-testid="no-match-filtered" className="text-lg font-medium">
+                          No match among {filter} users
+                        </p>
+                        <button
+                          type="button"
+                          data-testid="search-all-users"
+                          onClick={() => setFilter('all')}
+                          className="mt-3 px-4 py-1.5 text-sm bg-slate-700 border border-slate-600 rounded-lg text-white hover:bg-slate-600 transition-colors"
+                        >
+                          Search all users
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-lg font-medium">No users found</p>
+                        <p className="text-sm">Try adjusting your search or filter criteria</p>
+                      </>
+                    )}
                   </td>
                 </tr>
               ) : (
@@ -661,17 +702,12 @@ export default function UsersPage() {
                               >
                                 {businessLabel(user).text}
                               </p>
-                              <div className="flex items-center gap-2">
-                                <p data-testid="row-user" className="text-sm text-slate-200">
-                                  {user.full_name || 'No name'}
-                                </p>
-                                {user.email_confirmed && (
-                                  <span title="Email verified">
-                                    <CheckCircle className="w-3 h-3 text-green-400" />
-                                  </span>
-                                )}
-                              </div>
-                              <p className="text-xs text-slate-400">{user.email}</p>
+                              <UserNameLine
+                                fullName={user.full_name}
+                                email={user.email}
+                                emailConfirmed={user.email_confirmed}
+                                isActive={isActiveUser(user)}
+                              />
                               <p className="text-xs text-slate-500 font-mono mt-1">{user.id.slice(0, 8)}...</p>
                             </div>
                           </div>
@@ -692,33 +728,6 @@ export default function UsersPage() {
                             )}
                             {!user.company && !user.phone && (
                               <p className="text-xs text-slate-500">No contact info</p>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex flex-col gap-1">
-                            <span className={`px-2 py-1 text-xs font-medium rounded-full w-fit ${
-                              isActiveUser(user)
-                                ? 'bg-green-500/20 text-green-300'
-                                : 'bg-slate-500/20 text-slate-300'
-                            }`}>
-                              {isActiveUser(user) ? (
-                                <span className="flex items-center gap-1">
-                                  <UserCheck className="w-3 h-3" />
-                                  Active
-                                </span>
-                              ) : (
-                                <span className="flex items-center gap-1">
-                                  <Ban className="w-3 h-3" />
-                                  Inactive
-                                </span>
-                              )}
-                            </span>
-                            {user.role && (
-                              <span className="px-2 py-1 text-xs font-medium bg-blue-500/20 text-blue-300 rounded-full w-fit flex items-center gap-1">
-                                <Shield className="w-3 h-3" />
-                                {user.role}
-                              </span>
                             )}
                           </div>
                         </td>
@@ -775,7 +784,7 @@ export default function UsersPage() {
                       {/* Expanded Details Row */}
                       {isExpanded && (
                         <tr className="bg-slate-900/50">
-                          <td colSpan={7} className="px-6 py-6">
+                          <td colSpan={6} className="px-6 py-6">
                             {isLoading ? (
                               <div className="text-center py-12">
                                 <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>

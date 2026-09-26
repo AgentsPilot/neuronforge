@@ -11,7 +11,7 @@
 // `.eq('user_id', userId)` on every query. For the owner method `userId` is
 // always the authenticated caller (never a client-supplied value).
 //
-// THE ONE ADMIN EXCEPTION (admin reorganisation slice 2b, SA C-7):
+// THE FIRST ADMIN EXCEPTION (admin reorganisation slice 2b, SA C-7):
 // `listAdminAiFailures` reads an ADMIN-SELECTED account's failed Business OS AI
 // actions for the Businesses panel. Its only caller is
 // `app/api/admin/business-os/accounts/[accountId]/summary/route.ts`, behind
@@ -19,6 +19,15 @@
 // adminReadMethods.guard.test.ts) fails if anything outside `app/api/admin/**`
 // calls it. It is still `.eq('user_id', accountId)`-scoped, and it selects only
 // the id, time, grouping id and `details` (metadata; no prompt or message).
+//
+// THE SECOND ADMIN EXCEPTION, AND THE FIRST UNSCOPED READ (admin reorganisation
+// slice 4, SA C-5): `countAdminEventsAllAccountsInWindow` counts audit rows of
+// EVERY account, for the admin Health landing. It is NOT `.eq('user_id')`-scoped:
+// the question ("how many failed AI actions platform-wide in 24 h?") has no
+// per-tenant answer. It returns one integer (`count: 'exact', head: true`, so no
+// row, no `details`), requires an admin read context (who read, for which
+// request), and its only caller is `app/api/admin/health-summary/route.ts`,
+// behind `requireAdmin` (pinned by adminReadMethods.guard.test.ts).
 //
 // AI audit entries (entity type `ai_action`, events `BUSINESS_AI_ACTION_*`) are
 // operator-only until the charging decision (Layer 3 D-6). They are excluded
@@ -72,6 +81,26 @@ export interface AdminAiFailureRow {
   /** AiAuditDetails as stored. Projected to an allow-list by the caller. */
   details: unknown;
 }
+
+/**
+ * Who is reading, for which request (slice 4, SA C-5). Structurally the same as
+ * the admin analytics repository's context, declared here so this owner-scoped
+ * repository does not import that admin-only module.
+ */
+export interface AdminAuditReadContext {
+  correlationId: string;
+  /** The admin's user id (from `requireAdmin`). Never an email. */
+  adminId: string;
+}
+
+/** What `countAdminEventsAllAccountsInWindow` may filter on. At least one is required. */
+export interface AdminAuditCountFilter {
+  /** An exact event name (an AUDIT_EVENTS value). */
+  action?: (typeof AUDIT_EVENTS)[keyof typeof AUDIT_EVENTS];
+  severity?: AuditSeverity;
+}
+
+const AUDIT_SEVERITIES: readonly AuditSeverity[] = ['info', 'warning', 'critical'];
 
 export interface OwnerAuditQuery {
   action?: string;
@@ -173,6 +202,67 @@ export class AuditTrailRepository {
     } catch (error) {
       this.logger.error({ err: error, accountId }, 'Failed to list the AI failures of an account for admin');
       return { data: null, error: error as Error };
+    }
+  }
+  /**
+   * ADMIN ONLY, ALL ACCOUNTS — see the header. The exact number of audit rows,
+   * every account, in `[window.start, window.end]` (both inclusive, as the admin
+   * audit page's `.gte/.lte`), matching the action and/or severity.
+   */
+  async countAdminEventsAllAccountsInWindow(
+    context: AdminAuditReadContext,
+    filter: AdminAuditCountFilter,
+    window: { start: string; end: string },
+    opts: { signal?: AbortSignal } = {}
+  ): Promise<RepositoryResult<number>> {
+    try {
+      if (!context?.correlationId || !context?.adminId) {
+        throw new Error('An admin read context (correlationId, adminId) is required');
+      }
+      if (!filter?.action && !filter?.severity) {
+        throw new Error('An action or a severity is required');
+      }
+      if (filter.severity && !AUDIT_SEVERITIES.includes(filter.severity)) {
+        throw new Error('Unknown severity');
+      }
+      if (!window || !window.start || !window.end || !(Date.parse(window.start) <= Date.parse(window.end))) {
+        throw new Error('A valid window (start <= end) is required');
+      }
+
+      let query = this.supabase
+        .from('audit_trail')
+        .select('id', { count: 'exact', head: true })
+        .gte('created_at', window.start)
+        .lte('created_at', window.end);
+      if (filter.action) query = query.eq('action', filter.action);
+      if (filter.severity) query = query.eq('severity', filter.severity);
+      if (opts.signal) query = query.abortSignal(opts.signal);
+
+      const { count, error } = await query;
+      if (error) throw error;
+
+      // info: a cross-tenant read. The filter and the count only.
+      this.logger.info(
+        {
+          correlationId: context.correlationId,
+          adminId: context.adminId,
+          method: 'countAdminEventsAllAccountsInWindow',
+          action: filter.action,
+          severity: filter.severity,
+          count: count ?? 0,
+        },
+        'Admin audit count read across all accounts'
+      );
+      return { data: count ?? 0, error: null };
+    } catch (error) {
+      // warn, like the sibling admin reads (AdminTokenUsageAnalyticsRepository):
+      // the caller turns a failure into an "unavailable" tile and records it in
+      // its own timings, so this is not a fault on its own (SA code review 5).
+      this.logger.warn(
+        { err: error, correlationId: context?.correlationId, method: 'countAdminEventsAllAccountsInWindow' },
+        'Admin audit count read failed'
+      );
+      return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
     }
   }
 }

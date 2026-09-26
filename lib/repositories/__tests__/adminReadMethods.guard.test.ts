@@ -4,6 +4,7 @@
  *
  *   BusinessProfileRepository.findAdminIdentity / findAdminIdentitiesByUserIds
  *   AuditTrailRepository.listAdminAiFailures
+ *   AuditTrailRepository.countAdminEventsAllAccountsInWindow (slice 4, SA C-5)
  *   UserProfileRepository.listForAdmin
  *
  * Two things are pinned: what each reads (columns, scoping, no filter-string
@@ -43,7 +44,7 @@ function recordingClient(result: (calls: Call[]) => { data: unknown; error: unkn
       const calls: Call[] = [{ method: 'from', args: [table] }];
       queries.push(calls);
       const builder: Record<string, unknown> = {};
-      for (const method of ['select', 'eq', 'in', 'gte', 'order', 'limit', 'ilike', 'or', 'maybeSingle']) {
+      for (const method of ['select', 'eq', 'in', 'gte', 'lte', 'order', 'limit', 'ilike', 'or', 'maybeSingle', 'abortSignal']) {
         builder[method] = (...args: unknown[]) => {
           calls.push({ method, args });
           return builder;
@@ -113,6 +114,60 @@ describe('AuditTrailRepository.listAdminAiFailures', () => {
     const { client } = recordingClient(() => ({ data: null, error: { message: 'boom' } }));
     const result = await new AuditTrailRepository(client).listAdminAiFailures(ACCOUNT, { since: new Date(), limit: 10 });
     expect(result.data).toBeNull();
+  });
+});
+
+describe('AuditTrailRepository.countAdminEventsAllAccountsInWindow (slice 4, SA C-5)', () => {
+  const CTX = { correlationId: 'corr-1', adminId: '11111111-1111-4111-8111-111111111111' };
+  const WINDOW = { start: '2026-09-25T10:30:00.000Z', end: '2026-09-26T10:30:00.000Z' };
+
+  it('is an exact head count, all accounts, over the inclusive window: no row and no details are read', async () => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 7 } as { data: unknown; error: unknown }));
+    const result = await new AuditTrailRepository(client).countAdminEventsAllAccountsInWindow(
+      CTX,
+      { action: 'BUSINESS_AI_ACTION_FAILED' },
+      WINDOW
+    );
+    expect(result).toEqual({ data: 7, error: null });
+    const q = queries[0];
+    expect(q).toContainEqual({ method: 'from', args: ['audit_trail'] });
+    expect(q).toContainEqual({ method: 'select', args: ['id', { count: 'exact', head: true }] });
+    expect(q).toContainEqual({ method: 'eq', args: ['action', 'BUSINESS_AI_ACTION_FAILED'] });
+    expect(q).toContainEqual({ method: 'gte', args: ['created_at', WINDOW.start] });
+    expect(q).toContainEqual({ method: 'lte', args: ['created_at', WINDOW.end] });
+    // Deliberately unscoped: the first all-accounts read in this repository.
+    expect(q.some((c) => c.method === 'eq' && c.args[0] === 'user_id')).toBe(false);
+  });
+
+  it('filters on severity, and attaches the deadline signal', async () => {
+    const signal = new AbortController().signal;
+    const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 0 } as { data: unknown; error: unknown }));
+    await new AuditTrailRepository(client).countAdminEventsAllAccountsInWindow(CTX, { severity: 'critical' }, WINDOW, { signal });
+    expect(queries[0]).toContainEqual({ method: 'eq', args: ['severity', 'critical'] });
+    expect(queries[0]).toContainEqual({ method: 'abortSignal', args: [signal] });
+  });
+
+  it.each([
+    ['no admin context', { correlationId: '', adminId: '' }, { action: 'BUSINESS_AI_ACTION_FAILED' }, WINDOW],
+    ['no action and no severity', CTX, {}, WINDOW],
+    ['an unknown severity', CTX, { severity: 'fatal' }, WINDOW],
+    ['a reversed window', CTX, { severity: 'critical' }, { start: WINDOW.end, end: WINDOW.start }],
+  ])('refuses %s before any query', async (_, ctx, filter, window) => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null }));
+    const result = await new AuditTrailRepository(client).countAdminEventsAllAccountsInWindow(
+      ctx as typeof CTX,
+      filter as { severity?: 'critical' },
+      window
+    );
+    expect(result.data).toBeNull();
+    expect(queries).toHaveLength(0);
+  });
+
+  it('returns { data: null, error } on a database error', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: { message: 'boom' } }));
+    const result = await new AuditTrailRepository(client).countAdminEventsAllAccountsInWindow(CTX, { severity: 'critical' }, WINDOW);
+    expect(result.data).toBeNull();
+    expect(result.error).toBeTruthy();
   });
 });
 
@@ -214,7 +269,14 @@ describe('UserProfileRepository.listForAdmin', () => {
 // ─── Who may call them (SA C-7) ───────────────────────────────────────────────
 
 const ROOT = process.cwd();
-const ADMIN_METHODS = ['findAdminIdentity', 'findAdminIdentitiesByUserIds', 'listAdminAiFailures', 'listForAdmin'];
+const ADMIN_METHODS = [
+  'findAdminIdentity',
+  'findAdminIdentitiesByUserIds',
+  'listAdminAiFailures',
+  'listForAdmin',
+  // Slice 4: the first unscoped (all-accounts) audit read.
+  'countAdminEventsAllAccountsInWindow',
+];
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

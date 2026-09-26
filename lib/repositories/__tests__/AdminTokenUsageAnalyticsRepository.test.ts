@@ -25,6 +25,7 @@ jest.mock('@/lib/logger', () => {
 import {
   AdminTokenUsageAnalyticsRepository,
   ADMIN_ANALYTICS_COLUMNS,
+  ADMIN_HEALTH_READ_LIMITS,
 } from '../AdminTokenUsageAnalyticsRepository';
 import { buildFeatureFilterOrExpression } from '../TokenUsageRepository';
 
@@ -159,6 +160,152 @@ describe('listRowsAllAccountsInWindow', () => {
     const reversed = await repo.listRowsAllAccountsInWindow(CTX, { start: WINDOW.end, end: WINDOW.start }, {});
     expect(reversed.data).toBeNull();
     expect(calls.filter((c) => c.method === 'from')).toHaveLength(1); // only the bad-filter attempt reached from()
+  });
+});
+
+// ─── Health landing reads (slice 4, F-1, SA C-4) ─────────────────────────────
+
+/** One builder per `from()`; each query resolves with `pageFor(rangeArgs)`. */
+function pagingClient(pageFor: (from: number, to: number) => { data: unknown; error: unknown; count?: number }) {
+  const queries: Array<Array<{ method: string; args: unknown[] }>> = [];
+  const client = {
+    from: (table: string) => {
+      const calls: Array<{ method: string; args: unknown[] }> = [{ method: 'from', args: [table] }];
+      queries.push(calls);
+      const builder: Record<string, unknown> = {};
+      for (const method of ['select', 'gte', 'lte', 'eq', 'is', 'not', 'or', 'order', 'range', 'abortSignal']) {
+        builder[method] = (...args: unknown[]) => {
+          calls.push({ method, args });
+          return builder;
+        };
+      }
+      builder.then = (resolve: (v: unknown) => void) => {
+        const range = calls.find((c) => c.method === 'range');
+        resolve(pageFor((range?.args[0] as number) ?? 0, (range?.args[1] as number) ?? 0));
+      };
+      return builder;
+    },
+  } as unknown as SupabaseClient;
+  return { client, queries };
+}
+
+const rowsBetween = (from: number, to: number, total: number) =>
+  Array.from({ length: Math.max(0, Math.min(to, total - 1) - from + 1) }, (_, i) => ({
+    id: `id-${from + i}`,
+    created_at: '2026-09-07T00:00:00.000Z',
+    cost_usd: '0.01',
+  }));
+
+describe('countAllAccountsInWindow', () => {
+  it('is an exact head count over the window and the Business OS filter; no row is read', async () => {
+    const { client, queries } = pagingClient(() => ({ data: null, error: null, count: 42 }));
+    const result = await new AdminTokenUsageAnalyticsRepository(client).countAllAccountsInWindow(CTX, WINDOW, {
+      featureFilter: BOS_FILTER,
+    });
+    expect(result).toEqual({ data: 42, error: null });
+    const q = queries[0];
+    expect(q).toContainEqual({ method: 'select', args: ['id', { count: 'exact', head: true }] });
+    expect(q).toContainEqual({ method: 'gte', args: ['created_at', WINDOW.start] });
+    expect(q).toContainEqual({ method: 'lte', args: ['created_at', WINDOW.end] });
+    expect(q).toContainEqual({ method: 'or', args: [buildFeatureFilterOrExpression(BOS_FILTER)] });
+  });
+
+  it('attaches the deadline signal, and refuses a read with no admin context', async () => {
+    const signal = new AbortController().signal;
+    const { client, queries } = pagingClient(() => ({ data: null, error: null, count: 0 }));
+    const repo = new AdminTokenUsageAnalyticsRepository(client);
+    await repo.countAllAccountsInWindow(CTX, WINDOW, {}, { signal });
+    expect(queries[0]).toContainEqual({ method: 'abortSignal', args: [signal] });
+
+    const refused = await repo.countAllAccountsInWindow({ correlationId: '', adminId: '' }, WINDOW, {});
+    expect(refused.data).toBeNull();
+    expect(queries).toHaveLength(1);
+  });
+
+  it('returns { data: null, error } on a database error', async () => {
+    const { client } = pagingClient(() => ({ data: null, error: { message: 'boom' } }));
+    const result = await new AdminTokenUsageAnalyticsRepository(client).countAllAccountsInWindow(CTX, WINDOW, {});
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+  });
+});
+
+describe('listCostPointsAllAccountsInWindow', () => {
+  it('selects only id, created_at and cost_usd, newest first with an id tiebreak, paged', async () => {
+    expect(ADMIN_ANALYTICS_COLUMNS.cost).toBe('id, created_at, cost_usd');
+    const { client, queries } = pagingClient((from, to) => ({ data: rowsBetween(from, to, 1500), error: null }));
+    const result = await new AdminTokenUsageAnalyticsRepository(client).listCostPointsAllAccountsInWindow(
+      CTX,
+      WINDOW,
+      { featureFilter: BOS_FILTER },
+      { pageSize: 1000, ceiling: 10000 }
+    );
+    expect(result.error).toBeNull();
+    expect(result.data).toMatchObject({ completed: true, reachedCeiling: false, pages: 2 });
+    expect(result.data!.rows).toHaveLength(1500);
+    expect(queries).toHaveLength(2);
+    expect(queries[0]).toContainEqual({ method: 'select', args: [ADMIN_ANALYTICS_COLUMNS.cost] });
+    expect(queries[0]).toContainEqual({ method: 'order', args: ['created_at', { ascending: false }] });
+    expect(queries[0]).toContainEqual({ method: 'order', args: ['id', { ascending: false }] });
+    expect(queries[0]).toContainEqual({ method: 'range', args: [0, 999] });
+    expect(queries[1]).toContainEqual({ method: 'range', args: [1000, 1999] });
+  });
+
+  it('stops at the ceiling and says so (never "completed")', async () => {
+    const { client, queries } = pagingClient((from, to) => ({ data: rowsBetween(from, to, 100000), error: null }));
+    const result = await new AdminTokenUsageAnalyticsRepository(client).listCostPointsAllAccountsInWindow(
+      CTX, WINDOW, {}, { pageSize: 1000, ceiling: 3000 }
+    );
+    expect(result.data).toMatchObject({ completed: false, reachedCeiling: true, pages: 3 });
+    expect(result.data!.rows).toHaveLength(3000);
+    expect(queries).toHaveLength(3);
+  });
+
+  it('de-duplicates a row that shifts across a page boundary', async () => {
+    const { client } = pagingClient((from) =>
+      from === 0
+        ? { data: [{ id: 'a', created_at: 'x', cost_usd: 1 }, { id: 'b', created_at: 'x', cost_usd: 1 }], error: null }
+        : { data: [{ id: 'b', created_at: 'x', cost_usd: 1 }], error: null }
+    );
+    const result = await new AdminTokenUsageAnalyticsRepository(client).listCostPointsAllAccountsInWindow(
+      CTX, WINDOW, {}, { pageSize: 2, ceiling: 10 }
+    );
+    expect(result.data!.rows.map((r) => r.id)).toEqual(['a', 'b']);
+  });
+
+  it('C-4: once the deadline has passed, no further page is requested', async () => {
+    const controller = new AbortController();
+    const { client, queries } = pagingClient((from, to) => {
+      controller.abort(); // the deadline passes while page 1 is in flight
+      return { data: rowsBetween(from, to, 5000), error: null };
+    });
+    const result = await new AdminTokenUsageAnalyticsRepository(client).listCostPointsAllAccountsInWindow(
+      CTX, WINDOW, {}, { pageSize: 1000, ceiling: 10000, signal: controller.signal }
+    );
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toContainEqual({ method: 'abortSignal', args: [controller.signal] });
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+  });
+
+  it('refuses a ceiling above the limit, or no admin context, before any query', async () => {
+    const { client, queries } = pagingClient(() => ({ data: [], error: null }));
+    const repo = new AdminTokenUsageAnalyticsRepository(client);
+    expect(
+      (await repo.listCostPointsAllAccountsInWindow(CTX, WINDOW, {}, { pageSize: 1000, ceiling: ADMIN_HEALTH_READ_LIMITS.CEILING + 1 })).data
+    ).toBeNull();
+    expect(
+      (await repo.listCostPointsAllAccountsInWindow({ correlationId: 'c', adminId: '' }, WINDOW, {}, { pageSize: 1000, ceiling: 10 })).data
+    ).toBeNull();
+    expect(queries).toHaveLength(0);
+  });
+
+  it('logs counts only, never row values', async () => {
+    mockInfo.mockClear();
+    const { client } = pagingClient(() => ({ data: [{ id: 'a', created_at: 'x', cost_usd: '123.45' }], error: null }));
+    await new AdminTokenUsageAnalyticsRepository(client).listCostPointsAllAccountsInWindow(CTX, WINDOW, {}, { pageSize: 10, ceiling: 10 });
+    expect(JSON.stringify(mockInfo.mock.calls)).not.toContain('123.45');
+    expect(mockInfo.mock.calls[0][0]).toMatchObject({ rows: 1, pages: 1, completed: true });
   });
 });
 

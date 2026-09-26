@@ -44,6 +44,34 @@ export type EntitlementMode = 'off' | 'shadow' | 'enforce';
 export const MODE_ENV_VAR = 'BOS_ENTITLEMENTS_MODE';
 
 /**
+ * What the environment asks for, and what that resolves to — the ONE parser
+ * behind both public readers (admin reorganisation slice 4, SA C-8).
+ *
+ * Pure: no logging, no import, no throw. `raw` is returned only so
+ * `getEntitlementMode()` can keep logging it exactly as it always has; it never
+ * leaves this file (`getEntitlementModeSetting()` drops it).
+ */
+interface ParsedModeSetting {
+  raw: string;
+  requested: EntitlementMode | 'unrecognised';
+  effective: EntitlementMode;
+  refused: boolean;
+}
+
+function parseModeSetting(): ParsedModeSetting {
+  const raw = (process.env[MODE_ENV_VAR] ?? '').trim().toLowerCase();
+
+  if (raw === '' || raw === 'off') return { raw, requested: 'off', effective: 'off', refused: false };
+  if (raw === 'shadow') return { raw, requested: 'shadow', effective: 'shadow', refused: false };
+  if (raw === 'enforce') {
+    return isEnforceAllowed()
+      ? { raw, requested: 'enforce', effective: 'enforce', refused: false }
+      : { raw, requested: 'enforce', effective: 'shadow', refused: true };
+  }
+  return { raw, requested: 'unrecognised', effective: 'off', refused: false };
+}
+
+/**
  * The mode, after the launch gate.
  *
  * `enforce` is refused — and downgraded to `shadow` — while the launch config
@@ -56,25 +84,38 @@ export const MODE_ENV_VAR = 'BOS_ENTITLEMENTS_MODE';
  * enforcing and is not is exactly the kind of thing that goes unnoticed.
  */
 export function getEntitlementMode(): EntitlementMode {
-  const raw = (process.env[MODE_ENV_VAR] ?? '').trim().toLowerCase();
+  const setting = parseModeSetting();
 
-  if (raw === '' || raw === 'off') return 'off';
-  if (raw === 'shadow') return 'shadow';
-
-  if (raw === 'enforce') {
-    if (!isEnforceAllowed()) {
-      logger.error(
-        { mode: raw, effectiveMode: 'shadow', reason: 'no_tier_configured' },
-        'BOS_ENTITLEMENTS_MODE=enforce refused: no tier is configured, so enforcing would leave ' +
-          'customers with nothing to buy. Running in shadow instead.'
-      );
-      return 'shadow';
-    }
-    return 'enforce';
+  if (setting.refused) {
+    logger.error(
+      { mode: setting.raw, effectiveMode: 'shadow', reason: 'no_tier_configured' },
+      'BOS_ENTITLEMENTS_MODE=enforce refused: no tier is configured, so enforcing would leave ' +
+        'customers with nothing to buy. Running in shadow instead.'
+    );
+  } else if (setting.requested === 'unrecognised') {
+    logger.error({ mode: setting.raw, effectiveMode: 'off' }, 'Unrecognised BOS_ENTITLEMENTS_MODE; treating it as off');
   }
 
-  logger.error({ mode: raw, effectiveMode: 'off' }, 'Unrecognised BOS_ENTITLEMENTS_MODE; treating it as off');
-  return 'off';
+  return setting.effective;
+}
+
+/**
+ * The same answer as `getEntitlementMode()`, plus WHAT WAS ASKED FOR — for the
+ * admin Health page, where "we think we are enforcing and we are not" is the
+ * signal (SA C-8).
+ *
+ * Never returns the raw environment string (an unknown value is reported as
+ * `'unrecognised'`, not echoed), and does not log: `getEntitlementMode()` already
+ * logs the refusal wherever the mode is actually used, and a health page that
+ * logged on every load would bury it.
+ */
+export function getEntitlementModeSetting(): {
+  effective: EntitlementMode;
+  requested: EntitlementMode | 'unrecognised';
+  refused: boolean;
+} {
+  const { effective, requested, refused } = parseModeSetting();
+  return { effective, requested, refused };
 }
 
 /** True when the mode is `shadow` or `enforce` — i.e. resolution should happen. */

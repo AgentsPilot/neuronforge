@@ -9,9 +9,11 @@
 //   - SERVICE-ROLE CLIENT, ON PURPOSE. The read spans every account. RLS has no
 //     "a platform admin reads every ledger row" policy to lean on, and the
 //     owner policy would return one account at most. CLAUDE.md Rule 4
-//     (`.eq('user_id', userId)`) is replaced by the caller's gate: the ONLY
-//     permitted caller is `app/api/admin/token-usage/drill-down/route.ts`,
-//     which runs `requireAdmin` before it reaches this class. A source guard
+//     (`.eq('user_id', userId)`) is replaced by the caller's gate. The ONLY
+//     permitted callers are `app/api/admin/token-usage/drill-down/route.ts`
+//     (Cost Analytics) and `app/api/admin/health-summary/route.ts` (the Health
+//     landing, admin reorganisation slice 4: the count and the paged cost read
+//     below). Both run `requireAdmin` before they reach this class. A source guard
 //     (lib/repositories/__tests__/AdminTokenUsageAnalyticsRepository.test.ts)
 //     fails if anything outside `app/api/admin/**` imports it.
 //   - "All accounts" is in the METHOD NAME, never an omitted argument
@@ -54,7 +56,35 @@ export const ADMIN_ANALYTICS_COLUMNS = {
     'activity_name, category, request_type, feature, component, endpoint, input_tokens, ' +
     'output_tokens, cost_usd',
   totals: 'cost_usd, input_tokens, output_tokens',
+  /** The Health spend tile (slice 4): what a sum per sub-window needs, plus the paging key. */
+  cost: 'id, created_at, cost_usd',
 } as const;
+
+/**
+ * Limits of the paged Health spend read (admin reorganisation slice 4, F-1).
+ * Same shape as the chat report's all-accounts read. The ceiling is NOT to be
+ * raised: past it the figure is labelled a lower bound, and the fix is an index
+ * or an RPC (slice 4 workplan §7.4), not a bigger loop.
+ */
+export const ADMIN_HEALTH_READ_LIMITS = {
+  PAGE_SIZE: 1000,
+  CEILING: 10_000,
+} as const;
+
+/** One row of the paged cost read. numeric may arrive as a string. */
+export interface AdminCostPointRow {
+  id: string;
+  created_at: string;
+  cost_usd: number | string | null;
+}
+
+/** The paged cost read's result. `completed` = the last page was short (nothing left to read). */
+export interface AdminCostPointsPage {
+  rows: AdminCostPointRow[];
+  reachedCeiling: boolean;
+  completed: boolean;
+  pages: number;
+}
 
 export type AdminAnalyticsColumns = keyof typeof ADMIN_ANALYTICS_COLUMNS;
 
@@ -199,6 +229,137 @@ export class AdminTokenUsageAnalyticsRepository {
       return { data: rows, error: null };
     } catch (error) {
       log.warn({ err: error }, 'Admin analytics ledger read failed');
+      return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
+    }
+  }
+  private static assertReadContext(context: AdminReadContext, window: AdminAnalyticsWindow): void {
+    if (!context?.correlationId || !context?.adminId) {
+      throw new Error('An admin read context (correlationId, adminId) is required');
+    }
+    if (!window || !window.start || !window.end || Date.parse(window.start) > Date.parse(window.end)) {
+      throw new Error('A valid window (start <= end) is required');
+    }
+  }
+
+  /**
+   * Exact number of matching ledger rows, all accounts, in the window
+   * (`count: 'exact', head: true`: no row is returned). Health spend tile.
+   */
+  async countAllAccountsInWindow(
+    context: AdminReadContext,
+    window: AdminAnalyticsWindow,
+    filters: AdminAnalyticsFilters,
+    opts: { signal?: AbortSignal } = {}
+  ): Promise<RepositoryResult<number>> {
+    const log = this.logger.child({
+      correlationId: context?.correlationId,
+      adminId: context?.adminId,
+      method: 'countAllAccountsInWindow',
+    });
+    try {
+      AdminTokenUsageAnalyticsRepository.assertReadContext(context, window);
+
+      const base = this.supabase
+        .from('token_usage')
+        .select('id', { count: 'exact', head: true })
+        .gte('created_at', window.start)
+        .lte('created_at', window.end);
+
+      let query = AdminTokenUsageAnalyticsRepository.applyFilters(base, filters);
+      if (opts.signal) query = query.abortSignal(opts.signal);
+      const { count, error } = await query;
+      if (error) throw error;
+
+      log.info({ count: count ?? 0, scoped: !!filters.featureFilter }, 'Admin ledger count read');
+      return { data: count ?? 0, error: null };
+    } catch (error) {
+      log.warn({ err: error }, 'Admin ledger count read failed');
+      return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
+    }
+  }
+
+  /**
+   * `id, created_at, cost_usd` of every matching row, all accounts, in the
+   * window: newest first (`created_at DESC, id DESC`), paged, de-duplicated by
+   * id, up to `ceiling` rows. Health spend tile.
+   *
+   * The read is newest-first, so a ceiling-truncated read drops the OLDEST rows;
+   * the caller decides per sub-window whether its figure is exact (SA C-1).
+   *
+   * DEADLINE (SA C-4): `signal` is checked BETWEEN pages and attached to each
+   * request, so an expired deadline stops work instead of only stopping the
+   * wait. An aborted read returns `{ data: null, error }` like any failure.
+   */
+  async listCostPointsAllAccountsInWindow(
+    context: AdminReadContext,
+    window: AdminAnalyticsWindow,
+    filters: AdminAnalyticsFilters,
+    opts: { pageSize: number; ceiling: number; signal?: AbortSignal }
+  ): Promise<RepositoryResult<AdminCostPointsPage>> {
+    const log = this.logger.child({
+      correlationId: context?.correlationId,
+      adminId: context?.adminId,
+      method: 'listCostPointsAllAccountsInWindow',
+    });
+    try {
+      AdminTokenUsageAnalyticsRepository.assertReadContext(context, window);
+      const pageSize = Math.trunc(opts?.pageSize);
+      const ceiling = Math.trunc(opts?.ceiling);
+      if (!(pageSize >= 1 && pageSize <= ADMIN_HEALTH_READ_LIMITS.PAGE_SIZE)) {
+        throw new Error('pageSize is out of range');
+      }
+      if (!(ceiling >= 1 && ceiling <= ADMIN_HEALTH_READ_LIMITS.CEILING)) {
+        throw new Error('ceiling is out of range');
+      }
+
+      const rows: AdminCostPointRow[] = [];
+      const seen = new Set<string>();
+      let pages = 0;
+      let completed = false;
+
+      for (let from = 0; rows.length < ceiling; from += pageSize) {
+        if (opts.signal?.aborted) throw new Error('Read deadline passed');
+        const to = from + Math.min(pageSize, ceiling - from) - 1;
+        const base = this.supabase
+          .from('token_usage')
+          .select(ADMIN_ANALYTICS_COLUMNS.cost)
+          .gte('created_at', window.start)
+          .lte('created_at', window.end);
+
+        let query = AdminTokenUsageAnalyticsRepository.applyFilters(base, filters)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(from, to);
+        if (opts.signal) query = query.abortSignal(opts.signal);
+
+        const { data, error } = await query;
+        if (error) throw error;
+        pages += 1;
+
+        const page = (data ?? []) as unknown as AdminCostPointRow[];
+        for (const row of page) {
+          const key = String(row.id);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          rows.push(row);
+        }
+
+        if (page.length < to - from + 1) {
+          completed = true;
+          break;
+        }
+        if (from + pageSize >= ceiling) break;
+      }
+
+      const reachedCeiling = !completed && rows.length >= ceiling;
+      // info: a cross-tenant read. Counts only, never row values.
+      log.info(
+        { rows: rows.length, pages, completed, reachedCeiling, scoped: !!filters.featureFilter },
+        'Admin ledger cost points read'
+      );
+      return { data: { rows: rows.slice(0, ceiling), reachedCeiling, completed, pages }, error: null };
+    } catch (error) {
+      log.warn({ err: error }, 'Admin ledger cost points read failed');
       return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
     }
   }

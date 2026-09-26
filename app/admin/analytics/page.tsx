@@ -26,6 +26,7 @@ import {
   ChevronRight,
   Check
 } from 'lucide-react';
+import { formatLinkedBound, parseLinkedWindow, urlWithoutLinkedWindow, type LinkedWindow } from './linkedWindow';
 
 // Types
 interface CategoryBreakdown {
@@ -221,6 +222,22 @@ function AdminCostAnalyticsContent() {
   // can ask for ?scope=all, or narrow to one account with ?user=<id>.
   const [scope, setScope] = useState<Scope>(() => (searchParams?.get('scope') === 'all' ? 'all' : 'bos'));
   const [possiblyIncomplete, setPossiblyIncomplete] = useState(false);
+  // An exact window from a deep link (slice 4, SA C-9): the Health spend tile
+  // links here with the bounds it counted. Any period or custom-range change
+  // clears it.
+  const [linkedWindow, setLinkedWindow] = useState<LinkedWindow | null>(() => parseLinkedWindow(searchParams));
+  /**
+   * Leave the linked window: drop it from state AND from the address bar, so a
+   * reload does not bring it back. `replaceState` changes the URL only; it does
+   * not navigate or refetch (the state change above does that).
+   */
+  const clearLinkedWindow = useCallback(() => {
+    setLinkedWindow(null);
+    if (typeof window !== 'undefined') {
+      const next = urlWithoutLinkedWindow(window.location.href);
+      if (next !== null) window.history.replaceState(window.history.state, '', next);
+    }
+  }, []);
   const [dateRangeError, setDateRangeError] = useState<string | null>(null);
   const [breakdownBy, setBreakdownBy] = useState<BreakdownDimension>('provider');
   const [filters, setFilters] = useState<Filters>(() => {
@@ -281,7 +298,11 @@ function AdminCostAnalyticsContent() {
       if (filters.execution) queryParams.set('execution', filters.execution);
       if (filters.category && filters.category !== 'all') queryParams.set('category', filters.category);
 
-      if (period === -1 && appliedDateRange) {
+      if (linkedWindow) {
+        // Verbatim: never through the browser-local T23:59:59 path below.
+        queryParams.set('dateFrom', linkedWindow.from);
+        queryParams.set('dateTo', linkedWindow.to);
+      } else if (period === -1 && appliedDateRange) {
         queryParams.set('dateFrom', new Date(appliedDateRange.from).toISOString());
         queryParams.set('dateTo', new Date(appliedDateRange.to + 'T23:59:59').toISOString());
       } else if (period > 0) {
@@ -334,17 +355,19 @@ function AdminCostAnalyticsContent() {
     } finally {
       setLoading(false);
     }
-  }, [breakdownBy, filters, period, appliedDateRange, scope]);
+  }, [breakdownBy, filters, period, appliedDateRange, scope, linkedWindow]);
 
   useEffect(() => {
-    if (period === -1) {
+    if (linkedWindow) {
+      fetchData();
+    } else if (period === -1) {
       if (appliedDateRange) {
         fetchData();
       }
     } else {
       fetchData();
     }
-  }, [fetchData, period, appliedDateRange]);
+  }, [fetchData, period, appliedDateRange, linkedWindow]);
 
   const handleRowClick = (item: DrillDownItem) => {
     if (item.type === 'call') {
@@ -444,6 +467,7 @@ function AdminCostAnalyticsContent() {
   };
 
   const handlePeriodSelect = (value: number) => {
+    clearLinkedWindow();
     if (value === -1) {
       const today = new Date();
       const thirtyDaysAgo = new Date();
@@ -462,6 +486,7 @@ function AdminCostAnalyticsContent() {
   };
 
   const handleApplyDateRange = () => {
+    clearLinkedWindow();
     if (customDateFrom && customDateTo) {
       // Caught here with a clear message rather than sent to the route, which
       // refuses it with a 400 (QA E-3). ISO dates compare correctly as strings.
@@ -552,7 +577,9 @@ function AdminCostAnalyticsContent() {
                 key={option.value}
                 onClick={() => handlePeriodSelect(option.value)}
                 className={`px-3 py-1.5 text-sm rounded transition-colors ${
-                  period === option.value
+                  // No preset is the active window while a linked window applies
+                  // (SA code review 4): the chip is the one statement of the window.
+                  !linkedWindow && period === option.value
                     ? 'bg-purple-500 text-white'
                     : 'text-slate-400 hover:text-white'
                 }`}
@@ -576,6 +603,22 @@ function AdminCostAnalyticsContent() {
           </button>
         </div>
       </header>
+
+      {linkedWindow && (
+        <div data-testid="linked-window" className="flex items-center gap-2 text-xs text-slate-300">
+          <span className="px-2 py-1 rounded bg-slate-800 border border-slate-600">
+            Linked window {formatLinkedBound(linkedWindow.from)} to {formatLinkedBound(linkedWindow.to)} UTC
+          </span>
+          <button
+            type="button"
+            onClick={clearLinkedWindow}
+            aria-label="Clear the linked window"
+            className="p-1 rounded hover:bg-slate-700"
+          >
+            <X className="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+        </div>
+      )}
 
       {/* What these numbers are, and are not (slice 2a). */}
       <div data-testid="scope-notes" className="space-y-1 text-xs text-slate-400">
