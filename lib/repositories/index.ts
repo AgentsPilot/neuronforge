@@ -77,6 +77,11 @@ export {
   AdminTokenUsageAnalyticsRepository,
   adminTokenUsageAnalyticsRepository,
 } from './AdminTokenUsageAnalyticsRepository';
+// Admin reorganisation slice 5: the cron run record (writer: lib/cron/cronRunRecorder.ts
+// only) and the admin-only, cross-account jobs & queues reads (app/api/admin/** only).
+// Source guards enforce both, barrel included.
+export { BosCronRunRepository, bosCronRunRepository } from './BosCronRunRepository';
+export { AdminJobsQueuesRepository, adminJobsQueuesRepository } from './AdminJobsQueuesRepository';
 // Admin Archiving, read-only in Slice 1 (docs/workplans/ADMIN_ARCHIVING_SLICE_1_UI_WORKPLAN.md)
 export { ArchiveRepository, archiveRepository } from './ArchiveRepository';
 export type {

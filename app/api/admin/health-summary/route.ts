@@ -4,9 +4,11 @@
  *
  * One screen of red / amber / grey tiles built ONLY from signals that already
  * exist: Business OS AI settings, audited AI failures, Business OS AI spend,
- * critical audit events and the entitlements mode. Scheduled jobs and queues
- * are "Not measured yet". A tile is green only when the evaluator proves it
- * clear (SA C-10R, admin reorganisation slice 5); the route decides no colour.
+ * critical audit events, the entitlements mode, and (slice 5) the scheduled
+ * jobs and queues, read through the SAME orchestrator and computation as
+ * /admin/jobs-queues, so tiles 6 and 7 show the page's own numbers (A-8). A
+ * tile is green only when the evaluator proves it clear (SA C-10R); the route
+ * decides no colour.
  *
  * ── Shape ────────────────────────────────────────────────────────────────
  *   requireAdmin FIRST → strict Zod (the route takes no input) → every read in
@@ -47,7 +49,11 @@ import {
   ADMIN_HEALTH_READ_LIMITS,
 } from '@/lib/repositories/AdminTokenUsageAnalyticsRepository';
 import { auditTrailRepository } from '@/lib/repositories/AuditTrailRepository';
+import { adminJobsQueuesRepository } from '@/lib/repositories/AdminJobsQueuesRepository';
 import { areaOffSummary } from '@/app/admin/business-os-llm/areaState';
+import { asRepoResult, underDeadline, type ReadTiming } from '@/lib/admin/readUnderDeadline';
+import { readJobsQueues } from '@/lib/admin/jobs/readJobsQueues';
+import { buildJobsQueuesView, jobsTileFacts, queuesTileFacts } from '@/lib/admin/jobs/buildJobsQueuesView';
 import {
   buildHealthSummary,
   type CriticalFacts,
@@ -58,6 +64,7 @@ import {
   type SpendFacts,
 } from '@/lib/admin/health/evaluateHealth';
 import { computeHealthWindows, summariseSpend, type HealthWindows } from '@/lib/admin/health/windows';
+import type { JobsTileFacts, QueuesTileFacts } from '@/lib/admin/jobs/jobsQueuesTypes';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -71,88 +78,6 @@ const ROUTE = '/api/admin/health-summary';
  * with a cache-busting parameter, or this would 400 it.
  */
 const HealthSummaryQuerySchema = z.object({}).strict();
-
-/** Per-read deadline (F-4, C-4). A read past it makes its tile `unavailable`. */
-const HEALTH_READ_DEADLINE_MS = 5000;
-
-class ReadDeadlineError extends Error {
-  constructor() {
-    super('Read deadline passed');
-    this.name = 'ReadDeadlineError';
-  }
-}
-
-type RepoResult<T> = { data: T | null; error: Error | null };
-
-interface ReadTiming {
-  read: string;
-  ms: number;
-  ok: boolean;
-  /** An error CLASS, never a message (C-7). */
-  failure?: string;
-  rows?: number;
-  pages?: number;
-}
-
-/**
- * Run one read under a deadline. The signal is handed to the read so paging
- * stops (not only the wait) once the deadline passes (C-4). The timer is always
- * cleared, and a read that settles after its deadline is swallowed, never an
- * unhandled rejection.
- */
-async function underDeadline<T>(
-  read: string,
-  timings: ReadTiming[],
-  run: (signal: AbortSignal) => Promise<RepoResult<T>>
-): Promise<HealthRead<T>> {
-  const started = Date.now();
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      controller.abort();
-      reject(new ReadDeadlineError());
-    }, HEALTH_READ_DEADLINE_MS);
-  });
-  deadline.catch(() => undefined);
-
-  let work: Promise<RepoResult<T>>;
-  try {
-    work = run(controller.signal);
-  } catch (error) {
-    work = Promise.reject(error);
-  }
-  work.catch(() => undefined);
-
-  try {
-    const result = await Promise.race([work, deadline]);
-    if (result.error || result.data === null) {
-      timings.push({ read, ms: Date.now() - started, ok: false, failure: result.error?.name ?? 'NoData' });
-      return { ok: false };
-    }
-    timings.push({ read, ms: Date.now() - started, ok: true });
-    return { ok: true, value: result.data };
-  } catch (error) {
-    timings.push({
-      read,
-      ms: Date.now() - started,
-      ok: false,
-      failure: error instanceof Error ? error.name : 'Unknown',
-    });
-    return { ok: false };
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
-/** Wrap a promise that does not return `{ data, error }` (the settings view). */
-async function asRepoResult<T>(promise: Promise<T>): Promise<RepoResult<T>> {
-  try {
-    return { data: await promise, error: null };
-  } catch (error) {
-    return { data: null, error: error instanceof Error ? error : new Error('Read failed') };
-  }
-}
 
 async function readSettings(timings: ReadTiming[]): Promise<HealthRead<SettingsFacts>> {
   const view = await underDeadline('settings', timings, () => asRepoResult(buildAdminSettingsView()));
@@ -234,6 +159,18 @@ export async function GET(request: NextRequest) {
         auditTrailRepository.countAdminEventsAllAccountsInWindow(context, filter, { start, end }, { signal })
       );
 
+    // Tiles 6 and 7: the shared jobs & queues read, bound to this admin's context.
+    const jobsQueuesRead = readJobsQueues(
+      {
+        summariseCronRunsAllJobs: (jobs, now, recent, opts) =>
+          adminJobsQueuesRepository.summariseCronRunsAllJobs(context, jobs, now, recent, opts),
+        readQueueFiguresAllAccounts: (queue, now, opts) =>
+          adminJobsQueuesRepository.readQueueFiguresAllAccounts(context, queue, now, opts),
+      },
+      windows.end,
+      timings
+    );
+
     const [settings, failed24h, failed7d, completed24h, critical24h, critical7d, spendCount, spendRows] =
       await Promise.all([
         readSettings(timings),
@@ -288,6 +225,17 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // readJobsQueues never rejects (each group is isolated); the guard is belt and braces.
+    let jobs: HealthRead<JobsTileFacts> = { ok: false };
+    let queues: HealthRead<QueuesTileFacts> = { ok: false };
+    try {
+      const view = buildJobsQueuesView(await jobsQueuesRead, windows.end);
+      jobs = { ok: true, value: jobsTileFacts(view) };
+      queues = { ok: true, value: queuesTileFacts(view, windows.end) };
+    } catch (error) {
+      requestLogger.error({ err: error }, 'Health: jobs and queues could not be computed');
+    }
+
     let entitlements: HealthRead<EntitlementFacts> = { ok: false };
     try {
       const setting = getEntitlementModeSetting();
@@ -297,7 +245,7 @@ export async function GET(request: NextRequest) {
     }
 
     const summary = buildHealthSummary(
-      { windows, settings, failures, spend, critical, entitlements },
+      { windows, settings, failures, spend, critical, entitlements, jobs, queues },
       new Date(),
       {
         onRuleError: (report) =>
