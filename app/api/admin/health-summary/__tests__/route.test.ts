@@ -56,8 +56,19 @@ jest.mock('@/lib/repositories/AuditTrailRepository', () => ({
   auditTrailRepository: { countAdminEventsAllAccountsInWindow: (...a: unknown[]) => mockAuditCount(...a) },
 }));
 
+// Slice 5: tiles 6 and 7 read through the shared jobs & queues orchestrator.
+const mockCronSummary = jest.fn();
+const mockQueueFigures = jest.fn();
+jest.mock('@/lib/repositories/AdminJobsQueuesRepository', () => ({
+  adminJobsQueuesRepository: {
+    summariseCronRunsAllJobs: (...a: unknown[]) => mockCronSummary(...a),
+    readQueueFiguresAllAccounts: (...a: unknown[]) => mockQueueFigures(...a),
+  },
+}));
+
 import { GET } from '../route';
 import { bosRowFilter } from '@/lib/business-os/llm/callCatalog';
+import { quietQueueFigures, quietSummaryRows } from '@/tests/helpers/jobs-queues-fixtures';
 
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };
 const OFF_AREA_ADMIN_EMAIL = 'changed-by@example.com';
@@ -88,9 +99,11 @@ function quiet() {
   mockCount.mockResolvedValue({ data: 0, error: null });
   mockCostPoints.mockResolvedValue({ data: { rows: [], reachedCeiling: false, completed: true, pages: 1 }, error: null });
   mockModeSetting.mockReturnValue({ effective: 'off', requested: 'off', refused: false });
+  mockCronSummary.mockImplementation(async (_c: unknown, _jobs: unknown, now: Date) => ({ data: quietSummaryRows(now), error: null }));
+  mockQueueFigures.mockResolvedValue({ data: quietQueueFigures(), error: null });
 }
 
-const reads = () => [mockSettingsView, mockAuditCount, mockCount, mockCostPoints];
+const reads = () => [mockSettingsView, mockAuditCount, mockCount, mockCostPoints, mockCronSummary, mockQueueFigures];
 
 async function json(res: Response) {
   return (await res.json()) as {
@@ -154,7 +167,7 @@ describe('Zod: the route takes no parameters', () => {
 });
 
 describe('happy path', () => {
-  it('seven tiles in order; quiet means green where eligible, entitlements for information; jobs and queues not measured (C-10R)', async () => {
+  it('seven tiles in order; quiet means green where eligible, entitlements for information (C-10R)', async () => {
     const res = await GET(req());
     expect(res.status).toBe(200);
     const body = await json(res);
@@ -170,8 +183,9 @@ describe('happy path', () => {
       href: '/admin/business-os-tiers',
       text: 'Open Plans & entitlements (plans and account lookup)',
     });
-    expect(tile(body, 'scheduled_jobs').status).toBe('not_measured');
-    expect(tile(body, 'queues').status).toBe('not_measured');
+    // Slice 5: all 12 jobs recorded a Vercel cron run and all five queues were read.
+    expect(tile(body, 'scheduled_jobs').status).toBe('green');
+    expect(tile(body, 'queues').status).toBe('green');
   });
 
   it('passes the Business OS row filter unchanged, with the admin context and a deadline signal', async () => {

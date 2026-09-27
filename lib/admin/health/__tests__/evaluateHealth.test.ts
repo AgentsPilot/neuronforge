@@ -27,6 +27,8 @@ import {
   OTHERWISE_GREEN,
   OTHERWISE_GREEN_UNLESS_LOWER_BOUND,
   OTHERWISE_INFORMATION,
+  OTHERWISE_JOBS,
+  OTHERWISE_QUEUES,
   UNAVAILABLE_HEADLINE,
   colourTile,
   describeCondition,
@@ -51,6 +53,23 @@ import {
 } from '../rules';
 import { computeHealthWindows, type Measured } from '../windows';
 import type { HealthFigure, HealthTile, TileStatus } from '../healthTypes';
+import type { JobsTileFacts, QueuesTileFacts } from '@/lib/admin/jobs/jobsQueuesTypes';
+
+/** Twelve healthy jobs, all recorded. */
+function quietJobs(over: Partial<JobsTileFacts> = {}): JobsTileFacts {
+  return {
+    runsRead: 'ok', total: 12, healthy: 12, stopped: 0, keepsFailing: 0, late: 0,
+    lastRunFailed: 0, partlyDone: 0, noRunYet: 0, worstJob: null, ...over,
+  };
+}
+
+/** Five queues read, nothing wrong. */
+function quietQueues(over: Partial<QueuesTileFacts> = {}): QueuesTileFacts {
+  return {
+    total: 5, readOk: 5, dueNow: 0, stuck: 0, stoppedDraining: 0, behind: 0,
+    deadLettered24h: 0, deadLettered7d: 0, failed24h: 0, oldestDueMinutes: null, oldestDueQueue: null, ...over,
+  };
+}
 
 const W = computeHealthWindows(new Date('2026-09-26T10:30:00.000Z'));
 const STATUSES: TileStatus[] = ['red', 'amber', 'green', 'neutral', 'not_measured', 'unavailable'];
@@ -74,6 +93,8 @@ function quietInputs(): HealthInputs {
     },
     critical: { ok: true, value: { last24h: 0, last7d: 0 } },
     entitlements: { ok: true, value: { effective: 'off', refused: false } },
+    jobs: { ok: true, value: quietJobs() },
+    queues: { ok: true, value: quietQueues() },
   };
 }
 
@@ -115,6 +136,31 @@ function inputsFor(tile: MeasuredTileId, metrics: MetricValues, flags: FlagValue
       break;
     case 'entitlements_mode':
       inputs.entitlements = { ok: true, value: { effective: 'shadow', refused: flags.entitlementEnforceRefused === true } };
+      break;
+    case 'scheduled_jobs':
+      inputs.jobs = {
+        ok: true,
+        value: quietJobs({
+          stopped: v('jobsStopped').value,
+          keepsFailing: v('jobsKeepFailing').value,
+          late: v('jobsLate').value,
+          lastRunFailed: v('jobsLastRunFailed').value,
+          partlyDone: v('jobsPartlyDone').value,
+        }),
+      };
+      break;
+    case 'queues':
+      inputs.queues = {
+        ok: true,
+        value: quietQueues({
+          stuck: v('queueItemsStuck').value,
+          stoppedDraining: v('queuesStoppedDraining').value,
+          deadLettered24h: v('queueDeadLettered24h').value,
+          behind: v('queuesBehind').value,
+          deadLettered7d: v('queueDeadLettered7d').value,
+          failed24h: v('queueFailed24h').value,
+        }),
+      };
       break;
   }
   return inputs;
@@ -268,10 +314,13 @@ describe('no match (C-10R)', () => {
     }
   });
 
-  it('PR-1 pin (SC-7(f)): tiles 6 and 7 are eligible, and still "Not measured yet"', () => {
+  it('tiles 6 and 7 are eligible; when a call does not measure them they say "Not measured yet"', () => {
+    const inputs = quietInputs();
+    delete inputs.jobs;
+    delete inputs.queues;
     for (const id of ['scheduled_jobs', 'queues'] as const) {
       expect(GREEN_ELIGIBLE.has(id)).toBe(true);
-      expect(tileOf(evaluateHealth(quietInputs()), id).status).toBe('not_measured');
+      expect(tileOf(evaluateHealth(inputs), id).status).toBe('not_measured');
     }
   });
 });
@@ -409,8 +458,14 @@ describe('the rule list\'s closing line never contradicts C-18 or C-10R (SA code
     expect(tileOf(evaluateHealth(quietInputs()), 'entitlements_mode').otherwise).toBe(OTHERWISE_INFORMATION);
   });
 
-  it('tiles without rules have no closing line', () => {
-    for (const id of ['scheduled_jobs', 'queues']) expect(tileOf(evaluateHealth(quietInputs()), id).otherwise).toBeNull();
+  it('tiles 6 and 7 say what green needs, and have no closing line when not measured on this call', () => {
+    const tiles = evaluateHealth(quietInputs());
+    expect(tileOf(tiles, 'scheduled_jobs').otherwise).toBe(OTHERWISE_JOBS);
+    expect(tileOf(tiles, 'queues').otherwise).toBe(OTHERWISE_QUEUES);
+    const inputs = quietInputs();
+    delete inputs.jobs;
+    delete inputs.queues;
+    for (const id of ['scheduled_jobs', 'queues']) expect(tileOf(evaluateHealth(inputs), id).otherwise).toBeNull();
   });
 });
 
@@ -470,8 +525,10 @@ describe('failed reads and the not-measured tiles', () => {
     }
   );
 
-  it('scheduled jobs and queues are always not measured, with no link and no rules', () => {
+  it('scheduled jobs and queues are not measured, with no link and no rules, when a call does not measure them', () => {
     for (const inputs of [quietInputs(), inputsFor('bos_ai_spend', { spend24h: lb(999) })]) {
+      delete inputs.jobs;
+      delete inputs.queues;
       for (const id of ['scheduled_jobs', 'queues']) {
         const tile = tileOf(evaluateHealth(inputs), id);
         expect(tile.status).toBe('not_measured');
@@ -481,6 +538,7 @@ describe('failed reads and the not-measured tiles', () => {
       }
     }
   });
+
 });
 
 // ── Figures and links ──────────────────────────────────────────────────────
@@ -570,20 +628,31 @@ describe('figures and links', () => {
     expect(invalid.pageLink).toEqual(ENTITLEMENTS_PAGE_LINK);
   });
 
-  it('no other tile carries a page link in PR-1, read or not', () => {
+  const LINKED = ['entitlements_mode', 'scheduled_jobs', 'queues'];
+
+  it('only the entitlements, jobs and queues tiles carry a page link, read or not', () => {
     const failed = quietInputs();
     failed.settings = { ok: false };
     failed.failures = { ok: false };
     failed.spend = { ok: false };
     failed.critical = { ok: false };
-    for (const tile of evaluateHealth(failed).filter((t) => t.id !== 'entitlements_mode')) {
-      expect(tile.pageLink).toBeNull();
+    failed.jobs = { ok: false };
+    failed.queues = { ok: false };
+    for (const inputs of [quietInputs(), failed]) {
+      for (const tile of evaluateHealth(inputs)) {
+        if (LINKED.includes(tile.id)) expect(tile.pageLink).not.toBeNull();
+        else expect(tile.pageLink).toBeNull();
+      }
     }
   });
 
-  it('no other tile carries a page link in PR-1', () => {
-    for (const tile of evaluateHealth(quietInputs()).filter((t) => t.id !== 'entitlements_mode')) {
-      expect(tile.pageLink).toBeNull();
+  it('tiles 6 and 7 link to the jobs & queues page, and their figures to its sections', () => {
+    const tiles = evaluateHealth(quietInputs());
+    for (const [id, anchor] of [['scheduled_jobs', '#jobs'], ['queues', '#queues']] as const) {
+      const tile = tileOf(tiles, id);
+      expect(tile.pageLink).toEqual({ href: '/admin/jobs-queues', text: 'Open Scheduled jobs & queues' });
+      expect(tile.figures.length).toBeGreaterThan(0);
+      for (const figure of tile.figures) expect(figure.href).toBe(`/admin/jobs-queues${anchor}`);
     }
   });
 
@@ -660,7 +729,41 @@ function randomInputs(r: () => number): HealthInputs {
     }),
     critical: maybe({ last24h: n(), last7d: n() }),
     entitlements: maybe({ effective: (['off', 'shadow', 'enforce'] as const)[Math.floor(r() * 3)], refused: r() > 0.7 }),
+    // Tiles 6/7 vary completeness independently of the counts (SC-7(d)).
+    jobs: maybe(
+      quietJobs({
+        runsRead: (['ok', 'ok', 'ok', 'not_installed', 'failed'] as const)[Math.floor(r() * 5)],
+        stopped: r() > 0.8 ? 1 : 0,
+        keepsFailing: r() > 0.8 ? 1 : 0,
+        late: r() > 0.8 ? 1 : 0,
+        lastRunFailed: r() > 0.8 ? 1 : 0,
+        partlyDone: r() > 0.8 ? 1 : 0,
+        noRunYet: r() > 0.6 ? Math.floor(r() * 3) : 0,
+      })
+    ),
+    queues: maybe(
+      quietQueues({
+        readOk: r() > 0.3 ? 5 : Math.floor(r() * 5),
+        stuck: r() > 0.8 ? 1 : 0,
+        stoppedDraining: r() > 0.8 ? 1 : 0,
+        deadLettered24h: r() > 0.8 ? 1 : 0,
+        behind: r() > 0.8 ? 1 : 0,
+        deadLettered7d: r() > 0.8 ? 1 : 0,
+        failed24h: r() > 0.8 ? 1 : 0,
+      })
+    ),
   };
+}
+
+/** Is the tile's measurement complete, from the inputs (tiles 6/7 only; the others are complete when read). */
+function completeFromInputs(inputs: HealthInputs, id: string): boolean {
+  if (id === 'scheduled_jobs') {
+    return !!inputs.jobs && inputs.jobs.ok && inputs.jobs.value.runsRead === 'ok' && inputs.jobs.value.noRunYet === 0;
+  }
+  if (id === 'queues') {
+    return !!inputs.queues && inputs.queues.ok && inputs.queues.value.readOk === inputs.queues.value.total;
+  }
+  return true;
 }
 
 const READ_OF: Record<string, keyof HealthInputs | null> = {
@@ -669,8 +772,8 @@ const READ_OF: Record<string, keyof HealthInputs | null> = {
   bos_ai_spend: 'spend',
   critical_audit: 'critical',
   entitlements_mode: 'entitlements',
-  scheduled_jobs: null,
-  queues: null,
+  scheduled_jobs: 'jobs',
+  queues: 'queues',
 };
 
 describe('C-10R / C-20 fuzz: random valid rule lists × random inputs', () => {
@@ -690,10 +793,11 @@ describe('C-10R / C-20 fuzz: random valid rule lists × random inputs', () => {
         // matched, every figure exact (for these five tiles, a figure is exact
         // exactly when the metrics behind it are).
         const key = READ_OF[tile.id];
-        const readOk = key ? (inputs[key] as { ok: boolean }).ok : false;
+        const read = key ? (inputs[key] as { ok: boolean } | undefined) : undefined;
+        const readOk = !!read && read.ok;
         const provenClear =
-          GREEN_ELIGIBLE.has(tile.id) && key !== null && readOk && tile.matchedRuleId === null &&
-          tile.figures.every((f) => f.exact);
+          GREEN_ELIGIBLE.has(tile.id) && readOk && tile.matchedRuleId === null &&
+          completeFromInputs(inputs, tile.id) && tile.figures.every((f) => f.exact);
         expect(tile.status === 'green').toBe(provenClear);
         // "For information" only on a tile that may never be green (F-12, OQ-9).
         if (tile.status === 'neutral') expect(tile.id).toBe('entitlements_mode');

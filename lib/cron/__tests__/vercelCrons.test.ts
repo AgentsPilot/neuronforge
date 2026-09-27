@@ -14,8 +14,9 @@
  * Re-enabling one must also update this test, deliberately.
  *
  * The 12 entries below are pinned byte for byte and in order: slice 5 must not
- * change any Business OS schedule. PR-2 replaces this literal list with the
- * job registry (FR-R9), which the page and the Health tiles read.
+ * change any Business OS schedule. The job registry (lib/cron/bosCronJobs.ts,
+ * slice 5 PR-2) is checked against vercel.json separately, in
+ * bosCronJobs.test.ts (FR-R9).
  */
 
 import * as fs from 'fs';
