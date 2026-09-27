@@ -1,12 +1,14 @@
 # Applying the Business OS entitlements migration
 
-> **Last Updated**: 2026-09-26
+> **Last Updated**: 2026-09-27
 
 ## Overview
 
 This is the hand-off for the one person who runs this: **you, in the Supabase dashboard, against production.** It is self-contained — paste it into the PR description or keep it open in a second tab. No terminal, no `psql`, no repository checkout beyond copying two files out of GitHub.
 
 It adds three tables, four functions and two triggers. **Nothing in the product reads them.** The feature is off by default (`BOS_ENTITLEMENTS_MODE` is unset), so when you finish, customers see exactly what they saw before. That is the point: the risky part is the schema change, and it is being done while it cannot affect anyone.
+
+> **Since then (recorded 2026-09-27):** production has been set to `BOS_ENTITLEMENTS_MODE=shadow` **on purpose, to collect data first**. Decisions are resolved and recorded; nothing is refused, so customers still see no difference. The sentence above describes the state at apply time and is kept as written. A refused `enforce` also runs as `shadow` (`lib/business-os/entitlements/mode.ts`); the admin Health tile then shows the amber "Enforcement requested but not active". Shadow **without** that amber headline means the setting is `shadow` itself.
 
 **Only four steps change anything: step 4, step 5, step 9 and step 10.** Everything else reads, or takes a backup. Stopping before step 4 leaves the database exactly as it was; step 9 changes privileges only, and step 10 adds one read-only function.
 
@@ -408,3 +410,4 @@ The reason it is quarantined is not the rollback at the end — every write is i
 | 2026-09-24 | Step 9 added: the privilege fix | The rewritten checker ran on production and **A4 failed for real**: `anon` and `authenticated` retained PostgreSQL 17's `MAINTAIN` privilege, and `service_role` retained DELETE and TRUNCATE, both because the migration **enumerated** what it revoked. `20261009_business_os_entitlements_privilege_fix.sql` corrects the live database, `20261005` is corrected for fresh environments, and A4 now asserts the client roles have no ACL entry at all, with a new A4b for the `service_role` DELETE/TRUNCATE case |
 | 2026-09-24 | The scripts are comment-free and block-per-paste | After two failed pastes (`relation "a" does not exist`), the checking script was rewritten as four standalone statements with **no `--` comments and no prose in any string**. Every word of explanation moved into this document: a new reference section per script, keyed by the `fix` column of each row, plus [Why the scripts are boring](#why-the-scripts-are-boring). No check changed its predicate, its threshold or its PASS/WARN/FAIL meaning |
 | 2026-09-22 | Created | Extracted from the workplan (§4.20.3) as a self-contained hand-off for the production apply, written for the operator rather than the team |
+| 2026-09-27 | Production mode noted: `shadow`, on purpose | The Overview's "off by default (unset)" is true of the apply and kept; a note now records that production has since been set to `shadow` deliberately, to collect data first (admin reorganisation slice 5, RC-5.3 / OQ-8), with the refused-`enforce` caveat |

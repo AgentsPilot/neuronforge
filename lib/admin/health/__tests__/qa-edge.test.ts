@@ -54,13 +54,13 @@ describe('QA: invalid rule sets never throw and isolate to their tile', () => {
       tiles = evaluateHealth(inputs(), { rules, onRuleError });
     }).not.toThrow();
     expect(byId(tiles, 'bos_ai_spend').status).toBe('unavailable');
-    expect(byId(tiles, 'bos_ai_failures').status).toBe('neutral');
-    expect(byId(tiles, 'bos_ai_settings').status).toBe('neutral');
+    expect(byId(tiles, 'bos_ai_failures').status).toBe('green'); // C-10R: quiet, exact, eligible
+    expect(byId(tiles, 'bos_ai_settings').status).toBe('green');
     expect(onRuleError).toHaveBeenCalledTimes(1);
     expect(onRuleError.mock.calls[0][0].tile).toBe('bos_ai_spend');
   });
 
-  it('a lower-bound spend input with an invalid rule list is unavailable, never Normal', () => {
+  it('a lower-bound spend input with an invalid rule list is unavailable, never green', () => {
     const t = byId(
       evaluateHealth(
         inputs({

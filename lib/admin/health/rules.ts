@@ -5,12 +5,17 @@
  * ── How a tile is coloured ────────────────────────────────────────────────
  * Each measured tile has an ORDERED list of rules. They are evaluated top to
  * bottom; the FIRST rule whose condition matches sets the tile's colour, and its
- * description is what the tile says. If none matches, the tile is grey "Normal".
- * There is no green (SA C-10): a rule's colour can only be red or amber.
+ * description is what the tile says. A rule's colour can only be red or amber.
+ * GREEN IS NEVER DATA (SA C-10R): when no rule matches, the evaluator alone
+ * decides between green "All clear" (proven clear), grey "For information"
+ * and the honest greys, from a code constant in `evaluateHealth.ts`.
  *
- * Two things are NOT decided here, on purpose, so no data edit can break them:
- *   - a figure that is only a lower bound is never "Normal" (SA C-18): the
- *     evaluator makes such a tile amber even if every rule below were deleted;
+ * Three things are NOT decided here, on purpose, so no data edit can break them:
+ *   - which tiles may ever be green (`GREEN_ELIGIBLE` in the evaluator; the
+ *     entitlements mode never is, OQ-9);
+ *   - a figure that is only a lower bound is never green or "for information"
+ *     (SA C-18): the evaluator makes such a tile amber even if every rule
+ *     below were deleted;
  *   - a comparison ("x times the previous period", "a share of all actions")
  *     never fires on a lower bound (SA C-2): that is built into the condition
  *     kinds, not left to each rule.

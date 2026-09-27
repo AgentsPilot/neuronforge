@@ -9,15 +9,30 @@
  * fails its checks makes THAT tile `unavailable` (reported through `onRuleError`,
  * which the route logs at `error`), never `neutral`, and never fails the page.
  *
- * Colour: the FIRST matching rule, in list order (see `rules.ts`). No match →
- * grey "Normal" — unless any of the tile's figures is a lower bound, in which
- * case the tile is amber whatever the rules say (SA C-18).
+ * Colour: the FIRST matching rule, in list order (see `rules.ts`). When no
+ * rule matches, ONE predicate decides (SA C-10R, admin reorganisation slice 5):
+ *
+ *   provenClear = the tile is in GREEN_ELIGIBLE
+ *              ∧ the measurement is complete
+ *              ∧ every metric AND every figure is exact
+ *
+ *   - proven clear                         → green "All clear"
+ *   - not eligible but exact and complete  → neutral "for information"
+ *                                            (only the entitlements mode)
+ *   - inexact on a LOWER_BOUND_TILES tile  → amber (SA C-18, now over the
+ *                                            figures as well as the metrics)
+ *   - completeness 'not_measured'          → not_measured
+ *   - otherwise inexact or incomplete      → unavailable
+ *
+ * Inexact or incomplete can never reach green or neutral. Eligibility is code,
+ * here, not data in `rules.ts`, so no rule edit can make a tile green.
  *
  * @module lib/admin/health/evaluateHealth
  */
 
 import type {
   HealthFigure,
+  HealthPageLink,
   HealthRuleView,
   HealthSummary,
   HealthTile,
@@ -40,24 +55,44 @@ import { toAuditDateParam, type HealthWindows, type Measured, type SpendSums } f
 
 // ── Fixed texts ────────────────────────────────────────────────────────────
 
-export const NORMAL_HEADLINE = 'Normal';
+/** The headline of a tile that is proven clear (SA C-10R). */
+export const GREEN_HEADLINE = 'All clear';
 export const NOT_MEASURED_HEADLINE = 'Not measured yet';
 export const UNAVAILABLE_HEADLINE = 'Could not check just now';
-/** The SA C-18 invariant's headline: a lower bound is never "Normal". */
+/** The SA C-18 invariant's headline: a lower bound is never clear. */
 export const LOWER_BOUND_HEADLINE = 'Total is a minimum; not all calls counted';
 export const OI_P1_NOTE =
   'AI cost & usage reads at most 1,000 calls per period (known issue OI-P1), so it will show less than this.';
 /** The closing line of a rule list when the tile's figures are always exact. */
-export const OTHERWISE_NORMAL = 'Otherwise: Normal.';
+export const OTHERWISE_GREEN = `Otherwise: green, "${GREEN_HEADLINE}".`;
 /**
  * The closing line for a tile whose figures can be a lower bound (SA C-18): the
- * evaluator makes such a tile amber when no rule matches, so "Normal" alone
+ * evaluator makes such a tile amber when no rule matches, so "green" alone
  * would be untrue.
  */
-export const OTHERWISE_NORMAL_UNLESS_LOWER_BOUND =
-  `Otherwise: Normal, unless a figure is only a minimum; then amber: "${LOWER_BOUND_HEADLINE}".`;
+export const OTHERWISE_GREEN_UNLESS_LOWER_BOUND =
+  `Otherwise: green, "${GREEN_HEADLINE}", unless a figure is only a minimum; then amber: "${LOWER_BOUND_HEADLINE}".`;
+/** The closing line of a tile that may never be green (OQ-9). */
+export const OTHERWISE_INFORMATION = 'Otherwise: shown for information only (never green).';
 /** Tiles whose metrics can arrive as a lower bound (only spend is read with a ceiling). */
 const LOWER_BOUND_TILES: ReadonlySet<MeasuredTileId> = new Set<MeasuredTileId>(['bos_ai_spend']);
+
+/**
+ * The ONLY tiles that may ever be green (SA C-10R.3). Code, not data: moving a
+ * tile in or out is a code change that SA reviews. `entitlements_mode` is
+ * deliberately absent: a chosen mode is not a health signal (OQ-9), so it is
+ * shown "for information" and never green. `scheduled_jobs` and `queues` are
+ * eligible, but until their reads exist (slice 5 PR-2) they are built as "Not
+ * measured yet" and never reach this predicate.
+ */
+export const GREEN_ELIGIBLE: ReadonlySet<HealthTileId> = new Set<HealthTileId>([
+  'bos_ai_settings',
+  'bos_ai_failures',
+  'bos_ai_spend',
+  'critical_audit',
+  'scheduled_jobs',
+  'queues',
+]);
 
 /** Above this many calls in a window, Cost Analytics' figure is truncated (OI-P1). */
 export const COST_ANALYTICS_ROW_CAP = 1000;
@@ -350,20 +385,53 @@ const TITLES: Record<HealthTileId, string> = {
   queues: 'Queues',
 };
 
-interface Measurement {
+/**
+ * Whether a measurement covers everything its tile is about (SA C-10R).
+ * 'complete' = every read behind the tile succeeded; 'not_measured' = some part
+ * has not been measured yet; 'partial' = some part could not be read. Only
+ * 'complete' can be green. The five slice 4 tiles are 'complete' whenever their
+ * read succeeded (a failed read has no measurement at all).
+ */
+export type Completeness = 'complete' | 'not_measured' | 'partial';
+
+export interface TileMeasurement {
   metrics: MetricValues;
   flags: FlagValues;
   figures: HealthFigure[];
   footnote: string | null;
+  completeness: Completeness;
+  /** The headline when the tile is shown "for information" (a tile outside GREEN_ELIGIBLE). */
+  informationHeadline?: string;
+  pageLink?: HealthPageLink | null;
 }
 
-function colourTile(
+/** The single "proven clear" predicate (SA C-10R.2, SC-7(b)): metrics AND figures. */
+export function isProvenClearMeasurement(measurement: {
+  metrics: MetricValues;
+  figures: HealthFigure[];
+  completeness: Completeness;
+}): boolean {
+  return (
+    measurement.completeness === 'complete' &&
+    Object.values(measurement.metrics).every((m) => m?.exact !== false) &&
+    measurement.figures.every((f) => f.exact)
+  );
+}
+
+/**
+ * Colour one measured tile. Exported so the C-10R biconditional can be tested
+ * over measurements the five slice 4 reads cannot produce yet (a figure that is
+ * inexact while its metrics are exact, an incomplete measurement).
+ */
+export function colourTile(
   id: MeasuredTileId,
   rules: unknown,
-  measurement: Measurement | null,
+  measurement: TileMeasurement | null,
   onRuleError?: (report: RuleErrorReport) => void
 ): HealthTile {
-  const base = { id, title: TITLES[id] };
+  // A tile's page link is a fact about the tile, not about its read: it stays
+  // when the read fails, so an admin can still open the page (QA-3).
+  const base = { id, title: TITLES[id], pageLink: measurement?.pageLink ?? tilePageLink(id) };
   try {
     const problem = validateRuleList(id, rules);
     if (problem) {
@@ -381,7 +449,11 @@ function colourTile(
     }
     const valid = rules as readonly HealthRule<MetricId, FlagId>[];
     const views = ruleViews(valid);
-    const otherwise = LOWER_BOUND_TILES.has(id) ? OTHERWISE_NORMAL_UNLESS_LOWER_BOUND : OTHERWISE_NORMAL;
+    const otherwise = !GREEN_ELIGIBLE.has(id)
+      ? OTHERWISE_INFORMATION
+      : LOWER_BOUND_TILES.has(id)
+        ? OTHERWISE_GREEN_UNLESS_LOWER_BOUND
+        : OTHERWISE_GREEN;
 
     if (!measurement) {
       return {
@@ -402,13 +474,28 @@ function colourTile(
     if (match) {
       status = match.colour;
       headline = match.description;
-    } else if (Object.values(measurement.metrics).some((m) => m?.exact === false)) {
-      // SA C-18: a lower bound is never "Normal", whatever the rule list says.
-      status = 'amber';
-      headline = LOWER_BOUND_HEADLINE;
+    } else if (!isProvenClearMeasurement(measurement)) {
+      const inexact =
+        Object.values(measurement.metrics).some((m) => m?.exact === false) ||
+        measurement.figures.some((f) => !f.exact);
+      if (inexact && LOWER_BOUND_TILES.has(id)) {
+        // SA C-18: a lower bound is never clear, whatever the rule list says.
+        status = 'amber';
+        headline = LOWER_BOUND_HEADLINE;
+      } else if (measurement.completeness === 'not_measured') {
+        status = 'not_measured';
+        headline = NOT_MEASURED_HEADLINE;
+      } else {
+        status = 'unavailable';
+        headline = UNAVAILABLE_HEADLINE;
+      }
+    } else if (GREEN_ELIGIBLE.has(id)) {
+      status = 'green';
+      headline = GREEN_HEADLINE;
     } else {
+      // Exact and complete, but a tile that may never be green (OQ-9).
       status = 'neutral';
-      headline = NORMAL_HEADLINE;
+      headline = measurement.informationHeadline ?? TITLES[id];
     }
 
     return {
@@ -441,7 +528,7 @@ function exact(value: number): Measured {
   return { value, exact: true };
 }
 
-function settingsMeasurement(facts: SettingsFacts): Measurement {
+function settingsMeasurement(facts: SettingsFacts): TileMeasurement {
   const href = '/admin/business-os-llm';
   const figure = (label: string, n: number, note: string | null): HealthFigure => ({
     label,
@@ -469,17 +556,18 @@ function settingsMeasurement(facts: SettingsFacts): Measurement {
     ],
     footnote:
       '"Configured off" is what the settings say. The AI switch fails open, so a call may still run.',
+    completeness: 'complete',
   };
 }
 
-function failuresMeasurement(facts: FailureFacts, w: HealthWindows): Measurement {
+function failuresMeasurement(facts: FailureFacts, w: HealthWindows): TileMeasurement {
   const total24h = facts.failed24h + facts.completed24h;
   return {
     metrics: { failed24h: exact(facts.failed24h), completed24h: exact(facts.completed24h) },
     flags: {},
     figures: [
       {
-        label: 'Failed, last 24 h',
+        label: 'Failed AI actions, last 24 h',
         value: `${formatCount(facts.failed24h)} of ${formatCount(total24h)} actions`,
         exact: true,
         href: auditLink({ action: AI_FAILED_ACTION }, w.last24hStart, w.end),
@@ -487,7 +575,7 @@ function failuresMeasurement(facts: FailureFacts, w: HealthWindows): Measurement
         note: null,
       },
       {
-        label: 'Failed, last 7 days',
+        label: 'Failed AI actions, last 7 days',
         value: formatCount(facts.failed7d),
         exact: true,
         href: auditLink({ action: AI_FAILED_ACTION }, w.last7dStart, w.end),
@@ -498,6 +586,7 @@ function failuresMeasurement(facts: FailureFacts, w: HealthWindows): Measurement
     footnote:
       'AI actions that failed after at least one AI call, as recorded in the audit trail. ' +
       'Share = failed ÷ (failed + completed).',
+    completeness: 'complete',
   };
 }
 
@@ -509,7 +598,7 @@ function callsText(m: Measured): string {
   return `${m.exact ? '' : 'at least '}${formatCount(m.value)} calls`;
 }
 
-function spendMeasurement(facts: SpendFacts, w: HealthWindows): Measurement {
+function spendMeasurement(facts: SpendFacts, w: HealthWindows): TileMeasurement {
   const { sums, callsKnown } = facts;
   const figure = (
     label: string,
@@ -538,23 +627,24 @@ function spendMeasurement(facts: SpendFacts, w: HealthWindows): Measurement {
     },
     flags: {},
     figures: [
-      figure('Last 24 h', sums.spend24h, sums.spendPrev24h, 'previous 24 h', sums.calls24h, w.last24hStart, 'last 24 hours'),
-      figure('Last 7 days', sums.spend7d, sums.spendPrev7d, 'previous 7 days', sums.calls7d, w.last7dStart, 'last 7 days'),
+      figure('AI spend, last 24 h (USD)', sums.spend24h, sums.spendPrev24h, 'previous 24 h', sums.calls24h, w.last24hStart, 'last 24 hours'),
+      figure('AI spend, last 7 days (USD)', sums.spend7d, sums.spendPrev7d, 'previous 7 days', sums.calls7d, w.last7dStart, 'last 7 days'),
     ],
     footnote:
       'USD, estimated from the model pricing table; never mixed with a business currency. ' +
       'The comparison with the previous period is computed here from one read; AI cost & usage ' +
       'computes its own "vs previous period" differently (known issue OI-P2).',
+    completeness: 'complete',
   };
 }
 
-function criticalMeasurement(facts: CriticalFacts, w: HealthWindows): Measurement {
+function criticalMeasurement(facts: CriticalFacts, w: HealthWindows): TileMeasurement {
   return {
     metrics: { critical24h: exact(facts.last24h) },
     flags: {},
     figures: [
       {
-        label: 'Last 24 h',
+        label: 'Critical events, last 24 h',
         value: formatCount(facts.last24h),
         exact: true,
         href: auditLink({ severity: 'critical' }, w.last24hStart, w.end),
@@ -562,7 +652,7 @@ function criticalMeasurement(facts: CriticalFacts, w: HealthWindows): Measuremen
         note: null,
       },
       {
-        label: 'Last 7 days',
+        label: 'Critical events, last 7 days',
         value: formatCount(facts.last7d),
         exact: true,
         href: auditLink({ severity: 'critical' }, w.last7dStart, w.end),
@@ -573,34 +663,53 @@ function criticalMeasurement(facts: CriticalFacts, w: HealthWindows): Measuremen
     footnote:
       'All products. "Critical" is the severity an event is recorded with; it includes routine events ' +
       'such as password changes and refunds.',
+    completeness: 'complete',
   };
 }
 
-const MODE_WORDS: Record<EntitlementFacts['effective'], { word: string; meaning: string }> = {
-  off: { word: 'Off', meaning: 'Nothing is resolved, recorded or refused.' },
-  shadow: { word: 'Shadow', meaning: 'Everything is resolved and recorded; nothing is refused.' },
-  enforce: { word: 'Enforce', meaning: 'Plan limits are acted on.' },
+/** The mode in plain words (RC-5.2, FR-E1). */
+export const MODE_WORDS: Record<EntitlementFacts['effective'], { word: string; meaning: string }> = {
+  off: { word: 'Off', meaning: 'Plans are not checked.' },
+  shadow: { word: 'Shadow', meaning: 'Plans are checked and logged; nothing is blocked.' },
+  enforce: { word: 'Enforce', meaning: 'Plan limits are applied to customers.' },
 };
 
-function entitlementsMeasurement(facts: EntitlementFacts): Measurement {
+/** Where the entitlements tile leads, in words that say so (RC-5.2, FR-E2). */
+export const ENTITLEMENTS_PAGE_LINK: HealthPageLink = {
+  href: '/admin/business-os-tiers',
+  text: 'Open Plans & entitlements (plans and account lookup)',
+};
+
+/**
+ * Static page links, by tile: shown whatever the read returned, including when
+ * it failed or the rule list was invalid (QA-3).
+ */
+function tilePageLink(id: MeasuredTileId): HealthPageLink | null {
+  return id === 'entitlements_mode' ? ENTITLEMENTS_PAGE_LINK : null;
+}
+
+function entitlementsMeasurement(facts: EntitlementFacts): TileMeasurement {
   const mode = MODE_WORDS[facts.effective];
   return {
     metrics: {},
     flags: { entitlementEnforceRefused: facts.refused },
     figures: [
       {
-        label: 'Mode',
+        label: 'Mode in effect',
         value: mode.word,
         exact: true,
-        href: '/admin/business-os-tiers',
-        linkLabel: `Entitlements mode: ${mode.word}, open Plans & entitlements`,
+        // The tile's own visible link says where it goes; the word itself is not a link.
+        href: null,
+        linkLabel: null,
         note: facts.refused
           ? 'BOS_ENTITLEMENTS_MODE on Vercel asks for enforce, but the launch gate refused it, so it runs in ' +
             'shadow (see the error log). The linked page shows only the mode in effect.'
-          : mode.meaning,
+          : null,
       },
     ],
     footnote: null,
+    completeness: 'complete',
+    informationHeadline: `${mode.word} mode: ${mode.meaning}`,
   };
 }
 
@@ -614,6 +723,7 @@ function notMeasuredTile(id: 'scheduled_jobs' | 'queues'): HealthTile {
     figures: [],
     rules: [],
     otherwise: null,
+    pageLink: null,
     footnote:
       id === 'scheduled_jobs'
         ? 'Job runs are not recorded anywhere yet (roadmap R-2). No page yet.'
@@ -621,7 +731,7 @@ function notMeasuredTile(id: 'scheduled_jobs' | 'queues'): HealthTile {
   };
 }
 
-function measureOrNull<T>(read: HealthRead<T>, build: (value: T) => Measurement): Measurement | null {
+function measureOrNull<T>(read: HealthRead<T>, build: (value: T) => TileMeasurement): TileMeasurement | null {
   return read.ok ? build(read.value) : null;
 }
 
@@ -629,7 +739,7 @@ function measureOrNull<T>(read: HealthRead<T>, build: (value: T) => Measurement)
 export function evaluateHealth(inputs: HealthInputs, options: EvaluateOptions = {}): HealthTile[] {
   const rules = options.rules ?? HEALTH_RULES;
   const w = inputs.windows;
-  const safe = <T>(read: HealthRead<T>, build: (value: T) => Measurement): Measurement | null => {
+  const safe = <T>(read: HealthRead<T>, build: (value: T) => TileMeasurement): TileMeasurement | null => {
     try {
       return measureOrNull(read, build);
     } catch {

@@ -176,30 +176,30 @@ describe('QA: boundary rows land in exactly one window', () => {
     ]);
     const b = await body(await GET(req()));
     const spend = tile(b, 'bos_ai_spend');
-    const f24 = spend.figures.find((f) => f.label === 'Last 24 h')!;
-    const f7 = spend.figures.find((f) => f.label === 'Last 7 days')!;
+    const f24 = spend.figures.find((f) => f.label === 'AI spend, last 24 h (USD)')!;
+    const f7 = spend.figures.find((f) => f.label === 'AI spend, last 7 days (USD)')!;
     expect(f24.value).toContain('$3.00 (previous 24 h: $12.00)');
     expect(f24.value).toContain('2 calls');
     expect(f7.value).toContain('$63.00 (previous 7 days: $192.00)');
     expect(f7.value).toContain('6 calls');
-    // $3 today is above the $1 floor but under 2× $12 → no rule; exact → Normal? No:
-    // spend24h 3 < 20; ratios fail; week 63 < 1.5 × 192 → Normal.
-    expect(spend.status).toBe('neutral');
-    expect(spend.headline).toBe('Normal');
+    // spend24h 3 < 20; ratios fail; week 63 < 1.5 × 192 → no rule; every figure
+    // exact → proven clear (C-10R).
+    expect(spend.status).toBe('green');
+    expect(spend.headline).toBe('All clear');
   });
 });
 
 describe('QA: zero previous spend (ratio baseline 0)', () => {
-  it('both periods zero → Normal', async () => {
+  it('both periods zero → green (proven clear)', async () => {
     spendRows([]);
     const spend = tile(await body(await GET(req())), 'bos_ai_spend');
-    expect(spend.status).toBe('neutral');
+    expect(spend.status).toBe('green');
   });
 
-  it('new spend under every floor ($0.99 vs $0) → Normal', async () => {
+  it('new spend under every floor ($0.99 vs $0) → green (proven clear)', async () => {
     spendRows([row(END - H, 0.99)]);
     const spend = tile(await body(await GET(req())), 'bos_ai_spend');
-    expect(spend.status).toBe('neutral');
+    expect(spend.status).toBe('green');
   });
 
   it('new spend at the doubled floor ($1 vs $0) → amber "doubled"', async () => {
@@ -270,7 +270,7 @@ describe('QA: exactly at the thresholds', () => {
 });
 
 describe('QA: the count fails while a ceiling-truncated read succeeds', () => {
-  it('lower bounds, no "calls", no OI-P1 note, amber — never Normal', async () => {
+  it('lower bounds, no "calls", no OI-P1 note, amber — never green', async () => {
     const rows = Array.from({ length: 10 }, (_, i) => row(END - i * 60_000, 0.01)); // all inside 24 h
     mockCostPoints.mockResolvedValue({ data: { rows, reachedCeiling: true, completed: false, pages: 1 }, error: null });
     mockCount.mockResolvedValue({ data: null, error: new Error('count failed') });
