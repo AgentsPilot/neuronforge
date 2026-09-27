@@ -501,11 +501,11 @@ describe('U-R10 / R-10: the read methods do not write', () => {
     }
   });
 
-  it('method count is pinned at 11; account-data methods end in AllAccounts, run-log methods do not need to (SA Q-7)', () => {
+  it('method count is pinned at 13; account-data methods end in AllAccounts, run-log and per-user methods do not need to (SA Q-7)', () => {
     const methods = Object.getOwnPropertyNames(ArchiveRepository.prototype).filter(
       (name) => name !== 'constructor'
     );
-    // Deliberate pin move: 3 in Slice 1, 6 in Slice 2a, 11 in Slice 2b.
+    // Deliberate pin move: 3 in Slice 1, 6 in Slice 2a, 11 in Slice 2b, 13 in Slice 3.
     expect(methods.sort()).toEqual(
       [
         'claimRunForContinue',
@@ -513,16 +513,20 @@ describe('U-R10 / R-10: the read methods do not write', () => {
         'countAuditTrailAllAccounts',
         'countAuditTrailBeforeAllAccounts',
         'createRun',
+        'deleteArchivedForUser',
         'finishRun',
         'getLatestCutoff',
         'getOldestAuditTrailCreatedAtAllAccounts',
+        'listArchivedForUser',
         'listRuns',
         'runBatchAllAccounts',
         'takeOverStaleRuns',
       ].sort()
     );
     const runLogMethods = ['claimRunForContinue', 'createRun', 'finishRun', 'getLatestCutoff', 'listRuns', 'takeOverStaleRuns'];
-    for (const name of methods.filter((m) => !runLogMethods.includes(m))) {
+    // Scoped by their userId ARGUMENT (Rule 4), so they carry no AllAccounts suffix.
+    const perUserMethods = ['deleteArchivedForUser', 'listArchivedForUser'];
+    for (const name of methods.filter((m) => !runLogMethods.includes(m) && !perUserMethods.includes(m))) {
       expect(name).toMatch(/AllAccounts$/);
     }
   });

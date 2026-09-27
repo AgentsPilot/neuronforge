@@ -12,10 +12,13 @@
 // account data and has no `user_id` at all, so there is no scope to omit
 // (Slice 2 SA Q-7).
 //
-// ONLY CALLERS: `GET /api/admin/archiving` (reads) and
+// CALLERS: `GET /api/admin/archiving` (reads) and
 // `POST /api/admin/archiving/runs` with its runner
-// `lib/archiving/server/runArchive.ts` (run methods). Both routes are behind
-// `requireAdmin`.
+// `lib/archiving/server/runArchive.ts` (run methods), both behind
+// `requireAdmin`; and, for the two PER-USER methods (Slice 3),
+// `AuditTrailService.anonymizeUserData` / `exportUserData` (GDPR erasure and
+// export). The per-user methods meet Rule 4 by ARGUMENT, not by name: they
+// filter `.eq('user_id', userId)`, so they carry no `AllAccounts` suffix.
 //
 // WRITES (Slice 2b). This file writes `archive_runs` only: create, claim for
 // Continue, stale takeover and finish. It never writes `audit_trail` or
@@ -23,19 +26,23 @@
 // `archive_audit_trail_batch`, which copies, deletes and records the batch in
 // one transaction and refuses any run that is not `running` with exactly the
 // stored cutoff (decision D-1). Every insert and update is built field by
-// field; nothing from a request body is spread into a payload. The per-user
-// erasure/export methods arrive in Slice 3 (condition C-7: all archive access
-// goes through this file).
+// field; nothing from a request body is spread into a payload. The one other
+// write is `deleteArchivedForUser` (Slice 3, erasure, condition C-8): a delete
+// by one account's `user_id`, with no payload at all. All archive access goes
+// through this file (condition C-7).
 //
-// No row content is ever read. Counts select nothing (`head: true`), the
+// Row content is read in exactly one place: `listArchivedForUser` selects
+// `archived_records.payload` for the person's OWN export. No admin route or UI
+// reads it (AC-14). Everywhere else, counts select nothing (`head: true`), the
 // oldest-row lookup selects `created_at` alone, and the run list names its
-// columns. No method selects `archived_records.payload` (AC-14). Counts use
+// columns. Counts use
 // `count: 'exact', head: true` because PostgREST aggregates are disabled on this
 // project (F-10).
 //
 // Methods never throw: they return `{ data, error }` or a discriminated result.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { z } from 'zod';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, type Logger } from '@/lib/logger';
 import type { ArchiveRunStatus, ArchiveSourceKey } from '@/lib/archiving/config';
@@ -53,6 +60,15 @@ const ARCHIVE_RUNS = 'archive_runs';
 const BATCH_FUNCTIONS: Record<ArchiveSourceKey, string> = {
   audit_trail: 'archive_audit_trail_batch',
 };
+
+/**
+ * Page size for the per-user archive read. PostgREST caps a response at 1,000
+ * rows on this project, so a larger page would silently truncate.
+ */
+const ARCHIVED_PAGE_SIZE = 1000;
+
+/** An account id. Anything else is refused before a query is built. */
+const userIdSchema = z.string().uuid();
 
 /** Postgres unique violation: on `archive_runs`, only the one-running-run-per-source index. */
 const UNIQUE_VIOLATION = '23505';
@@ -400,6 +416,91 @@ export class ArchiveRepository {
       return { data: null, error: toError(error) };
     }
   }
+
+  // ── Per-user (Slice 3: GDPR erasure and export) ────────────────────────────
+  //
+  // CONTRACT FOR CALLERS: `userId` must be the authenticated account's own id,
+  // or one an admin gate has verified. Never a value taken from a request body.
+  // This runs as the service role, so the argument IS the tenant boundary: there
+  // is no parent row to pre-check ownership against (tenant-isolation-guard
+  // step 2). A non-UUID is refused before any query is built.
+
+  /**
+   * Delete every archived row of one account, whatever its source (C-8, AC-13).
+   * Exactly one filter, `user_id`; no `select`, so no row content comes back.
+   * Returns the number of rows deleted. A missing count is an error, never 0.
+   */
+  async deleteArchivedForUser(userId: string): Promise<RepositoryResult<number>> {
+    const methodLogger = this.logger.child({ method: 'deleteArchivedForUser' });
+    if (!userIdSchema.safeParse(userId).success) {
+      const error = new Error('userId must be a UUID');
+      methodLogger.error({ err: error }, 'Refused an invalid user id');
+      return { data: null, error };
+    }
+
+    try {
+      const { count, error } = await this.supabase
+        .from(ARCHIVED_RECORDS)
+        .delete({ count: 'exact' })
+        .eq('user_id', userId);
+
+      if (error) throw error;
+      if (count === null || count === undefined) {
+        throw new Error('archived_records delete count came back empty');
+      }
+      return { data: count, error: null };
+    } catch (error) {
+      methodLogger.error({ err: error }, "Failed to delete an account's archived rows");
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  /**
+   * Every archived row of one account for one source, for the person's own
+   * export. The only method that selects `payload`. Read in pages of
+   * ARCHIVED_PAGE_SIZE, newest first, until a short page.
+   */
+  async listArchivedForUser(
+    userId: string,
+    source: ArchiveSourceKey
+  ): Promise<RepositoryResult<ArchivedRecordRow[]>> {
+    const methodLogger = this.logger.child({ method: 'listArchivedForUser', source });
+    if (!userIdSchema.safeParse(userId).success) {
+      const error = new Error('userId must be a UUID');
+      methodLogger.error({ err: error }, 'Refused an invalid user id');
+      return { data: null, error };
+    }
+
+    try {
+      const rows: ArchivedRecordRow[] = [];
+      for (let from = 0; ; from += ARCHIVED_PAGE_SIZE) {
+        const { data, error } = await this.supabase
+          .from(ARCHIVED_RECORDS)
+          .select('source_id, payload, archived_at')
+          .eq('user_id', userId)
+          .eq('source', source)
+          .order('original_created_at', { ascending: false })
+          .order('id', { ascending: true })
+          .range(from, from + ARCHIVED_PAGE_SIZE - 1);
+
+        if (error) throw error;
+        const page = (data ?? []) as ArchivedRecordRow[];
+        rows.push(...page);
+        if (page.length < ARCHIVED_PAGE_SIZE) break;
+      }
+      return { data: rows, error: null };
+    } catch (error) {
+      methodLogger.error({ err: error }, "Failed to read an account's archived rows");
+      return { data: null, error: toError(error) };
+    }
+  }
+}
+
+/** One archived row as the export reads it. `payload` is the whole source row. */
+export interface ArchivedRecordRow {
+  source_id: string;
+  payload: Record<string, unknown>;
+  archived_at: string;
 }
 
 /** The counts one batch reports. `deleted` always equals `selected` (the function's invariant). */

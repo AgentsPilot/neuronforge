@@ -18,6 +18,7 @@ import {
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { OPERATOR_AUDIENCES } from '@/lib/audit/eventAudience';
 import { createLogger } from '@/lib/logger';
+import { ArchivedBeforeNotice } from '@/app/admin/components/ArchivedBeforeNotice';
 
 // Structured logging works in a client component: lib/logger.ts configures
 // Pino's `browser: { asObject: true }` transport, and the sibling admin page
@@ -420,6 +421,9 @@ function AuditTrailPageContent() {
           </div>
         </div>
       </header>
+
+        {/* Older entries may be archived (FR-12, archiving slice 3). */}
+        <ArchivedBeforeNotice />
 
         {/* Filters */}
         <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
