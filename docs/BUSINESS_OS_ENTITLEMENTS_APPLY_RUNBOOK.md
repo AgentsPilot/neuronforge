@@ -10,7 +10,7 @@ It adds three tables, four functions and two triggers. **Nothing in the product 
 
 > **Since then (recorded 2026-09-27):** production has been set to `BOS_ENTITLEMENTS_MODE=shadow` **on purpose, to collect data first**. Decisions are resolved and recorded; nothing is refused, so customers still see no difference. The sentence above describes the state at apply time and is kept as written. A refused `enforce` also runs as `shadow` (`lib/business-os/entitlements/mode.ts`); the admin Health tile then shows the amber "Enforcement requested but not active". Shadow **without** that amber headline means the setting is `shadow` itself.
 
-**Only three steps change anything: step 4, step 5 and step 9.** Everything else reads, or takes a backup. Stopping before step 4 leaves the database exactly as it was, and step 9 changes privileges only.
+**Only four steps change anything: step 4, step 5, step 9 and step 10.** Everything else reads, or takes a backup. Stopping before step 4 leaves the database exactly as it was; step 9 changes privileges only, and step 10 adds one read-only function.
 
 **One thing will probably go wrong, and it is one line to fix.** Step 2 makes its editor tab read-only on purpose. If step 4 runs on **that same tab**, it fails with *"cannot execute CREATE TABLE in a read-only transaction"* — immediately after step 2 said `PASS`, which looks much worse than it is. Run `RESET default_transaction_read_only;` on that tab, or open a new one, and paste again. Nothing was applied.
 
@@ -23,8 +23,12 @@ It adds three tables, four functions and two triggers. **Nothing in the product 
 | `scripts/preflight-bos-entitlements-migration.sql` | Checks it is safe to apply | No |
 | `supabase/migrations/20261005_business_os_entitlements.sql` | Creates the tables, functions and triggers | **Yes** |
 | `supabase/migrations/20261005b_business_os_entitlements_backfill.sql` | Gives every existing account a plan record | **Yes** |
+| `supabase/migrations/20261009_business_os_entitlements_privilege_fix.sql` | Takes back privileges the defaults gave (step 9) | **Yes**, privileges only |
+| `supabase/migrations/20261010_business_os_tenants_missing_plan_row.sql` | Adds the read-only scan that finds tenants with no plan record (step 10) | **Yes**, one function |
 | `scripts/check-bos-entitlements-migration.sql` | Confirms it all landed | No |
 | `scripts/rollback-bos-entitlements-migration.sql` | Removes it entirely, if you ever want that | Only when you arm it by hand |
+
+There are seven files, not five. The two migrations in the middle were added after the first apply and are each run once — see steps 9 and 10.
 
 **How to get a file's text:** open it on GitHub (the PR's *Files changed* tab, or browse the branch), click **Raw**, select all, copy. **Use Raw, not the rendered view** — the rendered view copies the line numbers too, and the paste fails on the first one.
 
@@ -162,6 +166,71 @@ The last statement is a `SELECT` that prints what the migration is and points ba
 Then run **block 1** of the checker again. Expect `BLOCK 1 VERDICT PASS`, with **A4** reporting `0 of 3 tables carry an entry for anon authenticated or PUBLIC` and **A4b** reporting `0 of 3 tables let service_role delete or truncate`. A10 says the same before and after — that is deliberate, so the fix cannot be mistaken for a regression.
 
 > **The lesson, in one line:** enumerate the `GRANT`, which says what you intend, and never the `REVOKE`, which says what you forbid. A database gains privileges over time and a list written today silently stops covering them. `20261005` has been corrected the same way, so a fresh environment never has the gap.
+
+### 10. The exhaustive missing-plan-row scan (2026-09-26, run once)
+
+Paste `supabase/migrations/20261010_business_os_tenants_missing_plan_row.sql` → **Run**.
+
+It creates one read-only function, `public.business_os_tenants_missing_plan_row(p_limit integer)`, and grants `EXECUTE` on it to `service_role` only. It writes nothing, creates no table, and is safe to re-run — the body is `CREATE OR REPLACE`. Like the other hand-pasted files it carries **no `--` comments**; its last statement is a `SELECT` that names the migration and points back here.
+
+**What it is for.** The admin entitlements report has always told you how many tenants have no plan row. Until now it worked that count out in TypeScript, from `business_profiles` only — so a tenant who started onboarding and never created a business profile was **not counted**. Checker row B1 counted them (it unions both tables), which meant the report and the checker could disagree and there was no way to tell which was right. The answer now comes from one place, in SQL, and both read it.
+
+**Verify it against row B1.** Run these two, one after the other. They must agree.
+
+```sql
+SELECT * FROM public.business_os_tenants_missing_plan_row(20000);
+```
+
+```sql
+SELECT count(*) AS missing
+FROM (
+  SELECT user_id FROM public.business_profiles
+  UNION
+  SELECT user_id FROM public.onboarding_conversations
+) AS tenants
+WHERE NOT EXISTS (
+  SELECT 1 FROM public.business_os_account_plans AS plans
+  WHERE plans.user_id = tenants.user_id
+);
+```
+
+| Column | Meaning |
+|---|---|
+| `tenants_checked` | Every distinct tenant, from the union of both tables |
+| `missing_count` | The exact number with no plan row — **not capped** by `p_limit` |
+| `missing_with_profile` | Of those, how many have a business profile (the ones the old count would have found) |
+| `missing_onboarding_only` | Of those, how many have onboarding only (**the ones it missed**) |
+| `missing_sample` | Up to `p_limit` ids, for looking at |
+| `truncated` | Whether the sample was cut. The counts are still exact when it is `true` |
+
+**What to do if the scan failed, or `missing_count` is above zero.** A failed scan is the first case to rule out: if step 2 returned no row at all, the function is not installed and nothing below applies — go back and paste the migration.
+
+**If the count itself is above zero.** Write the number down, then apply `supabase/migrations/20261005b_business_os_entitlements_backfill.sql` again — it is re-runnable — and re-run the function. **Write the new number down too.** Row B1 is the same check and has the same answer.
+
+| After the re-run | What it means |
+|---|---|
+| `missing_count` is **0** | The backfill did what it is for. Done |
+| `missing_count` **fell but is not 0** | Run it once more. If it stops falling, treat it as the row below |
+| `missing_count` **did not fall** | **A different problem with a different fix.** The backfill is not the thing that is failing — the plan-row triggers are (step 8). Do not keep re-running the backfill; check the database log (step 6b) and checker row `trigger rows` |
+
+> ⚠️ **If you ever need to change what columns this function returns, `DROP FUNCTION public.business_os_tenants_missing_plan_row(integer);` first.** `CREATE OR REPLACE FUNCTION` **cannot change a return type** — it fails with `42P13 cannot change return type of existing function`, and adding a column to a `RETURNS TABLE` counts as changing it. The migration is written as `CREATE OR REPLACE` so it is safe to re-run as it stands; that is a different thing from being safe to edit.
+
+> ### The switch-on gate: TWO conditions, not one
+>
+> **Do not switch `BOS_ENTITLEMENTS_MODE` to `enforce` unless BOTH of these are true:**
+>
+> | | Condition | How you check it |
+> |---|---|---|
+> | 1 | **The scan actually ran.** | Step 2 returned a row. In the admin report, `tenantsWithoutPlanRow.scanFailed` is `false` |
+> | 2 | **And it found nothing missing.** | `missing_count` is `0`. In the report, `count` is `0` — not `null` |
+>
+> **A failed scan is not a zero.** If the function is missing or errors, the report says `scanFailed: true` and every count is `null` rather than `0` — precisely so that "we checked and nobody is missing" and "we never checked" cannot be mistaken for each other. Reading the number on its own is the mistake this whole migration exists to make impossible: an account with no plan record resolves to no entitlements, so under `enforce` it is **a customer who is refused**.
+>
+> In one line, for anyone automating it: **`scanFailed === false && count === 0`**.
+
+If the function is missing, the report says so and returns **an error, not zero**. "Nothing is missing" and "the check was never installed" must never look the same, because the first is a green light.
+
+---
 
 ---
 
@@ -337,6 +406,7 @@ The reason it is quarantined is not the rollback at the end — every write is i
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-09-26 | Added step 10 | `20261010_business_os_tenants_missing_plan_row.sql`: the missing-plan-row count now comes from SQL rather than from TypeScript over `business_profiles` alone, so the admin report and checker row B1 can no longer disagree. Includes the two queries that verify one against the other, and the two-condition switch-on gate: the scan must have RUN (`scanFailed` false) **and** found nothing (`count` 0), because a failed scan is not a zero |
 | 2026-09-24 | Step 9 added: the privilege fix | The rewritten checker ran on production and **A4 failed for real**: `anon` and `authenticated` retained PostgreSQL 17's `MAINTAIN` privilege, and `service_role` retained DELETE and TRUNCATE, both because the migration **enumerated** what it revoked. `20261009_business_os_entitlements_privilege_fix.sql` corrects the live database, `20261005` is corrected for fresh environments, and A4 now asserts the client roles have no ACL entry at all, with a new A4b for the `service_role` DELETE/TRUNCATE case |
 | 2026-09-24 | The scripts are comment-free and block-per-paste | After two failed pastes (`relation "a" does not exist`), the checking script was rewritten as four standalone statements with **no `--` comments and no prose in any string**. Every word of explanation moved into this document: a new reference section per script, keyed by the `fix` column of each row, plus [Why the scripts are boring](#why-the-scripts-are-boring). No check changed its predicate, its threshold or its PASS/WARN/FAIL meaning |
 | 2026-09-22 | Created | Extracted from the workplan (§4.20.3) as a self-contained hand-off for the production apply, written for the operator rather than the team |

@@ -19,18 +19,7 @@ defensible conclusion that names the fix-owner and a remediation path. You are *
 you recommend the fix; you never implement it. The actual fix is always implemented by **Dev after SA
 review**, and the Team Leader routes your conclusion onward.
 
-## Tech Stack Context
-
-- **Frontend:** Next.js 14 (App Router), React 18, TypeScript, TailwindCSS 4, Framer Motion
-- **Backend:** Next.js API Routes (serverless)
-- **Database:** Supabase (PostgreSQL + Auth + Row-Level Security)
-- **AI/LLM:** OpenAI GPT-4o, Anthropic Claude, Groq, Mistral, Kimi — via provider factory abstraction
-- **Validation:** Zod schemas
-- **Logging:** Pino (structured)
-- **Hosting:** Vercel
-- **Testing:** Jest (unit/integration), Playwright (E2E)
-
----
+> Tech stack, mandatory rules and security rules: see `CLAUDE.md` (loaded into every agent). This file only adds what is specific to this role.
 
 ## Input Contract
 
@@ -205,7 +194,7 @@ answer for a real failure is "calibration behaved correctly — say so."
 ## V6 Defects — Propose, Do Not Write
 
 When the root cause is a **V6 defect**, the conclusion document must **additionally propose** the
-WEAK_POINTS.md / V6_OPEN_ITEMS.md entry *text*, per the CLAUDE.md **V6 Work Protocol** (WP entry with
+WEAK_POINTS.md / V6_OPEN_ITEMS.md entry *text*, per the **V6 Work Protocol** (`.claude/skills/v6-pipeline/SKILL.md` §4) (WP entry with
 problem / evidence / fix shape / why-not-caught-earlier, plus the one-line V6_OPEN_ITEMS.md pointer).
 
 You only **propose** this text, and only **inside the conclusion document**. You **must not** write to

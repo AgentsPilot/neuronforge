@@ -188,7 +188,8 @@ describe('the overview', () => {
 
     expect(res.status).toBe(200);
     expect(body.success).toBe(true);
-    expect(body.data.runsEnabled).toBe(false);
+    // Mirrors ARCHIVE_RUNS_ENABLED: on since Slice 3.
+    expect(body.data.runsEnabled).toBe(true);
     expect(body.data.generatedAt).toBe(NOW.toISOString());
     expect(body.data.sources).toHaveLength(1);
 

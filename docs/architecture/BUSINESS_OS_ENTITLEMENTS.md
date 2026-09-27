@@ -156,9 +156,9 @@ Cross-instance staleness is bounded at 30 s: an admin change invalidates the loc
 | **G-2** | The CI checks that are advisory today are required |
 | **UD-2** | At least one tier configured — otherwise `enforce` self-downgrades. ✅ met on 2026-09-23 |
 | **Chat surface gate (FR-46)** | `chat.access` is configured (off for Essentials) but nothing reads it. Slice 2 must gate the chat entry point on it, once per turn, or Essentials has chat in all but name — for writes as well as reads |
-| **Missing-plan-row check** | `findTenantsMissingPlanRow` must become an exhaustive SQL anti-join first. Today it scans accounts with a business profile; under enforcement a missing row denies a real customer |
+| **Missing-plan-row check** | ✅ **met in code on 2026-09-26** (S-0): `findTenantsMissingPlanRow` is one call to `public.business_os_tenants_missing_plan_row`, an SQL anti-join over the union of `business_profiles` and `onboarding_conversations`. It used to scan accounts with a business profile only, so an onboarding-only tenant with no plan row was invisible — and under enforcement a missing row denies a real customer. **The gate is not closed until the migration is applied to production and the count is zero**: `20261010_business_os_tenants_missing_plan_row.sql`, runbook step 10. A missing function returns an error, never zero |
 | **Launch operation** | `launch_champion_existing` makes every account without an in-force tier an open-ended champion (U-2, UD-3, UD-4). Slice 1 ships the **dry run**; execution is Slice 2 |
-| **Trim list** | The shadow report's no-end-date list flags accounts that never created a business profile — onboarding-only champions to trim before enforcement |
+| **Trim list** | ✅ **worked on 2026-09-26** (S-0): the shadow report has a `dormantChampions` section listing each open-ended champion with no business profile, how long they have been dormant, where they came from, and the exact admin call that would end their access. **It is a list and a mechanism, not a decision** — nothing is trimmed, and the section writes nothing. Who (if anyone) is cut is the user's call |
 
 ## Admin operations
 
@@ -199,6 +199,7 @@ Two rules worth knowing before using them:
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-09-26 | S-0 moved two switch-on gates | The missing-plan-row scan is now an exhaustive SQL anti-join (`20261010`), so the admin report and checker row B1 answer from one place; the trim list is worked as a `dormantChampions` report section that proposes an end-access call and cuts nobody |
 | 2026-09-22 | Created | Slice 1 as built: catalog/config, resolver, plan records, shadow mode, report and the admin surface (workplan §4, S1-T16) |
 | 2026-09-27 | Production mode corrected: `shadow`, on purpose | The Overview and the mode table said `BOS_ENTITLEMENTS_MODE` is unset (off) in production. Production resolves it to **`shadow`**, set deliberately to collect data first (admin reorganisation slice 5, RC-5.3 / OQ-8). Added the caveat that a refused `enforce` also runs as `shadow`, and how the Health tile tells the two apart |
 | 2026-09-24 | `chat.access` added (FR-46) | The chat SURFACE as its own capability, off for Essentials and on for Autopilot: the per-operation `chat.*` groups cannot express "this plan has no chat", for writes as well as reads. Ships in the catalog (38 capabilities) and both tier rows; the gate itself is Slice 2 |

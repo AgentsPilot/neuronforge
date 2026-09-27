@@ -5,7 +5,7 @@
  *   - every registered event has exactly one audience, and no entry names an
  *     event that is not registered — so a new event cannot be hidden or shown
  *     without somebody deciding;
- *   - the 15 / 58 / 84 split is pinned, so any reclassification is a visible diff;
+ *   - the 15 / 61 / 84 split is pinned, so any reclassification is a visible diff;
  *   - an untagged event is visible, which is what actually protects production
  *     (no CI job runs this suite).
  */
@@ -43,10 +43,10 @@ describe('AUDIT_EVENT_AUDIENCE is exhaustive over the catalogue', () => {
     }
   });
 
-  it('pins the split: 15 Business OS, 58 shared, 84 AgentsPilot', () => {
-    expect(registered).toHaveLength(157);
+  it('pins the split: 15 Business OS, 61 shared, 84 AgentsPilot', () => {
+    expect(registered).toHaveLength(160);
     expect(eventsTagged('bos')).toHaveLength(15);
-    expect(eventsTagged('shared')).toHaveLength(58);
+    expect(eventsTagged('shared')).toHaveLength(61);
     expect(eventsTagged('agentspilot')).toHaveLength(84);
   });
 });

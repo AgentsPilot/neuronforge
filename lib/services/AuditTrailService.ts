@@ -4,6 +4,7 @@
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { NextRequest } from 'next/server';
+import { z } from 'zod';
 import {
   AuditLogEntry,
   AuditLogInput,
@@ -11,12 +12,41 @@ import {
   AuditQueryParams,
   AuditQueryResult,
   GDPRExport,
+  GDPRExportLog,
 } from '../audit/types';
 import { getEventMetadata } from '../audit/events';
 import { sanitizeChanges, summarizeChanges } from '../audit/diff';
 import { createLogger } from '@/lib/logger';
+import { archiveRepository } from '@/lib/repositories/ArchiveRepository';
 
 const logger = createLogger({ service: 'AuditTrailService' });
+
+/** An account id. Erasure and export refuse anything else before any query. */
+const userIdSchema = z.string().uuid();
+
+function assertUserId(userId: string): void {
+  if (!userIdSchema.safeParse(userId).success) {
+    throw new Error('userId must be a UUID');
+  }
+}
+
+/**
+ * Erasure stopped half-way: the live rows were anonymised, the archived rows
+ * were not deleted. Re-running `anonymizeUserData` completes it.
+ */
+export class ErasureIncompleteError extends Error {
+  readonly anonymized: number;
+  readonly deleteError: Error | null;
+
+  constructor(anonymized: number, deleteError: Error | null) {
+    super(
+      `Erasure incomplete: ${anonymized} live audit rows anonymised, archived rows not deleted. Re-run erasure.`
+    );
+    this.name = 'ErasureIncompleteError';
+    this.anonymized = anonymized;
+    this.deleteError = deleteError;
+  }
+}
 
 /**
  * Singleton audit trail service
@@ -374,9 +404,23 @@ class AuditTrailService {
   }
 
   /**
-   * Export user data for GDPR compliance (Article 20)
+   * Export user data for GDPR compliance (Article 20).
+   *
+   * Live rows AND the account's archived rows (FR-14c), merged newest first.
+   * Each entry says which it is (`archived`). If the archive cannot be read the
+   * export throws: an export that silently leaves out the archive is exactly
+   * what BQ-7 ruled out.
+   *
+   * CALLER CONTRACT: `userId` is the authenticated account's own id, or one an
+   * admin gate verified, never a request-body value. This runs with the service
+   * role, so the argument is the tenant boundary. No production caller today.
+   *
+   * Known, pre-existing: the live read is one request, so PostgREST's 1,000-row
+   * cap applies to it. The archived read pages. Recorded under requirement C-17.
    */
   public async exportUserData(userId: string): Promise<GDPRExport> {
+    assertUserId(userId);
+
     const { data, error } = await this.supabase
       .from('audit_trail')
       .select('*')
@@ -387,7 +431,27 @@ class AuditTrailService {
       throw new Error(`Failed to export user data: ${error.message}`);
     }
 
-    const logs = data || [];
+    const archived = await archiveRepository.listArchivedForUser(userId, 'audit_trail');
+    if (archived.error || !archived.data) {
+      throw new Error(
+        `Failed to export archived user data: ${archived.error?.message ?? 'no data'}`
+      );
+    }
+
+    const liveLogs: GDPRExportLog[] = ((data || []) as AuditLogEntry[]).map((log) => ({
+      ...log,
+      archived: false,
+    }));
+    // `payload` is the whole audit_trail row as it was when archived (to_jsonb).
+    const archivedLogs: GDPRExportLog[] = archived.data.map((row) => ({
+      ...(row.payload as unknown as AuditLogEntry),
+      archived: true,
+      archivedAt: row.archived_at,
+    }));
+
+    const logs = [...liveLogs, ...archivedLogs].sort((a, b) =>
+      (b.created_at ?? '').localeCompare(a.created_at ?? '')
+    );
 
     // Generate summary
     const actionsPerformed: Record<string, number> = {};
@@ -400,8 +464,8 @@ class AuditTrailService {
 
     const dateRange = logs.length > 0
       ? {
-          from: logs[logs.length - 1].created_at,
-          to: logs[0].created_at,
+          from: logs[logs.length - 1].created_at as string,
+          to: logs[0].created_at as string,
         }
       : { from: new Date().toISOString(), to: new Date().toISOString() };
 
@@ -409,6 +473,7 @@ class AuditTrailService {
       userId,
       exportedAt: new Date().toISOString(),
       totalEvents: logs.length,
+      archivedEvents: archivedLogs.length,
       dateRange,
       logs,
       summary: {
@@ -419,9 +484,39 @@ class AuditTrailService {
   }
 
   /**
-   * Anonymize user data for GDPR compliance (Right to erasure)
+   * Erase a user's audit history for GDPR compliance (Right to erasure).
+   *
+   * 1. ANONYMISE the account's live rows. Besides ids, network data and
+   *    `details`, this clears `user_email` (filled by a BEFORE INSERT trigger),
+   *    `changes` and `resource_name`, which can all hold personal data
+   *    (requirement C-17). One statement, so each row is anonymised atomically.
+   * 2. Then DELETE the account's archived rows (C-8).
+   *
+   * Live first, on purpose (Slice 3 workplan 2.1, SA Q-1). An archive run may be
+   * moving rows meanwhile. Rows it archived before step 1 still carry `user_id`
+   * in `archived_records`, so step 2 deletes them; rows it archives after step 1
+   * are already anonymised. The other order would leave rows archived between
+   * the two steps with all their personal data and nothing to delete them.
+   *
+   * Never silent. If step 2 fails, the live rows stay anonymised, the archived
+   * rows remain (still findable by `user_id`), and this throws
+   * `ErasureIncompleteError`; re-running completes it. `DATA_ANONYMIZED` is
+   * written only when both steps succeeded, so once per completed erasure. On a
+   * re-run its `recordsAnonymized` counts only THAT run (usually 0, since the
+   * live rows were anonymised the first time); the first attempt's count is in
+   * the `ErasureIncompleteError` log line.
+   *
+   * The event is queued, not yet written, when this returns (`log()` batches).
+   * The first production caller must flush the audit queue after it.
+   *
+   * CALLER CONTRACT: `userId` is the authenticated account's own id, or one an
+   * admin gate verified, never a request-body value. No production caller today.
    */
-  public async anonymizeUserData(userId: string): Promise<number> {
+  public async anonymizeUserData(
+    userId: string
+  ): Promise<{ anonymized: number; archivedDeleted: number }> {
+    assertUserId(userId);
+
     const { data, error } = await this.supabase
       .from('audit_trail')
       .update({
@@ -430,32 +525,47 @@ class AuditTrailService {
         ip_address: null,
         user_agent: null,
         session_id: null,
+        user_email: null,
+        changes: null,
+        resource_name: null,
         details: { anonymized: true },
       })
       .eq('user_id', userId)
       .select('id');
 
     if (error) {
+      logger.error({ err: error }, 'Erasure failed: live audit rows not anonymised');
       throw new Error(`Failed to anonymize user data: ${error.message}`);
     }
 
-    const count = data?.length || 0;
+    const anonymized = data?.length || 0;
 
-    // Log the anonymization
+    const deleted = await archiveRepository.deleteArchivedForUser(userId);
+    if (deleted.error || deleted.data === null) {
+      logger.error(
+        { err: deleted.error, anonymized },
+        'Erasure incomplete: live rows anonymised, archived rows not deleted'
+      );
+      throw new ErasureIncompleteError(anonymized, deleted.error);
+    }
+    const archivedDeleted = deleted.data;
+
+    // Log the erasure, only now that it is complete
     await this.log({
       action: 'DATA_ANONYMIZED',
       entityType: 'user',
       entityId: userId,
       userId: null, // System action
       details: {
-        recordsAnonymized: count,
+        recordsAnonymized: anonymized,
+        archivedRecordsDeleted: archivedDeleted,
         reason: 'GDPR Right to Erasure (Article 17)',
       },
       severity: 'critical',
       complianceFlags: ['GDPR'],
     });
 
-    return count;
+    return { anonymized, archivedDeleted };
   }
 
   /**

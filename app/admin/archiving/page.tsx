@@ -2,7 +2,8 @@
 
 /**
  * Archiving — how much of the audit trail is old enough to move out, under each
- * retention choice, and what earlier runs archived. Read-only (Slice 2a).
+ * retention choice, what earlier runs archived, and (Slice 2b) the controls to
+ * start a run or continue one.
  *
  * ── Why this page adds no guard of its own ──────────────────────────────────
  * `app/admin/layout.tsx` awaits `requireAdminPage()` before this page's RSC
@@ -10,17 +11,21 @@
  * a property of the route tree. A second check here would read as though the
  * first were optional (condition C-2).
  *
- * ── Why nothing here can start a run ────────────────────────────────────────
- * The route that starts a run arrives in Slice 2b, and runs stay switched off
- * until Slice 3 (C-5). The Archive button is disabled with no handler, and the
- * only request this page makes is the overview GET (AC-15).
+ * ── Starting a run, and why it cannot happen yet ────────────────────────────
+ * The Archive button opens a confirm dialog (FR-4, C-15) showing the retention,
+ * the cutoff, the rows that will move and, at 180 or 90 days, what owners lose
+ * (K-1). Continue appears on a partial, failed or stalled run and resumes it on
+ * its stored cutoff. Both send `POST /api/admin/archiving/runs`. While the
+ * overview says `runsEnabled: false`, Confirm and Continue are disabled and say
+ * "Not switched on yet", and no request is sent (SA Q-1); the server refuses
+ * regardless (409 `runs_not_enabled`, C-5). Nothing here runs on a timer or on
+ * load: only an admin's click starts anything (AC-15).
  *
- * ── The archive side (Slice 2a) ─────────────────────────────────────────────
+ * ── The archive side ────────────────────────────────────────────────────────
  * The archived total, the "archived before" cutoff, the last run and the run
- * history are read from the tables migration M1 creates, so a 0 or "No runs
- * yet" is now a measured fact, not a guess. Each run's status is a text badge,
- * never colour alone (§7 accessibility). A `running` run whose request has died
- * shows as "Stalled"; Slice 2b adds the Continue that recovers it.
+ * history are measured values from the tables migration M1 created. Each run's
+ * status is a text badge, never colour alone (§7 accessibility). A `running` run
+ * whose request has died shows as "Stalled".
  *
  * ── The dropdown ────────────────────────────────────────────────────────────
  * The overview carries the eligible count for every option, so changing the
@@ -28,6 +33,7 @@
  * the same constant the server's Zod schema is built from (FR-2).
  *
  * @see docs/workplans/ADMIN_ARCHIVING_SLICE_1_UI_WORKPLAN.md
+ * @see docs/workplans/ADMIN_ARCHIVING_SLICE_2B_WORKPLAN.md
  */
 
 import { useCallback, useEffect, useId, useState } from 'react';
@@ -45,15 +51,63 @@ import {
   DEFAULT_RETENTION_DAYS,
   RETENTION_DAYS_OPTIONS,
   isRetentionDays,
+  type ArchiveSourceKey,
   type RetentionDays,
 } from '@/lib/archiving/config';
 import type {
+  ArchiveRunErrorCode,
   ArchiveRunSummary,
   ArchiveSourceOverview,
   ArchivingOverview,
 } from '@/lib/archiving/types';
 
+import { ArchiveConfirmDialog } from './components/ArchiveConfirmDialog';
+import { formatCount, formatUtc } from './format';
+
 const LOAD_FAILED = 'Could not read the archiving overview';
+const RUNS_ROUTE = '/api/admin/archiving/runs';
+
+/** What the admin reads for each refusal. Raw error text is never shown. */
+const RUN_MESSAGES: Record<Exclude<ArchiveRunErrorCode, 'invalid_body'>, string> = {
+  runs_not_enabled: 'Archiving is not switched on yet.',
+  run_in_progress: 'Another run is in progress.',
+  run_not_continuable: "This run can't be continued.",
+  archive_batch_failed: 'A batch failed and nothing was lost. Press Continue to retry.',
+  run_unfinished:
+    'The run stopped before it was recorded. You can continue it in about 5 minutes.',
+};
+
+type RunRequest =
+  | { action: 'start'; source: ArchiveSourceKey; retentionDays: RetentionDays }
+  | { action: 'continue'; runId: string };
+
+/** The fallback for an unrecognised failure, worded for what the admin pressed (SA L-3). */
+const RUN_FAILED: Record<RunRequest['action'], string> = {
+  start: 'The run could not be started.',
+  continue: 'The run could not be continued.',
+};
+
+/** The server's run outcome, as one sentence. */
+function runMessage(
+  body: unknown,
+  ok: boolean,
+  action: RunRequest['action']
+): { kind: 'ok' | 'error'; text: string } {
+  const record = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+  if (ok && record.success === true) {
+    const data = (record.data ?? {}) as Record<string, unknown>;
+    const rows = typeof data.rowsArchived === 'number' ? formatCount(data.rowsArchived) : '0';
+    return data.outcome === 'partial'
+      ? { kind: 'ok', text: `Paused after ${rows} rows. Press Continue to archive the rest.` }
+      : { kind: 'ok', text: `Done: ${rows} rows archived.` };
+  }
+  const code = record.error;
+  const text =
+    typeof code === 'string' && code in RUN_MESSAGES
+      ? RUN_MESSAGES[code as keyof typeof RUN_MESSAGES]
+      : RUN_FAILED[action];
+  return { kind: 'error', text };
+}
 
 /**
  * A run's status as the admin reads it: a word first, colour second. The `!`
@@ -75,6 +129,11 @@ function statusBadge(run: ArchiveRunSummary): { label: string; className: string
   }
 }
 
+/** Partial, failed, or a running run whose request died: each can be resumed (C-12, SA Q-10). */
+function isContinuable(run: ArchiveRunSummary): boolean {
+  return run.status === 'partial' || run.status === 'failed' || (run.status === 'running' && run.isStale);
+}
+
 function RunStatus({ run }: { run: ArchiveRunSummary }) {
   const { label, className } = statusBadge(run);
   return (
@@ -93,21 +152,12 @@ function RunStatus({ run }: { run: ArchiveRunSummary }) {
  */
 const DARK_SELECT = '!border-slate-600 !bg-slate-800 !text-slate-100';
 
-/** `2025-09-26 14:05 UTC`. Always UTC: the cutoff is a UTC instant (FR-3). */
-function formatUtc(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return `${date.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
-}
-
-function formatCount(value: number): string {
-  return value.toLocaleString('en-US');
-}
-
 export default function ArchivingPage() {
   const [overview, setOverview] = useState<ArchivingOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -134,6 +184,37 @@ export default function ArchivingPage() {
     void load();
   }, [load]);
 
+  const runsEnabled = overview?.runsEnabled === true;
+
+  /** Start or continue a run, then re-read the overview so every number is current. */
+  const sendRun = useCallback(
+    async (request: RunRequest): Promise<boolean> => {
+      // The server refuses too; this keeps a disabled control from ever sending.
+      if (!runsEnabled) return false;
+      setBusy(true);
+      setNotice(null);
+      let ok = false;
+      try {
+        const response = await fetch(RUNS_ROUTE, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(request),
+        });
+        const body = await response.json().catch(() => null);
+        const message = runMessage(body, response.ok, request.action);
+        ok = message.kind === 'ok';
+        setNotice(message);
+      } catch {
+        setNotice({ kind: 'error', text: RUN_FAILED[request.action] });
+      } finally {
+        setBusy(false);
+      }
+      await load();
+      return ok;
+    },
+    [load, runsEnabled]
+  );
+
   return (
     <div className="space-y-6">
       <header className="border-b border-slate-700">
@@ -141,7 +222,11 @@ export default function ArchivingPage() {
           <div>
             <div className="mb-1 flex items-center gap-3">
               <h1 className="text-xl font-semibold text-white">Archiving</h1>
-              <Badge className="!rounded !bg-purple-500/20 !text-purple-400">Read-only</Badge>
+              {overview && !runsEnabled && (
+                <Badge data-testid="runs-off-badge" className="!rounded !bg-purple-500/20 !text-purple-400">
+                  Runs off
+                </Badge>
+              )}
             </div>
             <p className="max-w-3xl text-sm text-slate-400">
               How many old records each source holds, and how many would move to the archive under
@@ -159,6 +244,20 @@ export default function ArchivingPage() {
           </button>
         </div>
       </header>
+
+      {notice && (
+        <div
+          data-testid="run-notice"
+          role={notice.kind === 'error' ? 'alert' : 'status'}
+          className={`rounded-lg border p-3 text-sm ${
+            notice.kind === 'error'
+              ? 'border-rose-500/40 bg-rose-500/10 text-rose-100'
+              : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'
+          }`}
+        >
+          {notice.text}
+        </div>
+      )}
 
       {error && (
         <div
@@ -185,7 +284,15 @@ export default function ArchivingPage() {
       {overview && (
         <>
           {overview.sources.map((source) => (
-            <SourceCard key={source.key} source={source} />
+            <SourceCard
+              key={source.key}
+              source={source}
+              runsEnabled={runsEnabled}
+              busy={busy}
+              onStart={(retentionDays) =>
+                sendRun({ action: 'start', source: source.key, retentionDays })
+              }
+            />
           ))}
 
           <section
@@ -198,7 +305,12 @@ export default function ArchivingPage() {
                 Run history
               </h2>
             </header>
-            <RunHistory runs={overview.runs} />
+            <RunHistory
+              runs={overview.runs}
+              runsEnabled={runsEnabled}
+              busy={busy}
+              onContinue={(runId) => void sendRun({ action: 'continue', runId })}
+            />
           </section>
         </>
       )}
@@ -206,10 +318,20 @@ export default function ArchivingPage() {
   );
 }
 
-function SourceCard({ source }: { source: ArchiveSourceOverview }) {
+function SourceCard({
+  source,
+  runsEnabled,
+  busy,
+  onStart,
+}: {
+  source: ArchiveSourceOverview;
+  runsEnabled: boolean;
+  busy: boolean;
+  onStart: (retentionDays: RetentionDays) => Promise<boolean>;
+}) {
   const [retentionDays, setRetentionDays] = useState<RetentionDays>(DEFAULT_RETENTION_DAYS);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const labelId = useId();
-  const noteId = useId();
 
   const selected = source.options.find((option) => option.retentionDays === retentionDays);
 
@@ -313,34 +435,47 @@ function SourceCard({ source }: { source: ArchiveSourceOverview }) {
           )}
         </div>
 
-        <div>
-          {/* Disabled with no handler: nothing on this page can start a run (AC-15). */}
-          <button
-            type="button"
-            disabled
-            aria-describedby={noteId}
-            className="flex items-center gap-2 rounded border border-slate-600 px-3 py-2 text-sm text-slate-300 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Archive className="h-4 w-4" aria-hidden="true" />
-            Archive
-          </button>
-          <p id={noteId} className="mt-1 text-xs text-slate-500">
-            Not switched on yet
-          </p>
-        </div>
+        <ArchiveConfirmDialog
+          sourceLabel={source.label}
+          option={selected}
+          runsEnabled={runsEnabled}
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          busy={busy}
+          onConfirm={() => {
+            void onStart(retentionDays).then(() => setDialogOpen(false));
+          }}
+        />
       </div>
     </section>
   );
 }
 
 /** The run log, newest first. Counts and times only: no archived content (AC-14). */
-function RunHistory({ runs }: { runs: ArchiveRunSummary[] }) {
+function RunHistory({
+  runs,
+  runsEnabled,
+  busy,
+  onContinue,
+}: {
+  runs: ArchiveRunSummary[];
+  runsEnabled: boolean;
+  busy: boolean;
+  onContinue: (runId: string) => void;
+}) {
+  const continueNoteId = useId();
+
   if (runs.length === 0) {
     return <p className="text-sm text-slate-400">No runs yet.</p>;
   }
 
   return (
     <div className="overflow-x-auto">
+      {!runsEnabled && runs.some(isContinuable) && (
+        <p id={continueNoteId} className="mb-2 text-xs text-slate-500">
+          Not switched on yet
+        </p>
+      )}
       <table className="w-full text-left text-sm text-slate-300">
         <thead className="text-xs uppercase tracking-wide text-slate-500">
           <tr>
@@ -352,7 +487,10 @@ function RunHistory({ runs }: { runs: ArchiveRunSummary[] }) {
             <th scope="col" className="py-2 pr-4 text-right font-medium">Batches</th>
             <th scope="col" className="py-2 pr-4 font-medium">Status</th>
             <th scope="col" className="py-2 pr-4 font-medium">Finished</th>
-            <th scope="col" className="py-2 font-medium">Error</th>
+            <th scope="col" className="py-2 pr-4 font-medium">Error</th>
+            <th scope="col" className="py-2 font-medium">
+              <span className="sr-only">Actions</span>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -370,7 +508,21 @@ function RunHistory({ runs }: { runs: ArchiveRunSummary[] }) {
               <td className="py-2 pr-4 whitespace-nowrap">
                 {run.finishedAt ? formatUtc(run.finishedAt) : '—'}
               </td>
-              <td className="py-2">{run.errorCode ?? '—'}</td>
+              <td className="py-2 pr-4">{run.errorCode ?? '—'}</td>
+              <td className="py-2">
+                {isContinuable(run) && (
+                  <button
+                    type="button"
+                    data-testid={`continue-${run.id}`}
+                    onClick={() => onContinue(run.id)}
+                    disabled={!runsEnabled || busy}
+                    aria-describedby={runsEnabled ? undefined : continueNoteId}
+                    className="rounded border border-slate-600 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700/50 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Continue
+                  </button>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>

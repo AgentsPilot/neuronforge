@@ -56,10 +56,12 @@ export const ARCHIVE_SOURCE_KEYS = ARCHIVE_SOURCES.map((source) => source.key) a
 ];
 
 /**
- * Off until Slice 3 merges (condition C-5). A code constant rather than an env
- * var, so switching runs on is a reviewed diff with no dependency on Vercel access.
+ * On since Slice 3 (condition C-5): erasure and export now reach the archive, so
+ * archived rows may exist. A code constant rather than an env var, so switching
+ * runs on or off is a reviewed diff with no dependency on Vercel access. Setting
+ * it back to `false` makes the POST refuse with 409 `runs_not_enabled`.
  */
-export const ARCHIVE_RUNS_ENABLED = false;
+export const ARCHIVE_RUNS_ENABLED = true;
 
 /** A run's lifecycle. Mirrors the `archive_runs.status` CHECK (pinned by the migration test). */
 export const ARCHIVE_RUN_STATUSES = ['running', 'succeeded', 'partial', 'failed'] as const;

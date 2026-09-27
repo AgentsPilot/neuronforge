@@ -1,6 +1,7 @@
 ---
 name: bos-llm-call-standards
-description: Make every Business OS AI call follow the LLM standards built in Layers 1, 1.1, 1.5, the logging clean-up and Layer 3. That means a catalogued call name, a server-side account, one grouping id per action, cost tracked through the provider layer, no owner text in logs, one audit entry per AI action (`runAiAction`), and a model/temperature resolved from the area settings instead of hardcoded. Use when adding, changing or reviewing an LLM/AI call, embedding, image generation or AI feature in Business OS code — `lib/business-os/**`, `app/api/business-os/**`, and the Business OS services (`lib/services/Website*`, `Intake*`, `Onboarding*`, `LeadAlert*`, `GeneratedImage*`) and their routes. Does NOT apply to the agents side (`lib/agentkit/**` including V6, `lib/pilot/**`), which also uses `callWithTracking` / `ProviderFactory` under its own rules. It prevents the classic failures: spend landing on the platform account, ungroupable ledger rows, untracked cost, and owner text in production logs.
+description: >-
+  Standards every Business OS AI call must meet — a catalogued call name, a server-side account, one grouping id per action, cost tracked through callWithTracking, no owner text in logs, one audit entry per action (runAiAction), and model/temperature resolved from area settings, never hardcoded. Use when adding, changing or reviewing an LLM call, embedding, image generation or AI feature in lib/business-os/**, app/api/business-os/**, or the Website, Intake, Onboarding, LeadAlert and GeneratedImage services. Not for lib/agentkit/** or lib/pilot/**.
 ---
 
 # bos-llm-call-standards

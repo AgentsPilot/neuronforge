@@ -63,7 +63,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 
 /**
- * The three files the operator PASTES into the Supabase SQL editor.
+ * The files the operator PASTES into the Supabase SQL editor.
  *
  * These carry the strictest rule: no `--` comments at all.
  */
@@ -71,9 +71,10 @@ const PASTE_SCRIPTS = [
   'scripts/preflight-bos-entitlements-migration.sql',
   'scripts/check-bos-entitlements-migration.sql',
   'scripts/rollback-bos-entitlements-migration.sql',
-  // The privilege fix (2026-09-24) is a MIGRATION the operator pastes by hand,
-  // so it is held to the paste rules as well as the hygiene ones.
+  // Both of these are MIGRATIONS the operator pastes by hand, so they are held
+  // to the paste rules as well as the hygiene ones.
   'supabase/migrations/20261009_business_os_entitlements_privilege_fix.sql',
+  'supabase/migrations/20261010_business_os_tenants_missing_plan_row.sql',
 ];
 
 /**
@@ -95,6 +96,7 @@ const SQL_FILES = [
   'supabase/migrations/20261005_business_os_entitlements.sql',
   'supabase/migrations/20261005b_business_os_entitlements_backfill.sql',
   'supabase/migrations/20261009_business_os_entitlements_privilege_fix.sql',
+  'supabase/migrations/20261010_business_os_tenants_missing_plan_row.sql',
 ];
 
 const read = (name: string) => readFileSync(join(process.cwd(), ...name.split('/')), 'utf8');
@@ -374,11 +376,11 @@ describe('the runbook states the checker grid sizes correctly (QA-3)', () => {
 });
 
 describe('the guard itself', () => {
-  it('reads seven non-trivial files, four of them pasted by hand', () => {
+  it('reads eight non-trivial files, five of them pasted by hand', () => {
     // A guard whose file list silently stopped matching would pass for ever.
     for (const name of SQL_FILES) expect(read(name).length).toBeGreaterThan(2000);
-    expect(SQL_FILES).toHaveLength(7);
-    expect(PASTE_SCRIPTS).toHaveLength(4);
+    expect(SQL_FILES).toHaveLength(8);
+    expect(PASTE_SCRIPTS).toHaveLength(5);
     for (const name of PASTE_SCRIPTS) expect(SQL_FILES).toContain(name);
   });
 
@@ -386,7 +388,7 @@ describe('the guard itself', () => {
     // Named explicitly: the migrations are the files most likely to be dropped
     // from the list by someone tidying it, and they are the ones a future
     // migration will be copied from.
-    expect(SQL_FILES.filter((name) => name.startsWith('supabase/migrations/'))).toHaveLength(3);
+    expect(SQL_FILES.filter((name) => name.startsWith('supabase/migrations/'))).toHaveLength(4);
   });
 
   it('detects the exact shapes the rules forbid', () => {

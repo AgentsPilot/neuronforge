@@ -1,5 +1,33 @@
 # Stripe Billing & Database Status - Current State Analysis
 
+> ## ⚠️ PART OF THIS SHIPPED AND PART NEVER DID. Read the split first.
+>
+> **Reviewed 2026-09-26 (S-0, RD-10).** This document lists tables as "✅ EXISTS"
+> without distinguishing the ones that are USED from the ones nothing has ever
+> called.
+>
+> | What it describes | Reality, verified 2026-09-25 |
+> |---|---|
+> | `user_subscriptions`, `billing_events`, `credit_transactions` and the Stripe columns | **Real and live.** The webhook writes them today |
+> | **`plans`** | **The table exists and has ZERO callers** (F-11, SA-confirmed). Its migration (`20250127_update_pricing_plans.sql`) is **not in the repository** |
+> | The Explorer / Navigator / Commander tiers it describes | **Never built** — see [PRICING_SYSTEM_IMPLEMENTATION_PLAN.md](/docs/PRICING_SYSTEM_IMPLEMENTATION_PLAN.md), also never built |
+>
+> ### H-7 — Business OS is NOT built on the `plans` table
+>
+> Recorded here because this is the document that would make somebody think it
+> is. **Business OS plans are configuration, not rows**:
+>
+> - the tiers live in `lib/business-os/entitlements/config/tierMatrix.ts`;
+> - the plan for one account is a row in `business_os_account_plans` (`tier`, `cohort`
+>   and their expiry dates), written only through audited admin operations or the
+>   provisioning triggers;
+> - nothing in `lib/business-os/**` reads `plans`, and nothing should start.
+>
+> If you found the `plans` table and thought it was the missing half of a plan
+> system: it is not. It is an orphan from the proposal above. **Do not wire
+> anything to it** — see [BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md](/docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md)
+> and [BUSINESS_OS_ENTITLEMENTS.md](/docs/architecture/BUSINESS_OS_ENTITLEMENTS.md).
+
 **Date**: 2025-01-05
 **Purpose**: Document existing database tables and identify what needs to be created for Stripe integration
 
