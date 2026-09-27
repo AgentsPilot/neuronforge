@@ -8,10 +8,20 @@ import { Moon, Sun, Globe, Check, Settings, Calendar } from 'lucide-react';
 import { useV2Theme } from '@/lib/design-system-v2';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
+import { PlanBadgePill, type PlanBadgeProps } from '@/components/business-os/PlanBadgePill';
 
 import { SchedulingDialog } from '@/components/business-os/SchedulingDialog';
 
-export function BusinessOSHeader() {
+/**
+ * `planBadge` is read by the layout, server-side, and passed down.
+ *
+ * `null` — no session, an unreadable plan, a thrown error, or simply not a
+ * Founding Partner — renders nothing at all. There is deliberately no error or
+ * loading state: the chrome of every screen is the last place to surface a
+ * problem with a decorative label, and a WRONG label would be a claim about what
+ * somebody is paying for.
+ */
+export function BusinessOSHeader({ planBadge = null }: { planBadge?: PlanBadgeProps | null }) {
   const router = useRouter();
   const { language, setLanguage, t } = useLanguage();
   const [isLanguageOpen, setIsLanguageOpen] = useState(false);
@@ -92,20 +102,31 @@ export function BusinessOSHeader() {
           * still the header on the `/v2/*` pages, where `/v2/dashboard` remains
           * the correct home until they are decommissioned.
           */}
-        <Link
-          href="/business-os"
-          className="group inline-block"
-          aria-label={t('nav.home')}
-        >
-          <Image
-            src="/images/AgentPilot_Logo.png"
-            alt="AgentsPilots"
-            width={120}
-            height={120}
-            className="group-hover:scale-105 transition-transform duration-200"
-            priority
-          />
-        </Link>
+        {/*
+          The identity slot, and the plan pill beside it.
+
+          The brief said "next to the business name". **This header does not render
+          a business name** — the left-hand slot is the logo — so the pill sits
+          beside the logo, which is the same position and the same intent. Flagged
+          rather than invented.
+        */}
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <Link
+            href="/business-os"
+            className="group inline-block"
+            aria-label={t('nav.home')}
+          >
+            <Image
+              src="/images/AgentPilot_Logo.png"
+              alt="AgentsPilots"
+              width={120}
+              height={120}
+              className="group-hover:scale-105 transition-transform duration-200"
+              priority
+            />
+          </Link>
+          {planBadge && <PlanBadgePill {...planBadge} />}
+        </div>
 
         {/* Calendar + Dark Mode Toggle + Language Selector + Settings */}
         <div className="flex items-center gap-2 sm:gap-3">

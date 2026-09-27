@@ -86,6 +86,7 @@ import {
   previewAccountFor,
   type PlanCapabilityRow,
 } from './planPresentation';
+import { planBadgeFor } from './planBadge';
 import { resolveEntitlements } from './resolver';
 import type { EntitlementResolution } from './resolver';
 import { getEntitlementConfig, type EntitlementConfig } from './source';
@@ -153,12 +154,38 @@ export function comparableAmount(value: CapabilityValue | undefined): { unit: st
   return null;
 }
 
-/** One line in "what you have". */
+/** One capability, as the customer reads it. */
 export interface CustomerPlanFeature {
   capability: string;
   label: string;
   /** Already formatted server-side; the component renders the string. */
   value: string;
+}
+
+/**
+ * One row of the list: a category, and the features in it.
+ *
+ * ── Why grouped (user decision, 2026-09-27) ──────────────────────────
+ * A Founding Partner saw 28 flat lines, which is a list nobody reads to the end
+ * of. Grouping uses the `category` every capability already carries, so there is
+ * no second taxonomy to maintain and no mapping to drift.
+ *
+ * The usual 3–4-per-row guidance is deliberately broken for AI chat's ten
+ * entries: they go on one longer line rather than behind a "+N more" expander,
+ * because an expander is a new interaction on a read-only screen, and hiding six
+ * of the ten things a plan includes is the opposite of what this section is for.
+ *
+ * `summary` is built HERE rather than joined in the component — same rule as
+ * every other string on this surface: the page renders, it does not compose.
+ */
+export interface CustomerPlanCategory {
+  /** The catalog's own category id. Stable, and what the order is keyed on. */
+  category: string;
+  /** What the category is called to a customer. */
+  label: string;
+  features: CustomerPlanFeature[];
+  /** The feature names, joined — the one string a row prints. */
+  summary: string;
 }
 
 /** What moving up a plan would change, derived by resolving both. */
@@ -177,8 +204,13 @@ export interface CustomerPlanUpgrade {
   availableToBuy: boolean;
   /** Plain words for why there is nothing to press. `null` when there is. */
   actionUnavailableBecause: string | null;
-  /** Granted there, not here. */
-  adds: CustomerPlanFeature[];
+  /**
+   * Granted there, not here — grouped, for the same reason the included list is.
+   *
+   * `basic → pro` is nine chat capabilities, which read as nine near-identical
+   * lines and now read as one.
+   */
+  adds: CustomerPlanCategory[];
   /** Granted in both, worth more there — `from` → `to`. */
   improves: Array<{ capability: string; label: string; from: string; to: string }>;
   /**
@@ -235,15 +267,226 @@ export interface CustomerPlanView {
   state: string | null;
   /** ISO, or `null` when access has no end date. */
   accessEndsAt: string | null;
-  /** When this plan ends, in a sentence, read off config. */
+  /**
+   * When this plan ends, in a sentence.
+   *
+   * **`null` only for a free plan with no end date**, where `whenThisChanges` says
+   * exactly that at more length. Keyed on `lifecycle.accessEndsAt` — the same
+   * field the note and the chrome pill read (SA R3-1).
+   *
+   * The two said the same thing to a free account: "No end date unless an admin
+   * sets one", and a row below, "Your access has no end date… we will tell you
+   * first and you will be able to choose a plan." The second says it better and
+   * completely.
+   *
+   * Suppressed HERE rather than hidden in the component, the way `nothingToShow`
+   * was: a field the page must know to skip is a field the next page will forget
+   * to skip. The component renders whichever is present and decides nothing.
+   *
+   * **The condition is narrow on purpose:** a note AND no end date. It survives
+   * wherever it carries information of its own — a paid plan's "While the plan is
+   * paid for", and a TRIAL's "14 days from the first onboarding message, or when
+   * the AI actions run out", which is the only place that deadline appears. A
+   * first pass dropped it whenever the note existed and silently cost the trial
+   * its countdown.
+   */
   endsWhen: string | null;
-  /** Written for the cohorts: what happens when free access is not free. */
+  /**
+   * Written for the cohorts: what happens when free access is not free.
+   *
+   * When this is set it is the ONLY ending sentence — see `endsWhen`.
+   */
   whenThisChanges: string | null;
-  included: CustomerPlanFeature[];
+  /**
+   * Every capability the plan grants, grouped by category.
+   *
+   * Grouped rather than flat since 2026-09-27: 28 lines is a list nobody
+   * finishes. The flat features are still inside each row, so a consumer that
+   * wants them has them without a second field to keep in step.
+   */
+  included: CustomerPlanCategory[];
   /** `null` when there is nothing above this plan. */
   nextPlanUp: CustomerPlanUpgrade | null;
   /** Plain words for the customer when we cannot answer. `null` when we can. */
   problem: string | null;
+  /**
+   * The plan pill for this account, or `null` — the SAME decision the chrome uses.
+   *
+   * Carried on this payload so the settings page can show the pill beside the
+   * "Your plan" heading **without a second request and without a second opinion**.
+   * `planBadgeFor` is the only thing that decides who gets one: the chrome reads it
+   * through `readPlanBadge`, and this surface reads it here.
+   *
+   * `href` is deliberately absent from this copy — beside the heading the pill
+   * identifies the plan, and a link from the section to itself is not navigation.
+   */
+  badge: { label: string; title: string } | null;
+}
+
+/**
+ * What each catalog category is called, and the order rows appear in.
+ *
+ * ── The order, and why it is this one ───────────────────────────────
+ * Not alphabetical (which would open on "Add-ons") and not catalog order (which
+ * is grouped for the people who maintain the catalog, and opens on add-ons too).
+ * It follows **the order a business meets these things**, which is also roughly
+ * how much they care:
+ *
+ *   1. CRM                — the clients. The reason the product exists.
+ *   2. Website & intake    — how those clients arrive.
+ *   3. Payments            — getting paid by them.
+ *   4. AI chat             — the assistant that does the work above.
+ *   5. Marketing           — bringing more of them in.
+ *   6. Insights            — what the numbers say once all that is running.
+ *   7. Support             — what we owe the owner.
+ *   8. Platform            — plumbing they should rarely think about.
+ *   9. Add-ons             — extras, last by definition.
+ *
+ * A category absent from this map still renders: it falls to the end with its
+ * raw id as the label, which is ugly on purpose. A new catalog category should
+ * be noticed and named, not silently swallowed — and `categoryOrder.test`
+ * asserts every category in the catalog is named here.
+ */
+const CATEGORY_PRESENTATION: ReadonlyArray<{ category: string; label: string }> = [
+  // The plain word AND the familiar acronym (user decision, 2026-09-27):
+  // "Clients" is what it is, "CRM" is what somebody has been calling it for
+  // twenty years, and the row has room for both.
+  { category: 'crm', label: 'Clients (CRM)' },
+  { category: 'website_intake', label: 'Website and enquiries' },
+  { category: 'payments', label: 'Payments' },
+  { category: 'ai_chat', label: 'AI assistant' },
+  { category: 'marketing', label: 'Marketing' },
+  { category: 'insights', label: 'Insights' },
+  { category: 'support', label: 'Support' },
+  { category: 'platform', label: 'Platform' },
+  { category: 'addon', label: 'Add-ons' },
+];
+
+/** Features grouped into rows, in the order above. Empty categories are dropped. */
+export function groupByCategory(
+  features: readonly CustomerPlanFeature[],
+  catalog: Record<string, CapabilityDef>
+): CustomerPlanCategory[] {
+  const known = new Map(CATEGORY_PRESENTATION.map((entry, index) => [entry.category, { ...entry, index }]));
+  const buckets = new Map<string, CustomerPlanFeature[]>();
+
+  for (const feature of features) {
+    const category = catalog[feature.capability].category;
+    const bucket = buckets.get(category);
+    if (bucket) bucket.push(feature);
+    else buckets.set(category, [feature]);
+  }
+
+  return [...buckets.entries()]
+    .map(([category, bucketFeatures]) => {
+      const presentation = known.get(category);
+
+      return {
+        category,
+        // An unnamed category shows its raw id rather than disappearing.
+        label: presentation?.label ?? category,
+        index: presentation?.index ?? CATEGORY_PRESENTATION.length,
+        features: bucketFeatures,
+        // Joined here, not in the component. A value worth printing is appended
+        // to its own name, so "AI actions (2,000 per month)" reads as one item.
+        //
+        // `yes` is dropped: "Client documents (yes)" in a list of what you HAVE is
+        // noise. And a value that already carries brackets is not wrapped in more
+        // of them — "Email volume (10,000 per month (alerts, never blocks))" was
+        // the first thing to look wrong when these lines were joined.
+        summary: bucketFeatures
+          .map((feature) => {
+            if (feature.value === 'yes') return feature.label;
+            return feature.value.includes('(')
+              ? `${feature.label} ${feature.value}`
+              : `${feature.label} (${feature.value})`;
+          })
+          .join(', '),
+      };
+    })
+    .sort((left, right) => left.index - right.index || left.category.localeCompare(right.category))
+    // `index` was a sort key, not part of the payload: the exact key-set
+    // allow-list over each object would (rightly) fail on it.
+    .map((row) => ({
+      category: row.category,
+      label: row.label,
+      features: row.features,
+      summary: row.summary,
+    }));
+}
+
+/**
+ * A date a customer can read, without `Intl`.
+ *
+ * Built from an explicit month list rather than `toLocaleDateString`: the format
+ * has to be identical in a test, on Vercel, and in whatever ICU build a container
+ * happens to ship. "1 December 2026" either way.
+ *
+ * Localising it is WS-2 step 1b with the rest of the sentences — the server will
+ * send the ISO date and a key, and the component will format it.
+ */
+const MONTHS = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+function readableDate(iso: string): string {
+  const date = new Date(iso);
+  return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+}
+
+/**
+ * The ending sentence for a FREE plan, from the account's own end date.
+ *
+ * ── The defect this replaces (SA R3-1) ────────────────────────────
+ * A champion with an admin-set expiry was told, in two adjacent lines, that their
+ * access had **no end date** and that it **would end**. Three things on this
+ * surface make a claim about an ending — the short line, the longer note, and the
+ * pill's tooltip on the chrome of every screen — and they were deciding
+ * independently.
+ *
+ * `describePlanEnding` was not the bug: it describes the **plan** from config, and
+ * a champion cohort genuinely has no configured duration. An end date is a
+ * per-ACCOUNT fact, so a sentence about the plan cannot answer it. The customer
+ * layer holds the resolution, so the rule belongs here — keyed on
+ * `lifecycle.accessEndsAt`, the resolver's own answer, which every consumer now
+ * reads.
+ *
+ * It also puts the DATE on screen. `accessEndsAt` was in the payload and rendered
+ * nowhere, which is how "your access ends" managed to be vaguer than the config
+ * sentence contradicting it.
+ */
+function describeFreePlanEnding(
+  config: EntitlementConfig,
+  planId: string,
+  resolution: EntitlementResolution
+): string | null {
+  const endsAt = resolution.lifecycle.accessEndsAt;
+
+  // No end date: the note says exactly that, at more length. One claim, one
+  // place — which is what removed the original duplicate.
+  if (endsAt === null) return null;
+
+  const configured = describePlanEnding(config, planId, resolution.values['ai.actions']?.value);
+
+  // A cohort with a configured duration (the trial) already explains WHY it ends,
+  // and that reason — running out of AI actions — is not visible from the date
+  // alone. Keep it, and lead with the date.
+  const hasAReason = /whichever comes first/i.test(configured);
+
+  return hasAReason
+    ? `Ends on ${readableDate(endsAt)}, or when the AI actions run out — whichever comes first.`
+    : `Your free access ends on ${readableDate(endsAt)}.`;
 }
 
 /** Granting, visible capabilities as the customer's feature list. */
@@ -353,7 +596,7 @@ function buildUpgrade(
       // badge, and a sentence restating it is noise — it also made the two
       // indistinguishable to a reader looking for either.
       : 'Get in touch if you would like to move plan before then.',
-    adds,
+    adds: groupByCategory(adds, catalog),
     improves,
     changes,
   };
@@ -389,6 +632,9 @@ export function buildCustomerPlanView(input: {
     whenThisChanges: null,
     included: [],
     nextPlanUp: null,
+    // No resolution, no badge. The pill is an identity label, and there is no
+    // identity to state.
+    badge: null,
   };
 
   // A read that failed is not a customer without a plan (the S-0 lesson, one
@@ -423,6 +669,19 @@ export function buildCustomerPlanView(input: {
   const isTier = basis.kind === 'tier';
   const rows = describePlanCapabilities(resolution, catalog);
   const included = featuresFrom(rows, catalog);
+  // Only for the free plans, and only as information: it says what a paid plan IS,
+  // not that a decision has been made, so the eventual change is something the
+  // customer has already read once.
+  //
+  // Branches on the SAME field as `endsWhen` and the pill (SA R3-1). Three
+  // consumers, one fact — previously they decided separately and a dated champion
+  // was told both that their access had no end date and that it would end.
+  const whenThisChanges = isTier
+    ? null
+    : resolution.lifecycle.accessEndsAt === null
+      ? 'Your access has no end date. Business OS is normally a paid monthly plan, so if that ever changes for your account we will tell you first and you will be able to choose a plan.'
+      : 'When this ends you will be able to choose a paid monthly plan. Nothing is charged before you choose one.';
+
   const nextPlanId = nextPlanIdFor(config, resolution);
   const visibleRows = rows.filter((row) => !isHiddenFromCustomer(row.capability, catalog[row.capability]));
   // A plan marked `shownToCustomers: false` is never named as the plan above
@@ -444,16 +703,24 @@ export function buildCustomerPlanView(input: {
     free: !isTier,
     state: resolution.state,
     accessEndsAt: resolution.lifecycle.accessEndsAt,
-    endsWhen: describePlanEnding(config, planId, resolution.values['ai.actions']?.value),
-    // Only for the free plans, and only as information. It says what a paid plan
-    // IS, not that a decision has been made — so the eventual change is already
-    // something the customer has read once.
-    whenThisChanges: isTier
-      ? null
-      : resolution.lifecycle.accessEndsAt === null
-        ? 'Your access has no end date. Business OS is normally a paid monthly plan, so if that ever changes for your account we will tell you first and you will be able to choose a plan.'
-        : 'When this ends you will be able to choose a paid monthly plan. Nothing is charged before you choose one.',
-    included,
+    // `null` only when the note below ALREADY SAYS IT.
+    //
+    // First pass suppressed it whenever the note existed, and that was too broad:
+    // a trial's line ("14 days from the first onboarding message, or when the AI
+    // actions run out") and its note ("when this ends you will be able to choose a
+    // paid plan") are not duplicates — one says WHEN, the other says WHAT NEXT.
+    // Dropping the first lost the only place the 14 days appears.
+    //
+    // The redundancy is specific to open-ended access, where the line says "no end
+    // date" and the note opens with "your access has no end date". So: suppress
+    // when there is a note AND there is no end date to state.
+    // A paid plan runs while it is paid for; a free one is described by its own
+    // end date (SA R3-1) — one rule, keyed on `lifecycle.accessEndsAt`.
+    endsWhen: isTier
+      ? describePlanEnding(config, planId, resolution.values['ai.actions']?.value)
+      : describeFreePlanEnding(config, planId, resolution),
+    whenThisChanges,
+    included: groupByCategory(included, catalog),
     // Shown only when the plan above genuinely gives this customer something.
     //
     // A Founding Partner already has more than Essentials, so for them the
@@ -466,5 +733,11 @@ export function buildCustomerPlanView(input: {
         ? upgrade
         : null,
     problem: null,
+    // One decision, two transports: the chrome gets it through `readPlanBadge`,
+    // this surface gets it here. `href` is dropped — see the field's comment.
+    badge: (() => {
+      const badge = planBadgeFor(resolution, config);
+      return badge ? { label: badge.label, title: badge.title } : null;
+    })(),
   };
 }

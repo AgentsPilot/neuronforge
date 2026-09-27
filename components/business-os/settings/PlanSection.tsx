@@ -39,6 +39,7 @@
 import { useEffect, useState } from 'react';
 import { ArrowRight, Check, Info, Loader2, Sparkles } from 'lucide-react';
 
+import { PlanBadgePill } from '@/components/business-os/PlanBadgePill';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { createLogger } from '@/lib/logger';
 
@@ -57,6 +58,22 @@ interface PlanFeature {
   value: string;
 }
 
+/**
+ * One row: a category and the features in it, already joined server-side.
+ *
+ * The component prints `summary`; it does not build it. Twenty-eight flat lines
+ * became nine rows (2026-09-27), and AI chat's ten entries are deliberately one
+ * long line rather than a "+N more" expander — an expander is a new interaction
+ * on a read-only screen, and hiding most of what a plan includes is the opposite
+ * of what this section is for.
+ */
+interface PlanCategory {
+  category: string;
+  label: string;
+  features: PlanFeature[];
+  summary: string;
+}
+
 interface PlanChange {
   capability: string;
   label: string;
@@ -70,10 +87,15 @@ interface PlanUpgrade {
   monthlyPriceUsd: number;
   availableToBuy: boolean;
   actionUnavailableBecause: string | null;
-  adds: PlanFeature[];
+  adds: PlanCategory[];
   improves: PlanChange[];
   /** Different there, but not rankable — shown as a change, never as a gain. */
   changes: PlanChange[];
+}
+
+interface PlanBadge {
+  label: string;
+  title: string;
 }
 
 export interface PlanPayload {
@@ -87,9 +109,11 @@ export interface PlanPayload {
   accessEndsAt: string | null;
   endsWhen: string | null;
   whenThisChanges: string | null;
-  included: PlanFeature[];
+  included: PlanCategory[];
   nextPlanUp: PlanUpgrade | null;
   problem: string | null;
+  /** Decided server-side by `planBadgeFor` — the same answer the chrome shows. */
+  badge: PlanBadge | null;
 }
 
 export function PlanSection() {
@@ -154,6 +178,9 @@ export function PlanSection() {
         <div className="flex items-baseline gap-2 flex-wrap">
           <span className="text-base text-[var(--v2-text-primary)]">{plan.name}</span>
           <span className="text-sm text-[var(--v2-text-muted)]">{priceLine(plan)}</span>
+          {/* The second placement (user decision). Unlinked: it sits inside the
+              section it would otherwise point at. */}
+          {plan.badge && <PlanBadgePill label={plan.badge.label} title={plan.badge.title} placement="page" />}
         </div>
         {plan.endsWhen && <p className="text-xs text-[var(--v2-text-muted)] mt-1">{plan.endsWhen}</p>}
       </div>
@@ -175,15 +202,13 @@ export function PlanSection() {
           // Named so a screen reader says which list this is, and so a test can
           // scope to it: an unnamed second list two elements down carries similar
           // numbers, and a positional query silently followed it.
-          <ul className="space-y-1.5" aria-label="What your plan includes">
-            {plan.included.map((feature) => (
-              <li key={feature.capability} className="flex items-start gap-2">
+          <ul className="space-y-2" aria-label="What your plan includes">
+            {plan.included.map((row) => (
+              <li key={row.category} className="flex items-start gap-2">
                 <Check className="w-4 h-4 shrink-0 mt-0.5 text-[var(--v2-primary)]" />
-                <span className="text-sm text-[var(--v2-text-primary)] min-w-0">
-                  {feature.label}
-                  {isQuantified(feature.value) && (
-                    <span className="text-[var(--v2-text-muted)]"> — {feature.value}</span>
-                  )}
+                <span className="text-sm min-w-0">
+                  <span className="text-[var(--v2-text-primary)]">{row.label}</span>
+                  <span className="block text-[var(--v2-text-muted)]">{row.summary}</span>
                 </span>
               </li>
             ))}
@@ -216,14 +241,12 @@ function NextPlanUp({ upgrade }: { upgrade: PlanUpgrade }) {
         What {upgrade.name} would add
       </h5>
       <ul className="mt-1.5 space-y-1.5" aria-label={`What ${upgrade.name} would add`}>
-          {upgrade.adds.map((feature) => (
-            <li key={feature.capability} className="flex items-start gap-2">
+          {upgrade.adds.map((row) => (
+            <li key={row.category} className="flex items-start gap-2">
               <Check className="w-4 h-4 shrink-0 mt-0.5 text-[var(--v2-text-muted)]" />
-              <span className="text-sm text-[var(--v2-text-primary)] min-w-0">
-                {feature.label}
-                {isQuantified(feature.value) && (
-                  <span className="text-[var(--v2-text-muted)]"> — {feature.value}</span>
-                )}
+              <span className="text-sm min-w-0">
+                <span className="text-[var(--v2-text-primary)]">{row.label}</span>
+                <span className="block text-[var(--v2-text-muted)]">{row.summary}</span>
               </span>
             </li>
           ))}
@@ -318,14 +341,3 @@ function priceLine(plan: PlanPayload): string {
   return plan.monthlyPriceUsd ? `$${plan.monthlyPriceUsd} a month` : '';
 }
 
-/**
- * Is this value worth printing beside the label?
- *
- * `yes` is what a granted boolean formats to, and "Client records — yes" reads
- * worse than "Client records" in a list that is already a list of what you have.
- * Anything with a number in it (an allowance, a seat count) is the opposite: the
- * number IS the information.
- */
-function isQuantified(value: string): boolean {
-  return value !== 'yes';
-}

@@ -71,8 +71,31 @@ describe('a Founding Partner', () => {
   it('sees the name and that it is free with no end date', async () => {
     await renderFor('champion');
 
-    expect(screen.getByText('Founding Partner')).toBeInTheDocument();
+    // TWICE now, deliberately: the plan name, and the pill beside it (user
+    // decision, 2026-09-27). `getAllByText` rather than a looser query, so the
+    // count is asserted rather than tolerated.
+    expect(screen.getAllByText('Founding Partner')).toHaveLength(2);
     expect(screen.getByText(/Free — no end date/i)).toBeInTheDocument();
+  });
+
+  it('the pill beside the heading does not link to the section it is in', async () => {
+    // The `page` placement renders a span, not a link: an element with no
+    // destination should not be in the tab order, and a link to the page you are
+    // already on is worse than no link. The chrome's copy is the one that links.
+    await renderFor('champion');
+
+    const pill = screen.getByTestId('plan-badge-pill');
+
+    expect(pill.tagName).toBe('SPAN');
+    expect(pill).not.toHaveAttribute('href');
+    // And it still carries the reason for a screen reader.
+    expect(pill).toHaveAttribute('aria-label', expect.stringContaining('no end date'));
+  });
+
+  it('a paying customer gets no pill — the same decision as the chrome', async () => {
+    await renderFor('basic');
+
+    expect(screen.queryByTestId('plan-badge-pill')).not.toBeInTheDocument();
   });
 
   it('is shown NO plan above — the section is absent, not an empty box', async () => {
@@ -95,13 +118,26 @@ describe('a Founding Partner', () => {
   it('is told everything it has, by name', async () => {
     await renderFor('champion');
 
-    // Two real labels from the catalog, so the list is genuinely rendered and
-    // not an empty <ul>. Scoped to the included list, and matched exactly:
-    // "Invoices" is also a substring of the chat invoice-control label, which an
-    // unscoped substring query resolved to two elements.
+    // Grouped rows: the category names are the lines, and the capability names
+    // live inside each row's summary. Both halves checked, against the payload's
+    // OWN strings — a substring like "Invoices" now appears in two summaries
+    // (Payments, and the AI assistant's invoice control), so an exact match on the
+    // row is the only unambiguous assertion.
+    const payload = payloadFor('champion');
     const included = within(screen.getByRole('list', { name: /What your plan includes/i }));
-    expect(included.getByText(/Contacts, pipeline and tasks/)).toBeInTheDocument();
-    expect(included.getByText('Invoices')).toBeInTheDocument();
+
+    for (const category of ['crm', 'payments']) {
+      const row = payload.included.find((entry) => entry.category === category)!;
+      expect(included.getByText(row.label)).toBeInTheDocument();
+      expect(included.getByText(row.summary)).toBeInTheDocument();
+    }
+
+    // Non-vacuity: those two rows really do name the capabilities somebody came
+    // to check.
+    expect(payload.included.find((entry) => entry.category === 'crm')!.summary).toMatch(
+      /Contacts, pipeline and tasks/
+    );
+    expect(payload.included.find((entry) => entry.category === 'payments')!.summary).toMatch(/Invoices/);
   });
 });
 
@@ -134,15 +170,21 @@ describe('a paying customer on Essentials', () => {
   it('does not print "yes" beside every feature it has', async () => {
     await renderFor('basic');
 
-    // "Client documents — yes" in a list titled "what your plan includes" is
-    // noise. A number is the opposite: it is the information.
+    // "Client documents (yes)" in a list titled "what your plan includes" is
+    // noise. A number is the opposite: it is the information — so a value is
+    // printed only when it says something, and `yes` never appears.
+    expect(screen.queryByText(/\(yes\)/)).not.toBeInTheDocument();
     expect(screen.queryByText(/— yes/)).not.toBeInTheDocument();
 
     // Scoped to the INCLUDED list BY NAME. A positional query
     // (`getAllByRole('list')[0]`) passed when the included list was empty,
     // because it then found the next-plan list, which carries the same number.
+    //
+    // The number now sits inside the AI assistant row's summary, as
+    // "AI actions (500 per month)" — grouping put the value in brackets beside
+    // its own name rather than on a line of its own.
     const included = within(screen.getByRole('list', { name: /What your plan includes/i }));
-    expect(included.getByText(/500 per month/)).toBeInTheDocument();
+    expect(included.getByText(/AI actions \(500 per month\)/)).toBeInTheDocument();
   });
 });
 
@@ -151,7 +193,7 @@ describe('a trial', () => {
     await renderFor('trial');
 
     expect(screen.getByText('Test Flight')).toBeInTheDocument();
-    expect(screen.getByText(/days from the first onboarding message/i)).toBeInTheDocument();
+    expect(screen.getByText(/Ends on \d+ \w+ \d{4}/)).toBeInTheDocument();
     expect(screen.getByText(/Nothing is charged before you choose one/i)).toBeInTheDocument();
   });
 });
@@ -281,10 +323,13 @@ describe('the contract with the server', () => {
 
     const included = within(screen.getByRole('list', { name: /What your plan includes/i }));
     expect(screen.getByText(payload.name!)).toBeInTheDocument();
-    for (const feature of payload.included.slice(0, 3)) {
-      expect(
-        included.getByText(new RegExp(feature.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
-      ).toBeInTheDocument();
+
+    // Grouped rows since 2026-09-27: each row prints its category label and the
+    // server-built `summary`. Both are asserted, because a component that printed
+    // the label and dropped the summary would still look like a list.
+    for (const row of payload.included.slice(0, 3)) {
+      expect(included.getByText(row.label)).toBeInTheDocument();
+      expect(included.getByText(row.summary)).toBeInTheDocument();
     }
   });
 
@@ -299,7 +344,7 @@ describe('the contract with the server', () => {
     expect(payload.nextPlanUp).not.toBeNull();
     // Two different lists, so a query for one can never accidentally answer for
     // the other.
-    expect(payload.included.map((feature) => feature.capability)).not.toEqual(
+    expect(payload.included.map((row) => row.category)).not.toEqual(
       payload.nextPlanUp!.improves.map((entry) => entry.capability)
     );
   });

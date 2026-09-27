@@ -24,13 +24,27 @@
 import {
   buildCustomerPlanView,
   comparableAmount,
+  groupByCategory,
   isHiddenFromCustomer,
 } from '@/lib/business-os/entitlements/customerPlanView';
+import { planBadgeFor } from '@/lib/business-os/entitlements/planBadge';
 import { previewAccountFor } from '@/lib/business-os/entitlements/planPresentation';
 import { resolveEntitlements } from '@/lib/business-os/entitlements/resolver';
 import { fixtureConfig } from '@/lib/business-os/entitlements/__fixtures__/fixtureSource';
 import { readCodeConfig } from '@/lib/business-os/entitlements/source';
 import type { CapabilityDef } from '@/lib/business-os/entitlements/types';
+
+/**
+ * The capability ids in a grouped list.
+ *
+ * `included` and `adds` became `CustomerPlanCategory[]` when the list was grouped
+ * (2026-09-27). Tests ask "which capabilities are named", which is now a question
+ * about the features inside the rows — one helper rather than eleven inline
+ * `flatMap`s, so the next shape change is one edit.
+ */
+function capabilityIdsOf(rows: readonly { features: readonly { capability: string }[] }[] = []): string[] {
+  return rows.flatMap((row) => row.features.map((feature) => feature.capability));
+}
 
 const NOW = new Date('2026-09-27T00:00:00.000Z');
 const config = readCodeConfig();
@@ -79,8 +93,13 @@ describe('a Founding Partner (champion)', () => {
       (capability) => !isHiddenFromCustomer(capability, catalog[capability])
     );
 
-    expect(view.included).toHaveLength(visibleCapabilities.length);
+    // Flattened: `included` is grouped by category now, so the count that matters
+    // is the capabilities inside the rows, not the number of rows.
+    expect(capabilityIdsOf(view.included)).toHaveLength(visibleCapabilities.length);
     expect(visibleCapabilities.length).toBeGreaterThan(10);
+    // And they really are grouped — fewer rows than capabilities, which is the
+    // whole point of the change.
+    expect(view.included.length).toBeLessThan(visibleCapabilities.length);
   });
 
   it('is offered NOTHING above it, because it already has the top plan in full', () => {
@@ -162,20 +181,24 @@ describe('a Founding Partner whose access has been given an end date', () => {
   it('is still free until then, and still has everything', () => {
     expect(view.free).toBe(true);
     expect(view.monthlyPriceUsd).toBe(0);
-    expect(view.included.length).toBeGreaterThan(10);
+    expect(capabilityIdsOf(view.included).length).toBeGreaterThan(10);
   });
 });
 
 describe('a trial (Test Flight)', () => {
   const view = viewFor('trial');
 
-  it('is told when it ends, in days read off the configuration', () => {
+  it('is told the DATE it ends, and why it might end sooner', () => {
     expect(view.name).toBe('Test Flight');
     expect(view.free).toBe(true);
     expect(view.accessEndsAt).not.toBeNull();
-    // Not a hard-coded 14: the sentence is read off `durationHistory`, so
-    // shortening the trial in config changes what the customer is told.
-    expect(view.endsWhen).toMatch(/\d+ days from/);
+
+    // The date, which is what `accessEndsAt` holds and what nothing rendered
+    // before (SA R3-1). It leads, because a date needs no arithmetic.
+    expect(view.endsWhen).toMatch(/Ends on \d+ \w+ \d{4}/);
+    // And the reason it can end sooner, which the date alone cannot carry — read
+    // off config, so shortening the trial changes what the customer is told.
+    expect(view.endsWhen).toMatch(/AI actions run out/);
   });
 
   it('is shown the paid plan and what it would actually add', () => {
@@ -243,8 +266,11 @@ describe('Essentials and Autopilot — the two nobody is on yet', () => {
     // customer is told about both: the chat capabilities Autopilot adds, and the
     // larger AI allowance.
     expect(view.nextPlanUp?.improves.map((entry) => entry.capability)).toEqual(['ai.actions']);
-    expect(view.nextPlanUp?.adds.map((feature) => feature.capability)).toContain('chat.access');
-    expect(view.nextPlanUp?.adds.length).toBeGreaterThanOrEqual(9);
+    expect(capabilityIdsOf(view.nextPlanUp?.adds)).toContain('chat.access');
+    expect(capabilityIdsOf(view.nextPlanUp?.adds).length).toBeGreaterThanOrEqual(9);
+    // And the nine arrive as ONE row, which is the point of grouping them.
+    expect(view.nextPlanUp?.adds).toHaveLength(1);
+    expect(view.nextPlanUp?.adds[0].label).toBe('AI assistant');
   });
 
   it('Essentials cannot be left by pressing anything yet', () => {
@@ -312,7 +338,7 @@ describe('Essentials and Autopilot — the two nobody is on yet', () => {
     // Silence about the one capability whose units do not match, rather than a
     // confident wrong claim in either direction.
     expect(view.nextPlanUp?.improves.map((entry) => entry.capability) ?? []).not.toContain('ai.actions');
-    expect(view.nextPlanUp?.adds.map((feature) => feature.capability) ?? []).not.toContain('ai.actions');
+    expect(capabilityIdsOf(view.nextPlanUp?.adds)).not.toContain('ai.actions');
 
     // And the comparison is not simply broken: a capability whose units DO match
     // is still ranked in the same view.
@@ -540,6 +566,199 @@ describe('the two commercial flags decide what a customer is offered', () => {
   });
 });
 
+/**
+ * The ending sentence, and the duplicate that was removed (refinement 1).
+ */
+describe('a plan is not told when it ends twice', () => {
+  it('an open-ended free plan gets the long note ONLY', () => {
+    // A champion saw "No end date unless an admin sets one" and, a row later,
+    // "Your access has no end date… we will tell you first". The second says it
+    // better and completely. Suppressed in the payload rather than skipped in the
+    // component: a field the page must know to ignore is a field the next page
+    // will forget to ignore.
+    const view = viewFor('champion');
+
+    expect(view.endsWhen).toBeNull();
+    expect(view.whenThisChanges).toMatch(/no end date/i);
+  });
+
+  it('a TRIAL keeps its deadline — the two are not duplicates', () => {
+    // The first pass suppressed `endsWhen` whenever a note existed, which cost the
+    // trial the only line that says WHEN it ends. Its note says what happens
+    // NEXT; the two carry different information and both survive.
+    const view = viewFor('trial');
+
+    expect(view.endsWhen).toMatch(/Ends on/);
+    expect(view.whenThisChanges).toMatch(/choose a paid monthly plan/i);
+  });
+
+  it('a paid plan keeps its line, because nothing else says it', () => {
+    const view = viewFor('basic');
+
+    expect(view.endsWhen).toMatch(/While the plan is paid for/i);
+    expect(view.whenThisChanges).toBeNull();
+  });
+
+  it('NOTHING claims "no end date" when there IS one — on any surface (SA R3-1/R3-4)', () => {
+    // This replaced a test that restated the implementation's own boolean
+    // (`suppressed === (note !== null && accessEndsAt === null)`), which is why the
+    // suite stayed green while a champion with an expiry was told, in two adjacent
+    // lines, that their access had no end date and that it would end. A test that
+    // asserts the condition can only ever agree with the code.
+    //
+    // So this asserts the CUSTOMER-VISIBLE property, over every string the surface
+    // can produce — including the pill's tooltip, which is on the chrome of every
+    // screen — and includes the state the original describe block never built: a
+    // champion with a date.
+    const datedChampion = resolveEntitlements({
+      config,
+      account: { ...previewAccountFor(config, 'champion', NOW), cohortExpiresAt: '2026-12-01T00:00:00.000Z' },
+      overrides: [],
+      addons: [],
+      now: NOW,
+    });
+
+    const cases = [
+      ...['champion', 'trial', 'basic', 'pro'].map((planId) => ({
+        what: planId,
+        view: viewFor(planId),
+        resolution: resolveEntitlements({
+          config,
+          account: previewAccountFor(config, planId, NOW),
+          overrides: [],
+          addons: [],
+          now: NOW,
+        }),
+      })),
+      {
+        what: 'champion with an end date',
+        view: buildCustomerPlanView({ resolution: datedChampion, unavailable: false, now: NOW, config }),
+        resolution: datedChampion,
+      },
+    ];
+
+    for (const { what, view, resolution } of cases) {
+      const claims = [view.endsWhen, view.whenThisChanges, planBadgeFor(resolution, config)?.title]
+        .filter((sentence): sentence is string => typeof sentence === 'string')
+        .join(' | ');
+
+      if (view.accessEndsAt !== null) {
+        expect({ what, claims }).toEqual({ what, claims: expect.not.stringMatching(/no end date/i) });
+      }
+    }
+  });
+
+  it('a champion WITH an end date is told the date, on both surfaces', () => {
+    // The state that was wrong on screen. Built here because the original dated
+    // champion describe asserted only on `whenThisChanges` — one of the three
+    // fields that can carry the claim.
+    const datedChampion = resolveEntitlements({
+      config,
+      account: { ...previewAccountFor(config, 'champion', NOW), cohortExpiresAt: '2026-12-01T00:00:00.000Z' },
+      overrides: [],
+      addons: [],
+      now: NOW,
+    });
+    const view = buildCustomerPlanView({ resolution: datedChampion, unavailable: false, now: NOW, config });
+
+    expect(view.endsWhen).toBe('Your free access ends on 1 December 2026.');
+    expect(view.whenThisChanges).toMatch(/choose a paid monthly plan/i);
+    // And the pill, which asserted the opposite as a constant.
+    expect(planBadgeFor(datedChampion, config)?.title).toMatch(/end date set/i);
+    expect(planBadgeFor(datedChampion, config)?.title).not.toMatch(/no end date/i);
+  });
+
+  it('every plan is told SOMETHING about its ending — never neither', () => {
+    // The failure mode of suppressing by construction: both null, and a customer
+    // with no idea whether their plan runs out.
+    for (const planId of ['champion', 'trial', 'basic', 'pro']) {
+      const view = viewFor(planId);
+
+      expect(view.endsWhen ?? view.whenThisChanges).toBeTruthy();
+    }
+  });
+});
+
+/**
+ * The grouped list (refinement 3).
+ */
+describe('the included list is grouped by category', () => {
+  it('a champion reads nine rows rather than twenty-eight lines', () => {
+    const view = viewFor('champion');
+
+    expect(capabilityIdsOf(view.included).length).toBeGreaterThan(20);
+    expect(view.included.length).toBeLessThanOrEqual(9);
+  });
+
+  it('AI chat is ONE long row, not an expander', () => {
+    // The user's 3–4-per-row rule of thumb, explicitly broken here: ten entries on
+    // one line beats hiding six of them behind "+N more", which would be a new
+    // interaction on a read-only screen.
+    const row = viewFor('champion').included.find((entry) => entry.category === 'ai_chat')!;
+
+    expect(row.features.length).toBeGreaterThanOrEqual(10);
+    expect(row.label).toBe('AI assistant');
+    // One string, joined server-side — the component prints it and composes
+    // nothing.
+    expect(row.summary.split(', ').length).toBe(row.features.length);
+  });
+
+  it('a value worth printing is appended to its own name, and `yes` never is', () => {
+    const rows = viewFor('basic').included;
+    const summaries = rows.map((row) => row.summary).join(' | ');
+
+    expect(summaries).toMatch(/AI actions \(500 per month\)/);
+    expect(summaries).not.toMatch(/\(yes\)/);
+    // And a value that already carries brackets is not wrapped in more of them:
+    // "Email volume (10,000 per month (alerts, never blocks))" was the first thing
+    // to look wrong when these lines were joined.
+    expect(summaries).toMatch(/Email volume 10,000 per month \(alerts, never blocks\)/);
+    expect(summaries).not.toMatch(/\(\d[\d,]* per month \(/);
+  });
+
+  it('the order is the one a business meets them in, and it is stable', () => {
+    // Not alphabetical (which opens on Add-ons) and not catalog order (which also
+    // opens on add-ons). Clients first because that is why the product exists.
+    const order = viewFor('champion').included.map((row) => row.category);
+
+    expect(order[0]).toBe('crm');
+    // The plain word AND the acronym (user decision, 2026-09-27) — pinned because
+    // it is a wording choice somebody made, not a default.
+    expect(viewFor('champion').included[0].label).toBe('Clients (CRM)');
+    expect(order.indexOf('website_intake')).toBeLessThan(order.indexOf('payments'));
+    expect(order.indexOf('payments')).toBeLessThan(order.indexOf('ai_chat'));
+    expect(order.indexOf('insights')).toBeLessThan(order.indexOf('support'));
+    expect(order[order.length - 1]).toBe('addon');
+    // Twice, same answer: nothing here depends on object iteration order.
+    expect(viewFor('champion').included.map((row) => row.category)).toEqual(order);
+  });
+
+  it('every category in the CATALOG has a customer-facing name', () => {
+    // A new catalog category renders with its raw id, which is ugly on purpose —
+    // and this fails, so it gets named rather than silently shipped.
+    const named = new Set(
+      [...new Set(Object.values(catalog).map((definition) => definition.category))].filter((category) => {
+        const row = groupByCategory(
+          [{ capability: Object.keys(catalog).find((id) => catalog[id].category === category)!, label: 'x', value: 'yes' }],
+          catalog
+        )[0];
+        return row.label !== category;
+      })
+    );
+
+    const all = new Set(Object.values(catalog).map((definition) => definition.category));
+    expect([...all].filter((category) => !named.has(category))).toEqual([]);
+  });
+
+  it('the upgrade list is grouped too — nine chat rows became one', () => {
+    const adds = viewFor('basic').nextPlanUp!.adds;
+
+    expect(adds).toHaveLength(1);
+    expect(adds[0].label).toBe('AI assistant');
+    expect(adds[0].features.length).toBeGreaterThanOrEqual(9);
+  });
+});
+
 describe('when there is no answer', () => {
   it('a failed read is NOT "you have no plan"', () => {
     // The S-0 lesson, one product away: "we could not check" and "there is
@@ -599,8 +818,8 @@ describe('what is never named', () => {
     for (const planId of ['champion', 'trial', 'basic', 'pro']) {
       const view = viewFor(planId);
       const named = [
-        ...view.included.map((feature) => feature.capability),
-        ...(view.nextPlanUp?.adds ?? []).map((feature) => feature.capability),
+        ...capabilityIdsOf(view.included),
+        ...capabilityIdsOf(view.nextPlanUp?.adds),
         ...(view.nextPlanUp?.improves ?? []).map((entry) => entry.capability),
       ];
 
@@ -659,6 +878,10 @@ describe('what is never named', () => {
     'included',
     'nextPlanUp',
     'problem',
+    // Added deliberately (user decision, 2026-09-27): the plan pill for the
+    // settings heading, decided by `planBadgeFor`. The allow-list rejected it
+    // until it was declared here — which is exactly what it is for.
+    'badge',
   ];
 
   it('produces EXACTLY these keys, so no exclusion field can appear under any name', () => {

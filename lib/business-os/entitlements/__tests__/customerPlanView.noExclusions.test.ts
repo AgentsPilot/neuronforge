@@ -41,6 +41,18 @@ import { resolveEntitlements } from '@/lib/business-os/entitlements/resolver';
 import { readCodeConfig } from '@/lib/business-os/entitlements/source';
 import type { CapabilityDef } from '@/lib/business-os/entitlements/types';
 
+/**
+ * The capability ids in a grouped list.
+ *
+ * `included` and `adds` became `CustomerPlanCategory[]` when the list was grouped
+ * (2026-09-27). Tests ask "which capabilities are named", which is now a question
+ * about the features inside the rows — one helper rather than eleven inline
+ * `flatMap`s, so the next shape change is one edit.
+ */
+function capabilityIdsOf(rows: readonly { features: readonly { capability: string }[] }[] = []): string[] {
+  return rows.flatMap((row) => row.features.map((feature) => feature.capability));
+}
+
 const NOW = new Date('2026-09-27T00:00:00.000Z');
 const config = readCodeConfig();
 const catalog = config.catalog as Record<string, CapabilityDef>;
@@ -110,6 +122,10 @@ describe('no plan is described by what it withholds', () => {
     'included',
     'nextPlanUp',
     'problem',
+    // Added deliberately (user decision, 2026-09-27): the plan pill for the
+    // settings heading, decided by `planBadgeFor`. The allow-list rejected it
+    // until it was declared here — which is exactly what it is for.
+    'badge',
   ].sort();
 
   const UPGRADE_KEYS = [
@@ -123,18 +139,54 @@ describe('no plan is described by what it withholds', () => {
     'changes',
   ].sort();
 
+  /**
+   * The grouped rows, which are new objects (2026-09-27).
+   *
+   * Grouping introduced a third shape, and the allow-list has to follow it: a row
+   * with a `withheld` or `youDoNotHave` array would be an exclusion list nested
+   * one level deeper than the rule used to look.
+   */
+  const ROW_KEYS = ['category', 'label', 'features', 'summary'].sort();
+  const FEATURE_KEYS = ['capability', 'label', 'value'].sort();
+
   it('carries no field that could hold an exclusion list, WHATEVER it is called', () => {
     for (const planId of PLAN_IDS) {
       const view = viewFor(planId);
 
       expect(Object.keys(view).sort()).toEqual(VIEW_KEYS);
 
+      // Every level, because grouping added one. A row, and a feature inside it.
+      for (const row of view.included) {
+        expect(Object.keys(row).sort()).toEqual(ROW_KEYS);
+        for (const feature of row.features) {
+          expect(Object.keys(feature).sort()).toEqual(FEATURE_KEYS);
+        }
+      }
+
       // The other object a page renders — and the one that gained a field this
       // round, which is exactly when an allow-list earns its keep.
       if (view.nextPlanUp) {
         expect(Object.keys(view.nextPlanUp).sort()).toEqual(UPGRADE_KEYS);
+
+        for (const row of view.nextPlanUp.adds) {
+          expect(Object.keys(row).sort()).toEqual(ROW_KEYS);
+          // Features too, which `included` checked and this did not (SA R3-3). An
+          // exclusion array nested inside an upgrade row is the same defect one
+          // level further down.
+          for (const feature of row.features) {
+            expect(Object.keys(feature).sort()).toEqual(FEATURE_KEYS);
+          }
+        }
       }
     }
+  });
+
+  it('the row allow-list rejects a nested exclusion array', () => {
+    // Non-vacuity at the new level: the rule must fail on the shape it exists for,
+    // one level down from where it used to look.
+    const row = viewFor('basic').included[0];
+
+    expect(Object.keys({ ...row, withheldHere: [] }).sort()).not.toEqual(ROW_KEYS);
   });
 
   it('the allow-list rejects a field a denylist would have missed', () => {
@@ -236,8 +288,8 @@ describe('no plan is described by what it withholds', () => {
       });
       const view = buildCustomerPlanView({ resolution, unavailable: false, now: NOW, config });
 
-      for (const feature of view.included) {
-        expect(resolution.values[feature.capability].value).not.toBe(false);
+      for (const capability of capabilityIdsOf(view.included)) {
+        expect(resolution.values[capability].value).not.toBe(false);
       }
     }
   });
@@ -249,8 +301,8 @@ describe('no plan is described by what it withholds', () => {
     for (const planId of PLAN_IDS) {
       const view = viewFor(planId);
       const named = [
-        ...view.included.map((feature) => feature.capability),
-        ...(view.nextPlanUp?.adds ?? []).map((feature) => feature.capability),
+        ...capabilityIdsOf(view.included),
+        ...capabilityIdsOf(view.nextPlanUp?.adds),
         ...(view.nextPlanUp?.improves ?? []).map((entry) => entry.capability),
         ...(view.nextPlanUp?.changes ?? []).map((entry) => entry.capability),
       ];
@@ -266,8 +318,8 @@ describe('no plan is described by what it withholds', () => {
     // Recorded here so the reversal is visible in the suite that replaced the
     // one enforcing it. Autopilot grants chat and says so; Essentials is told
     // what Autopilot would add.
-    expect(viewFor('pro').included.map((feature) => feature.capability)).toContain('chat.access');
-    expect(viewFor('basic').nextPlanUp?.adds.map((feature) => feature.capability)).toContain('chat.access');
+    expect(capabilityIdsOf(viewFor('pro').included)).toContain('chat.access');
+    expect(capabilityIdsOf(viewFor('basic').nextPlanUp?.adds)).toContain('chat.access');
 
     // ⚠️ And the accepted inaccuracy, asserted so nobody has to take it on
     // trust: an Essentials customer is shown chat under Autopilot and may infer
