@@ -189,6 +189,9 @@ import * as executionStats from '../execution-stats/route';
 import * as storageStats from '../storage-stats/route';
 import * as adminMessages from '../messages/route';
 
+// ── Admin Archiving slice 2b (2026-09-26) — gated from birth ─────────────────
+import * as archivingRuns from '../archiving/runs/route';
+
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };
 const CUSTOMER = { id: '22222222-2222-4222-8222-222222222222', email: 'customer@example.com' };
 const MSG_CTX = { params: { id: '99999999-9999-4999-8999-999999999999' } };
@@ -298,6 +301,12 @@ const CASES: Array<{ name: string; call: () => Promise<Response> }> = [
   { name: 'GET /api/admin/boost-packs', call: () => boostPacks.GET(req('/api/admin/boost-packs', 'GET')) },
   { name: 'GET /api/admin/execution-tiers', call: () => executionTiers.GET() },
   { name: 'GET /api/admin/storage-tiers', call: () => storageTiers.GET() },
+
+  // ── Admin Archiving slice 2b (2026-09-26) ───────────────────────────────
+  // Starts or continues a run that moves audit rows across every account.
+  // Gated from birth; proven here like the rest. With runs switched off it
+  // would touch nothing even for an admin, but the denial must come first.
+  { name: 'POST /api/admin/archiving/runs', call: () => archivingRuns.POST(req('/api/admin/archiving/runs', 'POST', { action: 'start', source: 'audit_trail', retentionDays: 365 })) },
 ];
 
 beforeEach(() => {
@@ -316,10 +325,11 @@ describe('slice 1 — anonymous writes and destructive actions are refused', () 
     //  + 1  `user-emails#POST`, gated ahead of slice 2 on its own branch
     //  + 23 slice 2 (14 cross-tenant reads incl. 3 HEAD probes, 9 internal-config GETs)
     //  + 4  slice 3 catalogue GETs
-    //  = 58, which is every admin handler now on the canonical gate EXCEPT the
-    // 3 category-A system-config routes (covered by their own suites) and the 7
-    // correct-but-inline copies (slice 4, still parked).
-    expect(CASES).toHaveLength(58);
+    //  + 1  `archiving/runs#POST`, Admin Archiving slice 2b, gated from birth
+    //  = 59, which is every admin handler now on the canonical gate EXCEPT the
+    // 3 category-A system-config routes (covered by their own suites) and the 6
+    // correct-but-inline copies (slice 4, still parked; 7 until `audit-trail#GET` moved to `requireAdmin` on 2026-09-25).
+    expect(CASES).toHaveLength(59);
   });
 
   describe.each(CASES)('$name', ({ call }) => {

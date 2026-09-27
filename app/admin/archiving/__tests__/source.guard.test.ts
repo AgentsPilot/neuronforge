@@ -4,9 +4,10 @@
  *   1. It is a client component with no guard of its own: protection comes from
  *      `app/admin/layout.tsx`, which a page cannot skip (condition C-2, R8).
  *   2. It imports nothing server-side. Only React, icons, the UI primitives,
- *      the client-safe archiving constants and its own folder.
- *   3. It cannot start anything: no write method and no URL other than the
- *      overview (AC-15).
+ *      the client-safe archiving `config` and `types` (never
+ *      `@/lib/archiving/server/*`, Slice 2b D-6) and its own folder.
+ *   3. It writes to exactly one place: a POST to `/api/admin/archiving/runs`
+ *      (Slice 2b). No other write method, no other URL (AC-15).
  *   4. No `console.*` (AC-18).
  *
  * Modelled on `app/admin/business-os-tiers/__tests__/source.guard.test.ts`.
@@ -48,7 +49,8 @@ function codeOf(source: string): string {
 function isAllowedImport(fromFile: string, specifier: string): boolean {
   if (specifier === 'react' || specifier === 'lucide-react') return true;
   if (specifier.startsWith('@/components/ui/')) return true;
-  if (specifier.startsWith('@/lib/archiving/')) return true;
+  // Named, not a prefix: `@/lib/archiving/server/*` is the runner (Slice 2b D-6).
+  if (specifier === '@/lib/archiving/config' || specifier === '@/lib/archiving/types') return true;
   if (specifier.startsWith(`@/${ROOT}`)) return true;
   if (specifier.startsWith('.')) {
     const resolved = path
@@ -93,6 +95,7 @@ describe('the screen imports nothing server-side', () => {
     expect(isAllowedImport(page, '@/lib/services/AuditTrailService')).toBe(false);
     expect(isAllowedImport(page, '../../../lib/repositories/ArchiveRepository')).toBe(false);
     expect(isAllowedImport(page, 'next/server')).toBe(false);
+    expect(isAllowedImport(page, '@/lib/archiving/server/runArchive')).toBe(false);
     // …and allows what the page legitimately uses.
     expect(isAllowedImport(page, '@/lib/archiving/config')).toBe(true);
     expect(isAllowedImport(page, '@/components/ui/select')).toBe(true);
@@ -100,20 +103,34 @@ describe('the screen imports nothing server-side', () => {
   });
 });
 
-describe('nothing here can start a run (AC-15)', () => {
-  it.each(allFiles)('%s sends no request that writes', (relative) => {
+describe('the only write is a POST to the runs route (AC-15, Slice 2b)', () => {
+  const RUNS_ROUTE = '/api/admin/archiving/runs';
+
+  it.each(allFiles)('%s uses no write method other than POST', (relative) => {
     const code = codeOf(read(relative));
-    expect(code).not.toMatch(/method:\s*['"](POST|PUT|PATCH|DELETE)['"]/i);
+    expect(code).not.toMatch(/method:\s*['"](PUT|PATCH|DELETE)['"]/i);
   });
 
-  it.each(allFiles)('%s fetches only the overview route', (relative) => {
+  it('exactly one POST in the whole screen, in page.tsx', () => {
+    const posts = allFiles.flatMap((relative) =>
+      [...codeOf(read(relative)).matchAll(/method:\s*['"]POST['"]/gi)].map(() => relative)
+    );
+    expect(posts).toEqual([`${ROOT}/page.tsx`]);
+  });
+
+  it.each(allFiles)('%s fetches only the overview and the runs route', (relative) => {
     const code = codeOf(read(relative));
-    const urls = [...code.matchAll(/fetch\(\s*(['"`])([^'"`]*)\1/g)].map((match) => match[2]);
+    // The runs URL is a named constant, so resolve it before reading fetch targets.
+    const resolved = code.replace(/fetch\(\s*RUNS_ROUTE\b/g, `fetch('${RUNS_ROUTE}'`);
+    const urls = [...resolved.matchAll(/fetch\(\s*(['"`])([^'"`]*)\1/g)].map((match) => match[2]);
     for (const url of urls) {
-      expect(url).toBe('/api/admin/archiving');
+      expect(['/api/admin/archiving', RUNS_ROUTE]).toContain(url);
     }
-    // A fetch whose URL is not a plain literal would slip past the check above.
-    expect(code.match(/fetch\(/g)?.length ?? 0).toBe(urls.length);
+    // A fetch whose URL is not a plain literal (or the named constant) would slip past the check above.
+    expect(resolved.match(/fetch\(/g)?.length ?? 0).toBe(urls.length);
+    if (/\bRUNS_ROUTE\b/.test(code)) {
+      expect(code).toMatch(new RegExp(`const RUNS_ROUTE = '${RUNS_ROUTE}';`));
+    }
   });
 });
 

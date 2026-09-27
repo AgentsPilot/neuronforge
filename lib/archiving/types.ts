@@ -67,3 +67,26 @@ export interface ArchivingOverview {
   /** Newest first, at most `RUN_HISTORY_LIMIT` (config). */
   runs: ArchiveRunSummary[];
 }
+
+/**
+ * The `POST /api/admin/archiving/runs` success payload (Slice 2b). Deliberately
+ * slim: the page refetches the overview after every POST, so a run's full
+ * summary always comes from the GET (workplan 2b D-1).
+ */
+export interface ArchiveRunResult {
+  runId: string;
+  /** `partial` = the time budget ran out with rows left; Continue resumes it. */
+  outcome: 'succeeded' | 'partial';
+  /** Totals for the whole run, including earlier requests of the same run. */
+  rowsArchived: number;
+  batches: number;
+}
+
+/** The short codes the runs route answers with when it refuses or fails. */
+export type ArchiveRunErrorCode =
+  | 'invalid_body'
+  | 'runs_not_enabled'
+  | 'run_in_progress'
+  | 'run_not_continuable'
+  | 'archive_batch_failed'
+  | 'run_unfinished';
