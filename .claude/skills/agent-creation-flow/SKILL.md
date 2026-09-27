@@ -1,6 +1,7 @@
 ---
 name: agent-creation-flow
-description: Loads the architecture + constraint context for the V2 thread-based agent-creation flow at /v2/agents/new — Phase 1 (diagnostic narrative), Phase 2 (single-question loop), Phase 3 (enhanced prompt) — and the v16 prompt template that drives them. Use whenever the user asks to add, change, debug, or extend ANYTHING in the new agent-creation flow: page UI, the process-message API route, the v16 prompt, the Phase 2/3 Zod schemas, telemetry, hints/opening, the running question number, the create-agent route, or the handoff into the V6 IntentContract generation pipeline. The V6 IntentContract pipeline itself is OUT OF SCOPE here (its own skill, not yet built). Cycle-specific workplans/requirements live in `docs/workplans/` and `docs/requirements/` — they're not loaded here; this skill captures the durable architecture + constraints, not any one cycle's audit trail.
+description: >-
+  Architecture and constraints for the V2 thread-based agent-creation flow at /v2/agents/new (Phase 1 narrative, Phase 2 question loop, Phase 3 enhanced prompt) and its v16 prompt template. Use when adding, changing, debugging or extending anything in that flow — the page UI, the process-message route, the v16 prompt, Phase 2/3 Zod schemas, telemetry, the create-agent route, or the handoff into V6. Not for the V6 pipeline itself (use v6-pipeline).
 ---
 
 # agent-creation-flow
