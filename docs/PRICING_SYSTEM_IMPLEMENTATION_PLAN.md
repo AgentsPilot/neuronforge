@@ -1,5 +1,24 @@
 # 🚀 AGENTPILOT PRICING SYSTEM - COMPLETE IMPLEMENTATION PLAN
 
+> ## ⚠️ NEVER BUILT. Not a description of anything that exists.
+>
+> **Reviewed 2026-09-26 (S-0, RD-10).** Nothing in this plan shipped. There is no
+> `plans` table in use, no Explorer / Navigator / Commander tier, no credit
+> multiplier by plan, and no plan management UI in Settings. The `plans` table it
+> designs **does exist in the database and has zero callers** — its migration is
+> not even in the repository (F-11).
+>
+> **Superseded for Business OS** by
+> [BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md](/docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md).
+> Business OS plans are Essentials and Autopilot, they are configured in
+> `lib/business-os/entitlements/config/tierMatrix.ts`, and they are **not built
+> on the table below**.
+>
+> It is kept, rather than archived, for one reason: it is the only written record
+> of a design discussion about pricing for the agent platform itself, and the agent
+> platform is parked rather than deleted. Read it as a proposal from 2025-01-27.
+> Do not read it as status, and do not wire anything to it.
+
 **Version:** 1.0
 **Date:** 2025-01-27
 **Status:** Ready for Implementation

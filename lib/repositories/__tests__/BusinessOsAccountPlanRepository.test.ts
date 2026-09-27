@@ -248,73 +248,166 @@ describe('findRecentOnboardedPlans (QA B-1)', () => {
   });
 });
 
-describe('findTenantsMissingPlanRow (QA B-5)', () => {
-  it('chunks the plan lookups at the batch limit and reports the gap', async () => {
-    // 150 profiles, so the plan lookup must be TWO queries of 100 and 50.
-    const profiles = Array.from({ length: 150 }, (_, i) => ({ user_id: `acct-${String(i).padStart(3, '0')}` }));
-    // The first chunk comes back missing two accounts; the second is complete.
-    const firstChunk = profiles.slice(0, 100).filter((row) => !['acct-005', 'acct-007'].includes(row.user_id));
-    const secondChunk = profiles.slice(100);
+describe('findTenantsMissingPlanRow — exhaustive since S-0', () => {
+  /**
+   * One RPC call, not a paged walk.
+   *
+   * It used to read `business_profiles` and then ask about plan records 100 ids
+   * at a time, because the anti-join across `business_profiles` and
+   * `onboarding_conversations` cannot be expressed through PostgREST. That made
+   * an onboarding-only tenant with no plan record invisible — harmless while
+   * nothing is enforced, and a real customer denied a capability afterwards.
+   *
+   * The counts below therefore come from SQL. What these tests hold is the
+   * boundary: the right function, the clamped argument, and — most of all —
+   * that a failure never looks like "nothing is missing".
+   */
+  const SCAN_ROW = {
+    tenants_checked: 1200,
+    missing_count: 3,
+    missing_with_profile: 1,
+    missing_onboarding_only: 2,
+    missing_sample: ['ghost-1', 'ghost-2', 'ghost-3'],
+    truncated: false,
+  };
 
-    const { client, builder } = mockSupabase([
-      { data: profiles, error: null },
-      { data: firstChunk, error: null },
-      { data: secondChunk, error: null },
-    ]);
+  it('asks the exhaustive function, and passes the bound it was given', async () => {
+    const { client, calls } = mockSupabase({ data: [SCAN_ROW], error: null });
 
-    const result = await new BusinessOsAccountPlanRepository(client).findTenantsMissingPlanRow();
+    const result = await new BusinessOsAccountPlanRepository(client).findTenantsMissingPlanRow({
+      maxAccounts: 500,
+    });
 
+    expect(calls.rpc).toEqual(['business_os_tenants_missing_plan_row', { p_limit: 500 }]);
     expect(result.error).toBeNull();
-    expect(result.data).toMatchObject({ checked: 150, missing: ['acct-005', 'acct-007'], truncated: false });
-
-    const chunkSizes = builder.in.mock.calls.map((call: unknown[]) => (call[1] as string[]).length);
-    expect(chunkSizes).toEqual([BOS_ENTITLEMENT_BATCH_LIMIT, 50]);
+    expect(result.data).toMatchObject({
+      checked: 1200,
+      count: 3,
+      missing: ['ghost-1', 'ghost-2', 'ghost-3'],
+      withProfile: 1,
+      onboardingOnly: 2,
+      truncated: false,
+    });
   });
 
-  it('de-duplicates profiles for the same account', async () => {
-    // One account with two profile rows must not be checked twice, and must not
-    // be reported missing twice either.
-    const { client } = mockSupabase([
-      { data: [{ user_id: 'acct-1' }, { user_id: 'acct-1' }], error: null },
-      { data: [], error: null },
-    ]);
+  it('says what it scanned, in the words the report prints', async () => {
+    // The old value of this field said "accounts with a business profile". That
+    // sentence was accurate and was the defect, so the scope now travels with
+    // the answer rather than being written at the reader.
+    const { client } = mockSupabase({ data: [SCAN_ROW], error: null });
 
     const result = await new BusinessOsAccountPlanRepository(client).findTenantsMissingPlanRow();
 
-    expect(result.data).toMatchObject({ checked: 1, missing: ['acct-1'] });
+    expect(result.data?.scope).toContain('exhaustive');
+    expect(result.data?.scope).toContain('onboarding');
   });
 
-  it('says when it stopped short rather than implying it scanned everything', async () => {
-    // The `maxAccounts + 1` probe: one more row than asked for means there are
-    // more, and a truncated scan reporting `missing: []` as if it were complete
-    // is the answer that would be believed.
-    const profiles = Array.from({ length: 4 }, (_, i) => ({ user_id: `acct-${i}` }));
-    const { client, calls } = mockSupabase([
-      { data: profiles, error: null },
-      { data: profiles.slice(0, 3), error: null },
-    ]);
+  it('clamps the bound rather than passing a caller number through', async () => {
+    const { client, calls } = mockSupabase({ data: [SCAN_ROW], error: null });
+    const repository = new BusinessOsAccountPlanRepository(client);
 
-    const result = await new BusinessOsAccountPlanRepository(client).findTenantsMissingPlanRow({ maxAccounts: 3 });
+    await repository.findTenantsMissingPlanRow({ maxAccounts: 999999 });
+    expect(calls.rpc?.[1]).toEqual({ p_limit: 20000 });
 
-    expect(calls.limit).toBe(4); // maxAccounts + 1
-    expect(result.data).toMatchObject({ checked: 3, truncated: true });
+    await repository.findTenantsMissingPlanRow({ maxAccounts: 0 });
+    expect(calls.rpc?.[1]).toEqual({ p_limit: 1 });
+
+    await repository.findTenantsMissingPlanRow();
+    expect(calls.rpc?.[1]).toEqual({ p_limit: 2000 });
   });
 
-  it('returns the error rather than a falsely empty answer', async () => {
-    const { client } = mockSupabase({ data: null, error: new Error('timeout') });
+  it('reads bigint counts that arrive as strings', async () => {
+    // PostgREST sends `bigint` as a string. Counting is the entire purpose of
+    // this method, so `"37" + 1 === "371"` is the bug worth a test of its own.
+    const { client } = mockSupabase({
+      data: [
+        {
+          ...SCAN_ROW,
+          tenants_checked: '5000',
+          missing_count: '37',
+          missing_with_profile: '5',
+          missing_onboarding_only: '32',
+        },
+      ],
+      error: null,
+    });
+
+    const result = await new BusinessOsAccountPlanRepository(client).findTenantsMissingPlanRow();
+
+    expect(result.data?.checked).toBe(5000);
+    expect(result.data?.count).toBe(37);
+    expect(result.data?.withProfile).toBe(5);
+    expect(result.data?.onboardingOnly).toBe(32);
+  });
+
+  it('accepts the row unwrapped as well as wrapped', async () => {
+    // A table-returning function comes back as an array; some PostgREST
+    // versions hand back the row itself. Both mean the same thing.
+    const { client } = mockSupabase({ data: SCAN_ROW, error: null });
+
+    const result = await new BusinessOsAccountPlanRepository(client).findTenantsMissingPlanRow();
+
+    expect(result.data?.count).toBe(3);
+  });
+
+  it('reports NOTHING MISSING only when the function said so', async () => {
+    const { client } = mockSupabase({
+      data: [
+        {
+          ...SCAN_ROW,
+          missing_count: 0,
+          missing_with_profile: 0,
+          missing_onboarding_only: 0,
+          missing_sample: [],
+        },
+      ],
+      error: null,
+    });
+
+    const result = await new BusinessOsAccountPlanRepository(client).findTenantsMissingPlanRow();
+
+    expect(result.data).toMatchObject({ count: 0, missing: [] });
+    expect(result.error).toBeNull();
+  });
+
+  it('returns an error when the function is not there — never an empty list', async () => {
+    // The operator applies migrations by hand. "Nothing is missing" and "the
+    // check has not been installed" must never look the same, because the first
+    // is a green light to switch enforcement on.
+    const { client } = mockSupabase({
+      data: null,
+      error: { message: 'function public.business_os_tenants_missing_plan_row(integer) does not exist' },
+    });
 
     const result = await new BusinessOsAccountPlanRepository(client).findTenantsMissingPlanRow();
 
     expect(result.data).toBeNull();
-    expect(result.error).toBeInstanceOf(Error);
+    // Asserted on shape, not `instanceof Error`: PostgREST returns a plain
+    // object, and the repository casts it, which is the convention throughout
+    // this file.
+    expect(result.error).toBeTruthy();
+    expect(String((result.error as { message?: string }).message)).toContain('does not exist');
   });
 
-  it('asks no plan questions when there are no profiles', async () => {
-    const { client, builder } = mockSupabase({ data: [], error: null });
+  it('treats an empty result set as a failure, not as a clean database', async () => {
+    // The function returns exactly one row. No row means it answered nothing —
+    // the same trap as above, arriving by a different route.
+    const { client } = mockSupabase({ data: [], error: null });
 
     const result = await new BusinessOsAccountPlanRepository(client).findTenantsMissingPlanRow();
 
-    expect(result.data).toMatchObject({ checked: 0, missing: [] });
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toMatch(/returned no row/);
+  });
+
+  it('never queries the two tables itself', async () => {
+    // If this starts going through `from(...)` again, the anti-join has been
+    // re-implemented in TypeScript and the gap is back.
+    const { client, builder } = mockSupabase({ data: [SCAN_ROW], error: null });
+
+    await new BusinessOsAccountPlanRepository(client).findTenantsMissingPlanRow();
+
+    expect(client.from as jest.Mock).not.toHaveBeenCalled();
     expect(builder.in).not.toHaveBeenCalled();
   });
 });
