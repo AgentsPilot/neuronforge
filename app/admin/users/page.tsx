@@ -30,6 +30,7 @@ import {
   ChevronUp
 } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
+import { ArchivedBeforeNotice } from '@/app/admin/components/ArchivedBeforeNotice';
 import { BusinessOsPanel } from './components/BusinessOsPanel';
 import { UserNameLine } from './components/UserNameLine';
 import { countLabels, toStatusFilter, type StatusFilter } from './userName';
@@ -1182,6 +1183,9 @@ export default function UsersPage() {
                                       <option value="settings">Settings Changes</option>
                                     </select>
                                   </div>
+
+                                  {/* Older entries may be archived (FR-12, archiving slice 3). */}
+                                  <ArchivedBeforeNotice className="mb-4" />
 
                                   {getFilteredAuditLogs(user.id).length === 0 ? (
                                     <div className="text-center py-12">
