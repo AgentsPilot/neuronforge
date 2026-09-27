@@ -121,7 +121,7 @@ lib/repositories/
 ├── AgentLogsRepository.ts         # Agent execution output logs
 ├── AgentMetricsRepository.ts      # Agent performance metrics
 ├── AgentStatsRepository.ts        # Agent run statistics and costs
-├── ArchiveRepository.ts           # Admin archiving: all-accounts counts, the run log, and the run lifecycle (slice 2b)
+├── ArchiveRepository.ts           # Admin archiving: all-accounts counts, the run log, the run lifecycle, and per-user erasure/export (slice 3)
 ├── ConfigRepository.ts            # System and reward configuration
 ├── ExecutionRepository.ts         # Agent execution records and token usage
 ├── ExecutionLogRepository.ts      # Step-by-step execution logs (legacy path)
@@ -376,12 +376,12 @@ interface CreateExecutionLogInput {
 
 **Purpose:** Data access for the Admin Archiving module (`/admin/archiving`). Reads the archivable sources — today only `audit_trail` — across **all accounts** for the admin overview. See [ADMIN_ARCHIVING_MODULE_REQUIREMENT.md](/docs/requirements/ADMIN_ARCHIVING_MODULE_REQUIREMENT.md).
 
-**Service role, intentionally:** it uses `supabaseServer` and has no `user_id` filter, because the admin overview counts every account's rows. It is called only from `requireAdmin`-gated routes (`app/api/admin/archiving/**`). Methods that read account data across accounts (`audit_trail`, `archived_records`) are suffixed `…AllAccounts` so the missing user scope is visible at every call site. Methods over `archive_runs` (the run log) have plain names: that table holds no account data and has no `user_id` at all.
+**Service role, intentionally:** it uses `supabaseServer` and has no `user_id` filter, because the admin overview counts every account's rows. Its all-accounts and run methods are called only from `requireAdmin`-gated routes (`app/api/admin/archiving/**`); its two per-user methods only from `AuditTrailService` erasure and export (slice 3), and they are scoped by their `userId` argument (Rule 4), so they carry no suffix. Methods that read account data across accounts (`audit_trail`, `archived_records`) are suffixed `…AllAccounts` so the missing user scope is visible at every call site. Methods over `archive_runs` (the run log) have plain names: that table holds no account data and has no `user_id` at all.
 
 **Key Responsibilities:**
 - Count rows, and rows older than a cutoff, with `count: 'exact', head: true` (no row content is read)
 - Return an error — never `0` — when the database gives no count
-- Read the run log with a named column list; never select `archived_records.payload`
+- Read the run log with a named column list; never select `archived_records.payload`, except `listArchivedForUser` for the person's own export (no admin route or UI reads it, AC-14)
 
 **Key Methods:**
 | Method | Description |
@@ -397,8 +397,10 @@ interface CreateExecutionLogInput {
 | `claimRunForContinue(runId, now)` | Moves a `partial` or `failed` run back to `running` and writes `last_batch_at`; `not_continuable` for any other id, `conflict` if another run is running (slice 2b) |
 | `runBatchAllAccounts(source, runId, cutoff, batchSize)` | Moves one batch through the source's database function (`archive_audit_trail_batch`) with the run's **stored** cutoff; returns three counts, never content (slice 2b) |
 | `finishRun(runId, { status, errorCode, now })` | Ends a `running` run as `succeeded`, `partial` or `failed`; zero rows is an error (slice 2b) |
+| `deleteArchivedForUser(userId)` | GDPR erasure: deletes every archived row of one account, of any source. Refuses a non-UUID before any query; one filter (`user_id`), no `select`; returns the count, and a missing count is an error (slice 3) |
+| `listArchivedForUser(userId, source)` | GDPR export: one account's archived rows of one source (`source_id`, `payload`, `archived_at`), newest first, read in 1,000-row pages. The only method that selects `payload` (slice 3) |
 
-**Writes (slice 2b).** It writes `archive_runs` only. Rows of `audit_trail` and `archived_records` move **only** through the database function, which copies, deletes and records a batch in one transaction and refuses a run that is not `running` with exactly the stored cutoff. The function name lives in this server-only file, never in the client-safe registry. The callers are `POST /api/admin/archiving/runs` and its runner `lib/archiving/server/runArchive.ts`, both behind `requireAdmin`; the route's source test pins that the runner is the only caller of `runBatchAllAccounts` and the route the only caller of the runner, after its runs-enabled check. **Slice 3:** `deleteArchivedForUser` and `listArchivedForUser` for GDPR erasure and export.
+**Writes (slice 2b).** It writes `archive_runs` only. Rows of `audit_trail` and `archived_records` move **only** through the database function, which copies, deletes and records a batch in one transaction and refuses a run that is not `running` with exactly the stored cutoff. The function name lives in this server-only file, never in the client-safe registry. The callers are `POST /api/admin/archiving/runs` and its runner `lib/archiving/server/runArchive.ts`, both behind `requireAdmin`; the route's source test pins that the runner is the only caller of `runBatchAllAccounts` and the route the only caller of the runner, after its runs-enabled check. **Per-user (slice 3).** `deleteArchivedForUser` is the one other write: a delete by one account's `user_id`, no payload. Both per-user methods are called only by `AuditTrailService.anonymizeUserData` / `exportUserData`, whose callers must pass the authenticated or admin-verified account id, never a request-body value (the argument is the tenant boundary on a service-role path).
 
 ## Type Definitions
 
@@ -772,4 +774,5 @@ When creating a new repository:
 | 2026-02-13 | Cleaned up `UserPluginConnections` | Removed dead code (`hasPluginPermission`, `cleanupExpiredConnections`), removed `getPluginDisplayName` hack, replaced all `any` types with proper types (`NextRequest`, `Record<string, unknown>`), extracted `audit()` helper with static import, added bounded token validation cache (max 100 entries). |
 | 2026-09-26 | `ArchiveRepository`: archive-side reads | Admin Archiving slice 2a: `countArchivedAllAccounts`, `listRuns`, `getLatestCutoff` over the new `archived_records` / `archive_runs` tables; still read-only. Naming rule clarified: `…AllAccounts` for account data, plain names for the run log |
 | 2026-09-26 | Added `ArchiveRepository` | Admin Archiving slice 1: three read-only, all-accounts count methods over `audit_trail`, service role documented. Added to the structure tree and the catalog. |
+| 2026-09-27 | `ArchiveRepository`: per-user erasure and export | Admin Archiving slice 3: `deleteArchivedForUser` (GDPR erasure deletes archived rows, C-8) and `listArchivedForUser` (GDPR export, the one `payload` read), both scoped by `userId` and refusing a non-UUID |
 | 2026-09-26 | `ArchiveRepository`: run lifecycle | Admin Archiving slice 2b: `takeOverStaleRuns`, `createRun`, `claimRunForContinue`, `runBatchAllAccounts` (through `archive_audit_trail_batch`), `finishRun`. The repository now writes `archive_runs`; archive rows move only through the database function |
