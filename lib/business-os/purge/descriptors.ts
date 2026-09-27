@@ -393,6 +393,12 @@ const EXCLUDED: PurgeDescriptor[] = [
   never('archive_runs', G,
     'The platform run log of archiving: who ran it, when, which cutoff, how many rows. No user_id and no business content, counts only. Never archived and never purged.'),
 
+  // Admin reorganisation slice 5 (SA SC-4): the Business OS cron run record.
+  never('bos_cron_runs', G,
+    'The platform run record of the Business OS scheduled jobs: job name, times, an outcome word, an error class and numeric counts. No user_id and no business content. Platform monitoring data, pruned at 30 days by the recorder; never purged.'),
+  never('bos_cron_run_recording', G,
+    'One row: when the cron run record was installed. Platform monitoring baseline, no user_id; never purged.'),
+
   // §8.12 Account configuration and unowned tables
   never('notification_settings', U, 'Account configuration that survives the business.'),
   never('security_settings', U, 'Account configuration that survives the business.'),

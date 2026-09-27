@@ -13,6 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
+import { withCronRunRecord } from '@/lib/cron/cronRunRecorder';
 import { drainInsightActions } from '@/lib/services/InsightActionDispatchService';
 
 const logger = createLogger({ module: 'InsightActionsCron' });
@@ -49,7 +50,7 @@ function verifyCronSecret(request: NextRequest): boolean {
   return authHeader === `Bearer ${cronSecret}`;
 }
 
-export async function GET(request: NextRequest) {
+async function runJob(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
@@ -77,3 +78,10 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
+/**
+ * Every proven Vercel cron run is recorded (admin reorganisation slice 5): the
+ * job body, its auth check and its response are unchanged; recording never
+ * fails the job. See lib/cron/cronRunRecorder.ts.
+ */
+export const GET = withCronRunRecord('insight-actions', runJob);

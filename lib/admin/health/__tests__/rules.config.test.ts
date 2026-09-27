@@ -13,12 +13,18 @@ import { validateRuleList } from '../evaluateHealth';
 const TILES = Object.keys(HEALTH_RULES) as MeasuredTileId[];
 
 describe('HEALTH_RULES', () => {
-  it('has a rule list for every measured tile, and none for the not-measured ones', () => {
+  it('has a rule list for every tile, the scheduled-jobs and queues tiles included (slice 5)', () => {
     expect([...TILES].sort()).toEqual(
-      ['bos_ai_failures', 'bos_ai_settings', 'bos_ai_spend', 'critical_audit', 'entitlements_mode'].sort()
+      [
+        'bos_ai_failures',
+        'bos_ai_settings',
+        'bos_ai_spend',
+        'critical_audit',
+        'entitlements_mode',
+        'queues',
+        'scheduled_jobs',
+      ].sort()
     );
-    expect(Object.keys(HEALTH_RULES)).not.toContain('scheduled_jobs');
-    expect(Object.keys(HEALTH_RULES)).not.toContain('queues');
   });
 
   it.each(TILES)('%s: the list is non-empty', (tile) => {

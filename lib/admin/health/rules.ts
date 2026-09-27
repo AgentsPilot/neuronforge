@@ -49,9 +49,19 @@ export type SettingsMetric = 'settingsIgnored' | 'settingsOff';
 export type FailureMetric = 'failed24h' | 'completed24h';
 export type SpendMetric = 'spend24h' | 'spendPrev24h' | 'spend7d' | 'spendPrev7d';
 export type CriticalMetric = 'critical24h';
+/** Tile 6 (slice 5): counts of jobs in each status, from the jobs & queues computation. */
+export type JobsMetric = 'jobsStopped' | 'jobsKeepFailing' | 'jobsLate' | 'jobsLastRunFailed' | 'jobsPartlyDone';
+/** Tile 7 (slice 5): items summed over the queues read, or queues over a threshold. */
+export type QueuesMetric =
+  | 'queueItemsStuck'
+  | 'queuesStoppedDraining'
+  | 'queueDeadLettered24h'
+  | 'queuesBehind'
+  | 'queueDeadLettered7d'
+  | 'queueFailed24h';
 export type EntitlementsFlag = 'entitlementEnforceRefused';
 
-export type MetricId = SettingsMetric | FailureMetric | SpendMetric | CriticalMetric;
+export type MetricId = SettingsMetric | FailureMetric | SpendMetric | CriticalMetric | JobsMetric | QueuesMetric;
 export type FlagId = EntitlementsFlag;
 
 /** How a metric is written in a generated condition summary (SA C-22). */
@@ -65,6 +75,17 @@ export const METRIC_LABELS: Readonly<Record<MetricId, { label: string; unit: 'us
   spend7d: { label: '7-day spend', unit: 'usd' },
   spendPrev7d: { label: 'previous 7-day spend', unit: 'usd' },
   critical24h: { label: 'critical events in 24 h', unit: 'count' },
+  jobsStopped: { label: 'jobs stopped', unit: 'count' },
+  jobsKeepFailing: { label: 'jobs failing run after run', unit: 'count' },
+  jobsLate: { label: 'jobs late', unit: 'count' },
+  jobsLastRunFailed: { label: 'jobs whose last run failed or did not finish', unit: 'count' },
+  jobsPartlyDone: { label: 'jobs whose last run was partly done', unit: 'count' },
+  queueItemsStuck: { label: 'items stuck in progress', unit: 'count' },
+  queuesStoppedDraining: { label: 'queues with a due item waiting over 2 drain intervals', unit: 'count' },
+  queueDeadLettered24h: { label: 'items dead-lettered (due or queued in 24 h)', unit: 'count' },
+  queuesBehind: { label: 'queues with a due item waiting over 1 drain interval', unit: 'count' },
+  queueDeadLettered7d: { label: 'items dead-lettered (due or queued in 7 days)', unit: 'count' },
+  queueFailed24h: { label: 'items failed (due or queued in 24 h)', unit: 'count' },
 };
 
 export const FLAG_LABELS: Readonly<Record<FlagId, string>> = {
@@ -103,13 +124,15 @@ export interface HealthRule<M extends MetricId = MetricId, F extends FlagId = ne
   condition: HealthCondition<M, F>;
 }
 
-/** Tiles with rules. The scheduled-jobs and queues tiles have none, by design. */
+/** Every tile's rules (slice 5 made the scheduled-jobs and queues tiles measured). */
 export interface HealthRuleSet {
   bos_ai_settings: readonly HealthRule<SettingsMetric>[];
   bos_ai_failures: readonly HealthRule<FailureMetric>[];
   bos_ai_spend: readonly HealthRule<SpendMetric>[];
   critical_audit: readonly HealthRule<CriticalMetric>[];
   entitlements_mode: readonly HealthRule<never, EntitlementsFlag>[];
+  scheduled_jobs: readonly HealthRule<JobsMetric>[];
+  queues: readonly HealthRule<QueuesMetric>[];
 }
 
 export type MeasuredTileId = keyof HealthRuleSet;
@@ -123,6 +146,21 @@ export const TILE_VOCABULARY: Readonly<
   bos_ai_spend: { metrics: ['spend24h', 'spendPrev24h', 'spend7d', 'spendPrev7d'], flags: [] },
   critical_audit: { metrics: ['critical24h'], flags: [] },
   entitlements_mode: { metrics: [], flags: ['entitlementEnforceRefused'] },
+  scheduled_jobs: {
+    metrics: ['jobsStopped', 'jobsKeepFailing', 'jobsLate', 'jobsLastRunFailed', 'jobsPartlyDone'],
+    flags: [],
+  },
+  queues: {
+    metrics: [
+      'queueItemsStuck',
+      'queuesStoppedDraining',
+      'queueDeadLettered24h',
+      'queuesBehind',
+      'queueDeadLettered7d',
+      'queueFailed24h',
+    ],
+    flags: [],
+  },
 };
 
 // ── The rules (the user's starting rules, 2026-09-26: "we can change later") ─
@@ -226,6 +264,93 @@ export const HEALTH_RULES: HealthRuleSet = {
       colour: 'amber',
       description: 'Enforcement requested but not active',
       condition: { kind: 'flag', flag: 'entitlementEnforceRefused' },
+    },
+  ],
+
+  // Slice 5 starting rules (requirement §S5.8; OQ-7 accepted them as proposed).
+  // What "stopped", "late", "keeps failing" mean per job is data in
+  // lib/cron/bosCronJobs.ts; these rules count the jobs in each state.
+  scheduled_jobs: [
+    {
+      id: 'jobs.stopped',
+      priority: 1,
+      colour: 'red',
+      description: 'A job has stopped',
+      condition: { kind: 'atLeast', metric: 'jobsStopped', value: 1 },
+    },
+    {
+      id: 'jobs.keepsFailing',
+      priority: 2,
+      colour: 'red',
+      description: 'A job keeps failing',
+      condition: { kind: 'atLeast', metric: 'jobsKeepFailing', value: 1 },
+    },
+    {
+      id: 'jobs.late',
+      priority: 3,
+      colour: 'amber',
+      description: 'A job is late',
+      condition: { kind: 'atLeast', metric: 'jobsLate', value: 1 },
+    },
+    {
+      id: 'jobs.lastRunFailed',
+      priority: 4,
+      colour: 'amber',
+      description: "A job's last run failed",
+      condition: { kind: 'atLeast', metric: 'jobsLastRunFailed', value: 1 },
+    },
+    {
+      id: 'jobs.partlyDone',
+      priority: 5,
+      colour: 'amber',
+      description: 'A job finished with work left or partly failed',
+      condition: { kind: 'atLeast', metric: 'jobsPartlyDone', value: 1 },
+    },
+  ],
+
+  queues: [
+    {
+      id: 'queues.stuck',
+      priority: 1,
+      colour: 'red',
+      description: 'Items stuck in progress',
+      condition: { kind: 'atLeast', metric: 'queueItemsStuck', value: 1 },
+    },
+    {
+      id: 'queues.stoppedDraining',
+      priority: 2,
+      colour: 'red',
+      description: 'A queue has stopped draining',
+      condition: { kind: 'atLeast', metric: 'queuesStoppedDraining', value: 1 },
+    },
+    {
+      // OQ-7: red, because a dead-letter is a client message that never went out.
+      id: 'queues.deadLettered24h',
+      priority: 3,
+      colour: 'red',
+      description: 'A message was dead-lettered in the last 24 hours',
+      condition: { kind: 'atLeast', metric: 'queueDeadLettered24h', value: 1 },
+    },
+    {
+      id: 'queues.behind',
+      priority: 4,
+      colour: 'amber',
+      description: 'A queue is behind',
+      condition: { kind: 'atLeast', metric: 'queuesBehind', value: 1 },
+    },
+    {
+      id: 'queues.deadLettered7d',
+      priority: 5,
+      colour: 'amber',
+      description: 'Dead-lettered items this week',
+      condition: { kind: 'atLeast', metric: 'queueDeadLettered7d', value: 1 },
+    },
+    {
+      id: 'queues.failed24h',
+      priority: 6,
+      colour: 'amber',
+      description: 'Failures in the last 24 hours',
+      condition: { kind: 'atLeast', metric: 'queueFailed24h', value: 1 },
     },
   ],
 };

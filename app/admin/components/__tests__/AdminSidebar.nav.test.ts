@@ -12,7 +12,8 @@
  *      takes no sidebar space while every one of its routes still works by URL;
  *   5. (slice 4) `/admin` is the Health landing, and the old dashboard moved to
  *      `/admin/platform-dashboard`, listed only in the hidden parked section
- *      (URL-only, user decision U-6).
+ *      (URL-only, user decision U-6);
+ *   6. (slice 5) Scheduled jobs & queues is third under Monitor.
  *
  * Source scan, like the per-page nav tests: the component is a client
  * component importing next/image and framer-motion, and the navigation lives
@@ -89,10 +90,12 @@ describe('section order', () => {
   });
 
   it('puts the pages the requirement names in the first three sections', () => {
-    // Archiving sits directly under Audit trail (Admin Archiving, condition C-2).
+    // Scheduled jobs & queues is third (slice 5, requirement §4.2); Archiving
+    // sits directly under Audit trail (Admin Archiving, condition C-2).
     expect(hrefsOf('Monitor')).toEqual([
       '/admin',
       '/admin/analytics',
+      '/admin/jobs-queues',
       '/admin/audit-trail',
       '/admin/archiving',
     ]);
@@ -124,11 +127,12 @@ describe('every admin page is reachable, exactly once', () => {
   const onDisk = adminPageRoutes();
 
   it('found the admin pages on disk (guards the scan itself)', () => {
-    // 25 pages: slice 4 moved the legacy dashboard to its own route, and Admin
-    // Archiving slice 1 added /admin/archiving. If this drops, the scan broke
-    // rather than the sidebar.
-    expect(onDisk.length).toBeGreaterThanOrEqual(25);
+    // 26 pages: slice 4 moved the legacy dashboard to its own route, Admin
+    // Archiving slice 1 added /admin/archiving, and slice 5 added
+    // /admin/jobs-queues. If this drops, the scan broke rather than the sidebar.
+    expect(onDisk.length).toBeGreaterThanOrEqual(26);
     expect(onDisk).toContain('/admin/archiving');
+    expect(onDisk).toContain('/admin/jobs-queues');
     expect(onDisk).toContain('/admin/platform-dashboard');
     expect(onDisk).toContain('/admin');
     expect(onDisk).toContain('/admin/exchange-rates');
@@ -137,8 +141,9 @@ describe('every admin page is reachable, exactly once', () => {
   it('lists every page except the deliberately unlisted ones', () => {
     const expected = onDisk.filter((r) => !UNLISTED.includes(r));
     expect([...allHrefs].sort()).toEqual(expected);
-    // 22 before, + the legacy dashboard (slice 4) + Archiving (Admin Archiving slice 1).
-    expect(allHrefs).toHaveLength(24);
+    // 22 before, + the legacy dashboard (slice 4) + Archiving (Admin Archiving
+    // slice 1) + Scheduled jobs & queues (slice 5).
+    expect(allHrefs).toHaveLength(25);
   });
 
   it('never lists the same page twice', () => {
@@ -208,5 +213,15 @@ describe('the parked AgentsPilot section is hidden, not removed', () => {
     expect(sidebar).toContain('sectionIndex < visibleSections.length - 1');
     // No render path iterates the unfiltered list.
     expect(sidebar).not.toContain('navigationSections.map(');
+  });
+});
+
+describe('slice 5: Scheduled jobs & queues', () => {
+  it('is a visible Monitor entry, never says "OK", and its page is a client component', () => {
+    const item = sections.find((s) => s.title === 'Monitor')?.items.find((i) => i.href === '/admin/jobs-queues');
+    expect(item?.name).toBe('Scheduled jobs & queues');
+    expect(item?.description).not.toMatch(/OK/);
+    const page = fs.readFileSync(path.join(ADMIN_DIR, 'jobs-queues/page.tsx'), 'utf8');
+    expect(page.trimStart().startsWith("'use client'")).toBe(true);
   });
 });

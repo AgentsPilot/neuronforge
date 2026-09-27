@@ -52,6 +52,7 @@ import {
   type MetricId,
 } from './rules';
 import { toAuditDateParam, type HealthWindows, type Measured, type SpendSums } from './windows';
+import type { JobsTileFacts, QueuesTileFacts } from '@/lib/admin/jobs/jobsQueuesTypes';
 
 // ── Fixed texts ────────────────────────────────────────────────────────────
 
@@ -74,6 +75,15 @@ export const OTHERWISE_GREEN_UNLESS_LOWER_BOUND =
   `Otherwise: green, "${GREEN_HEADLINE}", unless a figure is only a minimum; then amber: "${LOWER_BOUND_HEADLINE}".`;
 /** The closing line of a tile that may never be green (OQ-9). */
 export const OTHERWISE_INFORMATION = 'Otherwise: shown for information only (never green).';
+/** Tile 6's closing line: green needs every job to have a recorded run. */
+export const OTHERWISE_JOBS = `Otherwise: green, "${GREEN_HEADLINE}", once every job has a recorded run; grey until then.`;
+/** Tile 7's closing line: green needs every queue to have been read. */
+export const OTHERWISE_QUEUES = `Otherwise: green, "${GREEN_HEADLINE}", when every queue was read; grey if one could not be.`;
+/** Where tiles 6 and 7 lead. */
+export const JOBS_QUEUES_PAGE_LINK: HealthPageLink = {
+  href: '/admin/jobs-queues',
+  text: 'Open Scheduled jobs & queues',
+};
 /** Tiles whose metrics can arrive as a lower bound (only spend is read with a ceiling). */
 const LOWER_BOUND_TILES: ReadonlySet<MeasuredTileId> = new Set<MeasuredTileId>(['bos_ai_spend']);
 
@@ -81,9 +91,10 @@ const LOWER_BOUND_TILES: ReadonlySet<MeasuredTileId> = new Set<MeasuredTileId>([
  * The ONLY tiles that may ever be green (SA C-10R.3). Code, not data: moving a
  * tile in or out is a code change that SA reviews. `entitlements_mode` is
  * deliberately absent: a chosen mode is not a health signal (OQ-9), so it is
- * shown "for information" and never green. `scheduled_jobs` and `queues` are
- * eligible, but until their reads exist (slice 5 PR-2) they are built as "Not
- * measured yet" and never reach this predicate.
+ * shown "for information" and never green. `scheduled_jobs` is green only when
+ * all 12 jobs have a recorded Vercel cron run and the run read succeeded;
+ * `queues` only when all five queue reads succeeded (their measurements say
+ * `completeness: 'complete'` exactly then).
  */
 export const GREEN_ELIGIBLE: ReadonlySet<HealthTileId> = new Set<HealthTileId>([
   'bos_ai_settings',
@@ -141,6 +152,13 @@ export interface HealthInputs {
   spend: HealthRead<SpendFacts>;
   critical: HealthRead<CriticalFacts>;
   entitlements: HealthRead<EntitlementFacts>;
+  /**
+   * Tiles 6 and 7 (slice 5), from the same computation as the jobs & queues
+   * page (A-8). Absent = that tile was not measured on this call: it shows
+   * "Not measured yet", never a colour.
+   */
+  jobs?: HealthRead<JobsTileFacts>;
+  queues?: HealthRead<QueuesTileFacts>;
 }
 
 export interface RuleErrorReport {
@@ -453,7 +471,11 @@ export function colourTile(
       ? OTHERWISE_INFORMATION
       : LOWER_BOUND_TILES.has(id)
         ? OTHERWISE_GREEN_UNLESS_LOWER_BOUND
-        : OTHERWISE_GREEN;
+        : id === 'scheduled_jobs'
+          ? OTHERWISE_JOBS
+          : id === 'queues'
+            ? OTHERWISE_QUEUES
+            : OTHERWISE_GREEN;
 
     if (!measurement) {
       return {
@@ -685,7 +707,9 @@ export const ENTITLEMENTS_PAGE_LINK: HealthPageLink = {
  * it failed or the rule list was invalid (QA-3).
  */
 function tilePageLink(id: MeasuredTileId): HealthPageLink | null {
-  return id === 'entitlements_mode' ? ENTITLEMENTS_PAGE_LINK : null;
+  if (id === 'entitlements_mode') return ENTITLEMENTS_PAGE_LINK;
+  if (id === 'scheduled_jobs' || id === 'queues') return JOBS_QUEUES_PAGE_LINK;
+  return null;
 }
 
 function entitlementsMeasurement(facts: EntitlementFacts): TileMeasurement {
@@ -713,6 +737,7 @@ function entitlementsMeasurement(facts: EntitlementFacts): TileMeasurement {
   };
 }
 
+/** Tile 6 or 7 when the caller did not measure it on this call (input absent). */
 function notMeasuredTile(id: 'scheduled_jobs' | 'queues'): HealthTile {
   return {
     id,
@@ -724,10 +749,122 @@ function notMeasuredTile(id: 'scheduled_jobs' | 'queues'): HealthTile {
     rules: [],
     otherwise: null,
     pageLink: null,
+    footnote: 'Not measured on this load.',
+  };
+}
+
+/** "3 h 10 min", "45 min", "2 d 4 h". */
+export function formatMinutes(total: number): string {
+  const minutes = Math.max(0, Math.floor(total));
+  if (minutes < 60) return `${minutes} min`;
+  if (minutes < 1440) {
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return m ? `${h} h ${m} min` : `${h} h`;
+  }
+  const d = Math.floor(minutes / 1440);
+  const h = Math.floor((minutes % 1440) / 60);
+  return h ? `${d} d ${h} h` : `${d} d`;
+}
+
+/** Fixed words for a run read that did not succeed (the page says the same). */
+export const JOBS_NOT_INSTALLED_FOOTNOTE = 'Could not check: run recording is not installed yet.';
+export const JOBS_READ_FAILED_FOOTNOTE = 'Could not check: the run record could not be read just now.';
+
+function jobsMeasurement(facts: JobsTileFacts): TileMeasurement {
+  const href = `${JOBS_QUEUES_PAGE_LINK.href}#jobs`;
+  if (facts.runsRead !== 'ok') {
+    return {
+      metrics: {},
+      flags: {},
+      figures: [],
+      footnote: facts.runsRead === 'not_installed' ? JOBS_NOT_INSTALLED_FOOTNOTE : JOBS_READ_FAILED_FOOTNOTE,
+      completeness: 'partial',
+    };
+  }
+  // A job with no recorded run yet makes every count a lower bound, and the
+  // tile "not measured" rather than clear (C-10R).
+  const exactMetrics = facts.noRunYet === 0;
+  const m = (value: number): Measured => ({ value, exact: exactMetrics });
+  const figure = (label: string, value: string): HealthFigure => ({
+    label,
+    value,
+    exact: true,
+    href,
+    linkLabel: `${label}: ${value}, open Scheduled jobs & queues`,
+    note: null,
+  });
+  const figures = [
+    figure('Jobs healthy', `${formatCount(facts.healthy)} of ${formatCount(facts.total)}`),
+    figure('Jobs late', formatCount(facts.late)),
+    figure('Jobs stopped', formatCount(facts.stopped)),
+    figure('Jobs failing (last run, or run after run)', formatCount(facts.lastRunFailed + facts.keepsFailing)),
+  ];
+  if (facts.noRunYet > 0) figures.push(figure('Jobs with no run recorded yet', formatCount(facts.noRunYet)));
+  if (facts.worstJob) figures.push(figure('Worst job', facts.worstJob));
+  return {
+    metrics: {
+      jobsStopped: m(facts.stopped),
+      jobsKeepFailing: m(facts.keepsFailing),
+      jobsLate: m(facts.late),
+      jobsLastRunFailed: m(facts.lastRunFailed),
+      jobsPartlyDone: m(facts.partlyDone),
+    },
+    flags: {},
+    figures,
     footnote:
-      id === 'scheduled_jobs'
-        ? 'Job runs are not recorded anywhere yet (roadmap R-2). No page yet.'
-        : 'Queue depth (payment reminders, automations) is not recorded anywhere yet (roadmap R-2). No page yet.',
+      'Late and stopped are measured from the last start by Vercel\'s own scheduler; ' +
+      'a job with no run yet is measured from when recording began.',
+    completeness: facts.noRunYet > 0 ? 'not_measured' : 'complete',
+  };
+}
+
+function queuesMeasurement(facts: QueuesTileFacts): TileMeasurement {
+  const href = `${JOBS_QUEUES_PAGE_LINK.href}#queues`;
+  const complete = facts.readOk === facts.total;
+  if (facts.readOk === 0) {
+    return {
+      metrics: {},
+      flags: {},
+      figures: [],
+      footnote: 'Could not check: no queue could be read just now.',
+      completeness: 'partial',
+    };
+  }
+  const m = (value: number): Measured => ({ value, exact: complete });
+  const figure = (label: string, value: string): HealthFigure => ({
+    label,
+    value,
+    exact: complete,
+    href,
+    linkLabel: `${label}: ${value}, open Scheduled jobs & queues`,
+    note: null,
+  });
+  return {
+    metrics: {
+      queueItemsStuck: m(facts.stuck),
+      queuesStoppedDraining: m(facts.stoppedDraining),
+      queueDeadLettered24h: m(facts.deadLettered24h),
+      queuesBehind: m(facts.behind),
+      queueDeadLettered7d: m(facts.deadLettered7d),
+      queueFailed24h: m(facts.failed24h),
+    },
+    flags: {},
+    figures: [
+      figure('Items due now, all queues', formatCount(facts.dueNow)),
+      figure('Items stuck in progress', formatCount(facts.stuck)),
+      figure('Items dead-lettered, last 24 h', formatCount(facts.deadLettered24h)),
+      figure('Items failed, last 24 h', formatCount(facts.failed24h)),
+      figure(
+        'Oldest item due now',
+        facts.oldestDueMinutes === null ? 'none' : `${formatMinutes(facts.oldestDueMinutes)} (${facts.oldestDueQueue})`
+      ),
+    ],
+    footnote: complete
+      ? 'Failed and dead-lettered items are counted by when they were due (payment queues) or queued ' +
+        '(the others): no queue records when an item failed.'
+      : `${formatCount(facts.total - facts.readOk)} of ${formatCount(facts.total)} queues could not be read just now.`,
+    completeness: complete ? 'complete' : 'partial',
   };
 }
 
@@ -753,8 +890,12 @@ export function evaluateHealth(inputs: HealthInputs, options: EvaluateOptions = 
     colourTile('bos_ai_spend', rules.bos_ai_spend, safe(inputs.spend, (s) => spendMeasurement(s, w)), options.onRuleError),
     colourTile('critical_audit', rules.critical_audit, safe(inputs.critical, (c) => criticalMeasurement(c, w)), options.onRuleError),
     colourTile('entitlements_mode', rules.entitlements_mode, safe(inputs.entitlements, entitlementsMeasurement), options.onRuleError),
-    notMeasuredTile('scheduled_jobs'),
-    notMeasuredTile('queues'),
+    inputs.jobs
+      ? colourTile('scheduled_jobs', rules.scheduled_jobs, safe(inputs.jobs, jobsMeasurement), options.onRuleError)
+      : notMeasuredTile('scheduled_jobs'),
+    inputs.queues
+      ? colourTile('queues', rules.queues, safe(inputs.queues, queuesMeasurement), options.onRuleError)
+      : notMeasuredTile('queues'),
   ];
 }
 

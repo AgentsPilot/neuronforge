@@ -56,7 +56,18 @@ jest.mock('@/lib/repositories/AuditTrailRepository', () => ({
   auditTrailRepository: { countAdminEventsAllAccountsInWindow: (...a: unknown[]) => mockAuditCount(...a) },
 }));
 
+// Slice 5: tiles 6 and 7 read through the shared jobs & queues orchestrator.
+const mockCronSummary = jest.fn();
+const mockQueueFigures = jest.fn();
+jest.mock('@/lib/repositories/AdminJobsQueuesRepository', () => ({
+  adminJobsQueuesRepository: {
+    summariseCronRunsAllJobs: (...a: unknown[]) => mockCronSummary(...a),
+    readQueueFiguresAllAccounts: (...a: unknown[]) => mockQueueFigures(...a),
+  },
+}));
+
 import { GET } from '../route';
+import { quietQueueFigures, quietSummaryRows } from '@/tests/helpers/jobs-queues-fixtures';
 
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };
 const NOW = new Date('2026-09-26T10:30:45.123Z');
@@ -96,6 +107,8 @@ function quiet() {
   mockCount.mockResolvedValue({ data: 0, error: null });
   mockCostPoints.mockResolvedValue({ data: { rows: [], reachedCeiling: false, completed: true, pages: 1 }, error: null });
   mockModeSetting.mockReturnValue({ effective: 'off', requested: 'off', refused: false });
+  mockCronSummary.mockImplementation(async (_c: unknown, _jobs: unknown, now: Date) => ({ data: quietSummaryRows(now), error: null }));
+  mockQueueFigures.mockResolvedValue({ data: quietQueueFigures(), error: null });
 }
 
 let seq = 0;

@@ -26,7 +26,8 @@ import {
   Bot,
   Layers,
   HeartPulse,
-  Archive
+  Archive,
+  Clock
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -89,6 +90,13 @@ const navigationSections: NavSection[] = [
         href: '/admin/analytics',
         icon: TrendingUp,
         description: 'Token spend, both products'
+      },
+      {
+        // Slice 5: the Business OS crons and the five send queues, read-only.
+        name: 'Scheduled jobs & queues',
+        href: '/admin/jobs-queues',
+        icon: Clock,
+        description: 'Business OS job runs and send queues'
       },
       {
         name: 'Audit trail',

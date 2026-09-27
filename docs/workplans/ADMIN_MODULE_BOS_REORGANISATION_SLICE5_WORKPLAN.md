@@ -7,7 +7,7 @@
 **Branch:** `feature/admin-bos-jobs-queues` (worktree `neuronforge-admin-bos-reorg`, cut from `main` @ `546f6110`)
 **Process:** full cycle. The slice adds a production migration, a new `/api/admin/*` route, new cross-account reads and changes to twelve production cron routes. Order: Dev workplan → **SA workplan review (including the C-10 re-ruling, §8.1)** → user answers (§13) → Dev implements → SA code review → QA → user reviews the diff → user approval → RM.
 **Standing user rule:** **nothing is committed**, now or during implementation. Every change stays uncommitted in the worktree until the user has reviewed the code. The requirement's uncommitted edits in this worktree are left as they are.
-**Status:** PR-1 (parts A + E) Code Complete, uncommitted; SA approved with nits and QA passed; review follow-ups SA-1..SA-4 and QA-1..QA-3 applied (§17.6) (2026-09-27). PR-2 (parts B + C + D) not started. See [§17](#17-implementation-record-pr-1-dev-2026-09-27) and [§18](#18-deferred-claudemd-updates)
+**Status:** PR-1 (parts A + E) merged (PR #122). **PR-2 (parts B + C + D) Code Complete, uncommitted, on `feature/admin-bos-jobs-queues-pr2`, for SA code review (2026-09-27)**; SA approved, QA passed, user approved the code; committed and PR opened (not merged). L-5.1 to L-5.5 ✅ recorded 2026-09-27; merge gated on L-5.10, the migration being applied (L-5.7) and L-5.11. See [§19](#19-implementation-record-pr-2-dev-2026-09-27)
 
 ## Overview
 
@@ -42,10 +42,11 @@ This document records what was verified in the code, the design of each part, th
 16. [Task List](#16-task-list)
 17. [Implementation Record: PR-1 (Dev, 2026-09-27)](#17-implementation-record-pr-1-dev-2026-09-27)
 18. [Deferred CLAUDE.md Updates](#18-deferred-claudemd-updates)
-19. [SA Review Notes](#sa-review-notes)
-20. [QA Testing Report](#qa-testing-report)
-21. [Commit Info](#commit-info)
-22. [Change History](#change-history)
+19. [Implementation Record: PR-2 (Dev, 2026-09-27)](#19-implementation-record-pr-2-dev-2026-09-27)
+20. [SA Review Notes](#sa-review-notes)
+21. [QA Testing Report](#qa-testing-report)
+22. [Commit Info](#commit-info)
+23. [Change History](#change-history)
 
 ---
 
@@ -705,11 +706,11 @@ Admin Archiving slice 2b is uncommitted in another worktree (`agent-ae8876d4ecf0
 
 | # | When | Pass |
 |---|---|---|
-| L-5.1 | Before PR-2 merges | Each of the 5 tables lists `status, claimed_at, attempts, next_attempt_at, created_at, error_message`; the two payment tables also `scheduled_at`; automations also `executed_at` |
-| L-5.2 | Before PR-2 merges | Record every status value and count. **Any value outside the §6.1 vocabulary → tell Dev before merge** (it will show as "unrecognised status") |
-| L-5.3 | Before PR-2 merges | Recorded (do not assert a count; slice 4 §15.8 found indexes the repo lacks) |
-| L-5.4 | Before PR-2 merges | Recorded. Any table above ~100k rows → Dev re-plans the counts before merge |
-| L-5.5 | Before PR-2 merges | Dead-letter rows (if any) carry exactly the marker; automations' failed rows fall into the known labels |
+| L-5.1 | Before PR-2 merges | Each of the 5 tables lists `status, claimed_at, attempts, next_attempt_at, created_at, error_message`; the two payment tables also `scheduled_at`; automations also `executed_at`. ✅ **Recorded 2026-09-27:** every column the page reads exists with the expected types. `payment_automation_executions.scheduled_at` and both payment tables' `created_at` are nullable; `payment_reminders.scheduled_at` is NOT NULL |
+| L-5.2 | Before PR-2 merges | Record every status value and count. **Any value outside the §6.1 vocabulary → tell Dev before merge** (it will show as "unrecognised status"). ✅ **Recorded 2026-09-27:** `daily_briefing_sends` sent 20, skipped 25; `lead_responses` sent 1, skipped 2; `payment_reminders` cancelled 2, pending 3, sent 7; `insight_actions` and `payment_automation_executions` no rows. All within each queue's known list in `AdminJobsQueuesRepository` |
+| L-5.3 | Before PR-2 merges | Recorded (do not assert a count; slice 4 §15.8 found indexes the repo lacks). ✅ **Recorded 2026-09-27:** each queue has a partial "pending" index on its due column |
+| L-5.4 | Before PR-2 merges | Recorded. Any table above ~100k rows → Dev re-plans the counts before merge. ✅ **Recorded 2026-09-27:** approximate rows 45 / 0 / 3 / 0 / 12 (`daily_briefing_sends` / `insight_actions` / `lead_responses` / `payment_automation_executions` / `payment_reminders`), all ≤ 160 kB, far below the ~100k gate |
+| L-5.5 | Before PR-2 merges | Dead-letter rows (if any) carry exactly the marker; automations' failed rows fall into the known labels. ✅ **Recorded 2026-09-27:** no failed or dead-lettered rows |
 | L-5.6 | **Before PR-1 merges** | Recorded: the number of AP agents that stop running on a schedule. ✅ **Recorded 2026-09-27:** `scheduled_active_enabled_agents = 0`, `owners = 0`, `most_recent_scheduled_run = null`. Retiring the AgentsPilot crons stops no one's scheduled agents |
 | L-5.7 | After applying the migration | The migration's Step 3 row: all true; Step 4 text starts `DRY RUN PASS`; nothing kept = 0 / 1 |
 | L-5.8 | After PR-2 deploys: +2 h, and the next day after 09:00 UTC | +2 h: the 9 sub-daily jobs each have ≥ 1 `vercel_cron` run and none is late. Next day: all 12. **This is the OQ-2 verification** |
@@ -1021,7 +1022,7 @@ The only accepted pre-existing failure is the parked baseline, named by its test
 **Before code**
 - [x] T0a: SA workplan review, **including the written C-10 re-ruling (F-11)**: approved with SC-1 to SC-12 and C-10R (2026-09-27)
 - [x] T0b: The user answered (2026-09-27): **Q-U1** leave the "0" as is (no change to the Plans & entitlements page; the Health relabelling still applies); **Q-U2** no colour for payment-retry declines (count shown in PR-2); **Q-U3** PARKED, and **CLAUDE.md is not edited in this slice at all** (§18)
-- [ ] T0c: The user records **L-5.6** (before PR-1 can merge) and L-5.1 to L-5.5, L-5.10 (before PR-2 can merge). ✅ **L-5.6 recorded 2026-09-27:** `scheduled_active_enabled_agents = 0`, `owners = 0`, `most_recent_scheduled_run = null` (L-5.1 to L-5.5 and L-5.10 still owed for PR-2)
+- [ ] T0c: The user records **L-5.6** (before PR-1 can merge) and L-5.1 to L-5.5, L-5.10 (before PR-2 can merge). ✅ **L-5.6 recorded 2026-09-27:** `scheduled_active_enabled_agents = 0`, `owners = 0`, `most_recent_scheduled_run = null` ✅ **L-5.1 to L-5.5 recorded 2026-09-27** (see §15). **L-5.10 (Offir) still owed** for PR-2
 
 **PR-1 (A + E), uncommitted**
 - [x] T1: `lib/cron/__tests__/vercelCrons.test.ts`. **Deviation D-1:** the registry (`bosCronJobs.ts`) and `bosCronJobs.test.ts` move to PR-2; PR-1 pins the 12 entries literally
@@ -1033,17 +1034,17 @@ The only accepted pre-existing failure is the parked baseline, named by its test
 - [x] T7: Run §14.6; paste output (§17.3); implementation record; notify TL. **No commit**
 
 **PR-2 (B + C + D), uncommitted, after PR-1 review**
-- [ ] T8: The migration + static test (§5.2); the date prefix re-checked on `main`
-- [ ] T9: `BosCronRunRepository` + tests + import guard; `index.ts`
-- [ ] T10: `cronRunRecorder.ts` + tests (§5.4)
-- [ ] T11: Adopt in the 12 routes (three lines each) + `runRecord.adoption.test.ts`; `bosCronJobs.test.ts` gains the adoption assertion; `insight-detect/__tests__/route.audit.test.ts` passes unedited
-- [ ] T12: `AdminJobsQueuesRepository` (queue specs, RPC) + tests + isolation guard
-- [ ] T13: `lib/admin/jobs/*` (types, job status, queue figures, orchestrator with Zod on RPC rows, view builder) + tests with a simulated clock
-- [ ] T14: `GET /api/admin/jobs-queues` + route tests
-- [ ] T15: `health-summary`: tiles 6/7 via the shared computation; `HEALTH_RULES` for both; `underDeadline` moved into the orchestrator; tests (A-8 equality)
-- [ ] T16: Page + components + render/source tests; sidebar + header + nav test
-- [ ] T17: `ADMIN_IDENTIFICATION_AND_ACCESS.md` register row + re-measured census; `CLAUDE.md` admin row; Change History entries
-- [ ] T18: Run §14.6; paste output; implementation record (deviations, "what SA should look at first"); notify TL. **No commit**
+- [x] T8: The migration + static test (§5.2); the date prefix re-checked on `main`
+- [x] T9: `BosCronRunRepository` + tests + import guard; `index.ts`
+- [x] T10: `cronRunRecorder.ts` + tests (§5.4)
+- [x] T11: Adopt in the 12 routes (three lines each) + `runRecord.adoption.test.ts`; `bosCronJobs.test.ts` gains the adoption assertion; `insight-detect/__tests__/route.audit.test.ts` passes unedited
+- [x] T12: `AdminJobsQueuesRepository` (queue specs, RPC) + tests + isolation guard
+- [x] T13: `lib/admin/jobs/*` (types, job status, queue figures, orchestrator with Zod on RPC rows, view builder) + tests with a simulated clock
+- [x] T14: `GET /api/admin/jobs-queues` + route tests
+- [x] T15: `health-summary`: tiles 6/7 via the shared computation; `HEALTH_RULES` for both; `underDeadline` moved into the orchestrator; tests (A-8 equality)
+- [x] T16: Page + components + render/source tests; sidebar + header + nav test
+- [x] T17: `ADMIN_IDENTIFICATION_AND_ACCESS.md` register row 84 + census re-measured from disk (84 / 78 + 6 / 55 files; 26 pages); Change History. **`CLAUDE.md` not edited** (§18: its admin row no longer carries counts)
+- [x] T18: Run §14.6; paste output; implementation record (deviations, "what SA should look at first"); notify TL. **No commit**
 - [ ] T19 (user): apply the migration per the runbook; record L-5.7; then L-5.8, L-5.9, L-5.11, L-5.12 at their times
 
 ---
@@ -1179,6 +1180,146 @@ SA approved PR-1 with nits and QA passed it. Every fix below is uncommitted. QA'
 | U-C | Two `CLAUDE.md` Change History rows (mode corrected; handler count) | **Moot.** Nothing in `CLAUDE.md` changes | The Change History rows of the docs above: `BUSINESS_OS_ENTITLEMENTS.md`, the runbook and `TIER_BILLING_REUSE_PLAN.md` already have theirs in this PR; `ADMIN_IDENTIFICATION_AND_ACCESS.md` gets its row in PR-2 |
 
 **Q-U3 ("no commercial tier is configured") stays PARKED, per the user.** Its only text was the `CLAUDE.md` sentence, which PR #119 removed. It now belongs to `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md`, and nothing there is changed for it in this slice. Checked 2026-09-27: that doc already states, at the `enforce` paragraph, that "since 2026-09-23 two tiers are configured", and it carries no "no commercial tier is configured" sentence. So there is nothing stale to leave or fix there today. For whoever unparks Q-U3, one related stale comment was found and left alone: `lib/repositories/BusinessOsEntitlementShadowRepository.ts:14` ("ships with NO commercial tiers").
+
+---
+
+## 19. Implementation Record: PR-2 (Dev, 2026-09-27)
+
+**Nothing is committed** (standing user rule). Branch `feature/admin-bos-jobs-queues-pr2`, stacked on PR-1 (`63d385c1`). Before any code, `git merge --no-commit --no-ff origin/main` was run to pick up Admin Archiving slice 3 (#121): **"Automatic merge went well; stopped before committing as requested"**. It had **no conflicts and no file changes to stage**: `origin/main` @ `609635ff` is the merge of PR #122 (this slice's PR-1) on top of `1f1420d6` (#121), both already in `63d385c1`. `MERGE_HEAD` is left in place for RM.
+
+### 19.1 What was built
+
+| Part | File(s) | What |
+|---|---|---|
+| B | `supabase/migrations/20261011_bos_cron_runs.sql` | `bos_cron_runs`, `bos_cron_run_recording` (one row), `admin_bos_cron_run_summary`. SC-3 CHECKs, RLS with no policy, `REVOKE ALL` then exact grants, `SECURITY INVOKER` + `search_path = ''`, limits clamped inside. The runbook in the header: pre-check, single-transaction apply, access check, a dry run that always rolls back and prints `DRY RUN PASS`, "nothing kept". Date `20261011` checked against `origin/main`, whose latest migration is `20261010` |
+| B | `supabase/SQL Scripts/20261011_bos_cron_runs_rollback.sql` | The rollback, **a separate file** outside `supabase/migrations/` so no migration run can apply it |
+| B | `lib/cron/bosCronJobs.ts` | The registry: 12 jobs and 5 queues, **no imports** (SC-8). Time limits: `maxDuration` where exported; **300 s "assumed_pending_L-5.10"** for the 5 routes without one (SC-6) |
+| B | `lib/cron/cronRunRecorder.ts` | `withCronRunRecord`: SC-1 gate (NODE_ENV and VERCEL_ENV both production, secret present, SHA-256 of both sides compared with `timingSafeEqual`, any exception means unrecorded); SC-2 recorder-generated id and finish unless the table is definitively missing; each write bounded at 1.5 s; the same response object returned and the same error rethrown; 30-day prune after a successful finish; a 5-minute per-instance backoff when the table is missing |
+| B | `lib/repositories/BosCronRunRepository.ts`, `supabaseErrorCodes.ts` | Writes with an explicit field allow-list; finish only updates a row still `running`; prune by start time. `isMissingRelationError` sits in a pure module (D-12) |
+| B | The 12 `app/api/cron/*/route.ts` | `GET` renamed `runJob`, plus one import and `export const GET = withCronRunRecord('<id>', runJob)`. Bodies, auth checks and responses are untouched |
+| B | `lib/business-os/purge/descriptors.ts`, `__tests__/classification-baseline.json` | SC-4: both tables `never` (global); baseline 126 → 128, updated deliberately |
+| C | `lib/repositories/AdminJobsQueuesRepository.ts` | SC-9 in full (see the item-by-item list below this table) |
+| C | `lib/admin/jobs/jobsQueuesTypes.ts`, `buildJobsQueuesView.ts`, `readJobsQueues.ts`; `lib/admin/readUnderDeadline.ts` | The shared read (injected readers, Zod over every RPC row, per-group deadlines) and the one pure computation behind both the page and the tiles (A-8) |
+| C | `app/api/admin/jobs-queues/route.ts` | SC-10: `requireAdmin` first, strict empty Zod, isolated groups, counts and timings only in the log |
+| C | `app/admin/jobs-queues/page.tsx`, `app/admin/components/jobs/JobsQueuesView.tsx` | Read-only page: Refresh only, "Due now" separate from "Scheduled for later", green only in one `GREEN_STYLE` (Healthy / Clear) |
+| C | `AdminSidebar.tsx`, `AdminHeader.tsx` | "Scheduled jobs & queues" third under Monitor; header title |
+| D | `lib/admin/health/rules.ts`, `evaluateHealth.ts`, `app/api/admin/health-summary/route.ts` | Tiles 6 and 7 measured through the SAME orchestrator and computation. Their rules are data (§7, OQ-7: a dead-letter in 24 h is red). Green per C-10R, only when all 12 jobs have a recorded Vercel cron run / all 5 queue reads succeeded. Q-U2: payment-retry declines are a count, never a colour |
+| — | `docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md` | SC-12: register row 84 `jobs-queues#GET`; census re-measured **from disk after the merge**: **84 handlers / 55 route files = 78 `requireAdmin` + 6 inline + 0 open; 26 `/admin` pages**. `CLAUDE.md` untouched (§18) |
+
+What `AdminJobsQueuesRepository` does for SC-9:
+- the read context comes first and is required;
+- every select is a head count on `id`, or one of `scheduled_at`, `next_attempt_at`, `created_at`;
+- `error_message` appears only inside filters, and the marker is double-quoted for PostgREST;
+- each "due now" filter cites its claim function by file and line, and a test re-reads those lines;
+- the retry-time assumption (`next_attempt_at >= scheduled_at`) is stated in code and pinned by two fixtures;
+- a source guard allows only `app/api/admin/**` to use it, including through the barrel.
+
+**Tests added or changed:**
+
+| Test file | Count | What it pins |
+|---|---|---|
+| `lib/cron/__tests__/bosCronJobs.test.ts` | 74 | FR-R9 against `vercel.json`, thresholds against the requirement table, time limits against `maxDuration`, SC-11 money and key rules, SC-8 no imports, source adoption per route |
+| `cronRunRecorder.test.ts` | 27 | SC-1(d) every gate case, happy path, partial, Q-U2, 500, throw and rethrow, timeout class, missing table plus backoff, SC-2(b), start past its deadline, sync throws, non-JSON body, count extraction |
+| `app/api/cron/__tests__/runRecord.adoption.test.ts` | 36 | Per job, 12 × 3: an authorised "nothing to do" run is recorded, an unauthorised call records nothing, and a failing record write leaves the response identical to an unrecorded run |
+| `BosCronRunRepository.test.ts` (16) and `AdminJobsQueuesRepository.test.ts` (35) | 51 | Both repositories, including the two isolation guards |
+| `lib/admin/jobs/__tests__/*` | 46 | Simulated clock for one job of each schedule type (Healthy, then Late one minute past `interval + grace`, then Stopped one minute past `2 × interval + grace`); every rule; queue statuses; A-8 equality; C-10R on tiles 6/7; SC-5 Zod refusals; isolation; purity |
+| `app/api/admin/jobs-queues/__tests__/route.test.ts` | 11 | 401/403/400 ordering, happy path, not installed, one queue failing, the leak test with planted markers on the body and every log argument, 500 without details |
+| `supabase/migrations/__tests__/bos-cron-runs.migration.test.ts` | 23 | Every CHECK, the privileges, the function header, the runbook steps, the separate rollback |
+| `app/admin/__tests__/jobsQueues.render.test.tsx` (9) and `jobsQueues.source.guard.test.ts` (7) | 16 | The page: read-only, the green rule, no forbidden fields, C-21 imports |
+| Updated: Health tests, sidebar nav test, purge baseline | — | Listed in D-10 |
+
+### 19.2 Deviations (for SA code review)
+
+| # | Deviation | Why |
+|---|---|---|
+| D-10 | **The two Health route test files were edited**: each gains a mock of `AdminJobsQueuesRepository` in its `quiet()` setup, and the happy path now expects tiles 6/7 `green`. `evaluateHealth.test.ts` and `rules.config.test.ts` were updated for measured tiles 6/7: quiet inputs carry jobs/queues facts, the fuzz generates them, and the rule-set test lists 7 tiles. **Unedited, as required:** every existing cron route test (`insight-detect/__tests__/route.audit.test.ts` passes) and QA's `qa-slice5.test.ts` / `health.qa-slice5.render.test.tsx` | Without the mock, the Health route would reach the real service-role client in tests. The status changes are the intended behaviour of PR-2 |
+| D-11 | `underDeadline` / `asRepoResult` moved to `lib/admin/readUnderDeadline.ts` (SA optimisation note). A failed read now also carries its `error` object, for classification only; it is never shown or logged as text | One copy for both routes. The Health route's deadline tests pass unedited |
+| D-12 | `isMissingRelationError` lives in the pure `lib/repositories/supabaseErrorCodes.ts`, re-exported by `BosCronRunRepository` | So `lib/admin/jobs` never imports a database client (F-10) |
+| D-13 | The rollback is a separate file (`supabase/SQL Scripts/…_rollback.sql`), referenced from the migration header, rather than a block inside the header as in `20261010` | Coordinator instruction. The file cannot be applied by a migration run |
+| D-14 | `HealthInputs.jobs` / `.queues` are **optional**. When a call does not supply them, the tile says "Not measured yet" with no link. Both routes always supply them | Keeps QA's PR-1 file and every existing `HealthInputs` fixture valid, and "absent" has an honest meaning |
+| D-15 | **Found by the SC-10 leak test and fixed:** the queue view had spread the reader's figures object, so a stray field would have reached the response. It now copies an explicit field list | Defence in depth: the repository already selects no such field |
+| D-16 | Tile 6 metrics are marked inexact (lower bounds) while any job has no run yet; its figures stay exact counts; completeness `'not_measured'` keeps it grey. Tile 7 is inexact and `'partial'` when any queue read failed | C-10R: a rule may still fire on a proven problem; no-match can never be green |
+| D-17 | Both routes floor the clock to the minute (`windows.end` / the same floor) | Tile and page agree when loaded in the same minute (A-8) |
+| D-18 | FR-R3 ordering: the start row is written **before** the route's own auth check runs | SA F-3 ruling: the recorder's gate is strictly stronger than every route's check, so "recorded only after the caller is proven to be Vercel" holds in substance |
+| D-19 | **For BA via TL (SC-2(c)).** A record write that fails cannot show that job as "Could not check", because nothing was written. It shows as "did not finish (or its finish could not be recorded)", or as Late | That meets FR-R4's intent: it is **never Healthy** |
+| D-20 | The two new repositories are exported from `lib/repositories/index.ts` (the new-repository skill, step 4); both isolation guards allow the barrel and catch symbol use through it | House pattern (`AdminTokenUsageAnalyticsRepository`) |
+
+### 19.3 Verification (real output, 2026-09-27)
+
+| Command | Result |
+|---|---|
+| `npx jest app/admin lib/admin app/api/admin app/api/cron lib/audit lib/repositories lib/business-os/usage lib/business-os/entitlements lib/business-os/llm lib/business-os/purge lib/cron --ci --maxWorkers=50%` | **161 suites: 160 passed, 1 failed; 3,684 tests: 3,683 passed, 1 failed.** The failure is the parked baseline: "TokenUsageRepository account contract › pins every public method and its arity; no account filter became optional" |
+| `npm run test:bos-entitlements` | 66 suites / 1,308 tests, all passed (includes `supabase/migrations/__tests__` and the purge invariants) |
+| `npm run test:authz-guard` | 119 / 119 passed (the new handler is gated; no cap moved) |
+| `npm run typecheck:bos-llm` | 253 files in scope, 28 errors, **0 new**, passed (the same pre-existing "1 baseline entry is fixed" note) |
+| `npm run check:bos-llm-literals` | 46 files in scope, 2 exempt, **0 violations**, passed |
+| `npm run lint:hooks` | exit 0 |
+| ESLint on the touched files | exit 0, **0 errors**. 3 warnings, all in `app/api/cron/process-queue/route.ts`, which is untouched and was included only because the whole `app/api/cron` directory was linted |
+| Full `tsc --noEmit` (8 GB) | 2,863 lines of pre-existing diagnostics (unchanged from PR-1); **0 in any touched or new file** |
+| `next build`, CI placeholder env | **exit 0**, `✓ Compiled successfully`, `✓ Generating static pages (305/305)`. `ƒ /admin/jobs-queues` 7.18 kB; `ƒ /api/admin/jobs-queues`; every cron route builds with `export const GET = withCronRunRecord(...)` |
+
+### 19.4 What SA should look at first
+
+1. `lib/cron/cronRunRecorder.ts`: the gate (SC-1), `canFinish` (SC-2(b)), the rethrow path, and that `response` is returned untouched.
+2. `supabase/migrations/20261011_bos_cron_runs.sql`: the CHECKs (SC-3), the function (SC-5), and the dry run.
+3. `AdminJobsQueuesRepository.readQueueFiguresAllAccounts`: the filters per queue and the oldest-due pair (SC-9(e), (f)).
+4. `buildJobsQueuesView.ts`: `jobStatus` (the first-match order, `last_cron_started_at` only), `queueView`'s explicit copy (D-15).
+5. `evaluateHealth.ts`: `jobsMeasurement` / `queuesMeasurement` completeness (D-16).
+
+### 19.6 Review follow-ups (Dev, 2026-09-27, uncommitted)
+
+SA approved PR-2 with nits and QA passed it, both conditional on the Medium. `MERGE_HEAD` is kept, nothing is committed, and QA's 5 probe files (`qa-slice5-pr2.*`) stay in the tree and pass.
+
+| Finding | Fix |
+|---|---|
+| **SA-1 / QA bug 1 (Medium)** | The numbers-only CHECK is now `'strict $.* ? (@.type() != "number")'`. In lax mode `$.*` unwraps arrays, so `{"a":[1]}` and `{"a":[]}` passed. The dry run gains D-2a (`{"a": [1]}`), D-2b (`{"a": []}`) and D-2c (a nested object), each of which must be refused. The static test pins `strict`, and that the lax form is gone |
+| **SA-2 / QA-L1** | `isMissingRelationError`: any code other than `42P01` / `PGRST205` / `PGRST202` is **not** a missing relation. The message fallback matches only `relation "…" does not exist` or "Could not find the table / function". Tests: `42703` and `PGRST204` (missing column), with and without a code, are false |
+| **SA-3 / QA-L6** | The recorder decides whether to record inside its guard, but calls the handler **exactly once, outside it**. Tests: a synchronously throwing handler runs once and its same error is rethrown, on the unrecorded path, the recorded path (the failure is recorded) and the backoff path |
+| **SA-4** | `finishRun` returns the number of rows updated (`.select('id')`). With 0 rows the recorder logs a distinct `info`, "Cron run finish matched no running row; the run is not recorded" (`rowsUpdated: 0`), and never "Cron run recorded". Tested both ways |
+| **SA-5** | `OTHERWISE_JOBS` / `OTHERWISE_QUEUES` use `GREEN_HEADLINE` |
+| **SA-6** | `CREATE FUNCTION` (no `OR REPLACE`, house style F-15): a second paste fails and changes nothing. Pinned |
+| **SA-7** | The "nothing kept" step now says that once PR-2 is live, `runs_kept` counts real runs, and gives the check that matters then: `WHERE job = 'dry-run-job'` → 0. Pinned |
+| **QA-L4** | An unfinished last run shows its outcome words once (no "Finished" line, one outcome line). Tested |
+| **QA-L2** | `formatUtc` converts through `Date` → `toISOString()`, never slices text. Tests: a `+02:00` timestamp (including one that crosses midnight) shows the UTC wall clock, and the page renders it as UTC |
+| **QA-L5** (optional, done) | The dry run gains D-12 to D-20: job rule, source list, outcome list, HTTP status range, negative duration, class on a success, finish before start, deadline not after start, counts over 1,024 bytes. **The dry run's expected text is unchanged: `DRY RUN PASS`** (pinned) |
+
+**Verification (real output):**
+
+| Command | Result |
+|---|---|
+| Jest on the 11 paths, `--maxWorkers=50%` | **166 suites: 165 passed, 1 failed; 4,005 tests: 4,004 passed, 1 failed.** The failure is the parked baseline "TokenUsageRepository account contract › pins every public method and its arity; no account filter became optional" |
+| `npm run test:bos-entitlements` | 67 suites / 1,321 tests, all passed |
+| `npx jest supabase/migrations/__tests__` | 5 suites / 132 tests, all passed |
+| `npm run test:authz-guard` | 119 / 119 passed |
+| `npm run typecheck:bos-llm` | 253 in scope, 28 errors, 0 new, passed |
+| `npm run check:bos-llm-literals` | 0 violations, passed |
+| `npm run lint:hooks` | exit 0 |
+| ESLint, touched files | exit 0, 0 errors, 0 warnings |
+| `next build`, CI placeholder env | exit 0, `✓ Compiled successfully`, 305/305 pages |
+
+### 19.5 What the user must do, in order
+
+**Before PR-2 can merge:**
+1. **L-5.10** (Offir, Vercel → Project → Settings → Functions): is Fluid compute on, and what is the default max duration? If it is **above 300 s**, tell Dev: the 5 assumed limits in `lib/cron/bosCronJobs.ts` change to that value (CHECK bound permitting), before merge.
+2. **L-5.1 to L-5.5** (read-only SQL, §10): columns, status values, indexes, sizes, markers. Any status outside the §6.1 vocabulary, or any table above ~100k rows: tell Dev before merge.
+3. **Apply the migration** (Supabase SQL editor, PROD), following its header:
+   - (a) Step 1 pre-check. Four rows, all `PASS`; any `STOP`: do not apply.
+   - (b) Paste and run the whole `supabase/migrations/20261011_bos_cron_runs.sql` once.
+   - (c) Step 3 access check. One row; every column `true`.
+   - (d) Step 4 dry run. The error text must start with `DRY RUN PASS`.
+   - (e) "Nothing kept". Expect `runs_kept = 0`, `recording_rows = 1`.
+   - Any failure in (c) to (e): run `supabase/SQL Scripts/20261011_bos_cron_runs_rollback.sql`, and send the output to Dev.
+   - Record the results as **L-5.7**.
+4. **L-5.11**: `npm run schema:check` (read-only zero-row selects against the live database), and confirm the new reads are clean.
+
+**After PR-2 merges and deploys:**
+
+5. **L-5.8, at +2 h**: the SQL in §10. Expect 9 jobs with a `vercel_cron` run (all but `insight-metrics`, `insight-detect`, `payment-reminders`), and on `/admin/jobs-queues` no job Late or Stopped.
+6. **L-5.8, the next day after 09:00 UTC**: all 12 jobs recorded. **This is the OQ-2 proof that `CRON_SECRET` works.** A job missing here is being refused or is not scheduled.
+7. **L-5.12**: the Vercel logs `Health summary served` and `Jobs and queues served` show `totalMs` ≤ ~1.5 s p50 and ≤ 3 s worst.
+8. The QA manual checks M-3 to M-7 (§14.7).
+
+**If anything goes wrong after deploy:** the crons keep working whatever the state of the run record. Rolling back the table only makes the page say "not installed yet".
 
 ---
 
@@ -1394,6 +1535,78 @@ Comments 1–4 may be fixed in the same uncommitted change before RM; none requi
 
 ---
 
+**Code Review by SA — 2026-09-27 (PR-2: parts B + C + D)**
+**Status:** ✅ Code Approved with nits — **one Medium (comment 1) must be fixed before the user applies the migration**
+
+**Scope reviewed:** the uncommitted diff in the `neuronforge-admin-bos-reorg` worktree on `feature/admin-bos-jobs-queues-pr2`, with the `git merge --no-commit` of `origin/main` @ `609635ff` in progress (`MERGE_HEAD` present, merge-base = `HEAD` `63d385c1`, and `git diff HEAD MERGE_HEAD` is empty, as §19 says). `git diff --stat HEAD` first: 28 modified files, 773 insertions, 170 deletions, plus 23 untracked paths. **No deletion without a matching insertion.** The largest deletion is `health-summary/route.ts` (34 / 86), which is exactly the `underDeadline` / `asRepoResult` / `ReadTiming` block moved to `lib/admin/readUnderDeadline.ts` (D-11; compared line by line: same logic, plus the `error` carried for classification). Every other deletion is a rewritten line. `CLAUDE.md` untouched (`git diff --quiet HEAD -- CLAUDE.md`).
+
+### Verification (SA re-ran, real output)
+
+| Command | Result |
+|---|---|
+| `npx jest app/admin lib/admin app/api/admin app/api/cron lib/cron lib/repositories lib/business-os/purge lib/business-os/entitlements --ci --maxWorkers=50%` | **132 suites / 3,064 tests, all passed** (94.9 s). The parked `tokenUsageRepository` contract test lives outside these paths, so no failure appears in this list |
+| `npm run test:bos-entitlements` | 66 suites / 1,308 tests, all passed |
+| `npm run test:authz-guard` | 1 suite / 119 tests, passed |
+| `npm run typecheck:bos-llm` | 253 files in scope, 28 errors, **0 new**, passed (the pre-existing "1 baseline entry is fixed" in `app/api/onboarding/build/route.ts`, not touched) |
+| **The migration, executed** (SA, PGlite 0.5.8 = PostgreSQL 18.3 in a scratch directory; roles `anon`/`authenticated`/`service_role` created with Supabase-style default privileges; nothing near the repo or any database) | Step 1 pre-check: four `PASS`. The **whole file pasted as-is** (runbook comment included) applies. Pre-check again: P01 `STOP: already applied`. A second paste fails at `relation "bos_cron_runs" already exists` and changes nothing. Step 3 access check: **one row, all 15 columns `true`**. Step 4 dry run: `DRY RUN PASS: D-1 … D-11 PASS`. Nothing kept: `runs_kept = 0`, `recording_rows = 1`. As `anon`: `permission denied for table bos_cron_runs`; as `authenticated`: `permission denied for function admin_bos_cron_run_summary`. Clamp: 80 jobs + `p_recent = 999` returns 50 rows. The rollback runs twice cleanly and leaves three nulls. **One gap found: comment 1** |
+
+### Condition check
+
+| Item | Verdict | Evidence |
+|---|---|---|
+| SC-1 gate | ✅ | `cronRunRecorder.ts:84-97`: `NODE_ENV` and `VERCEL_ENV` both `production`, non-empty secret, SHA-256 of both sides then `timingSafeEqual` (no length throw), whole gate in `try` → `false`. Tests cover all five SC-1(d) cases plus a same-length wrong secret, no `VERCEL_ENV`, and a throwing `headers.get`; each asserts no repository call and the same response object |
+| SC-1(c) gate exception → unrecorded | ✅ | `:199-209`: any throw in gate, registry lookup or backoff check → `handler(request)` unrecorded. See comment 3 (a theoretical double call) |
+| SC-2 | ✅ | `randomUUID()` server-side (`:211`) inside the explicit insert allow-list; `canFinish = start.ok \|\| !start.missingTable` (`:226`); tested for a failed-but-maybe-committed start and a start slower than its deadline. D-19 recorded for BA; `DID_NOT_FINISH_WORDS` carries "(or its finish could not be recorded)" |
+| 1.5 s write deadline, never throws | ✅ | `bounded()` (`:137-168`): abort + resolve at 1,500 ms, sync throw captured, timer always cleared, late settle swallowed. Prune skipped when the finish failed (SA optimisation note taken) |
+| Job exception rethrown; original response returned | ✅ | `:246-255` records `failed`/`exception` (or `timeout` for `AbortError`/`TimeoutError`) and rethrows the **same** error, the finish itself wrapped so it can never mask it; `:262` returns the handler's own object. `response.clone().json()` leaves the body readable (tested) |
+| The 12 routes | ✅ | Each diff is exactly: one import, `export async function GET` → `async function runJob`, and `export const GET = withCronRunRecord('<id>', runJob)` with a comment. **No job body, auth check, early return or response edited.** `maxDuration`/`runtime`/`dynamic` literals untouched. The five dev `POST → GET(request)` handlers pass through (the gate needs `NODE_ENV=production`) |
+| SC-6 time limits | ✅ (gate owed) | `bosCronJobs.ts:81-86, 115-127`: `timeLimitSource: 'assumed_pending_L-5.10'` on the 5 routes with no `maxDuration`; test pins each against the route file and pins every deadline inside the 20-minute CHECK bound. The page shows `TIME_LIMIT_ASSUMED_NOTE`. **L-5.10 is still a pre-merge gate** |
+| D-18 (start row before the route's own auth) | ✅ Accepted | As ruled in F-3; stated in the recorder header |
+| SC-3 constraints | ⚠️ one gap | `like_regex` key rule, `failure_has_class`, `running_is_bare`, `deadline_bounded` (≤ start + 20 min), closed `error_class` list, `(outcome = 'running') = (finished_at IS NULL)`: all present and each refused in the dry run. **But the numbers-only rule accepts an array of numbers** (comment 1) |
+| RLS / grants | ✅ | RLS on both, no policy; `REVOKE ALL … FROM PUBLIC, anon, authenticated, service_role`, then exactly `S/I/U/D` on runs and `SELECT` on recording; proven by the executed access check |
+| SC-5 function | ✅ | `LANGUAGE sql STABLE SECURITY INVOKER SET search_path = ''`, every name `public.`-qualified, `p_jobs` sliced to 50, `p_recent` clamped 1..20 **inside**, `last_cron_started_at` its own column (vercel_cron only), `EXECUTE` for `service_role` only. `jobStatus` measures from `last_cron_started_at`, never from `recent`. Zod validates every row (`readJobsQueues.ts:172-204`), `.strip()` drops unknown keys, arrays bounded |
+| Runbook | ✅ | Pre-check → single `BEGIN … COMMIT` → access check (one privilege per `has_table_privilege` call where "all" is needed, correctly) → a `DO` block that always raises and prints `DRY RUN PASS` → nothing kept. `SET LOCAL ROLE service_role` follows the applied-and-verified `20261010` precedent. No nested `/*` inside the runbook comment (a Postgres block comment nests, so that was checked) |
+| Rollback | ✅ | Separate file outside `supabase/migrations/` (D-13). Drops the function, then both tables (indexes go with them); `IF EXISTS`, one transaction, idempotent (ran twice); nothing else depends on these objects |
+| SC-4 purge | ✅ | Both tables `never`, global, with reasons; baseline 126 → 128 deliberately in the same diff |
+| SC-8 | ✅ | `bosCronJobs.ts` has no `import`/`require` (pinned); the client imports `import type` only from the runtime-free `jobsQueuesTypes.ts` |
+| SC-9 repository | ✅ | Context first and required, checked before any request; selects only `id` (head counts) and `scheduled_at` / `next_attempt_at` / `created_at` (allow-list test over every `select()`); `error_message` only in filters, marker double-quoted in `.or()`; stuck = in progress and (`claimed_at` null or older than 90 s + 10 min). **Every "due now" predicate re-verified against its claim function** (`2026-08-14_payment_reminders_claim.sql:58-60`, `2026-08-14_payment_automation_executions_claim.sql:73-75`, `20260911_daily_briefing.sql:141-142`, `20260914_lead_responses.sql:132-133`, `20260917_insight_actions.sql:167-168`; none is redefined in a later migration). "Scheduled for later" is the exact complement over pending rows. The SC-9(f) assumption is stated in code and pinned by two fixtures. At most one `.or()` per request. Isolation guard catches the symbol anywhere, the barrel included |
+| SC-10 route | ✅ | `requireAdmin` is the first statement; `z.object({}).strict()` after the gate (401/403 win); 500 carries `details` only in development; no audit (read-only, as Health). The leak test plants markers in the RPC rows, the run rows and the queue figures, and asserts none reaches the body or **any** logger argument |
+| D-15 completeness | ✅ | `queueView` copies an explicit list; `runView` and `jobView` build every field explicitly; job counts are keyed by the registry's specs, not the stored object; Zod strips unknown run fields. No remaining spread of reader data into the response |
+| Shared orchestrator / A-8 / D-17 | ✅ | Both routes call `readJobsQueues` + `buildJobsQueuesView`; tile facts are derived from the same view. Both floor the clock to the minute (`windows.end`, and the same floor in the jobs route), so a page and a tile loaded in the same minute agree |
+| SC-11 counts | ✅ | Finite numbers kept, booleans → 1/0, all else dropped; `totalValueImpact` not listed (pinned); money regex over keys **and** path segments with a no-dead-regex self-test; every key satisfies the DB key rule |
+| Tiles 6/7 | ✅ | Rules are data in `rules.ts` (red/amber only, `atLeast`). Green per C-10R: tile 6 is `complete` only when `noRunYet === 0` and the run read succeeded, and "Healthy" itself requires a `vercel_cron` run, so green ⇔ all 12 healthy; tile 7 is `complete` only when all 5 queue reads succeeded. D-16: metrics inexact while a job has no run, so a proven Stopped still fires but no-match is grey. Q-U2: `payment-retry` has no `partlyDoneWhen`. OQ-7: `queues.deadLettered24h` is red |
+| Missing-table path | ✅ | Recorder: `42P01`/`PGRST205` → job runs unrecorded, 5-minute per-instance backoff. Page/tile: `PGRST202` → `not_installed` → "Could not check: run recording is not installed yet." |
+| SC-12 census | ✅ | Re-counted from disk: 55 route files; 81 exported `GET/POST/PUT/PATCH/DELETE` + 3 `HEAD` = **84**; the 6 files without `requireAdmin` are the 6 inline rows → **78 + 6 + 0**; **26** `page.tsx` under `app/admin/`. Register row 84 and a Change History row added; no cap moved. Sidebar: Monitor = Health, AI cost & usage, Scheduled jobs & queues, Audit trail, Archiving; nav test 24 → 25 entries, on-disk floor 26 |
+| Isolation (tenant-isolation-guard) | ✅ | The only new service-role **write** path is `BosCronRunRepository`: reached only after the SC-1 proof, explicit field allow-list, server-generated id, job id from the typed registry, `source` a two-value enum, finish keyed by that id and `outcome = 'running'`, prune by time only. No tenant column exists to defeat. The admin reads are read-only and gated |
+| Standards | ✅ | No `console.*` in any touched or new code file; Pino everywhere (the client view follows the `HealthGrid.tsx` precedent); no new `any`; the new repositories are in the barrel |
+
+### Code Review Comments
+
+1. `supabase/migrations/20261011_bos_cron_runs.sql:264` — **the numbers-only CHECK accepts an array of numbers.** `jsonb_path_exists` runs in `lax` mode by default, and a lax filter unwraps an array before testing it, so `'$.* ? (@.type() != "number")'` finds nothing in `{"a": [1, 2]}`. SA proved it on PostgreSQL 18.3: that insert, as `service_role`, is **accepted**, while `strict $.* ? (…)` refuses it. No text can get through (a string inside the array is still caught), and the recorder never writes an array. But a stored array would fail `readJobsQueues`' Zod (`z.number().finite()`), turning the whole run summary into "Could not check" for all 12 jobs. SC-3 promised "every value a number", and this migration is applied by hand in production, so fix it **before the user applies it**. Fix: `'strict $.* ? (@.type() != "number")'`; add a dry-run case (`{"a": [1]}` → `check_violation`); pin `strict` in `bos-cron-runs.migration.test.ts`. No SA re-review is needed; TL reads back the diff. — Priority: **Medium**
+2. `lib/repositories/supabaseErrorCodes.ts:174` — the message fallback `/does not exist/` also matches a **missing column** (`42703`). A schema drift would show as "not installed yet" rather than "could not be read", and would switch the recorder into its 5-minute backoff. Both outcomes are grey or unrecorded, never Healthy, so it is safe; only the label misleads. Narrow the fallback to `relation … does not exist` / `function … does not exist`, or rely on the codes. — Priority: Low
+3. `lib/cron/cronRunRecorder.ts:199-209` — `return handler(request)` sits inside the `try` whose `catch` calls `handler(request)` again. A handler that threw **synchronously** would run twice. Unreachable today (every `runJob` is `async`, so it returns a rejected promise instead), but it is a trap for a future non-async handler. Decide `proven`/`job` inside the `try`, and call the handler once, outside it. — Priority: Low
+4. `lib/cron/cronRunRecorder.ts:242` with `BosCronRunRepository.ts:112-132` — `finishRun` reports success when it updates **0 rows** (for example, a start that never committed), so "Cron run recorded" is logged for a run that has no row. Diagnostic only. Optionally `.select('id')` and log `finished: 0`. — Priority: Low
+5. `lib/admin/health/evaluateHealth.ts:79, 81` — `${'All clear'}` is a literal inside a template; use `GREEN_HEADLINE` (`:60`) so the three "Otherwise" lines cannot drift from the headline. — Priority: Low
+6. `supabase/migrations/20261011_bos_cron_runs.sql:307` — `CREATE OR REPLACE FUNCTION`, where F-15's house style is plain `CREATE`. Harmless: a second paste fails at the first `CREATE TABLE`, and P01 checks the function name. Make it plain `CREATE` for consistency. — Priority: Low
+7. `supabase/migrations/20261011_bos_cron_runs.sql:225-228` — "nothing kept: expect 0" is true only while PR-2 has **not** deployed (§19.5 applies it first). Add "(if PR-2 is already live, `runs_kept` is the real runs, and the dry run still kept nothing)", so a later re-check does not alarm the user. — Priority: Low
+
+### Optimisation Suggestions
+
+- The Health route now awaits ~64 extra requests on every load. L-5.12 is the right gate; if it misses, the slice 4 §7.4 fallback (tiles 6/7 in their own request) is UI-only.
+- `tests/helpers/jobs-queues-fixtures.ts` is a new top-level helper location. It is fine, but check it is inside the Jest roots CI will run once the test-tiering work lands.
+
+### Owed before PR-2 merges (unchanged from §19.5)
+
+- Comment 1 fixed, then the migration applied by the user: pre-check, apply, access check, dry run, nothing kept (**L-5.7**).
+- **L-5.10** (Offir): the platform default max duration. It decides the 5 assumed 300 s limits. Above 1,140 s, the 20-minute CHECK bound must also be raised.
+- **L-5.1 to L-5.5** (read-only SQL) and **L-5.11** (`schema:check`).
+
+### Code Approved for QA: Yes
+
+Approved for QA **once comment 1 is applied** (one word, one dry-run case, one test pin). Comments 2 to 7 may go in the same uncommitted change and need no SA re-review. **No commit** (standing user rule).
+
+---
+
 ## QA Testing Report
 
 **QA — 2026-09-27 (PR-1: parts A + E)**
@@ -1521,6 +1734,158 @@ Both files pass, and ESLint is clean on them. SA did not review them (see the SA
 
 ---
 
+**QA — 2026-09-27 (PR-2: parts B + C + D)**
+**Test mode:** full, scoped to PR-2 (the run record, the Scheduled jobs & queues page and its route, Health tiles 6 and 7)
+**Strategy used:**
+- A: Jest unit probes for the recorder, the registry, the status computation and the tiles.
+- B-lite: route tests with the reads mocked, and a repository probe that runs the recorded PostgREST filters against synthetic rows through a small in-memory interpreter.
+- A base comparison: one version-agnostic probe run on base `609635ff` (a temporary worktree outside the repo, since deleted) and on the PR-2 tree, and the two outputs diffed.
+- **A throwaway local Postgres:** PGlite 0.5.8 (PostgreSQL 18.3 compiled to WASM), installed in the QA scratchpad only. The migration, the runbook's four steps and the rollback were run there, with roles `anon`, `authenticated` and `service_role` (`BYPASSRLS`, as on Supabase). **No production or Supabase database was touched.**
+- Static gates and `next build` with the CI placeholder env.
+
+**Focus:** api, schema, security, ui (the page), and the 12 crons
+**Skipped:**
+- E2E: not set up in this repo. Manual checks are listed below.
+- L-5.x: the user's production checks. QA runs no production queries.
+
+**Input source:** TL prompt (items 1 to 9)
+
+### Command results (real output, 2026-09-27, worktree `neuronforge-admin-bos-reorg`, uncommitted, `MERGE_HEAD` = `609635ff` left in place)
+
+| Command | Result |
+|---|---|
+| `npx jest app/admin lib/admin app/api/admin app/api/cron lib/audit lib/repositories lib/business-os/usage lib/business-os/entitlements lib/business-os/llm lib/business-os/purge lib/cron --ci --maxWorkers=50%` (Dev's files only) | **161 suites: 160 passed, 1 failed. 3,684 tests: 3,683 passed, 1 failed.** Same as Dev's §19.3 |
+| The same command, including QA's 5 probe suites | **166 suites: 165 passed, 1 failed. 3,990 tests: 3,989 passed, 1 failed** |
+| The one failure | The parked "TokenUsageRepository account contract › pins every public method and its arity; no account filter became optional". **Identical on base `609635ff`:** 1 failed, 4 passed, with the same single extra method, `summariseFeatureAllAccountsInWindow`. (SA's 132-suite list omits `lib/business-os/usage`, which is why it shows no failure) |
+| `npm run test:bos-entitlements` | 66 suites / 1,308 tests passed (includes `bos-cron-runs.migration.test.ts`) |
+| `npm run test:authz-guard` | 1 suite / 119 tests passed |
+| `npm run typecheck:bos-llm` | 253 files in scope, 28 errors, **0 new**: passed. It also reports the pre-existing "1 baseline entry is fixed" in `app/api/onboarding/build/route.ts`, not touched |
+| `npm run check:bos-llm-literals` | 46 files in scope, 2 exempt, 0 violations: passed |
+| `npm run lint:hooks` | exit 0 |
+| `npx eslint lib/cron lib/admin app/admin/jobs-queues app/admin/components app/admin/__tests__ app/api/admin/jobs-queues app/api/admin/health-summary app/api/cron` + the new repositories, `index.ts`, `descriptors.ts`, the migration test, the fixtures and the QA files | exit 0, **0 errors**. 3 warnings, all in the untouched `app/api/cron/process-queue/route.ts` |
+| `next build` with the CI placeholder env from `build.yml` (no `.env*` file in the worktree) | **exit 0.** `✓ Compiled successfully`, `✓ Generating static pages (305/305)`, `ƒ /admin/jobs-queues` 7.18 kB, `ƒ /api/admin/jobs-queues`. The `DYNAMIC_SERVER_USAGE` lines were there before |
+
+### Local Postgres run (PGlite; throwaway; nothing real)
+
+| Step | Result |
+|---|---|
+| Pre-check, before applying | 4 rows, all `PASS` |
+| Apply (the whole file, runbook comment block included) | OK; 1 `bos_cron_run_recording` row |
+| Pre-check, after applying | P01 = `STOP: already applied, do not apply again` |
+| Access check | **One row; all 15 columns `true`** |
+| Dry run | `DRY RUN PASS: D-1 PASS \| D-2 PASS (numbers only) \| D-3 PASS (key rule) \| D-4 PASS (class list) \| D-5 PASS (running consistency) \| D-6 PASS (failure has a class) \| D-7 PASS (deadline bound) \| D-9 PASS (summary) \| D-10 PASS (a job with no runs still gets a row) \| D-11 PASS (30-day prune) \| (this error is expected: it rolls everything back)` |
+| Nothing kept | `runs_kept = 0`, `recording_rows = 1` |
+| A second paste | Fails at `relation "bos_cron_runs" already exists`, and nothing changes (0 / 1) |
+| Role probes | `anon` and `authenticated` get `permission denied` on both tables and on the function. `service_role` can run the function, but `TRUNCATE` and any write to `bos_cron_run_recording` are denied |
+| The function's clamps | 60 jobs in → 50 rows. `p_recent` 999 → 20, 0 → 1. NULL arguments → 0 rows. Duplicate and NULL job names are dropped. Rows started after `p_now` are excluded |
+| Rollback, then rollback again | Three NULLs; the second run is a no-op. The pre-check then passes again, and a re-apply plus access check is all `true` |
+| The CHECKs not exercised by the dry run | Each is refused: an upper-case `job`, `source = 'manual'`, a running row with `duration_ms`, `succeeded` with an `error_class`, `deadline_at = started_at`, a second recording row, a 41-character key, a key starting with a digit, a key with `_`, over 1,024 bytes, `null`, `true`, a nested object, a top-level array, an array of strings. A 40-character key and negative or fractional numbers are accepted |
+| **Not refused** | `{"a": [1, 2]}` and `{"a": []}`: bug 1 below. `'strict $.* ? (@.type() != "number")'` refuses both (checked in PGlite) |
+
+### Test Coverage
+
+| Acceptance criterion / check | Tested? | Result | Notes |
+|---|---|---|---|
+| B: every one of the 12 jobs records every authorised run, including "nothing to do" | ✅ | Pass | Dev's adoption test (12 × 3), plus QA's base comparison (scenarios A and A2): exactly one start with the right job id, and one finish |
+| B: the job's response is identical, recorded or not | ✅ | Pass | **QA base comparison: 12 routes × 17 scenarios = 204 outcomes (status + body, timings stripped), identical on base `609635ff` and PR-2: 0 differences** |
+| B: an unauthorised call writes nothing, and the route's own auth outcome is unchanged | ✅ | Pass | Checked on all 12 routes: a wrong secret (same length, different length, with a suffix, lower-case `bearer`), no header, an unset secret (including a literal `Bearer undefined`), an empty secret with `Bearer `, `NODE_ENV` development or test, `VERCEL_ENV` preview or unset. No write in any of them. Statuses equal base: 401 everywhere, except that with no secret the two fail-open routes (`calendar-sync`, `channel-metrics-sync`) still run (200), as on base, **and record nothing**, so they will turn Late, then Stopped (R-19 surfaces) |
+| B: the dev-only POST handlers are unaffected | ✅ | Pass | Development POST with or without a header: 200 on the 5 routes that have one (405 means the route has no POST), same as base, never recorded. A production POST gives 405 on all 12, same as base |
+| B: a job that throws still throws the same error | ✅ | Pass | The same object (`rejects.toBe`), recorded as `failed/exception` first. `TimeoutError` is classed `timeout`. Unrecorded: the same error, with no write |
+| B: a hung or failing record write never delays the response by more than 1.5 s, and never changes it | ✅ | Pass (see edge case 3) | Measured on the same response object: start hung **1,561 ms**, finish hung **1,521 ms**, prune hung **1,518 ms**. A rejected or synchronously thrown start, finish or prune adds <15 ms. Finish hung while the job throws: the same error in about 1.5 s. **Start and finish both hung (a dead database): 3,024 ms**, which is two deadlines, by design (SC-2(b)) |
+| B: the counts allow-list drops money and bad keys | ✅ | Pass | A poisoned body (`totalValueImpact`, `amount`, `revenue`, `totalAmount`, strings, NaN, Infinity, arrays, objects, owner text), run through all 12 jobs' specs: only each job's registry keys survive, as finite numbers; no money value and no text. Every key and path segment passes the money regex and the DB key regex. The 12 count paths were also checked by hand against the real response shapes of each route and its service |
+| B: every one of the 12 routes is wired to the right job id | ✅ | Pass | `git diff`: each route changes only by the import, `GET` → `runJob`, and `export const GET = withCronRunRecord('<its own folder name>', runJob)`. The id equals the path in every case. The base comparison confirms the id at runtime (`start.job === id`) |
+| B: "did not finish" once the limit plus margin has passed | ✅ | Pass | Dev's tests, and the dry run's D-8/D-9 (a running row past its deadline counts as bad) |
+| B: no owner text or error message is stored | ✅ | Pass | The DB refuses strings, messages and bad keys (PGlite); the recorder logs a `reason` only (probe: a rejected write whose message holds an email never reaches a log). Bug 1 is the one gap; it can carry numbers only |
+| B: retention | ✅ | Pass | D-11 in PGlite: a 31-day row is pruned and a 29-day one kept |
+| B: the migration is safe to run twice, has a written undo, and the code is safe before it | ✅ | Pass | PGlite: a second paste changes nothing; the rollback is idempotent. The not-installed paths are in the route and status probes below |
+| B: FR-R9, a job in `vercel.json` must appear on the page | ✅ | Pass | Dev's `bosCronJobs.test.ts` (74 tests) |
+| Migration vs SC-3 | ✅ | Pass, 1 gap | Every CHECK in SC-3(a)(b) is present **verbatim**, and the static test pins them. SC-3(c): the bad-key (D-3) and deadline-bound (D-7) cases are in the dry run. SC-3(d): RLS on with no policy; `REVOKE ALL` from PUBLIC, anon, authenticated and service_role, then the exact grants; the function is `SECURITY INVOKER` with `search_path = ''`, every name schema-qualified; the clamps are inside. **Gap:** SC-3(a)'s own expression is lax jsonpath (bug 1) |
+| Runbook steps complete and in order | ✅ | Pass | Pre-check → apply (header item 2) → access check → dry run → nothing kept; the rollback is a separate file. Matches §19.5 step 3 (a) to (e) |
+| C: due-now filters match each queue's claim function | ✅ | Pass | Read against `2026-08-14_payment_reminders_claim.sql:58-60`, `…_payment_automation_executions_claim.sql:73-75`, `20260911_daily_briefing.sql:141-142`, `20260914_lead_responses.sql:132-133` and `20260917_insight_actions.sql:167-168`. No later migration redefines them (only comments in `20261004`) |
+| C: status mapping, stuck detection, oldest due | ✅ | Pass | **QA semantic probe** (the recorded filters run against synthetic rows):<br>- due exactly at `now` counts, as in the claim's `<=`;<br>- stuck at exactly 690 s is not stuck (strict `<`);<br>- `dead_letter` status is the automations dead-letter, while a `failed` row with the marker counts as a failure there (only the reaper writes `dead_letter`; checked in the code);<br>- on the other four queues, `failed` + marker is the dead-letter, and a NULL `error_message` is still a failure (null-safe);<br>- guardrail skips are counted apart;<br>- unrecognised statuses are counted;<br>- the oldest due item is the minimum of the two candidates.<br>All 5 queues give the hand-worked figures |
+| C: no payload, `error_message` or owner text in any response or log | ✅ | Pass | Every select is `id` or a due/claim timestamp. The semantic probe plants owner text, a message and the marker in the rows: none reaches the figures or any log argument. The route probe's generic failure (an email in the message) never reaches a log. Plus Dev's SC-10 leak test |
+| C: the page is under Monitor, third, and a non-admin is refused | ✅ | Pass (code and API) | Sidebar Monitor = Health, AI cost & usage, **Scheduled jobs & queues**, Audit trail, Archiving. The nav test counts are updated (25 entries, 26 pages on disk, `onDisk` contains `/admin/jobs-queues`). The API gives 401/403 with no read (Dev), and **403 comes back in <1 s with hung reads and parameters present** (QA). The page redirect is the layout's `requireAdminPage`, and the authz guard (119/119) sees 26 pages |
+| C: all 12 jobs and 5 queues with the §S5.7 figures; Due now and Scheduled for later separate; nothing coloured by later items | ✅ | Pass | Render test (Dev), plus the QA probe: 500 later items and 9 with no due time on every queue still leave the Queues tile green |
+| C: read-only, with no retry, requeue, cancel or drain button | ✅ | Pass | Refresh is the only `<button>`; the source guard forbids the rest and any POST |
+| D: late and stopped at exact boundaries, per schedule | ✅ | Pass | All 12 jobs: exactly at `interval + grace` → Healthy; +1 ms → Late; exactly at `2 × interval + grace` → Late; +1 ms → Stopped. The thresholds equal the requirement table (15/20, 25/40, 70/130 min, 25/49 h). The same on the queues' drain thresholds |
+| D: manual runs don't reset "late" | ✅ | Pass | All 12: a fresh successful manual run with an old cron start stays Late. Ten fresh manual runs cannot push the last cron start out (SC-5). Manual runs alone are "No run recorded yet", never Healthy |
+| D: a job with no run yet | ✅ | Pass | All 12: grey up to and at the late threshold from the baseline; +1 ms Late; past stopped, Stopped. The baseline is the first run of any job, else `installed_at`. With no run at all and a 40-day-old install, every job is Stopped and tile 6 is red |
+| D: missing table → "run recording is not installed yet" | ✅ | Pass | View: every job "Could not check", with that sentence. Tile 6 is `unavailable` with the footnote; tile 7 is still measured (green). A generic failure says "could not be read just now" instead. Invalid RPC rows refuse the whole summary |
+| D: tiles 6 and 7 green only when fully measured | ✅ | Pass | Quiet → both green. One job with no run → `not_measured`. One queue unread, or a queue missing from the inputs → never green |
+| D: a dead-letter in the last 24 h is red | ✅ | Pass | Each of the 5 queues on its own: tile 7 red, queue status `dead_lettered_24h` |
+| D: declines are never coloured | ✅ | Pass | Payment-retry with 5 declines on three runs in a row: the job is Healthy, "retries declined or failed: 5" is shown, and tile 6 is green |
+| D: tile numbers equal page numbers | ✅ | Pass | A mixed fixture (stopped, late, last run failed, partly done, stuck, failures, a 3 h 10 min oldest due): every tile 6 and 7 figure is re-derived from the page view and matches, including "Worst job: Calendar sync" and "3 h 10 min (Lead replies)". Both routes floor `now` to the minute (D-17) |
+| Route: 401/403 before any read; 400 on any parameter | ✅ | Pass | Dev (4 gate cases, 401/403 beat 400), plus QA: `?a=`, `?a`, `?=1`, `?%20=1` and `?success=true&data=1` → 400 with no read; a bare `?` → 200 |
+| Route: one failed read makes only its own section unavailable | ✅ | Pass | A queue read hung past the deadline → 200 in about 5.0 s, only that queue "Could not check", the jobs still Healthy. A hung run summary → jobs "Could not check", the queues still measured |
+| SC-4 purge classification | ✅ | Pass | `test:bos-entitlements` includes the purge invariants; baseline 126 → 128 |
+| Happy path + failure path for each new route, repository method and the recorder | ✅ | Pass | Dev's tests plus the QA probes |
+| QA manual check of the page as a platform admin | ⚠️ | Owed | No E2E and no running deploy here. M-3 to M-7 below |
+
+### Issues Found
+
+#### Bugs (must fix before the migration is applied)
+1. **The counts "numbers only" CHECK accepts arrays.** File: `supabase/migrations/20261011_bos_cron_runs.sql:264`. Severity: **Medium**. This is the same finding as SA code-review comment 1, which QA reproduced independently.
+   - Steps to reproduce: in a throwaway Postgres, as `service_role`, insert a row with `counts = '{"a":[1,2]}'` (or `'{"a":[]}'`).
+   - Expected: `check_violation`, per SC-3 ("every value a number").
+   - Actual: accepted. Lax-mode jsonpath unwraps arrays before the filter runs.
+   - Impact: the recorder never writes an array, and an array cannot carry text, so FR-R5 holds. But one stored array would fail `readJobsQueues`' Zod (`z.number().finite()`), and **all 12 jobs** would show "Could not check".
+   - Fix (SA's): use `'strict $.* ? (@.type() != "number")'`, which refuses both in PGlite and still accepts every valid object. Add a dry-run case, and pin `strict` in `bos-cron-runs.migration.test.ts`.
+   - **Must land before the user applies the migration.** After that, it needs a second hand-applied migration.
+
+#### Performance Issues (should fix)
+None measured. The live budget is L-5.12, after deploy.
+
+#### Edge Cases (nice to fix)
+1. **"Not installed" is matched too broadly.** `lib/repositories/supabaseErrorCodes.ts:21` (SA comment 2 cites `:174`, but the file has 22 lines): `/does not exist/` also matches Postgres `42703` (`column … does not exist`). A drifted column would read "run recording is not installed yet", and the recorder would skip the finish and back off for 5 minutes. It is never Healthy, only mislabelled. Severity: Low.
+2. **Times are labelled UTC by slicing the string.** `app/admin/components/jobs/JobsQueuesView.tsx:66-68`: `utc()` takes characters 0–10 and 11–16. The run times inside `recent` come from `to_jsonb(timestamptz)`, which uses the database session's time zone (PGlite in local time gave `…+02:00`). Supabase defaults to UTC, so this is fine today, but a non-UTC database would show local times labelled "UTC". Fix: `new Date(iso).toISOString()` before slicing. Severity: Low.
+3. **A dead database adds about 3 s, not 1.5 s.** When both the start and the finish hang, each waits out its own deadline (measured 3,024 ms), because SC-2(b) finishes after a timed-out start. That is within R-4's accepted ~4.5 s worst case, and a single hung write stays at about 1.5 s. Informational.
+4. **An unfinished last run shows its outcome twice.** `JobsQueuesView.tsx:119` and `:121` both render `runWords(lastRun)` when `finishedAt` is null. Cosmetic.
+5. **The dry run does not exercise 8 of the CHECKs.** Those are the `job` regex, `source`, deadline after start, finish after start, error only on failure, "running is bare", the 1,024-byte size, and the duration/HTTP ranges. QA proved each in PGlite, and the static test pins each, so this is optional runbook hardening.
+6. **A synchronously throwing handler would run twice.** `lib/cron/cronRunRecorder.ts:199-209`, SA comment 3, which QA noticed too. Unreachable today, because all 12 `runJob`s are `async`. Low.
+7. **`CREATE OR REPLACE FUNCTION`** at `20261011_bos_cron_runs.sql:307`, SA comment 6. Harmless. Informational.
+
+### QA tests added (uncommitted; Dev or RM can keep or drop them)
+
+| File | Tests | What it covers |
+|---|---|---|
+| `app/api/cron/__tests__/qa-slice5-pr2.baseCompare.test.ts` | 204 | 12 routes × 17 auth/env/method scenarios. Version-agnostic: it wrote `QA_OUT` on base and on PR-2, and the diff was 0. It asserts "recorded only when proven" on PR-2 |
+| `lib/cron/__tests__/qa-slice5-pr2.recorder.test.ts` | 33 | Measured hang, reject and throw timings, the same response object, the same error, the gate cases, the poisoned-body counts across all 12 jobs |
+| `lib/admin/jobs/__tests__/qa-slice5-pr2.status.test.ts` | 53 | Exact boundaries for all 12 jobs and the 5 drain thresholds, manual runs, no-run baselines, not installed and failed reads, tile colours, declines, A-8 over a mixed fixture |
+| `lib/repositories/__tests__/qa-slice5-pr2.queueSemantics.test.ts` | 5 | The in-memory PostgREST interpreter: hand-worked figures for all 5 queues, with owner text planted and never leaked |
+| `app/api/admin/jobs-queues/__tests__/qa-slice5-pr2.route.test.ts` | 11 | Hung and failed reads isolated, invalid RPC rows, parameter edge cases, 403 before any read |
+
+### Manual and live checks owed by the user, in order
+
+**Before PR-2 merges**
+1. **L-5.10** (Offir, Vercel → Project → Settings → Functions): is Fluid compute on, and what is the default max duration? If it is above 300 s, Dev changes the 5 assumed limits before merge; above 1,140 s, the 20-minute CHECK bound too. **Pre-merge gate (SC-6).**
+2. **L-5.1 to L-5.5** (read-only SQL, §10): columns, status values, indexes, row counts, marker labels. Any status outside §6.1, or any table over ~100k rows: tell Dev before merge.
+3. **Apply the migration (L-5.7)**, in the Supabase SQL editor on PROD, per its header, **only after bug 1 is fixed**:
+   - (a) Pre-check: 4 rows, all `PASS`.
+   - (b) Paste and run the whole file once.
+   - (c) Access check: 1 row, all `true`.
+   - (d) Dry run: the text starts `DRY RUN PASS`.
+   - (e) Nothing kept: `0` / `1`.
+   - Any failure in (c) to (e): run `supabase/SQL Scripts/20261011_bos_cron_runs_rollback.sql` and send the output to Dev.
+4. **L-5.11:** `npm run schema:check` is clean for the new reads.
+
+**After PR-2 merges and deploys**
+5. **L-5.8 at +2 h:** the §10 SQL shows 9 jobs with a `vercel_cron` run (all but `insight-metrics`, `insight-detect`, `payment-reminders`), and no job is Late or Stopped on `/admin/jobs-queues`.
+6. **L-5.8 the next day after 09:00 UTC:** all 12 jobs recorded. This is the OQ-2 proof that `CRON_SECRET` works.
+7. **L-5.12:** in the Vercel logs, `Health summary served` and `Jobs and queues served` show `totalMs` ≤ ~1.5 s p50 and ≤ 3 s worst.
+8. **M-3:** "Scheduled jobs & queues" is third under Monitor. A non-admin is redirected from the page; the API gives 403, or 401 signed out.
+9. **M-4:** all 12 jobs and 5 queues are listed; Refresh is the only button; "As of HH:mm UTC" is shown.
+10. **M-5:** tiles 6 and 7 show the same numbers as the page, and each links to it ("Open Scheduled jobs & queues").
+11. **M-6:** the same as L-5.8, checked on the page (+2 h and the next day).
+12. **M-7:** the same as L-5.12.
+
+### Final Status
+- [x] Every PR-2 acceptance criterion that QA can test passes. There is no High issue. **One Medium (bug 1 = SA comment 1) must be fixed before the user applies the migration;** the fix is one word, one dry-run case and one test pin. QA does not need to re-run anything beyond the migration test and the PGlite dry run, which the fix's own test pin covers. 7 Low or informational edge cases.
+- [ ] Merge gates still open: bug 1, L-5.10, L-5.1 to L-5.5, the migration and L-5.7, L-5.11.
+
+**Verdict: PASS**, on the condition that bug 1 is fixed before the migration is applied.
+
+---
+
 ## Commit Info
 
 *(RM populates this section.)*
@@ -1538,3 +1903,8 @@ Both files pass, and ESLint is clean on them. SA did not review them (see the SA
 | 2026-09-27 | QA, PR-1 | **PASS.** Full Jest list run twice: the second run is 142 suites / 3,173 tests, and the only failure is the parked contract test (identical on base `546f6110`). The first run also hit three 5 s timeouts in untouched suites, which passed on their own. The entitlements tests, the authz guard, both BOS LLM gates, ESLint, `lint:hooks` and `next build` are all green. `vercel.json` compared with base (12 BOS crons, same order and schedules, the rest identical; the 3 AgentsPilot routes unchanged). 44 QA probe tests added, uncommitted. 4 Low edge cases, no bugs. L-5.6 is still owed before merge |
 | 2026-09-27 | PR-1 review follow-ups (Dev) | SA-1: §18 rewritten; PR #119 removed the `CLAUDE.md` text, so U-A/U-B/U-C are moot for `CLAUDE.md`, with a warning not to reintroduce it; each item mapped to its doc; Q-U3 stays parked. QA-1: remaining "production runs off/unset" wording corrected in `shadow.ts`, the `shadow.test.ts` title and a `chat-v4/route.ts` comment. SA-2/QA-2: `HealthTile.tsx` header. SA-3: the leftover "continued" describe folded back. SA-4: the green-class pattern covers 13 colour prefixes, each self-tested. QA-3: the entitlements page link stays when its read fails or its rule list is invalid (tested). See §17.6 |
 | 2026-09-27 | L-5.6 recorded (PR-1 merge gate) | The user's read-only production check: `scheduled_active_enabled_agents = 0`, `owners = 0`, `most_recent_scheduled_run = null`. Retiring the three AgentsPilot crons stops no one's scheduled agents. L-5.6 marked ✅ in §15 and the task list (T0c); PR-1's merge gate is met |
+| 2026-09-27 | PR-2 implemented (Dev), uncommitted | Parts B + C + D on `feature/admin-bos-jobs-queues-pr2` after `git merge --no-commit --no-ff origin/main` (clean, nothing to stage). Migration `20261011_bos_cron_runs.sql` plus a separate rollback; the registry, the recorder across all 12 routes, the two repositories, the shared read and computation, `/api/admin/jobs-queues`, the page, tiles 6/7 measured, the purge classification (SC-4), and the admin census re-measured (84 / 78 + 6 / 55; 26 pages). SC-1 to SC-12 and C-10R applied. The SC-10 leak test found and closed a spread of queue figures (D-15). Real verification output in §19.3 (only the parked contract test fails). Deviations D-10 to D-20; the user's ordered steps in §19.5 |
+| 2026-09-27 | SA code review, PR-2 | ✅ Code Approved with nits. Approved for QA once comment 1 is applied. SC-1 to SC-12, C-10R and D-10 to D-20 verified in code and tests. The census was re-counted from disk (84 = 81 + 3 `HEAD`; 78 + 6; 55 files; 26 pages). SA ran the migration itself (PGlite, PostgreSQL 18.3): pre-check, apply, access check (all true), `DRY RUN PASS`, nothing kept 0/1, rollback twice. That run found one Medium: the lax-mode numbers-only CHECK accepts `{"a":[1,2]}` (fix: `strict`, before the user applies). Six Low items. Jest (132 suites / 3,064 tests), `test:bos-entitlements`, `test:authz-guard` and `typecheck:bos-llm` all green |
+| 2026-09-27 | QA, PR-2 | **PASS, on the condition that bug 1 is fixed before the migration is applied.** Full Jest list: 166 suites / 3,990 tests, including QA's 5 probe suites (306 tests). The only failure is the parked contract test, identical on base `609635ff`. The entitlements tests, the authz guard, both BOS LLM gates, `lint:hooks`, ESLint and `next build` are all green. The base comparison of 12 routes × 17 auth scenarios showed 0 differences. Hung record writes each cost about 1.5 s; the same response object comes back and the same error is rethrown. The migration, runbook and rollback were run on a throwaway PGlite database: `DRY RUN PASS`, access check all true. **Bug 1 (Medium; SA comment 1, reproduced independently): the lax-jsonpath counts CHECK accepts arrays.** 7 Low or informational edge cases. No production database was touched |
+| 2026-09-27 | PR-2 review follow-ups (Dev) | SA-1 (Medium): the numbers-only CHECK is strict jsonpath, and the dry run refuses `{"a":[1]}`, `{"a":[]}` and nested objects. SA-2: a missing column is never "not installed". SA-3: the handler is called exactly once. SA-4: a finish of 0 rows is not "recorded". SA-5 `GREEN_HEADLINE`; SA-6 plain `CREATE FUNCTION`; SA-7 the "nothing kept" note. QA-L2 UTC conversion, QA-L4 outcome words once, QA-L5 dry-run cases D-12 to D-20. See §19.6 |
+| 2026-09-27 | L-5.1 to L-5.5 recorded (PR-2 merge gates) | The user's read-only production checks: all columns the page reads exist with the expected types (nullability noted); statuses present are all within each queue's known list; each queue has a partial pending index on its due column; approximate rows 45 / 0 / 3 / 0 / 12, all ≤ 160 kB; no failed or dead-lettered rows. Marked ✅ in §15 and T0c. **L-5.10 (Offir) still open**; L-5.7 and L-5.11 follow the migration |
