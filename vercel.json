@@ -2,18 +2,6 @@
   "ignoreCommand": "bash .github/ci/non-deploying-change.sh",
   "crons": [
     {
-      "path": "/api/run-scheduled-agents",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/update-template-scores",
-      "schedule": "0 3 * * *"
-    },
-    {
-      "path": "/api/cron/memory-consolidation",
-      "schedule": "0 4 * * 0"
-    },
-    {
       "path": "/api/cron/calendar-sync",
       "schedule": "*/5 * * * *"
     },
