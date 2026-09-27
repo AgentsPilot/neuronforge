@@ -56,8 +56,8 @@ describe('source registry', () => {
     }
   });
 
-  it('U-C5: runs stay switched off until Slice 3 (condition C-5)', () => {
-    expect(ARCHIVE_RUNS_ENABLED).toBe(false);
+  it('U-C5: runs are switched on since Slice 3 (condition C-5); switching off again is a reviewed diff here', () => {
+    expect(ARCHIVE_RUNS_ENABLED).toBe(true);
   });
 
   it('Slice 2: each source carries its batch size (1,000, TQ-3) and no database function name', () => {
