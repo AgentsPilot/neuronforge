@@ -1,11 +1,13 @@
 /**
  * @jest-environment jsdom
  *
- * What an admin reads on the Archiving screen (Slice 1): P-1 to P-7.
+ * What an admin reads on the Archiving screen: Slice 1 P-1 to P-7, Slice 2a
+ * G-1 and G-2, Slice 2b G-3 to G-8 (the confirm dialog and Continue).
  *
  * The assertions are about what would mislead if it were wrong: the counts and
- * cutoffs, the dropdown switching without a refetch, the disabled Archive
- * button, and "Not available yet" where a zero would be a guess.
+ * cutoffs, the dropdown switching without a refetch, what the confirm dialog
+ * promises (including K-1 at 180 and 90 days), and that nothing is sent while
+ * runs are switched off.
  */
 
 import '@testing-library/jest-dom';
@@ -150,13 +152,170 @@ describe('P-2 / P-3: the retention dropdown', () => {
   });
 });
 
-describe('P-4: the Archive button', () => {
-  it('is disabled and described by "Not switched on yet"', async () => {
+// Slice 2b replaces Slice 1's P-4 ("Archive is disabled"): Archive now opens
+// the confirm dialog, and "Not switched on yet" moves to Confirm (SA Q-1).
+describe('G-3 / G-4: the confirm dialog', () => {
+  it('G-3: Archive opens it with the source, retention, cutoff and rows for the selected option; Escape closes it', async () => {
+    const user = userEvent.setup();
     await renderPage();
 
-    const button = screen.getByRole('button', { name: 'Archive' });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAccessibleDescription('Not switched on yet');
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(dialog).toHaveTextContent('Audit trail');
+    expect(within(dialog).getByTestId('dialog-retention')).toHaveTextContent('365 days');
+    expect(within(dialog).getByTestId('dialog-cutoff')).toHaveTextContent('2025-09-26 12:00 UTC');
+    expect(within(dialog).getByTestId('dialog-rows')).toHaveTextContent('1,111');
+    expect(dialog).toHaveTextContent("Archived records can't be viewed or restored from the product.");
+
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it.each([
+    [180, '2,222'],
+    [90, '3,333'],
+  ])('G-4 (AC-8): at %p days the owner-history sentence names that number', async (days, rows) => {
+    const user = userEvent.setup();
+    await renderPage();
+
+    await user.click(screen.getByTestId('retention-select'));
+    await user.click(await screen.findByRole('option', { name: `${days} days` }));
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).getByTestId('dialog-rows')).toHaveTextContent(rows);
+    expect(within(dialog).getByTestId('owner-history-warning')).toHaveTextContent(
+      `Business owners will see only the last ${days} days of their own activity history from now on.`
+    );
+  });
+
+  it('G-4 (AC-8): at 365 days there is no owner-history sentence', async () => {
+    const user = userEvent.setup();
+    await renderPage();
+
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByTestId('owner-history-warning')).not.toBeInTheDocument();
+  });
+});
+
+describe('G-5: while runs are switched off', () => {
+  it('Confirm and Continue are disabled and say so, and nothing is ever posted', async () => {
+    const user = userEvent.setup();
+    const fetchMock = await renderPage(overview({}, [run({ id: 'part', status: 'partial' })]));
+
+    expect(screen.getByTestId('runs-off-badge')).toHaveTextContent('Runs off');
+    const cont = screen.getByTestId('continue-part');
+    expect(cont).toBeDisabled();
+    expect(cont).toHaveAccessibleDescription('Not switched on yet');
+
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+    const confirm = within(await screen.findByRole('dialog')).getByTestId('confirm-archive');
+    expect(confirm).toBeDisabled();
+    expect(confirm).toHaveAccessibleDescription('Not switched on yet');
+    await user.click(confirm);
+
+    for (const call of fetchMock.mock.calls as unknown[][]) {
+      expect(call).toEqual(['/api/admin/archiving']);
+    }
+  });
+});
+
+describe('runs switched on', () => {
+  /** The overview for every GET; the run route answers with `postReply`. */
+  function stubRoutes(data: ArchivingOverview, postReply: { ok: boolean; body: unknown }) {
+    const fetchMock = jest.fn(async (url: string, init?: RequestInit) =>
+      init?.method === 'POST'
+        ? { ok: postReply.ok, json: async () => postReply.body }
+        : { ok: true, json: async () => ({ success: true, data }) }
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+    return fetchMock;
+  }
+
+  const enabled = (runs: ArchiveRunSummary[] = []) => ({ ...overview({}, runs), runsEnabled: true });
+  const posts = (fetchMock: jest.Mock) =>
+    fetchMock.mock.calls.filter((call) => (call[1] as RequestInit | undefined)?.method === 'POST');
+
+  it('G-6: Confirm posts exactly the start request, then reads the overview again', async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubRoutes(enabled(), {
+      ok: true,
+      body: { success: true, data: { runId: 'r', outcome: 'succeeded', rowsArchived: 1111, batches: 2 } },
+    });
+    render(<ArchivingPage />);
+    await screen.findByTestId('source-audit_trail');
+
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+    await user.click(within(await screen.findByRole('dialog')).getByTestId('confirm-archive'));
+
+    await waitFor(() => expect(screen.getByTestId('run-notice')).toHaveTextContent('Done: 1,111 rows archived.'));
+    const [[url, init]] = posts(fetchMock);
+    expect(url).toBe('/api/admin/archiving/runs');
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+      action: 'start',
+      source: 'audit_trail',
+      retentionDays: 365,
+    });
+    expect(fetchMock.mock.calls.filter((call) => call[0] === '/api/admin/archiving')).toHaveLength(2);
+  });
+
+  it('G-7: Continue shows for partial, failed and stalled runs only, and posts the run id', async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubRoutes(
+      enabled([
+        run({ id: 'part', status: 'partial' }),
+        run({ id: 'fail', status: 'failed' }),
+        run({ id: 'stalled', status: 'running', isStale: true }),
+        run({ id: 'live', status: 'running', isStale: false }),
+        run({ id: 'done', status: 'succeeded' }),
+      ]),
+      { ok: true, body: { success: true, data: { runId: 'part', outcome: 'partial', rowsArchived: 10, batches: 1 } } }
+    );
+    render(<ArchivingPage />);
+    await screen.findByTestId('source-audit_trail');
+
+    for (const id of ['part', 'fail', 'stalled']) expect(screen.getByTestId(`continue-${id}`)).toBeEnabled();
+    for (const id of ['live', 'done']) expect(screen.queryByTestId(`continue-${id}`)).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId('continue-part'));
+    await waitFor(() => expect(posts(fetchMock)).toHaveLength(1));
+    expect(JSON.parse(String((posts(fetchMock)[0][1] as RequestInit).body))).toEqual({ action: 'continue', runId: 'part' });
+    await waitFor(() => expect(screen.getByTestId('run-notice')).toHaveTextContent('Paused after 10 rows'));
+  });
+
+  it.each([
+    // The server refuses even if a stale page thought runs were on (QA's missing row).
+    ['runs_not_enabled', 409, 'Archiving is not switched on yet.'],
+    ['run_in_progress', 409, 'Another run is in progress.'],
+    ['run_not_continuable', 409, "This run can't be continued."],
+    ['archive_batch_failed', 500, 'A batch failed and nothing was lost. Press Continue to retry.'],
+    ['run_unfinished', 500, 'The run stopped before it was recorded. You can continue it in about 5 minutes.'],
+    // SA L-3: an unrecognised failure on Continue says "continued", not "started".
+    ['Internal server error', 500, 'The run could not be continued.'],
+  ])('G-8: %s on Continue reads as a plain sentence, never raw error text', async (code, _status, sentence) => {
+    const user = userEvent.setup();
+    stubRoutes(enabled([run({ id: 'part', status: 'partial' })]), { ok: false, body: { success: false, error: code } });
+    render(<ArchivingPage />);
+    await screen.findByTestId('source-audit_trail');
+
+    await user.click(screen.getByTestId('continue-part'));
+
+    // Exactly the sentence: the code itself never reaches the screen.
+    expect((await screen.findByTestId('run-notice')).textContent).toBe(sentence);
+  });
+
+  it('G-8: an unrecognised failure on Confirm says the run could not be started', async () => {
+    const user = userEvent.setup();
+    stubRoutes(enabled(), { ok: false, body: { success: false, error: 'Internal server error' } });
+    render(<ArchivingPage />);
+    await screen.findByTestId('source-audit_trail');
+
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+    await user.click(within(await screen.findByRole('dialog')).getByTestId('confirm-archive'));
+
+    expect((await screen.findByTestId('run-notice')).textContent).toBe('The run could not be started.');
   });
 });
 
@@ -233,12 +392,6 @@ describe('G-2: after runs, the archive side shows what happened', () => {
     );
     expect(screen.getByTestId('run-status-live')).toHaveTextContent('Running');
     expect(screen.getByTestId('run-status-part')).toHaveTextContent('Partial');
-  });
-
-  it('still offers no way to start or continue a run in Slice 2a', async () => {
-    await renderWithRuns();
-    expect(screen.queryByRole('button', { name: /continue/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Archive' })).toBeDisabled();
   });
 });
 

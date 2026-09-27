@@ -1,9 +1,10 @@
 /**
- * Archiving Zod schemas (FR-2, the schema half of AC-3): U-V1 to U-V5.
+ * Archiving Zod schemas (FR-2, the schema half of AC-3): U-V1 to U-V5; the
+ * Slice 2b run request: V-1, V-2.
  */
 
 import { RETENTION_DAYS_OPTIONS } from '@/lib/archiving/config';
-import { archiveSourceKeySchema, retentionDaysSchema } from '../archiving';
+import { archiveRunRequestSchema, archiveSourceKeySchema, retentionDaysSchema } from '../archiving';
 
 describe('retentionDaysSchema', () => {
   it.each([365, 180, 90])('U-V1: accepts %p and returns the same number', (value) => {
@@ -44,5 +45,38 @@ describe('archiveSourceKeySchema', () => {
 
   it.each(['token_usage', '', 'AUDIT_TRAIL', null, 1])('U-V5: rejects %p', (value) => {
     expect(archiveSourceKeySchema.safeParse(value).success).toBe(false);
+  });
+});
+
+describe('archiveRunRequestSchema (Slice 2b)', () => {
+  const RUN_ID = '33333333-3333-4333-8333-333333333333';
+  const START = { action: 'start', source: 'audit_trail', retentionDays: 365 };
+
+  it.each(RETENTION_DAYS_OPTIONS)('V-1: accepts a start at %p days', (retentionDays) => {
+    expect(archiveRunRequestSchema.safeParse({ ...START, retentionDays }).success).toBe(true);
+  });
+
+  it('V-1: accepts a continue naming a run id', () => {
+    const result = archiveRunRequestSchema.safeParse({ action: 'continue', runId: RUN_ID });
+    expect(result.success && result.data).toEqual({ action: 'continue', runId: RUN_ID });
+  });
+
+  it.each([
+    ['retentionDays 30', { ...START, retentionDays: 30 }],
+    ['retentionDays as a string', { ...START, retentionDays: '365' }],
+    ['retentionDays missing', { action: 'start', source: 'audit_trail' }],
+    ['an unknown source', { ...START, source: 'agent_logs' }],
+    ['action missing', { source: 'audit_trail', retentionDays: 365 }],
+    ['an unknown action', { ...START, action: 'purge' }],
+    ['a runId that is not a uuid', { action: 'continue', runId: 'run-1' }],
+    ['a start carrying a runId', { ...START, runId: RUN_ID }],
+    ['an injected cutoff', { ...START, cutoff: '2020-01-01T00:00:00.000Z' }],
+    ['an injected startedBy', { ...START, startedBy: RUN_ID }],
+    ['an injected status', { ...START, status: 'succeeded' }],
+    ['an injected batchSize', { ...START, batchSize: 5000 }],
+    ['a continue carrying a cutoff', { action: 'continue', runId: RUN_ID, cutoff: '2020-01-01T00:00:00.000Z' }],
+    ['null', null],
+  ])('V-2: rejects %s', (_label, body) => {
+    expect(archiveRunRequestSchema.safeParse(body).success).toBe(false);
   });
 });

@@ -72,6 +72,9 @@ export const AUDIT_ENTITY_TYPES = [
   // tier and its overrides. Written only by the admin entitlement routes
   // (workplan §4.12); the entity id is the account id.
   'business_os_account_plan',
+  // One Admin Archiving run (a row in archive_runs). Written only by
+  // POST /api/admin/archiving/runs; the entity id is the run id.
+  'archive_run',
 ] as const;
 
 export type EntityType = (typeof AUDIT_ENTITY_TYPES)[number];
