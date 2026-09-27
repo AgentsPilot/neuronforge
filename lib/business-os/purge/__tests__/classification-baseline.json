@@ -1,6 +1,6 @@
 {
  "generated": "2026-09-16",
- "count": 126,
+ "count": 128,
  "levels": {
   "admin_users": "never",
   "advisor_reports": "never",
@@ -26,6 +26,8 @@
   "automation_slas": "never",
   "billing_events": "never",
   "boost_pack_purchases": "never",
+  "bos_cron_run_recording": "never",
+  "bos_cron_runs": "never",
   "business_chat_action_log": "reset",
   "business_chat_conversation": "reset",
   "business_chat_plan_cache": "reset",
