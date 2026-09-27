@@ -357,6 +357,144 @@ The consequence: because chat cannot be mentioned until S-2, **the upsell unders
 - [x] **Ready for the user's code review.** The extraction is provably invisible to the admin screen, isolation is structural, chat is silent through five doors, and no plan shape I could invent produces a misleading offer.
 - [ ] **QA-1 first** - the header assertion. QA-2 to QA-4 are small and can follow.
 
+---
+
+### Round 2 — after the user's four decisions
+
+**QA - 2026-09-27, round 2**
+**Test mode:** full regression on the reversal, plus re-runs of every round-1 check this round could have broken
+**Strategy used:** mutation first - 11 mutations, plus a structural additive-diff proof for the admin payload and four read-only probes.
+**Safety:** the tree is **still uncommitted**, so `git checkout --` was again never used. `customerPlanView.ts`, `route.ts` and `config/tierMatrix.ts` were copied outside the repo, each copy asserted non-empty **and** `cmp`-identical before any edit, and restored from that copy with `cmp` verifying every restore. Baseline and final both **79/79** on the five customer and admin suites; all three files restored byte-identical.
+
+**Round 1 is closed.** QA-1's identity door now bites: the `x-user-id` fallback that passed 11/11 last round produces **3 failures**, verified against the current route. QA-2 to QA-5 are closed as reported.
+
+### Verdict
+
+**PASS with two findings worth fixing and two notes.** The reversal is handled well: the replacement rule is sharper than the suppression it replaced, the two flags are properly required and the incoherent combination is refused, the champion flip was re-pointed **honestly**, and the extraction is still invisible to the admin screen. Two guards, however, claim more than they check - and in both cases the claim is the word *structural*.
+
+### 1. The deleted suppression - does the replacement bite?
+
+Eight tests went away and seven arrived. The new rule is the better one and it is genuinely enforced in three of the four ways it could be:
+
+| Mutation | Result |
+|---|---|
+| **E1** an `excluded: [...]` array added to the payload | **2 failed** - the field check bites |
+| **E2** a `youDoNotHave: [...]` array - a name **not** on the denylist | **54 passed - NOT CAUGHT** - QA-7 |
+| **E3** an exclusion sentence written into `endsWhen` | **4 failed** |
+| **E4** an exclusion sentence written into a **rendered** feature value | **1 failed** - better than I expected |
+
+The negative control on the phrasing (`:119-128`) is real: it asserts the pattern **does** match two exclusion sentences and does **not** match a neutral one, so four `not.toMatch` assertions cannot pass on a vocabulary accident. The non-vacuity leg (`:63-81`) confirms there are withheld-and-real capabilities to stay quiet about. Both are the right shape.
+
+### 2. The flags
+
+| Mutation | Result |
+|---|---|
+| **F1** the customer view ignores `shownToCustomers` | **63 passed - NOT CAUGHT** - QA-6 |
+| **F2** `availableToBuy` hardcoded `true` | **4 failed** |
+| **F2b** `actionUnavailableBecause` stops reading the flag | **3 failed** |
+| **F3** the **production** matrix made buyable-but-hidden | **6 failed** - the refusal bites |
+
+Both flags are genuinely **required**: `z.boolean()` with no `.default()`, the object is `.strict()`, and `tierMatrix.invariant.test.ts:97-108` deletes each flag in turn and asserts validation throws. The one incoherent combination is refused in `schema.ts:266-272` with two assertions on the message. Production ships **shown, not buyable** for both tiers, pinned on its own in `productionConfig.test.ts` with a comment saying that if the test ever changes, somebody has made a commercial decision - which is the right way to hold it.
+
+### 3. The champion flip, and whether the fallout was re-pointed honestly
+
+**Honestly, and better than honestly.** `resolver.test.ts` did not lose assertions: `chat.search: false` became `true`, `'branded'` became `'unbranded'`, `'manual'` became `'ai'` - the same assertions with the new values, plus a comment recording what they read before the flip. The `ai.actions` assertion reads the value **from the config** rather than hardcoding it, so it pins the generic property (a cohort's own numbers override the tier row) rather than a number. `productionConfig.test.ts` pins `champion.base` as `{ tier: 'pro' }` with a dated reason.
+
+**And the resolver really does what the comment says** - verified at the resolver, not read off the comment:
+
+| Plan | `ai.actions` | `decidedBy` | `chat.access` | included |
+|---|---|---|---|---|
+| `champion` | `{ perMonth: 1000 }` | **`cohort_values`** | `true` | 28 |
+| `pro` | `{ perMonth: 2000 }` | `basis` | `true` | 28 |
+
+So the cohort's explicit 1,000 **does** take precedence over the inherited `pro` row's 2,000. Founding Partners keep chat, and they are now offered Autopilot with `improves: ai.actions 1,000 per month -> 2,000 per month`, which is a genuine increase - the round-1 downgrade defect has not returned by another route.
+
+⚠️ **Worth the user's attention, not a defect:** a Founding Partner now has Autopilot's 28 capabilities but **half its AI allowance**. "Champion is Autopilot for free" is not quite true, and the screen now says so out loud by offering Autopilot on exactly that axis. That is the honest consequence of keeping `CHAMPION_VALUES`; if the intent was parity, the 1,000 is the line to change.
+
+### 4. The `changes` list
+
+`comparableAmount` now returns `{ amount, unit }`, and the three branches are exclusive by construction: unrankable pairs `continue`, different units go to `changes`, same-unit-and-more goes to `improves`. Measured on the real config: trial to Essentials produces `changes(1): ai.actions 250 in total -> 500 per month` **and** `improves(1): email.volume`, correctly separated.
+
+| Mutation | Result |
+|---|---|
+| **G1** cross-unit pairs pushed into `improves` instead | **3 failed** |
+
+So a cross-unit pair cannot leak into `improves` unnoticed. The component uses `ArrowRight` rather than a tick, deliberately. **But see QA-9**: that is the only thing distinguishing them.
+
+### 5. Re-runs of the round-1 checks
+
+| Check | Result |
+|---|---|
+| The extraction, after `planCommercialFlags` moved in | **only additive**: the sole differences from the pre-extraction module are `plans[].shownToCustomers` and `plans[].availableToBuy`; non-additive diffs `[]` in all three modes |
+| The identity door (round 1 QA-1) | **3 failures** - closed |
+| Tenant isolation | still structural: no input, cookie-verified session, `resolveAccountId(user.id)` |
+| The three no-plan states | all three still distinct and reassuring; `included: 0` with a `problem` sentence, no upsell, 13 keys |
+
+The additive-diff check isolates the **extraction**: both modules read the same current config, so the champion flip's effect on the admin screen is excluded by construction - which is what makes the result meaningful.
+
+### 6. The two content fixes
+
+**Neither hid an assertion.** `Coming soon` (`:122`) and the `get in touch` sentence (`:123`) are asserted **separately**, which is what makes the two distinguishable again - the fix improved the test rather than relaxing it. The `Invoices` query was scoped into the includes list with an **exact** string instead of a regex (`:97-99`), so the chat invoice-control label in the upgrade list can no longer satisfy it; and two new assertions arrived at `:159` and `:165-166` pinning that chat appears in a champion's includes and in Essentials' "would add".
+
+### Findings
+
+**QA-6 - The `shownToCustomers` gate is never exercised, and the fixture built to exercise it is never used by the surface that reads it.** Severity: **Medium**
+
+- File: `lib/business-os/entitlements/customerPlanView.ts:431`
+- Replacing `nextPlanId !== null && planCommercialFlags(config, nextPlanId).shownToCustomers` with `nextPlanId !== null` - deleting the gate - passes **63 tests**.
+- Dev's claim that varying the flags across three fixture tiers makes this impossible is **half-true**. The fixture is exactly right: `__fixtures__/exampleTierMatrix.ts:157-175` has shown+buyable, shown-only and **hidden**, and the hidden one is `pro`, **last in `tierOrder`** - so a customer on `growth` would have a hidden next plan, the perfect case. But all three customer-facing suites build their config with `readCodeConfig()` (`customerPlanView.test.ts:35`, `noExclusions.test.ts:45`, `PlanSection.render.test.tsx:42`), and in production **both** tiers are `shownToCustomers: true`. The fixture never reaches `buildCustomerPlanView`.
+- This is the flag the user's decision turns on, and it is the one with no test. **Fix: one test** - build the view for a customer on fixture `growth`, assert `nextPlanUp` is null; and on fixture `basic`, assert `growth` **is** offered. That also gives the `availableToBuy: true` branch of the component its only coverage.
+
+**QA-7 - "There is no field to render an exclusion list from" is enforced by a six-name denylist.** Severity: **Medium**
+
+- File: `lib/business-os/entitlements/__tests__/customerPlanView.noExclusions.test.ts:89` and `:96`
+- The header argues the rule outlives the old one because *"there is no field to render an exclusion list from, so the rule is structural rather than a habit"*. The test checks `Object.keys(view)` against `['withholds','excluded','excludes','missing','notIncluded','withheld']`. I added `youDoNotHave: ['chat.access']` to the payload and **all 54 tests passed** - so the rule is precisely a habit.
+- Not a live leak: nothing renders the field. It is about whether the guard stops the next one, and the answer is "only if it is spelled one of six ways".
+- **Fix, and there is precedent in this module:** make it an **allow-list** - assert `Object.keys(view).sort()` equals the known field set, so any new field must be declared in a diff. That is the shape Dev adopted for the entitlements import allow-list after the S-0 round found the same denylist weakness in the chat-v4 exemption.
+
+**QA-8 - The phrasing guard names `problem` among the sentences it scans, never produces one, and would fail on good copy if it did.** Severity: Low-Medium
+
+- File: `lib/business-os/entitlements/__tests__/customerPlanView.noExclusions.test.ts:103-117`
+- The scanned list is `[endsWhen, whenThisChanges, problem, nextPlanUp?.actionUnavailableBecause]` - including `problem`, which signals intent to cover the failure states. But the loop runs over the four real plan ids only, where `status` is always `ok` and `problem` is always `null`. The three states that have a `problem` sentence are never built.
+- I wrote the obvious extension - the same regex applied to the three no-plan views - and it **fails immediately**, on *"We do not have a plan record for this account yet."* The copy is good; the bare `do not have` alternative in the pattern is what catches it. So the next person to widen this guard will hit a false positive and the natural reaction is to weaken the regex.
+- **Fix:** narrow the pattern to second-person claims about the plan (`you do not have`, `your plan does not include`, `not included in your plan`) **and then** extend the loop to the three failure states. That makes the guard both wider in coverage and correct - the two changes have to happen together.
+
+**QA-9 - `changes` is separated from `improves` by an icon, inside a list announced as "would add".** Severity: Low
+
+- Files: `components/business-os/settings/PlanSection.tsx:215` and `:243-253`
+- The server takes deliberate care not to claim a cross-unit difference is better. The component then renders `changes` rows **in the same `<ul>`** as `adds` and `improves`, with the **identical** sentence template `- {from} becomes {to}`, differing only by `ArrowRight` instead of `Check` in the same muted colour. That `<ul>` carries `aria-label={`What ${upgrade.name} would add`}`.
+- So a trial customer reads *"AI actions - 250 in total becomes 500 per month"* under a heading that says what the plan **would add**, and a screen-reader user gets only the "would add" framing. The component's own comment says a tick *"would assert an improvement the server deliberately refused to claim"* - the verb and the list label do the same work as the tick.
+- **Fix:** a different verb for `changes` (`changes to`, or plain `250 in total -> 500 per month`), and its own list with its own label. Not urgent - the numbers shown are true and both are visible - but it re-introduces exactly the inference the server refused to make.
+
+### Would a customer be misled?
+
+**No, and the reversal removed the one real understatement from round 1.** An Essentials customer is now shown the nine chat capabilities under Autopilot, so the upsell no longer reads as "$50 more for some AI actions". Champions keep chat. Everything rendered is true of the configuration.
+
+Three things a reader should know are deliberate, all of them recorded in the code rather than left to be discovered:
+
+1. **The accepted inaccuracy.** An Essentials customer shown chat under Autopilot may infer they do not have it today - which is false until FR-46 enforces `chat.access`. The user accepted this explicitly, and `noExclusions.test.ts:176-180` asserts it rather than leaving it as a comment, which is the right way to carry an accepted inaccuracy.
+2. **Neither plan can be bought.** Every priced plan shows a *Coming soon* badge and a sentence, driven by `availableToBuy`, and the surface has no notion of purchasability of its own - so step 3 flips a flag and nothing else.
+3. **QA-9's framing** is the one place the screen invites a conclusion the server declined to state.
+
+### Numbers
+
+| Check | Result |
+|---|---|
+| Scope (entitlements, repositories, both `business-os` API trees, `components/business-os`, both settings pages, the admin tiers screen) | **74 suites / 1,395 tests, 0 failures** - Dev's 73 / 1,391 on a marginally narrower selection |
+| The five customer and admin suites | **79 tests**, green at baseline and after every restore |
+| ESLint over the touched paths | **0 errors**, 4 pre-existing warnings |
+| `tsc --noEmit`, verified method | **2,069**, **zero in any touched file** - unchanged from round 1 despite the new fields |
+| Mutations | **11 applied, 9 caught, 2 not** (F1 to QA-6, E2 to QA-7); every file restored byte-identical |
+
+### Anything needing the user
+
+**QA-6 before commit** - one test, on the flag the user's decision turns on. **The champion allowance** is the one business question: a Founding Partner now gets Autopilot's features with half its AI actions, and the screen offers them the upgrade on that axis. If parity was intended, `CHAMPION_VALUES['ai.actions']` is the line. QA-7 to QA-9 are small and can follow.
+
+### Final Status — round 2
+
+- [x] **Ready for the user's code review.** The reversal is clean, the flags are required and coherent, the champion flip was re-pointed honestly and verified at the resolver, and the extraction remains invisible to the admin screen.
+- [ ] **QA-6 first.** QA-7 (the allow-list) next, since it is the same lesson this module already learned once.
+
 
 ---
 
@@ -367,3 +505,4 @@ The consequence: because chat cannot be mentioned until S-2, **the upsell unders
 | 2026-09-27 | Created, with the SA review | Short-path UI slice, so there is no Dev workplan; this document is the review record. SA: approved for QA with P-1 (the account seam bypassed a second time — fix the guard, not just the call) and P-2 (the upgrade comparison ranks a one-off allowance against a monthly rate). Extraction verified function-by-function against the pre-change source rather than on the test count: two byte-identical, four semantically identical, one laxity noted (P-3). Endorsed the no-Zod argument on a no-input handler, the recorded absence of `requireAdmin`, "say nothing" about chat as the right shape by audience, both guard handlings, and English-for-now with a line drawn at the buy step. |
 | 2026-09-27 | QA round 1: PASS with two findings worth fixing (QA) | Added section 3. Twelve mutations, nine caught. The extraction is proven behaviour-preserving by running the pre-extraction module beside the new one and deep-comparing the admin payload - identical in all three modes over 152 capability rows, with a non-vacuity leg. Chat suppression fails 10 of 54 when the clause is removed, and the serialised-payload sweep already covers the fifth door including the Hebrew label. The downgrade fix holds on three plan shapes that do not exist yet. Dev's confessed vacuity measured exactly: 4 of 16 render tests. **QA-1 (Medium):** the source guard forbids the query string and the body but not `request.headers.get`, so an `x-user-id` authentication bypass passes all 11 route tests - this repo's known IDOR class. **QA-2..QA-4 (Low):** `nothingToShow` is unreachable; the two conservative comparison clauses are unpinned; one test named for the champion defect can examine zero pairs. 74 suites / 1,377 tests, lint 0 errors, tsc 2,069 (down 8) with zero in touched files. |
 | 2026-09-27 | SA review round 2: CHANGES REQUIRED (SA) | Added §2.9. Endorsed all four user decisions: the two required-not-defaulted commercial flags — and confirmed they MUST be config-level, because only the loader can refuse buyable-but-hidden, so the five-file blast radius is a consequence rather than scope creep, and it extends the approved `presentation` pattern rather than adding a new one; naming chat now that it is live for everyone; the champion flip, whose precedence claim I verified in `resolver.ts` layer 3, which applies cohort values only when the base is a tier, so the champion's 1,000/month really does beat the pro row's 2,000; and the `changes` list in the payload. The replacement rule is the right durable invariant with a genuinely strong negative control, and letting `nextPlanUp.adds` name chat is principled: facts about other plans, never limitations about yours. **R2-1 required:** the component renders all three lists in one list element labelled "What {plan} would add" and gives `changes` the same sentence as `improves`, so the distinction the server preserved survives only as a muted arrow versus a muted tick — a screen-reader user is told a neutral change is an addition, which is the round-1 defect in a channel we cannot see. **R2-2 required:** `customerPlanView.test.ts` passes alone at 31/31 and FAILS in company, in two reproductions, on line 529 — the assertion that no field could hold an exclusion list — with `excluded` among the payload keys; `excluded` appears nowhere in `customerPlanView.ts` but does in `report.ts`, so the module is not behaving as the file reads. Diagnosis required and the cause recorded; explicitly NOT claiming a production leak, because guessing a mechanism is how the §13.9 retraction happened. Low: R2-3 record the FR-46 window, R2-4 supersede a Change History row in BUSINESS_OS_ENTITLEMENTS.md that later rows of the same date contradict, R2-5 keep the closed round-1 items recorded. |
+| 2026-09-27 | QA round 2 after the user's four decisions: PASS with two findings (QA) | Eleven mutations, nine caught; backups outside the repo with `cmp`-verified restores, no `git checkout` on an uncommitted tree. Round 1 closed - the `x-user-id` door now produces 3 failures where it passed 11. The replacement for the deleted chat suppression bites on three of four routes in; the champion flip was re-pointed **honestly** (assertions replaced with new values, not deleted) and the resolver verified to apply the cohort's 1,000 over pro's 2,000 via `decidedBy: cohort_values`; the admin payload changed **only additively** (the two flags). **QA-6 (Medium):** deleting the `shownToCustomers` gate passes 63 tests - the fixture built to exercise it is never used by the customer surface, which reads production config where both tiers are shown. **QA-7 (Medium):** the no-exclusion-field rule is a six-name denylist, so `youDoNotHave` passes all 54; an allow-list makes it structural as the header claims. **QA-8/QA-9 (Low):** the phrasing guard scans `problem` but never produces one and would fail on good copy if it did; `changes` is separated from `improves` only by an icon, inside a list labelled "would add". 74 suites / 1,395 tests, lint 0 errors, tsc 2,069 with zero in touched files. |
