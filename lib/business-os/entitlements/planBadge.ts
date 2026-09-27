@@ -87,6 +87,10 @@ export function planBadgeFor(
 
   return {
     label: planLabel(config, basis.cohort),
+    // "See your plan." is correct again, and R4-7 is moot: it was a problem only
+    // for the UNLINKED copy beside the plan heading, which the user has since
+    // dropped. The one remaining pill is a link in the chrome, so telling somebody
+    // where it goes is exactly what a tooltip is for.
     title:
       endsAt === null
         ? 'Everything included, free, with no end date. See your plan.'

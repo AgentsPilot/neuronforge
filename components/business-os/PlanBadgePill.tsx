@@ -1,20 +1,25 @@
 /**
  * The quiet plan pill — beside the logo in the Business OS chrome.
  *
- * ── Two placements, both real (user decision, 2026-09-27) ───────────────
+ * ── ONE placement. Settled — please read before adding a second ───────────
  *
- *   `bar`   beside the logo in the Business OS chrome. Links to the plan section.
- *   `page`  beside the "Your plan" heading in settings. **Does not link** — there
- *           it identifies the plan, and a link from the section to itself is not
- *           navigation.
+ * **Beside the logo in the Business OS chrome, linking to the plan section.** That
+ * is the whole of it, by the user's decision of 2026-09-27.
  *
- * `placement` was removed last round as an unused variant for a placement that did
- * not exist (SA R3-7), and is back now that both are rendered. It is not here
- * speculatively.
+ * A `placement` prop has now been added and removed twice, so the three answers
+ * are written down rather than rediscovered:
  *
- * ⚠️ **The user menu placement was asked for and is NOT built.** There is no user
- * menu in the Business OS chrome, and the agent platform's `UserMenu` is not
- * rendered by it — see the hand-off for what adding one would involve.
+ *   **Beside the plan heading in settings?** No. The heading already prints the
+ *   plan name, so a pill next to it is the same words two centimetres away.
+ *
+ *   **In a user menu?** There is no user menu in this header — its left slot is the
+ *   logo and its right is four icon buttons. One was NOT invented. The agent
+ *   platform's `UserMenu` exists but Business OS does not render it, and it fetches
+ *   an agent-platform subscription, which would pull that billing state into the
+ *   Business OS chrome (the B-8 boundary).
+ *
+ *   **Somewhere else?** Then it needs a reason of its own, and this component
+ *   should grow a variant at that point and not before.
  *
  * Presentational and **data-free**: the label, the tooltip and the destination
  * all arrive as a prop, decided server-side by
@@ -36,39 +41,21 @@ import Link from 'next/link';
 export interface PlanBadgeProps {
   label: string;
   title: string;
-  /** Omitted for `page`, where the pill sits inside the thing it would link to. */
-  href?: string;
-  placement?: 'bar' | 'page';
+  href: string;
 }
 
-export function PlanBadgePill({ label, title, href, placement = 'bar' }: PlanBadgeProps) {
-  const size = placement === 'bar' ? 'text-[11px] px-2 py-0.5' : 'text-xs px-2.5 py-1';
-  const base = `inline-flex items-center gap-1 whitespace-nowrap border border-[var(--v2-border)] bg-[var(--v2-bg)] text-[var(--v2-text-secondary)] ${size}`;
-  const radius = { borderRadius: 'var(--v2-radius-button)' };
-
-  // The accessible name carries the REASON, not just the plan name: "Founding
-  // Partner" alone tells a screen-reader user nothing about why it is there.
-  const accessibleName = `${label} — ${title}`;
-
-  // A span, not a disabled link: an element with no destination should not be in
-  // the tab order at all, and a link to the page you are already on is worse than
-  // no link.
-  if (!href) {
-    return (
-      <span title={title} aria-label={accessibleName} data-testid="plan-badge-pill" className={base} style={radius}>
-        {label}
-      </span>
-    );
-  }
-
+export function PlanBadgePill({ label, title, href }: PlanBadgeProps) {
   return (
     <Link
       href={href}
       title={title}
-      aria-label={accessibleName}
+      // The accessible name carries the REASON, not just the plan name: "Founding
+      // Partner" alone tells a screen-reader user nothing about why it is there or
+      // what following it does.
+      aria-label={`${label} — ${title}`}
       data-testid="plan-badge-pill"
-      className={`${base} hover:border-[var(--v2-primary)] hover:text-[var(--v2-primary)] transition-colors`}
-      style={radius}
+      className="inline-flex items-center gap-1 whitespace-nowrap border border-[var(--v2-border)] bg-[var(--v2-bg)] text-[var(--v2-text-secondary)] hover:border-[var(--v2-primary)] hover:text-[var(--v2-primary)] transition-colors text-[11px] px-2 py-0.5"
+      style={{ borderRadius: 'var(--v2-radius-button)' }}
     >
       {label}
     </Link>

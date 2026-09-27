@@ -71,29 +71,46 @@ describe('a Founding Partner', () => {
   it('sees the name and that it is free with no end date', async () => {
     await renderFor('champion');
 
-    // TWICE now, deliberately: the plan name, and the pill beside it (user
-    // decision, 2026-09-27). `getAllByText` rather than a looser query, so the
-    // count is asserted rather than tolerated.
-    expect(screen.getAllByText('Founding Partner')).toHaveLength(2);
+    // ONCE: the plan name. The pill that briefly sat beside it was dropped, so a
+    // second occurrence here would mean it had come back.
+    expect(screen.getAllByText('Founding Partner')).toHaveLength(1);
     expect(screen.getByText(/Free — no end date/i)).toBeInTheDocument();
   });
 
-  it('the pill beside the heading does not link to the section it is in', async () => {
-    // The `page` placement renders a span, not a link: an element with no
-    // destination should not be in the tab order, and a link to the page you are
-    // already on is worse than no link. The chrome's copy is the one that links.
-    await renderFor('champion');
+  it('a DATED champion sees the date and nothing claiming "no end date" (SA R4-1)', async () => {
+    // The payload property is asserted in the view suite; this closes the class at
+    // the DOM, which is where the fourth claim-bearing surface lives — `priceLine`
+    // prints "Free — no end date" and reads the same field. A fifth would be
+    // caught here too, which is the point of asserting on rendered text.
+    const config = readCodeConfig();
+    const dated = resolveEntitlements({
+      config,
+      account: { ...previewAccountFor(config, 'champion', NOW), cohortExpiresAt: '2026-12-01T00:00:00.000Z' },
+      overrides: [],
+      addons: [],
+      now: NOW,
+    });
 
-    const pill = screen.getByTestId('plan-badge-pill');
+    serve({ success: true, data: buildCustomerPlanView({ resolution: dated, unavailable: false, now: NOW, config }) });
+    render(<PlanSection />);
+    await waitFor(() => expect(screen.queryByText(/Loading your plan/i)).not.toBeInTheDocument());
 
-    expect(pill.tagName).toBe('SPAN');
-    expect(pill).not.toHaveAttribute('href');
-    // And it still carries the reason for a screen reader.
-    expect(pill).toHaveAttribute('aria-label', expect.stringContaining('no end date'));
+    // The date is on screen …
+    expect(screen.getByText(/1 December 2026/)).toBeInTheDocument();
+    // … and nothing anywhere says the opposite, including the pill's tooltip and
+    // the price line.
+    expect(document.body.textContent ?? '').not.toMatch(/no end date/i);
+    // No pill on this surface any more, so the claim-bearing strings here are the
+    // two sentences and the price line — all covered by the body-text assertion
+    // above.
+    expect(screen.queryByTestId('plan-badge-pill')).not.toBeInTheDocument();
   });
 
-  it('a paying customer gets no pill — the same decision as the chrome', async () => {
-    await renderFor('basic');
+  it('renders NO plan pill — the one pill lives in the chrome (user decision)', async () => {
+    // Dropped 2026-09-27: the heading already prints the plan name, so a pill
+    // beside it repeated it. Asserted rather than merely absent, so a third attempt
+    // to add one fails here and reads the reason.
+    await renderFor('champion');
 
     expect(screen.queryByTestId('plan-badge-pill')).not.toBeInTheDocument();
   });

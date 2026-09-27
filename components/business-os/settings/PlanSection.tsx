@@ -39,7 +39,6 @@
 import { useEffect, useState } from 'react';
 import { ArrowRight, Check, Info, Loader2, Sparkles } from 'lucide-react';
 
-import { PlanBadgePill } from '@/components/business-os/PlanBadgePill';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { createLogger } from '@/lib/logger';
 
@@ -93,11 +92,6 @@ interface PlanUpgrade {
   changes: PlanChange[];
 }
 
-interface PlanBadge {
-  label: string;
-  title: string;
-}
-
 export interface PlanPayload {
   status: 'ok' | 'no_plan_record' | 'unavailable';
   planId: string | null;
@@ -112,8 +106,6 @@ export interface PlanPayload {
   included: PlanCategory[];
   nextPlanUp: PlanUpgrade | null;
   problem: string | null;
-  /** Decided server-side by `planBadgeFor` — the same answer the chrome shows. */
-  badge: PlanBadge | null;
 }
 
 export function PlanSection() {
@@ -178,9 +170,9 @@ export function PlanSection() {
         <div className="flex items-baseline gap-2 flex-wrap">
           <span className="text-base text-[var(--v2-text-primary)]">{plan.name}</span>
           <span className="text-sm text-[var(--v2-text-muted)]">{priceLine(plan)}</span>
-          {/* The second placement (user decision). Unlinked: it sits inside the
-              section it would otherwise point at. */}
-          {plan.badge && <PlanBadgePill label={plan.badge.label} title={plan.badge.title} placement="page" />}
+          {/* No plan pill here (user decision, 2026-09-27): the plan name is
+              already the first thing on this line, so a pill beside it repeats it.
+              The one pill lives in the chrome, beside the logo. */}
         </div>
         {plan.endsWhen && <p className="text-xs text-[var(--v2-text-muted)] mt-1">{plan.endsWhen}</p>}
       </div>

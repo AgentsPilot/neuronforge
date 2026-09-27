@@ -648,6 +648,66 @@ describe('a plan is not told when it ends twice', () => {
     }
   });
 
+  it('an unusable end date produces NO sentence, not "NaN undefined NaN" (SA R4-6)', () => {
+    // The one surface whose entire rule is that a failure must not look like a
+    // fact. A date `Date` cannot parse now yields nothing, and the note below
+    // still tells the customer what happens when their plan ends — so the page
+    // reads as less specific rather than as broken.
+    // Reached by handing this layer a resolution with a bad date, not by putting
+    // one on the account: the LIFECYCLE layer throws `RangeError: Invalid time
+    // value` on `toISOString` long before the formatter sees it, which is
+    // reassuring and also means the account route cannot exercise this guard.
+    // What can reach it is a plan row whose column is malformed, which is exactly
+    // this shape.
+    const sound = resolveEntitlements({
+      config,
+      account: previewAccountFor(config, 'champion', NOW),
+      overrides: [],
+      addons: [],
+      now: NOW,
+    });
+    const broken = {
+      ...sound,
+      lifecycle: { ...sound.lifecycle, accessEndsAt: 'not-a-date' },
+    } as typeof sound;
+
+    const view = buildCustomerPlanView({ resolution: broken, unavailable: false, now: NOW, config });
+
+    // No sentence at all, rather than a sentence containing rubbish.
+    expect(view.endsWhen).toBeNull();
+    // And nothing anywhere in the payload carries the rubbish either.
+    expect(JSON.stringify(view)).not.toMatch(/NaN/);
+    // The note still explains what happens when the plan ends, so the page reads
+    // as less specific rather than as broken.
+    expect(view.whenThisChanges).toBeTruthy();
+  });
+
+  it('the second-way-of-ending clause is decided STRUCTURALLY (SA R4-5)', () => {
+    // It was recovered by regex-matching another module's English
+    // (`/whichever comes first/i`), so a copy-edit there would silently drop the
+    // run-out warning here. The real predicate is the shape of the allowance: a
+    // one-off `{ total: n }` can run out, a `{ perMonth: n }` resets (FR-27).
+    const trial = viewFor('trial');
+    const champion = buildCustomerPlanView({
+      resolution: resolveEntitlements({
+        config,
+        account: { ...previewAccountFor(config, 'champion', NOW), cohortExpiresAt: '2026-12-01T00:00:00.000Z' },
+        overrides: [],
+        addons: [],
+        now: NOW,
+      }),
+      unavailable: false,
+      now: NOW,
+      config,
+    });
+
+    // The trial's allowance is a one-off total, so it says both ways it can end.
+    expect(trial.endsWhen).toMatch(/AI actions run out/);
+    // The champion's is monthly, so there is only the date.
+    expect(champion.endsWhen).not.toMatch(/run out/);
+    expect(champion.endsWhen).toMatch(/ends on/i);
+  });
+
   it('a champion WITH an end date is told the date, on both surfaces', () => {
     // The state that was wrong on screen. Built here because the original dated
     // champion describe asserted only on `whenThisChanges` — one of the three
@@ -878,10 +938,6 @@ describe('what is never named', () => {
     'included',
     'nextPlanUp',
     'problem',
-    // Added deliberately (user decision, 2026-09-27): the plan pill for the
-    // settings heading, decided by `planBadgeFor`. The allow-list rejected it
-    // until it was declared here — which is exactly what it is for.
-    'badge',
   ];
 
   it('produces EXACTLY these keys, so no exclusion field can appear under any name', () => {

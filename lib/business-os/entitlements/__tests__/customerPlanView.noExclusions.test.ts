@@ -122,10 +122,6 @@ describe('no plan is described by what it withholds', () => {
     'included',
     'nextPlanUp',
     'problem',
-    // Added deliberately (user decision, 2026-09-27): the plan pill for the
-    // settings heading, decided by `planBadgeFor`. The allow-list rejected it
-    // until it was declared here — which is exactly what it is for.
-    'badge',
   ].sort();
 
   const UPGRADE_KEYS = [
@@ -148,6 +144,10 @@ describe('no plan is described by what it withholds', () => {
    */
   const ROW_KEYS = ['category', 'label', 'features', 'summary'].sort();
   const FEATURE_KEYS = ['capability', 'label', 'value'].sort();
+  // SA R4-4 asked for the badge object's keys to join this sweep. It became moot:
+  // the user dropped the pill beside the plan heading, so the payload carries no
+  // `badge` at all — and VIEW_KEYS above would now REJECT one, which is stronger
+  // than sweeping its contents.
 
   it('carries no field that could hold an exclusion list, WHATEVER it is called', () => {
     for (const planId of PLAN_IDS) {

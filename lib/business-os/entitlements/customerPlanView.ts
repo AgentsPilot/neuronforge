@@ -86,7 +86,6 @@ import {
   previewAccountFor,
   type PlanCapabilityRow,
 } from './planPresentation';
-import { planBadgeFor } from './planBadge';
 import { resolveEntitlements } from './resolver';
 import type { EntitlementResolution } from './resolver';
 import { getEntitlementConfig, type EntitlementConfig } from './source';
@@ -309,18 +308,6 @@ export interface CustomerPlanView {
   nextPlanUp: CustomerPlanUpgrade | null;
   /** Plain words for the customer when we cannot answer. `null` when we can. */
   problem: string | null;
-  /**
-   * The plan pill for this account, or `null` — the SAME decision the chrome uses.
-   *
-   * Carried on this payload so the settings page can show the pill beside the
-   * "Your plan" heading **without a second request and without a second opinion**.
-   * `planBadgeFor` is the only thing that decides who gets one: the chrome reads it
-   * through `readPlanBadge`, and this surface reads it here.
-   *
-   * `href` is deliberately absent from this copy — beside the heading the pill
-   * identifies the plan, and a link from the section to itself is not navigation.
-   */
-  badge: { label: string; title: string } | null;
 }
 
 /**
@@ -422,8 +409,23 @@ export function groupByCategory(
  * has to be identical in a test, on Vercel, and in whatever ICU build a container
  * happens to ship. "1 December 2026" either way.
  *
- * Localising it is WS-2 step 1b with the rest of the sentences — the server will
- * send the ISO date and a key, and the component will format it.
+ * ── UTC, deliberately (SA R4-6) ──────────────────────────────────
+ * Read with `getUTC*`, against the standing rule that `user_preferences.timezone`
+ * is the authority for any hour shown to a client. That rule is about **clock
+ * times** — an appointment at 09:00 must be the client's 09:00. This is a
+ * calendar date on an entitlement boundary that was itself set in UTC, and
+ * rendering it in a business's local zone would move it a day either side of
+ * midnight for no benefit. Stating it because silence here would look like the
+ * oversight the rule exists to catch.
+ *
+ * ── An unusable date must not become a sentence ──────────────────────
+ * `null` on anything `Date` cannot parse. Without it, "NaN undefined NaN" reaches
+ * a customer on the one surface whose entire rule is that a failure must never
+ * look like a fact — and the caller then omits the claim rather than printing
+ * nonsense.
+ *
+ * Localising the format is WS-2 step 1b with the rest of the sentences — the
+ * server will send the ISO date and a key, and the component will format it.
  */
 const MONTHS = [
   'January',
@@ -440,8 +442,11 @@ const MONTHS = [
   'December',
 ];
 
-function readableDate(iso: string): string {
+function readableDate(iso: string): string | null {
   const date = new Date(iso);
+
+  if (Number.isNaN(date.getTime())) return null;
+
   return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
 }
 
@@ -477,16 +482,26 @@ function describeFreePlanEnding(
   // place — which is what removed the original duplicate.
   if (endsAt === null) return null;
 
-  const configured = describePlanEnding(config, planId, resolution.values['ai.actions']?.value);
+  const when = readableDate(endsAt);
 
-  // A cohort with a configured duration (the trial) already explains WHY it ends,
-  // and that reason — running out of AI actions — is not visible from the date
-  // alone. Keep it, and lead with the date.
-  const hasAReason = /whichever comes first/i.test(configured);
+  // An unusable date is not a sentence (R4-6). Saying nothing is correct here: the
+  // note below still tells the customer what happens when their plan ends, so the
+  // page reads as slightly less specific rather than as broken.
+  if (when === null) return null;
 
-  return hasAReason
-    ? `Ends on ${readableDate(endsAt)}, or when the AI actions run out — whichever comes first.`
-    : `Your free access ends on ${readableDate(endsAt)}.`;
+  // Does this plan have a SECOND way of ending, besides the date?
+  //
+  // Structural, not a regex over another module's prose (SA R4-5). A one-off
+  // total — `{ total: n }` rather than `{ perMonth: n }` — is what makes running
+  // out an ending (FR-27), and that is the same fact `describePlanEnding` reads to
+  // decide its own wording. Matching its English coupled this sentence to
+  // somebody else's copy-editing.
+  const allowance = resolution.values['ai.actions']?.value;
+  const runsOut = !!allowance && typeof allowance === 'object' && 'total' in (allowance as object);
+
+  return runsOut
+    ? `Ends on ${when}, or when the AI actions run out — whichever comes first.`
+    : `Your free access ends on ${when}.`;
 }
 
 /** Granting, visible capabilities as the customer's feature list. */
@@ -632,9 +647,6 @@ export function buildCustomerPlanView(input: {
     whenThisChanges: null,
     included: [],
     nextPlanUp: null,
-    // No resolution, no badge. The pill is an identity label, and there is no
-    // identity to state.
-    badge: null,
   };
 
   // A read that failed is not a customer without a plan (the S-0 lesson, one
@@ -733,11 +745,5 @@ export function buildCustomerPlanView(input: {
         ? upgrade
         : null,
     problem: null,
-    // One decision, two transports: the chrome gets it through `readPlanBadge`,
-    // this surface gets it here. `href` is dropped — see the field's comment.
-    badge: (() => {
-      const badge = planBadgeFor(resolution, config);
-      return badge ? { label: badge.label, title: badge.title } : null;
-    })(),
   };
 }
