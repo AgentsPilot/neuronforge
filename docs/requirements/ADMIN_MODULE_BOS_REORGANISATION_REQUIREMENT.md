@@ -4,7 +4,7 @@
 
 **Created by:** BA
 **Date:** 2026-09-24
-**Status:** Draft (a proposal for user review; nothing is built from this document until the user approves it and SA reviews the slices). Slices 1, 2 and 4 are shipped; slice 3 was superseded; **slice 5 is a new draft (2026-09-27) awaiting user answers (OQ-6 to OQ-9) and SA review**
+**Status:** Slices 1, 2, 4 and 5 are shipped; slice 3 was superseded. Roadmap items after slice 5 are proposals for the user to prioritise.
 
 ## Overview
 
@@ -221,7 +221,7 @@ Each slice ships alone, needs no later slice to make sense, and deletes no code 
 | 2. BOS lens on shared screens | ✅ Shipped (PR #112, decisions U-1 to U-5 in the Change History) |
 | 3. Consolidate AgentsPilot (collapse) | ⏭ **Superseded** by hiding the parked section (PR #108, 2026-09-25). Not built as written |
 | 4. Health at a glance | ✅ Shipped (PR #115, 2026-09-26). Live checks L-2 to L-6 passed; L-1 (route timing after deploy) still owed |
-| 5. Scheduled jobs & queues, Health fixes, AP cron retirement | ⬜ Draft (this document, 2026-09-27) |
+| 5. Scheduled jobs & queues, Health fixes, AP cron retirement | ✅ Shipped (PR #122 and PR #123, 2026-09-27). Migration applied and verified; the next-day proof that all 12 jobs record (L-5.8) is still owed |
 
 ### Slice 1: Put BOS up front (navigation only)
 
@@ -643,6 +643,8 @@ State: **Exists** = in code and usable; **Partial** = data or API exists, the ad
 | R-17 | Retire AP pages | Remove parked pages that are confirmed dead | — | S each | Low | Explicit user decision per page; not before AP's future is decided. AP **cron schedules** are retired in slice 5 part A (code kept) |
 | R-18 | Queue actions | Retry, requeue or cancel a dead-lettered or stuck item, and "drain now" (the event-driven plan §8.2 describes a manual drain endpoint that reuses the claim path) | New | M | Med, **High at launch** | Slice 5 (read-only first). Every action is audited with a reason; SA reviews double-send risk |
 | R-19 | Consistent cron authentication | `calendar-sync` and `channel-metrics-sync` run unauthenticated if `CRON_SECRET` is ever missing in production; the other ten refuse | New (found 2026-09-27) | S | Low now (secret is set, OQ-2) | SA to decide; a small security change, separate from slice 5 |
+| R-20 | Admin phantom-column fixes | Three admin reads ask for tables or columns that don't exist (schema check, 2026-09-27): the audit trail's `users` lookup (user names empty, OI-18), the AI cost drill-down's `workflow_executions.input_data`, and the Businesses detail stats' `agent_executions.total_tokens_used` / `user_subscriptions.plan_name` | Partial (screens exist, reads broken) | S | Med | Recommended as the next admin slice |
+| R-21 | Business OS / Stripe phantom-column fixes | Six product reads ask for columns that don't exist: Stripe checkout (`profiles.display_name`), Stripe invoices and webhook (`ais_system_config.pilot_credit_cost_usd`), the contact statement (`payment_invoices.description`), BizQL scheduling edits (`scheduling_services.name`) and landing-page generation (`business_profiles.target_audience`). Not an admin item; tracked here so it isn't lost | New (fix) | M | **High** (money paths) | Suggested as its own task, 2026-09-27; money paths first |
 
 ---
 
@@ -719,3 +721,4 @@ Related: [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_A
 | 2026-09-26 | Slice 2 decisions recorded (PR #112) | **U-1:** "Users" renamed "Businesses"; every row shows the business name **and** the user name (rows without a business say "No Business OS business"). **U-2:** borderline audit-event tags approved (plugin connections, test harness, onboarding and boost packs are shared; effort estimate is AgentsPilot). **U-3:** only the agents list and agent executions fold away. **U-4:** the AI cost & usage "Business OS only" toggle is on by default. **U-5:** the 1,000-row cutoff and the "vs previous period" filter gap are **parked** (workplan OI-P1 / OI-P2). Consequence: the slice 2 criterion "BOS preset totals match the LLM usage report" holds only below 1,000 rows in the window; live 30-day volume is already about 7,658 rows, so the page shows its totals may be incomplete |
 | 2026-09-27 | **Slice 5 drafted; OQ-2 and OQ-4 answered; slice states updated** | Re-baselined on main `546f6110` (branch `feature/admin-bos-jobs-queues`). **Slice 5** (roadmap R-2) specified: (A) retire the 3 AgentsPilot cron schedules, code kept (OQ-4, Offir: "sunset them for now"); (B) a minimal run record for the 12 BOS jobs, because **no cron records its runs today** (all 12 routes read), with four options in business terms and option A recommended (one hand-applied database change); (C) a "Scheduled jobs & queues" page under Monitor covering 12 jobs and the **five** §8.1 queues found in migrations (payment reminders, payment automations, daily briefing sends, lead responses, insight actions), read-only; (D) ordered rules for the two Health tiles, with late/stopped thresholds per schedule; (E) user feedback: **RC-5.1 green for healthy** (measured, exact, no rule matched; reverses slice 4 C-10, needs SA re-ruling), **RC-5.2** a clearer entitlements tile (the "0" is not emitted by the tile's code; Dev to identify it), **RC-5.3** correct the docs: production mode is shadow, not unset. **OQ-2** answered (CRON_SECRET set; unverified, slice 5 verifies). New questions OQ-6 to OQ-9. §7: slice states table; slice 3 marked superseded by PR #108; slice 4 marked shipped (PR #115) with its as-shipped amendments (U-1, U-6, link exceptions, U-5) and the replaced acceptance criterion. §8: R-1 done, R-2 = slice 5, new R-18 (queue actions) and R-19 (two crons run unauthenticated without the secret). §2.3, §4.2, §5, §6, §9, §10 and §12 updated to match |
 | 2026-09-27 | OQ-6 to OQ-9 answered | Option A run record with 30-day history approved; starting rules accepted (a dead-letter in 24 h is red); shadow mode confirmed deliberate (collect data first); Shadow is neutral, not green, on the entitlements tile |
+| 2026-09-27 | Slice 5 shipped; R-20 and R-21 added | PR #122 and PR #123 merged, migration applied and verified. The schema check found 32 pre-existing broken reads: the three admin ones become R-20 (next admin slice), the six Business OS / Stripe ones become R-21 (separate fix, money first) |

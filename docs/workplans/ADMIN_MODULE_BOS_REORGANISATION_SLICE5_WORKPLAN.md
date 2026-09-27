@@ -7,7 +7,7 @@
 **Branch:** `feature/admin-bos-jobs-queues` (worktree `neuronforge-admin-bos-reorg`, cut from `main` @ `546f6110`)
 **Process:** full cycle. The slice adds a production migration, a new `/api/admin/*` route, new cross-account reads and changes to twelve production cron routes. Order: Dev workplan → **SA workplan review (including the C-10 re-ruling, §8.1)** → user answers (§13) → Dev implements → SA code review → QA → user reviews the diff → user approval → RM.
 **Standing user rule:** **nothing is committed**, now or during implementation. Every change stays uncommitted in the worktree until the user has reviewed the code. The requirement's uncommitted edits in this worktree are left as they are.
-**Status:** PR-1 (parts A + E) merged (PR #122). **PR-2 (parts B + C + D) Code Complete, uncommitted, on `feature/admin-bos-jobs-queues-pr2`, for SA code review (2026-09-27)**; SA approved, QA passed, user approved the code; committed and PR opened (not merged). L-5.1 to L-5.5 ✅ recorded 2026-09-27; merge gated on L-5.10, the migration being applied (L-5.7) and L-5.11. See [§19](#19-implementation-record-pr-2-dev-2026-09-27)
+**Status:** ✅ **PR-1 merged (PR #122) and PR-2 merged (PR #123, `03f5402f`), 2026-09-27.** Migration `20261011_bos_cron_runs` applied in production and verified (L-5.7). L-5.1 to L-5.7 and L-5.11 recorded. **Still owed:** L-5.8 (+2 h: 9 jobs; the next day after 09:00 UTC: all 12), L-5.9, L-5.12, M-3 to M-7, and L-5.10 (Offir; no longer a gate). See [§20](#20-post-merge-record-and-follow-ups).
 
 ## Overview
 
@@ -712,11 +712,11 @@ Admin Archiving slice 2b is uncommitted in another worktree (`agent-ae8876d4ecf0
 | L-5.4 | Before PR-2 merges | Recorded. Any table above ~100k rows → Dev re-plans the counts before merge. ✅ **Recorded 2026-09-27:** approximate rows 45 / 0 / 3 / 0 / 12 (`daily_briefing_sends` / `insight_actions` / `lead_responses` / `payment_automation_executions` / `payment_reminders`), all ≤ 160 kB, far below the ~100k gate |
 | L-5.5 | Before PR-2 merges | Dead-letter rows (if any) carry exactly the marker; automations' failed rows fall into the known labels. ✅ **Recorded 2026-09-27:** no failed or dead-lettered rows |
 | L-5.6 | **Before PR-1 merges** | Recorded: the number of AP agents that stop running on a schedule. ✅ **Recorded 2026-09-27:** `scheduled_active_enabled_agents = 0`, `owners = 0`, `most_recent_scheduled_run = null`. Retiring the AgentsPilot crons stops no one's scheduled agents |
-| L-5.7 | After applying the migration | The migration's Step 3 row: all true; Step 4 text starts `DRY RUN PASS`; nothing kept = 0 / 1 |
+| L-5.7 | After applying the migration | The migration's Step 3 row: all true; Step 4 text starts `DRY RUN PASS`; nothing kept = 0 / 1 ✅ **Recorded 2026-09-27 (after apply in PROD):** Step 3 access check: one row, all 15 columns true. Step 4 dry run: `DRY RUN PASS` with D-1 to D-20 and D-2a/b/c all PASS. Nothing kept: 0 rows named `dry-run-job`. The file was applied and PR #123 merged first; Steps 3 and 4 were run straight after. |
 | L-5.8 | After PR-2 deploys: +2 h, and the next day after 09:00 UTC | +2 h: the 9 sub-daily jobs each have ≥ 1 `vercel_cron` run and none is late. Next day: all 12. **This is the OQ-2 verification** |
 | L-5.9 | After PR-1 deploys | Vercel → Project → Settings → Cron Jobs lists exactly the 12 BOS paths |
-| L-5.10 | Before PR-2 merges (Offir or the user, Vercel dashboard) | Project → Settings → Functions: is Fluid compute on, and what is the default max duration? Confirms the 300 s assumed for the 5 routes with no `maxDuration` (F-9) |
-| L-5.11 | After PR-2 is implemented, before merge | `npm run schema:check` (read-only zero-row selects) is clean for the new reads |
+| L-5.10 | Before PR-2 merges (Offir or the user, Vercel dashboard) | Project → Settings → Functions: is Fluid compute on, and what is the default max duration? Confirms the 300 s assumed for the 5 routes with no `maxDuration` (F-9) ⏳ **Still open (Offir emailed 2026-09-27, no reply yet). No longer a merge gate:** Vercel's docs state the Fluid compute default is 300 s (our assumption) and a project default can be raised to at most 800 s; above that needs a per-function `maxDuration`, which none of the 5 routes has. So the migration's 20-minute bound (1,140 s threshold) cannot be exceeded. Only the 5 assumed values in `bosCronJobs.ts` could need a small code change if Offir reports a non-default value. |
+| L-5.11 | After PR-2 is implemented, before merge | `npm run schema:check` (read-only zero-row selects) is clean for the new reads ✅ **Recorded 2026-09-27 (against main `03f5402f`):** 32 of 605 selects BROKEN, **all pre-existing and none from slice 5**; the new run-record and queue selects pass. Classified in §20.3. |
 | L-5.12 | After PR-2 deploys | Vercel logs: `Health summary served` and `Jobs and queues served` `totalMs` ≤ ~1.5 s p50, ≤ 3 s worst |
 
 ```sql
@@ -1045,7 +1045,7 @@ The only accepted pre-existing failure is the parked baseline, named by its test
 - [x] T16: Page + components + render/source tests; sidebar + header + nav test
 - [x] T17: `ADMIN_IDENTIFICATION_AND_ACCESS.md` register row 84 + census re-measured from disk (84 / 78 + 6 / 55 files; 26 pages); Change History. **`CLAUDE.md` not edited** (§18: its admin row no longer carries counts)
 - [x] T18: Run §14.6; paste output; implementation record (deviations, "what SA should look at first"); notify TL. **No commit**
-- [ ] T19 (user): apply the migration per the runbook; record L-5.7; then L-5.8, L-5.9, L-5.11, L-5.12 at their times
+- [ ] T19 (user): apply the migration per the runbook; record L-5.7; then L-5.8, L-5.9, L-5.11, L-5.12 at their times. ✅ Migration applied, L-5.7 and L-5.11 recorded 2026-09-27; L-5.8, L-5.9 and L-5.12 still owed (§20)
 
 ---
 
@@ -1886,9 +1886,53 @@ None measured. The live budget is L-5.12, after deploy.
 
 ---
 
+## 20. Post-merge record and follow-ups
+
+### 20.1 What shipped
+
+| PR | Parts | Commits | Merged |
+|---|---|---|---|
+| #122 | A + E (AgentsPilot crons retired, green for healthy tiles, entitlements tile, shadow-mode docs) | `b2197361`, `3cdb11be`, `454ead41`, `eb9a1fa2`, merge `63d385c1` | `609635ff`, 2026-09-27 |
+| #123 | B + C + D (run record, jobs & queues page, measured tiles 6 and 7) | merge `ff2c5544`, `78520ed1`, `e802176f`, `bf54be79`, `5768ca41`, `3ce33874` | `03f5402f`, 2026-09-27 |
+
+### 20.2 Production state
+
+- Migration `20261011_bos_cron_runs.sql` was applied by the user, then PR #123 was merged; the access check, dry run and "nothing kept" were run straight after (L-5.7 ✅). The page's missing-table fallback covered any gap.
+- `BOS_ENTITLEMENTS_MODE` is `shadow` on purpose (OQ-8).
+- 12 Business OS crons are scheduled; the 3 AgentsPilot schedules are retired (L-5.6: no scheduled agents affected).
+
+### 20.3 Schema check findings (L-5.11, main `03f5402f`)
+
+32 of 605 selects cannot run. None come from this slice. Split by owner:
+
+| Group | Selects | Effect today | Where it goes |
+|---|---|---|---|
+| **Admin screens** | `app/api/admin/audit-trail/route.ts`: `users` (relation missing). `app/api/admin/token-usage/drill-down/route.ts`: `workflow_executions.input_data` (column missing). `app/api/admin/users/[id]/stats/route.ts`: `agent_executions.total_tokens_used` and `user_subscriptions.plan_name` (columns missing) | Audit trail user names are empty (OI-18); the execution-level drill-down likely fails; the Businesses detail "all-products stats" block is likely empty | **Next admin slice** (requirement roadmap R-20) |
+| **Business OS / Stripe** | `app/api/stripe/create-checkout/route.ts`: `profiles.display_name`. `app/api/stripe/invoices/route.ts` and `app/api/stripe/webhook/route.ts`: `ais_system_config.pilot_credit_cost_usd`. `lib/payments/contactStatement.ts`: `payment_invoices.description`. `lib/business-os/bizql/mutate/MutateExecutor.ts`: `scheduling_services.name`. `app/api/website/landing-pages/generate/route.ts`: `business_profiles.target_audience` | Each whole select is rejected, so the code may silently fall back to defaults. The Stripe webhook may be crediting with a fallback rate | **Separate fix**, suggested as its own task on 2026-09-27; money paths first (requirement roadmap R-21) |
+| **Parked AgentsPilot** | About 20 others (agents, memory, workflows, API keys, pilot insight) | AgentsPilot is parked | Left as they are |
+
+The check's blind spots (star selects, embedded joins, template literals, insert/update payloads) mean 32 is a floor.
+
+### 20.4 Still owed by the user
+
+| Check | When | Expect |
+|---|---|---|
+| L-5.8 | About 2 h after the PR #123 deploy | 9 jobs with a `vercel_cron` run (all but `insight-metrics`, `insight-detect`, `payment-reminders`), `bad_runs` = 0, none late on `/admin/jobs-queues` |
+| L-5.8 | The next day after 09:00 UTC | All 12 jobs recorded. **This is the OQ-2 proof that `CRON_SECRET` works** |
+| L-5.9 | After the PR #122 deploy | Vercel → Cron Jobs lists exactly the 12 BOS paths |
+| L-5.12 | After deploy | `totalMs` ≤ ~1.5 s p50 and ≤ 3 s worst, for both routes |
+| M-3 to M-7 | After deploy | Page third under Monitor; 12 jobs and 5 queues; tiles match the page; timings |
+| L-5.10 | When Offir replies | Fluid compute on or off, and the default max duration. Only affects the 5 assumed limits; not a gate (see the L-5.10 row) |
+
+### 20.5 Expected first-day behaviour
+
+The Scheduled jobs tile stays grey on the first day. It can only turn green once all 12 jobs have a recorded run, and three of them run daily, so it should turn green after the next 09:00 UTC run if every job is accepted. The Queues tile can be green straight away (the tables are small, and L-5.5 found no failures).
+
+---
+
 ## Commit Info
 
-*(RM populates this section.)*
+See [§20.1](#201-what-shipped): PR #122 (`609635ff`) and PR #123 (`03f5402f`), both merged 2026-09-27.
 
 ---
 
@@ -1908,3 +1952,4 @@ None measured. The live budget is L-5.12, after deploy.
 | 2026-09-27 | QA, PR-2 | **PASS, on the condition that bug 1 is fixed before the migration is applied.** Full Jest list: 166 suites / 3,990 tests, including QA's 5 probe suites (306 tests). The only failure is the parked contract test, identical on base `609635ff`. The entitlements tests, the authz guard, both BOS LLM gates, `lint:hooks`, ESLint and `next build` are all green. The base comparison of 12 routes × 17 auth scenarios showed 0 differences. Hung record writes each cost about 1.5 s; the same response object comes back and the same error is rethrown. The migration, runbook and rollback were run on a throwaway PGlite database: `DRY RUN PASS`, access check all true. **Bug 1 (Medium; SA comment 1, reproduced independently): the lax-jsonpath counts CHECK accepts arrays.** 7 Low or informational edge cases. No production database was touched |
 | 2026-09-27 | PR-2 review follow-ups (Dev) | SA-1 (Medium): the numbers-only CHECK is strict jsonpath, and the dry run refuses `{"a":[1]}`, `{"a":[]}` and nested objects. SA-2: a missing column is never "not installed". SA-3: the handler is called exactly once. SA-4: a finish of 0 rows is not "recorded". SA-5 `GREEN_HEADLINE`; SA-6 plain `CREATE FUNCTION`; SA-7 the "nothing kept" note. QA-L2 UTC conversion, QA-L4 outcome words once, QA-L5 dry-run cases D-12 to D-20. See §19.6 |
 | 2026-09-27 | L-5.1 to L-5.5 recorded (PR-2 merge gates) | The user's read-only production checks: all columns the page reads exist with the expected types (nullability noted); statuses present are all within each queue's known list; each queue has a partial pending index on its due column; approximate rows 45 / 0 / 3 / 0 / 12, all ≤ 160 kB; no failed or dead-lettered rows. Marked ✅ in §15 and T0c. **L-5.10 (Offir) still open**; L-5.7 and L-5.11 follow the migration |
+| 2026-09-27 | Post-merge record (§20) | PR #122 and PR #123 merged. Migration applied in PROD; L-5.7 recorded (access all true, DRY RUN PASS, nothing kept). L-5.11 schema check: 32 pre-existing broken selects, none from this slice, split into admin (next slice, R-20), Business OS / Stripe (separate fix, R-21) and parked AgentsPilot. L-5.10 is no longer a gate per Vercel's docs (default 300 s, project max 800 s). Commit Info filled. Still owed: L-5.8, L-5.9, L-5.12, M-3 to M-7 |
