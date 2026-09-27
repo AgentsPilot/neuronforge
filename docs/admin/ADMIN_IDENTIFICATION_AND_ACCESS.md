@@ -1,6 +1,6 @@
 # Admin Identification & Access
 
-> **Last Updated**: 2026-09-26
+> **Last Updated**: 2026-09-27
 
 ## Overview
 
@@ -40,8 +40,8 @@ It exists because, before this work, the system had **no trustworthy admin signa
 > version of it described an *intended* end state and a reader would have
 > concluded the system was protected when it was not.
 
-Re-derived **2026-09-26** (Admin Archiving slice 2b, on top of the merge of admin reorganisation slice 4 with Admin Archiving slice 1): **83 handlers across 54
-route files = 77 `requireAdmin` + 6 inline + 0 open.** The split is measured, not
+Re-derived **2026-09-27** (admin reorganisation slice 5, on top of `main` with Admin Archiving slices 2b and 3): **84 handlers across 55
+route files = 78 `requireAdmin` + 6 inline + 0 open.** The split is measured, not
 asserted — re-run the census rather than trusting these figures if much time has
 passed.
 
@@ -61,6 +61,11 @@ passed.
 > **82 → 83 (2026-09-26):** `archiving/runs#POST` (Admin Archiving slice 2b), gated
 > from birth with `requireAdmin` as its first statement. Re-measured on the branch:
 > **83 / 77 + 6 / 54 files**. No cap moved.
+>
+> **83 → 84 (2026-09-27):** `jobs-queues#GET` (admin reorganisation slice 5, the
+> Scheduled jobs & queues page), gated from birth with `requireAdmin` as its first
+> statement. Re-measured from disk after merging `origin/main`: **84 / 78 + 6 / 55
+> files**; 26 `/admin` pages. No cap moved.
 
 ### What is true
 
@@ -70,8 +75,8 @@ passed.
 | It derives admin identity **only** from `admin_users`, via `AdminAccessService` | ✅ True |
 | It fails closed, answers **401** signed-out / **403** non-admin, and never 500s on an authorization outcome | ✅ True |
 | No app-code access decision reads `profiles.role` — a repo-wide sweep returns **zero** hits | ✅ True, and CI rule R4 keeps it that way |
-| **Every one of the 83 `/api/admin/*` handlers requires an admin.** 77 via `requireAdmin`, 6 via their own equivalent check. **Zero open.** | ✅ **True as of 2026-09-26** (slices 2 + 3 of the unification; re-counted after Admin Archiving slice 2b) |
-| **All 25 `/admin` pages are protected on the server**, by inheritance from `app/admin/layout.tsx` | ✅ **True as of 2026-09-21** (slice 5), for the 21 pages then. The 4 added since inherited it without an edit: `business-os-tiers`, `platform-dashboard` (the old landing, moved in admin reorganisation slice 4, beside the rewritten `/admin` Health page) and `archiving` (Admin Archiving slice 1). Re-counted 2026-09-26: 25 `page.tsx` files under `app/admin/` |
+| **Every one of the 84 `/api/admin/*` handlers requires an admin.** 78 via `requireAdmin`, 6 via their own equivalent check. **Zero open.** | ✅ **True as of 2026-09-27** (slices 2 + 3 of the unification; re-counted after admin reorganisation slice 5) |
+| **All 26 `/admin` pages are protected on the server**, by inheritance from `app/admin/layout.tsx` | ✅ **True as of 2026-09-21** (slice 5), for the 21 pages then. The 5 added since inherited it without an edit: `business-os-tiers`, `platform-dashboard` (the old landing, moved in admin reorganisation slice 4, beside the rewritten `/admin` Health page), `archiving` (Admin Archiving slice 1) and `jobs-queues` (admin reorganisation slice 5, a client page). Re-counted 2026-09-27: 26 `page.tsx` files under `app/admin/` |
 | A **new** admin route cannot ship ungated | ✅ **True.** `Admin authz surface guard` is a **required status check** on `main` with `enforce_admins` and `strict` — a red guard blocks the merge |
 | A **new** `/admin` page is protected before its author writes a line of it | ✅ True — it renders as `children` of the guarded layout; there is no per-page opt-out |
 
@@ -89,14 +94,14 @@ the work mostly done, as it was when the work had barely started.
 | ~~"The guard proves every gate actually runs"~~ | R1 proves a gate is **present**, not that it runs **first** or runs at all. 77 handlers are gated (2026-09-26): the 65 counted on 2026-09-21 were verified by hand and by the oracle, the 12 added since only by their own route tests — measured, not enforced. See [Known gaps in the guard itself](#known-gaps-in-the-guard-itself) and Open Item 8. |
 | ~~"The published counts cannot drift"~~ | The equality caps stop the exemption lists getting **longer**. Nothing forces an entry to be deleted when its handler is gated, so the figures can still drift **conservatively** — understating how much is gated (OI-22). |
 
-### Every admin handler and its state (83)
+### Every admin handler and its state (84)
 
 The unit is the **handler**, not the file: slice 1 gated write verbs and left read
 verbs open in the *same* files, so a file-level table would have been misleading.
 That asymmetry is gone now — every row below is gated — but the handler remains
 the right unit for the register.
 
-**77 `requireAdmin` · 6 correct-but-inline · 0 open.** (Rows 73–80 were added 2026-09-25 and rows 81–83 on 2026-09-26; the numbering of rows 1–72 is kept so older references still resolve.)
+**78 `requireAdmin` · 6 correct-but-inline · 0 open.** (Rows 73–80 were added 2026-09-25, rows 81–83 on 2026-09-26 and row 84 on 2026-09-27; the numbering of rows 1–72 is kept so older references still resolve.)
 
 | # | Route | Verb | State | Note |
 |---|---|---|---|---|
@@ -183,6 +188,7 @@ the right unit for the register.
 | 81 | `health-summary` | `GET` | ✅ gated | `requireAdmin`, gated from birth in admin reorganisation slice 4 (the Health landing). Reads across all accounts (audit counts, Business OS AI spend) through admin-only repository methods; returns counts and sums only |
 | 82 | `archiving` | `GET` | ✅ gated | `requireAdmin` first statement, new in Admin Archiving slice 1 (read-only overview; position pinned by its route test I-10) |
 | 83 | `archiving/runs` | `POST` | ✅ gated | `requireAdmin` first statement, new in Admin Archiving slice 2b (starts or continues an archive run; refused with 409 while runs are switched off). Position pinned by its route test P-15; in `adminGate.writes` |
+| 84 | `jobs-queues` | `GET` | ✅ gated | `requireAdmin` first statement, new in admin reorganisation slice 5 (the Scheduled jobs & queues page: the cron run record and the five queue tables, read-only, counts and timestamps only). 401/403 before 400 pinned by its route test |
 
 ### CI enforcement
 
@@ -485,7 +491,7 @@ Either path is idempotent (keyed on `email`) and re-activates a soft-revoked row
 | 5 | **Audit-log admin grants/revocations** via `AuditTrailService`. | ⬜ Future | — |
 | 6 | Decide whether to **retire `admin`/`viewer` from the `profiles.role` constraint** once nothing reads them for access. | ⬜ Future | Keep persona values; drop access-level values. Blocked on item 1's remaining halves. |
 | 7 | **Error-response conformance across the admin surface.** | ⬜ Todo | **26 of 44** admin route files put a raw error `.message` into a response body with **no `NODE_ENV` guard** — two shapes: `details: <err>.message` (4 files) and `message: error instanceof Error ? … ` (16 files). Only 4 use the guarded form. Contradicts the Security Rule *"never expose internal error details to client in production"*. Severity is reduced on gated routes (admin-only now) but not closed. |
-| 8 | **Guard precedence gap.** | ⬜ Todo | R1 proves a gate is **present**, not that it runs **first** or runs at all. Applies to all 77 gated handlers (83 in total, 2026-09-26). Closing it needs the oracle's instrumentation extended to cover the **body parse** — `mockTablesTouched` records DB/RPC/auth-API calls, not `request.json()` — otherwise a precedence check is only half a check. |
+| 8 | **Guard precedence gap.** | ⬜ Todo | R1 proves a gate is **present**, not that it runs **first** or runs at all. Applies to all 78 gated handlers (84 in total, 2026-09-27). Closing it needs the oracle's instrumentation extended to cover the **body parse** — `mockTablesTouched` records DB/RPC/auth-API calls, not `request.json()` — otherwise a precedence check is only half a check. |
 | 9 | **Admin routes repository-pattern migration.** | ⬜ Todo — **template agreed 2026-09-25** | **38 of 44** admin route files do direct DB access (25 construct their own service-role client at module scope), violating CLAUDE.md mandatory rule 1. They are **gated, not isolated**. 14 tables already have an owning repository to reuse; 6 table groups would need a new one. ⚠️ Blocked on a design decision: these are cross-user admin reads **by design**, so they need methods that are *not* the `.eq('user_id', userId)` shape the repository layer exists to enforce. Full write-up in [admin-authz-unification.md](/docs/workplans/admin-authz-unification.md).<br><br>📌 **The design decision is now made, and there is a template (2026-09-25, admin reorganisation slice 2a, SA C-3).** `lib/repositories/AdminTokenUsageAnalyticsRepository.ts` is the first admin-only, cross-account repository: service role with the reason in the header, "all accounts" in the method **name**, no `lib/business-os/**` import (filters arrive as data), allow-listed columns, `{ data, error }` and never throws, `info` log per read, singleton + barrel, and a source guard that fails if anything outside `app/api/admin/**` imports it. Admin reads on owner repositories follow the same discipline with "Admin" in the method name and their own source guard (`lib/repositories/__tests__/adminReadMethods.guard.test.ts`). **Counts (26 of 44, 38 of 44) above and in OI-7 are from 2026-09-20 and predate the 51-file tree; re-measure before quoting them.** Still inline after slice 2: the `audit-trail` read and the drill-down route's label lookups and execution-detail path. |
 | 11 | **Assert what makes the `/admin` page-guard bypass harmless (OI-21).** A crafted `Next-Router-State-Tree` header skips the layout render, so `requireAdminPage()` never runs — demonstrated unauthenticated. It is contained **only** because every `/admin` page is `'use client'` with no server props **and** every admin API is gated; the first of those is a hand-verified property that a future Server Component page would break with no test failing. | ✅ **Done 2026-09-24** — rule **R8**, in the required check | Built on the `isClient` the scanner already computed (now read from *stripped* source, so a comment mentioning the directive cannot fake it). Covers every render entry point, not only `page.tsx`; accepts a self-guarding server page and rejects a lookalike; nothing exempted. **The header bypass itself remains open** — what is closed is that the property containing it can no longer break silently. See [Known gaps in the guard itself](#known-gaps-in-the-guard-itself). Found by QA of the Business OS AI admin screen, 2026-09-24. |
 | 10 | **`app/admin/learning-system/page.tsx:233` still uses `console.error`.** | ⬜ Todo | Rule-3 cleanup around the `user-emails` feature is incomplete. |
@@ -541,3 +547,4 @@ npx eslint app lib components hooks --rule '{"no-console":"error"}'
 | 2026-09-26 | Admin reorganisation slice 4 (Health landing) | Register row **81** (`health-summary#GET`, gated from birth). Census re-measured: **81 handlers / 52 route files = 75 `requireAdmin` + 6 inline + 0 open**; no guard cap moved. `/admin` pages re-counted: **24** `page.tsx` files (the old dashboard moved to `/admin/platform-dashboard`, URL-only; `/admin` is now Health). All still client components (R8) under the guarded layout |
 | 2026-09-26 | Merge: admin reorganisation slice 4 + Admin Archiving slice 1 | Both branches added one handler gated from birth and each numbered it row 81. After the merge: row 81 `health-summary#GET`, row 82 `archiving#GET`. Census re-measured on the merged tree: **82 handlers / 53 route files = 76 `requireAdmin` + 6 inline + 0 open**; **25** `/admin` pages. The "All 21 pages" truth-table row and the precedence-gap figures are updated to match; no guard cap moved (R1 parked = 6) |
 | 2026-09-26 | Admin Archiving slice 2b: 83 = 77 gated + 6 inline + 0 open, 54 files | Register row **83** `archiving/runs#POST` (start or continue an archive run; 409 while runs are switched off), `requireAdmin` as its first statement, pinned by its route test P-15 and added to `adminGate.writes` (58 → 59). Census re-measured on the branch: 54 route files, 83 handlers, 6 without `requireAdmin`. No guard cap moved. CLAUDE.md admin row (82 / 53 / 76) flagged to the user, not edited |
+| 2026-09-27 | Admin reorganisation slice 5: 84 = 78 gated + 6 inline + 0 open, 55 files | Register row **84** `jobs-queues#GET` (the Scheduled jobs & queues page), `requireAdmin` as its first statement. Census re-measured from disk after merging `origin/main` (Admin Archiving slices 2b and 3): 55 route files, 84 exported handlers, 6 without `requireAdmin` (the 6 inline rows). `/admin` pages re-counted: **26** (`jobs-queues` added, a client page under the guarded layout). No guard cap moved |
