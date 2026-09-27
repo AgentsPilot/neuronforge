@@ -16,7 +16,7 @@ email — and establish **what is actually true** before a word of reply is writ
 Your output is a plain-text email draft. **You never send it.** The main session sends it after
 the user has read it.
 
-Default recipient: **Barak — meiribarak@gmail.com**. The user will say if it's someone else.
+Default recipient: **Barak**. The user supplies the address, and will say if it's someone else.
 
 ---
 
