@@ -97,7 +97,7 @@ async function json(res: Response) {
     success: boolean;
     error?: string;
     details?: string;
-    data?: { tiles: Array<{ id: string; status: string; headline: string; matchedRuleId: string | null; figures: Array<{ value: string; exact: boolean; note: string | null }> }> };
+    data?: { tiles: Array<{ id: string; status: string; headline: string; matchedRuleId: string | null; figures: Array<{ value: string; exact: boolean; note: string | null }>; pageLink: { href: string; text: string } | null }> };
   };
 }
 
@@ -154,17 +154,22 @@ describe('Zod: the route takes no parameters', () => {
 });
 
 describe('happy path', () => {
-  it('seven tiles in order; quiet means Normal everywhere measured; jobs and queues not measured', async () => {
+  it('seven tiles in order; quiet means green where eligible, entitlements for information; jobs and queues not measured (C-10R)', async () => {
     const res = await GET(req());
     expect(res.status).toBe(200);
     const body = await json(res);
     expect(body.data!.tiles.map((t) => t.id)).toEqual([
       'bos_ai_settings', 'bos_ai_failures', 'bos_ai_spend', 'critical_audit', 'entitlements_mode', 'scheduled_jobs', 'queues',
     ]);
-    for (const id of ['bos_ai_settings', 'bos_ai_failures', 'bos_ai_spend', 'critical_audit', 'entitlements_mode']) {
-      expect(tile(body, id).status).toBe('neutral');
-      expect(tile(body, id).headline).toBe('Normal');
+    for (const id of ['bos_ai_settings', 'bos_ai_failures', 'bos_ai_spend', 'critical_audit']) {
+      expect(tile(body, id).status).toBe('green');
+      expect(tile(body, id).headline).toBe('All clear');
     }
+    expect(tile(body, 'entitlements_mode').status).toBe('neutral');
+    expect(tile(body, 'entitlements_mode').pageLink).toEqual({
+      href: '/admin/business-os-tiers',
+      text: 'Open Plans & entitlements (plans and account lookup)',
+    });
     expect(tile(body, 'scheduled_jobs').status).toBe('not_measured');
     expect(tile(body, 'queues').status).toBe('not_measured');
   });
@@ -251,7 +256,7 @@ describe('failure isolation', () => {
     expect(res.status).toBe(200);
     const body = await json(res);
     expect(tile(body, 'critical_audit').status).toBe('unavailable');
-    expect(tile(body, 'bos_ai_failures').status).toBe('neutral');
+    expect(tile(body, 'bos_ai_failures').status).toBe('green');
     expect(JSON.stringify(body)).not.toContain('secret_table');
   });
 
@@ -267,7 +272,7 @@ describe('failure isolation', () => {
     const body = await json(res);
     expect(tile(body, 'bos_ai_settings').status).toBe('unavailable');
     for (const id of ['bos_ai_failures', 'bos_ai_spend', 'critical_audit', 'entitlements_mode']) {
-      expect(tile(body, id).status).toBe('neutral');
+      expect(tile(body, id).status).toBe(id === 'entitlements_mode' ? 'neutral' : 'green');
     }
     const served = mockLog.info.mock.calls.find(([, msg]) => msg === 'Health summary served');
     expect(served?.[0].reads).toContainEqual(expect.objectContaining({ read: 'settings', ok: false }));
@@ -277,7 +282,7 @@ describe('failure isolation', () => {
     mockSettingsView.mockRejectedValue(new Error('pricing read failed'));
     const body = await json(await GET(req()));
     expect(tile(body, 'bos_ai_settings').status).toBe('unavailable');
-    expect(tile(body, 'bos_ai_spend').status).toBe('neutral');
+    expect(tile(body, 'bos_ai_spend').status).toBe('green');
   });
 
   it('spend: the page read failing → unavailable (C-4)', async () => {
@@ -288,7 +293,7 @@ describe('failure isolation', () => {
   it('spend: only the count failing → figures still exact by natural completion, no "calls", no OI-P1 note (C-4)', async () => {
     mockCount.mockResolvedValue({ data: null, error: new Error('count failed') });
     const spend = tile(await json(await GET(req())), 'bos_ai_spend');
-    expect(spend.status).toBe('neutral');
+    expect(spend.status).toBe('green'); // exact by natural completion, so proven clear (C-10R)
     expect(spend.figures.every((f) => f.exact && f.note === null && !f.value.includes('calls'))).toBe(true);
   });
 

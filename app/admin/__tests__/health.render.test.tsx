@@ -3,10 +3,12 @@
  */
 
 /**
- * The Health landing (admin reorganisation slice 4): renders what the route
- * sends, never green, distinct looks for Normal / Not measured / Could not
- * check (SA C-10), accessible labels (SA C-16), the rules with their generated
- * conditions (SA C-22), and no link to the legacy dashboard (U-6).
+ * The Health landing (admin reorganisation slices 4 and 5): renders what the
+ * route sends; green only on a tile the route sent as green, labelled
+ * "Healthy" (SA C-10R); distinct looks for green / For information / Not
+ * measured / Could not check; accessible labels (SA C-16); the rules with
+ * their generated conditions (SA C-22); a visible page link that says where it
+ * goes (RC-5.2); and no link to the legacy dashboard (U-6).
  */
 
 import React from 'react';
@@ -31,12 +33,13 @@ const GREEN = /\b(?:bg|text|border)-(?:green|emerald)-/;
 function tile(over: Partial<HealthTile> & Pick<HealthTile, 'id' | 'status'>): HealthTile {
   return {
     title: over.id,
-    headline: 'Normal',
+    headline: 'All clear',
     matchedRuleId: null,
     figures: [],
     rules: [],
     otherwise: null,
     footnote: null,
+    pageLink: null,
     ...over,
   };
 }
@@ -58,7 +61,7 @@ const SUMMARY: HealthSummary = {
       matchedRuleId: 'failures.count24h',
       figures: [
         {
-          label: 'Failed, last 24 h',
+          label: 'Failed AI actions, last 24 h',
           value: '6 of 20 actions',
           exact: true,
           href: '/admin/audit-trail?action=BUSINESS_AI_ACTION_FAILED&date_from=2026-09-25T10%3A30&date_to=2026-09-26T10%3A30',
@@ -70,7 +73,7 @@ const SUMMARY: HealthSummary = {
         { colour: 'red', description: '5+ AI failures in the last 24 hours', condition: 'failed AI actions in 24 h ≥ 5' },
         { colour: 'amber', description: 'AI failures in the last 24 hours', condition: 'failed AI actions in 24 h ≥ 1' },
       ],
-      otherwise: 'Otherwise: Normal.',
+      otherwise: 'Otherwise: green, "All clear".',
     }),
     tile({
       id: 'bos_ai_spend',
@@ -78,7 +81,7 @@ const SUMMARY: HealthSummary = {
       headline: 'Total is a minimum; not all calls counted',
       figures: [
         {
-          label: 'Last 7 days',
+          label: 'AI spend, last 7 days (USD)',
           value: 'at least $12.10 (previous 7 days: $3.00)',
           exact: false,
           href: '/admin/analytics?scope=bos&dateFrom=x&dateTo=y',
@@ -87,8 +90,15 @@ const SUMMARY: HealthSummary = {
         },
       ],
     }),
-    tile({ id: 'critical_audit', status: 'neutral' }),
-    tile({ id: 'entitlements_mode', status: 'unavailable', headline: 'Could not check just now' }),
+    tile({ id: 'critical_audit', status: 'green' }),
+    tile({
+      id: 'entitlements_mode',
+      status: 'neutral',
+      headline: 'Shadow mode: Plans are checked and logged; nothing is blocked.',
+      figures: [{ label: 'Mode in effect', value: 'Shadow', exact: true, href: null, linkLabel: null, note: null }],
+      pageLink: { href: '/admin/business-os-tiers', text: 'Open Plans & entitlements (plans and account lookup)' },
+    }),
+    tile({ id: 'bos_ai_settings', status: 'unavailable', headline: 'Could not check just now' }),
     tile({ id: 'scheduled_jobs', status: 'not_measured', headline: 'Not measured yet', footnote: 'No page yet.' }),
   ],
 };
@@ -116,23 +126,62 @@ describe('the Health page', () => {
     const red = await screen.findByTestId('health-tile-bos_ai_failures');
     expect(within(red).getByTestId('headline').textContent).toBe('5+ AI failures in the last 24 hours');
     expect(within(red).getByTestId('status-label').textContent).toBe('Needs action');
-    expect(within(screen.getByTestId('health-tile-critical_audit')).getByTestId('status-label').textContent).toBe('Normal');
+    const green = screen.getByTestId('health-tile-critical_audit');
+    expect(within(green).getByTestId('status-label').textContent).toBe('Healthy');
+    expect(within(green).getByTestId('headline').textContent).toBe('All clear');
+    expect(within(screen.getByTestId('health-tile-entitlements_mode')).getByTestId('status-label').textContent).toBe(
+      'For information'
+    );
     expect(within(screen.getByTestId('health-tile-scheduled_jobs')).getByTestId('headline').textContent).toBe(
       'Not measured yet'
     );
   });
 
-  it('renders no green anywhere (C-10)', async () => {
+  it('renders green only on the tile the route sent as green (C-10R)', async () => {
     mockRoute();
+    render(<AdminHealthPage />);
+    await screen.findByTestId('health-tile-bos_ai_failures');
+    const sections = screen.getAllByRole('region');
+    expect(sections.length).toBe(SUMMARY.tiles.length);
+    for (const section of sections) {
+      const isGreen = section.getAttribute('data-status') === 'green';
+      expect(GREEN.test(section.outerHTML)).toBe(isGreen);
+    }
+  });
+
+  it('with no green tile in the summary, nothing on the page is green', async () => {
+    mockRoute({ success: true, data: { ...SUMMARY, tiles: SUMMARY.tiles.filter((t) => t.status !== 'green') } });
     const { container } = render(<AdminHealthPage />);
     await screen.findByTestId('health-tile-bos_ai_failures');
     expect(container.innerHTML).not.toMatch(GREEN);
   });
 
-  it('Normal, Not measured and Could not check look different (C-10)', () => {
+  it('green, For information, Not measured and Could not check all look different (C-10R)', () => {
     const cls = (s: keyof typeof STATUS_STYLES) => `${STATUS_STYLES[s].card} ${STATUS_STYLES[s].accent}`;
-    expect(new Set([cls('neutral'), cls('not_measured'), cls('unavailable')]).size).toBe(3);
-    for (const style of Object.values(STATUS_STYLES)) expect(`${style.card} ${style.accent}`).not.toMatch(GREEN);
+    expect(new Set([cls('green'), cls('neutral'), cls('not_measured'), cls('unavailable')]).size).toBe(4);
+    for (const [status, style] of Object.entries(STATUS_STYLES)) {
+      expect(GREEN.test(`${style.card} ${style.accent}`)).toBe(status === 'green');
+    }
+    expect(STATUS_STYLES.green.label).toBe('Healthy');
+    expect(STATUS_STYLES.neutral.label).toBe('For information');
+  });
+
+  it('the entitlements tile shows a visible link that says where it goes, and no number (RC-5.2)', async () => {
+    mockRoute();
+    render(<AdminHealthPage />);
+    const ent = await screen.findByTestId('health-tile-entitlements_mode');
+    const link = within(ent).getByTestId('page-link');
+    expect(link.textContent).toBe('Open Plans & entitlements (plans and account lookup)');
+    expect(link.getAttribute('href')).toBe('/admin/business-os-tiers');
+    expect(within(ent).getByText('Mode in effect')).toBeTruthy();
+    expect(ent.textContent).not.toMatch(/\d/);
+  });
+
+  it('a tile without a page link renders none', async () => {
+    mockRoute();
+    render(<AdminHealthPage />);
+    const red = await screen.findByTestId('health-tile-bos_ai_failures');
+    expect(within(red).queryByTestId('page-link')).toBeNull();
   });
 
   it('the not-measured tile has no link', async () => {
@@ -158,7 +207,7 @@ describe('the Health page', () => {
     expect(items[0]).toContain('5+ AI failures in the last 24 hours');
     expect(items[0]).toContain('failed AI actions in 24 h ≥ 5');
     expect(items[1]).toContain('AI failures in the last 24 hours');
-    expect(within(list).getByTestId('rule-otherwise').textContent).toBe('Otherwise: Normal.');
+    expect(within(list).getByTestId('rule-otherwise').textContent).toBe('Otherwise: green, "All clear".');
   });
 
   it('renders the closing line the route sent, and none when it sent none (SA code review 2)', async () => {

@@ -1,6 +1,8 @@
 /**
- * The Health evaluator (admin reorganisation slice 4, U-1): first match wins,
- * "Normal" when none does, no green, a lower bound is never Normal (C-18),
+ * The Health evaluator (admin reorganisation slice 4, U-1; slice 5 C-10R):
+ * first match wins, green "All clear" only when proven clear (C-10R), the
+ * entitlements mode "for information" and never green (OQ-9), a lower bound is
+ * never clear (C-18, over metrics AND figures),
  * comparisons need exact figures (C-2), a tile's rules see only its own metrics
  * (C-19), a bad list fails one tile and never throws (C-20), and every rule is
  * shown with a condition generated from itself (C-22).
@@ -15,20 +17,27 @@ import * as path from 'path';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import {
   AI_FAILED_ACTION,
+  ENTITLEMENTS_PAGE_LINK,
+  GREEN_ELIGIBLE,
+  GREEN_HEADLINE,
   LOWER_BOUND_HEADLINE,
-  NORMAL_HEADLINE,
+  MODE_WORDS,
   NOT_MEASURED_HEADLINE,
   OI_P1_NOTE,
-  OTHERWISE_NORMAL,
-  OTHERWISE_NORMAL_UNLESS_LOWER_BOUND,
+  OTHERWISE_GREEN,
+  OTHERWISE_GREEN_UNLESS_LOWER_BOUND,
+  OTHERWISE_INFORMATION,
   UNAVAILABLE_HEADLINE,
+  colourTile,
   describeCondition,
   evaluateHealth,
   firstMatchingRule,
   matchCondition,
+  type Completeness,
   type HealthInputs,
   type MetricValues,
   type FlagValues,
+  type TileMeasurement,
 } from '../evaluateHealth';
 import {
   HEALTH_RULES,
@@ -41,16 +50,16 @@ import {
   type MetricId,
 } from '../rules';
 import { computeHealthWindows, type Measured } from '../windows';
-import type { HealthTile, TileStatus } from '../healthTypes';
+import type { HealthFigure, HealthTile, TileStatus } from '../healthTypes';
 
 const W = computeHealthWindows(new Date('2026-09-26T10:30:00.000Z'));
-const STATUSES: TileStatus[] = ['red', 'amber', 'neutral', 'not_measured', 'unavailable'];
+const STATUSES: TileStatus[] = ['red', 'amber', 'green', 'neutral', 'not_measured', 'unavailable'];
 const MEASURED: MeasuredTileId[] = Object.keys(HEALTH_RULES) as MeasuredTileId[];
 
 const ex = (value: number): Measured => ({ value, exact: true });
 const lb = (value: number): Measured => ({ value, exact: false });
 
-/** Quiet, exact, all-zero inputs: every measured tile should read "Normal". */
+/** Quiet, exact, all-zero inputs: every eligible tile should read green "All clear". */
 function quietInputs(): HealthInputs {
   return {
     windows: W,
@@ -221,24 +230,55 @@ describe.each(allRules)('%s / %s', (tile, rule) => {
   });
 });
 
-describe('no match', () => {
-  it.each(MEASURED)('%s: quiet exact inputs → neutral "Normal"', (tile) => {
+const ELIGIBLE_MEASURED = MEASURED.filter((t) => GREEN_ELIGIBLE.has(t));
+
+describe('no match (C-10R)', () => {
+  it.each(ELIGIBLE_MEASURED)('%s: quiet exact inputs → green "All clear"', (tile) => {
     const shown = tileOf(evaluateHealth(quietInputs()), tile);
-    expect(shown.status).toBe('neutral');
-    expect(shown.headline).toBe(NORMAL_HEADLINE);
+    expect(shown.status).toBe('green');
+    expect(shown.headline).toBe(GREEN_HEADLINE);
     expect(shown.matchedRuleId).toBeNull();
   });
 
-  it('an empty rule list with exact inputs is Normal', () => {
+  it('the entitlements mode is never green: grey "for information", headline = the mode in words (OQ-9, FR-E1)', () => {
+    for (const effective of ['off', 'shadow', 'enforce'] as const) {
+      const inputs = quietInputs();
+      inputs.entitlements = { ok: true, value: { effective, refused: false } };
+      const shown = tileOf(evaluateHealth(inputs), 'entitlements_mode');
+      expect(shown.status).toBe('neutral');
+      expect(shown.headline).toBe(`${MODE_WORDS[effective].word} mode: ${MODE_WORDS[effective].meaning}`);
+    }
+  });
+
+  it('the shadow headline says what shadow means in plain words', () => {
+    const shown = tileOf(evaluateHealth(inputsFor('entitlements_mode', {})), 'entitlements_mode');
+    expect(shown.headline).toBe('Shadow mode: Plans are checked and logged; nothing is blocked.');
+  });
+
+  it('an empty rule list with exact inputs is green (eligible tile)', () => {
     const rules = { ...HEALTH_RULES, critical_audit: [] } as HealthRuleSet;
     const shown = tileOf(evaluateHealth(inputsFor('critical_audit', { critical24h: ex(9) }), { rules }), 'critical_audit');
-    expect(shown.status).toBe('neutral');
+    expect(shown.status).toBe('green');
+  });
+
+  it('GREEN_ELIGIBLE excludes the entitlements mode and includes every other tile', () => {
+    expect(GREEN_ELIGIBLE.has('entitlements_mode')).toBe(false);
+    for (const id of ['bos_ai_settings', 'bos_ai_failures', 'bos_ai_spend', 'critical_audit', 'scheduled_jobs', 'queues'] as const) {
+      expect(GREEN_ELIGIBLE.has(id)).toBe(true);
+    }
+  });
+
+  it('PR-1 pin (SC-7(f)): tiles 6 and 7 are eligible, and still "Not measured yet"', () => {
+    for (const id of ['scheduled_jobs', 'queues'] as const) {
+      expect(GREEN_ELIGIBLE.has(id)).toBe(true);
+      expect(tileOf(evaluateHealth(quietInputs()), id).status).toBe('not_measured');
+    }
   });
 });
 
 // ── C-18: a lower bound is never Normal ────────────────────────────────────
 
-describe('C-18: a lower bound is never Normal, whatever the rules say', () => {
+describe('C-18: a lower bound is never clear, whatever the rules say', () => {
   it('an EMPTY spend rule list plus a lower-bound figure → amber, fixed headline', () => {
     const rules = { ...HEALTH_RULES, bos_ai_spend: [] } as HealthRuleSet;
     const shown = tileOf(evaluateHealth(inputsFor('bos_ai_spend', { spend7d: lb(1) }), { rules }), 'bos_ai_spend');
@@ -250,11 +290,12 @@ describe('C-18: a lower bound is never Normal, whatever the rules say', () => {
     const shown = tileOf(evaluateHealth(inputsFor('bos_ai_spend', { spendPrev7d: lb(0.5) })), 'bos_ai_spend');
     expect(shown.status).toBe('amber');
     expect(shown.status).not.toBe('neutral');
+    expect(shown.status).not.toBe('green');
   });
 
   it('the figure keeps its "at least"', () => {
     const shown = tileOf(evaluateHealth(inputsFor('bos_ai_spend', { spend7d: lb(1.25) })), 'bos_ai_spend');
-    const week = shown.figures.find((f) => f.label === 'Last 7 days')!;
+    const week = shown.figures.find((f) => f.label === 'AI spend, last 7 days (USD)')!;
     expect(week.value).toContain('at least $1.25');
     expect(week.exact).toBe(false);
   });
@@ -340,10 +381,10 @@ describe('C-2: comparisons only on exact figures', () => {
   });
 });
 
-describe('the rule list\'s closing line never contradicts C-18 (SA code review 2)', () => {
+describe('the rule list\'s closing line never contradicts C-18 or C-10R (SA code review 2)', () => {
   it('the spend tile, which can carry a lower bound, says a minimum is amber', () => {
     const spend = tileOf(evaluateHealth(quietInputs()), 'bos_ai_spend');
-    expect(spend.otherwise).toBe(OTHERWISE_NORMAL_UNLESS_LOWER_BOUND);
+    expect(spend.otherwise).toBe(OTHERWISE_GREEN_UNLESS_LOWER_BOUND);
     expect(spend.otherwise).toContain(LOWER_BOUND_HEADLINE);
   });
 
@@ -354,15 +395,19 @@ describe('the rule list\'s closing line never contradicts C-18 (SA code review 2
     } as HealthRuleSet;
     const spend = tileOf(evaluateHealth(inputsFor('bos_ai_spend', { spend7d: lb(1) }), { rules }), 'bos_ai_spend');
     expect(spend.status).toBe('amber');
-    expect(spend.otherwise).toBe(OTHERWISE_NORMAL_UNLESS_LOWER_BOUND);
+    expect(spend.otherwise).toBe(OTHERWISE_GREEN_UNLESS_LOWER_BOUND);
   });
 
-  it.each(['bos_ai_settings', 'bos_ai_failures', 'critical_audit', 'entitlements_mode'])(
-    '%s (always exact) says plainly "Otherwise: Normal."',
+  it.each(['bos_ai_settings', 'bos_ai_failures', 'critical_audit'])(
+    '%s (always exact) says plainly that otherwise it is green',
     (id) => {
-      expect(tileOf(evaluateHealth(quietInputs()), id).otherwise).toBe(OTHERWISE_NORMAL);
+      expect(tileOf(evaluateHealth(quietInputs()), id).otherwise).toBe(OTHERWISE_GREEN);
     }
   );
+
+  it('the entitlements tile says it is never green', () => {
+    expect(tileOf(evaluateHealth(quietInputs()), 'entitlements_mode').otherwise).toBe(OTHERWISE_INFORMATION);
+  });
 
   it('tiles without rules have no closing line', () => {
     for (const id of ['scheduled_jobs', 'queues']) expect(tileOf(evaluateHealth(quietInputs()), id).otherwise).toBeNull();
@@ -405,7 +450,7 @@ describe('C-19 / C-20: invalid rule lists', () => {
     expect(reports).toHaveLength(1);
     expect(reports[0].tile).toBe('bos_ai_settings');
     for (const other of tiles.filter((t) => t.id !== 'bos_ai_settings' && t.id !== 'scheduled_jobs' && t.id !== 'queues')) {
-      expect(other.status).toBe('neutral');
+      expect(other.status).toBe(other.id === 'entitlements_mode' ? 'neutral' : 'green');
     }
   });
 });
@@ -414,7 +459,7 @@ describe('C-19 / C-20: invalid rule lists', () => {
 
 describe('failed reads and the not-measured tiles', () => {
   it.each(['settings', 'failures', 'spend', 'critical', 'entitlements'] as const)(
-    'a failed %s read → its tile is unavailable, never Normal',
+    'a failed %s read → its tile is unavailable, never green',
     (key) => {
       const inputs = quietInputs();
       (inputs as unknown as Record<string, unknown>)[key] = { ok: false };
@@ -450,6 +495,18 @@ describe('figures and links', () => {
       '/admin/audit-trail?action=BUSINESS_AI_ACTION_FAILED&date_from=2026-09-25T10%3A30&date_to=2026-09-26T10%3A30'
     );
     expect(day.linkLabel).toBe('Failed AI actions, last 24 hours: 3, open in audit trail');
+    expect(day.label).toBe('Failed AI actions, last 24 h');
+  });
+
+  it('every figure on every tile says what it is (RC-5.2, FR-E3): no bare "Last 24 h"', () => {
+    const inputs = quietInputs();
+    inputs.entitlements = { ok: true, value: { effective: 'shadow', refused: false } };
+    for (const tile of evaluateHealth(inputs)) {
+      for (const figure of tile.figures) {
+        expect(figure.label.trim().length).toBeGreaterThan(0);
+        expect(figure.label).not.toMatch(/^(Last 24 h|Last 7 days|Mode)$/);
+      }
+    }
   });
 
   it('the spend tile links to AI cost & usage with the exact ISO window', () => {
@@ -475,13 +532,59 @@ describe('figures and links', () => {
     expect(tile.figures[1].value).not.toContain('calls');
   });
 
-  it('the entitlements tile shows the mode, and the refused reason says where the requested value lives', () => {
+  it('the entitlements tile shows the mode in effect, and the refused reason says where the requested value lives', () => {
     let tile = tileOf(evaluateHealth(quietInputs()), 'entitlements_mode');
+    expect(tile.figures[0].label).toBe('Mode in effect');
     expect(tile.figures[0].value).toBe('Off');
-    expect(tile.headline).toBe(NORMAL_HEADLINE);
+    expect(tile.headline).toBe('Off mode: Plans are not checked.');
     tile = tileOf(evaluateHealth(inputsFor('entitlements_mode', {}, { entitlementEnforceRefused: true })), 'entitlements_mode');
     expect(tile.status).toBe('amber');
     expect(tile.figures[0].note).toMatch(/BOS_ENTITLEMENTS_MODE/);
+  });
+
+  it('the entitlements tile has a visible link that says where it goes, and no number (FR-E2, FR-E3)', () => {
+    for (const refused of [false, true]) {
+      const tile = tileOf(
+        evaluateHealth(inputsFor('entitlements_mode', {}, { entitlementEnforceRefused: refused })),
+        'entitlements_mode'
+      );
+      expect(tile.pageLink).toEqual(ENTITLEMENTS_PAGE_LINK);
+      expect(tile.pageLink?.text).toBe('Open Plans & entitlements (plans and account lookup)');
+      expect(tile.pageLink?.href).toBe('/admin/business-os-tiers');
+      expect(tile.figures[0].href).toBeNull();
+      const text = [tile.headline, tile.footnote, tile.pageLink?.text, ...tile.figures.flatMap((f) => [f.value, f.note])].join(' ');
+      expect(text).not.toMatch(/\d/);
+    }
+  });
+
+  it('the entitlements link stays when the read fails or the rule list is invalid (QA-3)', () => {
+    const inputs = quietInputs();
+    inputs.entitlements = { ok: false };
+    const failed = tileOf(evaluateHealth(inputs), 'entitlements_mode');
+    expect(failed.status).toBe('unavailable');
+    expect(failed.pageLink).toEqual(ENTITLEMENTS_PAGE_LINK);
+
+    const rules = { ...HEALTH_RULES, entitlements_mode: null } as unknown as HealthRuleSet;
+    const invalid = tileOf(evaluateHealth(quietInputs(), { rules, onRuleError: () => undefined }), 'entitlements_mode');
+    expect(invalid.status).toBe('unavailable');
+    expect(invalid.pageLink).toEqual(ENTITLEMENTS_PAGE_LINK);
+  });
+
+  it('no other tile carries a page link in PR-1, read or not', () => {
+    const failed = quietInputs();
+    failed.settings = { ok: false };
+    failed.failures = { ok: false };
+    failed.spend = { ok: false };
+    failed.critical = { ok: false };
+    for (const tile of evaluateHealth(failed).filter((t) => t.id !== 'entitlements_mode')) {
+      expect(tile.pageLink).toBeNull();
+    }
+  });
+
+  it('no other tile carries a page link in PR-1', () => {
+    for (const tile of evaluateHealth(quietInputs()).filter((t) => t.id !== 'entitlements_mode')) {
+      expect(tile.pageLink).toBeNull();
+    }
   });
 
   it('the settings tile carries area labels only', () => {
@@ -560,8 +663,18 @@ function randomInputs(r: () => number): HealthInputs {
   };
 }
 
-describe('C-10 / C-20 fuzz: random valid rule lists × random inputs', () => {
-  it('never throws, never leaves the status union, never reads a lower bound as Normal', () => {
+const READ_OF: Record<string, keyof HealthInputs | null> = {
+  bos_ai_settings: 'settings',
+  bos_ai_failures: 'failures',
+  bos_ai_spend: 'spend',
+  critical_audit: 'critical',
+  entitlements_mode: 'entitlements',
+  scheduled_jobs: null,
+  queues: null,
+};
+
+describe('C-10R / C-20 fuzz: random valid rule lists × random inputs', () => {
+  it('never throws, never leaves the status union, green if and only if proven clear', () => {
     const r = prng(20260926);
     for (let i = 0; i < 2000; i += 1) {
       const rules = r() > 0.2 ? randomRuleSet(r) : HEALTH_RULES;
@@ -573,16 +686,143 @@ describe('C-10 / C-20 fuzz: random valid rule lists × random inputs', () => {
       expect(tiles).toHaveLength(7);
       for (const tile of tiles) {
         expect(STATUSES).toContain(tile.status);
-        expect(tile.status as string).not.toBe('green');
+        // C-10R biconditional, end to end: green <=> eligible, read ok, no rule
+        // matched, every figure exact (for these five tiles, a figure is exact
+        // exactly when the metrics behind it are).
+        const key = READ_OF[tile.id];
+        const readOk = key ? (inputs[key] as { ok: boolean }).ok : false;
+        const provenClear =
+          GREEN_ELIGIBLE.has(tile.id) && key !== null && readOk && tile.matchedRuleId === null &&
+          tile.figures.every((f) => f.exact);
+        expect(tile.status === 'green').toBe(provenClear);
+        // "For information" only on a tile that may never be green (F-12, OQ-9).
+        if (tile.status === 'neutral') expect(tile.id).toBe('entitlements_mode');
       }
+      expect(tileOf(tiles, 'entitlements_mode').status).not.toBe('green');
       const spend = tileOf(tiles, 'bos_ai_spend');
       if (inputs.spend.ok) {
         const s = inputs.spend.value.sums;
         if ([s.spend24h, s.spendPrev24h, s.spend7d, s.spendPrev7d].some((m) => !m.exact)) {
           expect(spend.status).not.toBe('neutral');
+          expect(spend.status).not.toBe('green');
         }
       }
     }
+  });
+});
+
+function randomFigure(r: () => number): HealthFigure {
+  return { label: 'A figure', value: '1', exact: r() > 0.3, href: null, linkLabel: null, note: null };
+}
+
+function randomMeasurement(tile: MeasuredTileId, r: () => number): TileMeasurement | null {
+  if (r() < 0.1) return null; // the read failed
+  const metrics: MetricValues = {};
+  // Metric exactness, figure exactness and completeness vary INDEPENDENTLY (SC-7(d)).
+  for (const id of TILE_VOCABULARY[tile].metrics) metrics[id] = randomMeasured(r);
+  const flags: FlagValues = {};
+  for (const id of TILE_VOCABULARY[tile].flags) flags[id] = r() > 0.7;
+  const completeness: Completeness = (['complete', 'complete', 'not_measured', 'partial'] as const)[Math.floor(r() * 4)];
+  return {
+    metrics,
+    flags,
+    figures: Array.from({ length: 1 + Math.floor(r() * 3) }, () => randomFigure(r)),
+    footnote: null,
+    completeness,
+  };
+}
+
+describe('C-10R biconditional at the tile level (SC-7(d)): completeness and figure exactness vary independently', () => {
+  it('status === "green" <=> eligible, valid list, read ok, no match, complete, every metric and figure exact', () => {
+    const r = prng(20260927);
+    for (let i = 0; i < 4000; i += 1) {
+      const tile = MEASURED[Math.floor(r() * MEASURED.length)];
+      const rules = (r() > 0.2 ? randomRuleSet(r) : HEALTH_RULES)[tile] as readonly HealthRule<MetricId, FlagId>[];
+      const measurement = randomMeasurement(tile, r);
+      const shown = colourTile(tile, rules, measurement);
+
+      const noMatch = measurement !== null && firstMatchingRule(rules, measurement.metrics, measurement.flags) === null;
+      const allExact =
+        measurement !== null &&
+        Object.values(measurement.metrics).every((m) => m?.exact !== false) &&
+        measurement.figures.every((f) => f.exact);
+      const expectedGreen =
+        GREEN_ELIGIBLE.has(tile) && measurement !== null && noMatch && measurement.completeness === 'complete' && allExact;
+
+      expect(STATUSES).toContain(shown.status);
+      expect(shown.status === 'green').toBe(expectedGreen);
+      if (shown.status === 'neutral') expect(tile).toBe('entitlements_mode');
+      // Inexact or incomplete never reaches green or "for information".
+      if (measurement && (!allExact || measurement.completeness !== 'complete')) {
+        expect(['green', 'neutral']).not.toContain(shown.status);
+      }
+    }
+  });
+});
+
+describe('C-10R direct cases (SC-7(e))', () => {
+  const exactFigure: HealthFigure = { label: 'X', value: '0', exact: true, href: null, linkLabel: null, note: null };
+  const measurement = (over: Partial<TileMeasurement>): TileMeasurement => ({
+    metrics: { critical24h: ex(0) },
+    flags: {},
+    figures: [exactFigure],
+    footnote: null,
+    completeness: 'complete',
+    ...over,
+  });
+
+  it('exact metrics but an inexact figure → not green', () => {
+    const shown = colourTile('critical_audit', HEALTH_RULES.critical_audit, measurement({ figures: [{ ...exactFigure, exact: false }] }));
+    expect(shown.status).not.toBe('green');
+    expect(shown.status).toBe('unavailable');
+  });
+
+  it('an inexact figure on the spend tile → amber (C-18 now covers figures too)', () => {
+    const shown = colourTile(
+      'bos_ai_spend',
+      [],
+      measurement({
+        metrics: { spend24h: ex(0), spendPrev24h: ex(0), spend7d: ex(0), spendPrev7d: ex(0) },
+        figures: [{ ...exactFigure, exact: false }],
+      })
+    );
+    expect(shown.status).toBe('amber');
+    expect(shown.headline).toBe(LOWER_BOUND_HEADLINE);
+  });
+
+  it("completeness 'partial' with everything exact → unavailable", () => {
+    const shown = colourTile('critical_audit', HEALTH_RULES.critical_audit, measurement({ completeness: 'partial' }));
+    expect(shown.status).toBe('unavailable');
+    expect(shown.headline).toBe(UNAVAILABLE_HEADLINE);
+  });
+
+  it("completeness 'not_measured' with no match → not_measured", () => {
+    const shown = colourTile('critical_audit', HEALTH_RULES.critical_audit, measurement({ completeness: 'not_measured' }));
+    expect(shown.status).toBe('not_measured');
+    expect(shown.headline).toBe(NOT_MEASURED_HEADLINE);
+  });
+
+  it('a matching rule still wins over an incomplete measurement (a proven problem is shown)', () => {
+    const shown = colourTile('critical_audit', HEALTH_RULES.critical_audit, measurement({ metrics: { critical24h: ex(3) }, completeness: 'partial' }));
+    expect(shown.status).toBe('amber');
+  });
+
+  it('complete and exact → green only on an eligible tile', () => {
+    expect(colourTile('critical_audit', HEALTH_RULES.critical_audit, measurement({})).status).toBe('green');
+    const ent = colourTile('entitlements_mode', HEALTH_RULES.entitlements_mode, measurement({ metrics: {}, flags: { entitlementEnforceRefused: false } }));
+    expect(ent.status).toBe('neutral');
+  });
+});
+
+describe('eligibility is code, not data (SC-7(c))', () => {
+  const rulesCode = fs
+    .readFileSync(path.join(process.cwd(), 'lib/admin/health/rules.ts'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+  it('rules.ts holds no eligibility list and no green', () => {
+    expect(rulesCode).not.toMatch(/ELIGIBLE/i);
+    expect(rulesCode).not.toMatch(/green/i);
   });
 });
 
