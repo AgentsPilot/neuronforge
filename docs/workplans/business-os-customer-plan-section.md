@@ -123,7 +123,139 @@ One boundary note: `PlanSection.tsx` imports `@/lib/business-os/LanguageContext`
 
 ## 3. QA Testing Report
 
-_QA will populate this section._
+**QA - 2026-09-27, snapshot 14:14**
+**Test mode:** full, on the **uncommitted** tree
+**Strategy used:** mutation first - 12 mutations against the claims, plus a payload-identity proof for the extraction and four probes (the three no-plan states, a per-capability dump, and three plan shapes that do not exist yet). Reading only where a mutation could not settle it.
+**Safety:** the tree was **not committed**, so `git checkout --` was never used. Every target was copied to a backup **outside the repo**, the copy asserted non-empty **and byte-identical** before any edit, and restored from that copy with `cmp -s` verifying each restore. The harness aborts rather than proceeds if a backup or a restore fails. Final state verified: Dev's working set intact.
+
+> **Dev was editing throughout.** `route.ts` gained `resolveAccountId` at 14:07, `enforcementPoints.test.ts` was fixed at 14:12, and three more files changed after my first survey. **Everything below is pinned to the 14:14 snapshot** and was re-verified against the files as they then stood. One consequence needs Dev's eye - QA-5.
+
+### Verdict
+
+**PASS with two findings worth fixing and three notes.** The extraction is provably behaviour-preserving, tenant isolation is structural, chat suppression is the best-defended thing in the slice, and the downgrade-as-upgrade fix generalises to plan shapes that do not exist yet. Dev's confessed vacuity is fixed, and the fix measures exactly as claimed.
+
+### 1. The extraction - proven, not inferred
+
+Rather than trust *the admin's 152 tests stayed green*, I ran the **pre-extraction module and the current one side by side**. A verbatim copy of `adminPlansView.ts` from `609635ff` was dropped in beside the new one as a **new** file (nothing existing was touched) and both payloads deep-compared:
+
+| Check | Result |
+|---|---|
+| `JSON.stringify` equality at `mode=off` / `shadow` / `enforce` | **identical in all three** |
+| Size of what was compared | 4 plans, **152 capability rows**, 10 `notBuilt`, 9 `withheldWithoutGate` |
+| Non-vacuity: one sentence changed in the HEAD copy | **3 of 4 comparisons failed** |
+
+**The admin screen says exactly what it said before.** Both scratch files were deleted and `git status` returned to Dev's set.
+
+### 2. Tenant isolation
+
+`getUser()` resolves the session from **cookies only**, verified server-side by `supabase.auth.getUser()` - not from a header, not from a body - so the identity cannot be spoofed. `requireAdmin`'s absence is deliberate, documented, and right: this is a customer route and the admin endpoints are untouched. The handler takes no input; the id reaches `getSnapshot` through `resolveAccountId(user.id)`.
+
+| Mutation | Result |
+|---|---|
+| **T1** the route reads `?accountId=` and ignores it | **1 failed** - the source guard bites |
+| **T2** the route **resolves** `?accountId=` - the real leak | **2 failed** |
+| **T3** an `x-user-id` header fallback when there is no session | **11 passed - NOT CAUGHT** - QA-1 |
+
+### 3. Chat suppression
+
+| Mutation | Result |
+|---|---|
+| **C1** the `chat.` clause commented out | **10 of 54 failed** across the four new suites |
+| **C2** the `not_built` clause commented out | 1 of 43 failed |
+
+C1 is very well defended, and the fifth door I went looking for is already shut: `customerPlanView.chat.test.ts:86` serialises the **whole payload** per plan and asserts `not.toMatch(/chat/i)` **and** that the Hebrew label is absent, so an id, an English label and the Hebrew label are all covered - including inside `nextPlanUp`. I confirmed by probe that the three **no-plan payloads** carry no chat word either. C2's single failure is not a weakness: a `not_built` capability is never `granting`, so it cannot reach `included` or `adds` even unfiltered, and the one failing test is the rule-level one - the right place for it.
+
+### 4. The downgrade-as-upgrade defect
+
+Fixed, and fixed generically: `buildUpgrade` ranks `comparableAmount` off **both resolutions** and refuses when either side is unrankable or `nextAmount <= mineAmount`, and `nextPlanUp` is nulled entirely when nothing genuine remains. Measured on the real config: **champion gives `nextPlanUp: null`** (a Founding Partner is no longer offered a $79 downgrade); trial improves 2; basic improves 1 (`ai.actions 500 -> 2,000`).
+
+On **plan shapes that do not exist yet**, built by cloning the config and editing the matrix:
+
+| Synthetic shape | Result |
+|---|---|
+| next plan worse at everything | `nextPlanUp: null` - the section disappears |
+| unrankable variant differences (unbranded to branded, ai to manual) | improvements claimed: **none**; section disappears |
+| equal amount, different rendering (`1 seat` to `1 seat, more purchasable`) | claimed: **none** |
+
+| Mutation | Result |
+|---|---|
+| **D1** any rendered difference is an improvement again | **3 failed** |
+| **D2** unrankable values rank as `0` instead of `null` | 36 passed - **not caught**, QA-3 |
+| **D3** an equal amount counts as an improvement | 36 passed - **not caught**, QA-3 |
+
+### 5. Dev's confession, measured
+
+Verified exactly. Emptying `included` server-side fails **4 of the 16** render tests - Dev's claim of 1-of-15 to 4-of-16 - and 8 of 54 across the four new suites. Both halves of the fix are real: `expect(payload.included.length).toBeGreaterThanOrEqual(3)` **before** the loop, and `getByRole('list', { name: /What your plan includes/i })` in place of `getAllByRole('list')[0]`, with both lists in the component now carrying distinct `aria-label`s.
+
+**The same shape in the other three suites:** `customerPlanView.chat.test.ts` loops a 4-element literal and has a non-vacuity leg for the catalog's chat entries - safe. `route.test.ts` has non-vacuity legs on both the comment stripper and the handler-export test - safe, and the stripper leg is the one I would otherwise have asked for. `customerPlanView.test.ts:183` is the one to note - QA-4.
+
+### 6. The three no-plan states, and `not_built`
+
+| State | What the customer gets |
+|---|---|
+| read failed (`unavailable`) | *We could not load your plan just now. Nothing has changed about your account - please try again shortly.* |
+| no plan record (null resolution) | *We do not have a plan record for this account yet. Everything keeps working; get in touch if this stays here.* |
+| `basis: none` | the same sentence, `status: no_plan_record` |
+
+None renders as *your plan includes nothing*, the failed read is distinguishable from the missing record (the S-0 lesson, one product over), and the component adds a fourth guard: an empty `included` renders *We could not list your features just now. Nothing has been removed from your account.* rather than an empty list. **No `not_built` capability appears anywhere** - verified against live payloads and held by a test that has a non-vacuity leg.
+
+### Findings
+
+**QA-1 - The source guard forbids the query string and the body, but not the header - the one door this repo has actually been breached through.** Severity: **Medium**
+
+- File: `app/api/business-os/entitlements/my-plan/__tests__/route.test.ts:139-157`
+- It asserts the route source contains no `searchParams`, no `request.json()` and no `params`. It says nothing about `request.headers.get(...)`. I replaced the gate with a fallback that reads `x-user-id` when there is no session - a complete authentication bypass **and** a cross-tenant read - and **all 11 tests passed**, against the route as it stands at 14:12. The behavioural tests try a query string and a body; neither sends a header.
+- The code today is correct, so this is not a live vulnerability. It is a missing assertion on the **highest-risk regression path**: `x-user-id` / body-`userId` is this repo's known IDOR class (the sweep behind PRs #80 / #82 / #86), and this is the first entitlement data a non-admin can see. A guard whose stated purpose is *the day somebody adds `?accountId=` the test fails rather than the customer* should cover the id source that has already gone wrong here.
+- **Fix, two lines**, in the shape already used: a `not.toMatch` on `headers.get('x-user-id')` in the source guard, plus one behavioural test that sends the header and asserts the asked-for account is still the session's.
+
+**QA-2 - `nothingToShow` can never be shown.** Severity: Low
+
+- `lib/business-os/entitlements/customerPlanView.ts:255` sets it, `:359` discards it, `components/business-os/settings/PlanSection.tsx:201` renders it.
+- It is non-null exactly when `adds.length === 0 && improves.length === 0`; `nextPlanUp` is kept exactly when `adds.length > 0 || improves.length > 0`. The conditions are complements, so whenever the sentence is set the object carrying it is dropped. The field is **unreachable** and so is the paragraph that renders it.
+- It matters because the doc comment says it exists so *this plan adds nothing* and *we could not work it out* do not look the same - a distinction the screen cannot draw, while a reader of the type will believe it can. Either keep `nextPlanUp` so the sentence can do its job, or delete the field, the branch and its `toBeNull()` assertion.
+
+**QA-3 - The two clauses that keep the comparison conservative are not pinned.** Severity: Low
+
+- `lib/business-os/entitlements/customerPlanView.ts:243`. **D2**: making `comparableAmount` return `0` rather than `null` for an unrankable value is not caught - inert today only because `0 <= 0` keeps it silent, so it is safe by accident rather than by assertion. **D3**: changing `<=` to `<` is not caught, because an equal-and-identically-rendered pair is already skipped earlier.
+- Neither is a defect. Both are the guarantee Dev correctly describes as *say nothing when there is nothing to rank*, unheld by a test. My three synthetic-config probes are the vehicle - they run through `buildCustomerPlanView({ config })` with no source change, and two of them fail under D2.
+
+**QA-4 - One test named for the champion defect can silently check nothing.** Severity: Low
+
+- `lib/business-os/entitlements/__tests__/customerPlanView.test.ts:183-196` does `if (!upgrade) continue;` then loops `upgrade.improves`. Today three of four plans contribute so the loop runs - but if a regression nulled every `nextPlanUp` this test would pass having examined zero pairs, and it is the one the suite offers as *the general form of the champion defect*. Neighbours at `:146` and `:172` do assert `nextPlanUp` is non-null for trial and basic, so the property is protected; the named guardian is the part that can go quiet. A counter plus an assertion that it is above zero closes it.
+
+**QA-5 - I mutated and restored a file Dev was editing; please confirm the route.** Severity: note, needs Dev
+
+- I took a fresh byte-verified copy of `route.ts` at about 14:12, mutated it for T3, and restored it. Dev was editing in that window. The restored file is **4340 bytes, md5 `97379c6ab388`, three `resolveAccountId` occurrences**, and every guard pinning its content is green - `route.test.ts` asserts `resolveAccountId(user.id)`, `getSnapshot(accountId)` and *not* `getSnapshot(user.id)`, and the `enforcementPoints` exemption matches its import set. Strong evidence it is Dev's latest, not proof. One look settles it.
+
+**Closed while I watched:** at 14:11 `enforcementPoints.test.ts` was **red** - the route had gained a `resolveAccountId` import while its exemption listed only two symbols. Dev fixed the exemption at 14:12. Worth recording because the guard that caught it is the import allow-list added after the S-0 round found the chat-v4 denylist hole: it did exactly the job it was built for, on the first new file to reach the module from outside.
+
+### Would a customer be misled by anything on the screen?
+
+**No - with one consequence of the FR-46 decision the user should know is deliberate.**
+
+Everything rendered is true: the plan name, the price, the 19 capabilities, the ending sentence, and the free-plan notice that a paid plan is normal and will be announced first. A Founding Partner is no longer shown a cheaper plan as an upgrade. The three failure states each say something distinct and reassuring.
+
+The consequence: because chat cannot be mentioned until S-2, **the upsell understates Autopilot**. An Essentials customer sees *Autopilot - $129 a month: AI actions 500 per month becomes 2,000 per month* and nothing else, because the nine chat capabilities are the rest of the difference and are suppressed. That is the honest choice - the alternative is telling them their plan excludes chat while chat works - but the screen invites *why would I pay $50 more for that?* and has no answer. It understates and never overstates, which is the safe direction, and it resolves itself when S-2 makes the claim true.
+
+### Numbers
+
+| Check | Result |
+|---|---|
+| Scope (entitlements, repositories, both `business-os` API trees, `components/business-os`, the admin tiers screen) | **74 suites / 1,377 tests, 0 failures** at the 14:14 snapshot |
+| The four new suites | **54 tests**, green at baseline and after every restore |
+| ESLint over the touched paths | **0 errors**, 7 pre-existing warnings (`InvoiceSettingsSection.tsx` and neighbours, not this slice) |
+| `tsc --noEmit`, verified method | **2,069 - down 8**, exactly as Dev reported, and **zero in any touched file** |
+| Mutations | **12 applied, 9 caught, 3 not** (T3 to QA-1, D2/D3 to QA-3); every file restored byte-identical |
+
+### Anything needing the user
+
+**QA-1 before commit** - two lines, and it closes the identity door this repo has already been through once. **QA-5** is a one-look confirmation from Dev. Everything else is a follow-up.
+
+### Final Status
+
+- [x] **Ready for the user's code review.** The extraction is provably invisible to the admin screen, isolation is structural, chat is silent through five doors, and no plan shape I could invent produces a misleading offer.
+- [ ] **QA-1 first** - the header assertion. QA-2 to QA-4 are small and can follow.
+
 
 ---
 
@@ -132,3 +264,4 @@ _QA will populate this section._
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-09-27 | Created, with the SA review | Short-path UI slice, so there is no Dev workplan; this document is the review record. SA: approved for QA with P-1 (the account seam bypassed a second time — fix the guard, not just the call) and P-2 (the upgrade comparison ranks a one-off allowance against a monthly rate). Extraction verified function-by-function against the pre-change source rather than on the test count: two byte-identical, four semantically identical, one laxity noted (P-3). Endorsed the no-Zod argument on a no-input handler, the recorded absence of `requireAdmin`, "say nothing" about chat as the right shape by audience, both guard handlings, and English-for-now with a line drawn at the buy step. |
+| 2026-09-27 | QA round 1: PASS with two findings worth fixing (QA) | Added section 3. Twelve mutations, nine caught. The extraction is proven behaviour-preserving by running the pre-extraction module beside the new one and deep-comparing the admin payload - identical in all three modes over 152 capability rows, with a non-vacuity leg. Chat suppression fails 10 of 54 when the clause is removed, and the serialised-payload sweep already covers the fifth door including the Hebrew label. The downgrade fix holds on three plan shapes that do not exist yet. Dev's confessed vacuity measured exactly: 4 of 16 render tests. **QA-1 (Medium):** the source guard forbids the query string and the body but not `request.headers.get`, so an `x-user-id` authentication bypass passes all 11 route tests - this repo's known IDOR class. **QA-2..QA-4 (Low):** `nothingToShow` is unreachable; the two conservative comparison clauses are unpinned; one test named for the champion defect can examine zero pairs. 74 suites / 1,377 tests, lint 0 errors, tsc 2,069 (down 8) with zero in touched files. |
