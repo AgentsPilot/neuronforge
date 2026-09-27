@@ -495,6 +495,140 @@ Three things a reader should know are deliberate, all of them recorded in the co
 - [x] **Ready for the user's code review.** The reversal is clean, the flags are required and coherent, the champion flip was re-pointed honestly and verified at the resolver, and the extraction remains invisible to the admin screen.
 - [ ] **QA-6 first.** QA-7 (the allow-list) next, since it is the same lesson this module already learned once.
 
+---
+
+### Round 3 — the three UI refinements
+
+**QA - 2026-09-27, round 3**
+**Test mode:** full regression on the three refinements, plus re-runs of everything this round could have broken
+**Strategy used:** mutation first - 12 mutations, plus three read-only probes over the real config.
+**Safety:** the tree is **still uncommitted**, so `git checkout --` was again never used. `planBadge.ts`, `customerPlanView.ts` and `app/business-os/layout.tsx` were copied outside the repo, each copy asserted non-empty **and** `cmp`-identical before any edit, and restored from that copy with `cmp` verifying every restore. Baseline and final both **103/103**; all three files byte-identical afterwards.
+
+### Verdict
+
+**PASS with one finding worth fixing and one note.** The pill's *decision* is well defended and the grouping is exactly-once with no capability dropped or duplicated. The gap is one layer out: the function in the layout that calls the decision - the part that touches the session, the seam and the `try/catch` - has **no test at all**, so all three of its stated guarantees are unpinned.
+
+Two things from earlier rounds landed, and one of them paid for itself immediately:
+
+- **Round 2's QA-7 fix earned its keep in a week.** The exclusion denylist became an exact key-set allow-list at three nesting levels, and it is what caught Dev's own sort-key leak: the failing test on mutation **G4** is *"carries no field that could hold an exclusion list, WHATEVER it is called"*. The leak was not an exclusion field at all - which is the point of an allow-list.
+- **Round 2's champion-parity question was answered structurally.** `CHAMPION_VALUES['ai.actions']` now **reads** `TIER_MATRIX.tiers[CHAMPION_BASE_TIER]['ai.actions']` rather than pinning a number, so a champion resolves `{ perMonth: 2000 }`, is offered no upgrade, and the pill's *"Everything included"* is now **true**. Deriving beats hardcoding 2,000: it cannot drift when Autopilot's allowance changes.
+
+### 1. The pill
+
+| Mutation | Result |
+|---|---|
+| **P1** decided from the stored cohort **string** instead of the resolution | **2 failed** - exactly the two Dev claimed |
+| **P2** a lapsed champion keeps the pill (`state` check dropped) | **3 failed** |
+| **P3** the label hardcoded instead of read from config | **10 passed - NOT CAUGHT** - QA-11 |
+| **P4** the layout's `catch` renders a fallback label instead of nothing | **29 passed - NOT CAUGHT** - QA-10 |
+| **P5** the layout stops checking the session (id becomes `'anonymous'`) | **29 passed - NOT CAUGHT** - QA-10 |
+
+Verified by probe on the real config: the pill appears for `champion` only - `trial`, `basic` and `pro` all get **none**, and `planBadgeFor(null)` is `null`. The decision reads `resolution.state !== 'champion'`, so a lapsed champion loses it by construction and P2 confirms a test holds that.
+
+**The boundary is clean.** `planBadge.ts` is `server-only` and imported by exactly one file (the layout); `PlanBadgePill.tsx` imports only `next/link`, so nothing server-side crosses into the client bundle. `BusinessOSHeader` takes `planBadge` with a `= null` default, so a caller that forgets it renders nothing - the safe direction. The layout resolves `resolveAccountId(user.id)` from the cookie-verified session with no input of its own, so it **cannot** be asked about another account; `enforcementPoints.test.ts` records the new importer with an honest symbol list (`getEntitlementService`, `planBadgeFor`, `resolveAccountId`, `type PlanBadge`).
+
+### 2. The ending line
+
+| Mutation | Result |
+|---|---|
+| **E1** the broad condition is back (a note alone suppresses) | **4 failed** |
+| **E2** no suppression at all - the redundancy returns | **2 failed** |
+
+Measured per plan, which is the only way to see that the narrowing is right:
+
+| Plan | `endsWhen` | `whenThisChanges` |
+|---|---|---|
+| `champion` | **null** (suppressed) | set |
+| `trial` | **"14 days from the first onboarding message…"** - kept | set |
+| `basic` / `pro` | "While the plan is paid for…" - kept | null |
+
+So the sentence the first, broader rule killed is back and pinned, and the one genuinely redundant case is the only one suppressed. *"Every plan is told SOMETHING about its ending"* (`customerPlanView.test.ts:608`) **cannot pass vacuously**: the plan list is a literal, the loop always runs four times, and `expect(view.endsWhen ?? view.whenThisChanges).toBeTruthy()` fails on a null/null pair.
+
+### 3. The allow-list after nesting
+
+This is the third time in this project a structural rule met a shape change, and this time the rule won. The exact key-set is asserted at **three** levels - `VIEW_KEYS`, `ROW_KEYS`, `FEATURE_KEYS`, plus `UPGRADE_KEYS` - with two negative controls: `withheldHere: []` at row level (`noExclusions.test.ts:179`) and an extra field at view level (`:187`), both asserting the comparison **does** reject. G4 proves it bites on a real leak.
+
+### 4. Grouping
+
+Probed over the real config, all four plans:
+
+| Plan | rows | capabilities | duplicates | unique |
+|---|---|---|---|---|
+| `champion` | 9 | 28 | **none** | 28 |
+| `trial` | 9 | 19 | **none** | 19 |
+| `basic` | 9 | 19 | **none** | 19 |
+| `pro` | 9 | 28 | **none** | 28 |
+
+| Mutation | Result |
+|---|---|
+| **G1** one capability silently dropped while grouping | **7 failed** |
+| **G2** one capability lands in **two** rows | **1 failed** |
+| **G3** the nested-bracket fix reverted | **1 failed** |
+| **G4** the sort key leaks back into the payload | **1 failed** |
+| **G5** the `yes` suppression dropped | **2 failed** |
+
+Exactly-once is held by an **exact count** rather than a floor - `capabilityIdsOf(view.included)).toHaveLength(visibleCapabilities.length)` (`customerPlanView.test.ts:97`) - which is why both a drop and a duplicate fail. An **unknown** catalog category is kept rather than dropped: it renders with its raw id as the label, carries exactly the four allowed keys, and sorts last. The *"every category in the CATALOG has a customer-facing name"* test is non-vacuous - empty the presentation table and every label equals its id, so the assertion reports the full list. `nextPlanUp.adds` is grouped too, and preserves what the flat list said: nine chat capabilities became one `AI assistant` row with nine features inside it.
+
+### 5. Re-runs
+
+| Check | Result |
+|---|---|
+| The admin extraction equivalence | **not reachable by this round**: `adminPlansView.ts`, `planPresentation.ts`, `capabilityDisplay.ts` and all of `config/` are **untouched** on this branch, so the admin payload cannot have moved - and the admin suites are green |
+| The contract tests (real page against real server output) | green, and they are what G1/G3/G5 fail in |
+| The three no-plan states | all three still distinct: 13 keys, `included: 0`, no pill, no ending sentence, a `problem` sentence instead |
+| Tenant isolation | unchanged and now in two places: the route takes no input, and the layout resolves only `resolveAccountId(user.id)` from the session |
+
+### 6. The two fixes Dev made in passing
+
+**Neither hid anything - both are pinned.** The nested-bracket fix has its own assertion (`customerPlanView.test.ts:643-655` asserts `Email volume 10,000 per month (alerts, never blocks)` **and** `not.toMatch(/\(\d[\d,]* per month \(/)`), and reverting it fails (G3). The sort-key removal is caught by the allow-list (G4). Both fixes added coverage rather than relaxing it.
+
+### Findings
+
+**QA-10 - `readPlanBadge()` is untested, so none of the three guarantees the pill's safety rests on is pinned.** Severity: **Medium**
+
+- File: `app/business-os/layout.tsx:44-60`
+- Two mutations pass with **29/29 green**: replacing the `catch`'s `return null` with `{ label: 'Founding Partner', title: 'Plan unavailable', … }` (**P4**), and dropping the session check so the account id becomes the literal `'anonymous'` (**P5**). The only thing that references the layout in any test is `enforcementPoints.test.ts`, which checks **which symbols it imports**, not what it does with them.
+- `planBadge.ts` is well covered - ten tests, including the lapsed champion and *"the stored cohort is not what decides it"*. The untested part is the **caller**, and the caller is where all three claims live: *"every failure - no session, an unreadable plan, a thrown error - returns `null`"*, and *"through the account seam, like every other caller"*. The doc comment is the only thing holding them.
+- It renders on the chrome of every screen, which is why this is the one to fix rather than note. **Fix:** export `readPlanBadge` and give it three cases - no session, a throwing service, and a champion - asserting `null`, `null`, and a label. It is already a separate function whose only impurity is two awaits.
+
+**QA-11 - The pill's label provenance is unpinned.** Severity: Low
+
+- File: `lib/business-os/entitlements/planBadge.ts:81`
+- Replacing `planLabel(config, basis.cohort)` with the literal `'Founding Partner'` passes all ten tests, because the config's label happens to be that string today. The interface comment says *"the customer-facing plan name, from config - never an internal id"*, and that is the one property of the label nothing holds.
+- `planBadgeFor` already accepts `config` as its second parameter, so this is two lines: call it with a config whose champion label is renamed and assert the pill follows.
+
+**Note - the 30 s input cache, and the single case where a stale pill is wrong.** The module argues staleness is harmless because *"a champion's state is open-ended, so a stale champion pill says the same thing it said when it rendered"*. That holds except in the one transition that matters: when a champion's access **lapses**, the pill keeps saying *Founding Partner* for up to the `EntitlementService` 30 s input-cache window plus whatever the router cache holds on soft navigations. It is small, admin-initiated, and errs toward generosity rather than alarm - worth a sentence in the module rather than a change, so the next reader does not have to rediscover it.
+
+**Note - six lint errors next door, not from this slice.** `components/business-os/ConfigurationDialog.tsx` has six `react/jsx-no-duplicate-props` **errors** (lines 1155-1276). The file is **untouched** by this branch, so Dev's "0 errors" over the touched set is accurate - recorded only because it is in the same directory and someone widening the lint scope will meet them.
+
+### Could a customer be shown something untrue?
+
+**No, and this round closed the last thing that came near it.** With parity landed, a Founding Partner resolves `{ perMonth: 2000 }` - the same allowance as Autopilot - so the pill's *"Everything included, free, with no end date"* is true of capabilities **and** of quantities, and the screen no longer offers them an upgrade. That combination was the one internally inconsistent pair I would have raised: a chrome pill saying *everything included* on every screen while the settings page offered a plan with more.
+
+Three things remain deliberate and are recorded in code rather than left to be found: a trial gets **no pill** by decision (a countdown is a banner's job, and a layout that stays mounted would show yesterday's number); neither plan is buyable and every priced plan says so; and the accepted FR-46 inaccuracy is still asserted in `noExclusions.test.ts` rather than trusted. The grouped list cannot show a capability twice or lose one, and an unnamed future category shows its raw id rather than vanishing.
+
+The residual risk is QA-10's shape, not its content: nothing a customer sees today is wrong, but the code that decides whether to show them anything at all has no test to stop the next edit making it wrong.
+
+### Numbers
+
+| Check | Result |
+|---|---|
+| Scope (entitlements, repositories, both `business-os` API trees, `components/business-os`, both settings pages, the admin tiers screen) | **84 suites / 1,552 tests**, 1 suite red: `app/api/business-os/chat-v4/__tests__/route.audit.test.ts`, which is **inherited** - a deliberate `throw` in a mock kills the worker, the route and its test are untouched by this branch, and it was already red in the S-0 round |
+| The five customer and pill suites | **103 tests**, green at baseline and after every restore |
+| ESLint over the touched paths | **0 errors in any touched file**; 6 pre-existing errors and 152 warnings elsewhere under `components/business-os` |
+| `tsc --noEmit`, verified method | **2,099**, **zero in any touched file** - matching Dev, and the baseline move is other merges rather than this work |
+| Mutations | **12 applied, 9 caught, 3 not** (P3 to QA-11, P4/P5 to QA-10); every file restored byte-identical |
+
+### Anything needing the user
+
+Nothing to decide. **QA-10 before commit** - three cases for `readPlanBadge`, on the one piece of this feature that renders on every screen. QA-11 is two lines and can follow.
+
+### Final Status — round 3
+
+- [x] **Ready for the user's code review.** The pill cannot be decided from a stale string, a lapsed champion loses it, the grouping is exactly-once, the trial keeps its deadline, and the allow-list held through a shape change - catching a real leak in the process.
+- [ ] **QA-10 first**, then QA-11.
+
+
 
 ---
 
@@ -561,3 +695,4 @@ A sweep of the whole tree for stray control characters found **one other file**,
 | 2026-09-27 | QA round 1: PASS with two findings worth fixing (QA) | Added section 3. Twelve mutations, nine caught. The extraction is proven behaviour-preserving by running the pre-extraction module beside the new one and deep-comparing the admin payload - identical in all three modes over 152 capability rows, with a non-vacuity leg. Chat suppression fails 10 of 54 when the clause is removed, and the serialised-payload sweep already covers the fifth door including the Hebrew label. The downgrade fix holds on three plan shapes that do not exist yet. Dev's confessed vacuity measured exactly: 4 of 16 render tests. **QA-1 (Medium):** the source guard forbids the query string and the body but not `request.headers.get`, so an `x-user-id` authentication bypass passes all 11 route tests - this repo's known IDOR class. **QA-2..QA-4 (Low):** `nothingToShow` is unreachable; the two conservative comparison clauses are unpinned; one test named for the champion defect can examine zero pairs. 74 suites / 1,377 tests, lint 0 errors, tsc 2,069 (down 8) with zero in touched files. |
 | 2026-09-27 | SA review round 2: CHANGES REQUIRED (SA) | Added §2.9. Endorsed all four user decisions: the two required-not-defaulted commercial flags — and confirmed they MUST be config-level, because only the loader can refuse buyable-but-hidden, so the five-file blast radius is a consequence rather than scope creep, and it extends the approved `presentation` pattern rather than adding a new one; naming chat now that it is live for everyone; the champion flip, whose precedence claim I verified in `resolver.ts` layer 3, which applies cohort values only when the base is a tier, so the champion's 1,000/month really does beat the pro row's 2,000; and the `changes` list in the payload. The replacement rule is the right durable invariant with a genuinely strong negative control, and letting `nextPlanUp.adds` name chat is principled: facts about other plans, never limitations about yours. **R2-1 required:** the component renders all three lists in one list element labelled "What {plan} would add" and gives `changes` the same sentence as `improves`, so the distinction the server preserved survives only as a muted arrow versus a muted tick — a screen-reader user is told a neutral change is an addition, which is the round-1 defect in a channel we cannot see. **R2-2 required:** `customerPlanView.test.ts` passes alone at 31/31 and FAILS in company, in two reproductions, on line 529 — the assertion that no field could hold an exclusion list — with `excluded` among the payload keys; `excluded` appears nowhere in `customerPlanView.ts` but does in `report.ts`, so the module is not behaving as the file reads. Diagnosis required and the cause recorded; explicitly NOT claiming a production leak, because guessing a mechanism is how the §13.9 retraction happened. Low: R2-3 record the FR-46 window, R2-4 supersede a Change History row in BUSINESS_OS_ENTITLEMENTS.md that later rows of the same date contradict, R2-5 keep the closed round-1 items recorded. |
 | 2026-09-27 | QA round 2 after the user's four decisions: PASS with two findings (QA) | Eleven mutations, nine caught; backups outside the repo with `cmp`-verified restores, no `git checkout` on an uncommitted tree. Round 1 closed - the `x-user-id` door now produces 3 failures where it passed 11. The replacement for the deleted chat suppression bites on three of four routes in; the champion flip was re-pointed **honestly** (assertions replaced with new values, not deleted) and the resolver verified to apply the cohort's 1,000 over pro's 2,000 via `decidedBy: cohort_values`; the admin payload changed **only additively** (the two flags). **QA-6 (Medium):** deleting the `shownToCustomers` gate passes 63 tests - the fixture built to exercise it is never used by the customer surface, which reads production config where both tiers are shown. **QA-7 (Medium):** the no-exclusion-field rule is a six-name denylist, so `youDoNotHave` passes all 54; an allow-list makes it structural as the header claims. **QA-8/QA-9 (Low):** the phrasing guard scans `problem` but never produces one and would fail on good copy if it did; `changes` is separated from `improves` only by an icon, inside a list labelled "would add". 74 suites / 1,395 tests, lint 0 errors, tsc 2,069 with zero in touched files. |
+| 2026-09-27 | QA round 3 on the three UI refinements: PASS with one finding (QA) | Twelve mutations, nine caught; backups outside the repo with `cmp`-verified restores, no `git checkout` on an uncommitted tree. The pill's decision is well defended - deciding from the cohort string fails 2 tests, a lapsed champion keeping it fails 3 - and grouping is exactly-once on all four plans (no capability dropped or duplicated, unknown categories kept). The trial's deadline is back and pinned; the broad condition returning fails 4. Round 2's allow-list fix earned its keep immediately: it is what caught Dev's sort-key leak. Round 2's champion-parity question was answered structurally - `CHAMPION_VALUES['ai.actions']` now reads the base tier's value, so the pill's "Everything included" is true and no upgrade is offered. **QA-10 (Medium):** `readPlanBadge()` in `app/business-os/layout.tsx:44-60` has **no test**, so a fallback label on failure and a dropped session check both pass 29/29 - all three guarantees the pill's safety rests on are held only by a doc comment. **QA-11 (Low):** hardcoding the pill's label passes all ten tests, so its config provenance is unpinned. Notes: the 30 s input cache makes a lapsed champion's pill briefly wrong; six pre-existing lint errors sit in an untouched neighbour. 84 suites / 1,552 tests (one inherited-red suite), tsc 2,099 with zero in touched files. |
