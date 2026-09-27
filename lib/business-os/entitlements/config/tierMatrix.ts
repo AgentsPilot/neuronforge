@@ -223,10 +223,17 @@ export const TIER_MATRIX = {
     basic: {
       labels: { en: 'Essentials', he: 'Essentials', es: 'Essentials' },
       monthlyPriceUsd: 79,
+      shownToCustomers: true,
+      // Not yet: there is no buy path until WS-2 step 3. Flipping this to `true`
+      // is what turns it on — no component changes with it, which is the whole
+      // point of the flag living here.
+      availableToBuy: false,
     },
     pro: {
       labels: { en: 'Autopilot', he: 'Autopilot', es: 'Autopilot' },
       monthlyPriceUsd: 129,
+      shownToCustomers: true,
+      availableToBuy: false,
     },
   },
 } as const satisfies TierMatrix;

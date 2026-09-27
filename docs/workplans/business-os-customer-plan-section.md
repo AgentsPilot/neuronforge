@@ -498,6 +498,61 @@ Three things a reader should know are deliberate, all of them recorded in the co
 
 ---
 
+## 4. Dev response — SA round 2, QA round 2, and the parity decision
+
+### 4.1 R2-2 — the diagnosis, and the plain answer
+
+**The production payload cannot carry `excluded`, or any other key.** Not "does not today" — cannot.
+
+**The evidence that settled it was POSITION.** SA's received list was byte-identical to the real one with `"excluded"` inserted **between `"included"` and `"nextPlanUp"`**:
+
+```
+real     [... "whenThisChanges", "included",              "nextPlanUp", "problem"]
+SA's run [... "whenThisChanges", "included", "excluded",  "nextPlanUp", "problem"]
+```
+
+Key order in a JavaScript object literal follows the order the properties are **written in the source**. A key appearing at a specific position inside a literal that does not contain it cannot be produced by a module singleton, a `process.env` mutation, `jest.isolateModules`, or a shared config object — none of those can splice a property into the middle of a literal. It can only come from source that declares `excluded:` on the line after `included:`.
+
+So the suite had read a **mutated file**. A QA mutation run was editing this tree in parallel (the coordinator confirmed QA round 2 was running), and adding an exclusion field is precisely the mutant that attacks this slice's central promise. **The assertion caught exactly what it exists for.** "Passes alone, fails in company" was a longer run overlapping a live edit, not an ordering effect — which is why neither of SA's two reproductions failed for me, in either order, or in nine other permutations including three full-folder `--runInBand` runs.
+
+SA's two leads were both red herrings, and it was right to say so itself: `report.ts` contains the word `excluded` only in a comment and one sentence fragment — **no object in the module has such a key** — and `mode.test.ts` is absent from the second reproduction.
+
+**Corroborating facts:**
+
+| Check | Result |
+|---|---|
+| `excluded` as a KEY anywhere in `lib/business-os/entitlements/**` | none |
+| Dynamic key construction in `customerPlanView.ts` (`Object.assign`, computed keys, spread of caller data) | none — the only spreads are of a local `empty` |
+| Third time a parallel QA run has produced a mystery in this tree | yes: `route.ts` mutated mid-edit (round 1), tracked files destroyed by a `git checkout` loop (S-0) |
+
+**What changed as a result** — the point is that this should never need diagnosing again. The two-name denylist became an **exact key-set allow-list** on both objects and both failure paths. Any extra key, under any name, now names itself in the diff instead of costing a round.
+
+### 4.2 The champion allowance — the user chose parity
+
+QA's note at §3 and SA's counter-intuitive-behaviour warning were both correct **when written**. The user's decision (2026-09-27) removes the behaviour: `CHAMPION_VALUES` no longer pins `ai.actions`, and **reads it from the tier its `base` names**, so a Founding Partner gets Autopilot's 2,000.
+
+It is read rather than copied because `CohortExplicitValues` requires every cohort to state a value for every metered capability (RC-2) — so the field cannot be deleted, and a literal `2000` would be a second copy that silently stops matching. Parity is now structural.
+
+**Downstream, all verified:** the champion's `nextPlanUp` is `null` (nothing left to offer), the section is **absent rather than an empty box**, and four tests re-pointed honestly — each saying what it read before. **No other cohort value disagrees with the inherited row**: `sms.messages` 0 (`not_built`, forced), `email.volume` 10,000, `team.seats` 1, `business.locations` 1 — all equal to BASE, which `pro` does not change. Recorded in `cohorts.ts` beside the values, because that is where a future divergence would hide.
+
+### 4.3 The rest
+
+| # | What was done |
+|---|---|
+| **R2-1 / QA-9** | `changes` has its own `<ul>`, its own visible heading, its own `aria-label` ("What changes on {plan}") and its own sentence — "from X to Y, **which is different rather than larger**". Four DOM assertions, including that the two lists are different nodes and that the improvements list still says "becomes", so the two demonstrably read differently |
+| **R2-3** | FR-46's gate entry now says the surface **overstates the gap** until the gate ships, and that nothing customer-side changes when it does |
+| **R2-4** | The contradicted row is **superseded, not rewritten**: struck through, with what was reversed, what remains true, and a pointer to the rows that correct it |
+| **QA-6** | A fixture-driven block: a hidden plan is never offered (and the pair proving the flag is what decided it), plus both `availableToBuy` branches. It also caught a leak I had just introduced — `fixtureConfig()` shares its matrix, so writing a flag through it bled into the next test; the variant is cloned now |
+| **QA-7** | Allow-list. Reproduced QA's `youDoNotHave` mutant first: every six-name denylist stayed green and only the exact key set failed |
+| **QA-8** | Pattern narrowed to second-person plan claims **and** loop widened to the failure states, in one edit, with both halves controlled — "We do not have a plan record" must not match, and does not |
+| **QA-1..QA-5, P-1..P-5** | Left recorded as closed (R2-5) |
+
+### 4.4 One thing I broke and fixed, worth recording
+
+My scripted edit wrote **literal ASCII backspace characters** (0x08) into a regex where `\b` was meant, because the Python string was not raw. The pattern then required a control character and matched nothing — caught immediately by the negative control I had written beside it. Same class as the stray `\'` escapes swept during S-0.
+
+A sweep of the whole tree for stray control characters found **one other file**, `app/admin/business-os-llm/__tests__/ledgerPanel.render.test.tsx` — **not mine, not touched**, flagged here for whoever owns that slice.
+
 ## Change History
 
 | Date | Change | Details |

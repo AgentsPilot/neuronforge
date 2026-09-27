@@ -74,6 +74,30 @@ export function PlanCard({ plan }: Props) {
             </>
           )}
         </p>
+
+        {/* The two commercial flags, together and always both shown — including
+            when they disagree, which is the state that matters. "Public, not
+            sellable" is what a plan looks like before its buy path exists, and an
+            operator reading this card needs to see that rather than infer it from
+            a missing badge. */}
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <span
+            data-testid={`plan-${plan.id}-shown`}
+            className={`rounded px-1.5 py-0.5 text-xs ${
+              plan.shownToCustomers ? 'bg-sky-500/20 text-sky-300' : 'bg-slate-600/40 text-slate-400'
+            }`}
+          >
+            {plan.shownToCustomers ? 'shown to customers' : 'not shown to customers'}
+          </span>
+          <span
+            data-testid={`plan-${plan.id}-buyable`}
+            className={`rounded px-1.5 py-0.5 text-xs ${
+              plan.availableToBuy ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+            }`}
+          >
+            {plan.availableToBuy ? 'available to buy' : 'not available to buy'}
+          </span>
+        </div>
       </header>
 
       <dl className="space-y-2 border-b border-slate-700 py-3 text-sm">

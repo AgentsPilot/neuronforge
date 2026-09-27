@@ -202,6 +202,30 @@ export interface TierMatrixShape<TierName extends string, Row> {
  */
 export interface TierPresentation {
   /**
+   * May a customer see this plan at all?
+   *
+   * Two separate questions, because they have different answers. A plan can be
+   * worth showing before it can be sold — that is how "coming soon" exists — and
+   * conflating them forces a choice between hiding a plan nobody can buy yet and
+   * offering a button that cannot work.
+   *
+   * `false` removes it from every customer-facing surface: it is not listed as a
+   * plan, and it is never named as the plan above somebody. An operator still
+   * sees it on the admin Tiers screen, which shows both flags.
+   */
+  shownToCustomers: boolean;
+  /**
+   * May a customer buy or upgrade to it?
+   *
+   * `false` means the plan is presented with its action **visibly unavailable**
+   * and a reason — never a dead button, and never silence where a price sits.
+   *
+   * This is the single switch that turns the buy path on. Step 3 of WS-2 flips
+   * this flag; it does not edit a component. If a surface ever decides for itself
+   * whether a plan is purchasable, there are two answers to one question again.
+   */
+  availableToBuy: boolean;
+  /**
    * The customer-facing name, per locale.
    *
    * The internal id and the marketing name move at different speeds: renaming a

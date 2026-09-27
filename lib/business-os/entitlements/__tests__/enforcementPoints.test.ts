@@ -251,6 +251,11 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['getEntitlementModeSetting'],
       why: 'The admin Health landing (admin reorganisation slice 4). It reads which entitlements mode is in effect, and whether an `enforce` request was refused, to colour one tile; it resolves no account and refuses no capability.',
     },
+    {
+      file: 'app/api/business-os/entitlements/my-plan/route.ts',
+      symbols: ['buildCustomerPlanView', 'getEntitlementService', 'resolveAccountId'],
+      why: 'The CUSTOMER read behind the "Your plan" settings section (S-4a step 1) — the first non-admin file in this list. It resolves the session account and formats the answer; it refuses nothing, and it has no capability id to gate on. Note `getEntitlementService` here is `getSnapshot`, which reports every capability, and NOT `check()`, which is the call that would make this a gate: if this file ever calls `check`, it belongs in ENFORCEMENT_POINTS instead of here. `resolveAccountId` is the account seam (SA P-1), which every external caller of the service must go through — `accountSeam.guard` enforces that product-wide.',
+    },
   ];
 
   /** Every symbol a file imports from the entitlements module. */

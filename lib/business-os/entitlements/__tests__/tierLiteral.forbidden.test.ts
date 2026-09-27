@@ -30,11 +30,29 @@ const SCANNED = ['app', 'lib', 'components', 'hooks'];
  */
 const FORBIDDEN = ['basic', 'growth', 'pro', ...(TIER_ORDER as readonly string[])];
 
-/** Where tier names are legitimate. */
+/**
+ * Where tier names are legitimate.
+ *
+ * The config that defines them, the fixtures that stand in for it, and the tests
+ * that resolve a named plan on purpose.
+ *
+ * The last two entries were added for the customer "Your plan" surface (S-4a
+ * step 1). They are tests, and they name plan ids for the same reason the
+ * entitlements tests do: to resolve each of the four plans and assert what a
+ * customer on it is told. That is not the FR-12 risk — the risk is PRODUCT code
+ * carrying a tier id, and the four product files behind this surface
+ * (`customerPlanView`, `planPresentation`, `PlanSection`, the route) contain
+ * **zero** between them, which is the fact this widening leaves intact.
+ *
+ * They are prefixes on `__tests__` directories, not on the components folder:
+ * a tier id appearing in `PlanSection.tsx` itself still fails.
+ */
 const ALLOWED_PREFIXES = [
   join('lib', 'business-os', 'entitlements', 'config'),
   join('lib', 'business-os', 'entitlements', '__fixtures__'),
   join('lib', 'business-os', 'entitlements', '__tests__'),
+  join('components', 'business-os', 'settings', '__tests__'),
+  join('app', 'api', 'business-os', 'entitlements', 'my-plan', '__tests__'),
 ];
 
 /**

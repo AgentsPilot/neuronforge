@@ -25,6 +25,11 @@ function plan(overrides: Partial<Plan> = {}): Plan {
     kind: 'tier',
     name: 'Fixture Paid Plan',
     monthlyPriceUsd: 42,
+    // Public but not sellable by default — the state the product actually ships
+    // in, and the one where the two flags DISAGREE, so a card that rendered only
+    // one of them would pass by luck.
+    shownToCustomers: true,
+    availableToBuy: false,
     inheritsFrom: null,
     aiActions: '500 per month',
     endsWhen: 'While the plan is paid for.',
@@ -98,6 +103,20 @@ async function renderPage(data: PlansPayload = payload()) {
   render(<BusinessOsTiersPage />);
   await waitFor(() => expect(screen.getByTestId('enforcement-banner')).toBeInTheDocument());
 }
+
+describe('which plans are public, and which are sellable', () => {
+  it('shows BOTH commercial flags on every card, including when they disagree', async () => {
+    // The user asked for this explicitly: an operator should see at a glance
+    // which plans are public and which are sellable. They are different
+    // questions, and "public but not yet sellable" — the state the product ships
+    // in — is exactly the combination a single badge would hide.
+    await renderPage();
+
+    expect(screen.getByTestId('plan-paid-plan-shown')).toHaveTextContent(/shown to customers/i);
+    expect(screen.getByTestId('plan-paid-plan-buyable')).toHaveTextContent(/not available to buy/i);
+  });
+
+});
 
 describe('the enforcement banner', () => {
   it('says nothing is enforced, and shows the mode it was given', async () => {

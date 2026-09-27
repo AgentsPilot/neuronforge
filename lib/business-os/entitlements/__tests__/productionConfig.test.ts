@@ -46,11 +46,31 @@ describe('the shipped configuration', () => {
     expect(matrix.presentation.basic).toEqual({
       labels: { en: 'Essentials', he: 'Essentials', es: 'Essentials' },
       monthlyPriceUsd: 79,
+      shownToCustomers: true,
+      availableToBuy: false,
     });
     expect(matrix.presentation.pro).toEqual({
       labels: { en: 'Autopilot', he: 'Autopilot', es: 'Autopilot' },
       monthlyPriceUsd: 129,
+      shownToCustomers: true,
+      availableToBuy: false,
     });
+  });
+
+  it('shows both plans to customers and lets nobody buy either yet', () => {
+    // Stated on its own because it is the commercial state of the product, and
+    // the two flags answer different questions. **Both plans are public; neither
+    // is purchasable**, because the buy path does not exist until WS-2 step 3.
+    //
+    // Flipping `availableToBuy` is what turns buying on — no component changes
+    // with it. If this test ever has to change, somebody has made a commercial
+    // decision, which is exactly when it should be visible in a diff.
+    const { matrix } = getEntitlementConfig(new CodeTierMatrixSource());
+
+    for (const tier of ['basic', 'pro'] as const) {
+      expect(matrix.presentation[tier].shownToCustomers).toBe(true);
+      expect(matrix.presentation[tier].availableToBuy).toBe(false);
+    }
   });
 
   it('differs between the paid tiers ONLY by chat and credits', () => {
@@ -99,16 +119,50 @@ describe('the shipped configuration', () => {
 
     expect((config.matrix.tiers.basic as Record<string, unknown>)['ai.actions']).toEqual({ perMonth: 500 });
     expect((config.matrix.tiers.pro as Record<string, unknown>)['ai.actions']).toEqual({ perMonth: 2000 });
-    expect(config.cohorts.champion.values['ai.actions']).toEqual({ perMonth: 1000 });
+    // PARITY since 2026-09-27 (the user's decision). It read `{ perMonth: 1000 }`
+    // — twice Essentials, from when champions inherited Essentials — and pinning
+    // it made "Founding Partners get the top plan free" untrue by one number.
+    expect(config.cohorts.champion.values['ai.actions']).toEqual({ perMonth: 2000 });
     // A one-off TOTAL, not a rate: using it up is one of the two ways a trial
     // ends (D-2, FR-27).
     expect(config.cohorts.trial.values['ai.actions']).toEqual({ total: 250 });
   });
 
-  it('points both cohorts at a TIER, so they cannot drift from it', () => {
+  it('a champion gets the INHERITED allowance, not a copy of it', () => {
+    // Parity is structural, not a number typed twice. `CHAMPION_VALUES` reads the
+    // tier row its `base` names, so raising Autopilot raises champions with it —
+    // and this test fails the day somebody replaces the read with a literal that
+    // happens to match today.
+    const config = getEntitlementConfig(new CodeTierMatrixSource());
+    const inheritedTier = (config.cohorts.champion.base as { tier?: string }).tier!;
+
+    expect(config.cohorts.champion.values['ai.actions']).toEqual(
+      (config.matrix.tiers[inheritedTier as 'pro'] as Record<string, unknown>)['ai.actions']
+    );
+  });
+
+  it('no other champion value disagrees with the inherited row', () => {
+    // The question the parity change raised: "champions get the top plan" is only
+    // as true as its quietest exception. Every metered value a cohort must state
+    // explicitly is compared with the tier it inherits.
+    const config = getEntitlementConfig(new CodeTierMatrixSource());
+    const inherited = config.matrix.tiers[
+      (config.cohorts.champion.base as { tier?: string }).tier as 'pro'
+    ] as Record<string, unknown>;
+
+    for (const [capability, value] of Object.entries(config.cohorts.champion.values)) {
+      expect({ capability, value }).toEqual({ capability, value: inherited[capability] });
+    }
+  });
+
+  it('points each cohort at a TIER, so they cannot drift from it', () => {
     const { cohorts } = getEntitlementConfig(new CodeTierMatrixSource());
 
-    expect(cohorts.champion.base).toEqual({ tier: 'basic' });
+    // DIFFERENT tiers since 2026-09-27 (the user's decision, reversing Q-B3).
+    // Founding Partner points at Autopilot so design partners have chat while it
+    // is in testing; the trial previews Essentials, because a trial should show
+    // what you would be buying.
+    expect(cohorts.champion.base).toEqual({ tier: 'pro' });
     expect(cohorts.trial.base).toEqual({ tier: 'basic' });
 
     // The named plans, which a customer sees and the internal id never is.

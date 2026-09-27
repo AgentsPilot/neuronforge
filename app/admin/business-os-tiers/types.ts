@@ -24,6 +24,9 @@ export interface Plan {
   kind: 'tier' | 'cohort';
   name: string;
   monthlyPriceUsd: number;
+  /** Public? Sellable? Two questions, two answers (2026-09-27). */
+  shownToCustomers: boolean;
+  availableToBuy: boolean;
   inheritsFrom: string | null;
   aiActions: string;
   endsWhen: string;

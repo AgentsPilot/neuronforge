@@ -9,7 +9,11 @@
 // Requirement §6.4 / D-2 / D-4 / B-14, workplan §4.6.
 //
 // ── BOTH POINT AT A TIER (user decision, 2026-09-23) ────────────────────────
-// `base: { tier: 'basic' }` — both cohorts resolve from the Essentials row.
+// Each cohort resolves from the tier row its `base` names. They point at
+// DIFFERENT tiers since 2026-09-27: the trial previews Essentials, because a
+// trial should show what you would be buying; Founding Partner points at
+// Autopilot so design partners have chat while it is in testing. See the
+// comment on each `base` — either is one line to change.
 //
 // They used to be `{ all: true }`, because there were no tiers to point at. Now
 // there are, and pointing at one is strictly better: a cohort that enumerated
@@ -29,6 +33,18 @@
 
 import type { CohortConfigShape, HistoryEntry } from '../types';
 import type { CohortExplicitValues } from './catalog';
+import { TIER_MATRIX } from './tierMatrix';
+
+/**
+ * The tier Founding Partner resolves through — named once.
+ *
+ * Used for `champion.base` AND for the AI allowance below, so the two cannot
+ * disagree. Changing which tier champions get is still one line; it is now one
+ * line that moves the allowance with it.
+ *
+ * (No import cycle: `tierMatrix.ts` imports only `../types` and `./catalog`.)
+ */
+const CHAMPION_BASE_TIER = 'pro' as const;
 
 /**
  * A cohort's configuration, with the explicit values this catalog demands.
@@ -63,11 +79,25 @@ export type CohortConfig = CohortConfigShape<CohortExplicitValues>;
  * "we have not decided", not as "the current policy".
  */
 const CHAMPION_VALUES: CohortExplicitValues = {
-  // FIRST PASS (user decision, 2026-09-23): 1,000 AI actions a month, twice
-  // Essentials. To be reset from shadow data like every other number here —
-  // decided, but not yet measured. Champions who run out ask an admin for more;
-  // they never buy boosts (D-7).
-  'ai.actions': { perMonth: 1000 },
+  // PARITY WITH THE INHERITED TIER (user decision, 2026-09-27).
+  //
+  // It was `{ perMonth: 1000 }` — twice Essentials, decided on 2026-09-23 when
+  // champions inherited Essentials. Once they pointed at Autopilot that made
+  // "Founding Partners get the top plan free" untrue by one number, and the
+  // customer screen offered a design partner an upgrade on exactly the axis where
+  // they were behind. The promise is cleaner without the exception.
+  //
+  // READ from the tier row rather than copied. The type
+  // (`CohortExplicitValues`) requires every cohort to state an explicit value for
+  // every metered capability — RC-2: "everything" has no meaning for an
+  // allowance — so this field cannot simply be deleted. Writing `2000` here
+  // would be a second copy of Autopilot's number that silently stops matching the
+  // day somebody changes the tier, which is the drift that pointing a cohort at a
+  // tier exists to prevent. This way parity is structural: raise Autopilot and
+  // champions rise with it.
+  //
+  // Champions who run out ask an admin for more; they never buy boosts (D-7).
+  'ai.actions': TIER_MATRIX.tiers[CHAMPION_BASE_TIER]['ai.actions'],
   // Zero because SMS is `not_built`. This one is NOT a placeholder: a feature
   // that does not exist cannot be allocated, and the loader enforces it.
   'sms.messages': { perMonth: 0 },
@@ -80,6 +110,19 @@ const CHAMPION_VALUES: CohortExplicitValues = {
   // and multi-location are unbuilt (§18), so these cannot be raised yet.
   'team.seats': { included: 1, purchasable: false },
   'business.locations': { included: 1, purchasable: false },
+  // ── Do any of the four above disagree with the inherited row? No. ─────────
+  // Checked when parity landed (2026-09-27), because "champions get the top plan"
+  // is only as true as its quietest exception:
+  //
+  //   sms.messages        0        — `not_built`; the loader forces this either way
+  //   email.volume        10,000   — same as BASE, and pro does not change it
+  //   team.seats          1        — same as BASE (invites are unbuilt)
+  //   business.locations  1        — same as BASE (multi-location is unbuilt)
+  //
+  // So they are duplicates of the inherited values rather than overrides. They
+  // cannot be deleted — `CohortExplicitValues` requires every metered capability
+  // — but if any tier ever changes one of these, THIS is where the champion would
+  // silently stop matching. `ai.actions` reads the row for exactly that reason.
 };
 
 const TRIAL_VALUES: CohortExplicitValues = {
@@ -137,16 +180,29 @@ export const COHORTS = {
   },
   champion: {
     /**
-     * Founding Partner is BASIC today, and becomes AUTOPILOT the day chat is
-     * ready for design partners — **which is this one line**:
+     * Founding Partner is AUTOPILOT (2026-09-27, the user's decision).
      *
-     *     base: { tier: 'pro' },
+     * It was Essentials, and the flip was documented here as the one line that
+     * would change when chat was ready for design partners. **Chat is in testing
+     * and available to everyone now, so this is that moment.** Every champion
+     * resolves from the tier row this points at, so the next resolve after deploy
+     * gives them chat — no code, no migration, no per-account admin operation.
      *
-     * That is the whole change. No code, no migration, no per-account admin
-     * operation: every champion resolves from the tier row this points at, so
-     * the next resolve after the deploy gives them chat.
+     * **Reversing it is the same one line**: `base: { tier: 'basic' }`. Nothing
+     * else in the module knows which tier a cohort inherits from.
+     *
+     * **The AI allowance moves with it** (user decision, 2026-09-27). It briefly
+     * did not: `CHAMPION_VALUES` pinned 1,000 a month, and an explicit cohort
+     * value beats the tier row, so a Founding Partner had Autopilot's features
+     * with half its allowance. `CHAMPION_VALUES['ai.actions']` now READS this
+     * tier's value, so "Founding Partners get the top plan, free" is true without
+     * an exception — and none of the other cohort values disagree with the
+     * inherited row (see `CHAMPION_VALUES`).
+     *
+     * It reverses Q-B3, which the user parked as "fine for now, revisit during
+     * testing". This is that revisit.
      */
-    base: { tier: 'basic' },
+    base: { tier: CHAMPION_BASE_TIER },
     labels: { en: 'Founding Partner', he: 'Founding Partner', es: 'Founding Partner' },
     includeLifecycle: ['beta'],
     values: CHAMPION_VALUES,

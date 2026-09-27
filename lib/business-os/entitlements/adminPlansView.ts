@@ -34,35 +34,36 @@ import 'server-only';
  */
 
 import { describeCapabilityValue } from './capabilityDisplay';
-import { hasEnforcementPoint } from './config/enforcementPoints';
+import {
+  describePlanCapabilities,
+  describePlanEnding,
+  planCommercialFlags,
+  planInheritsFrom,
+  planLabel,
+  planMonthlyPriceUsd,
+  previewAccountFor,
+  type PlanCapabilityRow,
+} from './planPresentation';
 import { getEntitlementConfig } from './source';
 import { getEntitlementMode, MODE_ENV_VAR } from './mode';
 import { resolveEntitlements } from './resolver';
-import { isGrantingValue } from './schema';
-import type { EntitlementAccount } from './account';
-import type { EntitlementConfig } from './source';
 import type { CapabilityDef, CapabilityValue } from './types';
 
-/** One capability, as the screen shows it. */
-export interface AdminPlanCapability {
-  capability: string;
-  label: string;
-  category: string;
-  /** Rendered server-side: the page never formats a value itself. */
-  display: string;
-  /** `isGrantingValue` — the same question the config loader asks. */
-  granting: boolean;
-  /**
-   * Does anything in the product actually refuse this capability (SA R-1)?
-   *
-   * Withheld in the matrix and enforced are different facts. `false` means the
-   * plan says no and nothing asks — which the page must say AT the capability,
-   * not only in a banner about the mode. Read from `ENFORCEMENT_POINTS`, whose
-   * entries are checked against the source in both directions, so it clears
-   * itself in the commit that makes it false.
-   */
-  gateBuilt: boolean;
-}
+// Re-exported because this module was the original home and its own tests (and
+// the customer surface's, indirectly) import it from here. Moving the symbol
+// without leaving the door open would have made an extraction look like a
+// rewrite in the diff.
+export { previewAccountFor } from './planPresentation';
+
+/**
+ * One capability, as the screen shows it.
+ *
+ * The shared row (`planPresentation`), not a second definition: the admin screen
+ * and the customer's settings must not be able to disagree about what a value
+ * says. This screen is the one that also renders `gateBuilt` — "the plan says no
+ * and nothing asks" — which is an operator's fact, not a customer's.
+ */
+export type AdminPlanCapability = PlanCapabilityRow;
 
 /** One of the four plans. */
 export interface AdminPlanView {
@@ -75,6 +76,20 @@ export interface AdminPlanView {
   inheritsFrom: string | null;
   aiActions: string;
   endsWhen: string;
+  /**
+   * Is this plan public, and is it sellable? (user decision, 2026-09-27)
+   *
+   * Two questions with different answers, and an operator needs both at a glance:
+   * "which plans can a customer see" and "which can a customer buy" are asked
+   * separately in support and in a pricing conversation. Read through
+   * `planCommercialFlags`, the same function the customer surface reads, so the
+   * screen cannot disagree with what a customer is actually offered.
+   *
+   * A cohort is not a product, so both are `false` for one — which is a fact
+   * about being offered, not about the accounts on it.
+   */
+  shownToCustomers: boolean;
+  availableToBuy: boolean;
   /** What the resolver calls an account on this plan today. */
   state: string;
   /** Which layer the resolution stands on: a tier, a cohort, or nothing. */
@@ -113,78 +128,6 @@ export interface AdminPlansPayload {
   writeOpsNotOnThisPage: string[];
 }
 
-/**
- * The account each plan is previewed as. Exported for its test.
- *
- * QA (2026-09-24) mutated this function and the suite stayed green, because the
- * test rebuilt the same object and compared the result to itself. It is
- * exported now so the 11 fields can be ASSERTED — and the resolved `state` and
- * `basis` are pinned separately, because those are outputs that a wrong
- * synthetic changes and a copied mistake cannot fake.
- *
- * A fixed instant, so two plans are never resolved a millisecond apart.
- */
-export function previewAccountFor(
-  config: EntitlementConfig,
-  planId: string,
-  now: Date
-): EntitlementAccount {
-  const isTier = config.tierOrder.includes(planId);
-  const iso = now.toISOString();
-
-  return {
-    accountId: `preview-${planId}`,
-    tier: isTier ? planId : null,
-    planVersion: isTier ? config.matrix.version : 0,
-    tierExpiresAt: null,
-    cohort: isTier ? null : planId,
-    cohortExpiresAt: null,
-    // The facts a real account would carry. Dated NOW so a trial preview is a
-    // trial that has just started, rather than one that expired years ago.
-    onboardingStartedAt: iso,
-    profileCreatedAt: iso,
-    trialStartedAt: isTier ? null : iso,
-    trialEndsAt: null,
-    graceEndsAt: null,
-  };
-}
-
-/**
- * When a plan ends, in one sentence, **read off the configuration**.
- *
- * Not written down per plan: a cohort with a duration history says how long it
- * lasts, a cohort without one has no end date, and a tier has neither because
- * its end date is a per-account fact (`tier_expires_at`). If somebody shortens
- * the trial in config, this sentence changes with it.
- */
-function describeEnding(
-  config: EntitlementConfig,
-  planId: string,
-  aiActionsValue: CapabilityValue
-): string {
-  if (config.tierOrder.includes(planId)) {
-    return 'While the plan is paid for. An admin can set an end date on one account.';
-  }
-
-  const cohort = config.cohorts[planId as keyof typeof config.cohorts];
-  const duration = cohort?.durationHistory?.[cohort.durationHistory.length - 1];
-
-  if (!duration) {
-    return 'No end date unless an admin sets one.';
-  }
-
-  // A one-off TOTAL is what makes running out an ENDING (FR-27); a monthly rate
-  // simply resets. The difference is in the value, so the sentence reads it.
-  const isOneOffAllowance =
-    !!aiActionsValue && typeof aiActionsValue === 'object' && 'total' in (aiActionsValue as object);
-
-  const clock = cohort.clockStartsAt === 'profile_created' ? 'the business profile is created' : 'the first onboarding message';
-
-  return isOneOffAllowance
-    ? `${duration.days} days from ${clock}, or when the AI actions run out — whichever comes first.`
-    : `${duration.days} days from ${clock}.`;
-}
-
 /** Plain words for the mode that is actually set, so the page states no default. */
 function describeMode(mode: 'off' | 'shadow' | 'enforce'): string {
   if (mode === 'off') {
@@ -216,40 +159,18 @@ export function buildAdminPlansView(now: Date = new Date()): AdminPlansPayload {
       now,
     });
 
-    const capabilities = Object.entries(resolution.values).map(([capability, resolved]) => {
-      const definition = catalog[capability];
-      return {
-        capability,
-        label: definition.labels.en,
-        category: definition.category,
-        display: describeCapabilityValue(resolved.value, definition),
-        granting: isGrantingValue(resolved.value, definition),
-        // A `not_built` capability needs no gate: there is nothing to refuse.
-        // Marking it "nothing in the product refuses it yet" reads as "a
-        // customer could get this", on the same screen that says it cannot be
-        // sold at all (QA NEW-1) — and it buried the one capability the marker
-        // exists for in a list of nineteen.
-        gateBuilt: definition.lifecycle === 'not_built' || hasEnforcementPoint(capability),
-      };
-    });
-
-    const presentation = isTier
-      ? config.matrix.presentation[planId as keyof typeof config.matrix.presentation]
-      : undefined;
-    const cohort = isTier ? undefined : config.cohorts[planId as keyof typeof config.cohorts];
-    const base = cohort?.base as { tier?: string } | undefined;
+    const capabilities = describePlanCapabilities(resolution, catalog);
     const aiActions = resolution.values['ai.actions'];
 
     return {
       id: planId,
       kind: isTier ? 'tier' : 'cohort',
-      name: (presentation?.labels ?? cohort?.labels)?.en ?? planId,
-      // A cohort is what somebody has while they are NOT paying, so the price
-      // is zero by definition rather than by omission.
-      monthlyPriceUsd: presentation?.monthlyPriceUsd ?? 0,
-      inheritsFrom: base?.tier ?? null,
+      name: planLabel(config, planId),
+      monthlyPriceUsd: planMonthlyPriceUsd(config, planId),
+      inheritsFrom: planInheritsFrom(config, planId),
       aiActions: aiActions ? describeCapabilityValue(aiActions.value, catalog['ai.actions']) : 'not configured',
-      endsWhen: describeEnding(config, planId, aiActions?.value as CapabilityValue),
+      endsWhen: describePlanEnding(config, planId, aiActions?.value as CapabilityValue),
+      ...planCommercialFlags(config, planId),
       state: resolution.state,
       basis: resolution.basis.kind,
       includes: capabilities.filter((entry) => entry.granting),
