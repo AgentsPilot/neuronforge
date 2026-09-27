@@ -28,8 +28,10 @@ import {
   Settings,
   LogOut,
   MailCheck,
+  CreditCard,
 } from 'lucide-react';
 import { LeadNotificationToggles } from '@/components/business-os/settings/LeadNotificationToggles';
+import { PlanSection } from '@/components/business-os/settings/PlanSection';
 import { MarketingConsentPanel } from '@/components/business-os/settings/MarketingConsentPanel';
 import { ErasureRequestContent } from '@/components/business-os/purge/DangerZonePanel';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -890,6 +892,33 @@ function BusinessOSSettingsContent() {
           <div className="space-y-6">
         {/* Account Actions */}
         <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] divide-y divide-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+          {/*
+            Your plan — what this business is on and what it includes.
+
+            First in the list because it is the thing somebody opens settings to
+            check, and because a customer who cannot find what they are paying
+            for assumes the worst. Read-only in S-4a step 1: there is no way to
+            buy or change a plan here yet, and the section says so rather than
+            showing a button that does nothing.
+          */}
+          <div id="settings-section-plan">
+            <button
+              onClick={() => setExpandedSection(expandedSection === 'plan' ? null : 'plan')}
+              className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <CreditCard className="w-5 h-5 text-[var(--v2-text-muted)]" />
+                <span className="text-sm text-[var(--v2-text-primary)]">Your plan</span>
+              </div>
+              <ChevronRight className={`w-4 h-4 text-[var(--v2-text-muted)] transition-transform ${expandedSection === 'plan' ? 'rotate-90' : ''}`} />
+            </button>
+            {expandedSection === 'plan' && (
+              <div className="px-4 pb-4">
+                <PlanSection />
+              </div>
+            )}
+          </div>
+
           {/*
             How this business hears about a new enquiry.
             

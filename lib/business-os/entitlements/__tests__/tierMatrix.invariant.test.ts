@@ -79,6 +79,35 @@ describe('FR-3 / FR-7 — the other ways a matrix can be wrong', () => {
     expect(() => validateEntitlementConfig(config)).toThrow(/tier matrix/);
   });
 
+  it('rejects a tier that is buyable but not shown (2026-09-27)', () => {
+    // The two commercial flags answer different questions, and exactly one
+    // combination is incoherent: purchasable from a surface that never shows it.
+    // The other three are all real states — including "shown, not buyable", which
+    // is what the product ships as.
+    const config = withMatrix((matrix) => {
+      const presentation = matrix.presentation as Record<string, Record<string, unknown>>;
+      presentation.basic.shownToCustomers = false;
+      presentation.basic.availableToBuy = true;
+    });
+
+    expect(() => validateEntitlementConfig(config)).toThrow(/tier matrix/);
+    expect(() => validateEntitlementConfig(config)).toThrow(/availableToBuy/);
+  });
+
+  it('requires BOTH flags rather than defaulting either', () => {
+    // A default would decide a commercial question silently, and either default
+    // is wrong: `true` publishes a plan nobody meant to publish, `false` hides one
+    // somebody is selling. Adding a tier must make somebody answer.
+    for (const flag of ['shownToCustomers', 'availableToBuy']) {
+      const config = withMatrix((matrix) => {
+        const presentation = matrix.presentation as Record<string, Record<string, unknown>>;
+        delete presentation.basic[flag];
+      });
+
+      expect(() => validateEntitlementConfig(config)).toThrow(/tier matrix/);
+    }
+  });
+
   it('rejects a row for a tier that is not configured', () => {
     // Caught by the key enum before the cross-check gets a look in — either way
     // a matrix cannot price a tier that does not exist.

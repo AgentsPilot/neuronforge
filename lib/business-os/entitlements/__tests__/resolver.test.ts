@@ -34,19 +34,25 @@ describe('layer 1 — the basis', () => {
 
   it('a champion inherits the tier its cohort points at (2026-09-23)', () => {
     // Until the tiers existed, champions resolved from `{ all: true }`. They now
-    // point at `basic`, so a champion gets Essentials — including NO CHAT, until
-    // the day `champion.base` becomes `{ tier: 'pro' }`.
+    // point at a tier, and this fixture points them at its own `basic` row — so
+    // the assertions below are about INHERITANCE, not about what production
+    // grants. (In production `champion.base` is `{ tier: 'pro' }` since
+    // 2026-09-27, which is why `productionConfig.test.ts` and not this file is
+    // where that fact is pinned.)
     const result = resolve(championAccount());
 
     expect(result.basis).toEqual({ kind: 'cohort', cohort: 'champion' });
-    expect(result.values['chat.search'].value).toBe(false);
     expect(result.values['crm.core'].value).toBe(true);
-    // The FIXTURE Basic is branded and manual, and the champion gets exactly
-    // that — which is the inheritance, shown rather than asserted in the
-    // abstract. (Production Essentials is unbranded; the fixture is not a
-    // price list.)
-    expect(result.values['website.branding'].value).toBe('branded');
-    expect(result.values['intake.forms'].value).toBe('manual');
+    // The champion inherits the FIXTURE's `pro` row, because `champion.base` is
+    // `{ tier: 'pro' }` — and the cohorts are the real ones even here, since the
+    // fixture replaces only the tier matrix. So the assertions below are the
+    // fixture's `pro` values, shown rather than asserted in the abstract.
+    //
+    // This is what the flip changed: before 2026-09-27 these read `false`,
+    // `'branded'` and `'manual'` off the fixture's `basic` row.
+    expect(result.values['chat.search'].value).toBe(true);
+    expect(result.values['website.branding'].value).toBe('unbranded');
+    expect(result.values['intake.forms'].value).toBe('ai');
     // The cohort still states its own numbers, which override the tier row.
     expect(result.values['ai.actions'].value).toEqual(readCodeConfig().cohorts.champion.values['ai.actions']);
   });

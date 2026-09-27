@@ -150,8 +150,27 @@ export const FIXTURE_TIER_MATRIX: TierMatrixShape<FixtureTierId, TierRow> = {
   // NOT the production names: a fixture that reused "Essentials" would make a
   // test failure read like a pricing statement.
   presentation: {
-    basic: { labels: { en: 'Fixture Basic', he: 'Fixture Basic', es: 'Fixture Basic' }, monthlyPriceUsd: 10 },
-    growth: { labels: { en: 'Fixture Growth', he: 'Fixture Growth', es: 'Fixture Growth' }, monthlyPriceUsd: 20 },
-    pro: { labels: { en: 'Fixture Pro', he: 'Fixture Pro', es: 'Fixture Pro' }, monthlyPriceUsd: 30 },
+    // The two flags vary ON PURPOSE across the three fixture tiers: one visible
+    // and sellable, one visible and not, one hidden entirely. A fixture where
+    // every tier answered the same would let a surface ignore the flags and still
+    // pass.
+    basic: {
+      labels: { en: 'Fixture Basic', he: 'Fixture Basic', es: 'Fixture Basic' },
+      monthlyPriceUsd: 10,
+      shownToCustomers: true,
+      availableToBuy: true,
+    },
+    growth: {
+      labels: { en: 'Fixture Growth', he: 'Fixture Growth', es: 'Fixture Growth' },
+      monthlyPriceUsd: 20,
+      shownToCustomers: true,
+      availableToBuy: false,
+    },
+    pro: {
+      labels: { en: 'Fixture Pro', he: 'Fixture Pro', es: 'Fixture Pro' },
+      monthlyPriceUsd: 30,
+      shownToCustomers: false,
+      availableToBuy: false,
+    },
   },
 };

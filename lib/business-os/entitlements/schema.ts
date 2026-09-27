@@ -252,8 +252,25 @@ export function tierMatrixSchema(
           .object({
             labels: labelsSchema,
             monthlyPriceUsd: z.number().int().nonnegative(),
+            // Required, not defaulted. A default would decide a commercial
+            // question silently — and either default is wrong: `true` publishes
+            // a plan nobody meant to publish, `false` hides one somebody is
+            // selling. Adding a tier must make somebody answer both.
+            shownToCustomers: z.boolean(),
+            availableToBuy: z.boolean(),
           })
           .strict()
+          .superRefine((entry, ctx) => {
+            // A plan that cannot be seen cannot be bought. The reverse is fine
+            // and is the state we ship in: visible, not yet sellable.
+            if (entry.availableToBuy && !entry.shownToCustomers) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message:
+                  'a tier marked availableToBuy must also be shownToCustomers — otherwise it is purchasable from a surface that never shows it',
+              });
+            }
+          })
       ),
     })
     .strict()

@@ -149,6 +149,10 @@ describe('the fixture in the render suite still matches the server', () => {
       expect(keysOf(plan)).toEqual(
         [
           'aiActions',
+          // The two commercial flags (2026-09-27). Listed explicitly, like every
+          // other field: this test exists so a field added server-side and never
+          // rendered — or rendered and never sent — fails here.
+          'availableToBuy',
           'basis',
           'endsWhen',
           'id',
@@ -157,6 +161,7 @@ describe('the fixture in the render suite still matches the server', () => {
           'kind',
           'monthlyPriceUsd',
           'name',
+          'shownToCustomers',
           'state',
           'withholds',
         ].sort()
