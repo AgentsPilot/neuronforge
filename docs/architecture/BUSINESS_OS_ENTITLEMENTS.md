@@ -1,12 +1,12 @@
 # Business OS entitlements
 
-> **Last Updated**: 2026-09-24
+> **Last Updated**: 2026-09-27
 
 ## Overview
 
 What an account can do in Business OS, and why. This module answers one question — *is this account entitled to this capability, on this surface, right now?* — and it answers it from **configuration**, so changing what a plan includes is a config edit rather than a code change.
 
-**Nothing is enforced yet.** Slice 1 ships the infrastructure: the catalog, the resolver, the plan records, shadow-mode recording and the admin surface. `BOS_ENTITLEMENTS_MODE` is unset in production, which means nothing is resolved, nothing is recorded and nothing is refused. Slice 2 wires enforcement, Slice 3 adds metering, Slice 4 adds billing.
+**Nothing is enforced yet.** Slice 1 ships the infrastructure: the catalog, the resolver, the plan records, shadow-mode recording and the admin surface. **Production runs `BOS_ENTITLEMENTS_MODE=shadow` on purpose, to collect data first** (confirmed 2026-09-27): every decision is resolved and recorded, and nothing is refused. A refused `enforce` also runs as `shadow` (`lib/business-os/entitlements/mode.ts`); the admin Health tile then shows the amber "Enforcement requested but not active". Shadow **without** that amber headline means the setting is `shadow` itself. Slice 2 wires enforcement, Slice 3 adds metering, Slice 4 adds billing.
 
 ## Table of Contents
 
@@ -142,8 +142,8 @@ Cross-instance staleness is bounded at 30 s: an admin change invalidates the loc
 
 | Value | Meaning |
 |---|---|
-| unset / `off` | **The default and what production runs.** Nothing resolved, read, recorded or refused |
-| `shadow` | Everything resolved and recorded; **nothing refused** |
+| unset / `off` | The default when the variable is not set. Nothing resolved, read, recorded or refused |
+| `shadow` | Everything resolved and recorded; **nothing refused**. **What production runs, on purpose, to collect data first** (2026-09-27) |
 | `enforce` | Decisions acted on. Slice 2 onwards |
 
 `enforce` is **refused and downgraded to `shadow`** while no tier is configured (UD-2), logged at `error`. Since 2026-09-23 two tiers are configured, so that gate no longer fires — it stays as the guard against an emptied matrix. **This does not mean `enforce` is safe to set:** nothing calls a decision until Slice 2, there is no billing until Slice 4, and G-1 blocks both.
@@ -200,5 +200,6 @@ Two rules worth knowing before using them:
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-09-22 | Created | Slice 1 as built: catalog/config, resolver, plan records, shadow mode, report and the admin surface (workplan §4, S1-T16) |
+| 2026-09-27 | Production mode corrected: `shadow`, on purpose | The Overview and the mode table said `BOS_ENTITLEMENTS_MODE` is unset (off) in production. Production resolves it to **`shadow`**, set deliberately to collect data first (admin reorganisation slice 5, RC-5.3 / OQ-8). Added the caveat that a refused `enforce` also runs as `shadow`, and how the Health tile tells the two apart |
 | 2026-09-24 | `chat.access` added (FR-46) | The chat SURFACE as its own capability, off for Essentials and on for Autopilot: the per-operation `chat.*` groups cannot express "this plan has no chat", for writes as well as reads. Ships in the catalog (38 capabilities) and both tier rows; the gate itself is Slice 2 |
 | 2026-09-23 | The four plans configured | `basic`/`pro` as tiers with names and prices, `trial`/`champion` as cohorts pointing at `basic`; UD-2 now met; the chat-surface gap recorded as a Slice 2 gate (workplan §4.32) |

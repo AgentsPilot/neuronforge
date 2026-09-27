@@ -150,7 +150,7 @@ function load(
   return harness;
 }
 
-describe('mode `off` — the default, and what production runs', () => {
+describe('mode `off` — the default (production runs `shadow` on purpose, to collect data first)', () => {
   it('does nothing at all: no config, no read, no write', async () => {
     setMode(undefined);
     const h = load();
