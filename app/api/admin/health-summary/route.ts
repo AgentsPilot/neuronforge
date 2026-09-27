@@ -5,13 +5,14 @@
  * One screen of red / amber / grey tiles built ONLY from signals that already
  * exist: Business OS AI settings, audited AI failures, Business OS AI spend,
  * critical audit events and the entitlements mode. Scheduled jobs and queues
- * are "Not measured yet". Nothing is ever green.
+ * are "Not measured yet". A tile is green only when the evaluator proves it
+ * clear (SA C-10R, admin reorganisation slice 5); the route decides no colour.
  *
  * ── Shape ────────────────────────────────────────────────────────────────
  *   requireAdmin FIRST → strict Zod (the route takes no input) → every read in
  *   parallel, each under its own deadline → numbers → the pure evaluator.
  * A failed or late read makes ITS tile `unavailable`; it never makes a tile
- * "Normal" and never fails the page.
+ * green and never fails the page.
  *
  * ── Cross-account reads (why the service role is fine here) ───────────────
  * The spend and audit reads span every account on purpose: "how many AI actions

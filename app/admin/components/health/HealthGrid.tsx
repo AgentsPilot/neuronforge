@@ -63,8 +63,8 @@ export function HealthGrid() {
         <div>
           <h1 className="text-xl font-semibold text-white">Health</h1>
           <p className="text-sm text-slate-400 mt-1">
-            Is anything wrong in Business OS? Red needs action, amber needs a look, grey is normal or not measured.
-            Nothing here is ever green.
+            Is anything wrong in Business OS? Red needs action, amber needs a look, and the green label Healthy
+            means checked and clear. Grey means not measured yet, could not check, or for information only.
           </p>
           {summary && (
             <p data-testid="as-of" className="text-xs text-slate-500 mt-1">

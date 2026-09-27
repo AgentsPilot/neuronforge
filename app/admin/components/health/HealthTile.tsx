@@ -1,19 +1,24 @@
 'use client';
 
 /**
- * One Health tile (admin reorganisation slice 4).
+ * One Health tile (admin reorganisation slices 4 and 5).
  *
  * Renders only what the route sent: the status, the headline (the first
- * matching rule's description, or "Normal"), the figures with their links, and
- * the tile's own rule list with a condition summary generated from each rule
- * (SA C-22). It imports no rule config and no evaluator (SA C-21): the rules on
+ * matching rule's description; "All clear" when proven clear; the mode in
+ * plain words on the "for information" entitlements tile; or a fixed "not
+ * measured" / "could not check" text), the figures with their links, the
+ * tile's visible page link when it has one (RC-5.2), and the tile's own rule
+ * list with a condition summary generated from each rule (SA C-22). It imports no rule config and no evaluator (SA C-21): the rules on
  * screen are the rules that were applied.
  *
- * There is no green anywhere (SA C-10). Every status carries a text label as
- * well as a colour, and icons are hidden from screen readers (SA C-16).
+ * Green appears only for a tile the evaluator proved clear (SA C-10R), and
+ * only through GREEN_STYLE below: the one place a green class may appear in
+ * the Health files (pinned by the source guard, SC-7(g)). Every status carries
+ * a text label as well as a colour, and icons are hidden from screen readers
+ * (SA C-16).
  */
 
-import { AlertOctagon, AlertTriangle, CircleDashed, HelpCircle, Minus } from 'lucide-react';
+import { AlertOctagon, AlertTriangle, CheckCircle2, CircleDashed, HelpCircle, Info } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 import type { HealthTile as HealthTileData, TileStatus } from '@/lib/admin/health/healthTypes';
@@ -25,7 +30,19 @@ interface StatusStyle {
   accent: string;
 }
 
-/** Exported for the render test, which compares the class sets (SA C-10). */
+/**
+ * THE ONLY GREEN in the Health files (SA C-10R, SC-7(g)). A tile gets it only
+ * when the evaluator proved it clear: measured, complete, exact, no rule
+ * matched. Its text label says so in words.
+ */
+const GREEN_STYLE: StatusStyle = {
+  label: 'Healthy',
+  icon: CheckCircle2,
+  card: 'bg-slate-800 border border-emerald-500/40',
+  accent: 'text-emerald-300',
+};
+
+/** Exported for the render test, which compares the class sets (SA C-10R). */
 export const STATUS_STYLES: Record<TileStatus, StatusStyle> = {
   red: {
     label: 'Needs action',
@@ -39,9 +56,11 @@ export const STATUS_STYLES: Record<TileStatus, StatusStyle> = {
     card: 'bg-slate-800 border border-amber-500/40',
     accent: 'text-amber-300',
   },
+  green: GREEN_STYLE,
+  // Only a tile that may never be green reaches this (the entitlements mode, OQ-9).
   neutral: {
-    label: 'Normal',
-    icon: Minus,
+    label: 'For information',
+    icon: Info,
     card: 'bg-slate-800 border border-slate-700',
     accent: 'text-slate-300',
   },
@@ -115,6 +134,18 @@ export function HealthTile({ tile }: { tile: HealthTileData }) {
       )}
 
       {tile.footnote && <p className="text-xs text-slate-500">{tile.footnote}</p>}
+
+      {tile.pageLink && (
+        <p className="text-sm">
+          <a
+            href={tile.pageLink.href}
+            data-testid="page-link"
+            className="underline decoration-slate-500 underline-offset-2 text-slate-200 hover:text-white"
+          >
+            {tile.pageLink.text}
+          </a>
+        </p>
+      )}
 
       {tile.rules.length > 0 && (
         <details className="text-xs text-slate-400">
