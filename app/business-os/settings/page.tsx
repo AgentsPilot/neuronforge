@@ -129,7 +129,10 @@ function BusinessOSSettingsContent() {
       return;
     }
 
-    if (requested !== 'password' && requested !== 'preferences') return;
+    // `plan` added 2026-09-27: it is where the Founding Partner pill in the
+    // chrome points, so without it the pill would land somebody on settings with
+    // every section collapsed — a link that appears to do nothing.
+    if (requested !== 'password' && requested !== 'preferences' && requested !== 'plan') return;
 
     setExpandedSection(requested);
 

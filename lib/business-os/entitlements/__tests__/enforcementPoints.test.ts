@@ -252,6 +252,17 @@ describe('backward: a gate cannot ship unregistered', () => {
       why: 'The admin Health landing (admin reorganisation slice 4). It reads which entitlements mode is in effect, and whether an `enforce` request was refused, to colour one tile; it resolves no account and refuses no capability.',
     },
     {
+      file: 'app/business-os/layout.tsx',
+      // `type PlanBadge` as the extractor sees it — an inline type import keeps
+      // its `type` keyword, which is worth leaving visible: it says at a glance
+      // that the layout imports one VALUE-bearing function and one type.
+      // Just the one now: the read itself moved into
+      // `lib/business-os/entitlements/readPlanBadge.ts` so its three safety
+      // guarantees could be tested (QA-10). The layout awaits one function.
+      symbols: ['readPlanBadge'],
+      why: 'The Business OS chrome reads the plan ONCE, server-side, to decide whether to show the quiet Founding Partner pill (2026-09-27). It refuses nothing and gates nothing: every failure returns `null` and renders no pill. The read is `getSnapshot`, not `check` — if it ever becomes `check`, the product is being gated from a layout and belongs in ENFORCEMENT_POINTS.',
+    },
+    {
       file: 'app/api/business-os/entitlements/my-plan/route.ts',
       symbols: ['buildCustomerPlanView', 'getEntitlementService', 'resolveAccountId'],
       why: 'The CUSTOMER read behind the "Your plan" settings section (S-4a step 1) — the first non-admin file in this list. It resolves the session account and formats the answer; it refuses nothing, and it has no capability id to gate on. Note `getEntitlementService` here is `getSnapshot`, which reports every capability, and NOT `check()`, which is the call that would make this a gate: if this file ever calls `check`, it belongs in ENFORCEMENT_POINTS instead of here. `resolveAccountId` is the account seam (SA P-1), which every external caller of the service must go through — `accountSeam.guard` enforces that product-wide.',
