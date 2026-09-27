@@ -165,6 +165,10 @@ export const USER_OWNED_TABLES: Record<string, string> = {
   organization_members: 'Account level.',
   command_sessions: 'Account level.',
   token_usage: 'Billing and usage accounting, which must outlive any one business.',
+  archived_records:
+    "The person's own archived activity history (Admin Archiving). Like audit_trail, it " +
+    'follows the account, not the business: erasure and the activity-history purge reach it ' +
+    'by user_id, and a business Reset must not cascade it away.',
 
   automation_slas:
     'Reads as Business OS and is not: it carries agent_id, group_id and ' +

@@ -9,7 +9,12 @@
 
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { getEntitlementMode, isEntitlementResolutionEnabled, MODE_ENV_VAR } from '@/lib/business-os/entitlements/mode';
+import {
+  getEntitlementMode,
+  getEntitlementModeSetting,
+  isEntitlementResolutionEnabled,
+  MODE_ENV_VAR,
+} from '@/lib/business-os/entitlements/mode';
 import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
 import { LAUNCH } from '@/lib/business-os/entitlements/config/launch';
 
@@ -178,5 +183,63 @@ describe('UD-2 — enforce is allowed once a tier exists', () => {
       withMode('enforce');
       expect(getMode()).toBe('enforce');
     });
+  });
+});
+
+describe('getEntitlementModeSetting (admin Health, SA C-8): one parser, two readers', () => {
+  const VALUES: Array<string | undefined> = [
+    undefined,
+    '',
+    '   ',
+    'off',
+    'OFF',
+    'shadow',
+    ' Shadow ',
+    'enforce',
+    'ENFORCE',
+    'enforcing',
+    'garbage value',
+  ];
+
+  it.each(VALUES.map((v) => [v]))('agrees with getEntitlementMode() for %j', (value) => {
+    withMode(value);
+    expect(getEntitlementModeSetting().effective).toBe(getEntitlementMode());
+  });
+
+  it('agrees with getEntitlementMode() when enforce is refused, and reports the refusal', () => {
+    jest.isolateModules(() => {
+      // Both data modules are pinned: an earlier test's doMock of `launch` stays
+      // registered (doMock is not scoped to isolateModules).
+      jest.doMock('@/lib/business-os/entitlements/config/tierMatrix', () => ({ TIER_ORDER: [] }));
+      jest.doMock('@/lib/business-os/entitlements/config/launch', () => ({
+        LAUNCH: { enforceRequiresConfiguredTier: true },
+      }));
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fresh = require('@/lib/business-os/entitlements/mode');
+      withMode('enforce');
+      const setting = fresh.getEntitlementModeSetting();
+      expect(setting).toEqual({ effective: 'shadow', requested: 'enforce', refused: true });
+      expect(setting.effective).toBe(fresh.getEntitlementMode());
+    });
+  });
+
+  it('reports an unknown value as "unrecognised", never echoing the raw string', () => {
+    withMode('Secret-Looking-Value');
+    const setting = getEntitlementModeSetting();
+    expect(setting).toEqual({ effective: 'off', requested: 'unrecognised', refused: false });
+    expect(JSON.stringify(setting)).not.toMatch(/secret/i);
+  });
+
+  it('does not log (getEntitlementMode keeps the logging; Health must not double-log)', () => {
+    withMode('enforcing');
+    getEntitlementModeSetting();
+    expect(logged.error).not.toHaveBeenCalled();
+  });
+
+  it('getEntitlementMode keeps its unrecognised-value error log', () => {
+    withMode('enforcing');
+    getEntitlementMode();
+    expect(logged.error).toHaveBeenCalledTimes(1);
+    expect(logged.error.mock.calls[0][0]).toMatchObject({ effectiveMode: 'off' });
   });
 });

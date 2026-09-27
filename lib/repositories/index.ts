@@ -71,6 +71,20 @@ export type {
 // Row types live in the repository file: `TokenUsage` in ./types is an unrelated
 // execution-token type (Layer 1.1 workplan Q-9).
 export { TokenUsageRepository, tokenUsageRepository } from './TokenUsageRepository';
+// Admin-only, cross-account (admin reorganisation slice 2a). Only
+// app/api/admin/** may import it; a source guard enforces that, barrel included.
+export {
+  AdminTokenUsageAnalyticsRepository,
+  adminTokenUsageAnalyticsRepository,
+} from './AdminTokenUsageAnalyticsRepository';
+// Admin Archiving, read-only in Slice 1 (docs/workplans/ADMIN_ARCHIVING_SLICE_1_UI_WORKPLAN.md)
+export { ArchiveRepository, archiveRepository } from './ArchiveRepository';
+export type {
+  ArchiveBatchCounts,
+  ArchiveRunRow,
+  ClaimRunResult,
+  CreateRunResult,
+} from './ArchiveRepository';
 // S-6 free-tier grant (docs/workplans/ALLOCATE_FREE_TIER_S6_FIX_WORKPLAN.md)
 export { UserSubscriptionRepository, userSubscriptionRepository } from './UserSubscriptionRepository';
 export type {

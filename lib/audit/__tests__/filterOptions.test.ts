@@ -18,6 +18,7 @@ import {
 } from '../filterOptions';
 import { AUDIT_EVENTS } from '../events';
 import { AUDIT_ENTITY_TYPES } from '../types';
+import { AUDIT_EVENT_AUDIENCE, OPERATOR_AUDIENCES } from '../eventAudience';
 // The other copy of the same constant. Imported for one equality assertion —
 // this is a node test, so pulling zod in through requestSchemas costs nothing.
 import { AI_ACTION_ENTITY_TYPE as AI_ACTION_ENTITY_TYPE_FROM_SCHEMAS } from '../requestSchemas';
@@ -183,5 +184,42 @@ describe('buildEntityTypeFilterOptions', () => {
     expect(byValue['crm_contact']).toBe('CRM Contact');
     expect(byValue['ai_pricing']).toBe('AI Pricing');
     expect(byValue['payment_invoice']).toBe('Payment Invoice');
+  });
+});
+
+// ─── Slice 2c: the operator (Business OS) list ────────────────────────────────
+// The no-argument tests above are unchanged (SA C-11). These cover the
+// restricted list the admin page actually renders.
+
+describe('buildActionFilterGroups({ audiences: OPERATOR_AUDIENCES })', () => {
+  const operatorGroups = buildActionFilterGroups({ audiences: OPERATOR_AUDIENCES });
+  const operatorValues = operatorGroups.flatMap((g) => g.options.map((o) => o.value));
+
+  it('equals the catalogue minus exactly the events tagged agentspilot', () => {
+    const tagged = AUDIT_EVENT_AUDIENCE as Readonly<Record<string, string>>;
+    const expected = Object.values(AUDIT_EVENTS).filter((event) => tagged[event] !== 'agentspilot');
+    expect(new Set(operatorValues)).toEqual(new Set(expected));
+    expect(operatorValues).toHaveLength(expected.length);
+  });
+
+  it('offers no AgentsPilot event', () => {
+    expect(operatorValues).not.toContain(AUDIT_EVENTS.AGENT_CREATED);
+    expect(operatorValues).not.toContain(AUDIT_EVENTS.PILOT_EXECUTION_FAILED);
+    expect(operatorValues).not.toContain(AUDIT_EVENTS.MEMORY_CREATED);
+  });
+
+  it('still partitions what it offers: one group each, no empties, Business OS AI first', () => {
+    expect(operatorValues).toHaveLength(new Set(operatorValues).size);
+    for (const group of operatorGroups) expect(group.options.length).toBeGreaterThan(0);
+    expect(operatorGroups[0].label).toBe('Business OS AI');
+    expect(operatorValues).toContain(AUDIT_EVENTS.BUSINESS_AI_ACTION_FAILED);
+    expect(operatorValues).toContain(AUDIT_EVENTS.USER_LOGIN);
+  });
+
+  it('groups the entitlement events under "Business OS Entitlements", not "Bos"', () => {
+    const group = operatorGroups.find((g) => g.label === 'Business OS Entitlements');
+    expect(group).toBeDefined();
+    expect(group!.options.every((o) => o.value.startsWith('BOS_ENTITLEMENT_'))).toBe(true);
+    expect(operatorGroups.map((g) => g.label)).not.toContain('Bos');
   });
 });

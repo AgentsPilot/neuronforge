@@ -1,6 +1,7 @@
 ---
 name: v6-pipeline
-description: Loads the architecture + constraint context for the V6 agent-generation pipeline — Phase 0 (vocabulary) → Phase 1 (IntentContract) → Phase 2 (capability binding + data_schema) → Phase 3 (IR conversion) → Phase 4 (DSL compilation) — and the runtime that executes the resulting DSL (lib/pilot/). Use whenever the user asks to add, change, debug, or extend ANYTHING in the V6 pipeline: the IntentContract grammar, the Phase 1 system prompt (intent-system-prompt-v2.ts), the capability binder, the data_schema builder, the IR converter, the execution graph compiler, the DSL runtime (StepExecutor, ParallelExecutor, StructuralRepairEngine, DataPreprocessor), plugin definitions consumed by the pipeline, regression scenarios under tests/v6-regression/, or the diagnostics persisted on agents.agent_config.ai_context. The V2 thread-based agent-creation flow upstream (/v2/agents/new) is OUT OF SCOPE here — that's the agent-creation-flow skill. Cycle-specific workplans live in docs/v6/V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_*.md; the current weak-point catalog is V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md.
+description: >-
+  Architecture, invariants and the V6 Work Protocol for the V6 agent-generation pipeline (Phase 0 vocabulary through Phase 4 DSL compilation) and the DSL runtime in lib/pilot/. Use when adding, changing, debugging or extending anything in lib/agentkit/v6/ or lib/pilot/ — the IntentContract grammar, the Phase 1 prompt, capability binding, data_schema, IR conversion, the compiler, the runtime executors, V6 regression scenarios, or agent_config.ai_context diagnostics. Not for the /v2/agents/new chat flow (use agent-creation-flow).
 ---
 
 # v6-pipeline

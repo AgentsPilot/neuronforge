@@ -286,3 +286,47 @@ describe('error details never leak outside development', () => {
     expect(body.details.length).toBeGreaterThan(0);
   });
 });
+
+// ─── Slice 2c: one account's rows, and the dropdown's hidden events ───────────
+
+describe('the account filter (user_id)', () => {
+  const ACCOUNT = '99999999-9999-4999-8999-999999999999';
+
+  it('filters to one account when user_id is a UUID', async () => {
+    asAdmin();
+    const res = await call(`?action=BUSINESS_AI_ACTION_FAILED&user_id=${ACCOUNT}`);
+
+    expect(res.status).toBe(200);
+    expect(callsTo('eq')).toEqual(
+      expect.arrayContaining([
+        ['action', 'BUSINESS_AI_ACTION_FAILED'],
+        ['user_id', ACCOUNT],
+      ])
+    );
+  });
+
+  it('rejects a user_id that is not a UUID with 400, before any read', async () => {
+    asAdmin();
+    const res = await call('?user_id=abc');
+
+    expect(res.status).toBe(400);
+    expect(mockTablesRead).toHaveLength(0);
+  });
+
+  it('returns 403 — not 400 — for a non-admin sending a bad user_id', async () => {
+    mockGetUser.mockResolvedValue(OWNER);
+    mockIsAdmin.mockResolvedValue(false);
+    const res = await call('?user_id=abc');
+
+    expect(res.status).toBe(403);
+    expect(mockTablesRead).toHaveLength(0);
+  });
+
+  it('still filters by an event the operator dropdown hides (the route knows nothing of audiences)', async () => {
+    asAdmin();
+    const res = await call('?action=AGENT_CREATED');
+
+    expect(res.status).toBe(200);
+    expect(callsTo('eq')).toContainEqual(['action', 'AGENT_CREATED']);
+  });
+});

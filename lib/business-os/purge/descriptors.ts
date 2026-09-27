@@ -295,6 +295,14 @@ const OPT_IN: PurgeDescriptor[] = [
 
   { table: 'audit_trail', level: 'optional:activityHistory', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
     notes: 'user_id is SET NULL on the auth FK. With this option ticked, the audit record of THIS purge is still written afterwards.' },
+  // Admin Archiving (Slice 2, condition C-4): the audit rows that have been moved
+  // out of audit_trail. Same classification, scope and band as their source, so
+  // "delete my activity history" reaches archived history too (BQ-7, FR-14a).
+  // `snapshot: 'ids'`, unlike audit_trail: archived history is the long tail by
+  // definition, and a full-row snapshot above the 250,000-row SNAPSHOT_ROW_CEILING
+  // would make a business with years of history impossible to purge.
+  { table: 'archived_records', level: 'optional:activityHistory', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'ids',
+    notes: 'Archived audit_trail rows (Admin Archiving). No FK to auth.users on purpose (Slice 2 SA R-1), so the user_id survives account deletion and this scope still finds the rows. Its archive_run_id FK points at archive_runs, which is never, so it constrains no purge.' },
 ];
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -380,6 +388,10 @@ const EXCLUDED: PurgeDescriptor[] = [
     'The durable record of what an admin granted or revoked, and why. Support evidence; also never deleted by the admin reset, which ends rows instead.'),
   never('business_os_entitlement_shadow_events', U,
     'Aggregated "what would have been gated" counters. Platform observability about the product, not the owner\'s business data.'),
+
+  // Admin Archiving (Slice 2, condition C-4)
+  never('archive_runs', G,
+    'The platform run log of archiving: who ran it, when, which cutoff, how many rows. No user_id and no business content, counts only. Never archived and never purged.'),
 
   // §8.12 Account configuration and unowned tables
   never('notification_settings', U, 'Account configuration that survives the business.'),

@@ -9,7 +9,10 @@
  *      fails this test until it is given a place in the sidebar;
  *   3. the hardcoded status footer is gone and nothing else claims status;
  *   4. the parked AgentsPilot section is kept in the data but hidden, so it
- *      takes no sidebar space while every one of its routes still works by URL.
+ *      takes no sidebar space while every one of its routes still works by URL;
+ *   5. (slice 4) `/admin` is the Health landing, and the old dashboard moved to
+ *      `/admin/platform-dashboard`, listed only in the hidden parked section
+ *      (URL-only, user decision U-6).
  *
  * Source scan, like the per-page nav tests: the component is a client
  * component importing next/image and framer-motion, and the navigation lives
@@ -86,7 +89,13 @@ describe('section order', () => {
   });
 
   it('puts the pages the requirement names in the first three sections', () => {
-    expect(hrefsOf('Monitor')).toEqual(['/admin', '/admin/analytics', '/admin/audit-trail']);
+    // Archiving sits directly under Audit trail (Admin Archiving, condition C-2).
+    expect(hrefsOf('Monitor')).toEqual([
+      '/admin',
+      '/admin/analytics',
+      '/admin/audit-trail',
+      '/admin/archiving',
+    ]);
     expect(hrefsOf('Businesses')).toEqual([
       '/admin/users',
       '/admin/business-os-tiers',
@@ -100,8 +109,14 @@ describe('section order', () => {
     ]);
   });
 
-  it('parks the other twelve AgentsPilot pages', () => {
-    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(12);
+  it('parks the thirteen AgentsPilot pages, the legacy dashboard included (slice 4)', () => {
+    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(13);
+    expect(hrefsOf('AgentsPilot (parked)')).toContain('/admin/platform-dashboard');
+  });
+
+  it('the landing entry is Health (slice 4)', () => {
+    const landing = sections.flatMap((s) => s.items).find((i) => i.href === '/admin');
+    expect(landing?.name).toBe('Health');
   });
 });
 
@@ -109,8 +124,12 @@ describe('every admin page is reachable, exactly once', () => {
   const onDisk = adminPageRoutes();
 
   it('found the admin pages on disk (guards the scan itself)', () => {
-    // 23 pages today. If this drops, the scan broke rather than the sidebar.
-    expect(onDisk.length).toBeGreaterThanOrEqual(23);
+    // 25 pages: slice 4 moved the legacy dashboard to its own route, and Admin
+    // Archiving slice 1 added /admin/archiving. If this drops, the scan broke
+    // rather than the sidebar.
+    expect(onDisk.length).toBeGreaterThanOrEqual(25);
+    expect(onDisk).toContain('/admin/archiving');
+    expect(onDisk).toContain('/admin/platform-dashboard');
     expect(onDisk).toContain('/admin');
     expect(onDisk).toContain('/admin/exchange-rates');
   });
@@ -118,7 +137,8 @@ describe('every admin page is reachable, exactly once', () => {
   it('lists every page except the deliberately unlisted ones', () => {
     const expected = onDisk.filter((r) => !UNLISTED.includes(r));
     expect([...allHrefs].sort()).toEqual(expected);
-    expect(allHrefs).toHaveLength(22);
+    // 22 before, + the legacy dashboard (slice 4) + Archiving (Admin Archiving slice 1).
+    expect(allHrefs).toHaveLength(24);
   });
 
   it('never lists the same page twice', () => {
@@ -149,6 +169,12 @@ describe('labels are honest', () => {
     expect(queue?.name).toBe('Agent execution queue');
   });
 
+  it('the account list is called "Businesses" now that each row shows its business (slice 2b)', () => {
+    const item = sections.flatMap((s) => s.items).find((i) => i.href === '/admin/users');
+    expect(item?.name).toBe('Businesses');
+    expect(item?.description).toContain('Business OS');
+  });
+
   it('item names are unique (they are the React keys)', () => {
     const names = sections.flatMap((s) => s.items.map((i) => i.name));
     expect(new Set(names).size).toBe(names.length);
@@ -172,8 +198,8 @@ describe('the parked AgentsPilot section is hidden, not removed', () => {
     expect(navBlock.match(/hidden: true/g)).toHaveLength(1);
   });
 
-  it('keeps all twelve parked items in the data (routes are untouched)', () => {
-    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(12);
+  it('keeps all thirteen parked items in the data (routes are untouched)', () => {
+    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(13);
   });
 
   it('renders only the visible sections, and draws separators between those alone', () => {

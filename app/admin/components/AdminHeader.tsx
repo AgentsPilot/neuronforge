@@ -23,9 +23,10 @@ export default function AdminHeader({ onMenuClick }: AdminHeaderProps) {
 
   const getPageTitle = () => {
     switch (pathname) {
-      case '/admin': return 'Dashboard Overview';
+      case '/admin': return 'Health';
+      case '/admin/platform-dashboard': return 'Platform dashboard (legacy)';
       case '/admin/messages': return 'Contact Messages';
-      case '/admin/queues': return 'Queue Monitor';
+      case '/admin/queues': return 'Agent execution queue';
       default: return 'Admin Console';
     }
   };

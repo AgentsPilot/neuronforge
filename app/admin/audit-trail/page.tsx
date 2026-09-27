@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
 import {
   Search, Filter, Calendar, User, Activity, AlertCircle,
@@ -12,7 +13,10 @@ import {
   AI_ACTION_ENTITY_TYPE,
   buildActionFilterGroups,
   buildEntityTypeFilterOptions,
+  classifyAuditEvent,
 } from '@/lib/audit/filterOptions';
+import { AUDIT_EVENTS } from '@/lib/audit/events';
+import { OPERATOR_AUDIENCES } from '@/lib/audit/eventAudience';
 import { createLogger } from '@/lib/logger';
 
 // Structured logging works in a client component: lib/logger.ts configures
@@ -22,7 +26,18 @@ const logger = createLogger({ module: 'AdminAuditTrailPage' });
 
 // Derived once from the audit catalogues (FR-A3): a newly registered event or
 // entity type becomes selectable here with no change to this file.
-const ACTION_FILTER_GROUPS = buildActionFilterGroups();
+//
+// The Action Type list offers Business OS and shared events only (slice 2c).
+// The AgentsPilot-only ones are hidden by their explicit audience tag
+// (lib/audit/eventAudience.ts), never by a list written here, and an untagged
+// event is always shown. "All Actions" still returns every row.
+const ACTION_FILTER_GROUPS = buildActionFilterGroups({ audiences: OPERATOR_AUDIENCES });
+const OFFERED_ACTIONS: ReadonlySet<string> = new Set(
+  ACTION_FILTER_GROUPS.flatMap((group) => group.options.map((option) => option.value))
+);
+
+/** The one-click "BOS AI failures" view (slice 2c). */
+const BOS_AI_FAILED_ACTION = AUDIT_EVENTS.BUSINESS_AI_ACTION_FAILED;
 const ENTITY_TYPE_FILTER_OPTIONS = buildEntityTypeFilterOptions();
 
 interface AuditLogEntry {
@@ -50,6 +65,36 @@ interface FilterState {
   dateTo: string;
   searchTerm: string;
   entityType: string;
+  /** One account's rows only (set by a deep link from Businesses). '' = everyone. */
+  userId: string;
+}
+
+const EMPTY_FILTERS: FilterState = {
+  action: 'all',
+  severity: 'all',
+  dateFrom: '',
+  dateTo: '',
+  searchTerm: '',
+  entityType: 'all',
+  userId: '',
+};
+
+/**
+ * The first filter state, from the URL (e.g. the Businesses panel links to
+ * `?action=BUSINESS_AI_ACTION_FAILED&user_id=<id>`). The route validates every
+ * value; this only decides what the page asks for first.
+ */
+function filtersFromUrl(params: URLSearchParams | null): FilterState {
+  if (!params) return EMPTY_FILTERS;
+  return {
+    action: params.get('action') || 'all',
+    severity: params.get('severity') || 'all',
+    dateFrom: params.get('date_from') || '',
+    dateTo: params.get('date_to') || '',
+    searchTerm: params.get('search') || '',
+    entityType: params.get('entity_type') || 'all',
+    userId: params.get('user_id') || '',
+  };
 }
 
 /**
@@ -141,8 +186,19 @@ function AiActionDetails({ details }: { details: AiActionDetailsView }) {
   );
 }
 
+// useSearchParams needs a Suspense boundary in Next 14.
 export default function AuditTrailPage() {
+  return (
+    <Suspense fallback={null}>
+      <AuditTrailPageContent />
+    </Suspense>
+  );
+}
+
+function AuditTrailPageContent() {
   const { user } = useAuth();
+  // Null outside the App Router (e.g. a unit test); treated as "no deep link".
+  const searchParams = useSearchParams();
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -155,14 +211,9 @@ export default function AuditTrailPage() {
     hasMore: false,
     showing: 0
   });
-  const [filters, setFilters] = useState<FilterState>({
-    action: 'all',
-    severity: 'all',
-    dateFrom: '',
-    dateTo: '',
-    searchTerm: '',
-    entityType: 'all'
-  });
+  const [filters, setFilters] = useState<FilterState>(() =>
+    filtersFromUrl(searchParams as URLSearchParams | null)
+  );
 
   /**
    * The single definition of "a search is active". Used both to decide whether
@@ -185,6 +236,7 @@ export default function AuditTrailPage() {
       if (filters.dateFrom) params.append('date_from', filters.dateFrom);
       if (filters.dateTo) params.append('date_to', filters.dateTo);
       if (isSearchActive) params.append('search', filters.searchTerm);
+      if (filters.userId) params.append('user_id', filters.userId);
       params.append('page', currentPage.toString());
       params.append('page_size', pageSize.toString());
 
@@ -371,9 +423,38 @@ export default function AuditTrailPage() {
 
         {/* Filters */}
         <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
-          <div className="flex items-center gap-3 mb-4">
+          <div className="flex flex-wrap items-center gap-3 mb-4">
             <Filter className="w-5 h-5 text-blue-400" />
             <h2 className="text-xl font-bold text-white">Filters</h2>
+            {/* One-click view (slice 2c): every failed Business OS AI action. */}
+            <button
+              type="button"
+              data-testid="preset-bos-ai-failures"
+              onClick={() => setFilters({ ...filters, action: BOS_AI_FAILED_ACTION })}
+              className={`ml-auto px-3 py-1.5 text-sm rounded-lg border transition-colors ${
+                filters.action === BOS_AI_FAILED_ACTION
+                  ? 'bg-rose-500/20 border-rose-500/50 text-rose-200'
+                  : 'border-slate-600 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              BOS AI failures
+            </button>
+            {filters.userId && (
+              <span
+                data-testid="account-filter-chip"
+                className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-blue-500/20 text-blue-200"
+              >
+                Account {filters.userId.slice(0, 8)}…
+                <button
+                  type="button"
+                  aria-label="Show every account"
+                  onClick={() => setFilters({ ...filters, userId: '' })}
+                  className="text-blue-300 hover:text-white"
+                >
+                  ×
+                </button>
+              </span>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -403,6 +484,13 @@ export default function AuditTrailPage() {
                 {/* "all" is a UI sentinel, not a catalogue value — every other
                     option comes from AUDIT_EVENTS via buildActionFilterGroups() */}
                 <option value="all">All Actions</option>
+                {/* A deep link can name an event this list hides; show it rather
+                    than a blank select beside filtered results. */}
+                {filters.action !== 'all' && !OFFERED_ACTIONS.has(filters.action) && (
+                  <option value={filters.action}>
+                    {classifyAuditEvent(filters.action).label} (hidden from this list)
+                  </option>
+                )}
                 {ACTION_FILTER_GROUPS.map((group) => (
                   <optgroup key={group.label} label={group.label}>
                     {group.options.map((option) => (
@@ -473,14 +561,7 @@ export default function AuditTrailPage() {
 
           {/* Clear Filters */}
           <button
-            onClick={() => setFilters({
-              action: 'all',
-              severity: 'all',
-              dateFrom: '',
-              dateTo: '',
-              searchTerm: '',
-              entityType: 'all'
-            })}
+            onClick={() => setFilters(EMPTY_FILTERS)}
             className="mt-4 px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors"
           >
             Clear All Filters

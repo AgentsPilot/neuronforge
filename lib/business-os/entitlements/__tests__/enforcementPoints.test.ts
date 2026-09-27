@@ -241,6 +241,16 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['buildShadowReport', 'getEntitlementMode'],
       why: 'The admin shadow report. It counts what WOULD be refused and refuses nothing itself.',
     },
+    {
+      file: 'app/api/admin/business-os/accounts/[accountId]/summary/route.ts',
+      symbols: ['isBusinessOsTenant'],
+      why: 'The admin Businesses panel summary (admin reorganisation slice 2b). It asks whether an account is a Business OS tenant so the panel can say "Not a Business OS account", using the same check as the entitlements route; it is read-only and refuses no capability.',
+    },
+    {
+      file: 'app/api/admin/health-summary/route.ts',
+      symbols: ['getEntitlementModeSetting'],
+      why: 'The admin Health landing (admin reorganisation slice 4). It reads which entitlements mode is in effect, and whether an `enforce` request was refused, to colour one tile; it resolves no account and refuses no capability.',
+    },
   ];
 
   /** Every symbol a file imports from the entitlements module. */

@@ -153,6 +153,35 @@ function isValidDate(value: Date): boolean {
   return value instanceof Date && !Number.isNaN(value.getTime());
 }
 
+/**
+ * The PostgREST `or` expression for a feature filter: prefix match OR one of
+ * the listed values. The ONE place this expression is built, exported so the
+ * admin analytics repository (AdminTokenUsageAnalyticsRepository) applies the
+ * same predicate rather than a copy that could drift.
+ *
+ * The guard is inside the builder: every value is interpolated into filter
+ * syntax, so a prefix or value outside LABEL_PATTERN throws
+ * TokenUsageGuardError (callers catch it and return `{ data: null, error }`).
+ * A module-level function, not a method: it does not change the class's
+ * pinned public surface (tokenUsageRepository.contract.test.ts).
+ */
+export function buildFeatureFilterOrExpression(filter: TokenUsageFeatureFilter): string {
+  if (!filter || typeof filter.featurePrefix !== 'string' || !LABEL_PATTERN.test(filter.featurePrefix)) {
+    throw new TokenUsageGuardError('Invalid feature prefix');
+  }
+  if (!Array.isArray(filter.features)) {
+    throw new TokenUsageGuardError('At least one feature value is required');
+  }
+  for (const feature of filter.features) {
+    if (typeof feature !== 'string' || !LABEL_PATTERN.test(feature)) {
+      throw new TokenUsageGuardError('Invalid feature value');
+    }
+  }
+  const like = `feature.like.${filter.featurePrefix}*`;
+  if (filter.features.length === 0) return like;
+  return `${like},feature.in.(${filter.features.map((f) => `"${f}"`).join(',')})`;
+}
+
 export class TokenUsageRepository {
   private supabase: SupabaseClient;
   private logger: Logger;
@@ -226,9 +255,7 @@ export class TokenUsageRepository {
   }
 
   private static orExpression(filter: TokenUsageFeatureFilter): string {
-    const like = `feature.like.${filter.featurePrefix}*`;
-    if (filter.features.length === 0) return like;
-    return `${like},feature.in.(${filter.features.map((f) => `"${f}"`).join(',')})`;
+    return buildFeatureFilterOrExpression(filter);
   }
 
   // PostgREST builder chains are structurally typed per call; `applyMatch`
