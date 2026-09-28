@@ -2,6 +2,10 @@
 //
 // The module's public surface.
 //
+// ⚠️ IMPORTING THIS FROM OUTSIDE THE MODULE? The importing file must be
+// registered in the same change, as a gate or a recorded non-gate — see the
+// `business-os-entitlements` skill, then run `npm run test:bos-entitlements`.
+//
 // ── WHY A BARREL, WHEN THE REPO MOSTLY DOES NOT USE THEM ────────────────────
 // Two reasons, both specific to this module:
 //
