@@ -16,7 +16,11 @@
 //      holds no identity at all. It reaches ONE row, by the SHA-256 of a token
 //      the visitor presented (`findByTokenHashForPublicView`), and may stamp
 //      that row's first view (`markFirstViewed`). Its select is a narrow column
-//      list with no email, issuer, reason or hash.
+//      list with no email, issuer, reason or hash. Slice 1a adds two methods
+//      keyed by the id of THAT matched row, never by a caller-supplied value:
+//      `findInviteeEmailForPublicCheck` (the invitee email, read only so the
+//      server can ask whether it already has an account, and never returned to
+//      the visitor) and `markOpenedByExistingAccount` (FR-8a).
 //
 // FUTURE: champion-issued invites (requirement §14) must get their OWN methods,
 // scoped by `issuer_account_id` (for example `listForIssuerAccount`,
@@ -48,7 +52,7 @@ export const BUSINESS_OS_INVITE_ADMIN_COLUMNS =
   'id, email, email_locked, invite_type, grant_kind, grant_id, access_open_ended, access_months, ' +
   'issuer_kind, issuer_admin_id, issuer_account_id, inviter_display_name, language, personal_note, ' +
   'internal_reason, link_expiry_days, link_expires_at, first_viewed_at, revoked_at, revoked_by_admin_id, ' +
-  'revoke_reason, redeemed_at, redeemed_account_id, created_at, updated_at';
+  'revoke_reason, redeemed_at, redeemed_account_id, opened_by_existing_account_at, created_at, updated_at';
 
 /** What the public page's lookup reads (C-4): no email, no issuer, no reasons, no hash. */
 export const BUSINESS_OS_INVITE_PUBLIC_COLUMNS =
@@ -206,6 +210,57 @@ export class BusinessOsInviteRepository {
       return { data: (data ?? null) as unknown as BusinessOsInvitePublicView | null, error: null };
     } catch (error) {
       methodLogger.error({ dbError: safeDbError(error) }, 'Failed to look up invite by token');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  /**
+   * PUBLIC: the invitee email of the invite the visitor's token already matched
+   * (Slice 1a, FR-8a, L-3), or `null` when there is no such row.
+   *
+   * Kept out of `findByTokenHashForPublicView` on purpose (workplan D-12): the
+   * row the public response is built from never holds the email, so no future
+   * edit of that response's allow-list can leak it. The only use of the value
+   * is the server-side "does this email already have an account?" question.
+   * Never logged.
+   */
+  async findInviteeEmailForPublicCheck(id: string): Promise<RepositoryResult<string>> {
+    const methodLogger = this.logger.child({ method: 'findInviteeEmailForPublicCheck', inviteId: id });
+    try {
+      const { data, error } = await this.supabase.from(INVITES).select('email').eq('id', id).maybeSingle();
+
+      if (error) throw error;
+      const email = (data as { email?: unknown } | null)?.email;
+      return { data: typeof email === 'string' ? email : null, error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to read the invitee email');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  /**
+   * PUBLIC: stamp that the invited email already had an account when the
+   * invite was opened (FR-8a, requirement §4.1 delivery facts). Conditional on
+   * the stamp being empty, so a reload never moves it.
+   *
+   * `data` is `true` only when THIS call set the stamp, so the caller can write
+   * the audit entry once rather than on every reload (workplan D-13).
+   */
+  async markOpenedByExistingAccount(id: string, now: Date): Promise<RepositoryResult<boolean>> {
+    const methodLogger = this.logger.child({ method: 'markOpenedByExistingAccount', inviteId: id });
+    const at = now.toISOString();
+    try {
+      const { data, error } = await this.supabase
+        .from(INVITES)
+        .update({ opened_by_existing_account_at: at, updated_at: at })
+        .eq('id', id)
+        .is('opened_by_existing_account_at', null)
+        .select('id');
+
+      if (error) throw error;
+      return { data: Array.isArray(data) && data.length > 0, error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to record an open by an existing account');
       return { data: null, error: toError(error) };
     }
   }

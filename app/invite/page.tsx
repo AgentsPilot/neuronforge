@@ -20,6 +20,17 @@
  *
  * Slice 0 has no signup form: a valid invite ends with the R-4 line saying
  * account creation is not available from here yet.
+ *
+ * ── Slice 1a ────────────────────────────────────────────────────────────────
+ * `existing_account` (FR-8a): the invited email already has an account. The
+ * page sends the person to the NORMAL sign-in page; it never signs anyone in
+ * itself (BQ-7, "the link is never a credential").
+ *
+ * A signed-in visitor (requirement §4.3, L-8) on a `valid` or
+ * `existing_account` invite is told who they are signed in as and asked to
+ * sign out first. The offer is still shown, but nothing on the page invites
+ * them to act as the signed-in account. This is display only; the Slice 1b
+ * signup routes also refuse a session on the server.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -27,6 +38,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { marketingUrl } from '@/lib/utils/origins';
 
 import { INVITE_PAGE_COPY, directionOf, inviteLocaleOf, type InviteLocale } from './invitePageCopy';
+import { useSignedInVisitor } from './useSignedInVisitor';
 
 type InviteAccess =
   | { kind: 'open_ended'; months: null }
@@ -51,7 +63,11 @@ type InviteResponse =
       linkExpiresAt: string;
       offer: InviteOffer;
     }
-  | { state: 'expired' | 'revoked' | 'used' | 'unavailable'; language: string; inviterDisplayName: string };
+  | {
+      state: 'existing_account' | 'expired' | 'revoked' | 'used' | 'unavailable';
+      language: string;
+      inviterDisplayName: string;
+    };
 
 type View = { kind: 'loading' } | { kind: 'error' } | { kind: 'result'; data: InviteResponse };
 
@@ -71,6 +87,7 @@ function formatDate(iso: string, locale: InviteLocale): string {
 
 export default function InvitePage() {
   const [view, setView] = useState<View>({ kind: 'loading' });
+  const { visitor, signOut, signingOut } = useSignedInVisitor();
   // Held in memory only, so "try again" after a failed check needs no URL.
   const tokenRef = useRef<string | null>(null);
   // StrictMode runs effects twice in development; the fragment is gone after
@@ -118,6 +135,15 @@ export default function InvitePage() {
   const data = view.kind === 'result' ? view.data : null;
   const locale = inviteLocaleOf(data && data.state !== 'not_recognised' ? data.language : 'en');
   const copy = INVITE_PAGE_COPY[locale];
+  // L-8: asked only where the page would otherwise lead somewhere.
+  const showSignedInNotice =
+    visitor.status === 'signed_in' && (data?.state === 'valid' || data?.state === 'existing_account');
+
+  const handleSignOut = async () => {
+    await signOut();
+    // Re-ask the server as the signed-out visitor this now is.
+    await check();
+  };
 
   return (
     <main
@@ -140,6 +166,40 @@ export default function InvitePage() {
               {copy.retry}
             </button>
           </div>
+        )}
+
+        {showSignedInNotice && visitor.status === 'signed_in' && (
+          <section data-testid="invite-signed-in" className="space-y-3 rounded-lg bg-amber-50 p-4 text-amber-900">
+            <h2 className="font-semibold">{copy.signedInHeading(visitor.email)}</h2>
+            <p className="text-sm">{copy.signedInBody}</p>
+            <button
+              type="button"
+              onClick={() => void handleSignOut()}
+              disabled={signingOut}
+              className="rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-60"
+            >
+              {signingOut ? copy.signingOut : copy.signOut}
+            </button>
+          </section>
+        )}
+
+        {data?.state === 'existing_account' && (
+          <section data-testid="invite-state-existing_account" className="space-y-3">
+            <h1 className="text-xl font-semibold">{copy.existingAccountHeading}</h1>
+            <p className="text-slate-600">{copy.existingAccountBody}</p>
+            {/* QA-3: no Sign in button until the session check has answered, so a
+                signed-in visitor never sees it flash before the notice. */}
+            {visitor.status === 'signed_out' && (
+              <a
+                data-testid="invite-sign-in"
+                href={marketingUrl('/login')}
+                rel="noreferrer"
+                className="inline-block rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+              >
+                {copy.signIn}
+              </a>
+            )}
+          </section>
         )}
 
         {data?.state === 'not_recognised' && (

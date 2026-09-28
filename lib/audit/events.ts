@@ -177,6 +177,11 @@ export const AUDIT_EVENTS = {
   // the investigation trail on top of it.
   BOS_INVITE_CREATED: 'BOS_INVITE_CREATED',
   BOS_INVITE_REVOKED: 'BOS_INVITE_REVOKED',
+  // Slice 1a (FR-8a): an invite was opened and its email already had an
+  // account. Anonymous actor; written once per invite (the row's
+  // `opened_by_existing_account_at` stamp decides). Nothing was burned or
+  // changed, and no session was created.
+  BOS_INVITE_OPENED_BY_EXISTING_ACCOUNT: 'BOS_INVITE_OPENED_BY_EXISTING_ACCOUNT',
 
   // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
@@ -611,6 +616,11 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'An admin revoked a Business OS invite before it was used',
+  },
+  [AUDIT_EVENTS.BOS_INVITE_OPENED_BY_EXISTING_ACCOUNT]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS invite was opened for an email that already has an account; the visitor was sent to sign in and nothing changed',
   },
   [AUDIT_EVENTS.BUSINESS_DATA_PURGE_BLOCKED]: {
     severity: 'warning',

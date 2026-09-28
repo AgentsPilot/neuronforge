@@ -29,6 +29,8 @@ export interface InviteRow {
   revokedAt: string | null;
   revokeReason: string | null;
   redeemedAt: string | null;
+  /** Slice 1a (FR-8a): the invite was opened by an email that already had an account. */
+  openedByExistingAccountAt: string | null;
 }
 
 export interface InviteTypeOption {

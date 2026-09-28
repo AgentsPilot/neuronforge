@@ -35,6 +35,7 @@ function row(overrides: Partial<InviteRow> = {}): InviteRow {
     revokedAt: null,
     revokeReason: null,
     redeemedAt: null,
+    openedByExistingAccountAt: null,
     ...overrides,
   };
 }
@@ -92,6 +93,29 @@ beforeEach(() => {
 });
 
 describe('the list', () => {
+  it('is headed "Business OS Signup Invites" (Slice 1a label)', async () => {
+    render(<BusinessOsInvitesPage />);
+    await screen.findByTestId('invite-list');
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Business OS Signup Invites');
+  });
+
+  it('Slice 1a: shows when an invite was opened by an email that already has an account', async () => {
+    responder = () => ({
+      status: 200,
+      body: { success: true, data: payload({ invites: [row({ openedByExistingAccountAt: '2026-10-02T09:00:00.000Z' })] }) },
+    });
+    render(<BusinessOsInvitesPage />);
+    const list = await screen.findByTestId('invite-list');
+    expect(within(list).getByTestId('invite-existing-account')).toHaveTextContent('Opened by an existing account');
+    expect(within(list).getByTestId('invite-state')).toHaveTextContent('Pending');
+  });
+
+  it('Slice 1a: shows nothing extra for an invite never opened by an existing account', async () => {
+    render(<BusinessOsInvitesPage />);
+    const list = await screen.findByTestId('invite-list');
+    expect(within(list).queryByTestId('invite-existing-account')).not.toBeInTheDocument();
+  });
+
   it('loads the invites with their state, and the enforcement note', async () => {
     render(<BusinessOsInvitesPage />);
     const list = await screen.findByTestId('invite-list');
