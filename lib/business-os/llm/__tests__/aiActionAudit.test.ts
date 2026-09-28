@@ -35,13 +35,16 @@ jest.mock('@/lib/logger', () => {
 });
 
 import {
+  AI_ACTION_DECLARATIONS,
   buildAiAuditEntry,
   platformActorId,
   resetPlatformActorForTests,
   runAiAction,
+  type AiActionDeclaration,
   type AiActionSpec,
+  type AiActionType,
 } from '../aiActionAudit';
-import { buildBosCallContext, type BosLlmArea } from '../callCatalog';
+import { BOS_LLM_AREAS, buildBosCallContext, type BosLlmArea } from '../callCatalog';
 import { BaseAIProvider } from '@/lib/ai/providers/baseProvider';
 import type { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 import { AUDIT_EVENTS, getEventMetadata } from '@/lib/audit/events';
@@ -401,5 +404,67 @@ describe('buildAiAuditEntry is pure', () => {
     };
     expect(buildAiAuditEntry(summary)).toEqual(buildAiAuditEntry(summary));
     expect(buildAiAuditEntry(summary).details).toMatchObject({ estimatedCostUsd: 0.3 });
+  });
+});
+
+/**
+ * Deduction layer slice 1 (FR-4): the per-type facts. The enforced guard is the
+ * `satisfies Record<AiActionType, AiActionDeclaration>` under typecheck:bos-llm;
+ * this block is a local/QA-only bonus (no CI job runs this suite).
+ */
+describe('AI_ACTION_DECLARATIONS', () => {
+  // Widened on purpose so the runtime checks below see the declared shape, not
+  // the narrowed literals (and no implicit any from Object.entries).
+  const declarations: Record<AiActionType, AiActionDeclaration> = AI_ACTION_DECLARATIONS;
+  const types = Object.keys(declarations) as AiActionType[];
+  const typesWhere = (predicate: (d: AiActionDeclaration) => boolean): AiActionType[] =>
+    types.filter((t) => predicate(declarations[t])).sort();
+
+  it('declares exactly the members of the AiActionType union (source parse)', () => {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'aiActionAudit.ts'), 'utf8');
+    const start = source.indexOf('export type AiActionType =');
+    expect(start).toBeGreaterThanOrEqual(0);
+    const body = source.slice(start, source.indexOf(';', start));
+    // Quoted literals only: two members carry trailing `// dormant (…)` comments.
+    const members = Array.from(body.matchAll(/'([a-z_]+)'/g), (m) => m[1]);
+    expect(members.length).toBeGreaterThanOrEqual(16);
+    expect(new Set(members).size).toBe(members.length);
+    expect([...types].sort()).toEqual([...members].sort());
+  });
+
+  it('every entry is well-formed', () => {
+    const areas: readonly string[] = BOS_LLM_AREAS;
+    for (const type of types) {
+      const d = declarations[type];
+      expect(areas).toContain(d.area);
+      expect(['owner', 'client']).toContain(d.audience);
+      expect(typeof d.isSetup).toBe('boolean');
+      expect(typeof d.isCharged).toBe('boolean');
+      for (const lang of ['en', 'he', 'es'] as const) {
+        expect(d.diaryLabels[lang].trim().length).toBeGreaterThan(0);
+      }
+      expect(d.templateFallback === 'n/a').toBe(d.audience === 'owner');
+    }
+  });
+
+  it('no two types share a label in any language', () => {
+    for (const lang of ['en', 'he', 'es'] as const) {
+      const labels = types.map((t) => declarations[t].diaryLabels[lang].trim().toLowerCase());
+      expect(new Set(labels).size).toBe(labels.length);
+    }
+  });
+
+  it('pins the known facts', () => {
+    // SQ-12 + SA C-1: lead reply is the only client-facing type, and its no-AI fallback exists.
+    expect(typesWhere((d) => d.audience === 'client')).toEqual(['lead_reply_recommendation']);
+    expect(declarations.lead_reply_recommendation.templateFallback).toBe('exists');
+    // KI-4: exactly the two dormant types.
+    expect(typesWhere((d) => d.isDormant === true)).toEqual(['website_block_enrichment', 'website_section_field_rewrite']);
+    // Option B: every action is charged.
+    expect(typesWhere((d) => !d.isCharged)).toEqual([]);
+    // Setup AI, by class.
+    expect(typesWhere((d) => d.isSetup)).toEqual(
+      ['intake_form_generation', 'onboarding_build', 'onboarding_turn', 'website_full_site'].sort()
+    );
   });
 });
