@@ -204,8 +204,32 @@ export interface DescribedRef {
   $find: { where?: unknown[] };
 }
 
+/**
+ * Read a described reference, whichever way the model spelled it.
+ *
+ * The grammar says `$find`, and the `$` is what marks a directive apart from
+ * data — the same mark `$date` carries. Asked to "add task to eyal omer" the
+ * planner wrote the bare `find` instead, its repair round left it alone, and the
+ * object reached the column mapper, which correctly refused to store an object
+ * in `contact_id`. The request was expressed perfectly and failed on a sigil.
+ *
+ * Accepting both is a normalisation, not a loosened rule. A field like
+ * `contact_id` holds a scalar; an object carrying a `find` key is not a value
+ * anybody could mean literally, so there is no second reading to protect. The
+ * alternative — another example in the prompt — makes one phrasing work and
+ * leaves the next one to be discovered by a user.
+ *
+ * The `$` spelling stays canonical: it is what the tool schema documents and
+ * what everything downstream emits.
+ */
 export function isDescribedRef(value: unknown): value is DescribedRef {
-  return typeof value === 'object' && value !== null && '$find' in value;
+  if (typeof value !== 'object' || value === null) return false;
+  return '$find' in value || 'find' in value;
+}
+
+/** The `$find` payload, from either spelling. */
+function describedFind(value: DescribedRef): { where?: unknown[] } {
+  return value.$find ?? ((value as unknown as { find: { where?: unknown[] } }).find);
 }
 
 /** Does any field of this write describe a row rather than name it? */
@@ -266,7 +290,7 @@ export async function resolveDescribedReferences(
       ]);
     }
 
-    const where = value.$find.where ?? [];
+    const where = describedFind(value).where ?? [];
     if (where.length === 0) {
       throw new BizQLValidationError([
         `'${query.entity}.${key}' describes a ${field.references} with no filter, which ` +
