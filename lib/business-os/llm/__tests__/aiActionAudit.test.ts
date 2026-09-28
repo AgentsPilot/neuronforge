@@ -45,6 +45,7 @@ import {
   type AiActionType,
 } from '../aiActionAudit';
 import { BOS_LLM_AREAS, buildBosCallContext, type BosLlmArea } from '../callCatalog';
+import * as chargeClassification from '../chargeClassification';
 import { BaseAIProvider } from '@/lib/ai/providers/baseProvider';
 import type { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 import { AUDIT_EVENTS, getEventMetadata } from '@/lib/audit/events';
@@ -149,16 +150,18 @@ describe('one entry per action, with its totals (T-E1, AC-1)', () => {
       inputTokens: 412,
       outputTokens: 100,
       totalTokens: 512,
-      estimatedCostUsd: 0.003502,
+      // 10 dp since deduction slice 2 (SQ-14): the 0.0000024 embedding is no longer rounded away.
+      estimatedCostUsd: 0.0035024,
       callNames: ['planner', 'analysis', 'plan_cache_lookup_embedding'],
       models: ['gpt-4o-mini', 'gpt-4o', 'text-embedding-3-small'],
       outcome: 'succeeded',
     });
   });
 
-  // SA CR-2 / DV-10: the entry's cost is rounded to a micro-dollar, so it may
-  // differ from the exact ledger sum by at most 5e-7. Tokens and counts are exact.
-  it('matches the exact cost sum within 5e-7 when calls cost less than a micro-dollar (CR-2)', async () => {
+  // SA CR-2 / DV-10, amended by deduction slice 2 (SQ-14): the entry's cost is
+  // rounded to 10 decimal places, so it may differ from the exact ledger sum by
+  // at most 5e-11. Tokens and counts are exact.
+  it('matches the exact cost sum within 5e-11 when calls cost less than a micro-dollar (CR-2, SQ-14)', async () => {
     const costs = [0.00000013, 0.00000027, 0.00000041, 0.0012345678];
     await runAiAction(spec(), async () => {
       for (const cost of costs) {
@@ -167,8 +170,9 @@ describe('one entry per action, with its totals (T-E1, AC-1)', () => {
     });
     const details = onlyEntry().details as { estimatedCostUsd: number; inputTokens: number; outputTokens: number; callCount: number };
     const exact = costs.reduce((n, c) => n + c, 0);
-    expect(Math.abs(details.estimatedCostUsd - exact)).toBeLessThanOrEqual(5e-7);
-    expect(details.estimatedCostUsd).not.toBe(exact); // it IS rounded, so the tolerance is doing work
+    expect(Math.abs(details.estimatedCostUsd - exact)).toBeLessThanOrEqual(5e-11);
+    // Every sub-micro-dollar call survives: a micro-dollar rounding would have stored 0.001236.
+    expect(details.estimatedCostUsd).toBe(0.0012353778);
     expect(details.inputTokens).toBe(28);
     expect(details.outputTokens).toBe(0);
     expect(details.callCount).toBe(4);
@@ -466,5 +470,113 @@ describe('AI_ACTION_DECLARATIONS', () => {
     expect(typesWhere((d) => d.isSetup)).toEqual(
       ['intake_form_generation', 'onboarding_build', 'onboarding_turn', 'website_full_site'].sort()
     );
+  });
+});
+
+/**
+ * Deduction layer slice 2 (SQ-14, AC-29): the stored cost keeps small costs.
+ * Still `schema: 1`; old entries are not backfilled.
+ */
+describe('the stored cost keeps sub-micro-dollar costs (slice 2, AC-29)', () => {
+  it('a lone ~2e-7 USD embedding call stores a non-zero cost', async () => {
+    await runAiAction(spec(), async () => {
+      await llmCall({ callName: 'plan_cache_lookup_embedding', tokens: [10, 0], cost: 2.0000000000000002e-7, model: 'text-embedding-3-small' });
+    });
+    const details = onlyEntry().details as { estimatedCostUsd: number; schema: number };
+    expect(details.estimatedCostUsd).toBe(0.0000002);
+    expect(details.estimatedCostUsd).toBeGreaterThan(0);
+    expect(details.schema).toBe(1);
+  });
+
+  it('a sub-micro-dollar action total is non-zero (a micro-dollar rounding stored 0)', async () => {
+    await runAiAction(spec(), async () => {
+      await llmCall({ callName: 'plan_cache_lookup_embedding', tokens: [7, 0], cost: 0.00000013, model: 'text-embedding-3-small' });
+      await llmCall({ callName: 'plan_cache_lookup_embedding', tokens: [7, 0], cost: 0.00000027, model: 'text-embedding-3-small' });
+    });
+    expect((onlyEntry().details as { estimatedCostUsd: number }).estimatedCostUsd).toBe(0.0000004);
+  });
+
+  it('still clears float noise', async () => {
+    await runAiAction(spec(), async () => {
+      await llmCall({ cost: 0.1 });
+      await llmCall({ callName: 'analysis', cost: 0.2 });
+    });
+    expect((onlyEntry().details as { estimatedCostUsd: number }).estimatedCostUsd).toBe(0.3);
+  });
+});
+
+/**
+ * Deduction layer slice 2 (AC-3, SA Q-1, S-1): `runAiAction` makes an unpriced
+ * call fail loudly, after the entry is queued, in its own try.
+ */
+describe('unpriced calls fail loudly (slice 2, AC-3)', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  const unpricedErrors = () => mockLogged.filter((l) => l.level === 'error' && l.fields.event === 'bos_llm_call_unpriced');
+
+  it('logs one error per unpriced call, naming provider, model, area, action, group and account', async () => {
+    await runAiAction(spec(), async () => {
+      await llmCall({ callName: 'planner', model: 'gpt-imaginary', cost: 0 });
+      await llmCall({ callName: 'analysis', cost: 0.001 });
+    });
+    const errors = unpricedErrors();
+    expect(errors).toHaveLength(1);
+    expect(errors[0].fields).toEqual({
+      event: 'bos_llm_call_unpriced',
+      provider: 'openai',
+      model: 'gpt-imaginary',
+      area: 'chat',
+      actionType: 'chat_turn',
+      groupId: GROUP,
+      accountId: OWNER,
+      callName: 'planner',
+      kind: 'text',
+      reason: 'unpriced_on_recheck',
+    });
+    // The records disagree VISIBLY: the entry still stores the measured $0 (SQ-13).
+    expect(onlyEntry().details).toMatchObject({ estimatedCostUsd: 0.001, schema: 1 });
+  });
+
+  it('is silent for an action whose calls are all priced or failed', async () => {
+    await runAiAction(spec(), async () => {
+      await llmCall();
+      await llmCall({ callName: 'analysis', fail: true }).catch(() => undefined);
+    });
+    expect(unpricedErrors()).toHaveLength(0);
+  });
+
+  it('a throwing check changes neither the value nor the queued entry', async () => {
+    jest.spyOn(chargeClassification, 'reportUnpricedCalls').mockImplementation(() => {
+      throw new Error('classifier exploded');
+    });
+    await expect(runAiAction(spec(), async () => (await llmCall()).text)).resolves.toContain('answer');
+    expect(mockLog).toHaveBeenCalledTimes(1);
+    expect(mockLogged.some((l) => l.level === 'error' && l.msg === 'Checking the AI action for unpriced calls failed')).toBe(true);
+  });
+
+  it('a throwing check does not change the error the action throws, and the entry is still queued', async () => {
+    jest.spyOn(chargeClassification, 'reportUnpricedCalls').mockImplementation(() => {
+      throw new Error('classifier exploded');
+    });
+    const boom = new Error('action failed');
+    await expect(
+      runAiAction(spec(), async () => {
+        await llmCall();
+        throw boom;
+      })
+    ).rejects.toBe(boom);
+    expect(mockLog).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs after the entry is queued (a fault in it can never skip the entry)', async () => {
+    const order: string[] = [];
+    mockLog.mockImplementation(async () => {
+      order.push('audit');
+    });
+    jest.spyOn(chargeClassification, 'reportUnpricedCalls').mockImplementation(() => {
+      order.push('check');
+    });
+    await runAiAction(spec(), async () => llmCall());
+    expect(order).toEqual(['audit', 'check']);
   });
 });

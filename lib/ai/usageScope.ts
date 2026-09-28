@@ -31,8 +31,17 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createLogger } from '@/lib/logger';
+// Type-only: erased at compile time, so this module stays product-agnostic.
+import type { PriceStatus } from '@/lib/ai/pricing';
 
 const logger = createLogger({ module: 'UsageScope' });
+
+/**
+ * How the provider priced one call, where the provider says so (deduction
+ * layer slice 2). `unit` matters because an unpriced image has zero tokens, so
+ * a token-rate fallback would price it at $0. Declared once, here (D-0 S-1).
+ */
+export type UsageCallPricing = { status: PriceStatus; unit: 'token' | 'image' };
 
 /** One LLM call, as reported by the provider layer. No prompt, no output, no error text. */
 export interface UsageCallRecord {
@@ -50,6 +59,12 @@ export interface UsageCallRecord {
   success: boolean;
   /** The provider error's `code` on failure. Never its message. */
   errorCode?: string;
+  /**
+   * Whether the cost above came from a usable price. Absent means the provider
+   * does not report it (every provider but OpenAI today), never "unpriced".
+   * Scope-only: it is never written to the usage ledger.
+   */
+  pricing?: UsageCallPricing;
 }
 
 export interface UsageScopeResult {

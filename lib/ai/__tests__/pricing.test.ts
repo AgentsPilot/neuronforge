@@ -265,3 +265,174 @@ describe('listPricedModels (admin model options)', () => {
     expect(mockListActive).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * Slice 2 T1 (deduction layer, SA Q-2): the shared returns, PINNED ON THE OLD
+ * CODE before `calculateCostSync`'s lookup was extracted into
+ * `lookupPricingSync`. The agent platform records these numbers in
+ * `token_usage`, so the extraction must leave every one of them, the lookup
+ * order (cache, then in-code), the warn text and its level exactly as they were.
+ * Expected values are literals, never recomputed from the module under test.
+ */
+describe('shared pricing returns are unchanged by the slice 2 extraction (P-2)', () => {
+  const WARN_TEXT = 'No pricing found; recording $0 for this call';
+
+  it('prices an in-code model, sync and async', async () => {
+    const pricing = await freshPricing();
+    expect(pricing.calculateCostSync('openai', 'gpt-4o', 1000, 1000)).toBe(0.0125);
+    expect(await pricing.calculateCost('openai', 'gpt-4o', 1000, 1000)).toBe(0.0125);
+    expect(pricing.calculateCostSync('anthropic', 'claude-sonnet-4-6', 2000, 500)).toBe(0.0135);
+    expect(pricing.calculateCostSync('openai', 'text-embedding-3-small', 10, 0)).toBe(2.0000000000000002e-7);
+  });
+
+  it('returns 0 for zero tokens on a priced model, without a warn', async () => {
+    const pricing = await freshPricing();
+    expect(pricing.calculateCostSync('openai', 'gpt-4o', 0, 0)).toBe(0);
+    expect(logged.filter((l) => l.msg === WARN_TEXT)).toHaveLength(0);
+  });
+
+  it('returns 0 for an unpriced model and warns exactly once per call, at warn level, with the same text', async () => {
+    const pricing = await freshPricing();
+    expect(pricing.calculateCostSync('openai', 'gpt-4o-imaginary', 1000, 1000)).toBe(0);
+    const warns = logged.filter((l) => l.msg === WARN_TEXT);
+    expect(warns).toHaveLength(1);
+    expect(warns[0].level).toBe('warn');
+    expect(warns[0].fields).toEqual({ provider: 'openai', model: 'gpt-4o-imaginary' });
+    expect(pricing.calculateCostSync('groq', 'llama-imaginary', 10, 10)).toBe(0);
+    expect(logged.filter((l) => l.msg === WARN_TEXT)).toHaveLength(2);
+  });
+
+  it('reads the cache before the in-code table (a DB row wins)', async () => {
+    mockListActive.mockResolvedValue({
+      data: [row({ model_name: 'gpt-4o', input_cost_per_token: '0.000009', output_cost_per_token: '0.000009' })],
+      error: null,
+    });
+    const pricing = await freshPricing();
+    await pricing.refreshPricingCache();
+    expect(pricing.calculateCostSync('openai', 'gpt-4o', 1000, 1000)).toBeCloseTo(0.018, 12);
+    expect(await pricing.calculateCost('openai', 'gpt-4o', 1000, 1000)).toBeCloseTo(0.018, 12);
+  });
+
+  it('a DB row at 0/0 is served as a price: returns 0 with NO warn (the silent $0 slice 2 signals)', async () => {
+    mockListActive.mockResolvedValue({
+      data: [row({ model_name: 'gpt-free', input_cost_per_token: '0', output_cost_per_token: '0' })],
+      error: null,
+    });
+    const pricing = await freshPricing();
+    await pricing.refreshPricingCache();
+    expect(pricing.calculateCostSync('openai', 'gpt-free', 1000, 1000)).toBe(0);
+    expect(logged.filter((l) => l.msg === WARN_TEXT)).toHaveLength(0);
+  });
+});
+
+/** Slice 2 (deduction layer): the read-only price-status lookup and the in-code table accessor. */
+describe('getPriceStatusSync (slice 2, SQ-13 (1))', () => {
+  it('is priced for an in-code row, a cached row, and an input-only embedding row', async () => {
+    mockListActive.mockResolvedValue({ data: [row({ model_name: 'gpt-db-only' })], error: null });
+    const pricing = await freshPricing();
+    await pricing.refreshPricingCache();
+    expect(pricing.getPriceStatusSync('openai', 'gpt-4o')).toBe('priced');
+    expect(pricing.getPriceStatusSync('anthropic', 'claude-sonnet-4-6')).toBe('priced');
+    expect(pricing.getPriceStatusSync('openai', 'gpt-db-only')).toBe('priced');
+    expect(pricing.getPriceStatusSync('openai', 'text-embedding-3-small')).toBe('priced');
+  });
+
+  it('is unpriced for an unknown model or provider', async () => {
+    const pricing = await freshPricing();
+    expect(pricing.getPriceStatusSync('openai', 'gpt-4o-imaginary')).toBe('unpriced');
+    expect(pricing.getPriceStatusSync('groq', 'llama-3.3-70b-versatile')).toBe('unpriced');
+  });
+
+  it('a cached row at 0/0 is unpriced, and calculateCostSync still returns 0 (D-0 C-1)', async () => {
+    mockListActive.mockResolvedValue({
+      data: [row({ model_name: 'gpt-free', input_cost_per_token: '0', output_cost_per_token: '0' })],
+      error: null,
+    });
+    const pricing = await freshPricing();
+    await pricing.refreshPricingCache();
+    expect(pricing.getPriceStatusSync('openai', 'gpt-free')).toBe('unpriced');
+    expect(pricing.calculateCostSync('openai', 'gpt-free', 1000, 1000)).toBe(0);
+  });
+
+  it('a chat row with output 0 is unpriced (only input-only models may have output 0)', async () => {
+    mockListActive.mockResolvedValue({
+      data: [row({ model_name: 'gpt-half', input_cost_per_token: '0.000001', output_cost_per_token: '0' })],
+      error: null,
+    });
+    const pricing = await freshPricing();
+    await pricing.refreshPricingCache();
+    expect(pricing.getPriceStatusSync('openai', 'gpt-half')).toBe('unpriced');
+  });
+
+  it('agrees with the cost: the same row (a DB override) decides both', async () => {
+    mockListActive.mockResolvedValue({
+      data: [row({ model_name: 'gpt-4o', input_cost_per_token: '0', output_cost_per_token: '0' })],
+      error: null,
+    });
+    const pricing = await freshPricing();
+    await pricing.refreshPricingCache();
+    // The in-code gpt-4o row is priced, but the cache wins for both functions.
+    expect(pricing.calculateCostSync('openai', 'gpt-4o', 1000, 1000)).toBe(0);
+    expect(pricing.getPriceStatusSync('openai', 'gpt-4o')).toBe('unpriced');
+  });
+
+  it('logs nothing, at any level', async () => {
+    const pricing = await freshPricing();
+    logged.length = 0;
+    pricing.getPriceStatusSync('openai', 'gpt-4o');
+    pricing.getPriceStatusSync('openai', 'gpt-4o-imaginary');
+    expect(logged).toHaveLength(0);
+  });
+
+  it('is total: never throws, and any non-string or empty input is unpriced (SA C-2)', async () => {
+    const pricing = await freshPricing();
+    const hostile: unknown[] = [undefined, null, 42, {}, [], Symbol('s'), ''];
+    for (const bad of hostile) {
+      expect(() => pricing.getPriceStatusSync(bad as unknown as string, 'gpt-4o')).not.toThrow();
+      expect(pricing.getPriceStatusSync(bad as unknown as string, 'gpt-4o')).toBe('unpriced');
+      expect(() => pricing.getPriceStatusSync('openai', bad as unknown as string)).not.toThrow();
+      expect(pricing.getPriceStatusSync('openai', bad as unknown as string)).toBe('unpriced');
+    }
+  });
+});
+
+describe('inCodeTokenPrices (slice 2, SQ-9, SA S-5)', () => {
+  it('returns the in-code table, including providers the DB may override', async () => {
+    mockListActive.mockResolvedValue({
+      data: [row({ model_name: 'gpt-4o', input_cost_per_token: '0.000009', output_cost_per_token: '0.000009' })],
+      error: null,
+    });
+    const pricing = await freshPricing();
+    await pricing.refreshPricingCache();
+    const table = pricing.inCodeTokenPrices();
+    // The IN-CODE price, not the DB override (why listPricedModels cannot serve SQ-9).
+    expect(table.openai['gpt-4o']).toEqual({ input: 0.0025, output: 0.01 });
+    expect(Object.keys(table).sort()).toEqual(['anthropic', 'google', 'kimi', 'openai']);
+  });
+
+  it('is deep-frozen: mutation through a cast neither sticks nor changes any lookup', async () => {
+    const pricing = await freshPricing();
+    const table = pricing.inCodeTokenPrices() as unknown as Record<string, Record<string, { input: number; output: number }>>;
+    expect(Object.isFrozen(table)).toBe(true);
+    expect(Object.isFrozen(table.openai)).toBe(true);
+    expect(Object.isFrozen(table.openai['gpt-4o'])).toBe(true);
+    // Test files are strict-mode modules, so writing to a frozen object throws.
+    expect(() => {
+      table.openai['gpt-4o'].input = 0;
+    }).toThrow(TypeError);
+    expect(() => {
+      table.openai['gpt-free'] = { input: 0, output: 0 };
+    }).toThrow(TypeError);
+    expect(() => {
+      table.groq = {};
+    }).toThrow(TypeError);
+    expect(pricing.calculateCostSync('openai', 'gpt-4o', 1000, 1000)).toBe(0.0125);
+    expect(pricing.getPriceStatusSync('openai', 'gpt-4o')).toBe('priced');
+    expect(pricing.inCodeTokenPrices().openai['gpt-4o']).toEqual({ input: 0.0025, output: 0.01 });
+  });
+
+  it('returns a fresh copy each time', async () => {
+    const pricing = await freshPricing();
+    expect(pricing.inCodeTokenPrices()).not.toBe(pricing.inCodeTokenPrices());
+  });
+});

@@ -31,6 +31,9 @@ import { withUsageScope, type UsageCallRecord } from '@/lib/ai/usageScope';
 import { ALL_ZERO_UUID, platformAccountId } from '@/lib/platformAccount';
 import { createLogger } from '@/lib/logger';
 import { BOS_LLM_AREAS, bosFeature, isPlatformAccount, isUuid, type BosLlmArea } from './callCatalog';
+// Imports only the shared pricing reader and types (SA Q-1 (b)): the rate
+// derivation and SystemConfigRepository stay out of this module's graph.
+import { reportUnpricedCalls } from './chargeClassification';
 // Type-only, from a file with no imports: erased at compile time, adds nothing
 // to this server-only module's graph.
 import type { Labels } from '@/lib/business-os/entitlements/types';
@@ -315,8 +318,13 @@ export function buildAiAuditEntry(summary: AiActionSummary): AuditLogInput {
     inputTokens,
     outputTokens,
     totalTokens: inputTokens + outputTokens,
-    // Rounded to a micro-dollar: float sums otherwise store 0.30000000000000004.
-    estimatedCostUsd: Math.round(cost * 1e6) / 1e6,
+    // Rounded to 10 decimal places (deduction layer slice 2, SQ-14): enough to
+    // clear float noise (0.30000000000000004 stores 0.3), the same precision as
+    // the charge's numeric(…,10) (SQ-8), and fine enough that a ~2e-7 USD
+    // embedding is not stored as 0. Entries written before slice 2 are rounded
+    // to a micro-dollar; they are not backfilled. Exact while cost * 1e10 is a
+    // safe integer, i.e. below ~$900,000 per action.
+    estimatedCostUsd: Math.round(cost * 1e10) / 1e10,
     callNames: distinct(calls.map((c) => c.component)),
     models: distinct(calls.map((c) => c.model)),
     outcome: failure ? 'failed' : 'succeeded',
@@ -405,6 +413,24 @@ export async function runAiAction<T>(spec: AiActionSpec, fn: (handle: AiActionHa
     logger.error(
       { err, area: spec.area, actionType: spec.actionType, groupId: spec.groupId, accountId: accountId ?? null },
       'Building the AI audit entry failed; none written'
+    );
+  }
+
+  // Deduction layer slice 2 (AC-3): an unpriced call fails loudly, naming its
+  // area and action, which only this function knows. Log-only. Its own try, and
+  // AFTER the entry is queued, so a fault here can never skip the audit entry
+  // or change the action's result (SA Q-1 (a), S-1).
+  try {
+    reportUnpricedCalls(outcome.usage.calls, {
+      area: spec.area,
+      actionType: spec.actionType,
+      groupId: spec.groupId,
+      accountId,
+    });
+  } catch (err) {
+    logger.error(
+      { err, area: spec.area, actionType: spec.actionType, groupId: spec.groupId, accountId: accountId ?? null },
+      'Checking the AI action for unpriced calls failed'
     );
   }
 

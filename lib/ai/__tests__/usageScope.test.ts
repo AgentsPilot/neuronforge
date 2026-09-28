@@ -241,3 +241,118 @@ describe('the callWithTracking hook', () => {
     expect(without).toHaveLength(2);
   });
 });
+
+/**
+ * Deduction layer slice 2 (D-0 C-2): the optional `pricing` signal passes
+ * through the REAL callWithTracking to the usage scope, and nowhere else.
+ *
+ * The ledger payloads below are LITERALS captured from the unmodified code at
+ * T0 (call_id and latency_ms stripped, undefined fields omitted), so the proof
+ * never compares the new code with itself (P-1).
+ */
+describe('the price signal (slice 2)', () => {
+  const USER = '2f734ed5-3681-4049-880d-3de7b096bea3';
+  const SUCCESS_ROW = {
+    user_id: USER,
+    session_id: GROUP,
+    provider: 'openai',
+    model_name: 'gpt-test',
+    endpoint: 'chat/completions',
+    feature: 'business-os-chat',
+    component: 'planner',
+    category: 'general',
+    input_tokens: 42,
+    output_tokens: 5,
+    cost_usd: 0.001,
+    success: true,
+    request_type: 'chat',
+  };
+  const FAILURE_ROW = {
+    user_id: USER,
+    session_id: GROUP,
+    provider: 'openai',
+    model_name: 'gpt-test',
+    endpoint: 'chat/completions',
+    feature: 'business-os-chat',
+    component: 'planner',
+    category: 'general',
+    input_tokens: 0,
+    output_tokens: 0,
+    cost_usd: 0,
+    success: false,
+    error_code: 'rate_limit_exceeded',
+    error_message: 'provider said no',
+    request_type: 'chat',
+  };
+  const strip = (d: AICallData) => {
+    const { call_id: _c, latency_ms: _l, ...rest } = d as AICallData & { call_id?: string; latency_ms?: number };
+    return rest;
+  };
+
+  /** One call through the real callWithTracking, with or without a signal. */
+  function priced(pricing?: UsageCallRecord['pricing'], fail = false) {
+    return provider.callWithTracking(
+      ctx(GROUP),
+      'openai',
+      'gpt-test',
+      'chat/completions',
+      async () => {
+        if (fail) throw Object.assign(new Error('provider said no'), { code: 'rate_limit_exceeded' });
+        return { tokens: 42 };
+      },
+      (r: { tokens: number }) => ({ inputTokens: r.tokens, outputTokens: 5, cost: 0.001, ...(pricing ? { pricing } : {}) })
+    );
+  }
+
+  it('(i) reaches the scope record unchanged', async () => {
+    const outcome = await withUsageScope(GROUP, async () => {
+      await priced({ status: 'unpriced', unit: 'token' });
+      await priced({ status: 'priced', unit: 'image' });
+    });
+    expect(outcome.usage.calls.map((c) => c.pricing)).toEqual([
+      { status: 'unpriced', unit: 'token' },
+      { status: 'priced', unit: 'image' },
+    ]);
+  });
+
+  it('(ii) is absent from the record when the provider reports none (the other four providers)', async () => {
+    const outcome = await withUsageScope(GROUP, () => priced(undefined));
+    expect(outcome.usage.calls[0]).not.toHaveProperty('pricing');
+  });
+
+  it('(iii) never reaches the ledger: every payload equals the literal captured before the change', async () => {
+    for (const signal of [undefined, { status: 'priced', unit: 'token' } as const, { status: 'unpriced', unit: 'image' } as const]) {
+      // Outside a scope, then inside one; success, then failure.
+      mockTrack.mockClear();
+      await priced(signal);
+      await priced(signal, true).catch(() => undefined);
+      await withUsageScope(GROUP, async () => {
+        await priced(signal);
+        await priced(signal, true).catch(() => undefined);
+      });
+      const rows = mockTrack.mock.calls.map(([d]) => strip(d));
+      expect(rows).toEqual([SUCCESS_ROW, FAILURE_ROW, SUCCESS_ROW, FAILURE_ROW]);
+      for (const r of rows) expect(r).not.toHaveProperty('pricing');
+    }
+  });
+
+  it('(iv) a failed call carries no signal, even when extractMetrics would have given one', async () => {
+    const outcome = await withUsageScope(GROUP, async () => {
+      await priced({ status: 'priced', unit: 'token' }, true).catch(() => undefined);
+    });
+    expect(outcome.usage.calls).toHaveLength(1);
+    expect(outcome.usage.calls[0]).toMatchObject({ success: false, costUsd: 0 });
+    expect(outcome.usage.calls[0]).not.toHaveProperty('pricing');
+  });
+
+  it('(v) outside a scope: the same return value, and exactly one tracker call', async () => {
+    mockTrack.mockClear();
+    const withSignal = await priced({ status: 'priced', unit: 'token' });
+    expect(mockTrack).toHaveBeenCalledTimes(1);
+    mockTrack.mockClear();
+    const without = await priced(undefined);
+    expect(mockTrack).toHaveBeenCalledTimes(1);
+    expect(withSignal).toEqual({ tokens: 42 });
+    expect(without).toEqual({ tokens: 42 });
+  });
+});
