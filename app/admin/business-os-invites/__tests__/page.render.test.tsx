@@ -10,7 +10,7 @@
  */
 
 import '@testing-library/jest-dom';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import BusinessOsInvitesPage from '../page';
@@ -90,6 +90,16 @@ beforeEach(() => {
     const { status, body } = responder(call);
     return jsonResponse(status, body);
   }) as unknown as typeof fetch;
+});
+
+// Tests that swap in a fake clipboard must not leak it into the next test.
+const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+afterEach(() => {
+  if (originalClipboard) {
+    Object.defineProperty(navigator, 'clipboard', originalClipboard);
+  } else {
+    delete (navigator as { clipboard?: Clipboard }).clipboard;
+  }
 });
 
 describe('the list', () => {
@@ -212,6 +222,54 @@ describe('creating an invite', () => {
 
     expect(screen.getByTestId('invite-row-invite-2')).toBeInTheDocument();
   });
+
+  it('a second invite gets a fresh panel: its button reads "Copy", not the first link\'s "Copied"', async () => {
+    const LINK_B = 'http://localhost:3000/invite#t=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+    const user = userEvent.setup();
+    render(<BusinessOsInvitesPage />);
+    await screen.findByTestId('invite-list');
+
+    let nextCreate = { invite: row({ id: 'invite-a', email: 'a@example.com' }), link: LINK };
+    responder = (call) =>
+      call.init?.method === 'POST'
+        ? { status: 201, body: { success: true, data: nextCreate } }
+        : { status: 200, body: { success: true, data: payload() } };
+
+    const createOne = async (email: string) => {
+      await user.click(screen.getByRole('button', { name: /new invite/i }));
+      const form = screen.getByTestId('create-invite-form');
+      // fireEvent.change, not user.type: typing char by char pushed this test past
+      // Jest's 5 s timeout. Clicks stay on user-event.
+      fireEvent.change(within(form).getByLabelText('Email'), { target: { value: email } });
+      await user.click(within(form).getByRole('radio', { name: 'No end date' }));
+      fireEvent.change(within(form).getByLabelText(/internal reason/i), { target: { value: 'QA copy state' } });
+      await user.click(within(form).getByRole('button', { name: 'Create' }));
+    };
+
+    // Must come after userEvent.setup(), which installs its own clipboard stub.
+    const writeText = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+
+    // Invite A: copy it.
+    await createOne('a@example.com');
+    let panel = await screen.findByTestId('created-link-panel');
+    expect(within(panel).getByTestId('created-link')).toHaveTextContent(LINK);
+    await user.click(within(panel).getByRole('button', { name: 'Copy' }));
+    expect(await within(panel).findByText('Copied')).toBeInTheDocument();
+    expect(writeText).toHaveBeenLastCalledWith(LINK);
+
+    // Invite B, without dismissing A's panel first (what the admin did on production).
+    nextCreate = { invite: row({ id: 'invite-b', email: 'b@example.com' }), link: LINK_B };
+    await createOne('b@example.com');
+    await waitFor(() => expect(screen.getByTestId('created-link')).toHaveTextContent(LINK_B));
+    panel = screen.getByTestId('created-link-panel');
+    expect(panel).toHaveTextContent('Invite created for b@example.com');
+    expect(within(panel).queryByText('Copied')).not.toBeInTheDocument();
+
+    await user.click(within(panel).getByRole('button', { name: 'Copy' }));
+    expect(writeText).toHaveBeenLastCalledWith(LINK_B);
+    expect(await within(panel).findByText('Copied')).toBeInTheDocument();
+  }, 15000);
 
   it('after a reload the link is gone', async () => {
     const { user, form } = await openForm();

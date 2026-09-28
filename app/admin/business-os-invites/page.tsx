@@ -112,8 +112,16 @@ export default function BusinessOsInvitesPage() {
         <>
           <EnforcementNote mode={payload.enforcementMode} />
 
+          {/* Keyed by invite so each new link mounts a fresh panel. Without the key,
+              React reuses the previous panel and its "Copied" state carries over to a
+              link that was never copied, and an admin pastes the old one. */}
           {created && (
-            <CreatedLinkPanel link={created.link} email={created.invite.email} onDismiss={() => setCreated(null)} />
+            <CreatedLinkPanel
+              key={created.invite.id}
+              link={created.link}
+              email={created.invite.email}
+              onDismiss={() => setCreated(null)}
+            />
           )}
 
           {creating && (
