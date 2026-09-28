@@ -9,9 +9,12 @@
 // audit entry and queues it with AuditTrailService.log(): never awaited, never
 // flushed, the service unchanged (requirement D-4, FR-16, FR-17).
 //
-// NOT WIRED YET (Layer 3 steps 1-2): nothing calls `runAiAction` in production,
-// so nothing is written. Each area is wired in steps 3-4, after step 0 (the
-// secured audit routes) is deployed.
+// WIRED: `runAiAction` is called at 16 sites, one per `AiActionType`. 14 run in
+// production; the two dormant types (see the union) have call sites but no
+// production trigger yet. What each type is (its area, who it faces, whether it
+// is setup AI, whether it is charged, its diary label, whether a template
+// fallback exists) is declared once, in `AI_ACTION_DECLARATIONS` below the
+// union (deduction layer FR-4, slice 1). Nothing reads those facts yet.
 //
 // What an entry may hold is fixed (D-2, FR-4, FR-5): ids, counts, tokens, the
 // estimated cost, catalog call names, model names, the outcome and an error
@@ -28,6 +31,9 @@ import { withUsageScope, type UsageCallRecord } from '@/lib/ai/usageScope';
 import { ALL_ZERO_UUID, platformAccountId } from '@/lib/platformAccount';
 import { createLogger } from '@/lib/logger';
 import { BOS_LLM_AREAS, bosFeature, isPlatformAccount, isUuid, type BosLlmArea } from './callCatalog';
+// Type-only, from a file with no imports: erased at compile time, adds nothing
+// to this server-only module's graph.
+import type { Labels } from '@/lib/business-os/entitlements/types';
 
 const logger = createLogger({ module: 'AiActionAudit' });
 
@@ -52,6 +58,120 @@ export type AiActionType =
   | 'lead_reply_recommendation'
   | 'onboarding_turn'
   | 'image_generation';
+
+/** Who an action's output reaches: the owner, or the owner's clients (deduction layer FR-19). */
+export type AiActionAudience = 'owner' | 'client';
+
+/**
+ * What the charge, the diary and the limit need to know about one action type
+ * (deduction layer FR-4). Nothing reads it yet: later slices do.
+ *
+ * Audience and template fallback travel together, so the type itself refuses
+ * an owner-facing action with a fallback status, or a client-facing one without.
+ * The fallback status matters only for client-facing work (FR-19): `n/a` on an
+ * owner-facing type does not mean it has no degrade path.
+ */
+export type AiActionDeclaration = {
+  /** The area the call site passes to runAiAction today. */
+  area: BosLlmArea;
+  /** Setup AI (onboarding, first site or form): the class, not the instance. */
+  isSetup: boolean;
+  /** Every action is charged its measured cost (option B). */
+  isCharged: boolean;
+  /**
+   * Plain-language diary label; the area is shown beside it, so it says what
+   * the action did. DRAFT wording: BA/user (and native he/es) review before
+   * anything renders it.
+   */
+  diaryLabels: Labels;
+  /** Declared and labelled, but no production trigger yet (KI-4). */
+  isDormant?: true;
+} & (
+  | { audience: 'owner'; templateFallback: 'n/a' }
+  | { audience: 'client'; templateFallback: 'exists' | 'missing' }
+);
+
+/**
+ * One entry per `AiActionType`. `satisfies Record<…>` on this literal rejects a
+ * missing type and a stray key alike, and `typecheck:bos-llm` (a required check)
+ * enforces it: a new action type cannot ship without its facts.
+ */
+export const AI_ACTION_DECLARATIONS = {
+  chat_turn: {
+    area: 'chat', audience: 'owner', templateFallback: 'n/a', isSetup: false, isCharged: true,
+    diaryLabels: { en: 'Answered a question', he: 'מענה לשאלה', es: 'Respuesta a una pregunta' },
+  },
+  chat_website_operation: {
+    area: 'website', audience: 'owner', templateFallback: 'n/a', isSetup: false, isCharged: true,
+    diaryLabels: { en: 'Changed your website from chat', he: 'שינוי באתר דרך הצ׳אט', es: 'Cambio en tu sitio desde el chat' },
+  },
+  insight_run: {
+    area: 'insights', audience: 'owner', templateFallback: 'n/a', isSetup: false, isCharged: true,
+    diaryLabels: { en: 'Checked your business for insights', he: 'בדיקת תובנות לעסק', es: 'Revisión de novedades del negocio' },
+  },
+  briefing_narration: {
+    area: 'briefing', audience: 'owner', templateFallback: 'n/a', isSetup: false, isCharged: true,
+    diaryLabels: { en: 'Wrote your daily briefing', he: 'כתיבת התדריך היומי', es: 'Redacción del resumen diario' },
+  },
+  website_full_site: {
+    area: 'website', audience: 'owner', templateFallback: 'n/a', isSetup: true, isCharged: true,
+    diaryLabels: { en: 'Built your website', he: 'בניית האתר', es: 'Creación del sitio web' },
+  },
+  website_landing_page: {
+    area: 'website', audience: 'owner', templateFallback: 'n/a', isSetup: false, isCharged: true,
+    diaryLabels: { en: 'Built a landing page', he: 'בניית דף נחיתה', es: 'Creación de una página de destino' },
+  },
+  website_field_regenerate: {
+    area: 'website', audience: 'owner', templateFallback: 'n/a', isSetup: false, isCharged: true,
+    diaryLabels: { en: 'Rewrote website text', he: 'שכתוב טקסט באתר', es: 'Reescritura de texto del sitio' },
+  },
+  website_testimonial_enhance: {
+    area: 'website', audience: 'owner', templateFallback: 'n/a', isSetup: false, isCharged: true,
+    diaryLabels: { en: 'Polished a testimonial', he: 'ליטוש המלצה', es: 'Mejora de un testimonio' },
+  },
+  // Dormant (KI-4, Layer 1 KI-1): labelled now so it is not unlabelled the day it is wired.
+  website_section_field_rewrite: {
+    area: 'website', audience: 'owner', templateFallback: 'n/a', isSetup: false, isCharged: true, isDormant: true,
+    diaryLabels: { en: 'Rewrote a website section', he: 'שכתוב מקטע באתר', es: 'Reescritura de una sección del sitio' },
+  },
+  // Dormant (KI-4, Layer 1 KI-3): labelled now so it is not unlabelled the day it is wired.
+  website_block_enrichment: {
+    area: 'website', audience: 'owner', templateFallback: 'n/a', isSetup: false, isCharged: true, isDormant: true,
+    diaryLabels: { en: 'Enriched website content', he: 'העשרת תוכן האתר', es: 'Enriquecimiento del contenido del sitio' },
+  },
+  intake_form_generation: {
+    area: 'intake', audience: 'owner', templateFallback: 'n/a', isSetup: true, isCharged: true,
+    diaryLabels: { en: 'Built an intake form', he: 'בניית טופס קליטה', es: 'Creación de un formulario de admisión' },
+  },
+  intake_question_inference: {
+    area: 'intake', audience: 'owner', templateFallback: 'n/a', isSetup: false, isCharged: true,
+    diaryLabels: { en: 'Suggested an intake question', he: 'הצעת שאלה לטופס', es: 'Sugerencia de una pregunta para el formulario' },
+  },
+  // Spans website and onboarding; `website` is what the call site passes, and
+  // the audit entry's `details.areas` stays authoritative (WC-4).
+  onboarding_build: {
+    area: 'website', audience: 'owner', templateFallback: 'n/a', isSetup: true, isCharged: true,
+    diaryLabels: { en: 'Set up your business', he: 'הקמת העסק', es: 'Configuración de tu negocio' },
+  },
+  // The only client-facing type (SQ-12). The fallback EXISTS: the model only
+  // picks which of the owner's own replies to send, and every failure (switched
+  // off, empty, unusable, out of range, a throw) falls through to the
+  // deterministic ladder with no model call. See
+  // lib/business-os/leads/LeadReplyRecommender.ts:15-21 and
+  // lib/business-os/leads/leadReplyCandidates.ts:103-138 (`pickFallbackCandidate`).
+  lead_reply_recommendation: {
+    area: 'leads', audience: 'client', templateFallback: 'exists', isSetup: false, isCharged: true,
+    diaryLabels: { en: 'Picked a reply to a new enquiry', he: 'בחירת מענה לפנייה חדשה', es: 'Elección de respuesta a una nueva consulta' },
+  },
+  onboarding_turn: {
+    area: 'onboarding', audience: 'owner', templateFallback: 'n/a', isSetup: true, isCharged: true,
+    diaryLabels: { en: 'Setup conversation', he: 'שיחת הקמה', es: 'Conversación de configuración' },
+  },
+  image_generation: {
+    area: 'images', audience: 'owner', templateFallback: 'n/a', isSetup: false, isCharged: true,
+    diaryLabels: { en: 'Created an image', he: 'יצירת תמונה', es: 'Creación de una imagen' },
+  },
+} as const satisfies Record<AiActionType, AiActionDeclaration>;
 
 /** Failures the action itself signals, when it degraded without throwing (FR-6, RC-6). */
 export type AiFailureCode =
