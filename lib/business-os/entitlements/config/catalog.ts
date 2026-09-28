@@ -31,6 +31,7 @@
 //
 //   marketing.mass_email   builder with no dispatcher — nothing reads next_send_at
 //   payments.reminders     the sender returns `true; // Simulated success`
+//                          (built 2026-09-25 — `available` again; see its note)
 //   website.custom_domain  middleware only rewrites *.baseHost; the lookup has no caller
 //
 // The user's rule follows from the same place: **if a feature does not exist it

@@ -98,6 +98,8 @@ const BASE: TierRow = {
   'payments.invoices': true,
   'payments.card': true,
   'payments.multi_currency': true,
+  // `not_built` until 2026-09-25, when the sender stopped simulating success.
+  'payments.reminders': true,
   'marketing.lead_response': true,
   'insights.checks': true,
   'insights.channels': true,
@@ -141,7 +143,6 @@ const BASE: TierRow = {
   // Each of these is a feature the code does not deliver today. The loader
   // enforces it; these lines are the config agreeing with the loader rather
   // than the loader catching the config.
-  'payments.reminders': false, // the sender returns a simulated success
   'marketing.mass_email': false, // a campaign builder with no dispatcher
   'marketing.posts': false,
   'sms.messages': { perMonth: 0 },
