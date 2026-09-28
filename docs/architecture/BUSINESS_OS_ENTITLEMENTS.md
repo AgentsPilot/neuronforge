@@ -19,6 +19,7 @@ What an account can do in Business OS, and why. This module answers one question
 7. [Before enforcement can be switched on](#before-enforcement-can-be-switched-on)
 8. [Admin operations](#admin-operations)
 9. [Ops checks](#ops-checks)
+10. [Importing the module from outside it](#importing-the-module-from-outside-it)
 
 ---
 
@@ -198,6 +199,14 @@ Two rules worth knowing before using them:
 
 ---
 
+## Importing the module from outside it
+
+Any file outside `lib/business-os/entitlements/` that imports from it — **a type-only import included** — must be registered in the same change: as a gate in `config/enforcementPoints.ts`, or as a non-gate in `KNOWN_NON_GATE_IMPORTERS` (`__tests__/enforcementPoints.test.ts`) with the exact symbols it imports and why it refuses nothing. That is what keeps the admin screen's per-capability "no gate yet" marker true.
+
+The same applies to a capability id or tier name written as a literal, and to switching a capability to `available` (grant it in `BASE`, then `npm run entitlements:snapshot`). The full table, the review checklist and the definition of done (`npm run test:bos-entitlements`) are in the **`business-os-entitlements` skill** (`.claude/skills/business-os-entitlements/SKILL.md`). The CI check is not required, so the skill is where this gets caught.
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -213,3 +222,4 @@ Two rules worth knowing before using them:
 | 2026-09-27 | Chat named on the customer surface | The dedicated suppression and `customerPlanView.chat.test.ts` are gone (deleted in the same commit, per that file’s own instruction), because chat is available to everyone and in testing. Replaced by the narrower rule that survives enforcement: **the surface lists what a plan INCLUDES and never asserts what the customer’s current plan excludes** — `customerPlanView.noExclusions.test.ts` |
 | 2026-09-27 | Founding Partner gets FULL parity with Autopilot | The `ai.actions` override is gone: `CHAMPION_VALUES` now **reads the allowance from the tier its `base` names**, so champions get 2,000 a month rather than the 1,000 they were pinned at earlier the same day. "Founding Partners get the top plan free" is true without an exception, and the customer screen no longer offers a design partner an upgrade. Parity is **structural, not a copied number** — raise Autopilot and champions rise with it. **No other cohort value disagrees with the inherited row** (checked: `sms.messages`, `email.volume`, `team.seats`, `business.locations`) |
 | 2026-09-28 | Invite config added | `config/invites.ts` holds the invite link expiry options (15/30/60, default 30), the invite types and the grants each may carry (read from `COHORT_IDS` and `TIER_ORDER`), and the issuance policy with its Paid switch, off until Slice 5 (invite-only signup Slice 0, T-14, T-15) |
+| 2026-09-28 | Importing the module from outside it | New section and the `business-os-entitlements` skill, after three misses in three days reached main (9ffdf05b, #129, #134): an unregistered importer, including a type-only one, and a capability switched to `available` without being granted in `BASE` |

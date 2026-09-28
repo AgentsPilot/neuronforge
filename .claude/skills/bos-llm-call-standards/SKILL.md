@@ -166,6 +166,7 @@ Layer 2 moved every catalogued call onto settings an operator can change without
 - **`await AuditTrail.log(…)`** on a request path, or an audit entry per call.
 - **A direct `openai.*` call "just for this one feature",** or a model name or price literal in feature code.
 - **`model: 'gpt-4o'` or `temperature: 0.7` at a call site** — including the disguised forms `settings.temperature ?? 0.7`, `OPENAI_MODELS.GPT_4O_MINI`, and a request built OUTSIDE the `withModelFallback` callback so the retry re-sends the refused model.
+- **Borrowing a type or helper from `lib/business-os/entitlements/`** (for example `Labels` for diary text) without registering the file with the entitlements guard. It turned main's entitlements check red for three merges (#130). Follow the `business-os-entitlements` skill in the same change.
 - **A shared helper that imports the catalog.** Every file that imports the helper is then pulled into the `typecheck:bos-llm` gate with it. This is why `lib/platformAccount.ts` imports nothing: the catalog imports it, never the reverse (Layer 1.5 OQ-G).
 
 ## When NOT to use
