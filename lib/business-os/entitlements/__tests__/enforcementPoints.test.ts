@@ -263,6 +263,11 @@ describe('backward: a gate cannot ship unregistered', () => {
       why: 'The Business OS chrome reads the plan ONCE, server-side, to decide whether to show the quiet Founding Partner pill (2026-09-27). It refuses nothing and gates nothing: every failure returns `null` and renders no pill. The read is `getSnapshot`, not `check` — if it ever becomes `check`, the product is being gated from a layout and belongs in ENFORCEMENT_POINTS.',
     },
     {
+      file: 'lib/business-os/llm/aiActionAudit.ts',
+      symbols: ['Labels'],
+      why: 'Credit deduction slice 1 (fc1856bd): the AI action catalogue borrows the `Labels` TYPE for its en/he/es credit-diary labels. A type-only import from a file with no imports — erased at compile time, it can resolve no account and refuse nothing. If this file ever imports a value from the module, it is being asked to gate and this suite says so.',
+    },
+    {
       file: 'app/api/business-os/entitlements/my-plan/route.ts',
       symbols: ['buildCustomerPlanView', 'getEntitlementService', 'resolveAccountId'],
       why: 'The CUSTOMER read behind the "Your plan" settings section (S-4a step 1) — the first non-admin file in this list. It resolves the session account and formats the answer; it refuses nothing, and it has no capability id to gate on. Note `getEntitlementService` here is `getSnapshot`, which reports every capability, and NOT `check()`, which is the call that would make this a gate: if this file ever calls `check`, it belongs in ENFORCEMENT_POINTS instead of here. `resolveAccountId` is the account seam (SA P-1), which every external caller of the service must go through — `accountSeam.guard` enforces that product-wide.',
