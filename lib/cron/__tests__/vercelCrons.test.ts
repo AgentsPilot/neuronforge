@@ -38,7 +38,7 @@ const BOS_CRONS: CronEntry[] = [
   { path: '/api/cron/insight-automations', schedule: '*/5 * * * *' },
   { path: '/api/cron/insight-actions', schedule: '*/15 * * * *' },
   { path: '/api/cron/channel-metrics-sync', schedule: '30 * * * *' },
-  { path: '/api/cron/payment-reminders', schedule: '0 8 * * *' },
+  { path: '/api/cron/payment-reminders', schedule: '40 * * * *' },
   { path: '/api/cron/intake-reminders', schedule: '15 * * * *' },
   { path: '/api/cron/payment-retry', schedule: '0 * * * *' },
   { path: '/api/cron/daily-briefing', schedule: '10 * * * *' },

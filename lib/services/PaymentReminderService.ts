@@ -33,6 +33,16 @@ const logger = createLogger({ service: 'PaymentReminderService' });
 const LEASE_SECONDS = 90;
 const MAX_ATTEMPTS = 5;
 
+/**
+ * The hours, in the BUSINESS's timezone, when a chasing email may be sent.
+ *
+ * 08:00 to 20:00. Chasing somebody for money at four in the morning is worse
+ * than chasing them a few hours late, and until the cron moved to hourly this
+ * was enforced by running the job once a day — see `sendableAt`.
+ */
+const REMINDER_WINDOW_OPENS_AT = 8;
+const REMINDER_WINDOW_CLOSES_AT = 20;
+
 // ==================== TYPES ====================
 
 export type ReminderType = 'upcoming_due' | 'due_today' | 'overdue' | 'retry_failed' | 'payment_received';
@@ -257,7 +267,9 @@ export class PaymentReminderService {
         installment_id: params.installmentId || null,
         contact_id: params.contactId,
         reminder_type: params.reminderType,
-        scheduled_at: params.scheduledAt,
+        // Held to sending hours rather than sent whenever the scan noticed. See
+        // `sendableAt` — this is the rule the daily cron used to stand in for.
+        scheduled_at: await this.sendableAt(new Date(params.scheduledAt), userId),
         channel,
         template_id: params.templateId || null,
         status: 'pending',
@@ -455,7 +467,7 @@ export class PaymentReminderService {
         installment_id: params.installmentId || null,
         contact_id: params.contactId,
         reminder_type: 'upcoming_due',
-        scheduled_at: new Date().toISOString(),
+        scheduled_at: await this.sendableAt(new Date(), userId),
         channel: params.channel,
         template_id: params.templateId || null,
         status: 'pending',
@@ -1224,6 +1236,61 @@ export class PaymentReminderService {
   /**
    * Get user's reminder configuration
    */
+  /**
+   * The soonest moment a chasing email may go out.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS EXISTS, AND WHY IT IS HERE RATHER THAN IN THE CRON SCHEDULE
+   *
+   * `/api/cron/payment-reminders` ran daily at 08:00, and that was not a
+   * scheduling decision — it was a quiet-hours rule implemented in `vercel.json`.
+   * It worked, at the price of every reminder waiting up to a day: the route
+   * finds what is due and stamps `scheduled_at: now`, so a debt that came due at
+   * 09:00 was not noticed until the next morning.
+   *
+   * Moving the cron to hourly fixes the delay and, on its own, would chase
+   * somebody for money at 03:40. The rule belongs in the data, next to the thing
+   * it constrains, so the drain can run as often as it likes.
+   *
+   * WHY NOT HOLD A CLAIMED ROW INSTEAD
+   *
+   * Because `claim_due_payment_reminders` does `attempts = attempts + 1`, and
+   * `MAX_ATTEMPTS` is 5. A row released back to `pending` each hour from 20:00
+   * would burn 12 attempts by morning and the reaper would dead-letter a
+   * perfectly good reminder. So the window is applied when `scheduled_at` is
+   * written: a reminder is never DUE outside it, no claim is wasted, and no
+   * attempt is spent waiting.
+   *
+   * THE ZONE IS THE BUSINESS'S, not the client's, because the client's is not
+   * something this platform knows. It is the right proxy — a business's clients
+   * are usually near it — and `user_preferences.timezone` is the documented
+   * authority for the clock. A business that never set one resolves to UTC via
+   * `safeTimezone`, which is a guess, but a bounded one: the window still holds,
+   * it is just anchored to the wrong meridian.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private async sendableAt(desired: Date, userId: string): Promise<string> {
+    const zone = await this.businessZone(userId);
+    const { hour } = businessClock(desired, zone);
+
+    if (hour >= REMINDER_WINDOW_OPENS_AT && hour < REMINDER_WINDOW_CLOSES_AT) {
+      return desired.toISOString();
+    }
+
+    // Before the window opens, today still works; at or after it closes, the
+    // next chance is tomorrow morning.
+    const dateKey = businessDateKey(desired, zone);
+    const target = hour < REMINDER_WINDOW_OPENS_AT ? dateKey : shiftBusinessDateKey(dateKey, 1);
+    const open = businessInstant(target, `${String(REMINDER_WINDOW_OPENS_AT).padStart(2, '0')}:00`, zone);
+
+    logger.info(
+      { userId, zone, desired: desired.toISOString(), held: open.toISOString() },
+      'Reminder falls outside sending hours; scheduled for the next opening'
+    );
+
+    return open.toISOString();
+  }
+
   /**
    * The date it is where a business is, cached for the life of one cron run.
    *

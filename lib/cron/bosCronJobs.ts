@@ -337,12 +337,26 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
   {
     id: 'payment-reminders',
     path: '/api/cron/payment-reminders',
-    schedule: '0 8 * * *',
-    ...DAILY,
+    /*
+     * Hourly, not daily at 08:00.
+     *
+     * This route is a queue DRAIN: it finds what is due, stamps a reminder row
+     * `scheduled_at`, and sends what is due. Running it once a day meant a debt
+     * that came due at 09:00 was not noticed until the next morning, and the
+     * owner's own cadence — days 1, 3 and 7 past due — was pushed a day late.
+     *
+     * The 08:00 was never a schedule; it was a quiet-hours rule enforced by
+     * running the job once a day. That rule now lives in
+     * `PaymentReminderService.sendableAt`, which holds any reminder falling
+     * outside 08:00-20:00 in the business's own timezone. So the drain can run
+     * often without anybody being chased at four in the morning.
+     */
+    schedule: '40 * * * *',
+    ...HOURLY,
     ...MAX_60,
     label: 'Payment reminders',
     description: 'Finds overdue invoices, queues and sends payment reminders',
-    scheduleWords: 'Daily at 08:00 UTC',
+    scheduleWords: 'Hourly at :40',
     drainsQueue: 'payment_reminders',
     counts: [
       { key: 'remindersProcessed', path: ['data', 'reminders', 'processed'], label: 'reminders picked up' },
