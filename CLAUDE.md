@@ -1,6 +1,6 @@
 # CLAUDE.md — Project Context for AgentPilot
 
-> **Last Updated**: 2026-09-22  
+> **Last Updated**: 2026-09-25  
 > This file is the project's root context document and is exempt from the standard docs ToC requirement.
 
 ## Overview
@@ -175,6 +175,7 @@ The following documents define **mandatory development standards** for this proj
 6. TypeScript strict mode — no implicit `any`; if `any` is unavoidable, add a comment explaining why
 7. No new patterns introduced without SA review
 8. When working on the V6 pipeline (`lib/agentkit/v6/`, `lib/pilot/`, `scripts/test-dsl-execution-simulator/`) or plugin system — read the Platform Design Principles section above AND follow the V6 Work Protocol below.
+9. **Free the heap after every typecheck, build or test run** — `npx jest --clearCache`, remove any scratch `--outdir`, and leave no watch process or worker resident. See [Testing § Free the heap after every verification run](#free-the-heap-after-every-verification-run-mandatory). The run is not finished until this is done, including when it failed.
 
 ---
 
@@ -690,7 +691,81 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 npm test                     # Run the full Jest suite (jest.config.js ignores .claude/ worktrees)
 npm test -- path/to/tests    # Run a subset (any extra Jest args after --)
 npm run test:plugins         # Plugin tests only (tests/plugins/)
+npm run eval:chat            # Business OS chat golden set (real planner, real account)
 ```
+
+### The Business OS chat golden set
+
+Jest cannot test the chat's hardest half. The planner is one LLM call, so what it
+produces is not deterministic, and every bug worth catching lives in the PLAN it
+emitted rather than in any function's return value. `tests/business-os-chat/`
+exists for that: it sends real questions through the real planner and asserts on
+the plan (the IR), never on prose.
+
+| Command | What it does |
+|---|---|
+| `npm run eval:chat` | every scenario once, against a real account |
+| `... -- --runs=3` | repeat each one, because planning is non-deterministic at the margins |
+| `... -- --no-cache` | **plan everything afresh** — see below, this is usually what you want |
+| `... -- --filter=owed` | only scenarios whose name contains this |
+| `... -- --user=<uuid>` | evaluate against a specific account |
+| `... -- --json` | machine-readable report |
+
+**A scenario is one utterance, or a conversation.** A `turns` list is POSTED at
+the real chat route, so the real conversation memory decides what turn two means
+in the light of turn one. That is where the cross-turn bugs live — a filter
+inherited from two turns back, a figure the assistant just reported used as a row
+value — and none of them can be expressed as a single utterance.
+
+**Use `--no-cache` for any before-and-after.** On a warm suite most scenarios are
+served from the plan cache and never reach the model, and ANY change to the
+prompt or tool schema invalidates that cache. So the run after such a change is
+cold and the one before it was warm, and comparing them measures the cache. That
+has already produced one wrong conclusion. The summary line prints how many were
+cache-served so the shift is visible rather than inferred.
+
+**A scenario that names data needs that data.** `tests/business-os-chat/seed-fixture.ts`
+creates it, is idempotent, and takes `--check` to report what is missing without
+writing. Hebrew scenarios need Hebrew-named contacts: a Hebrew request
+deliberately does not match a Latin-script record, and that refusal is correct.
+
+**Interpreting a result.** The single-run noise band is at least ±3 scenarios, so
+a difference smaller than that is not a result. Flaky is reported separately from
+failing because they need different fixes. When a scenario fails, check first
+whether the expectation went stale or the account lacks the data — of 26 failures
+examined on 2026-09-26, only about half were defects.
+
+### Free the heap after every verification run (mandatory)
+
+**A typecheck, a build or a test run is not finished until what it left behind is
+gone.** These runs are the heaviest thing anyone does on this machine, and every
+one of them leaves a heap and a cache that nothing cleans up on its own. Measured
+on 2026-09-25: **311 MB** of Jest transform cache plus **8.6 MB** of leftover
+`esbuild` scratch directories in `/tmp`, accumulated across a week of sessions
+that each verified a handful of files.
+
+After `npm test`, `tsc`, `next build`, or any ad-hoc `esbuild`/`tsc` check:
+
+```bash
+npx jest --clearCache        # the big one: the transform cache grows without bound
+rm -rf /tmp/<your-scratch>   # any --outdir you passed to esbuild or tsc
+```
+
+Then confirm nothing is still resident:
+
+```bash
+ps -Ao rss,pid,etime,comm | grep -iE "jest|tsc|esbuild" | grep -v grep
+```
+
+| Rule | Why |
+|---|---|
+| Write scratch output to the session scratchpad, not to a fresh `/tmp/<name>` | A new name per run is how twenty orphaned directories appear; the scratchpad is cleaned with the session |
+| Never leave a watch process running (`--watch`, `tsc -w`, `next dev` you started) | It holds its heap for as long as the session lives, and the next run starts beside it rather than instead of it |
+| Clear the cache even when the run failed | A failed run caches its transforms too |
+| Kill any worker still resident after the run reports | Jest workers can outlive the reporter |
+
+Clearing the Jest cache costs a slower first run afterwards. That is the intended
+trade: a cold transform is seconds, and the cache reached 311 MB unnoticed.
 
 ---
 
@@ -807,4 +882,6 @@ npm run lint       # ESLint
 | 2026-04-07 | Resolved merge conflicts | Merged 13 conflicts between comprehensive (agent team, design principles, security, testing, deprecated) and lean branches. Kept comprehensive version with additional Code Quality gotcha entries from lean branch. |
 | 2026-09-19 | Corrected Testing section | E2E/Playwright is documented as not set up yet (it was never installed, and `npm run test:e2e` did not exist). `npm test` now exists and runs Jest; `jest.config.js` ignores `.claude/` worktrees. Adding E2E needs SA review. |
 | 2026-09-22 | Added Currency & Timezone section | Which column is authoritative for each, why NULL must stay distinct from `'UTC'`, the localStorage display-vs-persisted split, the no-FX rule on sums, and that timezone gates publishing while currency does not |
+| 2026-09-27 | Documented the Business OS chat golden set | `npm run eval:chat` had no mention anywhere. Records the two scenario kinds (one utterance, or `turns` posted at the real route for cross-turn bugs), why `--no-cache` is required for any before-and-after, the fixture script, and that the single-run noise band is ±3 so a smaller difference is not a result |
+| 2026-09-25 | Added the heap clean-up rule | Mandatory Rule 9 plus a Testing subsection: a typecheck, build or test run is not finished until its Jest cache and scratch `--outdir` are cleared and no worker or watch process is left resident. Prompted by finding 311 MB of Jest transform cache and 8.6 MB of orphaned `esbuild` directories accumulated across a week |
 | 2026-09-21 | Business OS LLM Layer 2 recorded | The Business OS LLM row now covers Layer 2 (model settings per area): call sites resolve provider, model, temperature and on/off from eight `system_settings_config` rows rather than writing them, `npm run check:bos-llm-literals` enforces it in the existing `bos-llm-typecheck` job, and the operator runbook is linked — including the fail-open kill switch |

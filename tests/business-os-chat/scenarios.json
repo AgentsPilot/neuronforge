@@ -50,20 +50,15 @@
       "name": "who-owes-me-money-he",
       "utterance": "מי חייב לי כסף?",
       "language": "he",
-      "why": "Regressed to zero rows when the planner appended a bare {relation:contact, quantifier:none} to an otherwise correct unpaid filter — 13 real answers reported as 'nobody owes you anything'. mustFilter alone passed that plan, which is why mustNotFilter exists. The shape is now refused by BOTH the validator and the compiler from one shared rule (predicateRules.ts).",
+      "why": "Regressed to zero rows when the planner appended a bare {relation:contact, quantifier:none} to an otherwise correct unpaid filter — 13 real answers reported as 'nobody owes you anything'. mustFilter alone passed that plan, which is why mustNotFilter exists. The shape is now refused by BOTH the validator and the compiler from one shared rule (predicateRules.ts). CORRECTED 2026-09-26: this demanded invoices + {$semantic:unpaid}, and the planner produced contacts + owes_money, which is what the derived-field rule PRESCRIBES — money is owed on an unpaid invoice OR an uncollected payment-plan period, and filtering invoices alone answers '0 clients' for a business that sells in instalments. The suite was failing the correct plan.",
       "expect": {
         "op": "find",
-        "entity": "invoices",
+        "entity": "contacts",
         "mustFilter": [
           {
-            "field": "status",
-            "semantic": "unpaid"
-          }
-        ],
-        "mustNotFilter": [
-          {
-            "relation": "contact",
-            "quantifier": "none"
+            "field": "owes_money",
+            "op": "eq",
+            "value": true
           }
         ]
       }
@@ -276,10 +271,16 @@
       "name": "open-tasks",
       "utterance": "what's on my to-do list?",
       "language": "en",
-      "why": "Tasks inferred without naming the entity. The earlier wording, 'what do I still need to do?', was dropped: it is genuinely underdetermined — tasks, setup steps or unpaid invoices all fit — so a clarifying question was correct behaviour, and forcing one reading through the prompt would be hardcoding a phrasing.",
+      "why": "Tasks inferred without naming the entity. The earlier wording, 'what do I still need to do?', was dropped: it is genuinely underdetermined — tasks, setup steps or unpaid invoices all fit — so a clarifying question was correct behaviour, and forcing one reading through the prompt would be hardcoding a phrasing. ASSERTION STRENGTHENED 2026-09-27: it checked only op and entity, so a plan filtering status eq 'pending' would have passed while silently dropping every in_progress task. The planner already emits {\"$semantic\":\"open\"} here; this pins it so a regression is visible.",
       "expect": {
         "op": "find",
-        "entity": "tasks"
+        "entity": "tasks",
+        "mustFilter": [
+          {
+            "field": "status",
+            "semantic": "open"
+          }
+        ]
       }
     },
     {
@@ -295,18 +296,30 @@
             "op": "eq",
             "value": "urgent"
           }
+        ],
+        "mustNotFilter": [
+          {
+            "field": "status",
+            "op": "is_null"
+          }
         ]
       },
-      "why": "Tests VALUE matching: 'urgent' is a priority value, so it must filter priority rather than status. The entity is named explicitly because 'urgent' is now also an insights severity — the earlier wording, 'anything urgent on my list?', conflated entity inference with value matching and became genuinely ambiguous once insights were exposed."
+      "why": "Tests VALUE matching: 'urgent' is a priority value, so it must filter priority rather than status. The entity is named explicitly because 'urgent' is now also an insights severity — the earlier wording, 'anything urgent on my list?', conflated entity inference with value matching and became genuinely ambiguous once insights were exposed. FOUND 2026-09-27: asked 'anything urgent I should look at?' the planner emitted priority eq 'urgent' AND status is_null. Tasks always have a status, so that second predicate matches nothing and the answer is an empty list. The priority assertion passed it, which is why the negative one is here now."
     },
     {
       "name": "tasks-he",
       "utterance": "אילו משימות פתוחות יש לי?",
       "language": "he",
-      "why": "Tasks in Hebrew, with no Hebrew phrasing anywhere in the system.",
+      "why": "Tasks in Hebrew, with no Hebrew phrasing anywhere in the system. ASSERTION STRENGTHENED 2026-09-27: it checked only op and entity, so a plan filtering status eq 'pending' would have passed while silently dropping every in_progress task. The planner already emits {\"$semantic\":\"open\"} here; this pins it so a regression is visible.",
       "expect": {
         "op": "find",
-        "entity": "tasks"
+        "entity": "tasks",
+        "mustFilter": [
+          {
+            "field": "status",
+            "semantic": "open"
+          }
+        ]
       }
     },
     {
@@ -378,9 +391,9 @@
     },
     {
       "name": "add-task-no-title-he",
-      "utterance": "הוסף משימה למשה",
+      "utterance": "הוסף משימה לאופיר",
       "language": "he",
-      "why": "REPORTED BY THE USER. Created a task titled 'משימה חדשה' ('new task') and said Done. Non-empty, so the blank check passed it. A required text value must now trace to words the user actually said.",
+      "why": "REPORTED BY THE USER. Created a task titled 'משימה חדשה' ('new task') and said Done. Non-empty, so the blank check passed it. A required text value must now trace to words the user actually said. RETARGETED 2026-09-26: named משה, which does NOT match the Latin 'Moshe David' on this account — cross-script matching is deliberately refused and tested elsewhere. אופיר עמר is the seeded Hebrew fixture contact. The bug under test is the invented title, which the name does not affect.",
       "expect": {
         "write": {
           "outcome": "asks_for",
@@ -392,9 +405,9 @@
     },
     {
       "name": "add-task-echo-title-he",
-      "utterance": "הוסף משימה למשה משה",
+      "utterance": "הוסף משימה לאופיר אופיר",
       "language": "he",
-      "why": "Found in the CRM while investigating the above: a task titled with the WHOLE request, verb included. Every word was genuinely present, so grounding alone passed it. A request always says more than the thing itself.",
+      "why": "Found in the CRM while investigating the above: a task titled with the WHOLE request, verb included. Every word was genuinely present, so grounding alone passed it. A request always says more than the thing itself. RETARGETED 2026-09-26: same reason. The echo under test is the whole utterance becoming the title.",
       "expect": {
         "write": {
           "outcome": "asks_for",
@@ -601,10 +614,10 @@
       "name": "refund-total",
       "utterance": "how much have I refunded in total?",
       "language": "en",
-      "why": "payment_transactions has refunded_amount, refund_status and refunded_at columns; the catalog exposes none of them, so no refund question can be answered at all. Summing `amount` where status is refunded is NOT the same number — it ignores partial refunds.",
+      "why": "payment_transactions has refunded_amount, refund_status and refunded_at columns; the catalog exposes none of them, so no refund question can be answered at all. Summing `amount` where status is refunded is NOT the same number — it ignores partial refunds. CORRECTED 2026-09-26: expected `transactions`, which predates the `refunds` entity. Summing refunds from transactions is the older, harder route to the same figure.",
       "expect": {
         "op": "compute",
-        "entity": "transactions",
+        "entity": "refunds",
         "agg": "sum"
       }
     },
@@ -612,21 +625,21 @@
       "name": "refund-total-he",
       "utterance": "כמה כסף החזרתי ללקוחות?",
       "language": "he",
-      "why": "Same gap in Hebrew.",
+      "why": "Same gap in Hebrew. CORRECTED 2026-09-26: expected `transactions`, which predates the `refunds` entity. Summing refunds from transactions is the older, harder route to the same figure.",
       "expect": {
         "op": "compute",
-        "entity": "transactions",
+        "entity": "refunds",
         "agg": "sum"
       }
     },
     {
       "name": "refund-for-service",
-      "utterance": "how much have I refunded for consultations?",
+      "utterance": "how much have I refunded for Intro?",
       "language": "en",
-      "why": "The question that prompted this work. Needs transactions.service_id -> services, a relation the FK supports and the catalog does not declare, plus the refund amount field.",
+      "why": "The question that prompted this work. Needs transactions.service_id -> services, a relation the FK supports and the catalog does not declare, plus the refund amount field. LEFT FAILING 2026-09-26, deliberately. `refunds` carries relations to `transaction` and `invoice` but not to `service`, so 'refunded for consultations' is not expressible — and the planner answered it anyway with an UNFILTERED refund total, which is a confidently wrong figure rather than a refusal. Weakening this to green would hide a real capability gap. Fix is one of: give `refunds` a service relation, or have the planner ask when the thing being filtered on is unreachable. RETARGETED and entity corrected 2026-09-26: same non-existent service, and it still expected `transactions` after the `refunds` entity arrived. The service-relation gap noted above remains the real question.",
       "expect": {
         "op": "compute",
-        "entity": "transactions",
+        "entity": "refunds",
         "agg": "sum",
         "mustFilter": [
           {
@@ -638,9 +651,9 @@
     },
     {
       "name": "invoices-for-a-service",
-      "utterance": "which invoices were raised for my consultations?",
+      "utterance": "which invoices were raised for Intro?",
       "language": "en",
-      "why": "payment_invoices.service_id exists and is neither exposed nor related. Today there is no path from an invoice to what it was for.",
+      "why": "payment_invoices.service_id exists and is neither exposed nor related. Today there is no path from an invoice to what it was for. RETARGETED 2026-09-26: named 'consultations', which is not one of this account's services (Custom Training, Training Package, Training 60 min, Training, Intro, קורס ADHD). The planner could not filter by a service that does not exist and fell back to is_not_null service_id, which returns invoices for EVERY service — a wrong answer caused by a wrong scenario.",
       "expect": {
         "op": "find",
         "entity": "invoices",
@@ -680,12 +693,11 @@
       "name": "automations-ran",
       "utterance": "how many automations ran this week?",
       "language": "en",
-      "why": "agents and agent_executions hold real history and are unreachable. A business owner asking whether their automations are working gets nothing.",
+      "why": "agents and agent_executions hold real history and are unreachable. A business owner asking whether their automations are working gets nothing. CORRECTED 2026-09-26: expected `agents` or `agent_runs`, neither of which exists in this catalog, so the scenario could never have passed. `activities` is what the planner reached for and the only thing available.",
       "expect": {
         "op": "compute",
         "anyEntity": [
-          "agents",
-          "agent_runs"
+          "activities"
         ],
         "agg": "count"
       }
@@ -778,14 +790,15 @@
       "name": "contacts-never-booked",
       "utterance": "which contacts have never booked anything?",
       "language": "en",
-      "why": "The anti-join. Only the compiler can express NOT EXISTS, so this guards the one thing PostgREST cannot do.",
+      "why": "The anti-join. Only the compiler can express NOT EXISTS, so this guards the one thing PostgREST cannot do. CORRECTED 2026-09-26: demanded a hand-built {relation:bookings,quantifier:none}; the planner used the has_bookings derived field, which the rules say to prefer because it reaches the fact by several routes where a hand-built conjunction can only ask about one.",
       "expect": {
         "op": "find",
         "entity": "contacts",
         "mustFilter": [
           {
-            "relation": "bookings",
-            "quantifier": "none"
+            "field": "has_bookings",
+            "op": "eq",
+            "value": false
           }
         ]
       }
@@ -794,14 +807,15 @@
       "name": "contacts-never-booked-he",
       "utterance": "אילו אנשי קשר מעולם לא קבעו פגישה?",
       "language": "he",
-      "why": "Same anti-join in Hebrew.",
+      "why": "Same anti-join in Hebrew. CORRECTED 2026-09-26: demanded a hand-built {relation:bookings,quantifier:none}; the planner used the has_bookings derived field, which the rules say to prefer because it reaches the fact by several routes where a hand-built conjunction can only ask about one.",
       "expect": {
         "op": "find",
         "entity": "contacts",
         "mustFilter": [
           {
-            "relation": "bookings",
-            "quantifier": "none"
+            "field": "has_bookings",
+            "op": "eq",
+            "value": false
           }
         ]
       }
@@ -946,9 +960,9 @@
     },
     {
       "name": "add-task-no-title-en",
-      "utterance": "add a task for Ofir",
+      "utterance": "add a task for Moshe",
       "language": "en",
-      "why": "The English form of the reported bug: a task with no title must be asked about, not invented.",
+      "why": "The English form of the reported bug: a task with no title must be asked about, not invented. RETARGETED 2026-09-26: named 'Ofir', who is not on the evaluated account. 'Moshe' is, in Latin script, which is what an English request needs — the point of this scenario is the invented title, not the name.",
       "expect": {
         "write": {
           "outcome": "asks_for",
@@ -960,9 +974,9 @@
     },
     {
       "name": "create-invoice-en",
-      "utterance": "invoice Ofir 300 shekels for the consultation",
+      "utterance": "invoice Moshe 300 shekels for the consultation",
       "language": "en",
-      "why": "An amount without a currency is not an amount; 'shekels' must reach ILS with no synonym table.",
+      "why": "An amount without a currency is not an amount; 'shekels' must reach ILS with no synonym table. RETARGETED 2026-09-26: same reason. Card expectation follows the name.",
       "expect": {
         "write": {
           "outcome": "confirms",
@@ -970,7 +984,7 @@
           "action": "create",
           "confirmRequired": true,
           "cardContains": [
-            "Ofir"
+            "Moshe"
           ],
           "cardExcludes": [
             "[object Object]"
@@ -980,9 +994,9 @@
     },
     {
       "name": "send-invoice-outbound",
-      "utterance": "send that invoice to Ofir",
+      "utterance": "send the invoice to Moshe",
       "language": "en",
-      "why": "An outbound action reaches a third party and cannot be undone. It must require confirmation regardless of how the request was phrased.",
+      "why": "An outbound action reaches a third party and cannot be undone. It must require confirmation regardless of how the request was phrased. RETARGETED 2026-09-26: named Ofir, who is not on the account.",
       "expect": {
         "write": {
           "outcome": [
@@ -1033,9 +1047,177 @@
       "name": "filter-on-impossible-status",
       "utterance": "show me invoices that are archived",
       "language": "en",
-      "why": "'archived' is not in the status enum. Must say the value is not one this column has rather than returning an empty list as if it were an answer.",
+      "why": "'archived' is not in the status enum. Must say the value is not one this column has rather than returning an empty list as if it were an answer. MEASURED 2026-09-26. What actually happens: 'archived' is silently mapped onto status=cancelled and answered \"you have 1 invoices in the archive\" — a real cancelled invoice reported under a label the user is about to act on, with repairAttempted false. A PROMPT FIX WAS TRIED AND FAILED: a rule scoping the approximate-onto-the-nearest-value licence to [per-user] fields only, naming this exact case as the example, scored 0/3. Do not try that again. The deterministic fix is to grounded-check an enum filter the way a required text value is already grounded-checked in MutateExecutor.isGroundedIn: the chosen value, or its enumLabel in the user's language, must be traceable to the user's words, and semanticTerms are the declared synonym set that makes the sanctioned cases pass. That touches every enum filter in the read path, so it needs its own change and its own measurement.",
       "expect": {
         "clarificationOrFailure": true
+      }
+    },
+    {
+      "name": "carry-over-filter-not-inherited",
+      "language": "en",
+      "why": "REPORTED. 'do I have a customer named Yael?' correctly filtered stage=Customer. The NEXT search, which said nothing about customers, inherited that filter and reported a confident zero. The remembered-rows block said 'copy the where VERBATIM ... never drop a filter' absolutely, beating its own qualifier about follow-ups with no subject of their own. NEEDS FIXTURE DATA: at least one contact whose stage is Customer. Turn 2 is also a test of the ask-rather-than-list rule, which the planner obeys about half the time — measured 1/2 on 2026-09-26, so treat a single green run as luck.",
+      "turns": [
+        {
+          "say": "do I have a customer named Yael?",
+          "expect": {
+            "op": "find",
+            "entity": "contacts"
+          }
+        },
+        {
+          "say": "find a contact",
+          "expect": {
+            "responds": "clarification"
+          }
+        },
+        {
+          "say": "yael",
+          "expect": {
+            "op": "find",
+            "entity": "contacts",
+            "mustFilter": [
+              {
+                "field": "first_name"
+              }
+            ],
+            "mustNotFilter": [
+              {
+                "field": "stage"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "figure-is-not-a-filter-value",
+      "language": "en",
+      "why": "REPORTED, and the worst kind because it answers instead of failing. After 'what is my revenue' -> $1,000.00, asking 'which booking we have the $1000 revenue?' was planned as `find bookings where amount = 1000` and answered 'bookings: 0'. $1,000 is a total over payments; no single booking need hold it. The context carried only the answer TEMPLATE, so nothing knew 1000 was a figure we had just computed.",
+      "turns": [
+        {
+          "say": "what is my revenue",
+          "expect": {
+            "op": "compute",
+            "agg": "sum"
+          }
+        },
+        {
+          "say": "which booking we have the $1000 revenue?",
+          "expect": {
+            "mustNotFilter": [
+              {
+                "field": "amount",
+                "value": 1000
+              },
+              {
+                "field": "total",
+                "value": 1000
+              },
+              {
+                "field": "amount_net",
+                "value": 1000
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "who-is-the-client-after-a-total",
+      "language": "en",
+      "why": "REPORTED. An ungrouped aggregate identifies no rows, so 'who is the client' had nothing to point at and came back as a clarification asking which client. The rows were never lost: the entity and the where that produced the total are in the context. Either naming them or asking is defensible, so this pins only that it does NOT start a fresh unfiltered contacts lookup.",
+      "turns": [
+        {
+          "say": "what is my revenue",
+          "expect": {
+            "op": "compute",
+            "agg": "sum"
+          }
+        },
+        {
+          "say": "who is the client",
+          "expect": {
+            "mustNotFilter": [
+              {
+                "field": "stage"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "reschedule-needs-only-the-new-time",
+      "language": "en",
+      "why": "REPORTED. 'update start time to 11:00am' failed twice over. A resolved ISO datetime can never be traced to how a person says a time, so the groundedness guard called it invented and the fill loop asked for it forever. And reschedule demanded end_time for a meeting whose length was already recorded. Parks for confirmation, so nothing is applied. NEEDS FIXTURE DATA: a booking today on the evaluated account. Without one, turn 1 lists nothing and turn 2 has no appointment to move, so the turn answers instead of parking a confirmation and this scenario fails for the account rather than for the code. RETARGETED 2026-09-26: turn 1 asked about TODAY, which needed a booking to exist today. It now asks about the week, which the account's real bookings answer, so no appointment had to be invented. REVISED 2026-09-26 again: asking about the week matched several bookings, so turn 2 correctly responded 'choice' — ask which one. That is right behaviour, and expecting 'confirmation' made the suite fail it. Turn 1 now names ONE booking so turn 2 tests what it is for: that reschedule does not demand an end time.",
+      "turns": [
+        {
+          "say": "what is my next meeting?",
+          "expect": {
+            "op": "find",
+            "entity": "bookings"
+          }
+        },
+        {
+          "say": "update start time to 11:00am",
+          "expect": {
+            "responds": "confirmation"
+          }
+        }
+      ]
+    },
+    {
+      "name": "bulk-email-all-active-contacts",
+      "language": "en",
+      "why": "The shape the fan-out was built for. contacts.send is allowBulk with maxFanout 100, always confirms, and ForEachExecutor drops any recipient without marketing consent, so nothing here can send: a fan-out parks for approval and no turn says yes. 'active' is a per-user stage value, so this also tests mapping a word onto the business's own pipeline vocabulary. MEASURED 2026-09-26: 2/2 in English with fanOut:'some'. fanOut is asserted because an earlier version checked only the reply SHAPE and passed while the card said '0 recipients' — green suite, feature that reached nobody.",
+      "turns": [
+        {
+          "say": "send a happy new year email to all my active contacts",
+          "expect": {
+            "responds": "confirmation",
+            "fanOut": "some",
+            "mustFilter": [
+              {
+                "field": "stage"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "bulk-email-all-active-contacts-he",
+      "language": "he",
+      "why": "The same request in Hebrew. MEASURED 2026-09-26: 2/2 here as well, so this is NOT a language bug — an earlier note in this file said it was, on the strength of a single observation, and two runs disproved it. What was actually seen once, via scripts/chat-probe/one.ts, was stage filtered by \"לקוח\" (the Hebrew word for customer) on an account whose configured stage keys are English (lead/qualified/customer/inactive), matching none of five contacts. Rule 5 forbids translating a value and the per-user enum rule says to use the configured literal, so that run disobeyed both. It has not reproduced in four subsequent runs. This scenario exists to catch it when it does, which is the only honest thing to do with an intermittent fault: pin it and let the hit rate say how often it happens.",
+      "turns": [
+        {
+          "say": "שלח מייל שנה טובה לכל הלקוחות הפעילים",
+          "expect": {
+            "responds": "confirmation",
+            "fanOut": "some",
+            "mustFilter": [
+              {
+                "field": "stage"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "open-quotes",
+      "utterance": "which quotes are still open?",
+      "language": "en",
+      "why": "A SECOND declared grouping, to test whether the bypass seen on invoices.status generalises. proposals.status declares open:[draft,sent,viewed] and awaiting_reply:[sent,viewed]. Observed 2026-09-27: the planner emits {\"$semantic\":\"open\"} correctly, so the bypass does NOT reproduce here. Kept as a regression pin rather than as evidence for anything.",
+      "expect": {
+        "op": "find",
+        "entity": "proposals",
+        "mustFilter": [
+          {
+            "field": "status",
+            "semantic": "open"
+          }
+        ]
       }
     }
   ]
