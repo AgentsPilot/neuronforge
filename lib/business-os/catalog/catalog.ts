@@ -549,6 +549,23 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
           // is not money still owed.
           unpaid: ['sent', 'overdue'],
         },
+        /*
+         * Asked "how much money am I owed in total?", the planner summed every
+         * invoice ever raised — paid, cancelled and refunded included — and
+         * reported it as money owed. No literal was wrong, so nothing objected:
+         * the filter was simply absent.
+         *
+         * These words are read by the validator only and never reach the prompt.
+         * See `semanticTermCues` in catalog.schema.ts for why that distinction
+         * matters.
+         */
+        semanticTermCues: {
+          unpaid: [
+            'owed', 'owe', 'owes', 'owing', 'outstanding',
+            'חייב', 'חייבת', 'חייבים', 'חוב',
+            'debe', 'deben', 'adeuda', 'pendiente de pago',
+          ],
+        },
       },
       due_date: {
         column: 'due_date',
@@ -1831,7 +1848,21 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         labels: { en: 'reschedule', he: 'שנה מועד', es: 'reprogramar' },
         risk: 'update',
         requiresConfirmation: true,
-        requiredFields: ['start_time', 'end_time'],
+        /*
+         * The new START only. The end follows it.
+         *
+         * "Move it to 11" is a whole instruction about an appointment whose
+         * length is already recorded, and requiring `end_time` turned it into a
+         * question — "when does it finish?" — asked of someone looking at a card
+         * that reads 10:00 to 10:15.
+         *
+         * Not dropped, just not demanded: `rescheduleBooking` loads the booking
+         * before it does anything, so an omitted end preserves the existing
+         * duration, and a stated one still changes it. A required field the
+         * system can read for itself is a question that should never be asked.
+         */
+        requiredFields: ['start_time'],
+        optionalFields: ['end_time'],
       },
       // Booking from the chat only became honest once the side effects moved
       // into BookingLifecycleService. Declared against the repository it would

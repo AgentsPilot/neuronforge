@@ -41,7 +41,7 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import { CATALOG, CATALOG_VERSION } from '@/lib/business-os/catalog';
 import { anchorizeInventedDates } from '../dates';
 import type { ComputeQuery, FindQuery, Query } from '../types';
-import { isSoftProblem, normalizePlan, validatePlan } from './validatePlan';
+import { isSoftProblem, normalizePlan, shouldAskInstead, validatePlan } from './validatePlan';
 import { resolveSameRows } from './resolveSameRows';
 import {
   getVerifiedQuestions,
@@ -90,6 +90,20 @@ export interface Plan {
 export interface PlanRequest {
   message: string;
   userId: string;
+  /**
+   * Plan from scratch, ignoring any cached plan for this question.
+   *
+   * For measurement only, and it exists because a measurement went wrong without
+   * it. On a warm suite 63 of 81 scenarios are served from the cache and make no
+   * model call at all, so a run mostly exercises the cache — and any change that
+   * alters the prompt or tool schema invalidates it, making the NEXT run cold and
+   * not comparable with the last. A tool-schema change was read as breaking four
+   * scenarios on 2026-09-26 when most of the difference was warm against cold.
+   *
+   * Never set by the route. A user asking the same question twice should get the
+   * cached plan; that is the whole point of having one.
+   */
+  skipCache?: boolean;
   /** Recent turns and last-shown rows, so pronouns and answers resolve. */
   context?: ConversationContext;
   /** BCP-47-ish language hint. Only used to tell the model which language to answer in. */
@@ -235,9 +249,11 @@ export class BizQLPlanner {
     );
 
     const cache = getPlanCache();
-    const cached = contextual
+    // Measurement path: see PlanRequest.skipCache.
+    const usableCache = request.skipCache ? null : cache;
+    const cached = contextual || !usableCache
       ? { layer: 'miss' as const, literals: [], normalized: '' }
-      : await cache.lookup(
+      : await usableCache.lookup(
           request.message,
           request.language ?? 'en',
           request.userId,
@@ -361,7 +377,27 @@ export class BizQLPlanner {
       includeActions: true,
       language: request.language,
     });
-    const tool = buildPlanTool(entities);
+    /*
+     * Enforce the plan schema, or merely describe it.
+     *
+     * Measured 2026-09-26: 14 of 32 validation problems across 19 planner turns
+     * were `answer.text is required` — a field this schema has always listed in
+     * `required`, which a provider treats as advisory unless asked to enforce
+     * it. Each one bought a full repair round trip to obtain one sentence.
+     *
+     * Behind a switch and default OFF for the same reason the stable prefix is:
+     * the benefit depends on the provider, the cost is a schema every member of
+     * which becomes required-and-nullable, and `repairAttempted` is recorded on
+     * every call — so this is a measurement rather than a belief, and it flips
+     * back without a deploy.
+     */
+    const strictTool = await SystemConfigService.getBoolean(
+      supabaseServer,
+      'bizchat_strict_plan_tool',
+      false
+    );
+
+    const tool = buildPlanTool(entities, { strict: strictTool });
 
     // Read this user's own configured values for any data-driven field, so the
     // planner never has to guess them and we never have to enumerate synonyms.
@@ -813,6 +849,42 @@ export class BizQLPlanner {
        * and the renderer's fallback answers from what the plan really found.
        */
       if (problems.every(isSoftProblem)) {
+        /*
+         * A filter the user never asked for degrades to a QUESTION, not to a
+         * thinner answer.
+         *
+         * "Show me invoices that are archived" survives every repair as
+         * `status eq "cancelled"`, and shipping it answers "you have 1 invoices
+         * in the archive" — a real cancelled invoice under a label the user is
+         * about to act on. Refusing outright would give them nothing. Asking
+         * names what could not be resolved, which is more than either.
+         */
+        const askInstead = problems.filter(shouldAskInstead);
+
+        if (askInstead.length > 0) {
+          logger.warn(
+            { problems: askInstead },
+            'Repairs spent on an unasked-for filter; asking the user instead of shipping it'
+          );
+
+          return {
+            ok: true,
+            // Deliberately no plan. The route treats a clarification as the
+            // whole turn, and a plan beside it would be a second answer to a
+            // question that has not been answered yet.
+            clarification: askInstead[0],
+            diagnostics: this.diagnostics({
+              model,
+              entities,
+              repairAttempted,
+              started,
+              promptTokens,
+              completionTokens,
+              cache: cached.layer,
+            }),
+          };
+        }
+
         if (problems.some((p) => p.startsWith('answer.text cites no step.')) && plan.answer) {
           logger.warn(
             { text: plan.answer.text },
