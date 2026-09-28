@@ -134,9 +134,18 @@ const asCount = (value?: number): string | undefined =>
 const asList = (value?: string[]): string | undefined =>
   Array.isArray(value) && value.length > 0 ? value.filter((v) => typeof v === 'string').join(', ') : undefined;
 
-/** Costs are stored rounded to a micro-dollar, so six decimals is the stored precision. */
+/**
+ * The stored cost at its stored precision: at least 6 and at most 10 decimals,
+ * trailing zeros trimmed down to 6. Entries written before deduction slice 2
+ * are rounded to a micro-dollar and so render exactly as they always did;
+ * later ones are rounded to 10 decimals (SQ-14), so a ~2e-7 USD embedding
+ * shows as $0.0000002 rather than $0.000000. Built from `toFixed`, never
+ * `String(n)`, so a small cost is never shown in exponent notation (SA Q-5).
+ */
 const asUsd = (value?: number): string | undefined =>
-  typeof value === 'number' && Number.isFinite(value) ? `$${value.toFixed(6)}` : undefined;
+  typeof value === 'number' && Number.isFinite(value)
+    ? `$${value.toFixed(10).replace(/(\.\d{6}\d*?)0+$/, '$1')}`
+    : undefined;
 
 function AiDetailValue({ label, value }: { label: string; value?: string }) {
   if (value === undefined) return null;

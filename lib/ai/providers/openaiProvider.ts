@@ -2,7 +2,7 @@
 import OpenAI from 'openai';
 import { BaseAIProvider, CallContext } from './baseProvider';
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
-import { calculateCostSync } from '@/lib/ai/pricing';
+import { calculateCostSync, getPriceStatusSync } from '@/lib/ai/pricing';
 import { getModelMaxOutputTokens } from '../context-limits';
 import { createLogger } from '@/lib/logger';
 
@@ -223,7 +223,9 @@ export class OpenAIProvider extends BaseAIProvider {
         // hope. Recorded alongside the call, not derived from it later.
         cachedInputTokens: this.cachedInputTokens(result.usage),
         cost: this.calculateCost(params.model, result.usage),
-        responseSize: JSON.stringify(result).length
+        responseSize: JSON.stringify(result).length,
+        // Read-only and total (never throws); scope-only, never the ledger.
+        pricing: { status: getPriceStatusSync('openai', params.model), unit: 'token' },
       })
     ) as Promise<OpenAI.Chat.ChatCompletion>;
   }
@@ -268,6 +270,7 @@ export class OpenAIProvider extends BaseAIProvider {
           total_tokens: result.usage?.total_tokens || 0,
         }),
         responseSize: 0,
+        pricing: { status: getPriceStatusSync('openai', params.model), unit: 'token' },
       })
     ) as Promise<OpenAI.Embeddings.CreateEmbeddingResponse>;
   }
@@ -309,12 +312,20 @@ export class OpenAIProvider extends BaseAIProvider {
           quality: params.quality,
           n: params.n,
         }),
-      (result: OpenAI.Images.ImagesResponse) => ({
-        inputTokens: 0,
-        outputTokens: 0,
-        cost: priceFor(result.quality) * params.n,
-        responseSize: 0,
-      })
+      (result: OpenAI.Images.ImagesResponse) => {
+        // priceFor is called ONCE, exactly as before.
+        const cost = priceFor(result.quality) * params.n;
+        return {
+          inputTokens: 0,
+          outputTokens: 0,
+          cost,
+          responseSize: 0,
+          // The resolver returns 0 only when no price was found (or it threw):
+          // `resolveImagePrice` never serves a 0 price (D-0 S-2). The coverage
+          // test pins every IMAGE_FALLBACK_PRICING value > 0.
+          pricing: { status: cost > 0 ? 'priced' : 'unpriced', unit: 'image' },
+        };
+      }
     );
   }
 

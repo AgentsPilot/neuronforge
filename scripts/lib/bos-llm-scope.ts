@@ -213,6 +213,11 @@ export const LITERAL_SCOPE_INCLUSIONS: ReadonlyArray<LiteralScopeInclusion> = [
     reason:
       'Business OS LLM model-settings admin route: reaches the catalog through adminSettingsView, so the direct-import rule misses it, but it serves the model picker and must never write a model id.',
   },
+  {
+    file: 'lib/business-os/llm/chargePricing.ts',
+    reason:
+      'Business OS credit deduction charge policy: reaches the catalog through chargeClassification, so the direct-import rule misses it, but it prices an action for a charge and must never write a model id or a price.',
+  },
 ];
 
 export function literalScope(
