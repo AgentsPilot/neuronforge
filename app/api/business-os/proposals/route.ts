@@ -230,6 +230,61 @@ export async function POST(request: NextRequest) {
     }
 
     /*
+     * A quote the client has ACCEPTED cannot be replaced.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * Acceptance is not a status, it is a set of consequences: an invoice was
+     * raised, a payment plan and its stages were created, and the snapshot of
+     * the agreed terms became the document that settles a dispute.
+     *
+     * Superseding it left BOTH standing. `markSuperseded` deliberately refuses
+     * to retire an accepted quote — its status filter is `sent | viewed |
+     * declined` — so the old one kept accepting while the new one went out, and
+     * a client who accepted the second got a SECOND invoice and a second plan
+     * for one job. Nothing further down noticed: acceptance only guards its own
+     * row, never a sibling.
+     *
+     * Refused here rather than only in the dialog, because the dialog is not the
+     * only caller — the chat writes proposals too.
+     *
+     * Ownership is checked in the same read. `supersedes_id` was accepted
+     * unvalidated, so a caller could point their own quote at another
+     * business's row.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (validated.supersedes_id) {
+      const { data: superseded } = await supabaseServer
+        .from('proposals')
+        .select('id, status')
+        .eq('id', validated.supersedes_id)
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (!superseded) {
+        return NextResponse.json(
+          { success: false, error: 'The quote being revised could not be found', code: 'supersedes_not_found' },
+          { status: 404 }
+        );
+      }
+
+      if (superseded.status === 'accepted') {
+        requestLogger.warn(
+          { supersedesId: validated.supersedes_id },
+          'Refused: a quote the client accepted cannot be revised'
+        );
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'already_accepted',
+            error:
+              'Your client has already accepted this quote, so it cannot be changed. Cancel the invoice and any payment plan first, then send a new quote.',
+          },
+          { status: 409 }
+        );
+      }
+    }
+
+    /*
      * Tax copied from the profile at DRAFT time and frozen thereafter, so a
      * business that changes its VAT rate does not re-price quotes already out.
      */

@@ -281,7 +281,28 @@ export default function OnboardingChatPage() {
   useEffect(() => {
     async function initialize() {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * ASKED MORE THAN ONCE, BECAUSE THE SESSION CAN ARRIVE LATE.
+         *
+         * This page is the far end of the cross-origin sign-in, and a single
+         * `getSession()` on mount can run before the session has been written
+         * to storage. Reading "no session" here is not harmless: the checks
+         * below are skipped, so an owner who finished onboarding weeks ago is
+         * shown the welcome message and a fresh conversation is started for
+         * them — the one outcome this page must never produce by accident.
+         *
+         * `/auth/handoff` now confirms the write before sending anyone here,
+         * so this is the second line rather than the first. It costs at most
+         * half a second on a page that is already waiting on the network, and
+         * it removes the only way a completed account lands back in setup.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        let session = (await supabase.auth.getSession()).data.session;
+        for (let attempt = 0; !session && attempt < 10; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+          session = (await supabase.auth.getSession()).data.session;
+        }
 
         if (session?.user) {
           // Check if already completed onboarding

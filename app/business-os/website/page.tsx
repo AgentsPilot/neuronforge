@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { gapFixAction } from '@/lib/business-os/journeyGapFix';
+import { useGapFix } from '@/components/business-os/setup/useGapFix';
 import { publicSiteDisplayHost, publicSiteSuffix, publicSiteUrl } from '@/lib/utils/origins';
 import { intakeReachesClient } from '@/lib/business-os/intakeReach';
 import { wantsWebsite } from '@/lib/business-os/onlinePresence';
@@ -329,6 +330,7 @@ const LABELS = {
     publish_fix_availability: 'Set working hours',
     publish_fix_timezone: 'Set your timezone',
     publish_fix_invoicing: 'Complete invoice details',
+    publish_fix_processor: 'Connect payments',
     publishing: 'Publishing...',
     view_site: 'View Site',
     copy_link: 'Copy Link',
@@ -515,6 +517,7 @@ const LABELS = {
     publish_fix_availability: 'Configurar horario',
     publish_fix_timezone: 'Configura tu zona horaria',
     publish_fix_invoicing: 'Completar datos de factura',
+    publish_fix_processor: 'Conectar pagos',
     publishing: 'Publicando...',
     view_site: 'Ver Sitio',
     copy_link: 'Copiar Enlace',
@@ -701,6 +704,7 @@ const LABELS = {
     publish_fix_availability: 'הגדר שעות פעילות',
     publish_fix_timezone: 'הגדירו אזור זמן',
     publish_fix_invoicing: 'השלם פרטי חשבונית',
+    publish_fix_processor: 'חיבור תשלומים',
     publishing: '...מפרסם',
     view_site: 'צפה באתר',
     copy_link: 'העתק קישור',
@@ -835,6 +839,32 @@ const LABELS = {
 };
 
 // Template name translations
+
+/**
+ * The Fix button's label for a gap, keyed by kind.
+ *
+ * Was a three-branch ternary in two places, against four gap kinds: a
+ * `processor` gap matched none of them and fell through to "Set working
+ * hours", while the button beside it opened the payments tab. A lookup means
+ * the next kind added shows nothing rather than the wrong thing, and the
+ * compiler flags the missing entry.
+ */
+function gapLabel(
+  kind: string,
+  labels: {
+    publish_fix_availability: string;
+    publish_fix_timezone: string;
+    publish_fix_invoicing: string;
+    publish_fix_processor: string;
+  }
+): string {
+  switch (kind) {
+    case 'invoicing': return labels.publish_fix_invoicing;
+    case 'timezone': return labels.publish_fix_timezone;
+    case 'processor': return labels.publish_fix_processor;
+    default: return labels.publish_fix_availability;
+  }
+}
 
 export default function WebsiteManagementPage() {
   const router = useRouter();
@@ -985,6 +1015,12 @@ export default function WebsiteManagementPage() {
    * change the service — this is the link out of the read-only view below.
    */
   const { openConfiguration } = useConfigurationDialog();
+  /**
+   * Acting on a readiness gap. Not every gap is cleared in the dialog — the
+   * timezone is set on the settings page — so the destination is decided in
+   * one place rather than assumed to be a tab here.
+   */
+  const runGapFix = useGapFix();
 
   /** Whether the business collects an intake form. It comes last in a journey. */
   const [intakeEnabled, setIntakeEnabled] = useState(false);
@@ -4135,7 +4171,7 @@ export default function WebsiteManagementPage() {
                             <button
                               type="button"
                               onClick={() =>
-                                openConfiguration(gapFixAction(gap.kind).tab, {
+                                runGapFix(gap.kind, {
                                   // Cleared rather than re-asked: activation is a
                                   // deliberate click, and it answers freshly.
                                   onClose: () => setSmartLinkNotice(null),
@@ -4144,11 +4180,7 @@ export default function WebsiteManagementPage() {
                               className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#4F6EF7] hover:bg-[#3B5AE5] transition-colors"
                               style={{ borderRadius: 'var(--v2-radius-button)' }}
                             >
-                              {gap.kind === 'invoicing'
-                                ? labels.publish_fix_invoicing
-                                : gap.kind === 'timezone'
-                                  ? labels.publish_fix_timezone
-                                  : labels.publish_fix_availability}
+                              {gapLabel(gap.kind, labels)}
                               <ArrowRight className={`w-3.5 h-3.5 ${language === 'he' ? 'rotate-180' : ''}`} />
                             </button>
                           </div>
@@ -5407,7 +5439,7 @@ export default function WebsiteManagementPage() {
                                   <button
                                     type="button"
                                     onClick={() =>
-                                      openConfiguration(gapFixAction(gap.kind).tab, {
+                                      runGapFix(gap.kind, {
                                         // The owner has just been sent to fix the very
                                         // thing this names; ask again rather than leave
                                         // the refusal asserting the old answer.
@@ -5417,11 +5449,7 @@ export default function WebsiteManagementPage() {
                                     className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#4F6EF7] hover:bg-[#3B5AE5] transition-colors"
                                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                                   >
-                                    {gap.kind === 'invoicing'
-                                      ? labels.publish_fix_invoicing
-                                      : gap.kind === 'timezone'
-                                        ? labels.publish_fix_timezone
-                                        : labels.publish_fix_availability}
+                                    {gapLabel(gap.kind, labels)}
                                     <ArrowRight className={`w-3.5 h-3.5 ${language === 'he' ? 'rotate-180' : ''}`} />
                                   </button>
                                 </div>

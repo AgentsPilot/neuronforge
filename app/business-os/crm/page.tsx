@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { CRMPipelineView } from '@/components/crm/CRMPipelineView';
+import { ContactsPager } from '@/components/crm/ContactsPager';
 import { CRMSubscriberList } from '@/components/crm/CRMSubscriberList';
 import { CRMContactList } from '@/components/crm/CRMContactList';
 import { CRMTaskList } from '@/components/crm/CRMTaskList';
@@ -20,6 +21,23 @@ const logger = createLogger({ module: 'CRMPage' });
 
 type ViewMode = 'pipeline' | 'contacts' | 'subscribers' | 'tasks';
 
+/**
+ * The drawer's collapsible sections, as `CRMContactDrawerV2.initialSection`
+ * declares them.
+ *
+ * Written out here so a `?section=` value off the URL can be CHECKED against it
+ * rather than cast into the drawer's union. A cast would compile and then hand
+ * the drawer a section name it has no panel for, which opens with everything
+ * collapsed and no clue why.
+ */
+const DRAWER_SECTIONS = ['details', 'bookings', 'tasks', 'forms', 'files', 'payments'] as const;
+type DrawerSection = (typeof DRAWER_SECTIONS)[number];
+
+/** The requested section, or undefined for anything we do not recognise. */
+function sectionFromUrl(value: string | null): DrawerSection | undefined {
+  return DRAWER_SECTIONS.includes(value as DrawerSection) ? (value as DrawerSection) : undefined;
+}
+
 export default function CRMPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -35,11 +53,24 @@ export default function CRMPage() {
   const [pipelineStages, setPipelineStages] = useState<CRMPipelineStage[]>([]);
   const [enabledCapabilities, setEnabledCapabilities] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [drawerDefaultTab, setDrawerDefaultTab] = useState<'details' | 'tasks' | undefined>(undefined);
+  /**
+   * Which collapsible section the drawer opens on.
+   *
+   * Widened from `'details' | 'tasks'` to the drawer's full set, so a link can
+   * land somebody on the part of the record it is about. `NeedsYouCard`'s
+   * "write a quote" sends `&section=bookings`, where the consultation and the
+   * quote action actually are; before this it sent `&action=quote`, which
+   * nothing read, so the button opened the drawer on the details section and
+   * left the owner to find the booking themselves.
+   */
+  const [drawerDefaultTab, setDrawerDefaultTab] = useState<DrawerSection | undefined>(undefined);
   // Pagination state for contacts list view
   const [currentPage, setCurrentPage] = useState(1);
   const [totalContacts, setTotalContacts] = useState(0);
-  const PAGE_SIZE = 10;
+  /** How many contacts each stage really holds — the column header's number. */
+  const [stageTotals, setStageTotals] = useState<Record<string, number>>({});
+  /** Twenty, as the money list uses. See components/payments/MoneyList.tsx. */
+  const PAGE_SIZE = 20;
 
   // Fetch pipeline stages and capabilities on mount
   useEffect(() => {
@@ -76,15 +107,20 @@ export default function CRMPage() {
   useEffect(() => {
     const contactId = searchParams.get('contact');
     if (contactId && contacts.length > 0) {
+      // `?section=` decides which part of the record opens. Absent or unknown
+      // falls back to details, which is what every link did before it existed.
+      const section = sectionFromUrl(searchParams.get('section'));
       const contact = contacts.find(c => c.id === contactId);
       if (contact) {
-        setDrawerDefaultTab('details');
+        setDrawerDefaultTab(section ?? 'details');
         setSelectedContact(contact);
         // Clear the query param from URL after opening
         router.replace('/business-os/crm', { scroll: false });
       } else {
-        // Contact not in current list - fetch it directly
-        fetchContactById(contactId);
+        // Contact not in current list - fetch it directly. The section has to go
+        // with it: this is the path a link from another page usually takes, since
+        // the contact it names is often not on the first page of this list.
+        fetchContactById(contactId, section);
       }
     }
   }, [searchParams, contacts]);
@@ -128,12 +164,12 @@ export default function CRMPage() {
     }
   };
 
-  const fetchContactById = async (contactId: string) => {
+  const fetchContactById = async (contactId: string, section?: DrawerSection) => {
     try {
       const response = await fetch(`/api/crm/contacts/${contactId}`);
       const data = await response.json();
       if (data.success && data.contact) {
-        setDrawerDefaultTab('details');
+        setDrawerDefaultTab(section ?? 'details');
         setSelectedContact(data.contact);
         router.replace('/business-os/crm', { scroll: false });
       }
@@ -142,11 +178,116 @@ export default function CRMPage() {
     }
   };
 
-  // Reset and fetch when search changes
-  useEffect(() => {
+  /**
+   * Searching always returns to the first page, set in the same update as the
+   * query itself.
+   *
+   * React batches the two, so the effect below sees one change and fetches
+   * once. Resetting in an effect of its own instead would fetch twice: once for
+   * the new query at the old page, then again after the reset.
+   *
+   * And it has to reset at all — staying on page five of a result set that now
+   * has two asks the server for an offset past the end and shows nothing.
+   */
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value);
     setCurrentPage(1);
-    fetchContacts();
-  }, [searchQuery]);
+  };
+
+  /**
+   * The board loads each column separately.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A single global page spread twenty contacts across four columns, so a stage
+   * holding sixty people showed whichever handful fell inside that window and
+   * looked nearly empty. The column is the unit somebody reads, so the column
+   * is the unit that pages.
+   *
+   * The rows still arrive as ONE flat array, because that is what the board
+   * already groups and what its drag-and-drop and optimistic moves operate on.
+   * Only the filling changes; none of that logic does.
+   *
+   * `stageTotals` carries the real size of each column, which is the number its
+   * header shows and the thing that decides whether there is more to load.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const fetchBoard = async (silent: boolean = false) => {
+    if (!pipelineStages.length) return;
+
+    try {
+      if (!silent) setLoading(true);
+
+      const pages = await Promise.all(
+        pipelineStages.map(async stage => {
+          const params = new URLSearchParams();
+          params.set('stage', stage.stage_key);
+          params.set('limit', String(PAGE_SIZE));
+          params.set('offset', '0');
+          if (searchQuery) params.set('search', searchQuery);
+
+          const response = await fetch(`/api/crm/contacts?${params}`);
+          const data = await response.json();
+          return {
+            key: stage.stage_key,
+            rows: (data.success ? data.contacts : []) ?? [],
+            total: (data.success ? data.total : 0) ?? 0,
+          };
+        })
+      );
+
+      setContacts(pages.flatMap(p => p.rows));
+      setStageTotals(Object.fromEntries(pages.map(p => [p.key, p.total])));
+      setTotalContacts(pages.reduce((sum, p) => sum + p.total, 0));
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to fetch the board');
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  };
+
+  /** The next twenty for one column, appended to what is already shown. */
+  const loadMoreStage = async (stageKey: string) => {
+    try {
+      const params = new URLSearchParams();
+      params.set('stage', stageKey);
+      params.set('limit', String(PAGE_SIZE));
+      // How many of this stage are already on screen. Derived rather than
+      // tracked, so it cannot fall out of step with what was actually loaded.
+      params.set('offset', String(contacts.filter(c => c.stage === stageKey).length));
+      if (searchQuery) params.set('search', searchQuery);
+
+      const response = await fetch(`/api/crm/contacts?${params}`);
+      const data = await response.json();
+      if (!data.success) return;
+
+      setContacts(prev => [...prev, ...(data.contacts ?? [])]);
+    } catch (error) {
+      logger.error({ err: error, stageKey }, 'Failed to load more for this column');
+    }
+  };
+
+  /*
+   * Refetch whenever the search or the page changes.
+   *
+   * The page is part of the REQUEST now, not a slice applied afterwards, so
+   * moving to page two without refetching would advance the pager and leave the
+   * same twenty rows underneath it.
+   *
+   * A new search goes back to page one in the same pass: staying on page five
+   * of a result set that now has two pages asks the server for an offset past
+   * the end and shows an empty board.
+   */
+  useEffect(() => {
+    // The board pages per column and ignores `currentPage`; the list pages
+    // globally. `pipelineStages` is a dependency because the board cannot ask
+    // for its columns until it knows what they are.
+    if (viewMode === 'pipeline') {
+      fetchBoard();
+    } else {
+      fetchContacts();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, currentPage, viewMode, pipelineStages]);
 
   const fetchPipelineStages = async () => {
     try {
@@ -179,17 +320,37 @@ export default function CRMPage() {
         setLoading(true);
       }
 
+      /*
+       * One page at a time, from the server.
+       *
+       * ─────────────────────────────────────────────────────────────────────
+       * This asked for everything — "No limit - fetch all contacts for
+       * pipeline view" — and the route answers `limit: validated.limit || 50`.
+       * So the board silently stopped at fifty, ordered newest first, which
+       * meant the contacts that disappeared were the OLDEST: the established
+       * clients. Dragging between stages then operated on an incomplete set.
+       *
+       * The count was wrong in the same breath. The API returns the real total
+       * alongside the rows, and this took `allContacts.length` instead — so a
+       * business with a hundred contacts was told it had fifty, by a number
+       * derived from the truncation itself.
+       *
+       * The schema caps `limit` at 100, so asking for everything was never
+       * going to work however it was phrased.
+       * ─────────────────────────────────────────────────────────────────────
+       */
       const params = new URLSearchParams();
       if (searchQuery) params.set('search', searchQuery);
-      // No limit - fetch all contacts for pipeline view
+      params.set('limit', String(PAGE_SIZE));
+      params.set('offset', String((currentPage - 1) * PAGE_SIZE));
 
       const response = await fetch(`/api/crm/contacts?${params}`);
       const data = await response.json();
 
       if (data.success) {
-        const allContacts = data.contacts || [];
-        setContacts(allContacts);
-        setTotalContacts(allContacts.length);
+        setContacts(data.contacts || []);
+        // The count of everything that MATCHES, not of what came back.
+        setTotalContacts(data.total ?? 0);
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to fetch contacts');
@@ -201,24 +362,71 @@ export default function CRMPage() {
   };
 
   // Get paginated contacts for list view
-  const paginatedContacts = contacts.slice(
-    (currentPage - 1) * PAGE_SIZE,
-    currentPage * PAGE_SIZE
-  );
+  /*
+   * No slice: `contacts` IS the current page now.
+   *
+   * It used to be a client-side window over an array the API had already
+   * truncated — five pages of ten over fifty rows, presented as the whole
+   * pipeline.
+   */
+  const paginatedContacts = contacts;
   const totalPages = Math.ceil(totalContacts / PAGE_SIZE);
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
   };
 
+  /**
+   * A contact was created. The modal has served its purpose, so it closes —
+   * there is no record being edited to stay on.
+   *
+   * The refresh is silent: the list is already on screen with real rows in it,
+   * and replacing them with the full-page spinner to add one more reads as the
+   * page reloading. The new contact simply appears.
+   */
   const handleContactCreated = () => {
     setIsNewContactModalOpen(false);
-    fetchContacts();
+    // Whichever view is on screen: a contact created while the board is open
+    // belongs in a column, and refreshing the list would not put it there.
+    void (viewMode === 'pipeline' ? fetchBoard(true) : fetchContacts(true));
   };
 
-  const handleContactUpdated = () => {
-    setSelectedContact(null);
-    fetchContacts();
+  /**
+   * A contact changed. Refresh what is on screen without taking it away.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * This was `setSelectedContact(null); fetchContacts();` — so editing one
+   * field closed the drawer and put the whole list behind the loading spinner,
+   * because `fetchContacts()` defaults to the non-silent path. Three things
+   * followed, and all three were live:
+   *
+   *   - The owner was thrown out of the record they were editing, and had to
+   *     find and reopen it to make the next change.
+   *   - The drawer's own "Saved" message is shown for two seconds; it was
+   *     unmounted immediately, so the confirmation never appeared.
+   *   - A booking saved from inside the drawer had to deliberately NOT report
+   *     itself, to avoid being ejected — so the list silently kept stale data.
+   *
+   * With the saved row in hand the drawer is re-pointed at it rather than
+   * closed, and the list refreshes silently underneath. Called with nothing —
+   * a deletion, a booking — it just re-reads the list; a deletion has already
+   * closed the drawer through `onClose`.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const handleContactUpdated = (updated?: CRMContact) => {
+    if (updated) {
+      setSelectedContact(updated);
+    }
+    /*
+     * Refresh whichever view is on screen.
+     *
+     * The board opens this same drawer, and this only ever refreshed the LIST —
+     * so a contact edited from the pipeline left its card showing the old
+     * values, and a stage change left it in the old column, until something
+     * else happened to reload. Both were true before the drawer stayed open;
+     * they were just harder to notice behind the close-and-reload.
+     */
+    void (viewMode === 'pipeline' ? fetchBoard(true) : fetchContacts(true));
   };
 
   const handleContactClick = (contact: CRMContact) => {
@@ -304,7 +512,7 @@ export default function CRMPage() {
                     : t('crm.search_placeholder')
                 }
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => handleSearchChange(e.target.value)}
                 className="ps-10 pe-4 py-2 w-48 lg:w-64 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[#8B5CF6] transition-all"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               />
@@ -411,7 +619,7 @@ export default function CRMPage() {
                 : t('crm.search_placeholder')
             }
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => handleSearchChange(e.target.value)}
             className="ps-10 pe-4 py-2 w-full bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[#8B5CF6] transition-all"
             style={{ borderRadius: 'var(--v2-radius-button)' }}
           />
@@ -428,19 +636,39 @@ export default function CRMPage() {
         ) : (
           <>
             {viewMode === 'pipeline' && (
-              <CRMPipelineView
-                contacts={contacts}
-                stages={pipelineStages}
-                onContactClick={handleContactClick}
-                onContactUpdated={() => fetchContacts(true)}
-              />
+              <>
+                <CRMPipelineView
+                  contacts={contacts}
+                  stages={pipelineStages}
+                  stageTotals={stageTotals}
+                  onLoadMore={loadMoreStage}
+                  onContactClick={handleContactClick}
+                  onContactUpdated={() => fetchBoard(true)}
+                />
+                {/*
+                  No global pager here: the board pages COLUMN BY COLUMN.
+
+                  One page across the whole board spread twenty contacts over
+                  four columns, so a stage holding sixty showed a handful and
+                  read as nearly empty. Each column now loads its own twenty and
+                  offers more when it has more.
+                */}
+              </>
             )}
             {viewMode === 'contacts' && (
               <CRMContactList
                 contacts={paginatedContacts}
                 stages={pipelineStages}
                 onContactClick={handleContactClick}
-                onContactsUpdated={() => fetchContacts()}
+                onContactsUpdated={() => {
+                  /*
+                   * Silent: the bulk actions behind this already show their own
+                   * `bulkLoading` state, so the full-page spinner was a second
+                   * indicator for the same work, and it threw away the list the
+                   * owner was looking at to redraw the same rows.
+                   */
+                  void fetchContacts(true);
+                }}
                 currentPage={currentPage}
                 totalPages={totalPages}
                 onPageChange={handlePageChange}

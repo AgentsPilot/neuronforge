@@ -74,7 +74,7 @@ describe('the lifecycle gate (FR-13)', () => {
     const result = resolve(championAccount());
 
     expect(result.values['marketing.mass_email'].value).toBe(false);
-    expect(result.values['payments.reminders'].value).toBe(false);
+    expect(result.values['marketing.posts'].value).toBe(false);
     expect(result.values['website.custom_domain'].value).toBe('unavailable');
     expect(result.values['sms.messages'].value).toEqual({ perMonth: 0 });
     expect(result.values['marketing.mass_email'].decidedBy).toBe('lifecycle_gate');

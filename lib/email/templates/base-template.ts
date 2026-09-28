@@ -501,11 +501,28 @@ export function formatEmailDate(
       dateOptions.minute = '2-digit';
       // Always use 12-hour format with AM/PM for client-facing emails
       dateOptions.hour12 = true;
+      /*
+       * Say WHICH clock this hour is on.
+       *
+       * Every booking email stated a bare "9:00 AM". The business knows which
+       * 9am it means; a client in another country has no way to, and an email
+       * cannot work it out for them — it is rendered once on the server before
+       * it is sent, and mail clients run no scripts. Naming the zone is the
+       * only thing the text itself can do, so it does it everywhere a time
+       * appears rather than in the templates that happened to remember.
+       *
+       * Date-only values (`includeTime: false`) get no label: a due date is a
+       * calendar day, and a zone on it would imply a precision it does not
+       * have.
+       */
+      dateOptions.timeZoneName = 'long';
     }
 
     return new Intl.DateTimeFormat(intlLocale, dateOptions).format(date);
   } catch {
-    // Fallback if timezone is invalid
+    // Fallback if timezone is invalid. No label here on purpose: this branch
+    // has fallen back to the SERVER's clock, so naming a zone would put a
+    // confident label on an hour we already know is unreliable.
     return date.toLocaleString(intlLocale, {
       weekday: 'long',
       month: 'long',

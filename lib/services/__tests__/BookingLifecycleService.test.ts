@@ -25,6 +25,12 @@ const mockDeleteCalendarEvent = jest.fn();
 const mockSendCancellationEmail = jest.fn();
 const mockAuditLog = jest.fn();
 
+/** No invoices unless a test says otherwise — the ordinary unpaid booking. */
+const mockFindInvoices = jest.fn();
+const mockUpdateInvoice = jest.fn();
+const mockVoidInvoice = jest.fn();
+const mockFindSettled = jest.fn();
+
 jest.mock('@/lib/repositories/SchedulingRepository', () => ({
   schedulingBookingRepository: {
     cancel: (...args: unknown[]) => mockCancel(...args),
@@ -35,6 +41,31 @@ jest.mock('@/lib/repositories/CRMContactRepository', () => ({
   crmContactRepository: {
     findById: (...args: unknown[]) => mockFindContact(...args),
   },
+}));
+
+jest.mock('@/lib/repositories/PaymentRepository', () => ({
+  paymentInvoiceRepository: {
+    findByBookingId: (...args: unknown[]) => mockFindInvoices(...args),
+    update: (...args: unknown[]) => mockUpdateInvoice(...args),
+  },
+  /*
+   * Held money comes from the PAYMENTS, not the invoices: a booking paid online
+   * through the widget has a transaction carrying its `booking_id` and no
+   * invoice at all, and an invoice-only sum reported nothing held for it.
+   */
+  paymentTransactionRepository: {
+    findSettledForBooking: (...args: unknown[]) => mockFindSettled(...args),
+  },
+}));
+
+/*
+ * Cancelling a chaseable invoice goes through the lifecycle module, not a bare
+ * status write — that is what voids it at Stripe as well, so the hosted invoice
+ * page stops being payable. Mocked here so the assertion is about WHICH path
+ * was taken, which is the part that was wrong.
+ */
+jest.mock('@/lib/payments/invoiceLifecycle', () => ({
+  voidInvoice: (...args: unknown[]) => mockVoidInvoice(...args),
 }));
 
 jest.mock('@/lib/services/CalendarSyncService', () => ({
@@ -83,6 +114,10 @@ beforeEach(() => {
   mockDeleteCalendarEvent.mockResolvedValue({ success: true });
   mockSendCancellationEmail.mockResolvedValue({ sent: true });
   mockAuditLog.mockResolvedValue(undefined);
+  mockFindInvoices.mockResolvedValue({ data: [], error: null });
+  mockUpdateInvoice.mockResolvedValue({ data: null, error: null });
+  mockVoidInvoice.mockResolvedValue({ data: { voidedAtProcessor: true }, error: null });
+  mockFindSettled.mockResolvedValue({ data: [], error: null });
 });
 
 describe('cancelBooking', () => {
@@ -98,6 +133,15 @@ describe('cancelBooking', () => {
       booking: booking(),
       calendarEventRemoved: true,
       clientNotified: true,
+      // Nothing was invoiced, so there is nothing to close and nothing held.
+      invoicesCancelled: 0,
+      amountHeld: 0,
+      heldCurrency: null,
+      // And no payment plan behind it, which is the ordinary booking.
+      planLive: false,
+      periodsRemaining: null,
+      // No quote stages either, so none to close.
+      stagesClosed: 0,
     });
 
     // The three steps that make a cancellation real.
@@ -237,5 +281,170 @@ describe('cancelBooking', () => {
       'This business has ceased operating',
       { offerRebooking: false }
     );
+  });
+});
+
+/**
+ * The money side of a cancellation.
+ *
+ * An unpaid invoice used to survive untouched, and the overdue scan reads
+ * `status in ('sent','overdue')` with no reference to the booking — so the
+ * platform went on chasing the client on days 1, 3 and 7 past due, in the
+ * owner's name, for an appointment that had been cancelled.
+ */
+describe('cancelBooking and the invoices', () => {
+  it('closes the ones that would still be chased', async () => {
+    mockFindInvoices.mockResolvedValue({
+      data: [
+        { id: 'inv-1', status: 'sent', amount: 200, refunded_amount: 0, currency: 'ILS' },
+        { id: 'inv-2', status: 'overdue', amount: 150, refunded_amount: 0, currency: 'ILS' },
+        { id: 'inv-3', status: 'draft', amount: 90, refunded_amount: 0, currency: 'ILS' },
+      ],
+      error: null,
+    });
+
+    const result = await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+
+    expect(result.data?.invoicesCancelled).toBe(3);
+    // None of them was ever paid, so nothing is being held.
+    expect(result.data?.amountHeld).toBe(0);
+
+    /*
+     * Through the lifecycle module, so a Stripe-issued invoice is voided at the
+     * processor too. A local status write leaves Stripe still reminding the
+     * client and the hosted page still payable.
+     */
+    expect(mockVoidInvoice).toHaveBeenCalledTimes(3);
+    expect(mockVoidInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ invoiceId: 'inv-1', userId: USER_ID })
+    );
+  });
+
+  it('does not void an invoice that was paid', async () => {
+    mockFindInvoices.mockResolvedValue({
+      data: [{ id: 'inv-1', status: 'paid', amount: 250, refunded_amount: 0, currency: 'ILS' }],
+      error: null,
+    });
+
+    await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+
+    // Voiding it would rewrite the record of money that actually moved.
+    expect(mockVoidInvoice).not.toHaveBeenCalled();
+  });
+
+  /*
+   * Money that moved is a record, not a draft. It is measured rather than
+   * rewritten, and the owner is asked what to do about it.
+   *
+   * Measured from the PAYMENTS, which is the part that was wrong first time
+   * round: the sum came off the invoices, and the commonest online sale — paid
+   * through the booking widget — has a transaction and no invoice at all.
+   */
+  it('reports money paid against an invoice', async () => {
+    mockFindInvoices.mockResolvedValue({
+      data: [{ id: 'inv-1', status: 'paid', amount: 250, refunded_amount: 0, currency: 'ILS' }],
+      error: null,
+    });
+    mockFindSettled.mockResolvedValue({
+      data: [{ id: 'tx-1', status: 'succeeded', amount: 250, refunded_amount: 0, currency: 'ILS' }],
+      error: null,
+    });
+
+    const result = await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+
+    expect(result.data?.invoicesCancelled).toBe(0);
+    expect(result.data?.amountHeld).toBe(250);
+    expect(result.data?.heldCurrency).toBe('ILS');
+  });
+
+  /*
+   * THE DIRECT ONLINE SALE — paid through the booking widget, no invoice
+   * anywhere. An invoice-derived sum called this zero, so nothing prompted the
+   * owner and the money quietly stayed with the business.
+   */
+  it('reports money paid online with no invoice behind it', async () => {
+    mockFindInvoices.mockResolvedValue({ data: [], error: null });
+    mockFindSettled.mockResolvedValue({
+      data: [{ id: 'tx-1', status: 'succeeded', amount: 180, refunded_amount: 0, currency: 'USD' }],
+      error: null,
+    });
+
+    const result = await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+
+    expect(result.data?.amountHeld).toBe(180);
+    expect(result.data?.heldCurrency).toBe('USD');
+  });
+
+  /* Both queries are asked: by booking, and by the booking's invoices. */
+  it('looks for payments by booking and by invoice', async () => {
+    mockFindInvoices.mockResolvedValue({
+      data: [{ id: 'inv-1', status: 'paid', amount: 250, refunded_amount: 0, currency: 'ILS' }],
+      error: null,
+    });
+
+    await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+
+    expect(mockFindSettled).toHaveBeenCalledWith(BOOKING_ID, ['inv-1'], USER_ID);
+  });
+
+  it('counts only what is still held after a partial refund', async () => {
+    mockFindSettled.mockResolvedValue({
+      data: [{ id: 'tx-1', status: 'succeeded', amount: 300, refunded_amount: 100, currency: 'ILS' }],
+      error: null,
+    });
+
+    expect((await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID })).data?.amountHeld).toBe(200);
+  });
+
+  /*
+   * An invoice called off before anyone paid it still carries its `amount`.
+   * Reading the sum off the invoices counted that as money held, and the owner
+   * would have been offered a refund for money that never arrived.
+   */
+  it('holds nothing for an invoice that was cancelled before anyone paid it', async () => {
+    mockFindInvoices.mockResolvedValue({
+      data: [{ id: 'inv-1', status: 'cancelled', amount: 300, refunded_amount: 0, currency: 'ILS' }],
+      error: null,
+    });
+    mockFindSettled.mockResolvedValue({ data: [], error: null });
+
+    const result = await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+
+    expect(result.data?.amountHeld).toBe(0);
+    expect(result.data?.heldCurrency).toBeNull();
+  });
+
+  it('holds nothing once it has been refunded in full', async () => {
+    mockFindSettled.mockResolvedValue({
+      data: [{ id: 'tx-1', status: 'succeeded', amount: 300, refunded_amount: 300, currency: 'ILS' }],
+      error: null,
+    });
+
+    expect((await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID })).data?.amountHeld).toBe(0);
+  });
+
+  /* A payment that never went through is not money the business is holding. */
+  it('ignores a payment that did not succeed', async () => {
+    mockFindSettled.mockResolvedValue({
+      data: [{ id: 'tx-1', status: 'failed', amount: 300, refunded_amount: 0, currency: 'ILS' }],
+      error: null,
+    });
+
+    expect((await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID })).data?.amountHeld).toBe(0);
+  });
+
+  /*
+   * The booking is already cancelled by this point. An invoice left chaseable is
+   * a real problem, but failing the cancellation over it would leave the owner
+   * with an appointment they have told a client is off.
+   */
+  it('still cancels the booking when the invoices cannot be read', async () => {
+    mockFindInvoices.mockRejectedValue(new Error('database down'));
+
+    const result = await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+
+    expect(result.error).toBeNull();
+    expect(result.data?.booking).toEqual(booking());
+    expect(result.data?.invoicesCancelled).toBe(0);
   });
 });

@@ -774,6 +774,26 @@ export const emailTranslations = {
     },
     wasLabel: { en: 'Was', es: 'Antes', he: 'היה' },
     reasonLabel: { en: 'Reason given', es: 'Motivo', he: 'סיבה' },
+    /*
+     * A cancellation only, and only when the client had paid. The owner is
+     * holding money for an appointment that is not happening, which the alert
+     * never used to mention — so the one email about it said nothing about the
+     * part that costs somebody money.
+     */
+    heldLabel: { en: 'Paid, not yet refunded', es: 'Pagado, sin devolver', he: 'שולם, טרם הוחזר' },
+    /*
+     * A plan that has NOT been stopped. Cancelling an appointment deliberately
+     * does not end a client's payment arrangement, so this says plainly that
+     * the charges continue until the owner decides otherwise — the value, not
+     * just the label, has to carry that or it reads as a status rather than a
+     * thing needing a decision.
+     */
+    planLabel: { en: 'Payment plan', es: 'Plan de pago', he: 'תוכנית תשלומים' },
+    planValue: {
+      en: 'Still charging — it was not stopped. Stop or refund it from the booking.',
+      es: 'Sigue cobrando: no se detuvo. Detenlo o devuélvelo desde la reserva.',
+      he: 'ממשיכה לחייב ולא הופסקה. אפשר לעצור או להחזיר דרך ההזמנה.',
+    },
     nameLabel: { en: 'Name', es: 'Nombre', he: 'שם' },
     emailLabel: { en: 'Email', es: 'Correo', he: 'אימייל' },
     phoneLabel: { en: 'Phone', es: 'Teléfono', he: 'טלפון' },
@@ -1375,6 +1395,10 @@ export function formatEmailDateLocalized(
       dateOptions.hour = 'numeric';
       dateOptions.minute = '2-digit';
       dateOptions.hour12 = locale !== 'he'; // Hebrew typically uses 24h format
+      // Name the clock, exactly as `formatEmailDate` does. Nothing calls this
+      // function today; kept in step so that whoever first does inherits the
+      // labelled behaviour rather than silently reintroducing a bare hour.
+      dateOptions.timeZoneName = 'long';
     }
 
     return new Intl.DateTimeFormat(intlLocales[locale], dateOptions).format(date);

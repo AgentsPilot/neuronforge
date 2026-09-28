@@ -15,6 +15,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { describeChargeAccount, resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { createLogger } from '@/lib/logger';
 import { emitPaymentEvent, PaymentProcessorType } from '@/lib/services/PaymentEventService';
+import { businessEventService } from '@/lib/business-os/insight/events/BusinessEventService';
 import { paymentProcessorService } from '@/lib/services/PaymentProcessorService';
 import { settleInvoicePaid } from '@/lib/payments/invoiceSettlement';
 import {
@@ -116,6 +117,34 @@ export class PaymentRetryService {
             maxRetries: config.maxRetries
           }
         });
+
+        /*
+         * And onto the INSIGHT bus, where something actually listens.
+         *
+         * ─────────────────────────────────────────────────────────────────────
+         * `emitPaymentEvent` above writes to `PaymentEventService`, which no
+         * reader consumes — so giving up on a client's card produced a row in a
+         * table and nothing else: no card, no email, no briefing line. The
+         * owner found out by noticing money had stopped arriving.
+         *
+         * `payment.failed` is the event `PaymentIssuesDetector` already watches,
+         * so this needs no new detector — only for the exhausted retry to be
+         * said on the bus that has a listener. Non-blocking: the retry decision
+         * is already made, and a failed emit must not change it.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        businessEventService
+          .emit(userId, {
+            eventType: 'payment.failed',
+            category: 'cash_flow',
+            entityType: 'invoice',
+            entityId: invoiceId,
+            contactId: invoice.contact_id,
+            valueUsd: Number(invoice.amount) || null,
+            metadata: { giveUp: true, retryCount: invoice.retry_count },
+            sourceCapability: 'payments',
+          })
+          .catch(err => logger.warn({ err, invoiceId }, 'Could not surface the exhausted retry'));
 
         return {
           data: {
@@ -223,6 +252,25 @@ export class PaymentRetryService {
             maxRetries: config.maxRetries
           }
         });
+
+        // Same reason as the invoice branch above: onto the bus that listens.
+        businessEventService
+          .emit(userId, {
+            eventType: 'payment.failed',
+            category: 'cash_flow',
+            // The insight bus has no `installment` entity; a period of a plan is
+            // reported against the invoice it belongs to, which is the thing the
+            // owner would open.
+            entityType: 'invoice',
+            entityId: installmentId,
+            contactId: installment.contact_id,
+            valueUsd: Number(installment.amount) || null,
+            metadata: { giveUp: true, retryCount: installment.retry_count, kind: 'installment' },
+            sourceCapability: 'payments',
+          })
+          .catch(err =>
+            logger.warn({ err, installmentId }, 'Could not surface the exhausted retry')
+          );
 
         return {
           data: {

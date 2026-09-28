@@ -134,8 +134,10 @@ async function enqueueDueBusinesses(now: Date): Promise<number> {
 
     /*
      * No timezone means no morning. Defaulting to UTC would email a Los
-     * Angeles business at midnight, which is worse than not emailing at all —
-     * the settings switch is gated on this for the same reason.
+     * Angeles business at midnight, which is worse than not emailing at all.
+     * The switch on the briefing card is disabled for the same reason, so the
+     * opt-in and this skip agree; a second, ungated switch in Settings used to
+     * disagree with both and has been removed.
      */
     if (source === 'default') {
       logger.debug({ userId }, 'Skipping briefing: no timezone set');
@@ -241,21 +243,55 @@ async function dispatchOne(
      */
     ownerFirstName: (authUser.data?.user?.user_metadata?.full_name as string | undefined)?.split(' ')[0],
     dashboardUrl: `${appUrl}/business-os`,
-    settingsUrl: `${appUrl}/business-os/settings?section=preferences`,
+    /*
+     * The dashboard, where the briefing card carries the switch for this email.
+     * The Settings row it used to point at is gone; that anchor now holds a
+     * signpost, for briefings already delivered.
+     */
+    settingsUrl: `${appUrl}/business-os`,
     branding,
     locale: language,
   });
 
-  await sendEmail({
+  const result = await sendEmail({
     kind: 'transactional',
     to: [ownerEmail],
     subject,
     html,
     // Presents the business as the sender rather than the platform.
     ownerUserId: userId,
+    /*
+     * The same page the footer's "Turn it off" link points at.
+     *
+     * This is recurring mail the owner switched on, so it earns the header —
+     * unlike a booking confirmation, which a client cannot unsubscribe from.
+     * Exchange quarantined this briefing as "High Confidence Phish" with all
+     * three authentication checks passing, and an absent List-Unsubscribe is
+     * one of the signals a filter reads as "not a sender who behaves properly".
+     */
+    unsubscribeUrl: `${appUrl}/business-os`,
   });
 
-  logger.info({ userId, date: day.date, lines: lines.length }, 'Morning briefing sent');
+  /*
+   * The result decides the outcome, not the fact that we reached this line.
+   *
+   * `sendEmail` never throws — it RETURNS `{ sent: false, error }` when no
+   * transport delivered. So discarding it meant a failed briefing still logged
+   * "sent", marked its queue row sent, and told nobody. The row's status was
+   * evidence of an intention, not of a delivery.
+   */
+  if (!result.sent) {
+    logger.error(
+      { userId, date: day.date, error: result.error ?? result.blocked },
+      'Morning briefing not sent'
+    );
+    return { sent: false, reason: result.error ?? 'send_failed' };
+  }
+
+  logger.info(
+    { userId, date: day.date, lines: lines.length, provider: result.provider },
+    'Morning briefing sent'
+  );
   return { sent: true, reason: 'sent' };
 }
 

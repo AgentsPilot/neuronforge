@@ -37,7 +37,11 @@ const logger = createLogger({ module: 'OperationalAutomationsAPI' });
  */
 const DecisionSchema = z.object({
   id: z.enum(['reply_to_enquiries', 'chase_invoices', 'chase_intake', 'remind_about_meeting']),
-  enabled: z.boolean(),
+  /**
+   * The answer to the automation's question. OPTIONAL, because `alertOwner`
+   * below can arrive alone — see the note on it.
+   */
+  enabled: z.boolean().optional(),
   /*
    * Settings, for the one automation that has any.
    *
@@ -53,7 +57,26 @@ const DecisionSchema = z.object({
   hoursBefore: z.number().int().min(1).max(168).optional(),
   notifyClient: z.boolean().optional(),
   notifyOwner: z.boolean().optional(),
-});
+
+  /*
+   * "Tell me when somebody is waiting", for an automation that declares an
+   * `ownerAlertColumn`.
+   *
+   * Sent ON ITS OWN, without `enabled`, which is why `enabled` is optional
+   * above. This switch is not an answer to the automation's question: it is
+   * already on, it is about writing to the OWNER rather than to their client,
+   * and it means something whether the automation runs or not.
+   *
+   * Folding it into a decision would have made pressing it re-answer the
+   * automation — and on an account that had never answered, `enabled: false`
+   * would have recorded a DECLINE. Switching "tell me" off would have silently
+   * turned down the auto-reply.
+   */
+  alertOwner: z.boolean().optional(),
+})
+  .refine(body => body.enabled !== undefined || body.alertOwner !== undefined, {
+    message: 'Send a decision, an owner-alert change, or both',
+  });
 
 export async function PUT(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
@@ -66,12 +89,59 @@ export async function PUT(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { id, enabled, hoursBefore, notifyClient, notifyOwner } = DecisionSchema.parse(body);
+    const { id, enabled, hoursBefore, notifyClient, notifyOwner, alertOwner } =
+      DecisionSchema.parse(body);
 
     // The column comes from the registry, never from the caller.
     const automation = automationById(id);
     if (!automation) {
       return NextResponse.json({ success: false, error: 'Unknown automation' }, { status: 400 });
+    }
+
+    /*
+     * The owner alert, written FIRST and on its own.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * Its own statement, and ahead of everything else, for two reasons.
+     *
+     * It is not part of the decision: a caller may send it with no `enabled` at
+     * all, and in that case nothing below runs — no decline array is read, no
+     * automation column is touched. Switching "tell me" off must not answer a
+     * question the owner was not asked.
+     *
+     * And it must not be able to take the decision down with it. This column is
+     * older than the reminder's, so the risk is smaller, but the shape is the
+     * one this file already uses everywhere: one unknown column rejects a whole
+     * statement, so anything that can fail on its own does.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (alertOwner !== undefined) {
+      if (!automation.ownerAlertColumn) {
+        return NextResponse.json(
+          { success: false, error: 'This automation has no owner alert' },
+          { status: 400 }
+        );
+      }
+
+      const { error: alertError } = await supabaseServer
+        .from('business_profiles')
+        .update({
+          [automation.ownerAlertColumn]: alertOwner,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('user_id', user.id);
+
+      if (alertError) throw alertError;
+
+      requestLogger.info(
+        { userId: user.id, automation: id, alertOwner },
+        'Owner alert preference set'
+      );
+    }
+
+    // An alert-only change is complete: there is no decision to record.
+    if (enabled === undefined) {
+      return NextResponse.json({ success: true });
     }
 
     /*

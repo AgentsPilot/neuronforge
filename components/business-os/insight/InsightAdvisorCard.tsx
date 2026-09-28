@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
 import { Loader2, Check, Clock } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
 import { useLanguage, type CurrencyCode } from '@/lib/business-os/LanguageContext';
 import { BeforeAfterPanel, type ProjectionColumn } from './BeforeAfterPanel';
 import type { InsightData, InsightProjection } from './InsightDetailModal';
@@ -59,6 +60,17 @@ export interface OperationalItem {
    * settings needs no change here.
    */
   settings?: OperationalSettings;
+  /**
+   * Notifications to the OWNER that ride along on this card without being part
+   * of the automation.
+   *
+   * Separate from `settings` on purpose. A setting belongs to the automation and
+   * is held locally until the approval carries it; this is already on, is about
+   * writing to the owner rather than their client, and saves the moment it moves
+   * whether the automation is running, declined or unanswered. See
+   * `ownerAlertColumn` in the automations registry.
+   */
+  notifications?: OperationalNotifications;
 }
 
 /** What the owner can choose about the meeting reminder. */
@@ -67,6 +79,11 @@ export interface OperationalSettings {
   hoursBefore: number;
   notifyClient: boolean;
   notifyOwner: boolean;
+}
+
+/** Whether the platform tells the OWNER, independent of the automation. */
+export interface OperationalNotifications {
+  alertOwner: boolean;
 }
 
 interface PendingInsight extends Omit<InsightData, 'eligible_for_automation'> {
@@ -115,6 +132,15 @@ interface InsightAdvisorCardProps {
     approve: boolean,
     settings?: OperationalSettings
   ) => Promise<void>;
+  /**
+   * Save an owner notification on its own, with NO decision attached.
+   *
+   * A separate callback rather than a third argument to `onOperationalDecide`,
+   * because the two must not share a request: that one always sends an answer,
+   * and on an automation nobody has answered yet, sending `false` alongside a
+   * notification change would record a decline the owner never gave.
+   */
+  onOperationalNotify?: (id: string, next: OperationalNotifications) => Promise<void>;
   currentIndex: number;
   projection?: InsightProjection;
   automationConfig?: AutomationConfig;
@@ -225,6 +251,7 @@ export function InsightAdvisorCard({
   onAction,
   onAutomate,
   onDeclineAutomate,
+  onOperationalNotify,
 }: InsightAdvisorCardProps) {
   const { t, isRTL, formatCurrency } = useLanguage();
   const [cardState, setCardState] = useState<InsightCardState>('default');
@@ -243,6 +270,15 @@ export function InsightAdvisorCard({
    * one page would appear as the answer on the next.
    */
   const [reminder, setReminder] = useState<OperationalSettings | null>(null);
+
+  /*
+   * The owner alert, held locally only so the switch responds at once.
+   *
+   * Unlike `reminder`, every change is sent immediately and reverted if the save
+   * is refused: this switch is already on and is not part of any approval, so
+   * there is no later press for it to ride along with.
+   */
+  const [notifications, setNotifications] = useState<OperationalNotifications | null>(null);
 
   // Fetch user's vertical for personalized advisor badge
   useEffect(() => {
@@ -300,6 +336,15 @@ export function InsightAdvisorCard({
     setReminder(settingsFor ? { ...settingsFor } : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsOwnerId]);
+
+  // Same follow-the-page rule, keyed on the id for the same reason.
+  const notificationsFor = operationalItem?.notifications;
+  const notificationsOwnerId = notificationsFor ? operationalItem!.id : null;
+
+  useEffect(() => {
+    setNotifications(notificationsFor ? { ...notificationsFor } : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notificationsOwnerId]);
 
   // Setup stage only when there is genuinely nothing to say — an automation
   // waiting to be approved is something to say.
@@ -521,6 +566,31 @@ export function InsightAdvisorCard({
       }
     },
     [operationalItem, onOperationalDecide]
+  );
+
+  /**
+   * Change an owner notification. Always saved, never deferred.
+   *
+   * The opposite of `handleSettings` above, which holds the choice until the
+   * approval carries it. There is no approval here to wait for: the alert is on
+   * from the day the account exists, and somebody switching it off is not
+   * answering a question about the automation. Deferring it would show a switch
+   * that moved and changed nothing.
+   *
+   * Reverted on refusal, so the card cannot claim a save the server declined.
+   */
+  const handleNotifications = useCallback(
+    async (next: OperationalNotifications) => {
+      if (!operationalItem || !onOperationalNotify) return;
+      const previous = notifications;
+      setNotifications(next);
+      try {
+        await onOperationalNotify(operationalItem.id, next);
+      } catch {
+        setNotifications(previous);
+      }
+    },
+    [operationalItem, onOperationalNotify, notifications]
   );
 
   // Handle automate
@@ -983,6 +1053,76 @@ export function InsightAdvisorCard({
                   );
                 })}
               </div>
+            </div>
+          </div>
+        )}
+
+        {/*
+          "Tell me when somebody is waiting."
+
+          Its own block, below the automation's, because it is a different kind
+          of thing: the card above asks permission to write to the owner's
+          CLIENT, and this decides whether the owner hears about it at all. It is
+          on from the day the account exists, so it is never phrased as an offer.
+
+          Shown in every state — on, declined, unanswered — because it does not
+          depend on the automation. An owner who says no to the auto-reply still
+          needs to be told somebody is waiting, and this is now the only place
+          that switch exists.
+        */}
+        {operationalItem && notifications && (
+          <div
+            style={{
+              marginTop: '10px',
+              display: 'flex',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: '12px',
+              border: '1.5px solid var(--v2-border)',
+              background: 'var(--v2-surface)',
+              borderRadius: '16px',
+              padding: '14px 16px',
+              fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+            }}
+          >
+            <label htmlFor="advisor-alert-owner" style={{ minWidth: 0, cursor: 'pointer' }}>
+              <span
+                style={{
+                  display: 'block',
+                  fontSize: '12.5px',
+                  color: 'var(--v2-text-primary)',
+                }}
+              >
+                {t('leads.alert_toggle')}
+              </span>
+              <span
+                style={{
+                  display: 'block',
+                  marginTop: '2px',
+                  fontSize: '11px',
+                  lineHeight: 1.4,
+                  color: 'var(--v2-text-muted)',
+                }}
+              >
+                {t('leads.alert_hint')}
+              </span>
+            </label>
+
+            {/*
+              `dir="ltr"` on the switch itself, as on the briefing card: the
+              shared Switch moves its thumb with a fixed rightward
+              `translate-x-[20px]`, so inside this RTL container the thumb would
+              start at the right edge and that shift would carry it out of the
+              track. The row around it still mirrors.
+            */}
+            <div dir="ltr" style={{ flexShrink: 0 }}>
+              <Switch
+                id="advisor-alert-owner"
+                checked={notifications.alertOwner}
+                onCheckedChange={next =>
+                  void handleNotifications({ ...notifications, alertOwner: next })
+                }
+              />
             </div>
           </div>
         )}

@@ -135,6 +135,21 @@ export interface BusinessProfile {
   clients_per_week: number | null;
   revenue_tier: string | null;
 
+  /*
+   * Public contact details, as typed under Settings → Business.
+   *
+   * Real columns, written by `updateContactDetails` below and read by
+   * `lib/branding/contactBlockContent.ts` for the contact block and footer. They
+   * were missing from this hand-written interface, so every consumer had to
+   * widen the row to `Record<string, unknown>` to reach them.
+   *
+   * Not to be confused with `contact_email` at the bottom of this interface,
+   * which is NOT a column. `email` is.
+   */
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+
   // Online presence
   website_url: string | null;
   landing_pages: string[] | null;

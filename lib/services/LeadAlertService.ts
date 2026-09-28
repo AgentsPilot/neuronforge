@@ -80,6 +80,18 @@ export interface LeadAlertInput {
   previousStartTime?: string | null;
   /** A cancellation only: the reason the client gave, if any. */
   reason?: string | null;
+  /**
+   * A cancellation only: money still held for an appointment that is not
+   * happening, as `cancelBooking` reports it.
+   *
+   * The supporting half of how the owner finds out. The dashboard gap is the
+   * half that cannot be switched off — this alert can be, and covers only the
+   * owner who acts from their inbox.
+   */
+  amountHeld?: number | null;
+  heldCurrency?: string | null;
+  /** A cancellation only: a payment plan still charging, reported never stopped. */
+  planStillCharging?: boolean;
 }
 
 /**
@@ -174,8 +186,20 @@ export async function notifyOwnerOfLead(input: LeadAlertInput): Promise<LeadAler
             })
           : null,
       reason: input.reason,
+      amountHeld: input.amountHeld,
+      heldCurrency: input.heldCurrency,
+      planStillCharging: input.planStillCharging,
       contactUrl: `${appUrl}/business-os/crm?contact=${input.contactId}`,
-      settingsUrl: `${appUrl}/business-os/settings?section=preferences`,
+      /*
+       * The dashboard, where this alert's switch now lives.
+       *
+       * It pointed at `settings?section=preferences` while the switch was a row
+       * in Settings. That row is gone: the switch sits on the "reply to new
+       * enquiries" advisor card, beside the automation it belongs with. Settings
+       * keeps a signpost at that anchor for alerts already in somebody's inbox,
+       * which cannot be rewritten.
+       */
+      settingsUrl: `${appUrl}/business-os`,
       branding,
       locale,
     });

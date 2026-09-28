@@ -17,6 +17,7 @@ import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository'
 import { schedulingServiceRepository, schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { externalCalendarEventRepository } from '@/lib/repositories/ExternalCalendarEventRepository';
+import { safeTimezone, businessClock, businessDateKey } from '@/lib/scheduling/businessTime';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'WebsiteAvailabilityAPI' });
@@ -65,7 +66,7 @@ function generateTimeSlots(
   durationMinutes: number,
   existingBookings: { start_time: string; end_time: string }[],
   externalEvents: { start_time: string; end_time: string }[],
-  _timezone: string = 'UTC'
+  timezone: string = 'UTC'
 ): AvailableSlot[] {
   const slots: AvailableSlot[] = [];
 
@@ -73,10 +74,15 @@ function generateTimeSlots(
   // We generate slots as "date + time" strings that represent wall-clock time,
   // NOT UTC. The client displays these directly without timezone conversion.
 
+  /*
+   * "Now", and "is the requested date today", both where the BUSINESS is.
+   * Read in the server's zone (UTC on Vercel) these hid slots that were still
+   * bookable for a business behind UTC, and offered slots that had already
+   * passed for one ahead of it.
+   */
   const now = new Date();
-  const nowHours = now.getHours();
-  const nowMinutes = now.getMinutes();
-  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const { hour: nowHours, minute: nowMinutes } = businessClock(now, timezone);
+  const todayStr = businessDateKey(now, timezone);
   const isToday = date === todayStr;
 
   for (const window of dayAvailability) {
@@ -112,21 +118,28 @@ function generateTimeSlots(
 
       // Check if slot overlaps with any existing booking
       // Note: bookings are stored with timezone info, need to compare carefully
+      /*
+       * A stored booking is an instant; `slotStartMins` is the business's wall
+       * clock. Reading the booking's hours in the server's zone compared two
+       * different clocks, so an existing 14:00 appointment in New York did not
+       * block the 14:00 slot — it blocked 18:00. A client rescheduling could
+       * book straight over an appointment the owner already had.
+       */
       const overlapsBooking = existingBookings.some(booking => {
-        // Extract just the time portion for comparison (simplified)
-        const bookingStart = new Date(booking.start_time);
-        const bookingEnd = new Date(booking.end_time);
-        const bookingStartMins = bookingStart.getHours() * 60 + bookingStart.getMinutes();
-        const bookingEndMins = bookingEnd.getHours() * 60 + bookingEnd.getMinutes();
+        const s = businessClock(new Date(booking.start_time), timezone);
+        const e = businessClock(new Date(booking.end_time), timezone);
+        const bookingStartMins = s.hour * 60 + s.minute;
+        const bookingEndMins = e.hour * 60 + e.minute;
         return slotStartMins < bookingEndMins && slotEndMins > bookingStartMins;
       });
 
       // Check if slot overlaps with any external calendar event
+      /* Same for a Google/Outlook event: an instant, read on the business's clock. */
       const overlapsExternal = externalEvents.some(event => {
-        const eventStart = new Date(event.start_time);
-        const eventEnd = new Date(event.end_time);
-        const eventStartMins = eventStart.getHours() * 60 + eventStart.getMinutes();
-        const eventEndMins = eventEnd.getHours() * 60 + eventEnd.getMinutes();
+        const s = businessClock(new Date(event.start_time), timezone);
+        const e = businessClock(new Date(event.end_time), timezone);
+        const eventStartMins = s.hour * 60 + s.minute;
+        const eventEndMins = e.hour * 60 + e.minute;
         return slotStartMins < eventEndMins && slotEndMins > eventStartMins;
       });
 
@@ -300,7 +313,22 @@ export async function GET(request: NextRequest) {
       // double assertion to narrow (interfaces get no implicit index signature).
       availability = profile.scheduling_availability as unknown as WeeklyAvailability;
     }
-    const timezone = 'UTC'; // TODO: Add timezone column to business_profiles if needed
+    /*
+     * The business's zone, from the row that actually holds it.
+     *
+     * This was hardcoded to 'UTC' behind a TODO asking for a
+     * `business_profiles.timezone` column — which has never existed, and never
+     * will: the settings page writes `user_preferences.timezone`, and that is
+     * the platform's single authority for the clock. Until now every slot this
+     * route offered a CLIENT was computed against UTC, so a business anywhere
+     * else published, and accepted reschedules into, the wrong hours.
+     */
+    const { data: ownerPrefs } = await supabaseServer
+      .from('user_preferences')
+      .select('timezone')
+      .eq('user_id', ownerId)
+      .maybeSingle();
+    const timezone = safeTimezone(ownerPrefs?.timezone);
 
     // Get day of week for the requested date using UTC to avoid timezone issues
     const [year, month, day] = date.split('-').map(Number);

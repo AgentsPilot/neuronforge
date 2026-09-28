@@ -83,6 +83,33 @@ export interface SendEmailBase {
    */
   replyTo?: string;
   /**
+   * Where this particular email can be switched off, for the `List-Unsubscribe`
+   * header.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * SUPPLIED PER SEND, never derived. A booking confirmation must NOT carry
+   * one: the client cannot unsubscribe from the confirmation of an appointment
+   * they just made, and offering it invites them to try. Only recurring mail
+   * the recipient chose to receive passes this — the morning briefing, and
+   * marketing once that is switched on.
+   *
+   * WHY IT MATTERS BEYOND POLITENESS. Microsoft and Gmail both read the header
+   * as a marker of a sender who behaves properly, and its absence as one more
+   * reason to doubt. A morning briefing from this platform was quarantined by
+   * Exchange as "High Confidence Phish" — with SPF, DKIM and DMARC all passing
+   * — so every remaining signal is worth removing.
+   *
+   * One-click (RFC 8058) is deliberately NOT declared: it requires an endpoint
+   * that unsubscribes on an unauthenticated POST, and advertising one that does
+   * not exist is worse than advertising nothing. The URL form sends the reader
+   * to a page where they confirm.
+   *
+   * `lib/consent/marketingGate.ts` names this header as one of three things
+   * that must exist before marketing sending can be switched on.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  unsubscribeUrl?: string;
+  /**
    * The business this email is sent on behalf of.
    *
    * Every booking email passed this already and the transport ignored it — it
@@ -163,6 +190,18 @@ function gmailConfigured(): boolean {
   );
 }
 
+/**
+ * The `List-Unsubscribe` header, or nothing.
+ *
+ * Angle brackets are required by RFC 2369 — a bare URL is ignored by the
+ * clients this exists to satisfy.
+ */
+function unsubscribeHeaders(p: SendEmailParams): Record<string, string> {
+  const url = p.unsubscribeUrl?.trim();
+  if (!url) return {};
+  return { 'List-Unsubscribe': `<${url}>` };
+}
+
 /** Returns the provider's message id, or undefined when it cannot be read. */
 async function sendViaResend(p: SendEmailParams): Promise<string | undefined> {
   // Build request body
@@ -175,6 +214,9 @@ async function sendViaResend(p: SendEmailParams): Promise<string | undefined> {
     // So a client's reply reaches the business, not an unattended platform inbox.
     ...(p.replyTo ? { reply_to: p.replyTo } : {}),
   };
+
+  const unsub = unsubscribeHeaders(p);
+  if (Object.keys(unsub).length > 0) body.headers = unsub;
 
   // Add attachments if present (Resend format)
   // Resend expects: { filename, content (base64 string), type (optional mime type) }
@@ -254,6 +296,8 @@ async function sendViaSMTP(p: SendEmailParams): Promise<void> {
     subject: p.subject,
     html: p.html,
     text: resolveText(p),
+    // Same header as the Resend path, from the same builder.
+    headers: unsubscribeHeaders(p),
   };
 
   // Add attachments if present (nodemailer format)
@@ -300,6 +344,8 @@ async function sendViaGmail(p: SendEmailParams): Promise<void> {
     subject: p.subject,
     html: p.html,
     text: resolveText(p), // D9: multipart/alternative — nodemailer builds both parts
+    // Same header as the other two transports, from the same builder.
+    headers: unsubscribeHeaders(p),
   };
 
   // Add attachments if present (nodemailer format)
@@ -346,6 +392,21 @@ async function sendViaGmail(p: SendEmailParams): Promise<void> {
  * verified with the provider; that is a separate, opt-in piece of work.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * The address a client should reach when they reply to, or RSVP to, this mail.
+ *
+ * Exported for the calendar invite: an `.ics` names an ORGANIZER, and naming
+ * the platform's own no-reply mailbox there — as the invite generator used to
+ * — points every acceptance at a mailbox nobody reads. Returns undefined when
+ * the owner cannot be resolved, and the invite then omits ORGANIZER entirely,
+ * which imports cleanly rather than naming the wrong person.
+ */
+export async function resolveOwnerReplyTo(ownerUserId: string | undefined): Promise<string | undefined> {
+  if (!ownerUserId) return undefined;
+  const { replyTo } = await resolveSender(ownerUserId, '');
+  return replyTo;
+}
+
 async function resolveSender(
   ownerUserId: string | undefined,
   fallbackFrom: string

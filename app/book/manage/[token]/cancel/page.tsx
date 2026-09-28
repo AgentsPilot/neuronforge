@@ -46,6 +46,14 @@ export default function CancelBookingPage() {
   const [cancelling, setCancelling] = useState(false);
   const [cancelled, setCancelled] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * The refusal's CODE, kept beside its sentence.
+   *
+   * "Too late to cancel" is the only error on this page that is not the end of
+   * the road — the business can still do it — so the page has to be able to
+   * tell it apart and offer the way through.
+   */
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [reason, setReason] = useState('');
 
   const locale = brand?.locale ?? 'en';
@@ -79,7 +87,10 @@ export default function CancelBookingPage() {
       .then(res => res.json())
       .then(data => {
         if (data.success) setBooking(data.booking);
-        else setError(cancelErrorText(data));
+        else {
+          setErrorCode(data.code ?? null);
+          setError(cancelErrorText(data));
+        }
       })
       .catch(() => setError(t('bookingNotFoundDesc')))
       .finally(() => setLoading(false));
@@ -101,6 +112,7 @@ export default function CancelBookingPage() {
       if (data.success) setCancelled(true);
       else setError(cancelErrorText(data));
     } catch {
+      setErrorCode(null);
       setError(t('cancelFailed'));
     } finally {
       setCancelling(false);
@@ -206,6 +218,31 @@ export default function CancelBookingPage() {
             </div>
 
             {error && <StatusCard tone="error" title={error} />}
+
+            {/*
+              A refusal with a way through it.
+
+              "You cannot cancel this late" was the whole message: true, and a
+              dead end. The business CAN still cancel it — only the self-service
+              window has closed — so the one thing the client needs is how to
+              ask, and the brand already carries it.
+            */}
+            {errorCode === 'too_late' && (brand?.info?.email || brand?.info?.phone) && (
+              <p className="text-sm text-center opacity-80">
+                {t('cancelAskBusiness')}{' '}
+                {brand.info.email && (
+                  <a href={`mailto:${brand.info.email}`} className="underline">
+                    {brand.info.email}
+                  </a>
+                )}
+                {brand.info.email && brand.info.phone ? ' · ' : ''}
+                {brand.info.phone && (
+                  <a href={`tel:${brand.info.phone}`} className="underline">
+                    {brand.info.phone}
+                  </a>
+                )}
+              </p>
+            )}
 
             <div className="space-y-2">
               <BrandButton

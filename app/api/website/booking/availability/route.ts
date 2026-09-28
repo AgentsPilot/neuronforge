@@ -15,7 +15,7 @@ import { createLogger } from '@/lib/logger';
 import { windowsForDay, hasAnyAvailability } from '@/lib/scheduling/availabilityWindows';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { stripeConnectRepository } from '@/lib/repositories/PaymentRepository';
-import { safeTimezone } from '@/lib/scheduling/businessTime';
+import { safeTimezone, businessInstant, businessDateKey, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
 
 const logger = createLogger({ module: 'WebsiteBookingAvailabilityAPI' });
 
@@ -179,24 +179,30 @@ export async function GET(request: NextRequest) {
             ownerId,
             date,
             selectedService.duration_minutes,
-            availabilitySettings
+            availabilitySettings,
+            timezone
           );
         }
       } else if (serviceId) {
         // Fetch slots for next N days
         const selectedService = formattedServices.find(s => s.id === serviceId);
         if (selectedService) {
-          const today = new Date();
+          /*
+           * "The next N days" counted where the BUSINESS is. This walked the
+           * server's calendar and then took the UTC day of each result, so for
+           * a business behind UTC the list began on tomorrow and the owner's
+           * actual today was never offered.
+           */
+          let dayKey = businessDateKey(new Date(), timezone);
           for (let i = 0; i < daysAhead; i++) {
-            const dayDate = new Date(today);
-            dayDate.setDate(today.getDate() + i);
-            const dateStr = dayDate.toISOString().split('T')[0];
             const daySlots = await calculateDaySlots(
               ownerId,
-              dateStr,
+              dayKey,
               selectedService.duration_minutes,
-              availabilitySettings
+              availabilitySettings,
+              timezone
             );
+            dayKey = shiftBusinessDateKey(dayKey, 1);
             slots.push(...daySlots);
           }
         }
@@ -272,11 +278,24 @@ async function calculateDaySlots(
   dateStr: string,
   durationMinutes: number,
   /** Raw JSON from the profile; shapes are normalised by `windowsForDay`. */
-  availabilitySettings: unknown
+  availabilitySettings: unknown,
+  /**
+   * The BUSINESS's zone. The opening hours below are wall clocks the owner
+   * typed ("09:00"), and the slots leave here as instants. Without this the
+   * conversion between the two ran in the SERVER's zone — UTC on Vercel — so a
+   * business open 09:00 in New York published its slots at 09:00 UTC, which is
+   * 05:00 in its own reception. Every client saw a different wrong hour.
+   */
+  timezone: string
 ): Promise<TimeSlot[]> {
   const slots: TimeSlot[] = [];
-  const date = new Date(dateStr);
-  const dayOfWeek = date.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+  /*
+   * Noon UTC, purely to name the weekday. `new Date('2026-09-21')` is midnight
+   * UTC, and reading its weekday in any zone behind UTC gives the day before.
+   */
+  const dayOfWeek = new Date(`${dateStr}T12:00:00Z`)
+    .toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' })
+    .toLowerCase();
 
   // The editor writes an array of windows per day. This asked for `.enabled` on
   // that array, got `undefined`, and returned no slots for every day of the
@@ -301,14 +320,21 @@ async function calculateDaySlots(
   let currentMin = startMin;
 
   while (currentHour < endHour || (currentHour === endHour && currentMin + durationMinutes <= endMin)) {
-    const slotStart = new Date(date);
-    slotStart.setHours(currentHour, currentMin, 0, 0);
+    /* The wall clock the owner typed, as the instant the business means by it. */
+    const slotStart = businessInstant(
+      dateStr,
+      `${String(currentHour).padStart(2, '0')}:${String(currentMin).padStart(2, '0')}`,
+      timezone
+    );
+    const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60 * 1000);
 
-    const slotEnd = new Date(slotStart);
-    slotEnd.setMinutes(slotEnd.getMinutes() + durationMinutes);
-
-    // Don't add slots that end after business hours
-    if (slotEnd.getHours() < endHour || (slotEnd.getHours() === endHour && slotEnd.getMinutes() <= endMin)) {
+    /*
+     * Whether the slot ends after closing, compared as wall-clock minutes
+     * rather than by reading `slotEnd`'s hours — those would come back in the
+     * server's zone and let a slot run past closing time.
+     */
+    const endMins = currentHour * 60 + currentMin + durationMinutes;
+    if (endMins <= endHour * 60 + endMin) {
       slots.push({
         start: slotStart.toISOString(),
         end: slotEnd.toISOString(),

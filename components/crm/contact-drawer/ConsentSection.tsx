@@ -23,6 +23,7 @@ import { MailCheck, MailX, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CollapsibleSection } from '../CollapsibleSection';
 import { createLogger } from '@/lib/logger';
+import { useLanguage } from '@/lib/business-os/LanguageContext';
 
 const logger = createLogger({ module: 'ConsentSection' });
 
@@ -44,17 +45,26 @@ interface ConsentState {
   subscribedAt?: string | null;
 }
 
-/** Plain words for a database enum. The owner never sees `list_unsubscribe`. */
-const METHOD_LABELS: Record<string, string> = {
-  web_form: 'a form on your site',
-  double_optin_confirm: 'a confirmed email signup',
-  unsubscribe_link: 'the unsubscribe link',
-  list_unsubscribe: "their email app's unsubscribe button",
-  owner_entered: 'recorded by you',
-  imported: 'an import',
-  reply_stop: 'a reply asking to stop',
-  legacy_unsubscribe_import: 'an earlier unsubscribe',
-};
+/**
+ * Plain words for a database enum. The owner never sees `list_unsubscribe`.
+ *
+ * Listed rather than interpolated into the key: `t()` answers with the KEY
+ * itself when it does not know one, so an enum value this list has not met
+ * would render as the literal string `crm.consent.method.whatever` in the
+ * consent history — the one place in the app that has to read back exactly what
+ * happened. Unknown methods fall through to the raw value instead, which at
+ * least says something true.
+ */
+const KNOWN_METHODS = [
+  'web_form',
+  'double_optin_confirm',
+  'unsubscribe_link',
+  'list_unsubscribe',
+  'owner_entered',
+  'imported',
+  'reply_stop',
+  'legacy_unsubscribe_import',
+];
 
 interface Props {
   contactId: string;
@@ -62,6 +72,7 @@ interface Props {
 }
 
 export function ConsentSection({ contactId, isRTL }: Props) {
+  const { t, language } = useLanguage();
   const [state, setState] = useState<ConsentState | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -96,20 +107,24 @@ export function ConsentSection({ contactId, isRTL }: Props) {
         body: JSON.stringify(body),
       });
       const json = await response.json();
-      if (!json.success) throw new Error(json.error || 'Could not save');
+      if (!json.success) throw new Error(json.error || t('crm.consent.save_failed'));
       setShowGrantForm(false);
       setWording('');
       setWhen('');
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save');
+      setError(err instanceof Error ? err.message : t('crm.consent.save_failed'));
     } finally {
       setSaving(false);
     }
   };
 
+  /*
+   * The reader's language, not the browser's. A Hebrew interface showing
+   * "Mar 3" is the kind of half-translated surface that reads as unfinished.
+   */
   const formatDate = (iso: string) =>
-    new Date(iso).toLocaleDateString(undefined, {
+    new Date(iso).toLocaleDateString(language, {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
@@ -120,16 +135,18 @@ export function ConsentSection({ contactId, isRTL }: Props) {
   const noEmail = state?.consented === null;
 
   const summary = loading
-    ? 'Checking…'
+    ? t('crm.consent.checking')
     : noEmail
-      ? 'No email address on this contact'
+      ? t('crm.consent.no_email')
       : state?.consented
-        ? `Agreed ${state.decidedAt ? formatDate(state.decidedAt) : ''}`.trim()
-        : 'Not given';
+        ? t('crm.consent.agreed_on')
+            .replace('{date}', state.decidedAt ? formatDate(state.decidedAt) : '')
+            .trim()
+        : t('crm.consent.not_given');
 
   return (
     <CollapsibleSection
-      title="Marketing email"
+      title={t('crm.consent.title')}
       icon={
         state?.consented ? (
           <MailCheck className="w-4 h-4 text-emerald-600" />
@@ -147,16 +164,12 @@ export function ConsentSection({ contactId, isRTL }: Props) {
         */}
         {!loading && state?.subscribedAt && (
           <p className="text-xs text-gray-500">
-            Newsletter subscriber since {formatDate(state.subscribedAt)}
+            {t('crm.consent.subscriber_since').replace('{date}', formatDate(state.subscribedAt))}
           </p>
         )}
 
         {!loading && !noEmail && !state?.consented && (
-          <p className="text-gray-500">
-            This person has not agreed to receive marketing email, so campaigns and
-            follow-up nudges will skip them. Bookings, invoices and receipts are
-            unaffected and still reach them.
-          </p>
+          <p className="text-gray-500">{t('crm.consent.explain_not_given')}</p>
         )}
 
         {/* The history. This is what answers a data request, so it shows the
@@ -173,11 +186,16 @@ export function ConsentSection({ contactId, isRTL }: Props) {
                         : 'font-medium text-gray-600'
                     }
                   >
-                    {event.decision === 'granted' ? 'Agreed' : 'Withdrew'}
+                    {event.decision === 'granted'
+                      ? t('crm.consent.event_granted')
+                      : t('crm.consent.event_withdrawn')}
                   </span>
                   <span className="text-xs text-gray-500">{formatDate(event.occurred_at)}</span>
                   <span className="text-xs text-gray-400">
-                    · {METHOD_LABELS[event.method] ?? event.method}
+                    ·{' '}
+                    {KNOWN_METHODS.includes(event.method)
+                      ? t(`crm.consent.method.${event.method}`)
+                      : event.method}
                   </span>
                 </div>
                 {event.statement_text && (
@@ -201,13 +219,17 @@ export function ConsentSection({ contactId, isRTL }: Props) {
                 disabled={saving}
                 onClick={() => record({ decision: 'withdrawn' })}
               >
-                {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Record withdrawal'}
+                {saving ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  t('crm.consent.record_withdrawal')
+                )}
               </Button>
             )}
 
             {!state?.consented && !showGrantForm && (
               <Button variant="outline" size="sm" onClick={() => setShowGrantForm(true)}>
-                Record consent given offline
+                {t('crm.consent.record_offline')}
               </Button>
             )}
           </div>
@@ -215,19 +237,16 @@ export function ConsentSection({ contactId, isRTL }: Props) {
 
         {showGrantForm && (
           <div className="space-y-2 rounded-lg border border-gray-200 p-3">
-            <p className="text-xs text-gray-500">
-              A signed form or a spoken yes is real consent. Record what they agreed to,
-              in their words — it is what you would have to show if they ever query it.
-            </p>
+            <p className="text-xs text-gray-500">{t('crm.consent.offline_hint')}</p>
             <textarea
               value={wording}
               onChange={(e) => setWording(e.target.value)}
               rows={3}
               className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm"
-              placeholder="e.g. Signed the intake form agreeing to receive occasional offers and news by email"
+              placeholder={t('crm.consent.offline_placeholder')}
             />
             <label className="block text-xs text-gray-500">
-              When they agreed
+              {t('crm.consent.when_agreed')}
               <input
                 type="date"
                 value={when}
@@ -250,10 +269,10 @@ export function ConsentSection({ contactId, isRTL }: Props) {
                   })
                 }
               >
-                {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Save'}
+                {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : t('common.save')}
               </Button>
               <Button variant="ghost" size="sm" onClick={() => setShowGrantForm(false)}>
-                Cancel
+                {t('common.cancel')}
               </Button>
             </div>
           </div>

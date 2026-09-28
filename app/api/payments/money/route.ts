@@ -156,7 +156,19 @@ export async function GET(request: NextRequest) {
 
     const bookingQuery = supabaseServer
       .from('scheduling_bookings')
-      .select('id, start_time, created_at, contact_id, service:scheduling_services(service_name)')
+      /*
+       * The client comes from `crm_contacts`, NOT from the booking row.
+       *
+       * `scheduling_bookings.client_first_name` and its siblings were dropped by
+       * `20260810_remove_client_fields_and_total_amount.sql`, which in the same
+       * breath made `contact_id` NOT NULL — so every booking has a contact and
+       * the join always resolves. Selecting the dropped columns does not degrade
+       * gracefully: PostgREST rejects the whole statement with 42703 and the
+       * orders list 500s.
+       *
+       * Same join the transactions query above uses.
+       */
+      .select('id, start_time, created_at, contact_id, contact:crm_contacts(first_name, last_name), service:scheduling_services(service_name)')
       .eq('user_id', user.id)
       .order('start_time', { ascending: false })
       .limit(GROUPING_CAP);
@@ -194,7 +206,7 @@ export async function GET(request: NextRequest) {
         // `currency` rides along so the totals card can keep an installment in
         // its own bucket: a plan need not bill in the currency of the booking
         // its row is grouped under.
-        .select('id, payment_plan_id, booking_id, installment_number, amount, currency, due_date, status, paid_at, transaction_id')
+        .select('id, payment_plan_id, booking_id, installment_number, amount, currency, due_date, status, paid_at, transaction_id, trigger, invoice_id')
         .eq('user_id', user.id)
         .in('booking_id', bookingIds)
         .order('installment_number');
@@ -225,6 +237,13 @@ export async function GET(request: NextRequest) {
           status: row.status,
           paidAt: row.paid_at,
           transactionId: row.transaction_id,
+          /*
+           * How this period becomes billable, and whether it has been.
+           * `unpaidPeriods` needs both to tell a debt from an agreement: a
+           * milestone nobody has billed is money agreed, not money owed.
+           */
+          trigger: row.trigger,
+          invoiceId: row.invoice_id,
         });
         plan.installmentCount = plan.periods.length;
         // Counted from the periods themselves rather than a stored figure, so
@@ -277,6 +296,13 @@ export async function GET(request: NextRequest) {
           // Products carry no time slot, so they fall back to their order date.
           startTime: booking.start_time ?? booking.created_at ?? null,
           contactId: booking.contact_id,
+          // PostgREST returns a to-one join as an object; normalised the same
+          // way the transactions mapping above does. Null rather than an empty
+          // string when nothing is there, so the fallback chain continues.
+          clientName: (() => {
+            const c = Array.isArray(booking.contact) ? booking.contact[0] ?? null : booking.contact ?? null;
+            return [c?.first_name, c?.last_name].filter(Boolean).join(' ').trim() || null;
+          })(),
         };
       }),
     });

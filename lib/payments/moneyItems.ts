@@ -116,6 +116,20 @@ export interface MoneyBooking {
   title: string;
   startTime?: string | null;
   contactId?: string | null;
+  /**
+   * Who the booking is for, as the booking itself recorded it.
+   *
+   * `scheduling_bookings` keeps `client_first_name` / `client_last_name` on the
+   * row — they are captured by the public widget before any contact exists, so
+   * they are present even when `contact_id` is not. Used as the last fallback
+   * for the row's client column, which otherwise reads "—" for a booking whose
+   * invoice was raised without a `client_name` and whose payment carries no
+   * contact join: three ways of not knowing a name the booking was holding all
+   * along.
+   *
+   * Optional, so a caller that has not been updated still type-checks.
+   */
+  clientName?: string | null;
 }
 
 export interface MoneyPeriod {
@@ -135,6 +149,17 @@ export interface MoneyPeriod {
   status: string;
   paidAt: string | null;
   transactionId: string | null;
+  /**
+   * How this period becomes billable: on its date, or when the owner says the
+   * work happened.
+   *
+   * Carried so `unpaidPeriods` can tell a debt from an agreement. Optional only
+   * so a caller that has not been updated still type-checks; absent reads as
+   * `'date'`, which is the column's own default and the behaviour before this.
+   */
+  trigger?: 'date' | 'manual' | null;
+  /** The invoice raised for this period, once one has been. */
+  invoiceId?: string | null;
 }
 
 export interface MoneyPlan {
@@ -544,8 +569,22 @@ export function buildMoneyItems(input: BuildMoneyItemsInput): MoneyItem[] {
         booking.contactId ??
         contactOfInvoice.get(bookingEntries[0].invoiceId ?? '') ??
         null,
-      // From whichever entry knows it. A booking's own record has only an id.
-      contactName: bookingEntries.find(e => e.contactName)?.contactName ?? null,
+      /*
+       * From whichever entry knows it, then from the booking itself.
+       *
+       * This used to stop at the entries, on the belief that "a booking's own
+       * record has only an id" — which is not true: the row carries the client
+       * name the widget captured. So a booking paid by a transaction with no
+       * contact join, or invoiced without a `client_name`, showed "—" in the
+       * client column of the orders list while the name sat on the booking.
+       */
+      // `||`, not `??`: an empty string is a booking that does not know the
+      // name either, and it would otherwise render as a blank cell instead of
+      // the "—" that says so.
+      contactName:
+        bookingEntries.find(e => e.contactName)?.contactName ||
+        booking.clientName ||
+        null,
       entries: bookingEntries,
       ...(plan ? { plan } : {}),
       // A booking is always a container, whatever it holds.
@@ -652,8 +691,36 @@ const SETTLED_PERIOD_STATUSES = ['paid', 'cancelled'];
  */
 function unpaidPeriods(item: MoneyItem): MoneyPeriod[] {
   return (item.plan?.periods ?? []).filter(
-    period => !SETTLED_PERIOD_STATUSES.includes(period.status)
+    period => !SETTLED_PERIOD_STATUSES.includes(period.status) && !agreedNotBilled(period)
   );
+}
+
+/**
+ * A phase of a quoted job that nobody has asked for yet.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * AGREED IS NOT OWED, AND THIS FILE ALREADY SAID SO.
+ *
+ * `OUTSTANDING_STATUSES` above excludes a `draft` invoice on exactly this
+ * reasoning: "nobody has been asked to pay them, so counting them as owed would
+ * overstate what is coming." A `trigger: 'manual'` period with no invoice is the
+ * plan equivalent of a draft — the money is agreed, the work may even be done,
+ * and no bill has left the building. `SETTLED_PERIOD_STATUSES` had no equivalent
+ * carve-out, so every unbilled phase was reported as a debt.
+ *
+ * The effect was not cosmetic. It put the whole remaining value of every quoted
+ * job into the Outstanding card and into `plan_owed_amount`, which is the figure
+ * an owner uses to judge who is late — and none of those clients were late,
+ * because none of them had been invoiced. A phase is now counted the moment it IS
+ * billed, through the invoice that bills it.
+ *
+ * Deliberately narrow: only `manual` AND unbilled. A dated period is money the
+ * client has agreed to pay on a date, and that is a genuine receivable whether or
+ * not the invoice has been raised yet.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function agreedNotBilled(period: MoneyPeriod): boolean {
+  return period.trigger === 'manual' && !period.invoiceId;
 }
 
 /**

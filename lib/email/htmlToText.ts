@@ -16,6 +16,24 @@
 export function htmlToText(html: string): string {
   if (!html) return '';
   return html
+    /*
+     * COMMENTS FIRST, before anything else touches the markup.
+     *
+     * The tag strip below is `<[^>]+>`, which stops at the first `>` it meets.
+     * Inside a comment that `>` is usually part of the prose — `Gmail rewrites
+     * <body> into a <div>` — so the comment was chopped at that point and its
+     * remainder survived as body copy.
+     *
+     * The templates in this repository are heavily commented, so the plaintext
+     * MIME part of real emails went out reading "into a and several clients
+     * drop its styles outright, so content that sets no colour of its own…".
+     * That is internal commentary in front of a client, and a text part that
+     * does not match the HTML part is a well-known spam signal.
+     *
+     * Conditional comments (`<!--[if mso]> … <![endif]-->`) are the same shape
+     * and go the same way.
+     */
+    .replace(/<!--[\s\S]*?-->/g, '')
     // Remove elements whose text content is not human-readable body copy.
     .replace(/<(style|script|head|title)[^>]*>[\s\S]*?<\/\1>/gi, '')
     // Line breaks and block boundaries → newlines.

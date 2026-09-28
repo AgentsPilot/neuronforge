@@ -34,6 +34,14 @@ export function PrivacyPolicyPage({ brand, settings }: Props) {
       businessName: brand.businessName,
       contactEmail: brand.info.email,
       postalAddress: settings?.postal_address ?? brand.info.address ?? null,
+      /*
+       * The business's own language, which is already what `brand.dir` below
+       * lays this page out for. Without it the notice was English inside an RTL
+       * page: right-aligned English prose, for a visitor who arrived at a Hebrew
+       * site. It is also the language the settings panel seeds, so an owner who
+       * never edits the draft sees the same words their visitors do.
+       */
+      locale: brand.locale,
     });
 
   const updated = settings?.privacy_policy_updated_at;

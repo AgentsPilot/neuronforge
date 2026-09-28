@@ -55,6 +55,10 @@ export function generateDailyBriefingEmail(data: DailyBriefingEmailData): {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
+    // Read back in the zone it was anchored in. Without this the noon-UTC
+    // anchor above is formatted in the SERVER's zone, which is the very shift
+    // the anchor exists to prevent — it only held because Vercel runs UTC.
+    timeZone: 'UTC',
   });
 
   // Set locale on branding for RTL support

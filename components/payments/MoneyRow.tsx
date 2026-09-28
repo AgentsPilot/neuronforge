@@ -2,6 +2,7 @@
 
 import { FileText, CreditCard, CalendarClock } from 'lucide-react';
 import { outstandingOf, type MoneyItem, type MoneyStatus } from '@/lib/payments/moneyItems';
+import { moneyRowReference } from '@/lib/payments/moneyRowReference';
 
 /**
  * One row of the money list.
@@ -143,14 +144,7 @@ export function MoneyRow({
    * one identifier, and the state counts that used to share that line now have a
    * column of their own.
    */
-  const reference =
-    item.method === 'plan' && item.plan
-      ? `${t('payments.method.plan') || 'Plan'} · ${item.plan.installmentCount} ${t('payments.payments_lower') || 'payments'}`
-      : item.entries.length === 1 && lead?.invoiceNumber !== item.title
-        ? lead?.invoiceNumber
-        : lead?.paymentMethod && item.method === 'direct'
-          ? t(`payments.payment_method.${lead.paymentMethod}`) || lead.paymentMethod
-          : null;
+  const reference = moneyRowReference(item, t);
 
   return (
     <div

@@ -171,6 +171,15 @@ export function PaymentsSection({
           title: session.booking.service?.service_name || t('crm.session') || 'Session',
           startTime: session.booking.start_time ?? session.booking.created_at ?? null,
           contactId,
+          /*
+           * No `clientName` here, deliberately.
+           *
+           * `scheduling_bookings.client_first_name` was dropped by
+           * `20260810_remove_client_fields_and_total_amount.sql`, so reading it
+           * yields undefined — a fallback that can never fire. This drawer is
+           * scoped to one contact anyway: the name is in its header, and the
+           * orders list supplies it from `crm_contacts` where it is needed.
+           */
         })),
         plansByBookingId,
         standaloneLabel: t('payments.payment') || 'Payment',

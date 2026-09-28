@@ -1,6 +1,7 @@
 'use client';
 
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { businessDateKey } from '@/lib/scheduling/businessTime';
 import { Check, Clock, Bell, ChevronDown, Lightbulb, Sparkles } from 'lucide-react';
 
 export interface StoryBeat {
@@ -81,7 +82,7 @@ export function MyDaySection({
   onInsightClick,
   children,
 }: MyDaySectionProps) {
-  const { t, isRTL, formatCurrency } = useLanguage();
+  const { t, isRTL, formatCurrency, timezone } = useLanguage();
 
   // Handle toggling the collapse state - use parent state if provided, otherwise internal
   const handleToggleCollapse = () => {
@@ -93,9 +94,16 @@ export function MyDaySection({
   const now = new Date();
   const dayKeys = ['day.sunday', 'day.monday', 'day.tuesday', 'day.wednesday', 'day.thursday', 'day.friday', 'day.saturday'];
   const monthKeys = ['month.jan', 'month.feb', 'month.mar', 'month.apr', 'month.may', 'month.jun', 'month.jul', 'month.aug', 'month.sep', 'month.oct', 'month.nov', 'month.dec'];
-  const dayName = t(dayKeys[now.getDay()]);
-  const monthName = t(monthKeys[now.getMonth()]);
-  const dateStr = `${now.getDate()} ${monthName}`;
+  /*
+   * "My Day" means the BUSINESS's day. Read off the browser, this header named
+   * the owner's laptop's day — so signing in from a trip, or simply working
+   * past midnight in a zone far from the business, headed the day's work with
+   * the wrong date while the entries under it came from the business's.
+   */
+  const todayKey = businessDateKey(now, timezone);
+  const dayName = t(dayKeys[new Date(`${todayKey}T12:00:00Z`).getUTCDay()]);
+  const monthName = t(monthKeys[Number(todayKey.slice(5, 7)) - 1]);
+  const dateStr = `${Number(todayKey.slice(8, 10))} ${monthName}`;
 
   const greetingText = t(`myday.greeting.${greeting}`) || {
     morning: 'Good morning',

@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
-  User, FolderOpen, Trash2, UserX, Check, Calendar, X, Upload, File, FileText, MessageSquare, Receipt
+  User, FolderOpen, Trash2, UserX, UserCheck, Check, Calendar, X, Upload, File, FileText, MessageSquare, Receipt
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -25,6 +25,8 @@ import { toast } from 'sonner';
 // Import modular sections
 import { ClientDetailsSection } from './ClientDetailsSection';
 import type { ContactSourceMetadata } from '@/components/crm/contactSources';
+import { isContactInactive } from '@/components/crm/contactStatus';
+import type { WeeklyAvailability } from '@/components/scheduling/AvailabilityEditor';
 import { NotesSection } from './NotesSection';
 import { SessionsSection } from './SessionsSection';
 import { TasksSection } from './TasksSection';
@@ -37,6 +39,7 @@ import { ProposalBuilderModal } from './ProposalBuilderModal';
 import { PaymentsSection } from './PaymentsSection';
 import { ConsentSection } from './ConsentSection';
 import { InvoiceModal } from '@/components/payments/InvoiceModal';
+import { RefundModal } from '@/components/payments/RefundModal';
 
 import type {
   CRMContact,
@@ -238,14 +241,16 @@ function quotedPayment(
     status: anyMoneyCollected ? 'paid' : 'pending',
     // The invoice behind the payment being DESCRIBED, so a refund finds that
     // transaction rather than the deposit's by default.
-    invoiceId: subject?.invoiceId ?? proposal.created_invoice_id ?? undefined,
+    // `invoice_id` reading in, `invoiceId` going out: the stage rows are database
+    // shape, the object returned here is the component's.
+    invoiceId: subject?.invoice_id ?? proposal.created_invoice_id ?? undefined,
     /*
      * What is owed right now: the earliest unpaid stage that has actually been
      * billed. A milestone nobody has marked done has no invoice to resend, and
      * offering to resend one would be offering to send nothing.
      */
     outstandingInvoiceId:
-      stages.find(s => s.status !== 'paid' && s.invoiceId)?.invoiceId ??
+      stages.find(s => s.status !== 'paid' && s.invoice_id)?.invoice_id ??
       (proposal.invoice.status !== 'paid' ? proposal.created_invoice_id ?? undefined : undefined),
     invoiceDueDate: proposal.invoice.due_date ?? undefined,
     plan: stages.length > 1
@@ -779,7 +784,21 @@ interface CRMContactDrawerV2Props {
   enabledCapabilities?: string[];
   isOpen: boolean;
   onClose: () => void;
-  onContactUpdated: () => void;
+  /**
+   * Something about this contact changed.
+   *
+   * Pass the saved row when there is one: the parent uses it to refresh the
+   * open drawer in place. Called with nothing for a change the parent should
+   * merely re-read the list after — a booking, a deletion — which is why the
+   * argument is optional rather than required.
+   *
+   * It used to take nothing at all, and the parent responded by closing the
+   * drawer and reloading the whole list. Saving one phone number therefore
+   * threw the owner out of the record they were editing, and the "Saved"
+   * confirmation this component sets for two seconds was unmounted before it
+   * could be read.
+   */
+  onContactUpdated: (updated?: CRMContact) => void;
   onTasksUpdated?: () => void;
   initialSection?: 'details' | 'bookings' | 'tasks' | 'forms' | 'files' | 'payments';
 }
@@ -1015,6 +1034,72 @@ function DocumentUploadModal({ isOpen, onClose, onUpload, uploading, t }: Docume
 
 const logger = createLogger({ module: 'CRMContactDrawer' });
 
+
+/**
+ * A booking row, joined with the service the drawer needs from it.
+ *
+ * `SchedulingBooking` does not declare `service` — the join is added by the
+ * queries that fetch bookings for this drawer — so the two places that built an
+ * `Appointment` each cast it themselves, and one of them forgot.
+ */
+type BookingWithService = SchedulingBooking & {
+  service?: {
+    service_name: string;
+    price?: number | null;
+    currency?: string;
+    is_product?: boolean;
+    sale_mode?: 'direct' | 'proposal' | null;
+  } | null;
+};
+
+/**
+ * A booking row as the drawer's `Appointment` view model.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY A FUNCTION AND NOT TWO OBJECT LITERALS
+ *
+ * There were two, forty lines apart, listing the same fifteen fields. They had
+ * already drifted: one coerced `client_email` with `|| undefined` and the other
+ * assigned it raw, one cast `service` and the other read it off a type that has
+ * no such property. Every one of those was a type error, and none of them was
+ * visible while the two lists were read separately.
+ *
+ * The coercions are not cosmetic. `client_first_name` and its siblings are
+ * DERIVED fields: `scheduling_bookings.client_first_name` was dropped by
+ * `20260810_remove_client_fields_and_total_amount.sql`, and the repository
+ * synthesises them from the joined contact — so they are `null` whenever the
+ * contact has no name recorded, while `Appointment` declares a plain `string`.
+ * Empty string rather than null because every consumer reads these through
+ * `[first, last].filter(Boolean)`, where the two behave identically.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function toAppointment(booking: BookingWithService): Appointment {
+  return {
+    id: booking.id,
+    service_id: booking.service_id,
+    client_first_name: booking.client_first_name ?? '',
+    client_last_name: booking.client_last_name ?? undefined,
+    client_email: booking.client_email ?? undefined,
+    client_phone: booking.client_phone ?? undefined,
+    start_time: booking.start_time,
+    end_time: booking.end_time,
+    timezone: booking.timezone ?? undefined,
+    status: booking.status,
+    notes: booking.notes ?? undefined,
+    intake_responses: booking.intake_responses ?? undefined,
+    intake_completed_at: booking.intake_completed_at ?? undefined,
+    created_at: booking.created_at ?? undefined,
+    service: booking.service
+      ? {
+          service_name: booking.service.service_name,
+          is_product: booking.service.is_product,
+          sale_mode: booking.service.sale_mode,
+          currency: booking.service.currency,
+        }
+      : undefined,
+  };
+}
+
 export function CRMContactDrawerV2({
   contact,
   stages,
@@ -1061,6 +1146,15 @@ export function CRMContactDrawerV2({
     supersedesId: string | null;
     declineReason: string | null;
     declineNote: string | null;
+    /**
+     * Reading a quote already sent, rather than writing one.
+     *
+     * Same dialog, same data — `basedOn` is what a revision already opens on, so
+     * viewing needs no second component and no extra fetch. Revising from the
+     * view flips this off and sets `supersedesId`, which is the exact state the
+     * revise path has always used.
+     */
+    readOnly?: boolean;
   } | null>(null);
   const [activities, setActivities] = useState<CRMActivity[]>([]);
   const [emails, setEmails] = useState<ContactEmail[]>([]);
@@ -1187,7 +1281,14 @@ export function CRMContactDrawerV2({
    * dialog's point of view the request is already in flight.
    */
   const [servicesLoading, setServicesLoading] = useState(true);
-  const [availability, setAvailability] = useState<Record<string, { start: string; end: string }[]> | undefined>(undefined);
+  /*
+   * Typed as the booking modal's `WeeklyAvailability`, which is what it is
+   * handed to. Held as `Record<string, …>` it could not be passed at all:
+   * `WeeklyAvailability` is a fixed-key INTERFACE, and an interface gets no
+   * implicit index signature, so the record is not assignable to it. The same
+   * narrowing is done in the public availability route, for the same reason.
+   */
+  const [availability, setAvailability] = useState<WeeklyAvailability | undefined>(undefined);
   /* The zone those hours are written in: the booking dialog renders on the
      business's clock, not the browser's. */
   const [bookingTimezone, setBookingTimezone] = useState<string>('UTC');
@@ -1222,6 +1323,25 @@ export function CRMContactDrawerV2({
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedBookingForPayment, setSelectedBookingForPayment] = useState<SessionCardData | null>(null);
   const [cancellingBooking, setCancellingBooking] = useState(false);
+  /**
+   * Money the business is still holding for a booking it just cancelled.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Cancelling never touches money, on purpose: a refund moves real funds and
+   * belongs to a person, not to a side effect. But it cannot be forgotten
+   * either — nothing on a cancelled booking said any money was held, so the
+   * owner had to already know to go looking for it.
+   *
+   * So the cancellation reports what it did NOT do, and this asks about it
+   * while they are still looking at the booking. Set only when there is
+   * something to give back, which is the uncommon case.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [refundAfterCancel, setRefundAfterCancel] = useState<{
+    bookingId: string;
+    amount: number;
+    currency: string;
+  } | null>(null);
   const [sendingIntake, setSendingIntake] = useState(false);
   // Invoice resend confirmation dialog state
   const [showInvoiceConfirm, setShowInvoiceConfirm] = useState(false);
@@ -1252,6 +1372,15 @@ export function CRMContactDrawerV2({
     return false;
   }, [pendingInvoiceId, sessions]);
   const [sendingInvoice, setSendingInvoice] = useState(false);
+
+  /*
+   * Whether this person is still someone the business works with.
+   *
+   * Read from the CONTACT's stage rather than the form's, so the banner and the
+   * footer button describe what is stored — not an unsaved stage the owner has
+   * picked in the dropdown and may yet cancel.
+   */
+  const contactInactive = isContactInactive(contact?.stage, stages);
 
   // UI states
   const [activeTab, setActiveTab] = useState<'customer' | 'activities'>('customer');
@@ -1285,7 +1414,10 @@ export function CRMContactDrawerV2({
   }
 
   // Process bookings data into session cards (extracted for reuse)
-  const processBookingsData = (bookingsData: { bookings: SchedulingBooking[] }, emailsData: { emails?: EmailRecord[] }, proposalsList: DrawerProposal[] = []) => {
+  // `BookingWithService`: these rows come from queries that join the service,
+  // which `SchedulingBooking` does not declare. Typed here rather than cast at
+  // each of the five places that read `booking.service`.
+  const processBookingsData = (bookingsData: { bookings: BookingWithService[] }, emailsData: { emails?: EmailRecord[] }, proposalsList: DrawerProposal[] = []) => {
     const emails: EmailRecord[] = emailsData.emails || [];
 
     // Helper to find confirmation email for a booking
@@ -1304,24 +1436,8 @@ export function CRMContactDrawerV2({
       });
     };
 
-    const sessionCards: SessionCardData[] = bookingsData.bookings.map((booking: SchedulingBooking) => {
-      const bookingData: Appointment = {
-        id: booking.id,
-        service_id: booking.service_id,
-        client_first_name: booking.client_first_name,
-        client_last_name: booking.client_last_name,
-        client_email: booking.client_email || undefined,
-        client_phone: booking.client_phone || undefined,
-        start_time: booking.start_time,
-        end_time: booking.end_time,
-        timezone: booking.timezone || undefined,
-        status: booking.status,
-        notes: booking.notes || undefined,
-        intake_responses: booking.intake_responses || undefined,
-        intake_completed_at: booking.intake_completed_at || undefined,
-        created_at: booking.created_at || undefined,
-        service: (booking as SchedulingBooking & { service?: { service_name: string; price?: number; currency?: string; is_product?: boolean } }).service
-      };
+    const sessionCards: SessionCardData[] = bookingsData.bookings.map((booking: BookingWithService) => {
+      const bookingData: Appointment = toAppointment(booking);
 
       // Map actual payment_status from booking to SessionPayment status
       const mapPaymentStatus = (dbStatus?: string): 'paid' | 'pending' | 'failed' | 'free' | 'refunded' => {
@@ -1695,7 +1811,10 @@ export function CRMContactDrawerV2({
          */
         load('/api/scheduling/availability', data => {
           if (data.success && data.availability) {
-            setAvailability(data.availability as Record<string, { start: string; end: string }[]>);
+            // Double assertion for the index-signature gap described on the
+            // state above; the route returns the seven day keys.
+            setAvailability(data.availability as unknown as WeeklyAvailability);
+
             if (data.timezone) setBookingTimezone(data.timezone as string);
           }
         }),
@@ -1734,7 +1853,26 @@ export function CRMContactDrawerV2({
       // Fetch all data in parallel for better performance
       loadAllContactData(contact.id);
     }
-  }, [contact, isOpen]);
+    /*
+     * Keyed on the contact's IDENTITY, not on the object.
+     *
+     * Everything in this effect is drawer-OPENING work: seed the form, go back
+     * to the first tab, clear any previous messages, load the tabs' data. That
+     * is right when a different contact is shown, and wrong when the same
+     * contact's row is merely replaced with a fresher copy — which is exactly
+     * what happens after a save now that the parent re-points the drawer
+     * instead of closing it.
+     *
+     * With `contact` in the deps, saving would have: thrown the owner back to
+     * the Customer tab from wherever they were, cleared the "Saved" message the
+     * save had just set, and re-fetched every tab's data — turning the reload
+     * we removed from the page into a reload inside the drawer.
+     *
+     * The form does not need re-seeding on a same-id update: its values are
+     * what was just submitted.
+     */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contact.id, isOpen]);
 
   // Fetch sessions (bookings with payments and emails) - kept for individual refresh
   /**
@@ -1817,24 +1955,8 @@ export function CRMContactDrawerV2({
       };
 
       if (bookingsData.success && bookingsData.bookings) {
-        const sessionCards: SessionCardData[] = bookingsData.bookings.map((booking: SchedulingBooking) => {
-          const bookingData: Appointment = {
-            id: booking.id,
-            service_id: booking.service_id,
-            client_first_name: booking.client_first_name,
-            client_last_name: booking.client_last_name,
-            client_email: booking.client_email,
-            client_phone: booking.client_phone,
-            start_time: booking.start_time,
-            end_time: booking.end_time,
-            timezone: booking.timezone,
-            status: booking.status,
-            notes: booking.notes,
-            intake_responses: booking.intake_responses ?? undefined,
-            intake_completed_at: booking.intake_completed_at,
-            created_at: booking.created_at,
-            service: booking.service
-          };
+        const sessionCards: SessionCardData[] = bookingsData.bookings.map((booking: BookingWithService) => {
+          const bookingData: Appointment = toAppointment(booking);
 
           // Map actual payment_status from booking to SessionPayment status
           const mapPaymentStatus = (dbStatus?: string): 'paid' | 'pending' | 'failed' | 'free' | 'refunded' => {
@@ -2109,7 +2231,14 @@ export function CRMContactDrawerV2({
       if (data.success) {
         setSuccessMessage(t('crm.drawer.saved') || 'Saved');
         setTimeout(() => setSuccessMessage(''), 2000);
-        onContactUpdated();
+        /*
+         * Hand back the saved row so the drawer stays open on it.
+         *
+         * The route answers with the updated contact; passing it lets the
+         * parent refresh this record in place instead of closing the drawer
+         * and re-fetching the list behind a full-page spinner.
+         */
+        onContactUpdated(data.contact ?? undefined);
       } else {
         setErrorMessage(data.error || t('crm.drawer.save_error'));
       }
@@ -2315,19 +2444,36 @@ export function CRMContactDrawerV2({
     }
   };
 
-  // Deactivate contact
-  const handleDeactivate = async () => {
+  /**
+   * Move this contact out of, or back into, the active pipeline.
+   *
+   * The footer used to offer Deactivate to everybody — including people who
+   * were already deactivated, for whom pressing it moved them to the stage they
+   * were already standing in and closed the drawer as though something had
+   * happened. There was no way back short of picking a stage by hand.
+   *
+   * Which stage either direction means is resolved server-side by stage TYPE,
+   * because every business names them differently.
+   */
+  const handleSetActive = async (nextActive: boolean) => {
     try {
       const response = await fetch(`/api/crm/contacts/${contact.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ is_active: false })
+        body: JSON.stringify({ is_active: nextActive })
       });
 
       const data = await response.json();
       if (data.success) {
-        onClose();
-        onContactUpdated();
+        /*
+         * Stays open on the contact, like every other field edit.
+         *
+         * Activating or deactivating moves a pipeline stage — it is a change TO
+         * this contact, not a way of leaving it — and closing meant an owner who
+         * reactivated someone in order to book them was put back in the list to
+         * find them again.
+         */
+        onContactUpdated(data.contact ?? undefined);
       } else {
         setErrorMessage(data.error || t('crm.drawer.deactivate_error'));
       }
@@ -2409,8 +2555,14 @@ export function CRMContactDrawerV2({
   };
 
   // Count sessions for badge
+  /* `start_time` is null for a product purchase, which has no slot to be
+     upcoming. It was passed to `new Date()` anyway — `new Date(null)` is the
+     epoch, so products happened to fall out of the count by being dated 1970.
+     Asked directly instead, which is the same answer for an honest reason. */
   const upcomingSessions = sessions.filter(s =>
-    s.booking.status === 'confirmed' && new Date(s.booking.start_time) > new Date()
+    s.booking.status === 'confirmed' &&
+    !!s.booking.start_time &&
+    new Date(s.booking.start_time) > new Date()
   ).length;
 
   return (
@@ -2505,6 +2657,22 @@ export function CRMContactDrawerV2({
             </div>
           </div>
 
+          {/*
+            Standing state, not a message.
+
+            It sits above the transient success and error lines because it is a
+            different kind of thing: those say what just happened, this says
+            what is true until somebody changes it. Without it the only signal
+            was the stage dropdown reading a word the owner chose themselves,
+            which for a pipeline whose closing stage is called "הושלם" does not
+            read as "inactive" at all.
+          */}
+          {contactInactive && (
+            <div className="flex-shrink-0 mx-6 mt-4 p-3 bg-[var(--v2-border)]/40 border border-[var(--v2-border)] text-[var(--v2-text-secondary)] text-sm rounded-lg">
+              {t('crm.contact.inactive_banner')}
+            </div>
+          )}
+
           {/* Messages */}
           {successMessage && (
             <div className="flex-shrink-0 mx-6 mt-4 p-3 bg-green-500/20 border border-green-500/40 text-green-600 dark:text-green-400 text-sm font-medium rounded-lg">
@@ -2581,6 +2749,29 @@ export function CRMContactDrawerV2({
                 onOpenProposalBuilder={(bookingId, context) =>
                   setProposalBuilder({ bookingId, ...context })
                 }
+                /* Read the quote as it was sent. `supersedesId` names the version
+                   to open on, not one to replace — `readOnly` is what decides
+                   which of those it means. */
+                onViewProposal={(bookingId, proposalId) => {
+                  /*
+                   * Carry the client's own words into the view.
+                   *
+                   * These were hardcoded null, so opening a DECLINED quote
+                   * showed the terms and not the one thing worth reading: why
+                   * it was refused. "We only have 8k budget" is the difference
+                   * between re-quoting well and guessing, and it is written
+                   * down in exactly one place.
+                   */
+                  const version = proposals.find(p => p.id === proposalId);
+
+                  setProposalBuilder({
+                    bookingId,
+                    supersedesId: proposalId,
+                    declineReason: version?.decline_reason ?? null,
+                    declineNote: version?.decline_note ?? null,
+                    readOnly: true,
+                  });
+                }}
                 /* Confirmed, not fired from the row.
                    It bills the client — an accidental tap sends someone a real
                    invoice, and there is no undo that unsends an email. */
@@ -2764,14 +2955,26 @@ export function CRMContactDrawerV2({
               <div className="flex items-center gap-2">
                 {!showDeleteConfirm && !showDeactivateConfirm && (
                   <>
+                    {/*
+                      One button, both directions. It said Deactivate to
+                      everybody, including the contacts already sitting in the
+                      past-client stage — so the only action offered on an
+                      inactive person was to deactivate them again.
+                    */}
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => setShowDeactivateConfirm(true)}
-                      className="text-amber-500 hover:text-amber-600 hover:bg-amber-500/10"
+                      onClick={() => (contactInactive ? handleSetActive(true) : setShowDeactivateConfirm(true))}
+                      className={contactInactive
+                        ? 'text-emerald-500 hover:text-emerald-600 hover:bg-emerald-500/10'
+                        : 'text-amber-500 hover:text-amber-600 hover:bg-amber-500/10'}
                     >
-                      <UserX className="h-4 w-4 me-1" />
-                      {t('crm.drawer.deactivate') || 'Deactivate'}
+                      {contactInactive
+                        ? <UserCheck className="h-4 w-4 me-1" />
+                        : <UserX className="h-4 w-4 me-1" />}
+                      {contactInactive
+                        ? (t('crm.drawer.activate') || 'Activate')
+                        : (t('crm.drawer.deactivate') || 'Deactivate')}
                     </Button>
                     <Button
                       variant="ghost"
@@ -2788,7 +2991,12 @@ export function CRMContactDrawerV2({
                 {showDeleteConfirm && (
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-red-500">{t('crm.drawer.confirm_delete') || 'Delete this contact?'}</span>
-                    <Button size="sm" variant="destructive" onClick={handleDelete}>
+                    {/* `destructive` is not one of this Button's variants — the
+                        union is default | outline | secondary | ghost | link —
+                        so the prop was silently doing nothing and the confirm
+                        button rendered in the default style. Coloured the same
+                        way the deactivate confirm beside it is. */}
+                    <Button size="sm" className="bg-red-500 hover:bg-red-600 text-white" onClick={handleDelete}>
                       {t('crm.drawer.yes_delete') || 'Yes, delete'}
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => setShowDeleteConfirm(false)}>
@@ -2800,7 +3008,7 @@ export function CRMContactDrawerV2({
                 {showDeactivateConfirm && (
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-amber-500">{t('crm.drawer.confirm_deactivate') || 'Deactivate this contact?'}</span>
-                    <Button size="sm" className="bg-amber-500 hover:bg-amber-600 text-white" onClick={handleDeactivate}>
+                    <Button size="sm" className="bg-amber-500 hover:bg-amber-600 text-white" onClick={() => handleSetActive(false)}>
                       {t('crm.drawer.yes_deactivate') || 'Yes, deactivate'}
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => setShowDeactivateConfirm(false)}>
@@ -2874,16 +3082,29 @@ export function CRMContactDrawerV2({
           fetchAllBookings(); // Refresh all bookings for availability
           setShowBookingModal(false);
           setEditingBooking(undefined);
-          // Note: Don't call onContactUpdated() here - it closes the drawer
-          // Booking updates are silently refreshed in the drawer without closing it
+          /*
+           * Now reported, where it used to be deliberately withheld.
+           *
+           * The note here said not to call this because it closed the drawer —
+           * true at the time, and the cost was that the contact list kept
+           * showing pre-booking data until something else happened to refresh
+           * it. The parent no longer closes on an update, so the list can be
+           * told. No argument: the contact row itself did not change.
+           */
+          onContactUpdated();
         }}
         availability={availability}
         timezone={bookingTimezone}
         prefilledContact={{
           id: contact.id,
-          first_name: contact.first_name,
+          /* `PrefilledContact` wants these two non-null, and a CRM contact can
+             have neither — a lead captured with only a phone number has no
+             first name and no email. Empty string is what the modal's own
+             inputs hold for "not given", so it prefills blank rather than
+             refusing to open. */
+          first_name: contact.first_name ?? '',
           last_name: contact.last_name,
-          email: contact.email,
+          email: contact.email ?? '',
           phone: contact.phone
         }}
         existingBookings={allBookings}
@@ -2932,7 +3153,7 @@ export function CRMContactDrawerV2({
               {t('crm.stage.confirm_body')
                 .replace('{stage}', pendingStage?.label ?? '')
                 .replace('{amount}', pendingStage?.amount ?? '')
-                .replace('{name}', contact.first_name)}
+                .replace('{name}', contact.first_name || '')}
             </p>
           </div>
           <div className={`flex gap-3 ${isRTL ? 'flex-row-reverse' : ''}`}>
@@ -2991,7 +3212,7 @@ export function CRMContactDrawerV2({
           <div className="py-4">
             <p className="text-sm text-[var(--v2-text-secondary)]">
               {(t('crm.intake.send_confirmation_message') || 'Send intake form to {name}? They will receive a link to fill out the form before their appointment.')
-                .replace('{name}', contact.first_name)}
+                .replace('{name}', contact.first_name || '')}
             </p>
           </div>
           <div className={`flex gap-3 ${isRTL ? 'flex-row-reverse' : ''}`}>
@@ -3068,7 +3289,18 @@ export function CRMContactDrawerV2({
             /* The version being revised, so the form opens on it.
                Re-typing a paragraph and a payment schedule to change one number
                is how an owner decides not to bother re-quoting at all. */
+            /*
+             * In VIEW mode the quote being read is the one to open on; in revise
+             * mode it is the one being replaced. They are the same row either
+             * way, which is why one prop serves both.
+             */
             basedOn={proposals.find(p => p.id === proposalBuilder.supersedesId) ?? null}
+            readOnly={proposalBuilder.readOnly ?? false}
+            onRevise={() =>
+              setProposalBuilder(current =>
+                current ? { ...current, readOnly: false } : current
+              )
+            }
             declineReason={proposalBuilder.declineReason}
             declineNote={proposalBuilder.declineNote}
             onSent={() => {
@@ -3206,7 +3438,32 @@ export function CRMContactDrawerV2({
                   toast.success(t('crm.booking.status_updated') || 'Booking updated');
                   fetchSessions(contact.id, { silent: true });
                   fetchActivities(contact.id, { silent: true });
+
+                  /*
+                   * Ask about the money, if any is held.
+                   *
+                   * Derived server-side from the INVOICES rather than from
+                   * `booking.payment_status`, which the delete guard already
+                   * documents as untrustworthy. Zero is the ordinary case and
+                   * says nothing.
+                   */
+                  const held = Number(data.amount_held) || 0;
+                  /*
+                   * A plan still charging opens the dialog even with nothing
+                   * held: the appointment is off and the client's card is
+                   * debited again next period until somebody decides
+                   * otherwise, and the dialog is where that decision lives.
+                   */
+                  const planLive = data.plan_live === true;
+                  const cancelledId = pendingCancelBookingId;
                   setPendingCancelBookingId(null);
+                  if ((held > 0 || planLive) && cancelledId) {
+                    setRefundAfterCancel({
+                      bookingId: cancelledId,
+                      amount: held,
+                      currency: data.held_currency || '',
+                    });
+                  }
                 } catch (err) {
                   toast.error(err instanceof Error ? err.message : 'Failed to cancel the booking');
                 } finally {
@@ -3226,6 +3483,34 @@ export function CRMContactDrawerV2({
           </div>
         </DialogContent>
       </Dialog>
+
+      {/*
+        The money the cancellation deliberately did not touch.
+
+        Opens straight after the booking is cancelled, and only when something
+        is actually held. The dialog is the one every other refund surface uses,
+        so the amount, the partial option and the client email all behave the
+        way they do everywhere else — this is a prompt at the right moment, not
+        a second way to refund.
+      */}
+      {refundAfterCancel && (
+        <RefundModal
+          isOpen
+          onClose={() => setRefundAfterCancel(null)}
+          bookingId={refundAfterCancel.bookingId}
+          originalAmount={refundAfterCancel.amount}
+          currency={refundAfterCancel.currency}
+          contactName={contact.first_name || undefined}
+          isRTL={isRTL}
+          onSuccess={() => {
+            setRefundAfterCancel(null);
+            // The booking's payment state and the timeline both moved.
+            fetchSessions(contact.id, { silent: true });
+            fetchActivities(contact.id, { silent: true });
+          }}
+          onError={message => toast.error(message)}
+        />
+      )}
 
       {/* Booking Confirmation Resend Dialog */}
       <Dialog open={showConfirmationResend} onOpenChange={setShowConfirmationResend}>
@@ -3309,7 +3594,7 @@ export function CRMContactDrawerV2({
                 ? t('crm.invoice.send_receipt_confirmation_message')
                 : t('crm.invoice.resend_confirmation_message') ||
                   'Resend invoice to {name}? They will receive a new email with the payment link.'
-              ).replace('{name}', contact.first_name)}
+              ).replace('{name}', contact.first_name || '')}
             </p>
           </div>
           <div className={`flex gap-3 ${isRTL ? 'flex-row-reverse' : ''}`}>

@@ -79,11 +79,20 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
   };
   const intlLocale = intlLocales[locale] || 'en-US';
 
+  /*
+   * `payment_invoices.due_date` is a DATE column, so this arrives as midnight
+   * UTC. Formatted with no zone it took the SERVER's, and for any zone behind
+   * UTC midnight falls on the previous evening: a client was invoiced with a
+   * due date one day earlier than the one the owner set. Pinned to UTC, the
+   * calendar day is the one that was stored — which is what a date-only value
+   * means.
+   */
   const formattedDueDate = data.dueDate.toLocaleDateString(intlLocale, {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
-    day: 'numeric'
+    day: 'numeric',
+    timeZone: 'UTC'
   });
 
   const formattedAppointmentDate = data.appointmentDate && data.timezone

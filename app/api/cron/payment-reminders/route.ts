@@ -95,6 +95,23 @@ export async function GET(request: NextRequest) {
      * row exclusively.
      * ───────────────────────────────────────────────────────────────────────
      */
+    /*
+     * Bill first, then chase.
+     *
+     * A quoted plan's later stages carry the dates the client agreed to and
+     * nothing raised their invoices, so the scan below found them late and
+     * chased the client for a stage — an email with a blank invoice number and
+     * no way to pay. Raising the invoice first is what makes that state
+     * unreachable: the stage becomes `billed` with an `invoice_id`, so the
+     * `status = 'pending'` scan no longer sees it, and the chasing happens
+     * through the invoice, which knows its own number.
+     *
+     * Before the scan for the same reason the scan is before the sender: a stage
+     * billed on this pass should be reminded on this pass rather than waiting an
+     * hour for the next one.
+     */
+    const stageStats = await paymentReminderService.billDueDatedStages();
+
     const overdueStats = await paymentReminderService.processOverdueItems();
 
     // Now send everything due, including what the scan just queued.
@@ -128,6 +145,7 @@ export async function GET(request: NextRequest) {
       duration,
       reminders: reminderStats,
       overdue: overdueStats,
+      stagesBilled: stageStats,
       invoicesMarkedOverdue: overdueSweep.data ?? 0
     }, 'Payment reminders cron job completed');
 
@@ -137,6 +155,7 @@ export async function GET(request: NextRequest) {
         duration,
         reminders: reminderStats,
         overdue: overdueStats,
+        stagesBilled: stageStats,
         invoicesMarkedOverdue: overdueSweep.data ?? 0
       }
     });

@@ -91,6 +91,19 @@ const SENTENCES: Record<string, Record<ActivityLocale, string>> = {
     es: 'Cita completada — {date}',
     he: 'הפגישה התקיימה — {date}',
   },
+  /*
+   * The owner said a refunded appointment is still going ahead.
+   *
+   * A refund and a cancellation are different acts: money can go back as
+   * goodwill while the session still happens. This is the owner answering that
+   * question, and it is what stops the dashboard asking again and lets the
+   * client's reminder resume.
+   */
+  booking_refund_kept: {
+    en: 'Refunded, appointment still going ahead — {date}',
+    es: 'Reembolsado, la cita sigue en pie — {date}',
+    he: 'הוחזר תשלום, הפגישה מתקיימת כרגיל — {date}',
+  },
   booking_no_show: {
     en: 'Client did not show — {date}',
     es: 'El cliente no se presentó — {date}',

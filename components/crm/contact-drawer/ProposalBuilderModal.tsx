@@ -74,6 +74,13 @@ interface ProposalBuilderModalProps {
     title: string;
     description: string | null;
     total: number;
+    /**
+     * Where this version stands, which decides whether it may be revised.
+     *
+     * Absent on a caller that does not know, which reads as "not revisable" —
+     * the safe answer for a button that can create a second quote for one job.
+     */
+    status?: string;
     /*
      * Carried into a revision, like the title and the description.
      *
@@ -88,6 +95,22 @@ interface ProposalBuilderModalProps {
       stages?: Array<{ label: string; percent: number }>;
     };
   } | null;
+  /**
+   * Show the quote as it was sent, with nothing editable.
+   *
+   * There was no way for an owner to READ a quote they had already sent. The
+   * drawer showed the amount and the status, the version strip showed the
+   * history, and the words themselves — the description, the payment shape, the
+   * terms — existed only on the client's copy. An owner taking a phone call about
+   * a quote had to ask the client what it said.
+   *
+   * Reuses this dialog rather than adding a viewer: `basedOn` already carries
+   * every field, because a revision opens on the previous version. The same data,
+   * the same layout, minus the ability to change it.
+   */
+  readOnly?: boolean;
+  /** Leave read-only mode and revise this version. Absent hides the button. */
+  onRevise?: () => void;
   /** Their reason for declining, so the owner can revise against it. */
   declineReason?: string | null;
   declineNote?: string | null;
@@ -120,12 +143,33 @@ export function ProposalBuilderModal({
   currency = 'USD',
   supersedesId = null,
   basedOn = null,
+  readOnly = false,
+  onRevise,
   declineReason = null,
   declineNote = null,
   onSent,
   t,
   isRTL = false,
 }: ProposalBuilderModalProps) {
+  /*
+   * Which versions a revision may replace.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The same list `ProposalRepository.markSuperseded` will act on, mirrored here
+   * on purpose: if the button offers a revision the data layer would refuse to
+   * retire, the old quote keeps accepting alongside the new one.
+   *
+   * ACCEPTED IS ABSENT, and that is the whole point. Acceptance already raised
+   * an invoice, created a payment plan and its stages, and froze the snapshot
+   * that settles a dispute. Revising it left both quotes live, so a client who
+   * accepted the second got a second invoice and a second plan for one job.
+   * Changing an accepted quote is not an edit; it is cancelling a deal and
+   * striking a new one, which is not this button.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const REVISABLE = ['draft', 'sent', 'viewed', 'declined'];
+  const canRevise = Boolean(basedOn?.status && REVISABLE.includes(basedOn.status));
+
   const [title, setTitle] = useState(defaultTitle);
   const [description, setDescription] = useState('');
   const [total, setTotal] = useState('');
@@ -538,18 +582,51 @@ export function ProposalBuilderModal({
             <div className="flex-1 min-w-0">
               <DialogHeader>
                 <DialogTitle className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)] rtl:text-right truncate">
-                  {supersedesId ? t('proposal.revise_title') : t('proposal.new_title')}
+                  {readOnly
+                    ? t('proposal.view_title')
+                    : supersedesId
+                      ? t('proposal.revise_title')
+                      : t('proposal.new_title')}
                 </DialogTitle>
               </DialogHeader>
               <p className="text-xs sm:text-sm text-[var(--v2-text-secondary)] mt-1 truncate">
                 {t('proposal.for')} {contactName}
               </p>
+              {/*
+                Why there is no Revise button on this one.
+
+                A control that quietly disappears reads as a bug. The owner came
+                here to change something, so the screen has to say that this
+                quote is settled and what to do instead.
+              */}
+              {readOnly && basedOn?.status === 'accepted' && (
+                <p className="text-xs text-[var(--v2-text-muted)] mt-1">
+                  {t('proposal.accepted_locked')}
+                </p>
+              )}
             </div>
           </div>
         </div>
 
         <div className="flex min-h-0 flex-1">
         <div className={`overflow-y-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6 ${file ? 'w-full md:w-[420px] md:shrink-0' : 'flex-1'}`}>
+          {/*
+            ONE `fieldset` rather than `disabled` on twenty inputs.
+
+            Read-only mode shows the quote exactly as it was sent, and a
+            disabled fieldset disables every form control inside it natively —
+            including keyboard focus, which `pointer-events-none` would not.
+            Adding the attribute to each field would be the same behaviour
+            spread over twenty places, and the twenty-first would be missed.
+
+            `border-0 p-0 m-0 min-w-0` because a fieldset ships a border and
+            padding, and `min-width: min-content` by default, which would stop
+            the body shrinking in the flex row above.
+          */}
+          <fieldset
+            disabled={readOnly}
+            className="space-y-4 sm:space-y-6 border-0 p-0 m-0 min-w-0"
+          >
           {/* Why they said no, when this is a revision. The owner is quoting
               against a stated objection, and it belongs on screen while they
               set the new number — not one drawer away. */}
@@ -907,6 +984,7 @@ export function ProposalBuilderModal({
               {error}
             </div>
           )}
+          </fieldset>
         </div>
 
         {/* The document, beside the offer. Hidden below md: two columns in a
@@ -990,6 +1068,29 @@ export function ProposalBuilderModal({
           >
             {t('proposal.cancel')}
           </button>
+          {/*
+            Read-only offers the way OUT of read-only, not a second Send.
+            Revising is the only thing an owner can do to a quote already with a
+            client, and it reopens this dialog on this version with
+            `supersedesId` set — which is what the version strip has always done.
+          */}
+          {readOnly && onRevise && canRevise && (
+            <button
+              type="button"
+              onClick={onRevise}
+              className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium border transition-all"
+              style={{
+                borderRadius: 'var(--v2-radius-button)',
+                color: 'var(--v2-primary)',
+                borderColor: 'var(--v2-primary)',
+                background: 'color-mix(in srgb, var(--v2-primary) 10%, transparent)',
+              }}
+            >
+              <FileText className="w-4 h-4" />
+              {t('proposal.revise')}
+            </button>
+          )}
+          {!readOnly && (
           <button
             type="button"
             onClick={handleSend}
@@ -1011,6 +1112,7 @@ export function ProposalBuilderModal({
               </>
             )}
           </button>
+          )}
         </div>
       </DialogContent>
     </Dialog>

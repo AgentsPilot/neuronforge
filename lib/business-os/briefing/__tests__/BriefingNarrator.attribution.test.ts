@@ -34,8 +34,17 @@ const U1 = '11111111-1111-4111-8111-111111111111';
 
 const chatCompletion = jest.fn();
 
-function facts(overrides: Partial<BriefingFacts> = {}): BriefingFacts {
-  return {
+/**
+ * Nested objects MERGE with the defaults rather than replacing them.
+ *
+ * A test that overrides one appointment field used to have to restate every
+ * other, so adding a fact to `BriefingFacts` broke every fixture in the file at
+ * once. Merging means a case says only what it is about.
+ */
+type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? Partial<T[K]> : T[K] };
+
+function facts(overrides: DeepPartial<BriefingFacts> = {}): BriefingFacts {
+  const base = {
     day: {
       timezone: 'Asia/Jerusalem',
       date: '2026-09-08',
@@ -51,6 +60,8 @@ function facts(overrides: Partial<BriefingFacts> = {}): BriefingFacts {
       awaitingPayment: [],
       first: { name: 'Michael', timeLocal: '09:00', serviceName: 'Assessment 1' },
       cancelled: [],
+      noShows: [],
+      syncFailures: 0,
     },
     money: {
       owed: [],
@@ -59,15 +70,27 @@ function facts(overrides: Partial<BriefingFacts> = {}): BriefingFacts {
       mixedCurrency: false,
       receivedToday: 0,
       receivedCount: 0,
+      instalmentsDue: [],
+      retrying: 0,
     },
     isQuiet: false,
-    ...overrides,
-    outlook: overrides.outlook ?? {
+    outlook: {
+      unanswered: { count: 0, people: [] },
+      refunded: { count: 0, people: [] },
       newLeads: { count: 0, people: [] },
       quotesWaiting: { count: 0, people: [] },
       quotesOut: { count: 0, people: [] },
     },
   };
+
+  return {
+    ...base,
+    ...overrides,
+    day: { ...base.day, ...overrides.day },
+    appointments: { ...base.appointments, ...overrides.appointments },
+    money: { ...base.money, ...overrides.money },
+    outlook: { ...base.outlook, ...overrides.outlook },
+  } as BriefingFacts;
 }
 
 beforeEach(() => {
@@ -118,5 +141,27 @@ describe('narrateBriefing attribution', () => {
     await narrateBriefing(facts({ isQuiet: true }), 'en', U1);
 
     expect(chatCompletion).not.toHaveBeenCalled();
+  });
+
+  it('makes no call on a day that produced no statements, quiet or not', async () => {
+    /*
+     * The stronger gate, and the cheaper one.
+     *
+     * `isQuiet` is the facts layer's own judgement about a day. This is
+     * arithmetic: if the day produced no sentences there is nothing to send,
+     * and the model would be asked to write a briefing out of an empty list.
+     * Asserted on the MOCK rather than on the output, because the output looks
+     * the same either way — the difference is whether it was paid for.
+     */
+    const empty = facts({
+      isQuiet: false,
+      appointments: { total: 0, completed: 0, ready: 0, first: undefined },
+    });
+
+    const result = await narrateBriefing(empty, 'en', U1);
+
+    expect(chatCompletion).not.toHaveBeenCalled();
+    expect(result.source).toBe('fallback');
+    expect(result.narrative).toBe('No activity we could see for today.');
   });
 });

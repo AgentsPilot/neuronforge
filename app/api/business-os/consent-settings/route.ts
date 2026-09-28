@@ -15,10 +15,11 @@ import { z } from 'zod';
 
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
+import { cleanPublicContact } from '@/lib/branding/placeholderContact';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { marketingConsentRepository } from '@/lib/repositories/MarketingConsentRepository';
 import { defaultStatement } from '@/lib/consent/defaultStatements';
-import { generatePrivacyPolicy } from '@/lib/consent/privacyPolicy';
+import { generatePrivacyPolicy, privacyLocale } from '@/lib/consent/privacyPolicy';
 import { MARKETING_SENDING_ENABLED } from '@/lib/consent/marketingGate';
 
 const logger = createLogger({ module: 'ConsentSettingsAPI' });
@@ -55,21 +56,60 @@ export async function GET(request: NextRequest) {
 
     const businessName = profile?.company_name || 'this business';
 
+    /*
+     * WHICH LANGUAGE THE SEEDED NOTICE IS WRITTEN IN.
+     *
+     * The panel sends the language the owner is reading it in, because that is
+     * who the seeded draft is for: text they can read is text they will edit.
+     * `business_profiles.language` is the fallback, since it is what the public
+     * page resolves the notice in, and English is the last resort.
+     */
+    const locale = privacyLocale(
+      request.nextUrl.searchParams.get('locale') || profile?.language || null
+    );
+
+    /*
+     * The business's own contact details, so nothing here is a blank form for a
+     * detail the platform already holds. The postal address seeds the field that
+     * needs one, and the email becomes the contact line in the generated privacy
+     * notice, which had no way to be reached before: `generatePrivacyPolicy`
+     * takes a `contactEmail` and nobody passed one.
+     *
+     * `cleanPublicContact` because these columns were backfilled from generated
+     * website copy and can still hold template scaffolding like
+     * `contact@example.com` or `123 Main Street`. A privacy notice naming an
+     * address the business does not own is worse than one naming none.
+     */
+    const businessEmail = cleanPublicContact(profile?.email ?? null, 'email');
+    const businessAddress = cleanPublicContact(profile?.address ?? null, 'address');
+
     return NextResponse.json({
       success: true,
       data: {
         settings,
-        /* Shown greyed in each empty field, so an owner can see what their
-           visitors are being asked before deciding to change it. */
+        /*
+         * Seeded into every empty field as REAL text the owner edits, not a
+         * greyed hint they have to retype. A hint is invisible to anyone who
+         * does not click into the box, and the two long fields here (the
+         * agreement wording and the privacy notice) are exactly the ones an
+         * owner will not compose from nothing.
+         */
         defaults: {
           statement_en: defaultStatement('en', businessName),
           statement_he: defaultStatement('he', businessName),
           statement_es: defaultStatement('es', businessName),
           privacy_policy_body: generatePrivacyPolicy({
             businessName,
-            postalAddress: settings?.postal_address ?? null,
+            contactEmail: businessEmail,
+            postalAddress: settings?.postal_address ?? businessAddress,
+            locale,
           }),
+          /* Empty string rather than null when there is nothing to suggest, so
+             the panel can fall back to its own example without a type dance. */
+          postal_address: businessAddress ?? '',
         },
+        /** Which language the seeded notice came back in, for the panel's note. */
+        locale,
         counts: { mailable: mailable ?? 0, contacts: total ?? 0 },
         /*
          * What still stands between a consented contact and an actual email.

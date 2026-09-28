@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import Image from 'next/image';
+import { Logo } from '@/components/brand/Logo';
 import { Moon, Sun, Globe, Check, Settings, Calendar } from 'lucide-react';
 import { useV2Theme } from '@/lib/design-system-v2';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -97,13 +97,10 @@ export function BusinessOSHeader() {
           className="group inline-block"
           aria-label={t('nav.home')}
         >
-          <Image
-            src="/images/AgentPilot_Logo.png"
-            alt="AgentsPilots"
-            width={120}
-            height={120}
-            className="group-hover:scale-105 transition-transform duration-200"
+          <Logo
+            placement="header"
             priority
+            className="group-hover:scale-105 transition-transform duration-200"
           />
         </Link>
 

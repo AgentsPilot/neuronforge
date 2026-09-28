@@ -3,8 +3,11 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
-import { verifyBookingToken, BookingEmailService } from '@/lib/services/BookingEmailService';
-import { updateOwnerCalendarEvent } from '@/lib/scheduling/syncBookingCalendar';
+import { verifyBookingToken } from '@/lib/services/BookingEmailService';
+import {
+  rescheduleBooking,
+  BookingSlotUnavailableError,
+} from '@/lib/services/BookingLifecycleService';
 import { notifyOwnerOfLead } from '@/lib/services/LeadAlertService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
@@ -14,6 +17,43 @@ import { activitySentence, activityMoment, activityRecord } from '@/lib/business
 import { safeTimezone } from '@/lib/scheduling/businessTime';
 
 const logger = createLogger({ module: 'API', service: 'BookingReschedule' });
+
+/**
+ * How many times a client may move one booking from their own link.
+ *
+ * Two, then they talk to the business. Not a number the business sets: it is a
+ * guard on a public link, and an owner can always move a booking themselves.
+ */
+const CLIENT_RESCHEDULE_LIMIT = 2;
+
+/**
+ * How many times the CLIENT has moved this booking.
+ *
+ * Counted from the timeline because only this route writes a
+ * `booking_rescheduled` row — the owner's reschedule writes none — so the count
+ * is self-service moves and nothing else. That asymmetry is the point: the
+ * business can move a booking as often as it likes.
+ *
+ * An unreadable count answers 0, letting the move through. A client who cannot
+ * reschedule and cannot be told why becomes a phone call for the owner; the
+ * worst case the other way is one extra move.
+ */
+async function clientMoveCount(userId: string, bookingId: string): Promise<number> {
+  const { count, error } = await supabaseServer
+    .from('crm_activities')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('activity_type', 'booking_rescheduled')
+    .eq('source_entity_id', bookingId);
+
+  if (error) {
+    logger.warn({ err: error, bookingId }, 'Could not count reschedules; allowing the move');
+    return 0;
+  }
+
+  return count ?? 0;
+}
+
 
 /**
  * Accepts the slot strings this platform actually produces.
@@ -104,6 +144,27 @@ export async function GET(
     if (booking.status !== 'confirmed') {
       return NextResponse.json(
         { success: false, code: 'not_reschedulable', error: 'This booking cannot be rescheduled' },
+        { status: 400 }
+      );
+    }
+
+    /*
+     * Say it BEFORE offering times, not after they pick one.
+     *
+     * The POST refuses a third move anyway, but a picker that shows a month of
+     * slots and then rejects the chosen one is the rudest possible way to state
+     * a rule. Same count, same limit, read here so the page can lead with it.
+     */
+    const usedMoves = await clientMoveCount(booking.user_id, bookingId);
+
+    if (usedMoves >= CLIENT_RESCHEDULE_LIMIT) {
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'reschedule_limit',
+          limit: CLIENT_RESCHEDULE_LIMIT,
+          error: `This booking has already been moved ${CLIENT_RESCHEDULE_LIMIT} times`,
+        },
         { status: 400 }
       );
     }
@@ -268,6 +329,40 @@ export async function POST(
       );
     }
 
+    /*
+     * How many times has the CLIENT moved this one already?
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * Unlimited self-service moves are a way not to pay. A booking's invoice is
+     * due on the day of the appointment, and the overdue chase now waits for
+     * the session to happen — so a client who moves the date whenever it gets
+     * close is never chased at all, because the session never arrives.
+     *
+     * Counted from the timeline rather than a column: only THIS route writes a
+     * `booking_rescheduled` row, so the count is client moves and nothing else.
+     * The owner can still move it as often as they like, which is the intended
+     * asymmetry — this is a limit on self-service, not on the business.
+     *
+     * Failing to read the count lets the move through. A client who cannot
+     * reschedule and cannot tell why is a phone call for the owner, and the
+     * worst case here is one extra move.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const movesSoFar = await clientMoveCount(bookingData.user_id, bookingId);
+
+    if (movesSoFar >= CLIENT_RESCHEDULE_LIMIT) {
+      requestLogger.info({ bookingId, movesSoFar }, 'Client reschedule limit reached');
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'reschedule_limit',
+          limit: CLIENT_RESCHEDULE_LIMIT,
+          error: `This booking has already been moved ${CLIENT_RESCHEDULE_LIMIT} times`,
+        },
+        { status: 400 }
+      );
+    }
+
     // Check for conflicts with the new time
     /*
      * The slot is a wall clock; the column is an instant.
@@ -310,44 +405,57 @@ export async function POST(
       'Converted picked wall clock to an instant'
     );
 
-    const { data: conflicts } = await supabaseServer
-      .from('scheduling_bookings')
-      .select('id')
-      .eq('user_id', booking.user_id)
-      .in('status', ['confirmed', 'completed'])
-      .neq('id', bookingId)
-      .lt('start_time', newEndInstant)
-      .gt('end_time', newStartInstant);
+    /*
+     * The same reschedule the owner's route performs.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This wrote the booking row itself and bolted the calendar and the email
+     * on afterwards — a second implementation of a verb that already had one,
+     * which is exactly the shape the cancel page had before it was routed
+     * through `cancelBooking`. Anything added to the shared reschedule reached
+     * the owner's bookings and not the ones a CLIENT moved, which is the path
+     * most moves actually take.
+     *
+     * Two consequences of the move, both deliberate:
+     *
+     *   · The double-booking check is now the canonical one
+     *     (`SLOT_HOLDING_STATUSES`), which counts a `pending` booking as
+     *     holding its slot. This route only counted `confirmed` and
+     *     `completed`, so a client could be handed a time another booking was
+     *     already holding.
+     *   · The move is written to the audit trail, which it never was.
+     *
+     * The guards above stay here: the token, the `confirmed` check and the
+     * service's notice window are this surface's alone.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const rescheduled = await rescheduleBooking({
+      bookingId,
+      userId: booking.user_id,
+      startTime: newStartInstant,
+      endTime: newEndInstant,
+      request,
+      logger: requestLogger,
+    });
 
-    if (conflicts && conflicts.length > 0) {
-      return NextResponse.json(
-        { success: false, code: 'slot_taken', error: 'The selected time slot is not available' },
-        { status: 409 }
-      );
-    }
+    if (rescheduled.error) {
+      // The slot went while they were choosing. Same code and status this route
+      // has always answered with, so the page keeps its own wording for it.
+      if (rescheduled.error instanceof BookingSlotUnavailableError) {
+        return NextResponse.json(
+          { success: false, code: 'slot_taken', error: 'The selected time slot is not available' },
+          { status: 409 }
+        );
+      }
 
-    // Store previous time for email
-    const previousDateTime = new Date(booking.start_time);
-
-    // Update booking
-    const { data: updatedBooking, error: updateError } = await supabaseServer
-      .from('scheduling_bookings')
-      .update({
-        start_time: newStartInstant,
-        end_time: newEndInstant,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', bookingId)
-      .select()
-      .single();
-
-    if (updateError) {
-      requestLogger.error({ err: updateError }, 'Failed to update booking');
+      requestLogger.error({ err: rescheduled.error }, 'Failed to update booking');
       return NextResponse.json(
         { success: false, code: 'reschedule_failed', error: 'Failed to reschedule booking' },
         { status: 500 }
       );
     }
+
+    const updatedBooking = rescheduled.data!.booking;
 
     requestLogger.info({ bookingId, previousTime: booking.start_time, newTime: newStartInstant }, 'Booking rescheduled');
 
@@ -398,19 +506,16 @@ export async function POST(
       }).catch(err => requestLogger.warn({ err }, 'Reschedule activity logging failed (non-blocking)'));
     }
 
-    // Send rescheduled email (non-blocking)
-    BookingEmailService.sendRescheduledEmail(bookingId, booking.user_id, previousDateTime)
-      .catch(err => requestLogger.warn({ err }, 'Rescheduled email failed (non-blocking)'));
-
     /*
-     * Move it in the owner's own calendar (non-blocking).
+     * The client's email and the owner's calendar are BOTH done by
+     * `rescheduleBooking` above — and were done here as well until this route
+     * started calling it. Left in place, the client received two "your
+     * appointment has moved" emails for one move.
      *
-     * Nothing did this either, and a stale event here is worse than a missing
-     * one: the appointment sat at the OLD time, so the owner had a phantom
-     * meeting on one slot and no sign of the real one on another.
+     * The calendar helper this used, `updateOwnerCalendarEvent`, ends at the
+     * same `CalendarSyncService.updateCalendarEvent` the service calls, so
+     * nothing is lost by dropping it.
      */
-    updateOwnerCalendarEvent(bookingId, booking.user_id, requestLogger)
-      .catch(err => requestLogger.warn({ err, bookingId }, 'Calendar move failed'));
 
     /*
      * And tell them (non-blocking), with both times.
@@ -429,8 +534,9 @@ export async function POST(
         [postContact?.first_name, postContact?.last_name].filter(Boolean).join(' ') || 'Client',
       contactEmail: postContact?.email,
       serviceName: movedService?.service_name,
-      // `previousDateTime` was captured before the update; `bookingData` still
-      // holds the old start because it was read before it too.
+      // `bookingData` was read BEFORE the reschedule, so it still holds the old
+      // start — which is the half of "moved" the owner needs, to know what to
+      // stop expecting as well as what to expect.
       startTime: newStartInstant,
       previousStartTime: bookingData.start_time,
       timezone: timeZone,

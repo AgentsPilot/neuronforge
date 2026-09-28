@@ -172,6 +172,11 @@ export function DailyBriefingCard({
         would rather have it in their inbox. `marginTop: auto` pins it to the
         bottom so the card can stretch to match the one beside it without the
         control floating in the middle.
+
+        It is now the ONLY switch that writes `daily_briefing_email_enabled`.
+        Settings carried a second one for a while, with no timezone gate, so the
+        briefing could be switched on there and then silently never send. That
+        copy is gone: `canEnable` below is the whole rule, in one place.
       */}
       <div
         style={{

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ContactsPager } from '@/components/crm/ContactsPager';
 import { Input } from '@/components/ui/input';
 import { Download, Trash2, Tag, X, Check, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -395,59 +396,16 @@ export function CRMContactList({
       </div>
 
       {/* Pagination Controls */}
-      {totalPages > 1 && onPageChange && (
-        <div className="flex items-center justify-between px-4 py-3 border border-[var(--v2-border)] border-t-0 bg-[var(--v2-surface)]" style={{ borderRadius: '0 0 var(--v2-radius-card) var(--v2-radius-card)' }}>
-          <div className="text-sm text-[var(--v2-text-muted)]">
-            {t('crm.pagination.page')} {currentPage} {t('crm.pagination.of')} {totalPages}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onPageChange(currentPage - 1)}
-              disabled={currentPage <= 1}
-              className="h-8 px-2"
-            >
-              <ChevronLeft className="h-4 w-4" />
-              <span className="hidden sm:inline ms-1">{t('crm.pagination.prev')}</span>
-            </Button>
-            <div className="hidden sm:flex items-center gap-1">
-              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                let pageNum: number;
-                if (totalPages <= 5) {
-                  pageNum = i + 1;
-                } else if (currentPage <= 3) {
-                  pageNum = i + 1;
-                } else if (currentPage >= totalPages - 2) {
-                  pageNum = totalPages - 4 + i;
-                } else {
-                  pageNum = currentPage - 2 + i;
-                }
-                return (
-                  <Button
-                    key={pageNum}
-                    variant={currentPage === pageNum ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => onPageChange(pageNum)}
-                    className={`h-8 w-8 p-0 ${currentPage === pageNum ? 'bg-[#8B5CF6] hover:bg-[#7C3AED] text-white' : ''}`}
-                  >
-                    {pageNum}
-                  </Button>
-                );
-              })}
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onPageChange(currentPage + 1)}
-              disabled={currentPage >= totalPages}
-              className="h-8 px-2"
-            >
-              <span className="hidden sm:inline me-1">{t('crm.pagination.next')}</span>
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
+      {/* The same pager the board uses — see components/crm/ContactsPager.tsx.
+          It lived here, which is why the kanban had none. */}
+      {onPageChange && (
+        <ContactsPager
+          currentPage={currentPage}
+          totalPages={totalPages}
+          onPageChange={onPageChange}
+          t={t}
+          attached
+        />
       )}
 
       {/* Floating Bulk Actions Bar */}

@@ -9,6 +9,7 @@ import { getStripeService } from '@/lib/stripe/StripeService';
 import { pilotCreditsToTokens } from '@/lib/utils/pricingConfig';
 import { QuotaAllocationService } from '@/lib/services/QuotaAllocationService';
 import { resolveAccountOwner } from '@/lib/payments/stripeAccountContext';
+import { notifyOwnerOfDispute } from '@/lib/services/DisputeAlertService';
 import { subscriptionIdFromInvoice, subscriptionMetadataFromInvoice } from '@/lib/payments/invoiceSubscription';
 import { bindPlanSubscription } from '@/lib/payments/bindPlanSubscription';
 import { fromMinorUnits } from '@/lib/payments/refundMath';
@@ -910,6 +911,117 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
  * handler can run repeatedly and produce the same single row. The transaction
  * and invoice totals then follow by trigger.
  */
+/**
+ * A chargeback: the bank has taken the money back.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE ONLY MONEY MOVEMENT THIS PLATFORM COULD NOT SEE.
+ *
+ * Nothing handled `charge.dispute.*`, so the funds left the connected account
+ * while the invoice still read `paid`, the booking still read paid, and revenue
+ * still counted it. Every screen agreed about money that was gone.
+ *
+ * WHY `status` AND NOT A NEW COLUMN. Every revenue read in this codebase filters
+ * on an ALLOW-LIST — `in('status', ['succeeded','refunded'])` or
+ * `eq('status','succeeded')` — so a status they do not name drops out of all of
+ * them at once, with no read left to remember to update. The column has no CHECK
+ * constraint, so this needs no migration.
+ *
+ * REVERSIBLE, because a dispute is. The previous status is kept in `metadata` so
+ * winning the case restores exactly what was there rather than a guess.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function handleDispute(
+  dispute: Stripe.Dispute,
+  phase: 'opened' | 'closed' | 'reinstated'
+) {
+  const chargeId = typeof dispute.charge === 'string' ? dispute.charge : dispute.charge?.id;
+  const paymentIntentId =
+    typeof dispute.payment_intent === 'string' ? dispute.payment_intent : dispute.payment_intent?.id;
+
+  let query = supabaseAdmin
+    .from('payment_transactions')
+    .select('id, user_id, status, amount, currency, contact_id, metadata')
+    .limit(1);
+
+  query = paymentIntentId
+    ? query.eq('stripe_payment_intent_id', paymentIntentId)
+    : query.eq('stripe_charge_id', chargeId || '');
+
+  const { data: matches } = await query;
+  const transaction = matches?.[0];
+
+  if (!transaction) {
+    // Money disputed against a payment this app never recorded. Loud, not
+    // dropped: it means the books are wrong in a way only Stripe can see.
+    console.error('❌ [Webhook] dispute for an unknown payment:', { chargeId, paymentIntentId });
+    return;
+  }
+
+  const metadata = (transaction.metadata ?? {}) as Record<string, unknown>;
+  const won = phase === 'reinstated' || (phase === 'closed' && dispute.status === 'won');
+
+  /*
+   * Won means the money came back, so the payment returns to what it was before
+   * the dispute — read from metadata rather than assumed to be `succeeded`, in
+   * case it had already been partly refunded.
+   */
+  const restored = (metadata.status_before_dispute as string) || 'succeeded';
+
+  const nextStatus = won ? restored : 'disputed';
+
+  const { error } = await supabaseAdmin
+    .from('payment_transactions')
+    .update({
+      status: nextStatus,
+      metadata: {
+        ...metadata,
+        // Written only when the dispute opens, so a second event cannot
+        // overwrite the original with `disputed` and lose the way back.
+        status_before_dispute:
+          phase === 'opened' ? transaction.status : metadata.status_before_dispute,
+        dispute: {
+          id: dispute.id,
+          phase,
+          status: dispute.status,
+          reason: dispute.reason,
+          amount_minor: dispute.amount,
+          evidence_due_by: dispute.evidence_details?.due_by ?? null,
+        },
+      },
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', transaction.id);
+
+  if (error) {
+    console.error('❌ [Webhook] Failed to record dispute:', error);
+    return;
+  }
+
+  console.log(
+    `⚖️  [Webhook] Dispute ${phase} on ${transaction.id}: status ${transaction.status} → ${nextStatus}`
+  );
+
+  /*
+   * Tell the owner, now.
+   *
+   * Stripe's evidence window is measured in days and a dispute nobody sees is
+   * lost by default, so this is the one webhook side effect worth an immediate
+   * email. Non-blocking: the ledger is already correct, and a mail failure must
+   * not make Stripe retry a write that has happened.
+   */
+  if (phase === 'opened') {
+    notifyOwnerOfDispute({
+      ownerId: transaction.user_id,
+      contactId: transaction.contact_id,
+      amount: Number(transaction.amount) || 0,
+      currency: transaction.currency || '',
+      reason: dispute.reason || '',
+      evidenceDueBy: dispute.evidence_details?.due_by ?? null,
+    }).catch(err => console.error('❌ [Webhook] Dispute alert failed (non-blocking):', err));
+  }
+}
+
 async function handleChargeRefunded(charge: Stripe.Charge, connectAccountId: string | null) {
   console.log('💸 [Webhook] Processing charge.refunded:', charge.id);
 
@@ -1686,12 +1798,35 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
     // Fallback: Try to find booking by contact_id, user_id, and matching amount
     console.log('⚠️ [Webhook] Invoice has no booking_id, attempting to find matching booking');
 
+    /*
+     * Guessing which booking a payment belongs to — and never guessing a
+     * CANCELLED one.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * Cancelling deliberately leaves `payment_status` alone: `paid` on a
+     * cancelled booking is true, because the business is still holding the
+     * money. So a cancelled appointment keeps whatever it had, and an unpaid
+     * one keeps `pending` — precisely what this guess looks for.
+     *
+     * That made this the one place the stale value could do harm. A client with
+     * a cancelled booking and a newer live one pays an invoice carrying no
+     * `booking_id`; the newer booking is already `paid` and so excluded by the
+     * filter below, leaving the CANCELLED one as the newest match. The money is
+     * then marked against it and `booking_id` written onto the invoice, binding
+     * a real payment to an appointment that is not happening — permanently,
+     * since the binding is what every later read follows.
+     *
+     * `completed` and `no_show` stay eligible on purpose: paying after the
+     * service is an ordinary flow, and a no-show fee is a real charge.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
     const { data: matchingBooking, error: matchError } = await supabaseAdmin
       .from('scheduling_bookings')
       .select('id, service:scheduling_services(price)')
       .eq('user_id', platformInvoice.user_id)
       .eq('contact_id', platformInvoice.contact_id)
       .in('payment_status', ['pending', null])
+      .neq('status', 'cancelled')
       .order('created_at', { ascending: false })
       .limit(1)
       .single();
@@ -2511,6 +2646,23 @@ export async function POST(request: NextRequest) {
       // wherever the charge lives, the ledger has to learn about it.
       case 'charge.refunded':
         await handleChargeRefunded(event.data.object as Stripe.Charge, connectAccountId);
+        break;
+
+      /*
+       * Chargebacks. The funds leave the account on `created` and only come back
+       * if the case is won, so all three phases are handled — recording the loss
+       * and never recording a recovery would be its own kind of wrong.
+       */
+      case 'charge.dispute.created':
+        await handleDispute(event.data.object as Stripe.Dispute, 'opened');
+        break;
+
+      case 'charge.dispute.closed':
+        await handleDispute(event.data.object as Stripe.Dispute, 'closed');
+        break;
+
+      case 'charge.dispute.funds_reinstated':
+        await handleDispute(event.data.object as Stripe.Dispute, 'reinstated');
         break;
 
       // A payment that succeeded without any invoice behind it — a website or

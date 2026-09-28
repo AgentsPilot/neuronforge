@@ -72,6 +72,8 @@ export function ClientDetailsSection({
   onToggle
 }: ClientDetailsSectionProps) {
   const [phoneCountry, setPhoneCountry] = useState<Country>('US');
+  /** The chip list is collapsed to the current answer until somebody opens it. */
+  const [sourceOpen, setSourceOpen] = useState(false);
   const [newTag, setNewTag] = useState('');
 
   const handleAddTag = () => {
@@ -204,10 +206,59 @@ export function ClientDetailsSection({
 
         {/* Source */}
         <div>
-          <Label className="text-[var(--v2-text-secondary)] mb-2 block text-start">
-            {t('crm.modal.how_found')}
-          </Label>
-          <div className="flex flex-wrap gap-1.5">
+          {/*
+            Collapsed to the answer, expanded to change it.
+
+            There are seventeen chips now — the channels a UTM can prove, the
+            three properties a contact can arrive on, and the handful only a
+            person can know. Laid out flat that is a wall of pills above the
+            tags field, and the answer, which is one chip, is lost among the
+            sixteen that are not it.
+
+            So the row shows what the contact IS, and the full set appears only
+            when somebody sets out to change it.
+          */}
+          <div className="flex items-center justify-between mb-2">
+            <Label className="text-[var(--v2-text-secondary)] block text-start">
+              {t('crm.modal.how_found')}
+            </Label>
+            <button
+              type="button"
+              onClick={() => setSourceOpen(open => !open)}
+              className="text-[12px] text-[#8B5CF6] hover:underline"
+            >
+              {sourceOpen ? t('button.done') : t('button.change')}
+            </button>
+          </div>
+
+          {/* Collapsed: the current answer alone, or a prompt when there is none. */}
+          {!sourceOpen && (() => {
+            const current = originOption(contactOrigin(formData.source, sourceMetadata)?.group);
+            if (!current) {
+              return (
+                <button
+                  type="button"
+                  onClick={() => setSourceOpen(true)}
+                  className="text-[12.5px] text-[var(--v2-text-muted)] hover:text-[#8B5CF6] transition-colors"
+                >
+                  {t('crm.modal.how_found_unset')}
+                </button>
+              );
+            }
+            const Icon = current.icon;
+            return (
+              <button
+                type="button"
+                onClick={() => setSourceOpen(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-[12.5px] font-medium border border-[#8B5CF6] bg-[#8B5CF6]/10 text-[#8B5CF6] rounded-full"
+              >
+                <Icon className="h-3 w-3 shrink-0" />
+                {t(current.labelKey)}
+              </button>
+            );
+          })()}
+
+          <div className={`flex-wrap gap-1.5 ${sourceOpen ? 'flex' : 'hidden'}`}>
             {/*
               The chip is the GROUP — Website, not "Website Booking". Which page
               or which smart link is the line underneath, because with several
@@ -224,7 +275,11 @@ export function ClientDetailsSection({
                 <button
                   key={origin.value}
                   type="button"
-                  onClick={() => setFormData(prev => ({ ...prev, source: origin.value }))}
+                  onClick={() => {
+                    setFormData(prev => ({ ...prev, source: origin.value }));
+                    // Picking one IS the change, so the list has done its job.
+                    setSourceOpen(false);
+                  }}
                   className={`flex items-center gap-1.5 px-2.5 py-1 text-[12.5px] font-medium border transition-all rounded-full ${
                     selected
                       ? 'border-[#8B5CF6] bg-[#8B5CF6]/10 text-[#8B5CF6]'

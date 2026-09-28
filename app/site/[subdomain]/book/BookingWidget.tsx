@@ -20,6 +20,7 @@ import { WebsiteCountrySelect } from '@/components/website/blocks/WebsiteCountry
 import 'react-phone-number-input/style.css';
 import { ConsentCheckbox } from '@/components/public/ConsentCheckbox';
 import { useConsentCopy, consentPayload } from '@/hooks/useConsentCopy';
+import { businessDateKey, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
 
 interface Service {
   id: string;
@@ -349,12 +350,16 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
     }
   };
 
-  // Generate dates for next 14 days
-  const dates = Array.from({ length: 14 }, (_, i) => {
-    const date = new Date();
-    date.setDate(date.getDate() + i);
-    return date.toISOString().split('T')[0];
-  });
+  /*
+   * The next 14 days the BUSINESS can be booked on.
+   *
+   * Built from the visitor's calendar and then reduced to a UTC day, this
+   * offered a client in Auckland a first date the business considered
+   * yesterday, and dropped its real last day off the end.
+   */
+  const dates = Array.from({ length: 14 }, (_, i) =>
+    shiftBusinessDateKey(businessDateKey(new Date(), timezone), i)
+  );
 
   // Auto-select service if initialServiceId is provided (e.g., from landing page)
   useEffect(() => {
@@ -779,19 +784,36 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
   // Get locale string for date/time formatting
   const dateLocale = locale === 'he' ? 'he-IL' : locale === 'es' ? 'es-ES' : 'en-US';
 
+  /*
+   * Every time this widget shows is the BUSINESS's clock, not the visitor's.
+   *
+   * These formatted a stored instant with no `timeZone`, so the hour rendered
+   * in whatever zone the client's device was set to: the same 09:00 slot read
+   * as 14:00 in London and 16:00 in Tel Aviv, and the client booked believing
+   * the number on screen. `timezone` is a prop this component already had, and
+   * already sends back on submit — it was only missing from display.
+   */
   const formatTime = (isoString: string) => {
     const date = new Date(isoString);
-    return date.toLocaleTimeString(dateLocale, { hour: 'numeric', minute: '2-digit', hour12: locale !== 'he' });
+    return date.toLocaleTimeString(dateLocale, {
+      hour: 'numeric', minute: '2-digit', hour12: locale !== 'he', timeZone: timezone
+    });
   };
 
   const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString(dateLocale, { weekday: 'short', month: 'short', day: 'numeric' });
+    /* A date key ("2026-09-21"), anchored at noon UTC so naming its weekday
+       cannot fall into the previous day for a zone behind UTC. */
+    const date = new Date(`${dateStr}T12:00:00Z`);
+    return date.toLocaleDateString(dateLocale, {
+      weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC'
+    });
   };
 
   const formatFullDate = (isoString: string) => {
     const date = new Date(isoString);
-    return date.toLocaleDateString(dateLocale, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    return date.toLocaleDateString(dateLocale, {
+      weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: timezone
+    });
   };
 
   // Step 1: Service Selection
@@ -878,7 +900,10 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
                 style={selectedDate === date ? { backgroundColor: primaryColor } : {}}
               >
                 <div className="text-xs font-medium">{formatDate(date).split(' ')[0]}</div>
-                <div className="text-lg font-semibold">{new Date(date).getDate()}</div>
+                {/* The day number off the key itself. `new Date('2026-09-21')`
+                    is midnight UTC, so reading its date in any zone behind UTC
+                    printed the day before the one the button selects. */}
+                <div className="text-lg font-semibold">{Number(date.slice(8, 10))}</div>
               </button>
             ))}
           </div>

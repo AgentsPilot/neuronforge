@@ -188,6 +188,12 @@ export function hashFacts(
      */
     quotesWaiting: outlook.quotesWaiting,
     quotesOut: outlook.quotesOut,
+    /*
+     * And the phases, for exactly the reason above: they are part of the text, so
+     * a phase becoming billable at noon must not leave the card showing the
+     * version written this morning.
+     */
+    stagesToBill: outlook.stagesToBill,
   });
 
   return createHash('sha256').update(material).digest('hex').slice(0, 32);

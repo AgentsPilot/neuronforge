@@ -11,6 +11,7 @@ import {
 } from './DraftManagerTypes';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { safeTimezone, businessDateKey, businessInstant, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
 import { schedulingServiceRepository, schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { crmTaskRepository } from '@/lib/repositories/CRMTaskRepository';
@@ -1894,6 +1895,9 @@ async function executeBookingCreate(
   const services = context.existingServices || [];
 
   try {
+    // Every date and hour below is the business's, not the server's.
+    const zone = await resolveChatTimezone(context.userId);
+
     // Check if user wants to see available slots - determined by LLM via show_available entity
     const wantsAvailableSlots = entities.show_available === true;
 
@@ -2044,7 +2048,7 @@ async function executeBookingCreate(
 
     // Step 3: If user wants available slots (has date but no time), show them
     if (contact && selectedService && date && !time && (wantsAvailableSlots || !entities._confirmed)) {
-      const parsedDate = parseRelativeDate(date);
+      const parsedDate = parseRelativeDate(date, zone);
       const durationMinutes = selectedService.duration || 60;
 
       // Get available slots for this date
@@ -2052,7 +2056,8 @@ async function executeBookingCreate(
         context.userId,
         parsedDate,
         durationMinutes,
-        lang
+        lang,
+        zone
       );
 
       if (availableSlots.length > 0) {
@@ -2070,7 +2075,7 @@ async function executeBookingCreate(
           missingFields: ['time'],
         };
 
-        const dateDisplay = formatDateForDisplay(parsedDate, lang);
+        const dateDisplay = formatDateForDisplay(parsedDate, lang, zone);
         return {
           success: true,
           response: t('booking.create.availableSlots', lang, { date: dateDisplay }),
@@ -2081,7 +2086,7 @@ async function executeBookingCreate(
           },
         };
       } else {
-        const dateDisplay = formatDateForDisplay(parsedDate, lang);
+        const dateDisplay = formatDateForDisplay(parsedDate, lang, zone);
         return {
           success: true,
           response: t('booking.create.noAvailableSlots', lang, { date: dateDisplay }),
@@ -2093,8 +2098,8 @@ async function executeBookingCreate(
     // Step 4: All fields collected - show confirmation or create if already confirmed
     if (contact && selectedService && date && time) {
       // Parse the date and time
-      const parsedDate = parseRelativeDate(date);
-      const startDateTime = combineDateAndTime(parsedDate, time);
+      const parsedDate = parseRelativeDate(date, zone);
+      const startDateTime = combineDateAndTime(parsedDate, time, zone);
       const durationMinutes = selectedService.duration || 60;
       const endDateTime = new Date(startDateTime.getTime() + durationMinutes * 60 * 1000);
 
@@ -2112,7 +2117,9 @@ async function executeBookingCreate(
           suggestions: getSuggestionsLocalized(['suggestion.openCalendar', 'suggestion.scheduleTomorrow'], lang),
           action: {
             type: 'open_booking_calendar',
-            date: parsedDate.toISOString().split('T')[0],
+            // The business's day, not the UTC day of the business's midnight —
+            // which is the day before for any zone ahead of UTC.
+            date: businessDateKey(parsedDate, zone),
           },
         };
       }
@@ -2137,7 +2144,7 @@ async function executeBookingCreate(
           client_phone: ('phone' in contactData ? contactData.phone : null) || null,
           start_time: startDateTime.toISOString(),
           end_time: endDateTime.toISOString(),
-          timezone: 'UTC',
+          timezone: zone,
           status: 'confirmed',
           booking_source: 'chat',
         });
@@ -2146,7 +2153,7 @@ async function executeBookingCreate(
           throw new Error(bookingResult.message || bookingResult.error || 'Failed to create booking');
         }
 
-        const dateDisplay = formatDateForDisplay(parsedDate, lang);
+        const dateDisplay = formatDateForDisplay(parsedDate, lang, zone);
         const timeDisplay = formatTimeForDisplay(time, lang);
         const clientDisplay = contactData.first_name || contactName;
 
@@ -2164,7 +2171,7 @@ async function executeBookingCreate(
       }
 
       // Show confirmation preview
-      const dateDisplay = formatDateForDisplay(parsedDate, lang);
+      const dateDisplay = formatDateForDisplay(parsedDate, lang, zone);
       const timeDisplay = formatTimeForDisplay(time, lang);
       const preview = formatFullPreview('booking.create', {
         contact_name: contact.name || `${contact.first_name || ''} ${contact.last_name || ''}`.trim(),
@@ -2370,9 +2377,16 @@ async function executeBookingCancel(
     }
 
     // Try to find bookings matching the criteria (via the repository)
-    const parsedCancelDate = date ? parseRelativeDate(date) : null;
+    /*
+     * The day to search, bounded by the BUSINESS's midnight. Built from the
+     * server's calendar, "cancel Sarah's booking tomorrow" searched a 24-hour
+     * window offset by the server's distance from the business — so it missed
+     * the appointment at one end and could match the next day's at the other.
+     */
+    const cancelZone = await resolveChatTimezone(context.userId);
+    const parsedCancelDate = date ? parseRelativeDate(date, cancelZone) : null;
     const cancelDayStart = parsedCancelDate
-      ? new Date(parsedCancelDate.getFullYear(), parsedCancelDate.getMonth(), parsedCancelDate.getDate())
+      ? businessInstant(businessDateKey(parsedCancelDate, cancelZone), '00:00', cancelZone)
       : null;
     const { data: bookings } = await schedulingBookingRepository.list(context.userId, {
       status: 'confirmed',
@@ -2414,9 +2428,14 @@ async function executeBookingCancel(
     // Single booking - show confirmation via delete dialog
     const booking = bookings[0];
     const clientName = `${booking.client_first_name || ''} ${booking.client_last_name || ''}`.trim() || t('booking.client.default', lang);
-    const dateDisplay = formatDateForDisplay(new Date(booking.start_time), lang);
+    /* The cancellation prompt names the appointment back to the owner, so it
+       must read on the business's clock — otherwise chat asks them to confirm
+       cancelling an hour they never booked. */
+    const dateDisplay = formatDateForDisplay(new Date(booking.start_time), lang, cancelZone);
     const locale = lang === 'he' ? 'he-IL' : lang === 'es' ? 'es-ES' : 'en-US';
-    const timeDisplay = new Date(booking.start_time).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+    const timeDisplay = new Date(booking.start_time).toLocaleTimeString(locale, {
+      hour: '2-digit', minute: '2-digit', timeZone: cancelZone
+    });
 
     return {
       success: true,
@@ -2445,7 +2464,15 @@ async function getAvailableTimeSlots(
   userId: string,
   date: Date,
   durationMinutes: number,
-  lang: string
+  lang: string,
+  /*
+   * The BUSINESS's zone. Opening hours are wall clocks the owner typed, and
+   * every boundary below — which weekday it is, where the day starts and ends,
+   * what hour a slot is — was measured on the SERVER's clock instead. Chat
+   * offered a New York business its UTC 09:00, which is 05:00 in its own
+   * reception, and checked those slots against the wrong day's bookings.
+   */
+  timezone: string = 'UTC'
 ): Promise<string[]> {
   try {
     // Get business availability from profile
@@ -2456,7 +2483,8 @@ async function getAvailableTimeSlots(
       .single();
 
     // Default business hours if no availability set
-    const dayOfWeek = date.getDay();
+    const dayKey = businessDateKey(date, timezone);
+    const dayOfWeek = new Date(`${dayKey}T12:00:00Z`).getUTCDay();
     const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
     const dayName = dayNames[dayOfWeek];
 
@@ -2478,11 +2506,12 @@ async function getAvailableTimeSlots(
       }
     }
 
-    // Get existing bookings for this date
-    const startOfDay = new Date(date);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(date);
-    endOfDay.setHours(23, 59, 59, 999);
+    // Get existing bookings for this date — the business's day, midnight to
+    // midnight where it is, not a 24-hour window offset by the server's zone.
+    const startOfDay = businessInstant(dayKey, '00:00', timezone);
+    const endOfDay = new Date(
+      businessInstant(shiftBusinessDateKey(dayKey, 1), '00:00', timezone).getTime() - 1
+    );
 
     const { data: existingBookings } = await schedulingBookingRepository.list(userId, {
       status: ['confirmed', 'completed'],
@@ -2497,12 +2526,18 @@ async function getAvailableTimeSlots(
 
     for (let hour = startHour; hour < endHour; hour++) {
       for (let minute = 0; minute < 60; minute += slotInterval) {
-        const slotStart = new Date(date);
-        slotStart.setHours(hour, minute, 0, 0);
+        /* The business's wall clock, as an instant. */
+        const slotStart = businessInstant(
+          dayKey,
+          `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+          timezone
+        );
         const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60 * 1000);
 
-        // Check if slot end is within business hours
-        if (slotEnd.getHours() > endHour || (slotEnd.getHours() === endHour && slotEnd.getMinutes() > 0)) {
+        // Whether the slot ends after closing, compared as wall-clock minutes.
+        // Reading `slotEnd`'s hours gave the server's, which let slots run past
+        // closing time and cut others short.
+        if (hour * 60 + minute + durationMinutes > endHour * 60) {
           continue;
         }
 
@@ -2519,6 +2554,7 @@ async function getAvailableTimeSlots(
             hour: '2-digit',
             minute: '2-digit',
             hour12: lang !== 'he',
+            timeZone: timezone,
           });
           slots.push(timeStr);
         }
@@ -2532,11 +2568,39 @@ async function getAvailableTimeSlots(
   }
 }
 
+/**
+ * The business's timezone, for turning what the owner typed into an instant.
+ *
+ * Chat is the one booking surface with no form and no widget: "book Sarah
+ * tomorrow at 3" is resolved entirely server-side, so without this every date
+ * and hour in it was read on the SERVER's clock — UTC on Vercel. A New York
+ * owner asking for 3pm got 15:00 UTC, four hours earlier than they meant, and
+ * the booking was then stamped `'UTC'` so the client's confirmation agreed
+ * with it.
+ */
+async function resolveChatTimezone(userId: string): Promise<string> {
+  try {
+    const { data } = await supabaseServer
+      .from('user_preferences')
+      .select('timezone')
+      .eq('user_id', userId)
+      .maybeSingle();
+    return safeTimezone(data?.timezone);
+  } catch (err) {
+    logger.warn({ err, userId }, 'Could not resolve the business timezone for chat; falling back to UTC');
+    return 'UTC';
+  }
+}
+
 // Helper: Parse relative dates like "tomorrow", "next Monday"
-function parseRelativeDate(dateStr: string): Date {
+// `timezone` is the BUSINESS's: "today" must mean the owner's today, not the
+// server's. Defaulted so the remaining callers keep their previous behaviour
+// until they are threaded too.
+function parseRelativeDate(dateStr: string, timezone: string = 'UTC'): Date {
   const lower = dateStr.toLowerCase().trim();
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  /* Midnight of the business's today, as an instant. */
+  const today = businessInstant(businessDateKey(now, timezone), '00:00', timezone);
 
   // Hebrew day names mapping
   const hebrewDays: Record<string, number> = {
@@ -2571,7 +2635,10 @@ function parseRelativeDate(dateStr: string): Date {
   // Check for day names
   for (const [dayName, dayNum] of Object.entries({ ...hebrewDays, ...englishDays })) {
     if (lower.includes(dayName)) {
-      const currentDay = today.getDay();
+      /* Which weekday the business is on. `today` is now an instant — business
+         midnight — and reading its day on the server's clock lands on the day
+         before for any zone far enough ahead of UTC. */
+      const currentDay = new Date(`${businessDateKey(today, timezone)}T12:00:00Z`).getUTCDay();
       let daysToAdd = dayNum - currentDay;
       if (daysToAdd <= 0) daysToAdd += 7; // Next occurrence
       return new Date(today.getTime() + daysToAdd * 24 * 60 * 60 * 1000);
@@ -2587,20 +2654,27 @@ function parseRelativeDate(dateStr: string): Date {
   return today;
 }
 
-// Helper: Combine date and time into a single Date object
-function combineDateAndTime(date: Date, timeStr: string): Date {
+/**
+ * Helper: the owner's "3pm" on that day, as the instant the business means.
+ *
+ * `setHours` wrote the hour on the SERVER's clock, so the appointment was
+ * created at 15:00 UTC no matter where the business was.
+ */
+function combineDateAndTime(date: Date, timeStr: string, timezone: string = 'UTC'): Date {
   const [hours, minutes] = timeStr.split(':').map(Number);
-  const combined = new Date(date);
-  combined.setHours(hours || 9, minutes || 0, 0, 0);
-  return combined;
+  const hhmm = `${String(hours || 9).padStart(2, '0')}:${String(minutes || 0).padStart(2, '0')}`;
+  return businessInstant(businessDateKey(date, timezone), hhmm, timezone);
 }
 
-// Helper: Format date for display
-function formatDateForDisplay(date: Date, lang: string): string {
+// Helper: Format date for display, on the business's calendar.
+function formatDateForDisplay(date: Date, lang: string, timezone: string = 'UTC'): string {
   const options: Intl.DateTimeFormatOptions = {
     weekday: 'long',
     month: 'short',
     day: 'numeric',
+    // Without this the confirmation sentence named the server's day, so chat
+    // could answer "booked for Tuesday" about a Monday appointment.
+    timeZone: timezone,
   };
   const locale = lang === 'he' ? 'he-IL' : lang === 'es' ? 'es-ES' : 'en-US';
   return date.toLocaleDateString(locale, options);
@@ -3105,10 +3179,11 @@ async function executeTaskCreate(
         }
       }
 
-      // Parse due date if provided
+      // Parse due date if provided, on the business's calendar: "due tomorrow"
+      // means the owner's tomorrow, not the server's.
       let dueDate: string | null = null;
       if (entities.due_date) {
-        const parsed = parseRelativeDate(entities.due_date);
+        const parsed = parseRelativeDate(entities.due_date, await resolveChatTimezone(context.userId));
         if (parsed) {
           dueDate = parsed.toISOString();
         }

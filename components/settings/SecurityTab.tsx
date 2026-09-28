@@ -1,5 +1,12 @@
 import React, { useState } from 'react'
 import { useAuth } from '@/components/UserProvider'
+import { changePassword } from '@/lib/client/change-password'
+import {
+  usesOAuthSignIn,
+  hasBothSignInMethods,
+  linkedOAuthLabel,
+  linkedProviderAccountUrl,
+} from '@/lib/authIdentities'
 import { supabase } from '@/lib/supabaseClient'
 import { DangerZonePanel } from '@/components/business-os/purge/DangerZonePanel'
 import { createLogger } from '@/lib/logger'
@@ -121,6 +128,20 @@ export default function SecurityTab() {
     }
   }
 
+  /*
+   * An account that signs in with Google has no password here, so there is
+   * nothing to change: `updateUser({ password })` would ADD one, silently, and
+   * would not touch the Google password the owner came here to rotate.
+   *
+   * An account with BOTH also gets the explanation rather than the form: see
+   * `usesOAuthSignIn`. The form could not change the credential they actually
+   * sign in with, and "forgot password" still reaches the one it could.
+   */
+  const signsInWithProvider = usesOAuthSignIn(user)
+  const signsInWithBoth = hasBothSignInMethods(user)
+  const providerName = linkedOAuthLabel(user)
+  const providerSecurityUrl = linkedProviderAccountUrl(user)
+
   const handlePasswordChange = async () => {
     if (!passwordForm.currentPassword || !passwordForm.newPassword) {
       setErrorMessage('Please fill in all password fields.')
@@ -141,36 +162,26 @@ export default function SecurityTab() {
       setSuccessMessage('')
       setErrorMessage('')
 
-      const { error } = await supabase.auth.updateUser({
-        password: passwordForm.newPassword
-      })
+      /*
+       * Through the API, never `supabase.auth.updateUser` from here.
+       * `updateUser` does not take the current password and does not check
+       * one, so the field above was decoration: any characters in it changed
+       * the password.
+       *
+       * The audit entry is written by the route too. It used to be posted from
+       * here with the user id in an `x-user-id` header — a value the browser
+       * chooses, so the record named whoever the caller said it was. The route
+       * takes it from the session instead, and records failed attempts, which
+       * a client that only runs on success never could.
+       */
+      const result = await changePassword(
+        passwordForm.currentPassword,
+        passwordForm.newPassword
+      )
 
-      if (error) throw error
-
-      // AUDIT TRAIL: Log password change
-      try {
-        await fetch('/api/audit/log', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-user-id': user?.id || ''
-          },
-          body: JSON.stringify({
-            action: 'USER_PASSWORD_CHANGED',
-            entityType: 'user',
-            entityId: user?.id,
-            userId: user?.id,
-            resourceName: user?.email || 'User Account',
-            details: {
-              timestamp: new Date().toISOString(),
-              method: 'user_initiated'
-            },
-            severity: 'critical',
-            complianceFlags: ['SOC2', 'GDPR']
-          })
-        });
-      } catch (auditError) {
-        logger.error({ err: auditError }, 'Audit logging failed (non-blocking)');
+      if (!result.success) {
+        setErrorMessage(result.error ?? 'Failed to change password. Please try again.')
+        return
       }
 
       setSuccessMessage('Password updated successfully!')
@@ -322,8 +333,41 @@ export default function SecurityTab() {
         </div>
 
         <div className="space-y-3">
-          {/* Change Password Section */}
+          {/* Change Password — or, for a Google account, why there is none */}
           <div className="p-4 rounded-xl bg-gradient-to-br from-gray-50 to-white border border-gray-200/50 hover:shadow-md transition-all duration-300">
+            {signsInWithProvider ? (
+              <div>
+                <h4 className="font-semibold text-gray-900 text-sm mb-0.5">
+                  You sign in with {providerName}
+                </h4>
+                <p className="text-xs text-gray-600">
+                  {signsInWithBoth ? (
+                    <>
+                      Your {providerName} password is managed at {providerName}, not here. This
+                      account also has an older password of its own from before you linked{' '}
+                      {providerName}; if you ever need it, use &ldquo;Forgot password&rdquo; on
+                      the sign-in page to set a new one.
+                    </>
+                  ) : (
+                    <>
+                      Your password lives with {providerName}, not here, so there is nothing to
+                      change on this page.
+                    </>
+                  )}
+                </p>
+                {providerSecurityUrl && (
+                  <a
+                    href={providerSecurityUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block text-xs text-indigo-600 underline mt-2"
+                  >
+                    Manage it in your {providerName} account
+                  </a>
+                )}
+              </div>
+            ) : (
+            <>
             <div className="mb-3">
               <h4 className="font-semibold text-gray-900 text-sm mb-0.5">Change Password</h4>
               <p className="text-xs text-gray-600">Update your account password</p>
@@ -404,6 +448,8 @@ export default function SecurityTab() {
                 </button>
               </div>
             </div>
+            </>
+            )}
           </div>
         </div>
       </div>

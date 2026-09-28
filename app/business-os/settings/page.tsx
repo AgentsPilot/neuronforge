@@ -3,6 +3,13 @@
 import React, { useState, useEffect, useMemo, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
+import { changePassword } from '@/lib/client/change-password';
+import {
+  usesOAuthSignIn,
+  hasBothSignInMethods,
+  linkedOAuthLabel,
+  linkedProviderAccountUrl,
+} from '@/lib/authIdentities';
 import { supabase } from '@/lib/supabaseClient';
 import { signOutUser } from '@/lib/client/auth-actions';
 import { marketingLogoutUrl } from '@/lib/utils/marketingUrl';
@@ -13,7 +20,6 @@ import {
   DollarSign,
   Clock,
   Lock,
-  Bell,
   Download,
   Trash2,
   ChevronRight,
@@ -29,7 +35,6 @@ import {
   LogOut,
   MailCheck,
 } from 'lucide-react';
-import { LeadNotificationToggles } from '@/components/business-os/settings/LeadNotificationToggles';
 import { MarketingConsentPanel } from '@/components/business-os/settings/MarketingConsentPanel';
 import { ErasureRequestContent } from '@/components/business-os/purge/DangerZonePanel';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -49,6 +54,28 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
+
+/**
+ * Scroll a deep-linked settings section into view, clear of the sticky header.
+ *
+ * Returns the timer so the caller can cancel it on unmount. Shared, because a
+ * second copy of this is how the offset drifts out of step and one entry point
+ * starts landing under the header.
+ */
+function scrollToSection(section: string): ReturnType<typeof setTimeout> {
+  return setTimeout(() => {
+    const target = document.getElementById(`settings-section-${section}`);
+    if (!target) return;
+
+    // Offset by the sticky header, which would otherwise cover the section
+    // heading the reader was sent here to find.
+    const header = document.querySelector('.sticky');
+    const headerHeight = header ? header.getBoundingClientRect().height : 0;
+    const top = target.getBoundingClientRect().top + window.scrollY - headerHeight - 12;
+
+    window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
+  }, 100);
+}
 
 function BusinessOSSettingsContent() {
   const router = useRouter();
@@ -127,25 +154,30 @@ function BusinessOSSettingsContent() {
       return;
     }
 
-    if (requested !== 'password' && requested !== 'preferences') return;
+    /*
+     * `timezone` scrolls but expands nothing: the picker is not inside a
+     * collapsible section, it sits in the profile block above them. Calling
+     * `setExpandedSection('timezone')` would collapse whichever section was
+     * open and match nothing, so it is handled before that.
+     */
+    if (requested === 'timezone') {
+      scrollToSection('timezone');
+      return;
+    }
+
+    /*
+     * `preferences` was accepted here too, for the notification section. That
+     * section is gone, so expanding it would collapse whichever section the owner
+     * had open and scroll to an anchor that no longer exists. An old email link
+     * to `?section=preferences` now just opens this page, unchanged.
+     */
+    if (requested !== 'password') return;
 
     setExpandedSection(requested);
 
     // After paint, so the section has rendered its expanded height and the
     // scroll lands on the open panel rather than where it used to be.
-    const timer = setTimeout(() => {
-      const target = document.getElementById(`settings-section-${requested}`);
-      if (!target) return;
-
-      // Offset by the sticky header, which would otherwise cover the section
-      // heading the reader was sent here to find.
-      const header = document.querySelector('.sticky');
-      const headerHeight = header ? header.getBoundingClientRect().height : 0;
-      const top = target.getBoundingClientRect().top + window.scrollY - headerHeight - 12;
-
-      window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
-    }, 100);
-
+    const timer = scrollToSection(requested);
     return () => clearTimeout(timer);
   }, [searchParams, loading, openConfiguration]);
 
@@ -297,6 +329,44 @@ function BusinessOSSettingsContent() {
     }
   };
 
+  /*
+   * Anyone who signs in with a provider gets an explanation instead of the form.
+   * See `usesOAuthSignIn` for why that includes an account which also has a
+   * password: the form cannot change the credential they actually use, and
+   * "forgot password" still reaches the one it can.
+   *
+   * `hasBothSignInMethods` only decides which wording the explanation gets.
+   */
+  const signsInWithProvider = usesOAuthSignIn(user);
+  const signsInWithBoth = hasBothSignInMethods(user);
+  const providerName = linkedOAuthLabel(user);
+  const providerSecurityUrl = linkedProviderAccountUrl(user);
+
+  /** The "you sign in with Google" block, worded by whichever state we are in. */
+  const providerNotice = (titleKey: string, descKey: string) => (
+    <div className="p-4 flex items-start gap-3">
+      <Lock className="w-5 h-5 text-[var(--v2-text-muted)] shrink-0 mt-0.5" />
+      <div className="space-y-1">
+        <p className="text-sm text-[var(--v2-text-primary)]">
+          {t(titleKey, { provider: providerName ?? '' })}
+        </p>
+        <p className="text-xs text-[var(--v2-text-secondary)]">
+          {t(descKey, { provider: providerName ?? '' })}
+        </p>
+        {providerSecurityUrl && (
+          <a
+            href={providerSecurityUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block text-xs text-[var(--v2-primary)] underline pt-1"
+          >
+            {t('settings.security.provider_manage', { provider: providerName ?? '' })}
+          </a>
+        )}
+      </div>
+    </div>
+  );
+
   const handlePasswordChange = async () => {
     if (!passwordForm.current || !passwordForm.new) {
       setErrorMessage(t('settings.security.password_required'));
@@ -315,8 +385,21 @@ function BusinessOSSettingsContent() {
       setChangingPassword(true);
       setErrorMessage('');
 
-      const { error } = await supabase.auth.updateUser({ password: passwordForm.new });
-      if (error) throw error;
+      /*
+       * Through the API, never `supabase.auth.updateUser` from here.
+       * `updateUser` does not take the current password and does not check
+       * one, so the field above was decoration: any characters in it changed
+       * the password. The route verifies it and audits the attempt.
+       */
+      const result = await changePassword(passwordForm.current, passwordForm.new);
+
+      if (!result.success) {
+        // The server's message is already written for the person reading it,
+        // and says something the generic key cannot — which credential was
+        // wrong, or that this account has no password at all.
+        setErrorMessage(result.error ?? t('settings.security.password_error'));
+        return;
+      }
 
       setSuccessMessage(t('settings.security.password_updated'));
       setPasswordForm({ current: '', new: '', confirm: '' });
@@ -830,8 +913,15 @@ function BusinessOSSettingsContent() {
             )}
           </div>
 
-          {/* Timezone */}
-          <div className="relative">
+          {/*
+            Timezone.
+
+            Carries an id because the readiness gate links straight here: a
+            missing timezone blocks publishing a booking surface, and the Fix
+            button has to land on the control that clears it rather than on a
+            page the owner then has to search.
+          */}
+          <div className="relative" id="settings-section-timezone">
             <button
               onClick={() => setOpenDropdown(openDropdown === 'timezone' ? null : 'timezone')}
               className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors"
@@ -891,30 +981,22 @@ function BusinessOSSettingsContent() {
         {/* Account Actions */}
         <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] divide-y divide-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-card)' }}>
           {/*
-            How this business hears about a new enquiry.
-            
-            Here rather than on the dashboard card, because the card renders
-            only when somebody is waiting — and a business with no open
-            enquiries could otherwise never reach the switch that decides what
-            happens to the next one.
+            The enquiry notification section used to be here.
+
+            Both of its switches now live next to the thing they are about: the
+            owner alert on the "reply to new enquiries" advisor card, and the
+            morning briefing on the briefing card. The reasoning that put them
+            here was that a dashboard card renders only when somebody is waiting:
+            true of the briefing card, but NOT of the enquiries automation, which
+            has no `requires` and is offered with zero waiting, so it is always
+            reachable.
+
+            No signpost is left at `#settings-section-preferences`. New mail points
+            at the dashboard instead (see `LeadAlertService` and
+            `DailyBriefingDispatchService`); mail already delivered still links to
+            `?section=preferences`, which now lands on this page with nothing
+            expanded rather than on a row explaining where the switch went.
           */}
-          <div id="settings-section-preferences">
-            <button
-              onClick={() => setExpandedSection(expandedSection === 'preferences' ? null : 'preferences')}
-              className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors"
-            >
-              <div className="flex items-center gap-3">
-                <Bell className="w-5 h-5 text-[var(--v2-text-muted)]" />
-                <span className="text-sm text-[var(--v2-text-primary)]">{t('leads.settings_title')}</span>
-              </div>
-              <ChevronRight className={`w-4 h-4 text-[var(--v2-text-muted)] transition-transform ${expandedSection === 'preferences' ? 'rotate-90' : ''}`} />
-            </button>
-            {expandedSection === 'preferences' && (
-              <div className="px-4 pb-4 space-y-4">
-                <LeadNotificationToggles />
-              </div>
-            )}
-          </div>
 
           {/* Marketing consent */}
           <div id="settings-section-consent">
@@ -924,7 +1006,7 @@ function BusinessOSSettingsContent() {
             >
               <div className="flex items-center gap-3">
                 <MailCheck className="w-5 h-5 text-[var(--v2-text-muted)]" />
-                <span className="text-sm text-[var(--v2-text-primary)]">Marketing permission</span>
+                <span className="text-sm text-[var(--v2-text-primary)]">{t('consent.title')}</span>
               </div>
               <ChevronRight className={`w-4 h-4 text-[var(--v2-text-muted)] transition-transform ${expandedSection === 'consent' ? 'rotate-90' : ''}`} />
             </button>
@@ -935,7 +1017,23 @@ function BusinessOSSettingsContent() {
             )}
           </div>
 
-          {/* Change Password */}
+          {/*
+            A provider linked at all → the notice, no form. The wording differs
+            by whether a password also exists, so an owner who has one is told
+            how to reset it rather than left to wonder where the form went.
+          */}
+          {signsInWithProvider ? (
+            signsInWithBoth
+              ? providerNotice(
+                  'settings.security.provider_also_signin',
+                  'settings.security.provider_also_desc'
+                )
+              : providerNotice(
+                  'settings.security.provider_signin',
+                  'settings.security.provider_signin_desc'
+                )
+          ) : (
+          <>
           <div>
             <button
               onClick={() => setExpandedSection(expandedSection === 'password' ? null : 'password')}
@@ -993,6 +1091,8 @@ function BusinessOSSettingsContent() {
               </div>
             )}
           </div>
+          </>
+          )}
 
           {/* Export Data */}
           <button

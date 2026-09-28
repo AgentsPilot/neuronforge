@@ -584,3 +584,169 @@ describe('payment plan periods', () => {
     expect(items[0].title).toBe('Consultation');
   });
 });
+
+describe('who the row is for', () => {
+  /*
+   * The orders list has a client column. It used to read "—" whenever neither
+   * the invoice nor the payment happened to carry a name — while the booking
+   * row itself had been holding one all along, captured by the public widget
+   * before any contact existed.
+   */
+
+  it('prefers a name an entry knows', () => {
+    const [item] = buildMoneyItems({
+      bookings: [booking({ clientName: 'From The Booking' })],
+      invoices: [invoice({ client_name: 'From The Invoice' })],
+      transactions: [],
+    });
+    expect(item.contactName).toBe('From The Invoice');
+  });
+
+  it('falls back to the name on the booking when the invoice has none', () => {
+    const [item] = buildMoneyItems({
+      bookings: [booking({ clientName: 'Dana Levi' })],
+      invoices: [invoice({ client_name: null })],
+      transactions: [],
+    });
+    expect(item.contactName).toBe('Dana Levi');
+  });
+
+  it('falls back for a payment with no contact joined', () => {
+    const [item] = buildMoneyItems({
+      bookings: [booking({ clientName: 'Dana Levi' })],
+      invoices: [],
+      transactions: [transaction({ invoice_id: null, contact_id: null, contact: null })],
+    });
+    expect(item.contactName).toBe('Dana Levi');
+  });
+
+  it('is null when nothing anywhere knows a name', () => {
+    const [item] = buildMoneyItems({
+      bookings: [booking({ clientName: null })],
+      invoices: [invoice({ client_name: null })],
+      transactions: [],
+    });
+    expect(item.contactName).toBeNull();
+  });
+
+  it('treats a booking with blank name parts as unknown, not as a space', () => {
+    const [item] = buildMoneyItems({
+      bookings: [booking({ clientName: '' })],
+      invoices: [invoice({ client_name: null })],
+      transactions: [],
+    });
+    expect(item.contactName).toBeNull();
+  });
+});
+
+describe('a phase of a quoted job that nobody has billed', () => {
+  /*
+   * The bug: `SETTLED_PERIOD_STATUSES` treats anything not paid or cancelled as a
+   * debt, so every unbilled phase of every quoted job was reported as money the
+   * client owed. None of those clients were late — none had been invoiced. It put
+   * the whole remaining value of each job into the Outstanding card and into
+   * `plan_owed_amount`, which is the figure an owner uses to judge who is behind.
+   *
+   * The file's own rule, applied: `OUTSTANDING_STATUSES` already excludes a draft
+   * invoice because "nobody has been asked to pay them".
+   *
+   * Asserted as a DIFFERENCE rather than an absolute. The deposit invoice that
+   * gives the booking a row contributes its own figure, and pinning that number
+   * here would make these tests fail for reasons that have nothing to do with the
+   * rule under test.
+   */
+  const paidDeposit = {
+    id: 'p1',
+    installmentNumber: 1,
+    amount: 705,
+    currency: 'ILS',
+    dueDate: '2026-09-10',
+    status: 'paid',
+    paidAt: '2026-09-10',
+    transactionId: 'tx-a',
+    trigger: 'date',
+    invoiceId: 'inv-1',
+  };
+
+  const owedWith = (secondPeriod: Record<string, unknown>) => {
+    const items = buildMoneyItems({
+      bookings: [booking()],
+      invoices: [invoice({ id: 'inv-1', amount: 705 })],
+      transactions: [],
+      plansByBookingId: {
+        'bk-1': {
+          id: 'plan-1',
+          installmentCount: 2,
+          periodsPaid: 1,
+          status: 'active',
+          periods: [paidDeposit, secondPeriod] as never,
+        },
+      },
+    });
+    return outstandingOf(items[0]);
+  };
+
+  const phase = (over: Record<string, unknown> = {}) => ({
+    id: 'p2',
+    installmentNumber: 2,
+    amount: 940,
+    currency: 'ILS',
+    dueDate: null,
+    status: 'pending',
+    paidAt: null,
+    transactionId: null,
+    trigger: 'manual',
+    invoiceId: null,
+    ...over,
+  });
+
+  /** The deposit-only baseline, with nothing outstanding on the plan itself. */
+  const baseline = owedWith(phase({ status: 'cancelled' }));
+
+  it('adds nothing to what is owed', () => {
+    expect(owedWith(phase())).toBe(baseline);
+  });
+
+  it('starts counting the moment the phase is billed', () => {
+    // An invoice exists, so the client has been asked. That is a real debt.
+    expect(owedWith(phase({ invoiceId: 'inv-2' }))).toBe(baseline + 940);
+  });
+
+  it('still counts a DATED period with no invoice yet', () => {
+    /*
+     * Deliberately narrow. An instalment carries a date the client agreed to, so
+     * it is a receivable whether or not its invoice has been raised — and it will
+     * be, by `billDueDatedStages`, when the date arrives.
+     */
+    expect(owedWith(phase({ trigger: 'date', dueDate: '2026-10-10' }))).toBe(baseline + 940);
+  });
+
+  it('counts a period that names no trigger, as it always did', () => {
+    // `trigger` is optional on the type so an un-updated caller still compiles.
+    // Absent has to keep meaning "a debt", which is the column's own default.
+    const untagged = phase();
+    delete (untagged as Record<string, unknown>).trigger;
+    expect(owedWith(untagged)).toBe(baseline + 940);
+  });
+
+  it('keeps the totals card agreeing with the row', () => {
+    // One rule, two readers. They disagreed once before and the row stated a
+    // figure the card above it contradicted.
+    const items = buildMoneyItems({
+      bookings: [booking()],
+      invoices: [invoice({ id: 'inv-1', amount: 705 })],
+      transactions: [],
+      plansByBookingId: {
+        'bk-1': {
+          id: 'plan-1',
+          installmentCount: 3,
+          periodsPaid: 1,
+          status: 'active',
+          periods: [paidDeposit, phase(), phase({ id: 'p3', amount: 705 })] as never,
+        },
+      },
+    });
+
+    expect(totalMoney(items).outstanding).toBe(outstandingOf(items[0]));
+  });
+});

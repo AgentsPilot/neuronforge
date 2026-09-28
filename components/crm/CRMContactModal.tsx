@@ -159,10 +159,43 @@ export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpd
       const url = contact ? `/api/crm/contacts/${contact.id}` : '/api/crm/contacts';
       const method = contact ? 'PUT' : 'POST';
 
+      /*
+       * Empty optional fields are OMITTED, not sent as "".
+       *
+       * ─────────────────────────────────────────────────────────────────────
+       * `formData` starts every text field as `''`, and this posted the object
+       * verbatim. The API declares `source: z.string().min(1).max(50)
+       * .optional()` — and `optional()` permits UNDEFINED, not an empty string,
+       * so a contact added without picking a source chip was rejected:
+       *
+       *     "source: String must contain at least 1 character(s)"
+       *
+       * The owner saw "Invalid input" and no indication of which field, on a
+       * form where leaving the source blank is entirely reasonable.
+       *
+       * `source` is the one that was reported, but it is not alone: `first_name`
+       * and `stage` are also `min(1).optional()`, and `email` is
+       * `.email().optional()`. An empty string fails ALL of them, so a contact
+       * saved without an email failed exactly the same way.
+       *
+       * An empty optional means "not given", which on the wire is absence.
+       * `last_name` and `phone` are left alone — they accept `''` today, and
+       * changing whether they store empty or null is a data decision, not a
+       * validation fix.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      const OPTIONAL_TEXT_FIELDS = ['source', 'email', 'first_name', 'stage'] as const;
+      const payload: Record<string, unknown> = { ...formData };
+      for (const field of OPTIONAL_TEXT_FIELDS) {
+        if (typeof payload[field] === 'string' && (payload[field] as string).trim() === '') {
+          delete payload[field];
+        }
+      }
+
       const response = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload)
       });
 
       const data = await response.json();

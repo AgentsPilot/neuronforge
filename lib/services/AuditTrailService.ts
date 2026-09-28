@@ -518,14 +518,40 @@ export const AuditTrail = AuditTrailService.getInstance();
  * do, which is exactly that moment, and the flush it triggers gives the loop
  * more work — so the entries are written and the process then exits normally.
  *
- * Registered once, and only where `process` exists. It does NOT fire on
- * `process.exit()` or on a signal; those paths should call `shutdown()`, which
- * stops the timer and flushes explicitly.
+ * It does NOT fire on `process.exit()` or on a signal; those paths should call
+ * `shutdown()`, which stops the timer and flushes explicitly.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * GUARDED ON `globalThis`, NOT ON MODULE SCOPE.
+ *
+ * This ran bare at module scope under a comment claiming it was "registered
+ * once". That is true of ONE module instance — but Next re-evaluates modules on
+ * every Fast Refresh, and each evaluation ran it again. `process.once` still
+ * ADDS a listener on every call; `once` only means it removes itself after
+ * firing, which `beforeExit` never does during a dev session.
+ *
+ * So the count climbed with every recompile until Node warned:
+ *
+ *     MaxListenersExceededWarning: Possible EventEmitter memory leak detected.
+ *     11 exit listeners added to [process].
+ *
+ * The process object outlives the module registry, so the flag belongs on it
+ * too. A Symbol.for key rather than a plain property: it cannot collide with
+ * anything else parked on the global, and it is the same shape used for
+ * database clients that must survive hot reloads.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
+const AUDIT_FLUSH_REGISTERED = Symbol.for('agentpilot.auditTrail.beforeExitRegistered');
+
 if (typeof process !== 'undefined' && typeof process.once === 'function') {
-  process.once('beforeExit', () => {
-    void AuditTrail.flush();
-  });
+  const globalScope = globalThis as unknown as Record<symbol, boolean | undefined>;
+
+  if (!globalScope[AUDIT_FLUSH_REGISTERED]) {
+    globalScope[AUDIT_FLUSH_REGISTERED] = true;
+    process.once('beforeExit', () => {
+      void AuditTrail.flush();
+    });
+  }
 }
 
 // Export class for testing

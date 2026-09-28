@@ -43,8 +43,13 @@ const updateContactSchema = z.object({
    * business's own way of saying the relationship is over. So this is read as an
    * intent and resolved into a stage below, rather than being given a column of
    * its own that every contact query would then have to learn to filter.
+   *
+   * `true` is the same intent in reverse, and it is one the drawer could not
+   * express: the footer offered Deactivate to everybody, including people who
+   * were already deactivated, and pressing it moved them to the stage they were
+   * standing in. There was no way back short of picking a stage by hand.
    */
-  is_active: z.literal(false).optional()
+  is_active: z.boolean().optional()
 });
 
 export async function GET(
@@ -132,25 +137,52 @@ export async function PUT(
     const { is_active, ...fields } = validated;
     const updates: CRMContactUpdate = { ...fields };
 
-    if (is_active === false) {
-      const { data: retired } = await supabaseServer
+    if (is_active !== undefined) {
+      /*
+       * Both directions resolve by TYPE, for the same reason: the stage that
+       * means "no longer a client" and the stage that means "a client again"
+       * are named differently in every pipeline.
+       *
+       * Reactivating targets the business's PRIMARY CLIENT stage — someone
+       * brought back is a client again, not a lead to be qualified from the
+       * start. Falling back to the earliest stage that is not retired keeps a
+       * pipeline without that flag working.
+       */
+      const { data: allStages } = await supabaseServer
         .from('crm_pipeline_stages')
-        .select('stage_key, stage_type, position')
+        .select('stage_key, stage_type, position, is_primary_client_stage')
         .eq('user_id', user.id)
-        .in('stage_type', ['past_client', 'archived'])
         .order('position', { ascending: true });
 
-      const target =
-        retired?.find(stage => stage.stage_type === 'past_client') ??
-        retired?.find(stage => stage.stage_type === 'archived');
+      const retired = allStages?.filter(s =>
+        s.stage_type === 'past_client' || s.stage_type === 'archived'
+      );
+
+      const target = is_active === false
+        ? (retired?.find(stage => stage.stage_type === 'past_client') ??
+           retired?.find(stage => stage.stage_type === 'archived'))
+        : (allStages?.find(stage => stage.is_primary_client_stage) ??
+           allStages?.find(stage =>
+             stage.stage_type !== 'past_client' && stage.stage_type !== 'archived'
+           ));
 
       if (!target) {
         // Said plainly rather than failed: a business whose pipeline has no
         // closing stage has nowhere to put this person, and that is a thing to
         // fix in the pipeline, not an error in the request.
-        requestLogger.warn({ userId: user.id, contactId: id }, 'No past-client stage to deactivate into');
+        // Which stage is missing depends on the direction, and so does what
+        // the owner has to go and add.
+        requestLogger.warn(
+          { userId: user.id, contactId: id, isActive: is_active },
+          'No stage to resolve this activation change into'
+        );
         return NextResponse.json(
-          { success: false, error: 'Your pipeline has no stage for past clients. Add one, then try again.' },
+          {
+            success: false,
+            error: is_active === false
+              ? 'Your pipeline has no stage for past clients. Add one, then try again.'
+              : 'Your pipeline has no active stage to move this contact back into. Add one, then try again.',
+          },
           { status: 400 }
         );
       }

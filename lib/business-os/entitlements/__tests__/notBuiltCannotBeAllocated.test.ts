@@ -31,7 +31,6 @@ describe('a tier may not grant a capability that does not exist', () => {
   // One case per SHAPE, because "granting" means something different in each.
   const grants: Array<[string, string, unknown]> = [
     ['boolean', 'marketing.posts', true],
-    ['boolean (a stubbed sender)', 'payments.reminders', true],
     ['boolean (a builder with no dispatcher)', 'marketing.mass_email', true],
     ['add-on, included', 'website.custom_domain', 'included'],
     // `purchasable` is the one worth spelling out: it is an OFFER TO SELL

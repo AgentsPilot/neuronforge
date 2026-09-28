@@ -97,7 +97,7 @@ describe('hashFacts', () => {
 
   it('moves when an invoice goes unpaid', () => {
     const owed = withMoney({
-      owed: [{ name: 'John Dou', amount: 500, currency: 'USD', overdue: false }],
+      owed: [{ name: 'John Dou', amount: 500, currency: 'USD', overdue: false, dueDate: null }],
       totalOwed: 500,
     });
     expect(hash(owed)).not.toBe(hash(BASE));

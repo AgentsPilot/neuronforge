@@ -200,6 +200,14 @@ export async function POST(request: NextRequest) {
         source: 'app',
         initiatedBy: user.id,
         clientRequestId: body.client_request_id,
+        /*
+         * The whole-booking path was the one place `manual` was dropped, so a
+         * business with no payment account left could record a refund for a
+         * single payment and not for the booking its payments belong to — which
+         * is the button the dashboard offers on a cancelled booking. `refund`
+         * still refuses it per leg while an account is connected.
+         */
+        manual: body.manual,
       });
 
       auditTrail
