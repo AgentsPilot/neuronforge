@@ -34,7 +34,9 @@ import {
   Settings,
   LogOut,
   MailCheck,
+  CreditCard,
 } from 'lucide-react';
+import { PlanSection } from '@/components/business-os/settings/PlanSection';
 import { MarketingConsentPanel } from '@/components/business-os/settings/MarketingConsentPanel';
 import { ErasureRequestContent } from '@/components/business-os/purge/DangerZonePanel';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -171,7 +173,17 @@ function BusinessOSSettingsContent() {
      * had open and scroll to an anchor that no longer exists. An old email link
      * to `?section=preferences` now just opens this page, unchanged.
      */
-    if (requested !== 'password') return;
+    /*
+     * `plan` is main's, and kept: it is where the Founding Partner pill in the
+     * chrome points, so without it the pill lands somebody on settings with every
+     * section collapsed — a link that appears to do nothing.
+     *
+     * `preferences` is NOT kept, though main accepted it. The section it expands
+     * is the enquiry-notification one removed above, so accepting it would
+     * collapse whatever the owner had open and scroll to an anchor that no longer
+     * exists. Both sides of this merge said as much in their own comments.
+     */
+    if (requested !== 'password' && requested !== 'plan') return;
 
     setExpandedSection(requested);
 
@@ -980,6 +992,33 @@ function BusinessOSSettingsContent() {
           <div className="space-y-6">
         {/* Account Actions */}
         <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] divide-y divide-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+          {/*
+            Your plan — what this business is on and what it includes.
+
+            First in the list because it is the thing somebody opens settings to
+            check, and because a customer who cannot find what they are paying
+            for assumes the worst. Read-only in S-4a step 1: there is no way to
+            buy or change a plan here yet, and the section says so rather than
+            showing a button that does nothing.
+          */}
+          <div id="settings-section-plan">
+            <button
+              onClick={() => setExpandedSection(expandedSection === 'plan' ? null : 'plan')}
+              className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <CreditCard className="w-5 h-5 text-[var(--v2-text-muted)]" />
+                <span className="text-sm text-[var(--v2-text-primary)]">Your plan</span>
+              </div>
+              <ChevronRight className={`w-4 h-4 text-[var(--v2-text-muted)] transition-transform ${expandedSection === 'plan' ? 'rotate-90' : ''}`} />
+            </button>
+            {expandedSection === 'plan' && (
+              <div className="px-4 pb-4">
+                <PlanSection />
+              </div>
+            )}
+          </div>
+
           {/*
             The enquiry notification section used to be here.
 

@@ -34,7 +34,10 @@ This document explains the complete agent execution flow and where/how OpenAI SD
 
 #### 3. **Scheduled Execution (Cron)**
 **File**: [app/api/run-scheduled-agents/route.ts](app/api/run-scheduled-agents/route.ts)
-- **Trigger**: Vercel Cron (every 5 minutes)
+
+> ⚠️ **Schedule retired (2026-09-27, admin reorganisation slice 5, part A).** AgentsPilot is parked, and on Offir's instruction ("sunset them for now") `/api/run-scheduled-agents` is **no longer in `vercel.json`**, so scheduled agents do not run on a schedule. The route code is unchanged. To re-enable, add `{ "path": "/api/run-scheduled-agents", "schedule": "*/5 * * * *" }` back to `crons` in `vercel.json` (and update `lib/cron/__tests__/vercelCrons.test.ts`). The two other AgentsPilot schedules, `/api/cron/update-template-scores` (`0 3 * * *`) and `/api/cron/memory-consolidation` (`0 4 * * 0`), were retired the same way.
+
+- **Trigger**: Vercel Cron (every 5 minutes) — *retired 2026-09-27, see the note above*
 - **Flow**:
   1. Finds agents where `next_run < now` and `schedule_enabled = true`
   2. Creates execution record for each
@@ -496,3 +499,11 @@ export class AIAnalytics {
 5. **Build dashboard** to visualize costs and performance
 6. **Implement caching** for common prompts (optional)
 7. **Add streaming support** for long responses (optional)
+
+---
+
+## Change History
+
+| Date | Change | Details |
+|------|--------|---------|
+| 2026-09-27 | AgentsPilot cron schedules retired | `/api/run-scheduled-agents`, `/api/cron/update-template-scores` and `/api/cron/memory-consolidation` removed from `vercel.json` (admin reorganisation slice 5, part A; OQ-4). Code kept; re-enable by re-adding the `vercel.json` entry. See [ADMIN_MODULE_BOS_REORGANISATION_SLICE5_WORKPLAN.md](/docs/workplans/ADMIN_MODULE_BOS_REORGANISATION_SLICE5_WORKPLAN.md) §4 |

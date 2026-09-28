@@ -14,18 +14,22 @@ import {
   Settings,
   Gift,
   FileText,
-  Sliders,
   Brain,
   Activity,
   Palette,
-  Database,
   BarChart3,
   DollarSign,
   MessageCircle,
   HardDrive,
   UserCheck,
-  Sparkles
+  Sparkles,
+  Bot,
+  Layers,
+  HeartPulse,
+  Archive,
+  Clock
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
 interface AdminSidebarProps {
   isOpen: boolean;
@@ -35,162 +39,236 @@ interface AdminSidebarProps {
 interface NavItem {
   name: string;
   href: string;
-  icon: any;
+  icon: LucideIcon;
   description: string;
 }
 
 interface NavSection {
   title: string;
+  /**
+   * Kept in the data but not rendered. The routes still work by URL; the
+   * section just takes no sidebar space. Flip to false to bring it back.
+   */
+  hidden?: boolean;
   items: NavItem[];
 }
 
+/**
+ * Sidebar IA, slice 1 of ADMIN_MODULE_BOS_REORGANISATION_REQUIREMENT.md (§4, §7).
+ *
+ * Sections follow the job, not the system: Monitor, then Businesses, then
+ * Settings, with the parked AgentsPilot product last. Only labels and
+ * descriptions were changed; every href is the route it always was, so no
+ * bookmark breaks. Labels are honest about which product a page serves: a
+ * page that only configures or shows AgentsPilot says so.
+ *
+ * Slice 4 made `/admin` the Health landing and moved the old AgentsPilot
+ * dashboard to `/admin/platform-dashboard`, listed only in the hidden parked
+ * section (URL-only, user decision U-6).
+ *
+ * Exchange Rates is deliberately NOT listed (requirement §4.3): it writes to
+ * the database straight from the browser, so surfacing it would widen exposure.
+ *
+ * Pinned by `app/admin/components/__tests__/AdminSidebar.nav.test.ts` (section
+ * order, one entry per admin page) and by the per-page nav tests next to the
+ * Business OS pages.
+ */
 const navigationSections: NavSection[] = [
   {
-    title: 'Overview',
+    title: 'Monitor',
     items: [
       {
-        name: 'Dashboard',
+        name: 'Health',
         href: '/admin',
-        icon: LayoutDashboard,
-        description: 'Overview & Analytics'
+        icon: HeartPulse,
+        // Slice 4: the landing answers "is anything wrong?" in red / amber /
+        // grey tiles. The description must never claim that all is well.
+        description: 'Is anything wrong? Business OS'
       },
       {
-        name: 'Queue Monitor',
-        href: '/admin/queues',
-        icon: Server,
-        description: 'Job Processing'
-      },
-      {
-        name: 'System Flow',
-        href: '/admin/system-flow',
-        icon: Activity,
-        description: 'Live System Visualization'
-      },
-      {
-        name: 'Cost Analytics',
+        name: 'AI cost & usage',
         href: '/admin/analytics',
         icon: TrendingUp,
-        description: 'Usage & Performance'
+        description: 'Token spend, both products'
+      },
+      {
+        // Slice 5: the Business OS crons and the five send queues, read-only.
+        name: 'Scheduled jobs & queues',
+        href: '/admin/jobs-queues',
+        icon: Clock,
+        description: 'Business OS job runs and send queues'
+      },
+      {
+        name: 'Audit trail',
+        href: '/admin/audit-trail',
+        icon: FileText,
+        description: 'System event history'
+      },
+      {
+        name: 'Archiving',
+        href: '/admin/archiving',
+        icon: Archive,
+        description: 'Move old audit records out'
       },
     ]
   },
   {
-    title: 'Users',
+    title: 'Businesses',
     items: [
       {
-        name: 'User Management',
+        // Renamed in slice 2b, once each row shows its business and the detail
+        // opens on a Business OS panel. The list still holds every login
+        // (one login = one business); a login with no business says so.
+        name: 'Businesses',
         href: '/admin/users',
         icon: Users,
-        description: 'Platform Users'
+        description: 'Every login and its Business OS business'
       },
       {
-        name: 'Onboarding',
-        href: '/admin/onboarding',
-        icon: UserCheck,
-        description: 'Free Tier & User Status'
+        name: 'Plans & entitlements',
+        href: '/admin/business-os-tiers',
+        icon: Layers,
+        // Names the product so it is never mistaken for the AgentsPilot free
+        // tier on the onboarding page.
+        description: 'Business OS plans, read-only'
       },
       {
         name: 'Messages',
         href: '/admin/messages',
         icon: MessageSquare,
-        description: 'Contact Inquiries'
-      },
-      {
-        name: 'Reward Config',
-        href: '/admin/reward-config',
-        icon: Gift,
-        description: 'Credit Rewards Management'
+        description: 'Contact inquiries'
       },
     ]
   },
   {
-    title: 'AI System',
+    title: 'Settings',
     items: [
       {
-        name: 'Agent Generation',
+        name: 'Business OS AI',
+        href: '/admin/business-os-llm',
+        icon: Bot,
+        // FR-12: the page no longer mirrors the on/off switch (runbook §4 is
+        // the switch's door), so the previous description named a surface that
+        // is not there. Pinned by `business-os-llm/__tests__/nav.test.ts`,
+        // scoped to THIS entry, so it cannot drift back unnoticed.
+        description: 'Models & temperatures'
+      },
+      {
+        name: 'Model pricing & billing',
+        href: '/admin/system-config',
+        icon: DollarSign,
+        description: 'Pricing, grace period, boosts'
+      },
+      {
+        name: 'Free tier & onboarding',
+        href: '/admin/onboarding',
+        icon: UserCheck,
+        description: 'Free-tier grant & signups'
+      },
+      {
+        name: 'Admin users',
+        href: '/admin/settings',
+        icon: Settings,
+        description: 'Who can open admin'
+      },
+    ]
+  },
+  {
+    // Parked, not retired (decision D-3): every page still works at its old
+    // URL. Hidden from the sidebar (user decision after slice 1 review,
+    // 2026-09-25): twelve always-open items forced a scrollbar for pages
+    // nobody operates day to day.
+    title: 'AgentsPilot (parked)',
+    hidden: true,
+    items: [
+      {
+        // The old `/admin` landing, moved in slice 4 when Health replaced it.
+        // URL-only by user decision (U-6): this entry exists so every admin
+        // page keeps exactly one sidebar entry, and it is hidden with its
+        // section. Nothing else links to it.
+        name: 'Platform dashboard (legacy)',
+        href: '/admin/platform-dashboard',
+        icon: LayoutDashboard,
+        description: 'AgentsPilot totals (old landing)'
+      },
+      {
+        name: 'Agent execution queue',
+        href: '/admin/queues',
+        icon: Server,
+        description: 'AgentsPilot agent runs'
+      },
+      {
+        name: 'System flow',
+        href: '/admin/system-flow',
+        icon: Activity,
+        description: 'AgentsPilot pipeline explainer'
+      },
+      {
+        name: 'Agent generation',
         href: '/admin/agent-generation-config',
         icon: Sparkles,
-        description: 'Workflow Generation Models'
+        description: 'AgentsPilot workflow models'
       },
       {
         name: 'Orchestration',
         href: '/admin/orchestration-config',
         icon: Brain,
-        description: 'Routing & Workflows'
+        description: 'AgentsPilot model routing'
       },
       {
-        name: 'AIS Config',
+        name: 'AIS config',
         href: '/admin/ais-config',
         icon: Settings,
-        description: 'Intensity System Settings'
+        description: 'AgentsPilot agent intensity'
       },
       {
-        name: 'Memory & Insights',
+        // Not Business OS Insights: this is agent memory, hence the rename.
+        name: 'Agent memory config',
         href: '/admin/memory-config',
         icon: Brain,
-        description: 'Memory & Learning Config'
+        description: 'AgentsPilot memory settings'
       },
       {
-        name: 'Memory Dashboard',
+        name: 'Agent memory dashboard',
         href: '/admin/learning-system',
         icon: BarChart3,
-        description: 'Monitoring & ROI'
-      },
-    ]
-  },
-  {
-    title: 'Configuration',
-    items: [
-      {
-        name: 'System Config',
-        href: '/admin/system-config',
-        icon: DollarSign,
-        description: 'Pricing & Billing'
+        description: 'AgentsPilot memory & ROI'
       },
       {
-        name: 'Storage Config',
+        name: 'Reward config',
+        href: '/admin/reward-config',
+        icon: Gift,
+        description: 'AgentsPilot sharing rewards'
+      },
+      {
+        name: 'Storage config',
         href: '/admin/storage-config',
         icon: HardDrive,
-        description: 'User Storage Management'
+        description: 'AgentsPilot storage tiers'
       },
       {
-        name: 'Executions Config',
+        name: 'Executions config',
         href: '/admin/executions-config',
         icon: BarChart3,
-        description: 'User Execution Quotas'
+        description: 'AgentsPilot execution quotas'
       },
       {
-        name: 'UI Config',
+        name: 'UI config',
         href: '/admin/ui-config',
         icon: Palette,
-        description: 'Design System & Version'
+        description: 'AgentsPilot app UI version'
       },
       {
-        name: 'HelpBot Config',
+        name: 'HelpBot config',
         href: '/admin/helpbot-config',
         icon: MessageCircle,
-        description: 'AI Assistant Settings'
-      },
-    ]
-  },
-  {
-    title: 'Admin',
-    items: [
-      {
-        name: 'Audit Trail',
-        href: '/admin/audit-trail',
-        icon: FileText,
-        description: 'System Event History'
-      },
-      {
-        name: 'Settings',
-        href: '/admin/settings',
-        icon: Settings,
-        description: 'Admin Users & Access'
+        description: 'AgentsPilot help assistant'
       },
     ]
   },
 ];
+
+const visibleSections = navigationSections.filter((section) => !section.hidden);
 
 export default function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
   const pathname = usePathname();
@@ -246,7 +324,7 @@ export default function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
 
           {/* Navigation */}
           <nav className="flex-1 min-h-0 p-3 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
-            {navigationSections.map((section, sectionIndex) => (
+            {visibleSections.map((section, sectionIndex) => (
               <div key={section.title} className={sectionIndex > 0 ? 'mt-6' : ''}>
                 {/* Section Title */}
                 <div className="px-3 mb-2">
@@ -308,7 +386,7 @@ export default function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
                 </div>
 
                 {/* Separator between sections (except last one) */}
-                {sectionIndex < navigationSections.length - 1 && (
+                {sectionIndex < visibleSections.length - 1 && (
                   <div className="mt-4 px-3">
                     <div className="h-px bg-white/5" />
                   </div>
@@ -316,31 +394,6 @@ export default function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
               </div>
             ))}
           </nav>
-
-          {/* System Status */}
-          <div className="p-3 border-t border-white/10">
-            <div className="bg-slate-800/50 rounded-lg p-3">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
-                <span className="text-xs font-medium text-white">System</span>
-              </div>
-
-              <div className="space-y-1 text-xs text-slate-400">
-                <div className="flex justify-between">
-                  <span>API</span>
-                  <span className="text-green-400">OK</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Queue</span>
-                  <span className="text-green-400">OK</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>DB</span>
-                  <span className="text-green-400">OK</span>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     </>

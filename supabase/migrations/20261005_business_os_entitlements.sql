@@ -3,6 +3,24 @@
 -- Workplan: docs/workplans/business-os-subscription-entitlements.md §4.3 (component 1)
 -- Requirement: docs/requirements/BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md
 --
+-- ⚠️ THIS FILE WAS EDITED ON 2026-09-24, AFTER IT WAS APPLIED TO PRODUCTION.
+-- It no longer matches the SQL the live database received, so do not read it as
+-- a record of what ran there.
+--
+--   WHAT PRODUCTION GOT   this file as it stood on 2026-09-23, whose REVOKE
+--                         ENUMERATED seven privileges, plus the follow-up
+--                         supabase/migrations/20261009_business_os_entitlements_privilege_fix.sql
+--                         which repairs the two gaps that enumeration left.
+--   WHAT THIS FILE IS     the corrected version. A fresh apply of it alone
+--                         reaches the same end state, and does NOT need 20261009.
+--
+-- The two gaps were: `anon` and `authenticated` kept PostgreSQL 17 MAINTAIN,
+-- which the list predates, and `service_role` kept DELETE and TRUNCATE, which a
+-- GRANT naming three privileges never took away. Both are corrected below, each
+-- at the statement it belongs to. Check A4 in
+-- scripts/check-bos-entitlements-migration.sql is what found them, and is what
+-- tells you which state a given database is in.
+--
 -- ── WHAT THIS IS ────────────────────────────────────────────────────────────
 -- Three tables that record, per Business OS account, what the account is
 -- entitled to and what an admin has changed about it, plus the functions that
@@ -18,18 +36,18 @@
 -- transaction would hold those locks for the whole scan, so every onboarding
 -- message and every profile write in the product would block behind the deploy.
 -- So: this transaction is schema only, with a bounded `lock_timeout` so it fails
--- fast rather than queueing behind a long-running query; 20261005b does the
+-- fast rather than queueing behind a long-running query. 20261005b does the
 -- backfill in its own transaction afterwards.
 --
--- S-8(g)'s "no window where a new tenant is covered by neither" still holds:
+-- The S-8(g) guarantee, no window where a new tenant is covered by neither,
 -- the triggers are live when this transaction commits, so a tenant created
 -- between the two migrations gets its row from the trigger and the backfill is
 -- a no-op for it (`ON CONFLICT DO NOTHING`).
 --
 -- ── TENANCY AND PURGE ───────────────────────────────────────────────────────
--- Every table is keyed by the owner's `user_id` with an FK to `auth.users(id)`,
+-- Every table is keyed by the `user_id` of the owner with an FK to `auth.users(id)`,
 -- deliberately NOT to `business_profiles`. A Business OS "Reset / start over"
--- cascades from `business_profiles`; if these rows cascaded with it, an owner
+-- cascades from `business_profiles`. If these rows cascaded with it, an owner
 -- could reset their way into a fresh trial. The tables are registered as
 -- `never` in lib/business-os/purge/descriptors.ts and as person-owned in
 -- lib/business-os/businessOwnedTables.ts, in the same change as this file.
@@ -39,7 +57,7 @@
 -- `ended_reason` and the actor ids are admin-internal, and nothing reads these
 -- tables with a user session. Every read and write goes through the service
 -- role via lib/repositories/BusinessOs*Repository.ts. Creating no policy also
--- satisfies the admin-authz guard's R5 (no RLS policy may reference
+-- satisfies R5 of the admin-authz guard (no RLS policy may reference
 -- profiles.role).
 --
 -- ── NO TIER NAMES IN SQL ────────────────────────────────────────────────────
@@ -68,7 +86,7 @@ CREATE TABLE IF NOT EXISTS public.business_os_account_plans (
   -- Commercial assignment. Validated in the app against the tier config.
   tier                  text NULL,
   -- The matrix version this account subscribed at, for grandfathering.
-  -- 0 means "unversioned; treat as the version current at trial start", which is
+  -- 0 means "unversioned, so treat it as the version current at trial start", which is
   -- only meaningful while there is no tier — hence the CHECK below.
   plan_version          integer NOT NULL DEFAULT 0,
   -- A-1: the tier assignment has its OWN end date, mirroring cohort_expires_at.
@@ -76,7 +94,7 @@ CREATE TABLE IF NOT EXISTS public.business_os_account_plans (
   -- current-period end, so "cancelled at period end" needs no new column.
   tier_expires_at       timestamptz NULL,
 
-  -- Cohort assignment: 'trial' | 'champion'. Validated in the app.
+  -- Cohort assignment: the value trial or the value champion. Validated in the app.
   cohort                text NULL,
   -- NULL means OPEN-ENDED for a champion: free access with no end date. An
   -- admin must say so explicitly (the admin route requires the key), and the
@@ -97,16 +115,16 @@ CREATE TABLE IF NOT EXISTS public.business_os_account_plans (
   grace_ends_at         timestamptz NULL,
 
   -- Anniversary anchor for metered periods (Slice 3). Set when a tier or cohort
-  -- is assigned; becomes the Stripe billing-cycle anchor in Slice 4.
+  -- is assigned. Becomes the Stripe billing-cycle anchor in Slice 4.
   period_anchor         timestamptz NOT NULL DEFAULT now(),
 
-  -- How this row came to exist: 'onboarding_trigger' | 'profile_trigger' |
-  -- 'backfill' | 'admin' | 'admin_reset' | 'launch'. Free text on purpose: it is
+  -- How this row came to exist: onboarding_trigger, profile_trigger, backfill,
+  -- admin, admin_reset or launch. Free text on purpose: it is
   -- provenance for humans, not a control value.
   origin                text NOT NULL,
 
   -- Plain uuid with NO foreign key, deliberately (workplan RC-9). An FK with no
-  -- ON DELETE would block deleting an admin's auth user; ON DELETE SET NULL
+  -- ON DELETE would block deleting the auth user of an admin. ON DELETE SET NULL
   -- would erase the durable actor record that WC-7 requires precisely so that
   -- history does not depend on the audit queue surviving.
   updated_by_admin_id   uuid NULL,
@@ -114,7 +132,7 @@ CREATE TABLE IF NOT EXISTS public.business_os_account_plans (
   created_at            timestamptz NOT NULL DEFAULT now(),
   updated_at            timestamptz NOT NULL DEFAULT now(),
 
-  -- A tier always carries a real matrix version; version 0 with a tier would
+  -- A tier always carries a real matrix version. Version 0 with a tier would
   -- silently grandfather everything.
   CONSTRAINT business_os_account_plans_tier_versioned
     CHECK (tier IS NULL OR plan_version > 0),
@@ -129,7 +147,7 @@ CREATE TABLE IF NOT EXISTS public.business_os_account_plans (
 );
 
 COMMENT ON TABLE public.business_os_account_plans IS
-  'Business OS entitlement state per account (owner user_id). Lifecycle is derived from these timestamps at read time; no cron moves accounts between states. Never purged: see lib/business-os/purge/descriptors.ts.';
+  'Business OS entitlement state per account (owner user_id). Lifecycle is derived from these timestamps at read time, and no cron moves accounts between states. Never purged: see lib/business-os/purge/descriptors.ts.';
 COMMENT ON COLUMN public.business_os_account_plans.tier_expires_at IS
   'End of the tier assignment. NULL = no end date (forever). Stripe current-period end from Slice 4.';
 COMMENT ON COLUMN public.business_os_account_plans.cohort_expires_at IS
@@ -139,7 +157,7 @@ COMMENT ON COLUMN public.business_os_account_plans.cohort_expires_at IS
 -- durable record of who granted or revoked what, and why.
 CREATE TABLE IF NOT EXISTS public.business_os_entitlement_overrides (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  -- FK to the plan row (itself FK'd to auth.users) so PostgREST can embed the
+  -- FK to the plan row, which itself has an FK to auth.users, so PostgREST can embed the
   -- overrides in the plan select: one round trip for a resolution (T-5).
   user_id            uuid NOT NULL
                        REFERENCES public.business_os_account_plans(user_id) ON DELETE CASCADE,
@@ -189,7 +207,7 @@ CREATE INDEX IF NOT EXISTS business_os_entitlement_shadow_events_day_idx
   ON public.business_os_entitlement_shadow_events (day);
 
 COMMENT ON TABLE public.business_os_entitlement_shadow_events IS
-  'Aggregated shadow-mode decisions (one row per account/capability/surface/outcome/rule/day). Observability only; nothing reads it to make a decision.';
+  'Aggregated shadow-mode decisions (one row per account/capability/surface/outcome/rule/day). Observability only, and nothing reads it to make a decision.';
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- 2. RLS and privileges (RC-8)
@@ -203,20 +221,47 @@ ALTER TABLE public.business_os_account_plans             ENABLE ROW LEVEL SECURI
 ALTER TABLE public.business_os_entitlement_overrides     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.business_os_entitlement_shadow_events ENABLE ROW LEVEL SECURITY;
 
-REVOKE SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+-- REVOKE ALL, not a list. Corrected 2026-09-24 after the post-apply check A4
+-- FAILED on production: this used to enumerate SELECT, INSERT, UPDATE, DELETE,
+-- TRUNCATE, REFERENCES and TRIGGER, and PostgreSQL 17 added MAINTAIN (VACUUM,
+-- ANALYZE, REINDEX, CLUSTER, REFRESH MATERIALIZED VIEW, LOCK TABLE). The
+-- Supabase default privileges granted it to anon and authenticated at CREATE
+-- time, and the enumeration did not take it away, so both client roles kept
+-- `m` on all three tables.
+--
+-- THE TRAP IS THE ENUMERATION ITSELF. A database gains privileges over time,
+-- through a major upgrade or a vendor default, and a list written today silently
+-- stops covering them. REVOKE ALL cannot go stale. Enumerate the GRANT, which
+-- states what we intend, and never the REVOKE, which states what we forbid.
+--
+-- PUBLIC is named too: it has no entry here, and a REVOKE from a role with no
+-- entry is a no-op, so it costs nothing and closes the case where a later
+-- default grants one.
+REVOKE ALL
   ON TABLE public.business_os_account_plans,
            public.business_os_entitlement_overrides,
            public.business_os_entitlement_shadow_events
-  FROM anon, authenticated;
+  FROM PUBLIC, anon, authenticated;
 
--- …and state the positive side rather than inheriting it (QA Q-4). Supabase's
+-- …and state the positive side rather than inheriting it (QA Q-4). The Supabase
 -- ALTER DEFAULT PRIVILEGES normally grants `service_role` on new tables, but that
 -- depends on which role applies this DDL. If it were applied by a role with
 -- different defaults, `service_role` would end up with NO access and every
 -- repository call would fail with "permission denied" — weeks later, because
--- nothing reads these tables until components 3 and 4. DELETE is deliberately
--- not granted: nothing in this module deletes a plan row or an override (the
--- reset ends rows, it does not remove them).
+-- nothing reads these tables until components 3 and 4.
+--
+-- DELETE and TRUNCATE are deliberately not granted: nothing in this module
+-- deletes a plan row or an override, and the reset ENDS rows rather than
+-- removing them (M-2). Corrected 2026-09-24: a GRANT that omits them does not
+-- take away what the Supabase defaults already gave, so service_role held `d`
+-- and `D` on production while this comment claimed otherwise. The REVOKE below
+-- makes the claim true, and the GRANT after it states the positive side.
+REVOKE DELETE, TRUNCATE
+  ON TABLE public.business_os_account_plans,
+           public.business_os_entitlement_overrides,
+           public.business_os_entitlement_shadow_events
+  FROM service_role;
+
 GRANT SELECT, INSERT, UPDATE
   ON TABLE public.business_os_account_plans,
            public.business_os_entitlement_overrides,
@@ -259,7 +304,7 @@ AS $$
     SUM(GREATEST(COALESCE(r.items_total, 0), 0))::bigint                 AS items_total,
     MAX(GREATEST(COALESCE(r.items_max, 0), 0))::integer                  AS items_max,
     now()                                                                AS last_seen_at,
-    -- One sample is enough to find the request in the logs; take any non-null.
+    -- One sample is enough to find the request in the logs. Take any non-null.
     (array_agg(r.sample_correlation_id) FILTER (WHERE r.sample_correlation_id IS NOT NULL))[1]
   FROM jsonb_to_recordset(p_rows) AS r(
     user_id uuid, capability text, surface text, outcome text, rule text,
@@ -275,7 +320,11 @@ AS $$
         sample_correlation_id = COALESCE(EXCLUDED.sample_correlation_id, e.sample_correlation_id);
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.business_os_record_shadow_events(jsonb)
+-- REVOKE ALL rather than REVOKE EXECUTE, for the same reason as the tables
+-- above: EXECUTE is the only privilege a function can carry today, so the two
+-- are equivalent right now, and the list is the thing that goes stale. There is
+-- no gap here to fix — this is the habit, applied where it is still free.
+REVOKE ALL ON FUNCTION public.business_os_record_shadow_events(jsonb)
   FROM public, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.business_os_record_shadow_events(jsonb)
   TO service_role;
@@ -284,13 +333,13 @@ GRANT EXECUTE ON FUNCTION public.business_os_record_shadow_events(jsonb)
 --
 -- SECURITY DEFINER because both parent tables accept user INSERTs under RLS
 -- (`WITH CHECK (auth.uid() = user_id)`) while the plan table has no user write
--- policy at all, so the trigger must not run with the caller's rights.
+-- policy at all, so the trigger must not run with the rights of the caller.
 --
 -- Rules these two functions follow, none of them optional:
 --   (a) they read ONLY NEW.user_id, plus constants and now(). They never copy
 --       any other column of the parent row into the plan row.
---   (b) `search_path = ''` with every name schema-qualified.
---   (c) `lock_timeout = '2s'`: a lock on the plan table must never stall an
+--   (b) `search_path` set to the empty string, with every name schema-qualified.
+--   (c) a `lock_timeout` of 2s: a lock on the plan table must never stall an
 --       onboarding message or a profile write.
 --   (d) every error becomes a WARNING. Creating a plan row must not be able to
 --       fail a signup — the row is backfilled or created by an admin instead.
@@ -347,21 +396,21 @@ $$;
 
 -- A trigger function cannot be invoked through PostgREST, but EXECUTE is
 -- revoked anyway so the privilege list says what is intended.
-REVOKE EXECUTE ON FUNCTION public.business_os_plan_fact_onboarding()
+REVOKE ALL ON FUNCTION public.business_os_plan_fact_onboarding()
   FROM public, anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public.business_os_plan_fact_profile()
+REVOKE ALL ON FUNCTION public.business_os_plan_fact_profile()
   FROM public, anon, authenticated;
 
--- ── Admin reset: start an account's plan state over, in place ───────────────
+-- ── Admin reset: start the plan state of an account over, in place ──────────
 --
 -- WHY A FUNCTION. The customer-facing Reset and Purge must never touch these
 -- tables (that is what stops a customer resetting into a fresh trial), so an
 -- admin still needs a sanctioned way to genuinely start an account over. Doing
--- it from the application would be several statements; a function body is one
+-- it from the application would be several statements, and a function body is one
 -- transaction, so there is never an instant where the account has no plan row.
 --
 -- WHAT IT DOES NOT DO (SA M-2). It does not delete anything. Override rows are
--- ENDED with the reset's reason, because they are the durable record of what an
+-- ENDED with the reason given for the reset, because they are the durable record of what an
 -- admin once granted, and the plan row is REWRITTEN IN PLACE rather than
 -- recreated. `created_at` and the recorded facts survive, the "never no row"
 -- invariant holds by construction, and there is no race with a provisioning
@@ -383,7 +432,7 @@ SECURITY INVOKER
 SET search_path = ''
 AS $$
 DECLARE
-  -- M-4: blank is as unacceptable as NULL. A cohort of '' would pass a NULL
+  -- M-4: blank is as unacceptable as NULL. An empty-string cohort would pass a NULL
   -- check and then be stored as a value the resolver cannot interpret.
   v_cohort text := btrim(COALESCE(p_cohort, ''));
   v_reason text := btrim(COALESCE(p_reason, ''));
@@ -416,16 +465,16 @@ BEGIN
   -- (b) Rewrite the plan row in place. The INSERT branch covers an account that
   --     has no row yet (a trigger failure), so the operation is also a repair.
   --
-  --     The repair branch RECOVERS THE FACTS from the tenant's own history (QA
+  --     The repair branch RECOVERS THE FACTS from the history of the tenant (QA
   --     Q-2). It has to: the triggers fire AFTER INSERT only, and a repaired
-  --     account's onboarding and profile rows already exist, so a fact left NULL
+  --     onboarding and profile rows of the account already exist, so a fact left NULL
   --     here can never be filled afterwards — and the trial clock is derived
   --     from it. On the DO UPDATE branch these two columns are absent from the
-  --     SET list, so an existing row's facts are untouched — only the repair
+  --     SET list, so the facts on an existing row are untouched — only the repair
   --     branch reads history.
   --
   --     These two sub-selects read the parent tables from INSIDE A FUNCTION
-  --     BODY, which is unrelated to M-1: M-1 is about the migration's top-level
+  --     BODY, which is unrelated to M-1: M-1 is about the top-level of the migration
   --     DDL holding trigger locks across a scan. The guard test enforces exactly
   --     that distinction.
   INSERT INTO public.business_os_account_plans AS p (
@@ -459,7 +508,7 @@ BEGIN
         -- M-5: updated_at is maintained explicitly by every writer.
         updated_at          = EXCLUDED.updated_at
         -- Deliberately untouched: created_at, onboarding_started_at,
-        -- profile_created_at. Facts are what the tenant did; a reset changes
+        -- profile_created_at. Facts are what the tenant did. A reset changes
         -- what they are entitled to, not what happened.
   RETURNING * INTO v_result;
 
@@ -467,7 +516,7 @@ BEGIN
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.business_os_reset_plan_state(uuid, text, timestamptz, timestamptz, uuid, text)
+REVOKE ALL ON FUNCTION public.business_os_reset_plan_state(uuid, text, timestamptz, timestamptz, uuid, text)
   FROM public, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.business_os_reset_plan_state(uuid, text, timestamptz, timestamptz, uuid, text)
   TO service_role;
@@ -476,7 +525,7 @@ GRANT EXECUTE ON FUNCTION public.business_os_reset_plan_state(uuid, text, timest
 -- 4. Triggers
 --
 -- Both fire on INSERT only. The onboarding one fires on every message, which is
--- cheap: after the first, the upsert's WHERE clause matches nothing and no row
+-- cheap: after the first, the WHERE clause of the upsert matches nothing and no row
 -- is written.
 -- ────────────────────────────────────────────────────────────────────────────
 
@@ -493,5 +542,5 @@ CREATE TRIGGER business_os_plan_on_profile
 COMMIT;
 
 -- The backfill is 20261005b_business_os_entitlements_backfill.sql. Run it after
--- this one. Running it late is safe; running it never leaves existing tenants
+-- this one. Running it late is safe. Running it never leaves existing tenants
 -- without a row, which the ops check in the admin report counts.

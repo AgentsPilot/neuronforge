@@ -72,6 +72,9 @@ export const AUDIT_ENTITY_TYPES = [
   // tier and its overrides. Written only by the admin entitlement routes
   // (workplan §4.12); the entity id is the account id.
   'business_os_account_plan',
+  // One Admin Archiving run (a row in archive_runs). Written only by
+  // POST /api/admin/archiving/runs; the entity id is the run id.
+  'archive_run',
 ] as const;
 
 export type EntityType = (typeof AUDIT_ENTITY_TYPES)[number];
@@ -192,29 +195,32 @@ export interface AuditQueryResult {
 /**
  * GDPR export format
  */
+/**
+ * One entry of a GDPR export. `archived` says where it came from: the live
+ * `audit_trail` (false) or `archived_records` (true, with `archivedAt`), so the
+ * person can see their whole history and which part has been archived (FR-14c).
+ */
+export type GDPRExportLog = AuditLogEntry & {
+  archived: boolean;
+  archivedAt?: string;
+};
+
 export interface GDPRExport {
   userId: string;
   exportedAt: string;
+  /** Live and archived entries together. */
   totalEvents: number;
+  /** How many of `totalEvents` came from the archive. */
+  archivedEvents: number;
   dateRange: {
     from: string;
     to: string;
   };
-  logs: AuditLogEntry[];
+  logs: GDPRExportLog[];
   summary: {
     actionsPerformed: Record<string, number>;
     entitiesModified: Record<EntityType, number>;
   };
-}
-
-/**
- * Retention policy configuration
- */
-export interface RetentionPolicy {
-  defaultDays: number; // Default retention for all logs
-  criticalEventsDays?: number; // Extended retention for critical events
-  gdprMaxDays?: number; // GDPR compliance limit
-  autoAnonymizeDays?: number; // Auto-anonymize PII after X days
 }
 
 /**
@@ -225,7 +231,6 @@ export interface AuditServiceConfig {
   batchSize?: number; // Number of logs to batch before writing
   batchIntervalMs?: number; // Max time to wait before flushing batch
   silent?: boolean; // Suppress all errors (never throw)
-  retentionPolicy?: RetentionPolicy;
   enableTamperDetection?: boolean; // Cryptographic chaining
   enableCompression?: boolean; // Compress details/changes JSON
 }

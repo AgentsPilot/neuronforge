@@ -70,3 +70,6 @@ scripts/tmp-*.ts
 # would also hand .github/ci/non-deploying-change.sh a tree of code sitting
 # under a path it treats as non-deploying.
 .claude/worktrees/
+
+# ESLint machine-readable report from `npm run lint:report` (never committed).
+.eslint-report.json

@@ -1,0 +1,603 @@
+{
+  "success": true,
+  "data": {
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "mode": "off",
+    "state": "active",
+    "basis": {
+      "kind": "tier",
+      "tier": "basic"
+    },
+    "lifecycle": {
+      "state": "active",
+      "basis": {
+        "kind": "tier",
+        "tier": "basic"
+      },
+      "accessEndsAt": null,
+      "graceEndsAt": null,
+      "reason": "tier_in_force_no_end_date"
+    },
+    "anomaly": null,
+    "matrixVersion": 1,
+    "capabilities": {
+      "crm.core": {
+        "value": true,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": true,
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "yes"
+      },
+      "crm.documents": {
+        "value": true,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": true,
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "yes"
+      },
+      "booking.calendar_sync": {
+        "value": true,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": true,
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "yes"
+      },
+      "website.ai_site": {
+        "value": true,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": true,
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "yes"
+      },
+      "website.branding": {
+        "value": "unbranded",
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": "unbranded",
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "unbranded"
+      },
+      "intake.forms": {
+        "value": "ai",
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": "ai",
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "ai"
+      },
+      "intake.reminders": {
+        "value": true,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": true,
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "yes"
+      },
+      "payments.invoices": {
+        "value": true,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": true,
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "yes"
+      },
+      "payments.card": {
+        "value": true,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": true,
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "yes"
+      },
+      "payments.reminders": {
+        "value": false,
+        "decidedBy": "lifecycle_gate",
+        "trace": [
+          {
+            "layer": "lifecycle_gate",
+            "from": null,
+            "to": false,
+            "note": "not_built: the feature does not exist, so nothing can grant it (FR-13)"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "payments.multi_currency": {
+        "value": true,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": true,
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "yes"
+      },
+      "chat.access": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "tier basic"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "chat.marketing": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "tier basic"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "chat.invoice_control": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "tier basic"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "chat.email": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "tier basic"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "chat.search": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "tier basic"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "chat.scheduling": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "tier basic"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "chat.quotes": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "tier basic"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "chat.reporting": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "tier basic"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "chat.bulk": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "tier basic"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "ai.actions": {
+        "value": {
+          "perMonth": 500
+        },
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": {
+              "perMonth": 500
+            },
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "500 per month"
+      },
+      "marketing.mass_email": {
+        "value": false,
+        "decidedBy": "lifecycle_gate",
+        "trace": [
+          {
+            "layer": "lifecycle_gate",
+            "from": null,
+            "to": false,
+            "note": "not_built: the feature does not exist, so nothing can grant it (FR-13)"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "marketing.lead_response": {
+        "value": true,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": true,
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "yes"
+      },
+      "marketing.posts": {
+        "value": false,
+        "decidedBy": "lifecycle_gate",
+        "trace": [
+          {
+            "layer": "lifecycle_gate",
+            "from": null,
+            "to": false,
+            "note": "not_built: the feature does not exist, so nothing can grant it (FR-13)"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "insights.checks": {
+        "value": true,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": true,
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "yes"
+      },
+      "insights.channels": {
+        "value": true,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": true,
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "yes"
+      },
+      "insights.daily_briefing": {
+        "value": true,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": true,
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "yes"
+      },
+      "support.level": {
+        "value": "priority",
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": "priority",
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "priority"
+      },
+      "email.volume": {
+        "value": {
+          "ceilingPerMonth": 10000
+        },
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": {
+              "ceilingPerMonth": 10000
+            },
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "10,000 per month (alerts, never blocks)"
+      },
+      "addon.marketing_analytics": {
+        "value": "unavailable",
+        "decidedBy": "lifecycle_gate",
+        "trace": [
+          {
+            "layer": "lifecycle_gate",
+            "from": null,
+            "to": "unavailable",
+            "note": "not_built: the feature does not exist, so nothing can grant it (FR-13)"
+          }
+        ],
+        "granting": false,
+        "display": "unavailable"
+      },
+      "addon.mobile": {
+        "value": "unavailable",
+        "decidedBy": "lifecycle_gate",
+        "trace": [
+          {
+            "layer": "lifecycle_gate",
+            "from": null,
+            "to": "unavailable",
+            "note": "not_built: the feature does not exist, so nothing can grant it (FR-13)"
+          }
+        ],
+        "granting": false,
+        "display": "unavailable"
+      },
+      "addon.full_payment_cycle": {
+        "value": "unavailable",
+        "decidedBy": "lifecycle_gate",
+        "trace": [
+          {
+            "layer": "lifecycle_gate",
+            "from": null,
+            "to": "unavailable",
+            "note": "not_built: the feature does not exist, so nothing can grant it (FR-13)"
+          }
+        ],
+        "granting": false,
+        "display": "unavailable"
+      },
+      "addon.sms": {
+        "value": "unavailable",
+        "decidedBy": "lifecycle_gate",
+        "trace": [
+          {
+            "layer": "lifecycle_gate",
+            "from": null,
+            "to": "unavailable",
+            "note": "not_built: the feature does not exist, so nothing can grant it (FR-13)"
+          }
+        ],
+        "granting": false,
+        "display": "unavailable"
+      },
+      "sms.messages": {
+        "value": {
+          "perMonth": 0
+        },
+        "decidedBy": "lifecycle_gate",
+        "trace": [
+          {
+            "layer": "lifecycle_gate",
+            "from": null,
+            "to": {
+              "perMonth": 0
+            },
+            "note": "not_built: the feature does not exist, so nothing can grant it (FR-13)"
+          }
+        ],
+        "granting": false,
+        "display": "0 per month"
+      },
+      "team.seats": {
+        "value": {
+          "included": 1,
+          "purchasable": false
+        },
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": {
+              "included": 1,
+              "purchasable": false
+            },
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "1 seat"
+      },
+      "business.locations": {
+        "value": {
+          "included": 1,
+          "purchasable": false
+        },
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": {
+              "included": 1,
+              "purchasable": false
+            },
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "1 location"
+      },
+      "website.custom_domain": {
+        "value": "unavailable",
+        "decidedBy": "lifecycle_gate",
+        "trace": [
+          {
+            "layer": "lifecycle_gate",
+            "from": null,
+            "to": "unavailable",
+            "note": "not_built: the feature does not exist, so nothing can grant it (FR-13)"
+          }
+        ],
+        "granting": false,
+        "display": "unavailable"
+      },
+      "addon.act_for_you": {
+        "value": "unavailable",
+        "decidedBy": "lifecycle_gate",
+        "trace": [
+          {
+            "layer": "lifecycle_gate",
+            "from": null,
+            "to": "unavailable",
+            "note": "not_built: the feature does not exist, so nothing can grant it (FR-13)"
+          }
+        ],
+        "granting": false,
+        "display": "unavailable"
+      }
+    },
+    "ignoredOverrides": [],
+    "overrides": [],
+    "plan": {
+      "user_id": "11111111-1111-4111-8111-111111111111",
+      "tier": "basic",
+      "plan_version": 1,
+      "tier_expires_at": null,
+      "cohort": null,
+      "cohort_expires_at": null,
+      "onboarding_started_at": "2026-01-01T00:00:00.000Z",
+      "profile_created_at": "2026-01-02T00:00:00.000Z",
+      "trial_started_at": null,
+      "trial_ends_at": null,
+      "grace_ends_at": null,
+      "period_anchor": "2026-01-01T00:00:00.000Z",
+      "origin": "admin",
+      "updated_by_admin_id": null,
+      "created_at": "2026-01-01T00:00:00.000Z",
+      "updated_at": "2026-01-01T00:00:00.000Z"
+    },
+    "effectiveWithinSeconds": 30
+  }
+}

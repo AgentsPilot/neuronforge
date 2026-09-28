@@ -146,9 +146,9 @@ describe('every audit action the executor can emit is registered (SA C5-2 / QA-2
   // looking at the right thing.
 
   it('source sweep: every `action:` literal in adminOps.ts is an AUDIT_EVENTS key', () => {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { readFileSync } = require('fs');
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { join } = require('path');
     const source: string = readFileSync(
       join(process.cwd(), 'lib', 'business-os', 'entitlements', 'adminOps.ts'),
@@ -385,15 +385,47 @@ describe('set_expiry (M-3 — a CHECK constraint is never the message)', () => {
 });
 
 describe('assign_tier', () => {
-  it('RC-1: refuses while production has no tiers configured', async () => {
-    const { ctx, calls } = context({ config: readCodeConfig() });
+  it('assigns a tier the SHIPPED config has, now that it has two (2026-09-23)', async () => {
+    // RC-1 used to refuse this op outright, because production shipped an empty
+    // matrix. It ships `basic` and `pro` from 2026-09-23, so the op works — and
+    // the assertion is on the production config deliberately, because "an admin
+    // can put an account on a real plan" is the thing that changed.
+    const config = readCodeConfig();
+    const { ctx, calls } = context({ config });
     const result = await executeAdminOp(
-      { op: 'assign_tier', tier: 'growth', expiresAt: null, reason: 'support case' } as AdminOp,
+      { op: 'assign_tier', tier: 'pro', expiresAt: null, reason: 'design partner' } as AdminOp,
+      ctx
+    );
+
+    expect(result).toMatchObject({ ok: true });
+    expect(calls.updatePlan[0]).toMatchObject({ tier: 'pro', plan_version: config.matrix.version });
+  });
+
+  it('RC-1: still refuses if the matrix is ever emptied again', async () => {
+    // The refusal itself, kept under test now that the shipped config no longer
+    // triggers it. It is the thing that stops an admin writing a tier name the
+    // resolver would then call unknown.
+    const { ctx, calls } = context({ config: { ...readCodeConfig(), tierOrder: [] } });
+    const result = await executeAdminOp(
+      { op: 'assign_tier', tier: 'pro', expiresAt: null, reason: 'support case' } as AdminOp,
       ctx
     );
 
     expect(result).toMatchObject({ ok: false, status: 400, error: 'no_tiers_configured' });
     expect(calls.updatePlan).toEqual([]);
+  });
+
+  it('Q-13 is now load-bearing on production: the schema enumerates the real tiers', () => {
+    // While the matrix was empty the tier field fell back to `z.string()` and
+    // this boundary check could not be exercised against the shipped config.
+    const production = adminOpSchema(readCodeConfig());
+    const body = (tier: string) => ({ op: 'assign_tier', tier, expiresAt: null, reason: 'support case' });
+
+    expect(production.safeParse(body('pro')).success).toBe(true);
+    expect(production.safeParse(body('basic')).success).toBe(true);
+    // A cohort is not a tier. This is the mistake the enum exists to catch.
+    expect(production.safeParse(body('champion')).success).toBe(false);
+    expect(production.safeParse(body('growth')).success).toBe(false);
   });
 
   it('stamps the matrix version the tier was sold at', async () => {

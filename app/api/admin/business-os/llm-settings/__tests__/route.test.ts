@@ -15,6 +15,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { NextRequest } from 'next/server';
 
+import { codeOf, LITERAL_RULES } from '@/tests/helpers/bos-llm-literal-rules';
+
 const getUser = jest.fn();
 jest.mock('@/lib/auth', () => ({ getUser: () => getUser() }));
 
@@ -58,10 +60,6 @@ const routeSource = fs.readFileSync(ROUTE_PATH, 'utf8');
  * the AST, "so comments and JSDoc are never read — the settings are the truth,
  * prose about them is not".
  */
-function codeOf(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-}
-
 const routeCode = codeOf(routeSource);
 
 function req(url = 'http://localhost/api/admin/business-os/llm-settings'): NextRequest {
@@ -179,7 +177,6 @@ describe('S1-T12: the source rules, as a backstop to the gate', () => {
   // a required check here, so they must not be the only thing standing up —
   // and they are deliberately derived, not hand-listed, so a sixth file or a
   // second route in this folder is covered the moment it is written.
-  const FEATURE_ROOTS = 'gpt|chatgpt|o[1345]|text-embedding|tts|sora|omni-moderation|claude|kimi|mistral|gemini|llama|moonshot|deepseek|grok|dall-e|whisper';
 
   /** Every non-test source file of this feature, found rather than enumerated. */
   function featureFiles(): string[] {
@@ -228,7 +225,11 @@ describe('S1-T12: the source rules, as a backstop to the gate', () => {
   });
 
   /**
-   * The five rules, each named — and each with a sample it MUST match.
+   * The five rules now live in `tests/helpers/bos-llm-literal-rules.ts` —
+   * slice 2's screen is the third caller, which is the point SA named for
+   * extracting them. The assertions about them stay here.
+   *
+   * Each rule is named and carries a sample it MUST match.
    *
    * Two of these were dead on arrival: written as plain template literals,
    * `` `case\s+…` `` compiles to `/cases+…/` and `` `\[\s*…\]` `` to a
@@ -241,34 +242,6 @@ describe('S1-T12: the source rules, as a backstop to the gate', () => {
    * `mustMatch`, which proves every rule is alive independently of whether the
    * files happen to be clean.
    */
-  const LITERAL_RULES: ReadonlyArray<{ name: string; pattern: RegExp; mustMatch: string }> = [
-    {
-      name: 'a quoted model id of any vendor family',
-      pattern: new RegExp(String.raw`['"](${FEATURE_ROOTS})-[a-z0-9._:-]*['"]`, 'i'),
-      mustMatch: `const m = 'claude-3-5-sonnet-20241022';`,
-    },
-    {
-      name: 'a z.enum allow-list of model ids',
-      pattern: /z\.enum\(\s*\[\s*['"](gpt|claude|kimi|mistral)-/i,
-      mustMatch: `z.enum(['gpt-4o', 'gpt-4o-mini'])`,
-    },
-    {
-      name: 'a switch case on a model name',
-      pattern: new RegExp(String.raw`case\s+['"](${FEATURE_ROOTS})-`, 'i'),
-      mustMatch: `switch (m) { case 'gpt-4o': break; }`,
-    },
-    {
-      name: 'a price-index key literal',
-      pattern: new RegExp(String.raw`\[\s*['"](${FEATURE_ROOTS})-[^'"]*['"]\s*\]`, 'i'),
-      mustMatch: `const p = PRICES['gpt-4o'];`,
-    },
-    {
-      name: 'a temperature bound to a literal number',
-      pattern: /temperature\s*[:=]\s*[0-9]/,
-      mustMatch: `chat({ temperature: 0.7 })`,
-    },
-  ];
-
   it.each(LITERAL_RULES.map((r) => [r.name, r] as const))(
     'rule "%s" is alive: it matches the shape it exists to catch',
     (_name, rule) => {

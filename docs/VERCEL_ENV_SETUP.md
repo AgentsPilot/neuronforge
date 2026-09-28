@@ -234,7 +234,7 @@ vercel env add GOOGLE_CLIENT_SECRET production
 | `/api/run-agent` | `OPENAI_API_KEY`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` |
 | `/api/generate-agent` | `OPENAI_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY` |
 | `/api/contact` | `GMAIL_USER`, `GMAIL_REFRESH_TOKEN`, `GMAIL_CLIENT_ID` |
-| `/api/run-scheduled-agents` | `CRON_SECRET`, `REDIS_URL` |
+| `/api/run-scheduled-agents` | `CRON_SECRET`, `REDIS_URL` (schedule retired 2026-09-27: no longer in `vercel.json`; code kept) |
 | OAuth callbacks | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` |
 
 ---
@@ -280,3 +280,11 @@ If you're still experiencing issues after following this guide:
 **Last Updated**: 2025-10-20
 **Related Files**: `.env.local`, `verify-env.js`
 **Deployment URL**: https://neuronforge-kohl.vercel.app/
+
+---
+
+## Change History
+
+| Date | Change | Details |
+|------|--------|---------|
+| 2026-09-27 | `/api/run-scheduled-agents` schedule retired | Removed from `vercel.json` with the other two AgentsPilot crons (admin reorganisation slice 5, part A; OQ-4). The route and its variables are unchanged; re-adding the `vercel.json` entry re-enables it |

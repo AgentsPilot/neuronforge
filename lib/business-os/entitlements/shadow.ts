@@ -14,10 +14,11 @@
 //
 //   1. **`off` returns before anything is imported.** The mode check is the
 //      first statement and the only top-level import besides the logger. With
-//      `BOS_ENTITLEMENTS_MODE` unset — the default, and production today — this
-//      function reads nothing, writes nothing, loads no config and allocates
-//      almost nothing. A bad entitlement config cannot take chat down at cold
-//      start, because with the flag off it is never loaded (RC-7).
+//      `BOS_ENTITLEMENTS_MODE` unset — the default; production runs `shadow`
+//      on purpose, to collect data first (2026-09-27) — this function reads
+//      nothing, writes nothing, loads no config and allocates almost nothing.
+//      A bad entitlement config cannot take chat down at cold start, because
+//      with the flag off it is never loaded (RC-7).
 //   2. **Everything else happens inside `void (async () => { try { … } })()`.**
 //      Not awaited, so the response does not wait for it; wrapped in `try`, so a
 //      failure is a log line. `await import()` inside the try means even a

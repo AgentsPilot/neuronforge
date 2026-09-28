@@ -10,13 +10,34 @@
 import { fixtureConfig } from '@/lib/business-os/entitlements/__fixtures__/fixtureSource';
 import { championAccount, tierAccount, trialAccount, account } from '@/lib/business-os/entitlements/__fixtures__/accounts';
 import { decide, failurePolicyFor, isRefusal, overlayFor } from '@/lib/business-os/entitlements/decide';
+import { readCodeConfig } from '@/lib/business-os/entitlements/source';
+import type { EntitlementConfig } from '@/lib/business-os/entitlements/source';
 import { resolveEntitlements } from '@/lib/business-os/entitlements/resolver';
 import type { EntitlementAccount } from '@/lib/business-os/entitlements/account';
 import { CAPABILITIES } from '@/lib/business-os/entitlements/config/catalog';
 import type { CapabilityDef, SurfaceKind } from '@/lib/business-os/entitlements/types';
 
 const NOW = new Date('2026-09-22T00:00:00.000Z');
-const config = fixtureConfig();
+
+/**
+ * Both cohorts, pointed at the fixture's MIDDLE row.
+ *
+ * Production points `trial` and `champion` at `basic` (2026-09-23), and in the
+ * FIXTURE `basic` is the deliberately thin row — no lead response, no intake
+ * reminders. A trial account would therefore be refused at step a, and step b's
+ * state overlay, which is the whole subject of this suite, would never run.
+ *
+ * So the cohorts are pointed at `growth` here. It changes WHAT a cohort has, not
+ * HOW the states behave, which is the thing under test. The production pointing
+ * is asserted where it belongs, in `productionConfig.test.ts`.
+ */
+function cohortsOn(tier: string): EntitlementConfig['cohorts'] {
+  const base = readCodeConfig().cohorts;
+  const entries = Object.entries(base).map(([id, cohort]) => [id, { ...cohort, base: { tier } }]);
+  return Object.fromEntries(entries) as EntitlementConfig['cohorts'];
+}
+
+const config = fixtureConfig({ cohorts: cohortsOn('growth') });
 
 function snapshotFor(acct: EntitlementAccount | null) {
   return resolveEntitlements({ config, account: acct, overrides: [], addons: [], now: NOW });

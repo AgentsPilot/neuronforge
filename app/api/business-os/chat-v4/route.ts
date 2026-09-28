@@ -1625,8 +1625,9 @@ async function handleChatTurn(
      * 5b. Entitlements, in shadow: record what this turn WOULD have needed.
      *
      * Nothing is gated. The call returns immediately when
-     * `BOS_ENTITLEMENTS_MODE` is unset — which it is in production — and when it
-     * is not, everything it does happens in an un-awaited promise with its own
+     * `BOS_ENTITLEMENTS_MODE` is unset. Production runs `shadow` on purpose, to
+     * collect data first (2026-09-27), so there it records, and everything it
+     * does happens in an un-awaited promise with its own
      * try/catch. It cannot throw into this request, cannot slow it down, and
      * cannot fail it. See lib/business-os/entitlements/shadow.ts.
      */

@@ -11,6 +11,8 @@ import { ConfigurationDialogProvider } from '@/components/business-os/Configurat
 import { CapabilitiesProvider } from '@/components/business-os/CapabilitiesProvider';
 import { Space_Grotesk, Inter } from 'next/font/google';
 
+import { readPlanBadge } from '@/lib/business-os/entitlements/readPlanBadge';
+
 // Load Space Grotesk for display text (headlines)
 const spaceGrotesk = Space_Grotesk({
   subsets: ['latin'],
@@ -27,11 +29,29 @@ const inter = Inter({
   display: 'swap',
 });
 
-export default function BusinessOSLayout({
+/*
+ * The plan pill is read HERE, with the page.
+ *
+ * This layout is a server component, so the answer comes with the render rather
+ * than from a `fetch` in the browser on every screen. The sibling
+ * `CapabilitiesProvider` is a client provider because its data changes while
+ * somebody is using the product (publish a service and a tab appears); a plan does
+ * not change under you, so it needs no refresh hook — and one fewer request per
+ * full load is worth the directness.
+ *
+ * The read itself lives in `lib/business-os/entitlements/readPlanBadge.ts`, not
+ * here: as a private function in this file its three safety guarantees could not
+ * be tested without rendering a layout, and two mutations to them passed a green
+ * suite (QA-10). Every failure returns `null`, and `null` renders nothing.
+ */
+
+export default async function BusinessOSLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const planBadge = await readPlanBadge();
+
   return (
     <UserProvider>
       <V2ThemeProvider>
@@ -59,7 +79,7 @@ export default function BusinessOSLayout({
                   without anybody hardcoding the header's height into an offset.
                 */}
                 <div className="sticky top-0 z-50">
-                  <BusinessOSHeader />
+                  <BusinessOSHeader planBadge={planBadge} />
                   <BusinessOSTabs />
                 </div>
                 {children}

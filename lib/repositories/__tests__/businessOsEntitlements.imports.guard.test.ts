@@ -9,9 +9,30 @@
  * and change an account's plan — bypassing the admin gate, the Zod validation
  * and the audit trail that component 5 will put in front of it.
  *
- * Symbol-level, not path-level (QA/SA note): a barrel import
+ * Symbol-level rather than import-path-level (QA/SA note): a barrel import
  * (`from '@/lib/repositories'`) names no file, so matching import paths would
  * miss exactly the case the barrel creates. This scans for the symbols.
+ *
+ * ── What that precision actually is (SA S0-2, 2026-09-26) ────────────────
+ * **It is symbol-level for a value import and path-level for a type-only
+ * import**, and this header used to claim the first for both.
+ *
+ * The scan is a plain text match over the whole file, so a guarded symbol
+ * matches wherever its name appears — including inside the module PATH of
+ * `import type { BusinessOsAccountPlan } from '@/lib/repositories/BusinessOs`
+ * `AccountPlanRepository'`. That import erases at compile time: it brings in no
+ * value, calls nothing, and cannot reach a table. Only the path survives to be
+ * matched, so the file is reported as a referrer when nothing is referred to.
+ *
+ * It **fails safe** — it over-reports, never under-reports — and the remedy is
+ * to declare the file in `ALLOWED` with the reason, as `dormantChampions.test.ts`
+ * does below. Do **not** re-route the type through the barrel to make the match
+ * go away: that passes by hiding a referrer, which is the evasion this guard
+ * exists to prevent. A declared referrer is auditable; a hidden one is not.
+ *
+ * Refining the match to distinguish a type-only import is tracked **outside
+ * S-0** — see `docs/workplans/business-os-s0-unblock.md` §10.3. Widening a
+ * security guard is not a change to make inside a slice that is not about it.
  *
  * When component 5 adds the admin routes, add their paths to ALLOWED — that edit
  * is the point at which someone states, in a reviewable diff, who may write
@@ -75,6 +96,12 @@ const ALLOWED = new Set(
     'lib/business-os/entitlements/adminOps.ts',
     'lib/business-os/entitlements/__tests__/adminOps.test.ts',
     'app/api/admin/business-os/entitlements/__tests__/routes.test.ts',
+    // ── S-0, 2026-09-26 ─ the trim-list section test ────────────────────
+    // A test of `report.ts` (already allowed). It names the repository only in
+    // the PATH of an `import type` — it imports no value and calls nothing.
+    // Declared here rather than routed through the barrel to dodge the match:
+    // hiding a referrer is worse than declaring one. See the header.
+    'lib/business-os/entitlements/__tests__/dormantChampions.test.ts',
   ].map((p) => p.split('/').join(sep))
 );
 

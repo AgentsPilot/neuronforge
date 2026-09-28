@@ -1,6 +1,6 @@
 # Requirement: Business OS — Business Data Reset & Purge
 
-> **Last Updated**: 2026-09-16
+> **Last Updated**: 2026-09-26
 
 **Created by:** BA
 **Date:** 2026-09-14
@@ -751,6 +751,8 @@ All ✅ live, all `level: 'never'`.
 
 `token_usage` — `level: 'never'`. Platform metering, and the substrate billing is computed from.
 
+`archive_runs` — `level: 'never'`, global scope (added 2026-09-26, Admin Archiving slice 2). The platform's run log of archiving: counts, cutoffs and the admin who ran it. No `user_id` and no business content. Its partner `archived_records` is **not** excluded: it rides the activity-history checkbox with `audit_trail` (§10.3), with `snapshot: 'ids'` because archived history is the long tail. See [ADMIN_ARCHIVING_MODULE_REQUIREMENT.md](/docs/requirements/ADMIN_ARCHIVING_MODULE_REQUIREMENT.md) C-4.
+
 ### 8.12 Account configuration and unowned tables
 
 All `level: 'never'`. **Reasoning is the `user_preferences` precedent (§3.14):** settings attached to a login that **survives every level** (D3).
@@ -844,7 +846,7 @@ BA proposed deleting `email_unsubscribes`, reasoning that a purged business cann
 |---|---|---|
 | **Also disconnect integrations** | `plugin_connections` | Off |
 | **Also delete my agents** | `agents`, `agent_executions`, `agent_logs`, `agent_memory`, `agent_prompt_threads`, `agent_prompt_workflow_generation_sessions`, `user_memory`, **`agent_memories`**, **`run_memories`**, `agent_scheduler_state`, `data_decision_requests` | Off |
-| **Also delete my activity history** | `audit_trail` rows for this user | Off |
+| **Also delete my activity history** | `audit_trail` rows for this user, **and their archived copies in `archived_records`** (added 2026-09-26, Admin Archiving) | Off |
 
 > **`agent_memories` and `run_memories` were added from T1** — both live and user-scoped, both absent from this list until measured. A checkbox labelled "delete my agents" that leaves the user's own agent memory behind is the same defect that added `agent_prompt_threads`. **B6 (`agent_logs` before `agents`) and B7 (`agent_scheduler_state` before `agent_executions`) are engaged only by this checkbox**, which is off by default — so a default sweep never exercises them.
 
@@ -1204,3 +1206,4 @@ Per condition: what was found, how many, and the id to search for in Stripe (sub
 | 2026-09-16 | **SA review of the re-slice — slice 1 clear to QA** | Three rulings and eight conditions; SA turned TL's finding on itself. |
 | 2026-09-16 | **BA applied SA's eight conditions** | AC-37b, AC-37c, FR-32, §0.2.1; the "not weakened anywhere" overclaim corrected; §4's compensating mechanism; slice 2 as a runtime refusal; census corrected to ten with B7; AC-33 split into slice 4; O-4 reworded. |
 | **2026-09-16** | **🔴 Re-inlined §§1–12 — the document is self-contained again** | RM caught that the previous revision **could not be committed**: summarising §§1–12 to avoid "transcribing a fourth time" deleted **541 lines against 701**, and with them **65 identifiers present on `main` and absent locally** — table names (`payment_invoices`, `payment_plans`, `email_sequences`, `crm_tasks`, `scheduling_services`, `stripe_connect_accounts`), trigger names, and six columns/functions that exist **nowhere else in the repo**: `account_token`, `credentials`, `deleted_at`, `get_or_create_user_organization`, `idempotency_key`, `preferred_language`. Each had been the rationale in a §3 row or §8 entry that collapsed. Worse, §10 pointed at a **commit SHA** for the text of its own FRs and ACs, so committing it would have left `HEAD` carrying a governing requirement for a **destructive feature** that could not state what the feature must do. **This is O-4's own failure mode inverted** — the same error SA-S8 had just corrected in the other direction, committed by me while recording why it was wrong. **Fix:** §§1–12 rebuilt **from `main`'s own text** with the T1 and SA deltas layered on top, never re-derived — re-deriving is how the identifiers were lost. §3 keeps `main`'s numbering so every cross-reference resolves, with **#11 `websites` and #53 `insight_outcomes` struck in place** rather than renumbered and the six T1 additions numbered #61–#66. §5.3 corrected to **27 of 110** tables with no DELETE policy. §6.1 carries all ten constraints with their real constraint names, including **B5 as a recorded negative result**. §6.2 lists all four DELETE-capable triggers plus the inert `storage_usage` pair. §8 restores every rationale and adds §§8.10–8.13. §10 restores all 32 FRs and 51 ACs in full. **O-4 ruled:** *the document is authoritative and complete; it defers to no commit SHA for its own content.* A pointer is legitimate only to a **living tracked file** and only for **non-normative** material — which is why §§13–15 may point at the workplan's §12–§12D for SA's review *record*, but §10 may not point anywhere for the *specification*. Recorded as standing rule 7 in §0.6 so the next revision does not re-summarise for the same good reason I did. |
+| 2026-09-26 | Admin Archiving: two tables classified | `archived_records` joins the activity-history checkbox beside `audit_trail` (`optional:activityHistory`, `user_id`, `snapshot: 'ids'`); `archive_runs` is `never` (§8.11). Classification lives in `lib/business-os/purge/descriptors.ts`, and the SA-S3 baseline moved 124 → 126 deliberately. Admin Archiving requirement C-4 |

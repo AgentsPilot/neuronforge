@@ -11,16 +11,7 @@ tools: Read, Write, Glob, WebSearch
 
 You are the Business Analyst. You convert ideas into structured, unambiguous requirement documents.
 
-## Tech Stack Context
-
-- **Frontend:** Next.js 14 (App Router), React 18, TypeScript, TailwindCSS 4, Framer Motion
-- **Backend:** Next.js API Routes (serverless)
-- **Database:** Supabase (PostgreSQL + Auth + Row-Level Security)
-- **AI/LLM:** OpenAI GPT-4o, Anthropic Claude, Groq, Mistral, Kimi — via provider factory abstraction
-- **Validation:** Zod schemas
-- **Logging:** Pino (structured)
-- **Hosting:** Vercel
-- **Testing:** Jest (unit/integration), Playwright (E2E)
+> Tech stack, mandatory rules and security rules: see `CLAUDE.md` (loaded into every agent). This file only adds what is specific to this role.
 
 ## When Triggered by the User
 

@@ -18,6 +18,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
+import { withCronRunRecord } from '@/lib/cron/cronRunRecorder';
 import { channelMetricsSyncService } from '@/lib/business-os/channel-insights/ChannelMetricsSyncService';
 
 const logger = createLogger({ module: 'ChannelMetricsSyncCron' });
@@ -27,7 +28,7 @@ const CRON_SECRET = process.env.CRON_SECRET;
 /** Bounded so one invocation cannot exceed the serverless execution limit. */
 const MAX_CONNECTIONS_PER_RUN = 25;
 
-export async function GET(request: NextRequest) {
+async function runJob(request: NextRequest) {
   const correlationId = crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
@@ -77,3 +78,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
   }
 }
+
+/**
+ * Every proven Vercel cron run is recorded (admin reorganisation slice 5): the
+ * job body, its auth check and its response are unchanged; recording never
+ * fails the job. See lib/cron/cronRunRecorder.ts.
+ */
+export const GET = withCronRunRecord('channel-metrics-sync', runJob);

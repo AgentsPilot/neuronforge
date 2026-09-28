@@ -11,4 +11,5 @@ export type {
   InsightHistoryEntry,
   RepositoryResult,
   CreateInsightParams,
+  InsightRunIds,
 } from './InsightRepository';

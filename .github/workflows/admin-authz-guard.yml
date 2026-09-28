@@ -7,7 +7,14 @@
 #   R3  a route.ts under app/admin/** (route handlers bypass layouts)
 #   R4  an access decision keyed on a `role` value (profiles.role is user-writable)
 #   R5  a migration adding an RLS policy that references profiles.role
-#   R6  app/admin/layout.tsx without its server-side page guard
+#   R6  app/admin/layout.tsx whose FIRST STATEMENT is not the page guard
+#   R8  a server-rendered render entry point under app/admin/** that does
+#       not guard itself (OI-21)
+#
+# There is no R7: it is reserved in the suite for the parked inverted rule
+# ("is anything that BEHAVES like an admin route gated, wherever it lives?").
+# The OI-21 rule took R8 rather than the free number so that parked decision
+# is not retired by accident.
 #
 # ── NO `paths:` FILTER, ON PURPOSE ─────────────────────────────────────────
 # This is the whole reason the job exists as its own workflow.

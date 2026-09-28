@@ -1,10 +1,14 @@
 // app/api/admin/audit-trail/route.ts
-// API for querying AIS audit trail with filters
+// Admin audit trail browser: every account's audit rows, with filters.
+//
+// The read still uses an inline service-role client rather than a repository.
+// This PR only adds one predicate (user_id); moving the read is an OI-9
+// candidate (docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md), recorded rather
+// than silently waived.
 
 import { NextResponse, NextRequest } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { getUser } from '@/lib/auth';
-import { AdminAccessService } from '@/lib/services/AdminAccessService';
+import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import { createLogger } from '@/lib/logger';
 import { AdminAuditTrailQuerySchema, firstIssueMessage } from '@/lib/audit/requestSchemas';
 
@@ -22,26 +26,17 @@ export const dynamic = 'force-dynamic';
 
 // GET - Fetch audit trail logs with filters
 export async function GET(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId, route: ROUTE });
+
   try {
-    // Admin only (Layer 3 step 0, Q-3). Middleware does not protect /api, and
-    // this route reads every account's audit rows with the service role, so it
-    // gates itself: 401 signed out, 403 not an admin. Admin identity comes from
-    // AdminAccessService (the admin_users table), never a user-writable role.
-    const adminUser = await getUser();
-    if (!adminUser) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-    }
-    let isAdmin = false;
-    try {
-      isAdmin = await AdminAccessService.getInstance().isAdmin({ id: adminUser.id, email: adminUser.email });
-    } catch (err) {
-      // Fail closed: an admin check that cannot answer is a "no".
-      logger.error({ err, userId: adminUser.id }, 'Admin check threw; denying access');
-    }
-    if (!isAdmin) {
-      logger.warn({ userId: adminUser.id, route: ROUTE }, 'Non-admin attempted to read audit data');
-      return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 });
-    }
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message. This route reads every
+    // account's audit rows with the service role; requireAdmin owns the 401/403
+    // split and fails closed (slice 2c replaced the inline copy, SA C-6).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+    const adminUser = gate.user;
 
     // Validate the query string AFTER the gate above and BEFORE any read, so an
     // unauthenticated or non-admin caller gets 401/403 and never learns what
@@ -50,8 +45,8 @@ export async function GET(request: NextRequest) {
       Object.fromEntries(request.nextUrl.searchParams)
     );
     if (!parsed.success) {
-      logger.warn(
-        { adminUserId: adminUser.id, route: ROUTE, issue: firstIssueMessage(parsed.error) },
+      requestLogger.warn(
+        { adminUserId: adminUser.id, issue: firstIssueMessage(parsed.error) },
         'Rejected an invalid audit query'
       );
       return NextResponse.json(
@@ -76,6 +71,7 @@ export async function GET(request: NextRequest) {
       date_from: dateFrom,
       date_to: dateTo,
       search,
+      user_id: accountId,
       page,
       page_size: pageSize,
     } = parsed.data;
@@ -83,8 +79,8 @@ export async function GET(request: NextRequest) {
     // Calculate offset for pagination
     const offset = (page - 1) * pageSize;
 
-    logger.debug(
-      { adminUserId: adminUser.id, action, severity, entityType, dateFrom, dateTo, hasSearch: !!search, page, pageSize, offset },
+    requestLogger.debug(
+      { adminUserId: adminUser.id, action, severity, entityType, accountId, dateFrom, dateTo, hasSearch: !!search, page, pageSize, offset },
       'Fetching audit logs with filters'
     );
 
@@ -105,6 +101,10 @@ export async function GET(request: NextRequest) {
 
     if (entityType) {
       query = query.eq('entity_type', entityType);
+    }
+
+    if (accountId) {
+      query = query.eq('user_id', accountId);
     }
 
     if (dateFrom) {
@@ -130,7 +130,7 @@ export async function GET(request: NextRequest) {
     const { data: logs, error, count } = await query;
 
     if (error) {
-      logger.error({ err: error }, 'Fetching audit logs failed');
+      requestLogger.error({ err: error }, 'Fetching audit logs failed');
       // The detail stays in the server log; only development sees it in the body.
       return NextResponse.json({
         success: false,
@@ -194,7 +194,7 @@ export async function GET(request: NextRequest) {
       users: log.user_id ? usersMap[log.user_id] : null
     }));
 
-    logger.debug({ count: logsWithUsers.length, page, searched: !!search }, 'Audit logs fetched');
+    requestLogger.debug({ count: logsWithUsers.length, page, searched: !!search }, 'Audit logs fetched');
 
     // Calculate pagination metadata
     const totalCount = count || 0;
@@ -215,7 +215,7 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error: unknown) {
-    logger.error({ err: error }, 'Admin audit-trail request failed');
+    requestLogger.error({ err: error }, 'Admin audit-trail request failed');
     return NextResponse.json({
       success: false,
       error: 'Internal server error',

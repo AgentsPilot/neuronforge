@@ -168,6 +168,16 @@ export const AUDIT_EVENTS = {
   BOS_ENTITLEMENT_LAUNCH_DRY_RUN: 'BOS_ENTITLEMENT_LAUNCH_DRY_RUN',
 
   // ==========================================
+  // ADMIN ARCHIVING (admin-only, server-written)
+  // ==========================================
+  // One entry when a run starts and one when it ends. A run that stops at its
+  // time budget (`partial`) writes nothing: it has not ended, and Continue
+  // finishes it (condition C-9f). Entity type 'archive_run', id = the run id.
+  ARCHIVE_RUN_STARTED: 'ARCHIVE_RUN_STARTED',
+  ARCHIVE_RUN_COMPLETED: 'ARCHIVE_RUN_COMPLETED',
+  ARCHIVE_RUN_FAILED: 'ARCHIVE_RUN_FAILED',
+
+  // ==========================================
   // AIS (AGENT INTENSITY SYSTEM) EVENTS
   // ==========================================
   AIS_SCORE_CALCULATED: 'AIS_SCORE_CALCULATED', // Initial calculation
@@ -560,6 +570,24 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'A Business OS AI action failed after making at least one LLM call',
+  },
+  // Admin Archiving. Moving audit rows out of the live table is a change to what
+  // the audit trail shows, so start and completion are warnings; a failed batch
+  // is critical because an admin has to act on it (Continue).
+  [AUDIT_EVENTS.ARCHIVE_RUN_STARTED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin started an archive run (source, retention and cutoff recorded)',
+  },
+  [AUDIT_EVENTS.ARCHIVE_RUN_COMPLETED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An archive run finished: every row before its cutoff is archived',
+  },
+  [AUDIT_EVENTS.ARCHIVE_RUN_FAILED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2'],
+    description: 'An archive batch failed and was rolled back; the run can be continued',
   },
   [AUDIT_EVENTS.BUSINESS_DATA_PURGE_BLOCKED]: {
     severity: 'warning',

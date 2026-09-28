@@ -19,15 +19,24 @@
 // the literal "Unknown event: X", which is right for a log line and wrong for a
 // dropdown.
 //
-// NOTHING IS EXCLUDED, and no exclusion mechanism exists. This is the
-// platform-admin compliance browser; there is no event an admin must be
-// prevented from *selecting*, and a hand-maintained exclusion list is the
-// rejected hardcoded list wearing a different hat. If an event ever genuinely
-// must be hidden, flag it on EventMetadata in ./events so the list stays
-// catalogue-driven — never in JSX, and never here. isAiAuditFilter() in
-// ./requestSchemas is NOT that mechanism: it guards the *owner* read path and
-// must not reach the admin route, where it would block the very filter these
-// options exist to add.
+// WHAT THE OPERATOR LIST HIDES, AND HOW (slice 2c, 2026-09-25). This module
+// used to state "nothing is excluded, and no exclusion mechanism exists". On the
+// user's instruction the admin page now lists only Business OS and shared events
+// and hides the AgentsPilot-only ones (the agent platform is parked). SA signed
+// the reversal (slice 2 workplan, R-5). It is done WITHOUT an exclusion list:
+// every event carries an explicit audience in ./eventAudience, and
+// buildActionFilterGroups({ audiences }) keeps the events whose audience is
+// listed. An untagged event is always kept, so a newly registered event can
+// never vanish before somebody classifies it; a test fails until they do.
+// Nothing is removed from AUDIT_EVENTS and the route filters nothing by
+// audience: "All Actions" still returns every row.
+//
+// The old escape hatch ("flag it on EventMetadata") was rejected: only 122 of
+// 157 events have an EVENT_METADATA entry, and adding entries for the other 35
+// would change the severity and compliance flags those events are written with
+// (WC-12). The classification therefore lives in its own exhaustive map.
+// isAiAuditFilter() in ./requestSchemas is still NOT this mechanism: it guards
+// the *owner* read path and must not reach the admin route.
 //
 // Accepted limitation: the live audit_trail table can hold `action` /
 // `entity_type` values that were never registered (./requestSchemas says so in
@@ -39,6 +48,8 @@
 // in Jest's default node environment.
 
 import { AUDIT_EVENTS, EVENT_METADATA } from './events';
+import { isVisibleTo } from './eventAudience';
+import type { AuditAudience } from './eventAudience';
 import { AUDIT_ENTITY_TYPES } from './types';
 import type { EntityType } from './types';
 
@@ -87,6 +98,8 @@ interface GroupRule {
 const GROUP_RULES: readonly GroupRule[] = [
   { prefix: 'BUSINESS_AI_ACTION_', label: 'Business OS AI' },
   { prefix: 'BUSINESS_', label: 'Business OS' },
+  // Without this the eight entitlement events fall back to a group called "Bos".
+  { prefix: 'BOS_ENTITLEMENT_', label: 'Business OS Entitlements' },
   { prefix: 'AGENTKIT_', label: 'AgentKit' },
   { prefix: 'AIS_', label: 'Agent Intelligence Score' },
   { prefix: 'AI_PRICING_', label: 'AI Pricing' },
@@ -102,7 +115,7 @@ const ORDERED_RULES: readonly GroupRule[] = [...GROUP_RULES].sort(
  * filter change exists to surface; alphabetical-by-label would bury it under
  * "Agent Intelligence Score" and "AgentKit".
  */
-const PINNED_GROUPS: readonly string[] = ['Business OS AI', 'Business OS'];
+const PINNED_GROUPS: readonly string[] = ['Business OS AI', 'Business OS', 'Business OS Entitlements'];
 
 /** Tokens that read wrong when merely capitalised. */
 const ACRONYMS: Readonly<Record<string, string>> = {
@@ -163,16 +176,24 @@ function byPinnedThenLabel(a: AuditFilterGroup, b: AuditFilterGroup): number {
 }
 
 /**
- * Every registered audit event, grouped for an <optgroup> list. Exhaustive over
- * AUDIT_EVENTS: each event appears exactly once, in exactly one group.
+ * Every registered audit event, grouped for an <optgroup> list. With no
+ * argument it is exhaustive over AUDIT_EVENTS: each event appears exactly once,
+ * in exactly one group.
+ *
+ * `audiences` restricts the list to events tagged with one of those audiences
+ * (./eventAudience). An untagged event is always included.
  *
  * The "all" sentinel is not returned — it is a UI value, not a catalogue value,
  * and stays as the page's first hardcoded <option>.
  */
-export function buildActionFilterGroups(): AuditFilterGroup[] {
+export function buildActionFilterGroups(options?: {
+  audiences?: readonly AuditAudience[];
+}): AuditFilterGroup[] {
   const byGroup = new Map<string, AuditFilterOption[]>();
+  const audiences = options?.audiences;
 
   for (const event of Object.values(AUDIT_EVENTS)) {
+    if (audiences && !isVisibleTo(event, audiences)) continue;
     const { group, label } = classifyAuditEvent(event);
     const description = EVENT_METADATA[event]?.description;
     const option: AuditFilterOption = description

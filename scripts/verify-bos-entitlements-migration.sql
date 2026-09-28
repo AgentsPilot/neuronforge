@@ -23,7 +23,7 @@
 --      starts below the `BEGIN`, an editor that wraps statements its own way —
 --      the fabricated users are COMMITTED into the production auth schema, where
 --      `on_auth_user_created` triggers and every downstream table are waiting.
---      A rolled-back transaction is a good safety property; it is not one worth
+--      A rolled-back transaction is a good safety property, but not one worth
 --      betting the identity table on, for evidence we can get another way.
 --   2. **The lock probe was worse.** Section B4 added `CHECK (false)` to the
 --      plan table to prove a failing plan write cannot fail a product write,
@@ -31,7 +31,7 @@
 --      It was opt-in behind `\if :probe_locks` — and QA (R-1) showed the opt-in
 --      was the trap: pasting into the editor fails on the first backslash, and
 --      the obvious repair is to delete the backslash lines, which leaves the
---      lock probe ENABLED on production. The user's instruction was to remove
+--      lock probe ENABLED on production. The instruction from the user was to
 --      it, not to re-gate it. **It is gone** (see B4 below), so there is no
 --      longer a version of this file that can lock the plan table.
 --
@@ -41,10 +41,10 @@
 --   | Behaviour                         | Covered instead by                   |
 --   |-----------------------------------|--------------------------------------|
 --   | The trigger records a fact        | Real traffic. `check-…` row 61 counts |
---   |                                   | plan rows with a trigger origin; it   |
+--   |                                   | plan rows with a trigger origin. It   |
 --   |                                   | is 0 at apply time and must stop      |
 --   |                                   | being 0 once anyone signs up          |
---   |                                   | (§4.20 step 8). Production's own      |
+--   |                                   | (§4.20 step 8). Real signups on       |
 --   |                                   | signups are a better sample than      |
 --   |                                   | three fabricated ones.                |
 --   | A failing plan write cannot fail  | Structure: `check-…` row 22 asserts   |
@@ -56,19 +56,19 @@
 --   |                                   | **Behaviourally unproven until a      |
 --   |                                   | throwaway database exists — the one   |
 --   |                                   | real gap, and it fails SAFE.**        |
---   | A trial cannot be restarted       | The upsert never overwrites a cohort; |
+--   | A trial cannot be restarted       | The upsert never overwrites a cohort, |
 --   |                                   | asserted from the source text by the  |
 --   |                                   | Jest migration guard, and by the      |
---   |                                   | resolver's own tests once Slice 2     |
+--   |                                   | the resolver tests once Slice 2       |
 --   |                                   | reads these rows.                     |
 --   | `business_os_reset_plan_state`    | Nothing calls it until the Slice-1    |
---   |                                   | admin route exists (component 5); it  |
+--   |                                   | admin route exists (component 5). It  |
 --   |                                   | gets its first real exercise there,   |
 --   |                                   | against one account, by an admin who  |
 --   |                                   | typed a confirmation.                 |
---   | The shadow RPC's arithmetic       | Shadow mode itself (Slice 2) writes   |
---   |                                   | real events with the product off; QA  |
---   |                                   | reads the first day's rows.           |
+--   | The arithmetic in the shadow RPC  | Shadow mode itself (Slice 2) writes   |
+--   |                                   | real events with the product off. QA  |
+--   |                                   | reads the rows from the first day.    |
 --
 -- If an environment ever exists where this file CAN run — the staging database
 -- in docs/ENVIRONMENTS_AND_DEPLOYMENT_STRATEGY.md, or a Supabase branch — run it
@@ -104,7 +104,7 @@
 
 BEGIN;
 
--- The guard that makes the header's promise enforceable.
+-- The guard that makes the promise in the header enforceable.
 --
 -- `transaction_timestamp()` is fixed when the transaction starts, while
 -- `statement_timestamp()` moves with each statement — so inside an explicit
@@ -161,7 +161,7 @@ BEGIN
     -- zero policies (RC-8, and R5 of the admin authz guard by construction)
     SELECT count(*) INTO n FROM pg_policies WHERE schemaname = 'public' AND tablename = t;
     IF n <> 0 THEN
-      RAISE EXCEPTION 'A3 % has % policy/policies; component 1 defines none', t, n;
+      RAISE EXCEPTION 'A3 % has % policy/policies, and component 1 defines none', t, n;
     END IF;
 
     -- no privileges for the client roles
@@ -180,7 +180,7 @@ BEGIN
 END $$;
 
 -- Functions: EXECUTE revoked from the client roles, and search_path pinned.
--- The two trigger functions also pin lock_timeout (M-1's sibling: a lock on the
+-- The two trigger functions also pin lock_timeout (the sibling of M-1: a lock
 -- plan table must never stall a product write).
 DO $$
 DECLARE
@@ -328,13 +328,13 @@ END $$;
 -- schema differs between Supabase versions, and some projects have a
 -- `handle_new_user` trigger that fails here), replace the INSERT with three
 -- existing auth user ids that are NOT Business OS tenants, written into
--- `_bos_probe` as 'tenant', 'tenant2' and 'tenant3', and keep the rest of the
+-- `_bos_probe` under the three tenant keys, and keep the rest of the
 -- script:
 --
 --   SELECT u.id FROM auth.users u
 --   LEFT JOIN public.business_profiles bp ON bp.user_id = u.id
 --   LEFT JOIN public.onboarding_conversations oc ON oc.user_id = u.id
---   WHERE bp.user_id IS NULL AND oc.user_id IS NULL LIMIT 3;
+--   WHERE bp.user_id IS NULL AND oc.user_id IS NULL LIMIT 3
 --
 -- This insert into `auth.users` is the reason the whole file is quarantined from
 -- production: see the header.
@@ -406,7 +406,7 @@ BEGIN
     RAISE EXCEPTION 'B2 the onboarding fact moved (% -> %): a trial could be restarted', v_first, p.onboarding_started_at;
   END IF;
   IF p.trial_started_at IS NOT NULL OR p.trial_ends_at IS NOT NULL THEN
-    RAISE EXCEPTION 'B2 the trigger wrote a pin; it may only fill a fact';
+    RAISE EXCEPTION 'B2 the trigger wrote a pin, when it may only fill a fact';
   END IF;
 END $$;
 
@@ -429,13 +429,13 @@ BEGIN
   IF p.origin <> 'onboarding_trigger' THEN RAISE EXCEPTION 'B3 origin was overwritten to %', p.origin; END IF;
 END $$;
 
--- B4. REMOVED, 2026-09-22, on the user's instruction — not disabled, removed.
+-- B4. REMOVED, 2026-09-22, on instruction from the user: not disabled, removed.
 --
 -- It proved S-8(i): a failing plan-table write can never fail the product write.
 -- It did that by adding `CHECK (false)` to the plan table, which takes an ACCESS
 -- EXCLUSIVE lock for the rest of the transaction — on a live database every
 -- concurrent plan-row trigger then waits out its 2s `lock_timeout` and logs a
--- WARNING, so the customer's message saves but their plan row does not exist
+-- WARNING, so the message from the customer saves but their plan row does not
 -- until someone re-runs the backfill.
 --
 -- It used to be opt-in behind `\if :probe_locks`. QA (R-1) showed why that was
@@ -449,7 +449,7 @@ END $$;
 -- migration guard asserts the `EXCEPTION WHEN OTHERS → WARNING` handler from the
 -- source text. That is weaker — it proves the mechanism is present, not that it
 -- behaves — and the header says so. If a throwaway database ever exists, the
--- probe is worth rewriting there; it is not worth writing on production.
+-- probe is worth rewriting there, and it is not worth writing on production.
 
 -- B4b. Set up the repair case for B7, without any lock probe.
 --
@@ -476,7 +476,7 @@ BEGIN
   DELETE FROM public.business_os_account_plans WHERE user_id = v_user2;
 
   SELECT count(*) INTO n FROM public.business_os_account_plans WHERE user_id = v_user2;
-  IF n <> 0 THEN RAISE EXCEPTION 'B4b tenant2 still has a plan row; B7 would not exercise the repair branch'; END IF;
+  IF n <> 0 THEN RAISE EXCEPTION 'B4b tenant2 still has a plan row, so B7 would not exercise the repair branch'; END IF;
 END $$;
 
 -- B5. M-3: an end date with nothing to end is rejected, in both directions.
@@ -604,7 +604,7 @@ BEGIN
   IF n <> 0 THEN RAISE EXCEPTION 'M-2 % override(s) are still active after a reset', n; END IF;
 
   SELECT count(*) INTO n FROM public.business_os_entitlement_overrides WHERE user_id = v_user;
-  IF n <> 1 THEN RAISE EXCEPTION 'M-2 the override row was deleted; it must be kept and ended'; END IF;
+  IF n <> 1 THEN RAISE EXCEPTION 'M-2 the override row was deleted, when it must be kept and ended'; END IF;
 
   SELECT * INTO ended FROM public.business_os_entitlement_overrides WHERE user_id = v_user;
   IF ended.ended_reason NOT LIKE 'plan_state_reset:%' OR ended.ended_by_admin_id <> v_admin THEN
@@ -624,7 +624,7 @@ BEGIN
   SELECT count(*) INTO n FROM public.business_os_account_plans WHERE user_id = v_user2;
   IF n <> 0 THEN RAISE EXCEPTION 'B7 precondition: tenant2 should have no plan row'; END IF;
 
-  -- tenant2's transcript was written in B4b, and the plan row the trigger made
+  -- The tenant2 transcript was written in B4b, and the plan row the trigger made
   -- for it was deleted there, so this is the repair branch. The transcript
   -- starts with a BACKDATED message, which is what gives the fact assertion
   -- below its teeth (QA Q-20). Nothing may be inserted for tenant2
@@ -639,7 +639,7 @@ BEGIN
   SELECT count(*) INTO n FROM public.business_os_account_plans WHERE user_id = v_user2;
   IF n <> 1 THEN RAISE EXCEPTION 'B7 expected one plan row after a repair, found %', n; END IF;
 
-  -- QA Q-2: the repaired row must carry the facts, recovered from the tenant's
+  -- QA Q-2: the repaired row must carry the facts, recovered from the tenant
   -- own history. The triggers are AFTER INSERT only, so a fact left NULL here
   -- can never be filled — and the trial clock is derived from it. tenant2 has an
   -- onboarding row (written in B4b) and no
@@ -680,7 +680,7 @@ BEGIN
    WHERE user_id = v_user AND capability = 'probe.cap';
 
   -- Two rows with the SAME key in ONE call. Before the GROUP BY fix (QA Q-1)
-  -- this raised SQLSTATE 21000 and the batch was lost; now they are folded.
+  -- this raised SQLSTATE 21000 and the batch was lost. Now they are folded.
   IF row_out.hits <> 5 THEN RAISE EXCEPTION 'B8 hits = %, expected 5 (2+3 folded within one call)', row_out.hits; END IF;
   IF row_out.items_total <> 6 THEN RAISE EXCEPTION 'B8 items_total = %, expected 6', row_out.items_total; END IF;
   IF row_out.items_max <> 9 THEN RAISE EXCEPTION 'B8 items_max = %, expected 9 (the peak, not the last)', row_out.items_max; END IF;
@@ -728,7 +728,7 @@ END $$;
 -- backfill ever ran, and the migration whose entire job is the backfill would be
 -- asserted against an empty set. So C0 below MAKES a pre-existing tenant — a
 -- tenant whose plan row is removed to simulate one that existed before the
--- schema — and runs the backfill's own statement over it. C1/C2 then have
+-- schema, and runs the same statement the backfill runs over it. C1/C2 then have
 -- something real to measure, and the probe tenants are excluded so the result
 -- does not depend on what B1–B8 happened to leave behind.
 -- ────────────────────────────────────────────────────────────────────────────
@@ -737,7 +737,7 @@ END $$;
 --
 -- ⚠️ The INSERT below is a COPY of the one in
 -- 20261005b_business_os_entitlements_backfill.sql, narrowed to one account.
--- Keep the two in step: if that file's SELECT changes, change this one.
+-- Keep the two in step: if the SELECT in that file changes, change this one.
 DO $$
 DECLARE
   v_user uuid := (SELECT user_id FROM _bos_probe WHERE kind = 'tenant3');
@@ -780,7 +780,7 @@ BEGIN
   IF p.tier IS NOT NULL OR p.plan_version <> 0 THEN
     RAISE EXCEPTION 'C0 the backfill must not assign a tier';
   END IF;
-  -- The facts come from the tenant's own history, not from now().
+  -- The facts come from the history of the tenant, not from now().
   IF p.onboarding_started_at <> timestamptz '2024-05-06 07:08:09+00' THEN
     RAISE EXCEPTION 'C0 onboarding_started_at is %, expected the first message', p.onboarding_started_at;
   END IF;
@@ -813,7 +813,7 @@ BEGIN
   LEFT JOIN public.business_os_account_plans p ON p.user_id = tenants.user_id
   WHERE p.user_id IS NULL
     -- NOT EXISTS, not NOT IN (QA Q-21): `_bos_probe` holds a row with a NULL
-    -- `user_id` (the 'first_fact' marker), and `NOT IN` over a set containing
+    -- `user_id` (the first_fact marker), and `NOT IN` over a set containing
     -- NULL is NULL for every row — this count would be 0 forever and C1 could
     -- never fail again. NOT EXISTS has no such trap to get wrong later.
     AND NOT EXISTS (SELECT 1 FROM _bos_probe b WHERE b.user_id = tenants.user_id);

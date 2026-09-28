@@ -10,10 +10,43 @@
  * So this is a source-level guard, in the same spirit as the RC-15 import guard:
  * a module that takes a user id from outside the module must name
  * `resolveAccountId`, or be on a list that says why it does not.
+ *
+ * ── SA P-1 (2026-09-27): the same finding came back, so the guard was wrong ─
+ * The customer "Your plan" route called `getSnapshot(user.id)` directly. R4-2
+ * had already been found and fixed in `shadow.ts`, and this guard was written to
+ * stop it recurring — and did not, because **it only ever scanned files inside
+ * `lib/business-os/entitlements/`.** A consumer in `app/` was invisible to it.
+ *
+ * That is the shape of a missing mechanism rather than a missing edit: the first
+ * version protected the module from itself and left every external caller — the
+ * ones that actually hold a `user.id` — unguarded. The second `describe` block
+ * below closes it: **anywhere in the product**, a file that reaches the
+ * entitlement service must resolve through the seam, and must never hand a raw
+ * user id to `getSnapshot` / `getSnapshots` / `check`.
+ *
+ * It matters most on customer-facing reads, where the symptom of getting it
+ * wrong is a user shown another account's plan.
+ *
+ * ── SA R4-3 (2026-09-27): the THIRD escape, so the blind spot is the fix ───
+ * `readPlanBadge.ts` — the only session→account conversion in the Business OS
+ * chrome — was invisible to **both** halves of this guard at once:
+ *
+ *   - the external scan (second `describe`) filters out
+ *     `lib/business-os/entitlements/`, because those files are the module;
+ *   - the intra-module sweep classified a file only if its source matched
+ *     `/\buserId\s*[:,)]/`, and this one writes `user.id`.
+ *
+ * So it was neither an `ENTRY_POINTS` entry, nor `EXEMPT`, nor reported as
+ * unclassified. The code was right; the guard could not see it.
+ *
+ * That is three escapes in one slice — `shadow.ts` (R4-2), the customer plan route
+ * (SA P-1), and this. Each was fixed by adding the file. This time the RULE
+ * changed: the sweep now notices a **session-shaped id** in any of the forms real
+ * code uses, not just the one spelling somebody happened to write first.
  */
 
-import { readdirSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { readdirSync, readFileSync, statSync } from 'fs';
+import { join, relative, sep } from 'path';
 
 const MODULE_DIR = join(process.cwd(), 'lib', 'business-os', 'entitlements');
 
@@ -24,7 +57,24 @@ const MODULE_DIR = join(process.cwd(), 'lib', 'business-os', 'entitlements');
  * means adding it here — which is the moment someone states how the id is
  * resolved.
  */
-const ENTRY_POINTS = ['shadow.ts'];
+const ENTRY_POINTS = [
+  'shadow.ts',
+  // The chrome's plan pill: reads the session itself and converts it (R4-3).
+  'readPlanBadge.ts',
+];
+
+/**
+ * A user id arriving from outside, in any form real code writes it.
+ *
+ * `userId` as a property or parameter, `user.id` / `user?.id` off a session
+ * object, and `session.user.id`. Deliberately NOT a bare `\buser\b`: half the
+ * module's prose says "user", and a guard that fires on comments is a guard
+ * somebody switches off.
+ *
+ * The narrow version of this — `/\buserId\s*[:,)]/` — is what let `readPlanBadge`
+ * through, and the third escape is what turned the entry into a rule.
+ */
+const SESSION_ID_SHAPES = /\buserId\s*[:,)]|\buser\??\.id\b|\bsession\.user\.id\b/;
 
 /**
  * Files that mention a user id but must NOT call the seam, with the reason.
@@ -48,6 +98,17 @@ function read(file: string): string {
   return readFileSync(join(MODULE_DIR, file), 'utf8');
 }
 
+/**
+ * Comments stripped, so the widened rule reads CODE and not prose.
+ *
+ * Needed because `SESSION_ID_SHAPES` matches `user.id`, which several files
+ * legitimately mention while explaining the seam. A guard that punished the
+ * explanation of its own rule would teach people to delete the explanation.
+ */
+function codeOnly(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+}
+
 describe('the account seam is used, not just exported', () => {
   it.each(ENTRY_POINTS)('%s resolves the id through resolveAccountId', (file) => {
     const source = read(file);
@@ -66,12 +127,48 @@ describe('the account seam is used, not just exported', () => {
 
     const unclassified = files.filter((file) => {
       if (ENTRY_POINTS.includes(file) || file in EXEMPT) return false;
-      const source = read(file);
-      // `userId` as a property or parameter — not a comment mentioning it.
-      return /\buserId\s*[:,)]/.test(source);
+      const source = codeOnly(read(file));
+      return SESSION_ID_SHAPES.test(source);
     });
 
     expect(unclassified).toEqual([]);
+  });
+
+  it('the widened rule SEES the file that escaped it (R4-3)', () => {
+    // Non-vacuity, and the regression test for the blind spot itself. The narrow
+    // version matched nothing in this file; the widened one must match, or adding
+    // it to ENTRY_POINTS above is decoration.
+    const source = codeOnly(read('readPlanBadge.ts'));
+
+    expect(SESSION_ID_SHAPES.test(source)).toBe(true);
+    // And the old rule genuinely did not — stated so the fix cannot be mistaken
+    // for a no-op.
+    expect(/\buserId\s*[:,)]/.test(source)).toBe(false);
+  });
+
+  it('every ENTRY_POINT really converts, and this one reads the session itself', () => {
+    // `shadow.ts` is handed a user id; `readPlanBadge.ts` fetches one. Both must
+    // convert before the id reaches the service.
+    const source = read('readPlanBadge.ts');
+
+    expect(source).toMatch(/resolveAccountId\(user\.id\)/);
+    expect(source).not.toMatch(/getSnapshot\(user\??\.id/);
+  });
+
+  it('the shapes rule accepts the forms real code writes, and not prose', () => {
+    // A control on the regex: three shapes in, one comment out. Without this the
+    // widened rule could be wrong in either direction and nothing would say so.
+    for (const code of [
+      'async function f(userId: string) {}',
+      'const accountId = resolveAccountId(user.id);',
+      'resolveAccountId(user?.id)',
+      'getSnapshot(session.user.id)',
+    ]) {
+      expect(SESSION_ID_SHAPES.test(code)).toBe(true);
+    }
+
+    // Prose about users must not trip it — the reason it is not a bare `\buser\b`.
+    expect(SESSION_ID_SHAPES.test('// the user sees their own plan here')).toBe(false);
   });
 
   it('scans a plausible number of files, so the sweep above is real', () => {
@@ -81,6 +178,122 @@ describe('the account seam is used, not just exported', () => {
   it('the exempt list names files that exist and really are exempt', () => {
     for (const [file, reason] of Object.entries(EXEMPT)) {
       expect(() => read(file)).not.toThrow();
+      expect(reason.length).toBeGreaterThan(10);
+    }
+  });
+});
+
+/**
+ * The same rule, for every caller in the product (SA P-1).
+ *
+ * Keyed on importing the entitlement service rather than on the text
+ * `getSnapshot(`, because three unrelated things in this codebase are called
+ * that or `check`: a private helper in `lib/business-os/llm/modelSettings.ts`, a
+ * marketing-consent gate in `lib/notifications/emailTransport.ts`, and a
+ * capability checker in `CapabilityBinderV2`. A guard that shouted about those
+ * would be switched off within a week.
+ */
+describe('the account seam is used by every caller, not only inside the module', () => {
+  const SCANNED = ['app', 'lib', 'components', 'hooks'];
+
+  /** Imports the entitlement service — i.e. can reach an account snapshot. */
+  const SERVICE_IMPORT = /from\s+['"][^'"]*business-os\/entitlements(\/EntitlementService|\/index)?['"]/;
+  const SERVICE_SYMBOL = /\b(getEntitlementService|EntitlementService)\b/;
+
+  /** The calls that take an account id. */
+  const ACCOUNT_CALLS = /\.(getSnapshot|getSnapshots|check)\s*\(/;
+
+  /**
+   * Callers that legitimately do not name the seam, with the reason.
+   *
+   * Empty on purpose right now: both external callers resolve. An entry here is
+   * somebody stating, in a reviewable diff, that their id did not come from a
+   * user — which is the only honest reason to skip it.
+   */
+  const EXTERNAL_EXEMPT: Record<string, string> = {};
+
+  function walk(dir: string, out: string[] = []): string[] {
+    let entries: string[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true }).map((entry) => entry.name);
+    } catch {
+      return out;
+    }
+
+    for (const entry of entries) {
+      if (entry === 'node_modules' || entry === '.next' || entry === '.claude') continue;
+      const full = join(dir, entry);
+      let isDir = false;
+      try {
+        isDir = statSync(full).isDirectory();
+      } catch {
+        continue;
+      }
+      if (isDir) walk(full, out);
+      else if (/\.tsx?$/.test(entry)) out.push(full);
+    }
+    return out;
+  }
+
+  const projectFiles = SCANNED.flatMap((dir) => walk(join(process.cwd(), dir)))
+    .map((full) => relative(process.cwd(), full).split(sep).join('/'))
+    // Tests describe the calls; they do not make them on a user's behalf. The
+    // module's own files are covered by the first describe block above.
+    .filter((file) => !/__tests__|\.test\.tsx?$/.test(file))
+    .filter((file) => !file.startsWith('lib/business-os/entitlements/'));
+
+  const callers = projectFiles.filter((file) => {
+    const source = readFileSync(join(process.cwd(), file), 'utf8');
+    return SERVICE_IMPORT.test(source) && SERVICE_SYMBOL.test(source) && ACCOUNT_CALLS.test(source);
+  });
+
+  it('finds the callers at all — otherwise everything below passes vacuously', () => {
+    // Two today: the admin account inspector and the customer plan read. A scan
+    // returning none means the regexes stopped matching, not that the product
+    // stopped asking.
+    expect(projectFiles.length).toBeGreaterThan(500);
+    expect(callers.length).toBeGreaterThanOrEqual(2);
+    expect(callers).toContain('app/api/business-os/entitlements/my-plan/route.ts');
+  });
+
+  it('every caller resolves through the seam, or says why it does not', () => {
+    const unresolved = callers.filter((file) => {
+      if (file in EXTERNAL_EXEMPT) return false;
+      return !/resolveAccountId\s*\(/.test(readFileSync(join(process.cwd(), file), 'utf8'));
+    });
+
+    // If this fails: call `resolveAccountId` on the id before you pass it, or add
+    // an EXTERNAL_EXEMPT entry saying where the id came from instead. `AccountId`
+    // is `string`, so nothing else will tell you.
+    expect(unresolved).toEqual([]);
+  });
+
+  it('no caller hands a RAW user id to the service', () => {
+    // The direct form of the defect, and the one an exemption must not be able
+    // to wave through: a file can call `resolveAccountId` somewhere else and
+    // still pass `user.id` here. This is what actually shipped on the customer
+    // route before P-1.
+    const raw = /\.(getSnapshot|getSnapshots|check)\s*\(\s*(user\.id|userId|user_id|session\.user\.id)\b/;
+
+    const offenders = callers.filter((file) => raw.test(readFileSync(join(process.cwd(), file), 'utf8')));
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('the raw-id rule really rejects the shape it is named after', () => {
+    // A negative control, because the two assertions above pass on a codebase
+    // where the regex matches nothing at all.
+    const raw = /\.(getSnapshot|getSnapshots|check)\s*\(\s*(user\.id|userId|user_id|session\.user\.id)\b/;
+
+    expect(raw.test('await getEntitlementService().getSnapshot(user.id);')).toBe(true);
+    expect(raw.test('await service.check(userId, capability);')).toBe(true);
+    // And accepts the fixed form.
+    expect(raw.test('await getEntitlementService().getSnapshot(accountId);')).toBe(false);
+  });
+
+  it('every EXTERNAL_EXEMPT entry names a real file and gives a reason', () => {
+    for (const [file, reason] of Object.entries(EXTERNAL_EXEMPT)) {
+      expect(projectFiles).toContain(file);
       expect(reason.length).toBeGreaterThan(10);
     }
   });

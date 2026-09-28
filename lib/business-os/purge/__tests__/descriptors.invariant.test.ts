@@ -588,3 +588,55 @@ describe('SA-S3 — classification is snapshotted, not re-decided per slice', ()
     expect(removed).toEqual([]);
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// Admin Archiving (Slice 2, condition C-4). This is how AC-12's behaviour is
+// proven while the purge RPC is held: the resolved table list for a run.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('C-4 — archived activity history is purged with the live history', () => {
+  const combos = [true, false].flatMap((integrations) =>
+    [true, false].map((agents) => ({ integrations, agents }))
+  );
+
+  it.each(['reset', 'purge'] as const)(
+    '%s with activity history ticked includes archived_records, id-snapshotted, alongside audit_trail',
+    (level) => {
+      for (const combo of combos) {
+        const run = descriptorsForRun(level, { ...combo, activityHistory: true });
+        const archived = run.find((d) => d.table === 'archived_records');
+        expect(archived).toBeDefined();
+        expect(archived?.snapshot).toBe('ids');
+        expect(archived?.scope).toEqual({ kind: 'user_id' });
+        expect(run.some((d) => d.table === 'audit_trail')).toBe(true);
+      }
+    }
+  );
+
+  it.each(['reset', 'purge'] as const)('%s without activity history leaves archived_records alone', (level) => {
+    for (const combo of combos) {
+      const run = descriptorsForRun(level, { ...combo, activityHistory: false });
+      expect(run.some((d) => d.table === 'archived_records')).toBe(false);
+    }
+  });
+
+  it('archive_runs is classified never and no option combination ever deletes it', () => {
+    expect(byTable.get('archive_runs')?.level).toBe('never');
+    for (const level of ['reset', 'purge'] as const) {
+      for (const combo of combos) {
+        for (const activityHistory of [true, false]) {
+          const run = descriptorsForRun(level, { ...combo, activityHistory });
+          expect(run.some((d) => d.table === 'archive_runs')).toBe(false);
+        }
+      }
+    }
+  });
+
+  it('archived_records mirrors audit_trail in level, scope and band', () => {
+    const archived = byTable.get('archived_records');
+    const live = byTable.get('audit_trail');
+    expect(archived?.level).toBe(live?.level);
+    expect(archived?.scope).toEqual(live?.scope);
+    expect(archived?.order).toBe(live?.order);
+  });
+});

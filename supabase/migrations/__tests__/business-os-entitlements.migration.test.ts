@@ -280,9 +280,29 @@ describe('RC-8 — RLS on, no policies, no client privileges', () => {
     expect(ddlCode).not.toMatch(/CREATE POLICY/i);
   });
 
-  it('revokes the client roles explicitly', () => {
-    expect(ddlCode).toMatch(/REVOKE SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER/);
-    expect(ddlCode).toMatch(/FROM anon, authenticated;/);
+  it('revokes the client roles with REVOKE ALL, never an enumeration', () => {
+    // Corrected 2026-09-24, after check A4 FAILED on production: the old
+    // enumeration (SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES,
+    // TRIGGER) predates PostgreSQL 17's MAINTAIN privilege, which the Supabase
+    // defaults had granted to anon and authenticated at CREATE time. Both roles
+    // kept `m` on all three tables.
+    //
+    // The list is the bug, not the missing entry: a database gains privileges
+    // over time, and any list written today stops covering them silently.
+    expect(ddlCode).toMatch(/REVOKE ALL\s+ON TABLE/);
+    expect(ddlCode).toMatch(/FROM PUBLIC, anon, authenticated;/);
+
+    // The enumeration must not come back, in any order of the first three.
+    expect(ddlCode).not.toMatch(/REVOKE SELECT, INSERT, UPDATE[^;]*FROM (PUBLIC, )?anon/);
+  });
+
+  it('takes DELETE and TRUNCATE away from service_role rather than only omitting them', () => {
+    // The other half of the same production finding: a GRANT that names
+    // SELECT, INSERT, UPDATE does not remove what the defaults already gave, so
+    // service_role held `d` and `D` while the comment beside the GRANT claimed
+    // DELETE was deliberately not granted. M-2's guarantee (the reset ENDS
+    // rows, it does not remove them) rested on the function body alone.
+    expect(ddlCode).toMatch(/REVOKE DELETE, TRUNCATE\s+ON TABLE[\s\S]{0,400}FROM service_role;/);
   });
 
   it('states the service_role grant rather than inheriting it (QA Q-4)', () => {
@@ -364,7 +384,7 @@ describe('S-8 — the provisioning triggers can only record a fact', () => {
 
   it('EXECUTE is revoked from the client roles', () => {
     for (const fn of functions) {
-      expect(ddlCode).toMatch(new RegExp(`REVOKE EXECUTE ON FUNCTION public\\.${fn}\\(\\)\\s+FROM public, anon, authenticated`));
+      expect(ddlCode).toMatch(new RegExp(`REVOKE ALL ON FUNCTION public\\.${fn}\\(\\)\\s+FROM public, anon, authenticated`));
     }
   });
 });
@@ -389,7 +409,7 @@ describe('WC-9 — the callable functions are service-role only', () => {
     const fn = ddlCode.slice(ddlCode.indexOf('FUNCTION public.business_os_record_shadow_events'));
     expect(fn).toMatch(/SECURITY INVOKER/);
     expect(fn).toMatch(/SET search_path = ''/);
-    expect(ddlCode).toMatch(/REVOKE EXECUTE ON FUNCTION public\.business_os_record_shadow_events\(jsonb\)\s+FROM public, anon, authenticated/);
+    expect(ddlCode).toMatch(/REVOKE ALL ON FUNCTION public\.business_os_record_shadow_events\(jsonb\)\s+FROM public, anon, authenticated/);
     expect(ddlCode).toMatch(/GRANT EXECUTE ON FUNCTION public\.business_os_record_shadow_events\(jsonb\)\s+TO service_role/);
   });
 
@@ -397,7 +417,7 @@ describe('WC-9 — the callable functions are service-role only', () => {
     const fn = ddlCode.slice(ddlCode.indexOf('FUNCTION public.business_os_reset_plan_state'));
     expect(fn).toMatch(/SECURITY INVOKER/);
     expect(fn).toMatch(/SET search_path = ''/);
-    expect(ddlCode).toMatch(/REVOKE EXECUTE ON FUNCTION public\.business_os_reset_plan_state\([^)]*\)\s+FROM public, anon, authenticated/);
+    expect(ddlCode).toMatch(/REVOKE ALL ON FUNCTION public\.business_os_reset_plan_state\([^)]*\)\s+FROM public, anon, authenticated/);
     expect(ddlCode).toMatch(/GRANT EXECUTE ON FUNCTION public\.business_os_reset_plan_state\([^)]*\)\s+TO service_role/);
   });
 });

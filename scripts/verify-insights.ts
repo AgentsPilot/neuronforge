@@ -8,6 +8,9 @@
  */
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
+// Type-only, so it is erased at compile time and does not disturb the dynamic
+// imports below (relative, matching this file's convention for `lib/`).
+import type { InsightRunIds } from '../lib/business-os/insight/repository';
 
 dotenv.config({ path: '.env.local' });
 
@@ -55,6 +58,13 @@ async function runDetection() {
   const prioritizer = new InsightPrioritizer(supabase);
   const repository = new InsightRepository(supabase);
   const runId = crypto.randomUUID();
+  /*
+   * The AI usage group is minted separately from the run id, and per business —
+   * this script only ever handles the one `userId` from argv, but reusing
+   * `runId` as the group is the exact shape of F-13 and must not be copied from
+   * here into anything that loops.
+   */
+  const ids: InsightRunIds = { runId, groupId: crypto.randomUUID() };
 
   // Get user language
   const { data: profile } = await supabase
@@ -95,7 +105,7 @@ async function runDetection() {
   console.log(`\n   🎯 Prioritized ${prioritized.length} insights`);
 
   // Save to database
-  const result = await repository.createBatch(userId, prioritized, runId);
+  const result = await repository.createBatch(userId, prioritized, ids);
   if (result.error) {
     console.error(`   ❌ Error saving insights: ${result.error.message}`);
     return { detections, correlationSummary };
@@ -115,7 +125,7 @@ async function runDetection() {
       userId,
       correlationSummary,
       detectorToInsightId,
-      runId
+      ids
     );
     if (corrResult.error) {
       console.error(`   ❌ Error saving correlated insights: ${corrResult.error.message}`);

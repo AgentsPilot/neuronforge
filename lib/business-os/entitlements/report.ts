@@ -78,6 +78,15 @@ const MAX_ACCOUNTS = 20000;
 /** How many accounts the setup-AI measurement samples. */
 const SETUP_AI_SAMPLE = 200;
 
+/**
+ * One day, for the dormancy size and the placeholder expiry (S-0).
+ *
+ * Whole days on purpose: "dormant for 268 days" is a fact somebody can weigh,
+ * and an hours figure is precision nobody asked for about an account that has
+ * done nothing for nine months.
+ */
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 /** The areas whose AI calls count as "setting up" (B-12). */
 const SETUP_AREAS = ['business-os-onboarding', 'business-os-website', 'business-os-intake'] as const;
 
@@ -126,7 +135,116 @@ export interface StaticSection {
    */
   noEndDateAccountsWithoutProfile: number;
   anomalies: Array<{ accountId: string; anomaly: string }>;
-  tenantsWithoutPlanRow: { checked: number; count: number; sample: string[]; truncated: boolean; scope: string };
+  /**
+   * Tenants with no plan record — **exhaustive since S-0**.
+   *
+   * `onboardingOnly` is the set the previous scan could not see at all, and
+   * `withProfile` the set it could. They are reported apart because that
+   * difference is the gap S-0 closed: a reader comparing two reports should be
+   * able to see which half is new rather than infer it.
+   *
+   * ── Why every number here is nullable (SA S0-1) ──────────────────────
+   * The repository refuses to let a failed scan look like a clean database: a
+   * missing function or an empty result set comes back as an error, never as
+   * zero. This section used to throw that away — on failure it emitted
+   * `count: 0` and carried the distinction in the `scope` sentence, which is
+   * English. The switch-on gate is *"do not enforce while the count is above
+   * zero"*, so a check that never ran satisfied the gate and nothing could ask
+   * whether the zero was real.
+   *
+   * So the failure is in the type. When `scanFailed` is `true` every count is
+   * `null`, and the gate is **`scanFailed === false && count === 0`** — two
+   * conditions a machine can evaluate. `null` alone would not be enough:
+   * `null > 0` is `false` in JavaScript, which is the same trap wearing a
+   * different hat.
+   */
+  tenantsWithoutPlanRow: {
+    /**
+     * `true` when the scan did not answer. **Read this before any count.**
+     * Nothing else in this object is meaningful while it is `true`.
+     */
+    scanFailed: boolean;
+    checked: number | null;
+    count: number | null;
+    sample: string[];
+    withProfile: number | null;
+    onboardingOnly: number | null;
+    truncated: boolean;
+    scope: string;
+  };
+  /**
+   * The dormant-champion trim list, worked (S-0).
+   *
+   * Every account with free access that never built a business — and, per
+   * account, the admin operation that would end it. **Nothing here cuts
+   * anybody**: it produces the list and the mechanism, and the decision belongs
+   * to whoever owns the commercial call.
+   */
+  dormantChampions: DormantChampionSection;
+}
+
+/** One dormant champion, and what ending their free access would take. */
+export interface DormantChampionRow {
+  accountId: string;
+  /** When the plan record was created — the start date of the account itself. */
+  since: string;
+  /** How the record came to exist: `backfill`, a trigger, or an admin operation. */
+  origin: string;
+  /** Whole days between `since` and the report, so "dormant" has a size. */
+  dormantDays: number;
+  /** The first onboarding message, when there was one. */
+  onboardingStartedAt: string | null;
+  /**
+   * The exact admin operation that ends free access for this one account.
+   *
+   * Carried per row rather than described once, because what makes a trim list
+   * actionable is not knowing THAT an operation exists — it is having the body,
+   * for this account, with the field that applies to a cohort rather than a
+   * tier. `tier_expires_at` on an account with no tier is a 409 an admin would
+   * otherwise discover by hand.
+   */
+  endAccessOp: {
+    method: 'POST';
+    path: string;
+    body: { op: 'set_expiry'; field: 'cohort_expires_at'; value: string; reason: string };
+  };
+}
+
+export interface DormantChampionSection {
+  /**
+   * `true` when the plan walk **failed**, as opposed to finishing or being
+   * capped (QA-4).
+   *
+   * Without this the section reports `accounts: 0, rows: []` for a failed read
+   * and for a genuinely empty list alike — the same asymmetry S0-1 removed one
+   * field along, in a section this slice added. `truncated` does not cover it:
+   * it is also `true` after a healthy walk that hit `MAX_ACCOUNTS`, so it
+   * cannot distinguish "capped" from "broken".
+   *
+   * Read it before `accounts`, which is `null` while this is `true`.
+   */
+  walkFailed: boolean;
+  /**
+   * Distinct accounts, not rows — the unit somebody would act in.
+   *
+   * `null` when `walkFailed`: how many dormant champions exist is not knowable
+   * from a walk that stopped on an error, and `0` would be a claim. Any rows
+   * already collected are still listed below — each one is individually true,
+   * and the list simply is not complete.
+   */
+  accounts: number | null;
+  rows: DormantChampionRow[];
+  /** `true` when the plan walk did not finish — capped OR failed — so the list is partial. */
+  truncated: boolean;
+  /**
+   * Set only when the list is not the whole picture, and says so in words
+   * (QA-4). `null` on a healthy report, so its presence is the signal.
+   */
+  incomplete: string | null;
+  /** What happens after the date in `endAccessOp`, so it is not read as harsher than it is. */
+  afterExpiry: string;
+  /** What this section is, on the section itself. */
+  note: string;
 }
 
 export interface ObservedRow {
@@ -338,9 +456,16 @@ async function buildStatic(
   const byTier: Record<string, number> = {};
   const noEndDate: NoEndDateRow[] = [];
   const anomalies: Array<{ accountId: string; anomaly: string }> = [];
+  // Collected in the SAME pass as everything else: a second query over the same
+  // rows could disagree with `noEndDateAccountsWithoutProfile`, and the two
+  // being the same number is one of the properties the tests hold.
+  const dormant: BusinessOsAccountPlan[] = [];
 
   let scanned = 0;
   let truncated = false;
+  // Distinct from `truncated`, which a healthy walk also sets when it reaches
+  // MAX_ACCOUNTS (QA-4). Only a read that ERRORED sets this.
+  let walkFailed = false;
   let after: string | null = null;
 
   // Keyset paging (RC-12): an offset walk silently skips or repeats rows when
@@ -351,6 +476,7 @@ async function buildStatic(
     if (page.error || !page.data) {
       logger.error({ err: page.error, after }, 'Report: plan page failed; static section is partial');
       truncated = true;
+      walkFailed = true;
       break;
     }
 
@@ -373,6 +499,13 @@ async function buildStatic(
       }
       if (row.tier && row.tier_expires_at === null) {
         noEndDate.push(noEndDateRow(row, 'tier', row.tier));
+      }
+
+      // The trim list, in one condition: free access, no end date, no business
+      // ever built. A paying account fails the first test, which is the
+      // exclusion that would hurt most if it were missing.
+      if (row.cohort === 'champion' && row.cohort_expires_at === null && row.profile_created_at === null) {
+        dormant.push(row);
       }
     }
 
@@ -401,15 +534,108 @@ async function buildStatic(
     anomalies,
     tenantsWithoutPlanRow: missing.data
       ? {
+          scanFailed: false,
           checked: missing.data.checked,
-          count: missing.data.missing.length,
+          // The EXACT count, which is no longer the sample length: the scan
+          // counts in SQL and returns a bounded list of ids.
+          count: missing.data.count,
           // A sample, not the list: the count is the signal, and 2,000 ids in a
           // report is not a report.
           sample: missing.data.missing.slice(0, 20),
+          withProfile: missing.data.withProfile,
+          onboardingOnly: missing.data.onboardingOnly,
           truncated: missing.data.truncated,
-          scope: 'accounts with a business profile (see findTenantsMissingPlanRow)',
+          scope: missing.data.scope,
         }
-      : { checked: 0, count: 0, sample: [], truncated: true, scope: 'unavailable — the read failed' },
+      : {
+          // Distinguishable from "nothing is missing" **in the type**, not in a
+          // sentence (SA S0-1). This row used to say `count: 0` here, which is
+          // the S-0 defect one layer above where S-0 fixed it: the gate reads a
+          // number, and a failed scan handed it a number that passes.
+          scanFailed: true,
+          checked: null,
+          count: null,
+          sample: [],
+          withProfile: null,
+          onboardingOnly: null,
+          truncated: true,
+          scope: 'unavailable — the read failed',
+        },
+    dormantChampions: dormantChampionSection(dormant, truncated, walkFailed, now),
+  };
+}
+
+/**
+ * The trim list, worked (S-0).
+ *
+ * ── Who is on it ────────────────────────────────────────────
+ * A champion with **no end date** and **no business profile**. The backfill
+ * treated "a profile OR any onboarding message" as a tenant, so an account that
+ * opened onboarding once and never came back is a champion for ever.
+ *
+ * ── Why it carries an operation and not a recommendation ────────────────
+ * A count cannot be acted on and a recommendation is a decision taken by the
+ * wrong person. So each row carries the exact request that would end that
+ * account free access — and its `reason` is a placeholder that refuses to be
+ * sent as written, and its date is 30 days out as an illustration rather than a
+ * proposal. **Nothing here has been cut, and nothing here cuts anybody.**
+ */
+function dormantChampionSection(
+  rows: BusinessOsAccountPlan[],
+  truncated: boolean,
+  walkFailed: boolean,
+  now: Date
+): DormantChampionSection {
+  const placeholderExpiry = new Date(now.getTime() + 30 * MS_PER_DAY).toISOString();
+
+  return {
+    walkFailed,
+    // Accounts, not rows. One account has one plan record, so these agree
+    // today; counting in the unit somebody acts in keeps it true if that ever
+    // stops being so.
+    //
+    // `null` rather than a partial count when the walk failed (QA-4): a number
+    // here is read as "how many there are", and after a failed read nobody
+    // knows. `rows.length` is still available to anyone who wants "how many we
+    // managed to find".
+    accounts: walkFailed ? null : new Set(rows.map((row) => row.user_id)).size,
+    rows: rows.map((row) => ({
+      accountId: row.user_id,
+      since: row.created_at,
+      origin: row.origin,
+      // Clamped at zero: a record created in the future (clock skew, or a
+      // seeded fixture) would otherwise report a NEGATIVE dormancy, which reads
+      // as nonsense in a list somebody is meant to act on.
+      dormantDays: Math.max(
+        0,
+        Math.floor((now.getTime() - new Date(row.created_at).getTime()) / MS_PER_DAY)
+      ),
+      onboardingStartedAt: row.onboarding_started_at ?? null,
+      endAccessOp: {
+        method: 'POST',
+        path: `/api/admin/business-os/entitlements/accounts/${row.user_id}`,
+        body: {
+          op: 'set_expiry',
+          // The field that applies to a cohort. `tier_expires_at` on an account
+          // with no tier is a 409.
+          field: 'cohort_expires_at',
+          value: placeholderExpiry,
+          reason: 'REPLACE THIS with why, and the date above with the date you chose',
+        },
+      },
+    })),
+    truncated,
+    incomplete: walkFailed
+      ? 'The plan walk FAILED part way through. This list is whatever was read before the error, the account count is not available, and nothing here should be treated as the whole picture.'
+      : null,
+    afterExpiry:
+      'At that date the champion cohort lapses and the account enters the 30 days of champion grace ' +
+      'configured in the lifecycle, after which it has whatever the tier layer gives it. ' +
+      'While BOS_ENTITLEMENTS_MODE is off, nothing happens at all: the date is recorded and not acted on.',
+    note:
+      'A list and a mechanism, not a decision. Nothing here has been cut, no account has been changed, ' +
+      'and the operation on each row is what somebody would have to send deliberately. ' +
+      'Who (if anyone) loses free access is a commercial call, not a report.',
   };
 }
 

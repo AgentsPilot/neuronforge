@@ -31,6 +31,10 @@ const REQUIRED_CAPABILITIES = [
   'payments.card',
   'payments.reminders',
   'payments.multi_currency',
+  // FR-46 (2026-09-24): the chat SURFACE, added when configuring the tiers
+  // showed that the eight per-operation groups below cannot express "Essentials
+  // has no chat". Nothing reads it until Slice 2.
+  'chat.access',
   'chat.marketing',
   'chat.invoice_control',
   'chat.email',
@@ -68,10 +72,10 @@ describe('AC-1 — the catalog covers the requirement', () => {
     expect(present.filter((id) => !required.includes(id as never))).toEqual([]);
   });
 
-  it('is 37 capabilities', () => {
+  it('is 38 capabilities', () => {
     // A guard on the guard: if both lists above were edited together, this still
     // notices the size changed and asks for a deliberate decision.
-    expect(CAPABILITY_IDS).toHaveLength(37);
+    expect(CAPABILITY_IDS).toHaveLength(38);
   });
 
   it('validates against its own schema', () => {

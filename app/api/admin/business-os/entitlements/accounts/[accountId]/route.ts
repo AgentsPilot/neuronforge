@@ -33,7 +33,13 @@ import {
 } from '@/lib/repositories/BusinessOsAccountPlanRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { onboardingConversationRepository } from '@/lib/repositories/OnboardingConversationRepository';
-import { adminOpSchema, executeAdminOp } from '@/lib/business-os/entitlements/adminOps';
+import {
+  adminOpSchema,
+  executeAdminOp,
+  isBusinessOsTenant,
+} from '@/lib/business-os/entitlements/adminOps';
+import { describeCapabilityValue } from '@/lib/business-os/entitlements/capabilityDisplay';
+import { isGrantingValue } from '@/lib/business-os/entitlements/schema';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import { getEntitlementService, CACHE_TTL_SECONDS } from '@/lib/business-os/entitlements/EntitlementService';
 import { resolveAccountId } from '@/lib/business-os/entitlements/account';
@@ -63,7 +69,38 @@ export async function GET(request: NextRequest, context: { params: { accountId: 
     }
 
     const accountId = resolveAccountId(parsedId.data);
+
+    // ── Is this a Business OS account at all? (QA, 2026-09-24) ──────────────
+    //
+    // The POST path has refused a non-tenant with 404 since R2-1; the GET did
+    // not, and returned 200 with a confident panel built from an anomaly. An
+    // agent-platform-only id, or a deleted account, therefore READ as a
+    // Business OS account with a plan — the one answer an admin must never get
+    // from a screen they consult before changing somebody's entitlements.
+    //
+    // THE SAME FUNCTION the write path calls, not the same rule written twice
+    // (QA NEW-2). The re-implementation disagreed with it: this one is
+    // short-circuiting, so a profile hit never reads onboarding and an
+    // onboarding error on an account that has a profile is not an error at all.
+    const isTenant = await isBusinessOsTenant({
+      accountId,
+      profileRepository: businessProfileRepository,
+      onboardingRepository: onboardingConversationRepository,
+    });
+
+    if (isTenant === null) {
+      return NextResponse.json({ success: false, error: 'tenant_check_failed' }, { status: 500 });
+    }
+
+    if (!isTenant) {
+      return NextResponse.json(
+        { success: false, error: 'not_a_business_os_account' },
+        { status: 404 }
+      );
+    }
+
     const snapshot = await getEntitlementService().getSnapshot(accountId, { bypassCache: true });
+    const config = getEntitlementConfig();
 
     if (snapshot.unavailable || !snapshot.resolution) {
       return NextResponse.json({ success: false, error: 'entitlement_inputs_unavailable' }, { status: 503 });
@@ -83,8 +120,34 @@ export async function GET(request: NextRequest, context: { params: { accountId: 
         lifecycle: snapshot.resolution.lifecycle,
         anomaly: snapshot.resolution.anomaly ?? null,
         matrixVersion: snapshot.resolution.matrixVersion,
-        // FR-10: the value AND the layer that decided it, per capability.
-        capabilities: snapshot.resolution.values,
+        // FR-10: the value AND the layer that decided it, per capability —
+        // plus whether the value GRANTS anything, decided here by
+        // `isGrantingValue` (QA, 2026-09-24).
+        //
+        // The admin screen used to answer that itself with `value !== false`,
+        // which called `{ included: 0 }` and `'unavailable'` entitlements and
+        // reported 26 of 38 in force where the resolver says 19. A second
+        // granting rule is a second answer to a question that already has one;
+        // the only way to keep it single is to send the answer.
+        capabilities: Object.fromEntries(
+          Object.entries(snapshot.resolution.values).map(([capability, resolved]) => [
+            capability,
+            {
+              ...resolved,
+              granting: isGrantingValue(
+                resolved.value,
+                (config.catalog as Record<string, Parameters<typeof isGrantingValue>[1]>)[capability]
+              ),
+              // QA-8: the same formatter the plan cards use. The lookup used to
+              // print `{"included":1,"purchasable":false}` beside a card
+              // reading `1 seat` — two ways of saying one thing, on one screen.
+              display: describeCapabilityValue(
+                resolved.value,
+                (config.catalog as Record<string, Parameters<typeof describeCapabilityValue>[1]>)[capability]
+              ),
+            },
+          ])
+        ),
         ignoredOverrides: snapshot.resolution.ignoredOverrides,
         // The admin view is the ONE place override reason text appears: the
         // shadow report deliberately carries none (RC-16).

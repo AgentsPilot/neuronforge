@@ -188,7 +188,7 @@ import { SEEDED_ROWS } from '../__fixtures__/seededRows';
 import { __resetModelFallbackForTests } from '../modelFallback';
 
 import { InsightRepository } from '@/lib/business-os/insight/repository/InsightRepository';
-import type { Insight } from '@/lib/business-os/insight/repository/InsightRepository';
+import type { Insight, InsightRunIds } from '@/lib/business-os/insight/repository/InsightRepository';
 import type { DetectionResult } from '@/lib/business-os/insight/detectors/types';
 import type { CorrelatedInsight, CorrelationSummary } from '@/lib/business-os/insight/correlation/types';
 import { narrateBriefing } from '@/lib/business-os/briefing/BriefingNarrator';
@@ -206,6 +206,18 @@ import type { BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
 const U1 = profile.user_id;
 const G1 = '33333333-3333-4333-8333-333333333333';
 const R1 = '66666666-6666-4666-8666-666666666666';
+/** The insight run's PER-BUSINESS group. Never `R1`, which the whole run shares. */
+const INSIGHT_GROUP = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+/*
+ * The insight generators take `InsightRunIds { runId, groupId }`, not a bare run
+ * id (F-13). The REAL type is imported rather than re-declared: these `as never
+ * as` casts defeat the compiler completely, so when the parameter changed every
+ * call below kept compiling and started passing a string where an object was
+ * expected — `ids.groupId` then reads `undefined` and the ledger row records no
+ * group at all.
+ */
+const INSIGHT_RUN_IDS: InsightRunIds = { runId: R1, groupId: INSIGHT_GROUP };
+
 const owner: BosLlmOwner = { userId: U1, groupId: G1 };
 
 const chatCompletion = jest.fn();
@@ -220,6 +232,7 @@ const NAMED_IDS: Record<string, string> = {
   [U1]: '<user>',
   [G1]: '<group>',
   [R1]: '<run>',
+  [INSIGHT_GROUP]: '<insight-group>',
   [bosBriefingGroupId(U1, '2026-09-08')]: '<briefing-group>',
 };
 
@@ -422,15 +435,15 @@ const SITES: Array<[string, () => Promise<unknown>]> = [
     'insights/insight_content',
     () =>
       (new InsightRepository({} as unknown as SupabaseClient) as never as {
-        generateLocalizedContent(d: unknown, u: string, c: unknown, r: string): Promise<unknown>;
-      }).generateLocalizedContent(detection, U1, businessContext, R1),
+        generateLocalizedContent(d: unknown, u: string, c: unknown, r: InsightRunIds): Promise<unknown>;
+      }).generateLocalizedContent(detection, U1, businessContext, INSIGHT_RUN_IDS),
   ],
   [
     'insights/correlated_insight',
     () =>
       (new InsightRepository({} as unknown as SupabaseClient) as never as {
-        generateCorrelatedContent(i: unknown, u: string, c: unknown, r: string): Promise<unknown>;
-      }).generateCorrelatedContent(correlated, U1, businessContext, R1),
+        generateCorrelatedContent(i: unknown, u: string, c: unknown, r: InsightRunIds): Promise<unknown>;
+      }).generateCorrelatedContent(correlated, U1, businessContext, INSIGHT_RUN_IDS),
   ],
   [
     'insights/health_summary',
@@ -446,9 +459,9 @@ const SITES: Array<[string, () => Promise<unknown>]> = [
           summary: unknown,
           all: Insight[],
           lang: string,
-          run: string
+          run: InsightRunIds
         ): Promise<unknown>;
-      }).generateHealthNarrative(U1, 72, 3, { cash_flow: 60 }, { categories: [], movingUp: null, improved: 0, declined: 0, steady: 0, measured: 0, unavailable: 0 }, correlationSummary, [] as Insight[], 'en', R1),
+      }).generateHealthNarrative(U1, 72, 3, { cash_flow: 60 }, { categories: [], movingUp: null, improved: 0, declined: 0, steady: 0, measured: 0, unavailable: 0 }, correlationSummary, [] as Insight[], 'en', INSIGHT_RUN_IDS),
   ],
   ['briefing/daily_narration', () => narrateBriefing(facts(), 'en', U1)],
   [

@@ -4,9 +4,11 @@
  * Two jobs:
  *
  *   1. Guard the SHIPPED config: if someone lowers a tier value without
- *      recording a removal and bumping the version, this goes red. Today the
- *      matrix is empty, so what it really guards is the cohort histories — which
- *      are exactly the values someone would be tempted to edit in place.
+ *      recording a removal and bumping the version, this goes red. From
+ *      2026-09-23 that is its real job — the matrix has two tiers, so taking
+ *      something away from a paying subscriber is now a thing that CAN happen.
+ *      It also guards the cohort histories, which are the values someone would
+ *      otherwise be tempted to edit in place.
  *   2. Prove the comparison itself works, against the fixture matrix. A snapshot
  *      test that only ever compares an empty object with an empty object is a
  *      test that will still pass on the day it is needed and fail to do its job.
@@ -54,10 +56,30 @@ describe('the shipped configuration has not drifted', () => {
   });
 
   it('snapshots something worth snapshotting', () => {
-    // With no tiers configured, the histories are the whole guard. If they were
-    // empty too, the test above would be comparing nothing with nothing.
+    // The non-vacuity check. Until 2026-09-23 the histories were the whole
+    // guard because the matrix was empty; now the tiers must be in there too, or
+    // the test above is comparing nothing with nothing on the half that matters.
     expect(snapshot.histories.trial.duration.length).toBeGreaterThan(0);
     expect(snapshot.histories.champion.grace.length).toBeGreaterThan(0);
+
+    expect(Object.keys(snapshot.tiers).sort()).toEqual(Object.keys(TIER_MATRIX.tiers).sort());
+    for (const row of Object.values(snapshot.tiers)) {
+      expect(Object.keys(row).length).toBe(Object.keys(CAPABILITIES).length);
+    }
+  });
+
+  it('a lowered value in the SHIPPED matrix is caught, not just in the fixture', () => {
+    // The guard aimed at the real thing: same comparison, same snapshot, one
+    // capability quietly withdrawn from a live tier.
+    const [firstTier] = Object.keys(TIER_MATRIX.tiers);
+    const current = currentConfig();
+    const findings = findDrift(snapshot, {
+      ...current,
+      tiers: { ...current.tiers, [firstTier]: { ...current.tiers[firstTier], 'crm.core': false } },
+    });
+
+    expect(findings.map((finding) => finding.where)).toContain(`${firstTier}.crm.core`);
+    expect(findings[0].detail).toContain('removals');
   });
 });
 

@@ -32,7 +32,7 @@
  *
  * ── Implementation notes that are cheap to get wrong ──────────────────────
  * `getUser()` reads cookies, so the whole `/admin` segment becomes dynamically
- * rendered. That is correct, and harmless here — all 21 pages fetch at runtime.
+ * rendered. That is correct, and harmless here — all 22 pages fetch at runtime.
  *
  * `redirect()` throws a control-flow signal to unwind the render. It MUST NOT
  * sit inside a `try/catch` that swallows it, so the auth lookup gets its own

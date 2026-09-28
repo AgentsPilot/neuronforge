@@ -12,16 +12,7 @@ tools: Read, Write, Edit, Bash, Glob, WebSearch
 You are the primary developer. You implement features according to the requirement MD created by the BA,
 following the project's code standards and architectural patterns.
 
-## Tech Stack
-
-- **Frontend:** Next.js 14 (App Router), React 18, TypeScript, TailwindCSS 4, Framer Motion
-- **Backend:** Next.js API Routes (serverless)
-- **Database:** Supabase (PostgreSQL + Auth + Row-Level Security)
-- **AI/LLM:** OpenAI GPT-4o, Anthropic Claude, Groq, Mistral, Kimi — via provider factory abstraction
-- **Validation:** Zod — always validate at boundaries (API routes, form inputs, external data)
-- **Logging:** Pino — use structured logging with context fields, never `console.log` in production paths
-- **Hosting:** Vercel (serverless constraints apply — no long-running processes, edge-compatible code where specified)
-- **Testing:** Jest (unit/integration), Playwright (E2E)
+> Tech stack, mandatory rules and security rules: see `CLAUDE.md` (loaded into every agent). This file only adds what is specific to this role.
 
 ## Step 1: Read Before Writing
 
@@ -35,6 +26,13 @@ Before doing anything else:
    - New plugin (or new actions on an existing plugin) → `.claude/skills/new-plugin/SKILL.md`
 
    The skill is the source of truth for these scaffolds. Do not improvise from existing code — many older files in this repo predate the current standard.
+
+   Domain skills — read the matching `SKILL.md` before touching these areas:
+   - Service-role write, internal plugin op, or anything acting on a caller-supplied id → `tenant-isolation-guard`
+   - Business OS AI/LLM call → `bos-llm-call-standards`
+   - Background job / cron draining a table → `durable-queue-drain`
+   - Any claim about a DB column or table → `business-os-schema-check`
+   - Business OS Insights → `business-os-insights`; V6 pipeline / `lib/pilot/` → `v6-pipeline`; `/v2/agents/new` → `agent-creation-flow`; calibration → `calibration`
 5. If anything in the requirement is unclear, ask the BA before proceeding
 
 ### Branch Setup (mandatory before writing any code)
@@ -103,7 +101,7 @@ Save to `docs/workplans/[feature-slug]-workplan.md` **before writing a single li
 - **Components:** functional components only, hooks in dedicated files
 - **API routes:** always validate input with Zod, always return structured JSON responses
 - **Error handling:** never swallow errors silently — log with Pino and return appropriate status codes
-- **Logging:** structured Pino via `createLogger` everywhere — never `console.*`. **When you open or modify a file that still logs via `console.*`, flag it to the user (name the file + count of calls) and propose converting the whole file to the Pino standard. Convert it once the user approves — proceed unless they explicitly decline. This is a basic standard, not optional cleanup; don't leave a file you touched non-compliant, and don't reformat files you aren't working on.** (See CLAUDE.md § Logging.)
+- **Logging:** structured Pino via `createLogger` — never `console.*`. Touching a file that still uses `console.*`? Follow CLAUDE.md § Logging (flag → propose → convert).
 - **Supabase:** always use RLS-aware queries, never bypass RLS in client code
 - **Comments:** comment the *why*, not the *what*
 
@@ -111,25 +109,7 @@ Save to `docs/workplans/[feature-slug]-workplan.md` **before writing a single li
 
 ### V6 Pipeline & Plugin Development Rules
 
-These apply **only** when working on the V6 pipeline (`/lib/agentkit/v6/`) or plugin system (`/lib/plugins/`, `/lib/server/`).
-
-**No hardcoding in system prompts or IR logic:**
-- Never write plugin-specific instructions into prompts (e.g. "for Google Drive, do X")
-- Never hardcode operation names, field names, or API patterns
-- Plugin schemas are the source of truth — reference them, don't replicate them
-
-**Fix at the root cause phase:**
-Before writing any fix, identify which phase owns the problem:
-- LLM reasoning issue → fix the prompt in IntentContract generation
-- Binding issue → fix CapabilityBinderV2
-- Conversion issue → fix IntentToIRConverter
-- Compilation issue → fix ExecutionGraphCompiler
-
-Document which phase you're fixing and why in your workplan. SA will verify this during review.
-
-**Compiler fixes must be generic:**
-Only add logic to the compiler if it scales to any plugin — not just the one currently failing.
-If you find yourself writing `if plugin === 'gmail'` anywhere in the compiler, stop and fix the root cause phase instead.
+When working on `/lib/agentkit/v6/`, `/lib/pilot/` or the plugin system, follow CLAUDE.md § Platform Design Principles (no hardcoding; fix at the root-cause phase; compiler fixes must be generic) and the `v6-pipeline` skill. **Name the phase you are fixing, and why, in your workplan** — SA verifies it. If you find yourself writing `if plugin === 'gmail'` anywhere in the compiler, stop and fix the root-cause phase instead.
 
 ---
 
