@@ -101,6 +101,16 @@ export type {
   TokenUsageWindow,
   UsageSummaryRpcRow,
 } from './TokenUsageRepository';
+// Business OS invites (invite-only signup, Slice 0). Admin-scoped and
+// token-scoped methods only; see the repository header (C-13).
+export { BusinessOsInviteRepository, businessOsInviteRepository } from './BusinessOsInviteRepository';
+export type {
+  BusinessOsInvite,
+  BusinessOsInviteGrantKind,
+  BusinessOsInvitePublicView,
+  CreateBusinessOsInviteInput,
+  RevokeBusinessOsInviteInput,
+} from './types';
 
 // Types
 export type {

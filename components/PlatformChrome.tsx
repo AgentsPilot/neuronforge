@@ -34,7 +34,18 @@ const PlatformShell = dynamic(
  * would benefit from the same treatment, but it is outside the scope of this
  * change; adding it here is a one-line follow-up.
  */
-const PUBLIC_PREFIXES = ['/book', '/c/', '/invoice/', '/go/', '/proposal/'] as const
+const PUBLIC_PREFIXES = [
+  '/book',
+  '/c/',
+  '/invoice/',
+  '/go/',
+  '/proposal/',
+  // The Business OS invite page (invite-only signup, Slice 0). Its visitor has
+  // no account yet, so it must not load the owner's platform shell. Matched
+  // exactly and as a prefix, like `/book`; its middleware entry is the
+  // `/invite` branch that also sets `Referrer-Policy: no-referrer`.
+  '/invite',
+] as const
 
 /**
  * Customer-facing pages that are NOT under a public prefix.

@@ -399,6 +399,10 @@ const EXCLUDED: PurgeDescriptor[] = [
   never('bos_cron_run_recording', G,
     'One row: when the cron run record was installed. Platform monitoring baseline, no user_id; never purged.'),
 
+  // Invite-only signup, Slice 0 (condition C-10, SA ruling F-1).
+  never('business_os_invites', G,
+    'Platform record of who was invited, by which admin, on what grant, and whether it was used. No user_id: not tenant data, so a Reset or Purge must never touch it (a Reset that removed it would also let an owner re-enter as a fresh invitee). Deliberately NOT in USER_OWNED_TABLES: the account-deletion sweep deletes by user_id, which this table does not have. Erasure of the invitee email is requirement L-12, designed in the Slice 1 workplan.'),
+
   // §8.12 Account configuration and unowned tables
   never('notification_settings', U, 'Account configuration that survives the business.'),
   never('security_settings', U, 'Account configuration that survives the business.'),

@@ -43,9 +43,10 @@ describe('AUDIT_EVENT_AUDIENCE is exhaustive over the catalogue', () => {
     }
   });
 
-  it('pins the split: 15 Business OS, 61 shared, 84 AgentsPilot', () => {
-    expect(registered).toHaveLength(160);
-    expect(eventsTagged('bos')).toHaveLength(15);
+  // +2 Business OS (BOS_INVITE_CREATED, BOS_INVITE_REVOKED): invite-only signup, Slice 0.
+  it('pins the split: 17 Business OS, 61 shared, 84 AgentsPilot', () => {
+    expect(registered).toHaveLength(162);
+    expect(eventsTagged('bos')).toHaveLength(17);
     expect(eventsTagged('shared')).toHaveLength(61);
     expect(eventsTagged('agentspilot')).toHaveLength(84);
   });
