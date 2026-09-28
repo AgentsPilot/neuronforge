@@ -1,0 +1,628 @@
+# Requirement: Business OS Invite-Only Signup
+
+> **Last Updated**: 2026-09-28
+
+**Created by:** BA
+**Date:** 2026-09-28
+**Status:** SA reviewed 2026-09-28 — **APPROVED WITH CONDITIONS** (§16). The user decided BQ-1 to BQ-9 on 2026-09-28 (§13). There are no open business questions. Dev may write the Slice 0 workplan; it must address conditions C-1 to C-13 in §16.4.
+**Related:** [BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md), [BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md](/docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md) (plan of record for tiers and billing), [BUSINESS_OS_ENTITLEMENTS.md](/docs/architecture/BUSINESS_OS_ENTITLEMENTS.md), [BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md) (sibling, in flight), [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md).
+
+## Overview
+
+For now, Business OS signup is by invitation only, and Business OS is a **closed system**. A platform admin invites an email address with one of two invite types. A **Champion** invite is free and admin-only; it makes the person a Founding Partner. A **Paid** invite (Essentials, or Autopilot if the admin picks it) requires payment at signup. The invitee opens a secured signup page, which checks that the invitation is still valid, shows what it offers, and creates their account on that plan. Every invitation is recorded with who sent it, who accepted it, when, and in which **invitation circle** (level): L1 means invited by an admin, L2 means invited by an L1, and so on. Levels exist to measure how far word of mouth spreads. The design leaves room for later features: champions inviting friends to paid Essentials plans, with bonus credits for both sides when the friend first pays; per-inviter caps; a free limited-time invite; and open signup from the marketing site. These are designed for here and not built. The work is split into small slices that can each be shipped and demoed on their own (§10). **Paid invites, the main growth path, are blocked on the billing work (reuse-plan S-4a) and on the service-role key rotation (G-1).**
+
+---
+
+## Table of Contents
+
+1. [Vocabulary](#1-vocabulary)
+2. [As-built: what exists and what we reuse](#2-as-built-what-exists-and-what-we-reuse)
+3. [User stories](#3-user-stories)
+4. [Invite lifecycle and burn semantics](#4-invite-lifecycle-and-burn-semantics)
+5. [Invite types and what they grant](#5-invite-types-and-what-they-grant)
+6. [Lineage and invitation circles](#6-lineage-and-invitation-circles)
+7. [Functional requirements](#7-functional-requirements)
+8. [Security, abuse and audit](#8-security-abuse-and-audit)
+9. [Non-functional requirements](#9-non-functional-requirements)
+10. [Slices](#10-slices)
+11. [Acceptance criteria](#11-acceptance-criteria)
+12. [Technical recommendations for SA](#12-technical-recommendations-for-sa)
+13. [Business questions](#13-business-questions)
+14. [Out of scope / future roadmap (designed for, not built)](#14-out-of-scope--future-roadmap-designed-for-not-built)
+15. [Notes on integration points](#15-notes-on-integration-points)
+16. [SA Review](#16-sa-review)
+
+---
+
+## 1. Vocabulary
+
+| Term | Meaning |
+|---|---|
+| **Invite** | A record that allows **one** person to create **one** Business OS account and says what that account starts on. It is not a team-seat invite. §18 of the entitlements requirement ("Team invites and seat management", `team.seats`) is a different feature: it adds a person to an existing account. This document calls that concept a *team invite* wherever the two could be confused. |
+| **Invite type** | **Champion** (free, admin-only) or **Paid** (`basic`, or `pro` if an admin picks it; payment at signup). There is no trial invite type (BQ-3). |
+| **Grant** | What the invite places the new account on. It is always an **existing** entitlements record (a cohort or a tier), never a new concept (§5). The user's word "scope" means the grant. |
+| **Link expiry** | The date after which the invitation can no longer be **accepted**. It is separate from the **access end date**, which is when the granted plan stops (a champion's end date, for example). |
+| **Redeem / burn** | Using the invite to create an account. After that it can never be used again. |
+| **Issuer / inviter** | Whoever sent the invite: a platform admin today, a champion account in the future (§14). |
+| **Invitation circle / level** | How far someone is from the company in the chain of invitations. L1 means invited by an admin, L2 means invited by an L1, and so on (§6). Its business purpose is to **measure how far word of mouth spreads.** |
+| **Signup policy** | The rule for who may create an account: `invite_only` now, `open` later (§14). |
+| **G-1** | The switch-on gate from the entitlements and billing plans: rotating and verifying the Supabase service-role key. Not the same thing as the grant rules GR-1 to GR-5 in §5. |
+
+Plans are named by their internal ids (`trial`, `champion`, `basic`, `pro`), per RD-14 of the reuse plan. Customer-facing names (Test Flight, Founding Partner, Essentials, Autopilot) are data held in the `presentation` block and `cohorts.ts` labels.
+
+---
+
+## 2. As-built: what exists and what we reuse
+
+Checked against the code on 2026-09-28.
+
+### 2.1 Reuse
+
+| # | What exists | Where | How this feature uses it |
+|---|---|---|---|
+| **AB-1** | **Plans and cohorts.** `TIER_ORDER = ['basic','pro']`. `trial` (14 days, clock starts at the first onboarding message) and `champion` (no default end date) are cohorts that point at the `basic` row. | `lib/business-os/entitlements/config/tierMatrix.ts`, `config/cohorts.ts` | An invite's grant is `champion`, `basic` or `pro`, validated against the config. **No invite type grants `trial`** (BQ-3), although the cohort stays in config. No plan names appear in SQL or in invite code (FR-12 of the entitlements requirement). |
+| **AB-2** | **The plan row** `business_os_account_plans`: one per account, with `cohort`, `cohort_expires_at`, `tier`, `tier_expires_at`, `origin` (free-text provenance), and `updated_by_admin_id`. | `supabase/migrations/20261005_business_os_entitlements.sql`, `lib/repositories/BusinessOsAccountPlanRepository.ts` (`ensurePlanRow`, `updatePlan`) | A champion redemption writes the new account's plan row with `origin = 'invite'`. A paid invite's tier is written by the S-4a webhook on payment. |
+| **AB-3** | **The admin placement rules.** `executeAdminOp` enforces three things: a champion must state its end date, explicitly or as `null` (RC-4); no operation may leave an account with no basis (R2-3); an unknown tier is refused. | `lib/business-os/entitlements/adminOps.ts` | The invite grant reuses **the same rules**, as a server-side function and never as an HTTP self-call, following the pattern of reuse-plan Q-T2. |
+| **AB-4** | **The admin surface.** `requireAdmin` / `requireAdminPage`, the `app/admin/layout.tsx` guard inherited by every `/admin` page, and the read-only Tiers page. | `lib/admin/requireAdminRoute.ts`, `app/admin/business-os-tiers/` | New invite admin routes and a new `/admin` page inherit the gate. Plan changes for existing accounts stay on the Tiers operations (BQ-7). |
+| **AB-5** | **Atomic single-use code pattern.** `auth_handoff_codes` plus `claim_auth_handoff_code`: one `UPDATE … WHERE used_at IS NULL AND expires_at > now() RETURNING`, so two racing requests cannot both win. Every refusal returns one indistinguishable message. | `app/api/auth/handoff/route.ts`, `app/api/auth/handoff/redeem/route.ts` | Prior art for burning an invite (§4.3). |
+| **AB-6** | **Creating a session server-side for a user proven by other means**: `auth.admin.generateLink({ type: 'magiclink' })` followed by `verifyOtp` in the browser. | `app/api/auth/handoff/redeem/route.ts`, `app/auth/handoff/page.tsx` | One way to sign in an account **that the redemption has just created**, on this origin (T-3). It is never used to sign in an existing account from an invite link (BQ-7). |
+| **AB-7** | **In-app auth calls.** Email/password and Google OAuth via the browser client, with audit events. | `lib/client/auth-actions.ts`, `app/auth/callback/page.tsx` | The invite page can run signup on this origin, as the `/test-business-os` harness already does for sign-in. |
+| **AB-8** | **Email transport.** Resend first with SMTP and Gmail fallback. It never throws, returns `providerMessageId`, requires a `kind` (`transactional` / `marketing`), and accepts explicit `from` and `replyTo`. | `lib/notifications/emailTransport.ts` | Sends the invitation as `transactional`, with an explicit "<Name> via AgentPilot" sender and the inviter's Reply-To (FR-15, T-11). |
+| **AB-9** | **Email templates** with branded wrapper, RTL and `en/he/es` translations. | `lib/email/templates/base-template.ts`, `translations.ts` | The invite email gets a new template on the same wrapper. The existing templates are **business-to-client** (sent as the business), so none can be reused as-is. |
+| **AB-10** | **Delivery tracking.** A Resend webhook (Svix-verified) writes `delivered/opened/clicked` onto `email_sends` by provider message id. | `app/api/webhooks/resend/route.ts` | Optional in Slice 2: "email opened" on an invite (§4.1). |
+| **AB-11** | **Audit trail** | `lib/services/AuditTrailService.ts` | Every invite event (§8.3). |
+| **AB-12** | **Server-write-only RLS lockdown** (RLS on, no policies, `REVOKE ALL` from `anon`/`authenticated`) | Pattern of `20261005_business_os_entitlements.sql`, reuse-plan L-29 | The invite and lineage tables. |
+
+### 2.2 How someone signs up today, and why "invite only" is partly new scope
+
+| # | Finding | Evidence |
+|---|---|---|
+| **AB-13** | **Anyone can sign up today.** The signup and login forms live on the **marketing site**, a separate Next app on another origin that is not in this repository. `marketingSignupUrl()` points there. Google OAuth creates an account on first sign-in from anywhere it is offered. Nothing in this repository checks whether a new person is allowed in. | `lib/utils/marketingUrl.ts` ("`/login` AND `/signup` ARE NOT ROUTES IN THIS APP"), `lib/client/auth-actions.ts` |
+| **AB-14** | A new auth user gets a `profiles` row from a trigger (`create_user_settings_trigger`) that lives **in the Supabase project and not in `supabase/migrations/`**. | `app/auth/callback/page.tsx:70-94` |
+| **AB-15** | **A new account's plan row appears on its first onboarding message or first business profile, with `cohort = 'trial'`.** The triggers only fill a missing *fact* on conflict, and never overwrite `cohort` or `tier`. So a plan row written **earlier** with `cohort = 'champion'` survives onboarding untouched, which is what makes champion provisioning work without changing the triggers. ⚠️ The reverse is a hazard for paid invites: a paid invitee who reaches onboarding **before paying** would get a free `trial` row from the trigger (T-13). | `20261005_business_os_entitlements.sql`, `business_os_plan_fact_onboarding` / `_profile` |
+| **AB-16** | **The admin placement path cannot be used for a brand-new invitee as-is.** `executeAdminOp` first requires the account to be a Business OS tenant (a profile or an onboarding message, RC-10). An account that has just signed up has neither, so the result would be `404 not_a_business_os_account`. For the same reason, the Tiers page lookup cannot show an invited account until it starts onboarding. | `adminOps.ts` `isBusinessOsTenant` |
+| **AB-17** | `launch_champion_existing` (run at enforcement switch-on) makes **every account without an in-force tier an open-ended champion.** With no trial invite type, the only invited accounts it could affect are **paid invitees who signed up but never paid**: it would make them free champions. **The user will clean up the data before switch-on (BQ-6),** so this is a technical note for SA (T-9), not a business question or a slice. | `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md` § Before enforcement can be switched on |
+| **AB-18** | The shadow report's **trim list** flags no-end-date champions who never created a business profile. Invited champions who have not onboarded yet will appear there. This is also covered by the user's pre-switch-on cleanup (T-9). | Same doc, "Trim list" |
+
+### 2.3 Payment: what exists and what does not
+
+| # | Finding | Evidence |
+|---|---|---|
+| **AB-19** | **Nobody can pay for a Business OS plan today.** Everything under `app/api/stripe/` is shaped around Pilot Credits (the agent platform), and there is no Business OS checkout, plan surface or billing route (`app/api/business-os/billing*` does not exist). | Reuse plan F-13, F-14; glob on 2026-09-28 |
+| **AB-20** | The **plan of record** is the reuse plan's S-4a. It adds fixed Stripe prices by `lookup_key`, a Business OS checkout, and a webhook that calls `assign_tier` server-side and adds a product dimension to `billing_events`. It is **not built**. It may merge inert, but taking real money and switching enforcement on are both blocked by **G-1** (service-role key rotation). | Reuse plan §6.2–6.4, RD-1, RD-4, L-19, Q-T3 |
+| **AB-21** | `billing_events` and Stripe are where payments are recorded. Stripe owns what was bought, and the plan row owns what is in force (Q-T9). | Reuse plan F-8, Q-T9 |
+
+**Consequence for this requirement.** It **does not build payment**. Paid invites plug into S-4a's checkout once that exists. This requirement adds only the **link** from invite to account to payment (§7.7), so it is always possible to answer "who paid, for which invited account, when and how much" from the billing records S-4a writes. **Because paid invites are now the main growth path (§5), most of this feature's commercial value depends on S-4a landing.** Until then, the only way in is a champion invite.
+
+---
+
+## 3. User stories
+
+- As a **platform admin**, I want to invite any email address as a Champion (free) or to a Paid plan, so that I control who joins and on what terms.
+- As an **admin**, I want to see every invite I or another admin sent, with its status (sent, accepted, expired, revoked), so that I can follow up.
+- As an **admin**, I want to revoke an invite that has not been used, and re-send one whose email was lost, so that a mistaken or stale invite causes no harm.
+- As an **admin**, I want to see who signed up from a paid invite but has not paid, so that I can follow up personally.
+- As an **invitee**, I want a welcoming email from the person who invited me, in my language, with their personal note and one clear link, so that I know who invited me and can reply to them directly.
+- As an **invitee**, I want the signup page to show what I am being offered before I commit, so that I can decide.
+- As an **invitee with a champion invite**, I want to sign up and start as a Founding Partner without paying.
+- As an **invitee with a paid invite**, I want to see the plan, its price and everything it includes, and pay for it as part of signing up.
+- As an **invitee who already has an account**, I want the invite to send me to sign in, so that nothing about my existing account changes by surprise.
+- As **the business**, I want to know for every account who invited it and in which invitation circle, and later whether it paid, so that we can measure how far word of mouth spreads and build referral perks on that record without re-collecting it.
+- As **the business**, I want open signup closed while we are invite-only, without doing anything that blocks opening it from the marketing site later.
+
+---
+
+## 4. Invite lifecycle and burn semantics
+
+### 4.1 States
+
+| State | Meaning | Stored or derived | Terminal |
+|---|---|---|---|
+| `pending` | Created and not yet used. It may or may not have been emailed. | Stored | No |
+| `accepted` | Used to create an account. **Burned.** | Stored (`redeemed_at`, `redeemed_account_id`) | Yes |
+| `revoked` | An admin withdrew it before use. | Stored (`revoked_at`, `revoked_by`, reason) | Yes |
+| `expired` | `pending` and past its link expiry. | **Derived at read time**, never written by a job | Yes (in effect) |
+
+**Delivery facts are tracked alongside the state, not as states:** `sent_at` / `last_sent_at` / `send_count`, `send_failed_at` with a reason, `email_delivered_at` / `email_opened_at` (Slice 2, from the Resend webhook, informational only), `first_viewed_at` (the signup page loaded with a valid token), and `opened_by_existing_account_at` (the invited email already had an account when the invite was opened, BQ-7). They answer "did they get it and look at it?". They never change whether the invite can be used.
+
+**Why expiry is derived rather than stored:** this matches the entitlements module, where lifecycle is derived from timestamps and "no cron moves accounts between states". Unscheduled crons are a known failure mode here (`check-free-tier-expiration`, and `CRON_SECRET` still not set on Vercel), and a derived expiry cannot fail to run.
+
+**Link expiry is a configurable setting (BQ-1).** The admin picks **15, 30 or 60 days** when creating an invite, with **30 days** as the default. There is no free-form range. The allowed options and the default live in **one configuration setting**. The chosen expiry is stamped on the invite at creation, so changing the setting affects new invites only (T-14).
+
+### 4.2 Transitions
+
+```
+            create
+              |
+              v
+  +------> pending ----(link expiry passes)----> expired
+  |           |  \
+  | resend    |   \--(admin revokes)----------> revoked
+  | (new link,|
+  |  new or   +--(valid redemption by a new    --> accepted  [burned]
+  |  same     |   account for the invited email)
+  |  expiry)  |
+  +-----------+
+              |
+              +--(opened, email already has an account)--> stays pending
+                  (sent to sign in; not burned; plan unchanged; expires)
+```
+
+- **Resend** (Slice 2) is only possible while `pending`, or `expired` if the admin also picks a new expiry (15/30/60 days). It **issues a new link and invalidates the old one** (FR-14), keeps the same invite record, and increments `send_count`.
+- **Revoke** is possible only while `pending` or `expired`. An `accepted` invite cannot be revoked: the account exists, and changing its plan is done through the existing Tiers admin operations.
+- There is no "un-revoke". The admin creates a new invite, and the record of the revoked one remains.
+
+### 4.3 Burn semantics
+
+| Rule | Decision | Reason |
+|---|---|---|
+| Uses | **Single use.** One invite creates at most one account. | Lineage has to be one-to-one (§6), and a reusable link cannot be kept to its intended recipient. |
+| Bound to email | **Locked to the invited email address by default (BQ-2).** The account must be created with exactly that address, compared case-insensitively after normalisation. With Google, the Google-verified email must match. The words "by default" leave room for a later **per-invite override**, which is **not built**. The hook is an `email_locked` flag on the invite, always `true` today (§14). | A forwarded or leaked link is useless to anyone else. Lineage and "who invited whom" stay truthful. |
+| When it burns | **In the same server-side operation that creates the account** (and, for a champion, writes the plan row), plus the lineage row. If account creation fails, the invite is not burned. If the claim succeeds and a later step fails, the claim is released or the operation is idempotent on retry (T-4). For a **paid** invite, the burn happens when the account is created, **not** on payment (§5). An invitee who never pays keeps the account, held on "finish your payment" (BQ-8). | Stops two failure modes: "burned but no account", which locks the invitee out, and "account but not burned", which allows re-use. |
+| Race | Two submits of the same invite must result in exactly one account (AB-5 pattern). | Double-clicks and retries happen. |
+| **Email already has an account (BQ-7)** | Issuing is **allowed**, and nothing is checked when the invite is created. When the invite is **opened** and its email already has an account, the page sends the person **to sign in** through the normal sign-in page. **The invite link itself never authenticates anyone.** The invite is **not burned**, **changes nothing** about their plan, stays `pending`, and expires in the normal way. Plan changes for existing accounts are made by an admin on the Tiers page. | An invite must never silently change an existing customer's plan, and a link that signs people in would be a credential sitting in an inbox. |
+| **Several pending invites to one email (BQ-7)** | **Allowed.** The **first one accepted** creates the account and wins the lineage. From then on the email has an account, so every other invite for it falls under the row above: it sends the person to sign in and then expires unused. | Admins do not need to coordinate. The tree records the invite that actually brought the person in. |
+| Signed-in visitor | If someone already signed in opens an invite link, the page says who they are signed in as and asks them to sign out before accepting. It never attaches the grant to the signed-in account. | Stops the grant landing on the wrong account. |
+
+---
+
+## 5. Invite types and what they grant
+
+An invite grants **exactly one existing entitlements basis**. It never creates a new one. **There are two invite types now (BQ-3).**
+
+| Invite type | Who may issue it (now) | Grant | Access end | Payment | Available from |
+|---|---|---|---|---|---|
+| **Champion** (Founding Partner) | **Admins only** | `cohort = 'champion'`, written at redemption | **Required at invite creation**, following RC-4 (silence is never "forever"): either "no end date" or a length counted from signup (for example 12 months), turned into `cohort_expires_at` at redemption | **None.** This is the only free invite. | Slice 0/1 |
+| **Paid** (`basic` Essentials by default; `pro` Autopilot if the admin picks it) | Admins | `tier = <id>` through the existing `assign_tier` path, **written by the S-4a webhook only after payment succeeds** | Stripe current-period end (S-4a) | **Required at signup.** No use before paying. | Slice 5; **blocked on S-4a and G-1** |
+
+Rules:
+
+- **GR-1.** Which grants each invite type may carry is read from config (`COHORT_IDS`, `TIER_ORDER`), so a new tier becomes invitable with no invite-code change. Each id is Zod-validated at creation and **re-validated at redemption**, so an invite created for a tier that has since been removed is refused cleanly rather than writing an unknown value.
+- **GR-2.** The grant is stored on the invite as the admin chose it. At redemption the grant is read **from the server-side invite record only**, never from the request (§8.1).
+- **GR-3. Who may issue which type is a policy, not code.** An **issuance policy** maps each issuer kind to the invite types it may issue. Today it says: admin may issue champion, basic or pro. The future champion-to-friend invites add one entry: a champion account may issue **basic only**, never a free invite, because this is a closed system (§14). The policy is config, read at creation and re-checked at redemption (T-15).
+- **GR-4. No pay-before-use (BQ-3).** A paid invitee who has created an account but not yet paid can do **nothing** except finish payment. They must not reach onboarding, because the onboarding trigger would give them a free trial row (AB-15, T-13). They are held there **with no time limit** (BQ-8). A future **free limited-time invite** is designed for but not built (§14).
+- **GR-5. Honest status until enforcement.** Nothing is enforced until the reuse plan's S-5 switch-on, which G-1 blocks. Until then a champion invitee gets the full product, as every account does today. The champion basis is **recorded** on the plan row and becomes the commercial difference at switch-on. The admin UI states this (the Tiers page's `EnforcementBanner` already does, and can be reused).
+
+---
+
+## 6. Lineage and invitation circles
+
+Designed now, and built only at L1 in this delivery, so that champion-to-friend invites and perks need no migration rewrite.
+
+### 6.1 Why levels exist (BQ-5)
+
+The level is the **invitation circle**: L1 means invited by an admin, L2 means invited by an L1, L3 means invited by an L2, and so on. **Its business purpose is to measure how far word of mouth spreads**: how many people each circle brings in, and how many of them pay. Level describes distance from the company. It does not describe plan; plan is recorded separately, so both can be reported.
+
+### 6.2 Model
+
+**Every account created through an invite gets exactly one lineage record,** written at redemption and never edited afterwards (except the payment milestones in §6.4):
+
+| Field | Meaning |
+|---|---|
+| `account_id` | The new account (the owner `user_id`, per T-2 of the entitlements requirement) |
+| `invite_id` | The invite that created it, which is the **first one accepted** if several were sent (BQ-7) |
+| `source` | `admin_invite` now; `account_invite` and `organic` in future (§14) |
+| `parent_account_id` | The inviting **account**. `NULL` when an admin invited them, because an admin is not part of the tree. |
+| `root_account_id` | The L1 ancestor (the account's own id when it is L1). Makes "the whole tree under this champion" one query. |
+| `level` | `1` for an admin invite, otherwise `parent.level + 1`. **Stored**, not recomputed, so a later change to the tree cannot silently move someone's level. |
+| `created_at` | Redemption time |
+| `first_paid_at`, `first_payment_ref` | §6.4. Also the **perk trigger** for the future (§14). |
+
+**The invite record carries the issuer** (`issuer_kind = 'admin' | 'account'`, `issuer_admin_id` or `issuer_account_id`, exactly one set). Champion-to-friend invites (§14) only need to start writing `issuer_kind = 'account'` rows. No column is added and no row is rewritten.
+
+### 6.3 Level rules
+
+| Case | Level |
+|---|---|
+| Signs up from an admin invite (champion or paid) | **L1** (BQ-5, decided) |
+| Signs up from an invite sent by an L*n* champion (future) | L*n+1* |
+| Signs up through open marketing signup (future) | **L1**, with `source = 'organic'` and no parent (recommended; confirm when open signup is scoped) |
+| Existing accounts created before this feature | **No lineage row.** Deliberately not backfilled, because their inviter is unknown and an invented L1 would be false. Reports show them as "pre-invite". |
+
+### 6.4 Payment milestones
+
+When S-4a's webhook assigns a paid tier to an account that has a lineage row, it stamps `first_paid_at` and a reference to the billing record (the `billing_events` row / Stripe invoice id) **if not already set**. That is the only lineage write after creation. **The invitee's first successful payment is the event future perks fire on** (§14). A paid-invite lineage row with no `first_paid_at` is exactly what the admin sees as "signed up, not paid" (BQ-8).
+
+Amounts are **not copied** into lineage. They stay in `billing_events` / Stripe, the single source of truth. "How much did the accounts under champion X pay?" is a join: lineage (by `root_account_id`) to account to billing records.
+
+### 6.5 Reporting need (Slice 6)
+
+The basic report that answers "how far does word of mouth spread":
+
+| Measure | Per |
+|---|---|
+| Invites sent, accepted, expired | Level of the invitee-to-be (the issuer's level + 1) |
+| Signups | Level |
+| **Paid signups** (lineage with `first_paid_at`) | Level |
+| Tree size and paid count | L1 root (`root_account_id`): which champions bring people in |
+
+With admin invites only, everything is L1 until champion-to-friend invites exist. The report is still useful from day one for sent/accepted/paid at L1, and it is where L2+ growth will show up.
+
+---
+
+## 7. Functional requirements
+
+### 7.1 Admin: create and manage invites (Slice 0)
+
+| ID | Requirement |
+|---|---|
+| **FR-1** | An admin can create an invite with: invited email (required); invite type (**Champion**, or **Paid** with Essentials by default and Autopilot selectable) offered according to the issuance policy (GR-3); access end (required for champion: "no end date" or a length in months); link expiry (**15, 30 or 60 days, default 30**, from the setting in §4.1); invitee language (defaults to the **inviter's** language, and the inviter can override it per invite, §7.4, T-12); a personal note from the inviter (plain text, length-capped); and an internal reason (at least 3 characters, the convention of the admin operations). The Paid type is shown **but disabled** until the S-4a payment path is live, with the text "available when payments are live". |
+| **FR-2** | The email is normalised (trimmed, lower-cased) and syntax-validated. **Nothing else is checked when issuing** (BQ-7): several pending invites to one email are allowed, and an email that already has an account is allowed. The list simply shows every invite for that email together. |
+| **FR-3** | On creation the admin is shown **the invite link once**, with a copy button, so the invite can be delivered by hand before email exists (Slice 0/1). After that only the invite **record** is visible; the link cannot be shown again (it is stored hashed, §8.1). A lost link means Resend (FR-14), which issues a new one. |
+| **FR-4** | *(Replaced by BQ-7.)* No existing-account check is made when issuing. The check happens when the invite is opened (FR-8a). |
+| **FR-5** | An admin list page under `/admin` (a new Business OS invites page next to Tiers) shows every invite: email, invite type and grant, issuer, created, link expiry, derived state, delivery facts, "opened by an existing account" if so, and for accepted invites the account, its level and (after Slice 5) its paid status, including **"signed up, not paid"** (BQ-8). It can filter by state, type and paid status, and search by email. |
+| **FR-6** | An admin can **revoke** a `pending`/`expired` invite, with a reason. |
+| **FR-7** | Every admin route is gated with `requireAdmin` as its first statement, validates with Zod, writes through a repository, and audits with actor and reason (§8.3). The page inherits `app/admin/layout.tsx`'s guard. |
+
+### 7.2 The invite page (Slice 0 read-only; Slice 1 onwards signup)
+
+| ID | Requirement |
+|---|---|
+| **FR-8** | A public page on the platform origin opens from the invite link and validates the token **server-side**. It shows one of: *valid* (a welcome from the inviter by name, the inviter's personal note, the offered plan's customer-facing name and what it includes, the price and "payment required" for a paid invite, and the signup form); *expired* ("this invitation has expired, ask for a new one"); *revoked*; *already used* ("sign in instead"); or *not recognised* (one generic message, §8.1). |
+| **FR-8a** | **Existing account (BQ-7).** If the invited email already has an account, the page does not offer signup. It says the person already has an account and sends them to the normal sign-in page. It **never signs them in itself**, does **not** burn the invite, does **not** change their plan, and records `opened_by_existing_account_at`. |
+| **FR-9** | What the plan includes is shown from the **existing** `presentation` block and capability display data (`capabilityDisplay.ts`), in the invite's language, with RTL for Hebrew. No plan contents are written into the invite page. |
+| **FR-10** | The first successful load of a valid token records `first_viewed_at`. |
+
+### 7.3 Redemption (Slice 1; Google in Slice 3)
+
+| ID | Requirement |
+|---|---|
+| **FR-11** | The invitee creates their account on the invite page with the **invited email, pre-filled and not editable** (BQ-2), and a password (Slice 1). Continue-with-Google comes in Slice 3, and requires the Google-verified email to equal the invited email. |
+| **FR-12** | Redemption, as one server-side operation: re-validates the invite (pending, not expired, not revoked, grant still valid in config, issuance policy still allows it, email still has no account); creates the auth user; for a **champion**, writes the plan row with `origin = 'invite'` applying the AB-3 rules; writes the lineage row (§6); burns the invite; audits. It is **atomic in effect**: if any step fails, no invite ends up burned without an account (§4.3). |
+| **FR-13** | After a **champion** redemption, the invitee is **signed in** on the platform origin and lands in onboarding (`/onboarding-chat`), exactly as a normal new user does today. There is no second login step. After a **paid** redemption they go to checkout instead (FR-23). |
+
+### 7.4 Email (Slice 2)
+
+| ID | Requirement |
+|---|---|
+| **FR-14** | Creating an invite sends the invitation email (the admin can untick "send email" and copy the link instead). **Resend** issues a fresh link, invalidates the previous one, can set a new expiry from the same 15/30/60 options, and is rate-limited (at most 3 sends per invite per 24 hours). |
+| **FR-15** | **Sender (BQ-4, BQ-9).** The email shows the **inviter's name**, as "**<Inviter Name> via AgentPilot**". It is sent **from our own verified domain**, with **Reply-To set to the inviter's own email**, so a reply reaches the person who invited them. **For admin-issued invites the inviter is the individual admin**: their own name, and their own email as Reply-To (BQ-9). It is **never sent from the inviter's own mailbox**: we cannot sign mail for their domain, so deliverability and DMARC would fail. If the inviter has no name on record, the display name falls back to "**AgentPilot**". The email is `kind: 'transactional'` (a one-to-one invitation, not a list send; SA to confirm). It is **not** business-branded, so the transport's `ownerUserId` business-sender lookup is **not** used (T-11). |
+| **FR-15a** | **Content and language (BQ-4).** The email is in the **invite's language**, which defaults to the inviter's language and can be overridden per invite (FR-1), with RTL for Hebrew. It contains a welcome, the inviter's **personal note**, what is offered (and "payment required" for a paid invite), the link as a button plus a plain-text copy, the link expiry date, and a "not expecting this? ignore it" line. |
+| **FR-16** | A failed send is recorded on the invite (`send_failed_at` and reason) and shown to the admin. It does not fail the invite creation, because the link is still copyable. |
+| **FR-17** | *(Optional within Slice 2.)* Delivery and open events from the existing Resend webhook are matched to the invite by provider message id and shown as delivery facts. |
+
+### 7.5 Closing open signup (Slice 4)
+
+| ID | Requirement |
+|---|---|
+| **FR-18** | A single **signup policy** setting, `invite_only` now, decides whether a person with no valid invite can create an account. Under `invite_only`, every account-creation path is refused unless it is an invite redemption: the marketing `/signup` form, first-time Google sign-in, and any direct Supabase `signUp` call. That includes someone calling Supabase with the public anon key directly, which is why the check cannot live only in a web page. |
+| **FR-19** | Someone refused under `invite_only` sees a friendly message on the marketing site ("AgentPilot is invite-only right now") with a way to ask for an invite (a mailto or form; the destination can be a placeholder). |
+| **FR-20** | Existing accounts can still sign in. Password reset still works. **Only account creation** is gated. |
+| **FR-21** | Changing the policy to `open` later is a configuration change, not a code change (§14). |
+
+### 7.6 Paid invites (Slice 5)
+
+| ID | Requirement |
+|---|---|
+| **FR-22** | A paid invite's page shows the plan (`basic`, or `pro` if the admin picked it), its price (from `presentation`, USD per RD-13) and everything it includes, and says that payment is required at signup. |
+| **FR-23** | After creating the account the invitee goes straight to the **S-4a Business OS checkout** for that plan. The plan is applied by S-4a's webhook through `assign_tier` (reuse-plan L-19). This requirement builds **no** payment code. |
+| **FR-24** | **No use before payment (BQ-3, BQ-8).** An invitee who created the account but has not paid can only see a "finish your payment" screen, from which they can resume checkout. They cannot reach onboarding or any Business OS surface, which also prevents the onboarding trigger from giving them a free trial row (AB-15, T-13). They get back to this screen by signing in, because the invite link is already burned. They are held there **with no time limit**. There are **no automatic reminders and no automatic deletion** in this delivery (both are future, §14). Admins see them as "signed up, not paid" (FR-5, FR-25) and follow up by hand. |
+
+### 7.7 Payment attribution (Slice 5)
+
+| ID | Requirement |
+|---|---|
+| **FR-25** | For every invited account an admin can see: the invite (issuer, type, dates), the invitation circle, and **whether it has paid, when, how much and in what currency**, read from `billing_events` / Stripe through the account, not copied (§6.4). "Signed up, not paid" is visible as its own status (BQ-8). |
+| **FR-26** | The first successful payment stamps `first_paid_at` and the billing reference on the lineage row (§6.4), once and idempotently. This is the hook future perks read. |
+
+### 7.8 Invitation-circle reporting (Slice 6)
+
+| ID | Requirement |
+|---|---|
+| **FR-27** | An admin report shows the §6.5 measures: invites sent, accepted and expired; signups; and paid signups, **per level**, plus tree size and paid count per L1 root. It is read-only, admin-gated, and needs no new data beyond the invite and lineage records (and `first_paid_at` for the paid counts). |
+
+---
+
+## 8. Security, abuse and audit
+
+### 8.1 The link
+
+| Threat | Requirement |
+|---|---|
+| **Guessing** | The token is random with at least 128 bits of entropy (recommendation: 256), not a sequential id or a UUID. It is **stored only as a hash**, so a database read (including by the holder of the leaked service-role key) never yields a usable link. The validate and redeem endpoints are rate-limited per IP and per token. |
+| **Enumeration** | Unknown, malformed and wrong-hash tokens all get one identical response, with the same status and similar timing (AB-5's rule). Expired, revoked, used and "you already have an account" are shown **only for a token that matched**, because only the holder of a real link can see them. |
+| **The link is never a credential (BQ-7)** | An invite link can create a **new** account and sign that new account in (T-3). It can **never** sign in an existing account, whatever state the invite is in. An existing account holder is always sent to the normal sign-in page. |
+| **Reuse** | Single use, burned atomically (§4.3). A used link shows "already used, sign in". |
+| **Forwarding / leak** | Locked to the invited email by default (§4.3). A forwarded link cannot create an account for a different address. |
+| **Mailbox proof** | An account is **never marked email-confirmed unless control of the mailbox has been shown**. An emailed link proves it. A link delivered by hand (Slice 0/1 copy-paste) does **not**, so that path must still verify the address before the account is confirmed (T-5). Otherwise someone holding a forwarded link could squat an address they do not own. |
+| **Expired link** | Refused at validation **and** re-checked at redemption, so a page left open past the expiry cannot redeem. |
+| **Link in logs and history** | The token must not appear in server access logs, Pino logs, audit details, analytics or `Referer` headers (T-7). |
+| **Tampered grant** | The redeem request carries **only** the token and the signup credentials. Invite type, grant, level, parent and account id are read from the server-side invite record. The redemption write uses an explicit allow-list of fields, following the `tenant-isolation-guard` pattern (M1/G3). |
+| **Reply-To spoofing** | The Reply-To is the inviter's **own account email**, read server-side. It is never a free-text field on the form, so an invite cannot be made to route replies to an arbitrary address. |
+
+### 8.2 Tenancy
+
+- The invite and lineage tables are **platform records**, not tenant data. RLS is on with no policies, `REVOKE ALL` is applied to `anon`/`authenticated`, and access is service-role only via repositories (AB-12). The `supabaseServer` use is documented in code as required by the security rules.
+- Redemption writes **only the new account's own** plan and lineage rows.
+- **Future champion-to-friend invites** (§14): a champion may list and revoke only invites where `issuer_account_id` is itself. It sees an invitee's status and level but never the invitee's business data, and the invitee never sees the inviter's.
+- Invite and lineage rows **do not cascade** from a Business OS "Reset" (the same reason plan rows do not: resetting must not reset lineage or let an owner re-enter as someone else's referral). They are registered as never-purged / person-owned, like the plan tables.
+
+### 8.3 Audit
+
+A **durable record on the rows themselves** (issuer, redeemer, timestamps, reasons) is the primary record. It does not depend on the audit queue surviving, which is the entitlements module's WC-7 rule. In addition, `AuditTrailService` records, each with actor, target and correlation id:
+
+| Event | Actor | Severity |
+|---|---|---|
+| Invite created / revoked / resent / expiry changed | Admin | info |
+| Invite email sent / failed | System | info / warning |
+| Invite opened by an existing account (not burned) | Anonymous | info |
+| Invite redeemed (with the new account id, type, level) | Invitee | info |
+| Plan row provisioned from a champion invite | System, on behalf of the invite | info |
+| Redemption refused (reason class only, never the token) | Anonymous | warning |
+| First payment stamped on lineage (Slice 5) | System (webhook) | info |
+
+**Who paid, when and how much** comes from S-4a's `billing_events` with the product dimension, joined through the account. This requirement adds the link, not a second payment log.
+
+### 8.4 An honest limit
+
+Until **G-1** (service-role key rotation, which is outstanding and not ours to schedule), anyone holding the leaked key can create users and write plan rows directly. **Invite-only is a business control and not a security boundary until G-1 is done.** This does not block Slices 0–4 and 6, but it must be stated wherever "signup is closed" is reported.
+
+---
+
+## 9. Non-functional requirements
+
+- **Performance:** invite validation and redemption have no cron, queue or LLM call. The page answers in under 1 second p95, excluding Supabase auth itself.
+- **Security:** §8. Every route follows the CLAUDE.md API pattern (Zod first, Pino with a correlation id, never `console.*`, no internal error details in production).
+- **Accessibility and localisation:** the invite page and email work in `en`/`he`/`es` with RTL. Form labels are proper labels, and errors are announced. The plan-name translations are the same existing placeholders (English in all three locales until the user supplies them). **The invite's language is persisted on the invite row**. It is never read from the browser's `LanguageContext`, which is localStorage-backed and display-only (CLAUDE.md, Currency & Timezone: never persist a value seeded from it) (T-12).
+- **Privacy:** an invited email is personal data. When an invite expires unused its email is retained for the admin list for a limited period (SA/Legal default: 12 months), then anonymised. Account erasure anonymises the invitee email on their invite and lineage rows but keeps the structural record (level, parent), so the tree and the circle report stay valid.
+- **Operability:** the migration follows the entitlements SQL conventions (no single-letter aliases and no `--` comments in the operator-pasted check scripts), with a read-only `check-` script. The user applies migrations to production by hand, so each slice's migration must be safe to apply before its code deploys.
+- **Testing:** per CLAUDE.md, integration tests for each new route (happy path, auth failure, invalid input), unit tests for each repository method, and a manual QA record of the critical path until E2E exists.
+
+---
+
+## 10. Slices
+
+**Why the first slice is thinner than "admin sends invite + champion signup".** That bundle carries five separate risks: the data model, the admin UI, email deliverability and sender identity, account creation, and plan provisioning. **Email is not on the critical path**, because an admin can paste a link into WhatsApp. So email is Slice 2, and a very thin Slice 0 proves the record and the link first. The first **end-to-end** champion signup is Slice 1, and it can be demoed without email.
+
+**The growth path is blocked.** Paid invites are now the main way new customers arrive (§5), and they depend on reuse-plan **S-4a** (the Business OS buy path), which cannot take real money until **G-1** (the key rotation) is verified. Slices 0–4 and 6 can ship now. They deliver invite-only signup through **champion invites only**. **Slice 5 cannot reach real customers until S-4a is live, and the future champion-to-friend flow (§14) has no business value until then either**, because every friend invite is a paid invite.
+
+| Slice | Scope | Done means (the demo) | Depends on | Blocked by S-4a / G-1? |
+|---|---|---|---|---|
+| **0 Invite records and link** | Invite table and repository; issuance policy (admin: champion, basic, pro); expiry setting (15/30/60, default 30); admin create/list/revoke routes; the `/admin` invites page (the Paid type shown disabled); the invite page **read-only**: it validates the token and shows welcome / offered plan / expired / revoked / not recognised. **No signup yet.** FR-1 to FR-10, except the signup form. | *An admin creates a champion invite for `x@example.com` with the 30-day default, copies the link, opens it in a private window, and sees the Founding Partner welcome with their note. They revoke it, refresh, and the page says it was withdrawn. The admin list shows both states.* | None | No |
+| **1 Champion signup, end to end** | Redemption (FR-11 to FR-13) with email and password; plan row provisioned `cohort = 'champion'`, `origin = 'invite'`; lineage row at L1; atomic burn; the existing-account path (FR-8a: sent to sign in, not burned); the first-accepted-wins rule; mailbox proof for hand-delivered links (§8.1); tenant-definition fix so the Tiers page can see invited accounts (AB-16, T-2); audit events. | *The invitee opens the pasted link, creates a password, and lands in onboarding signed in. The Tiers page shows the account as a champion with the chosen end date. The invite shows Accepted, L1, with the account. Opening the link again says "already used, sign in". A second pending invite to the same email now says "you already have an account", sends them to sign in, and stays unused.* | Slice 0 | No |
+| **2 Invitation email** | Template: "<Inviter> via AgentPilot" (the individual admin's name, with "AgentPilot" as the fallback), our verified domain, Reply-To to the inviter, personal note, the invite's language with an inviter default and override, RTL; send on create; resend with a fresh link; send-failure recording; optional delivery/open tracking (FR-14 to FR-17). | *The admin ticks "send email". The invitee receives "Dana via AgentPilot" in Hebrew with Dana's note and a working button, and hitting Reply addresses Dana. The admin resends, and the old link stops working. The admin list shows sent, and delivered/opened if tracking is included.* | Slice 1 | No |
+| **3 Sign up with Google** | Continue-with-Google on the invite page, with the Google-verified email required to match the invited email. *(Trial invites were removed from this slice by BQ-3. It stays separate because it is independently demoable and is a prerequisite for Slice 4; it may be merged into Slice 1 if SA prefers.)* | *A champion invitee signs up with Google using the invited Gmail and lands in onboarding. Trying with a different Google account is refused with a clear message.* | Slice 1 | No |
+| **4 Close open signup** | Signup policy `invite_only` enforced on every account-creation path (FR-18 to FR-21), plus the marketing site's refusal message. **Coordinated with the marketing-site owner**, because that app is not in this repository. | *Signing up on the marketing site with a fresh email, or with a new Google account, is refused with the invite-only message. Existing users still sign in. An invite still works.* | Slices 1 and 3 (otherwise nobody can join by Google); marketing-site change | No, but see §8.4 |
+| **5 Paid invites and payment attribution** | Paid type enabled (basic default, pro selectable); plan preview with price; hand-off to the S-4a checkout; the "finish your payment" gate that keeps unpaid invitees out of onboarding with no time limit (FR-24, T-13); lineage `first_paid_at` stamp; admin view of who paid, when and how much, including "signed up, not paid" (FR-22 to FR-26). **This is the main growth path.** | *An admin sends an Essentials invite. The invitee sees Essentials with its price and contents, creates the account, and cannot get past "finish your payment" until they pay; before paying, the admin list shows them as "signed up, not paid". After they pay with a test card, the Tiers page shows `tier = basic`, and the invite record shows paid on that date for $79.* | **Reuse-plan S-4a** (WS-1 and WS-2) | **Yes, both.** It can be built once S-4a merges inert, but it cannot be **released to real customers** until S-4a is live, which needs G-1 verified. |
+| **6 Invitation-circle reporting** | The §6.5 report (FR-27): invites sent/accepted/expired, signups and paid signups per level, and tree size per L1 root. | *The admin opens the report and sees, for L1, 12 invites sent, 9 accepted, 0 paid (before Slice 5). After Slice 5, paid signups appear per level.* | Slice 1 (signup counts); Slice 5 for paid counts | Paid counts only |
+
+**The "before switch-on" slice from the first draft is dropped.** With no trial invites, the launch operation can only affect paid invitees who signed up and never paid, and the trim list only flags invited champions who have not onboarded. The user will clean up the data before switch-on (BQ-6), so this is not a slice. The technical note stays with SA as T-9, so the launch dry run can list such accounts for the cleanup.
+
+---
+
+## 11. Acceptance criteria
+
+- [ ] **AC-1** (S0) An admin can create, list and revoke invites. A non-admin gets 401/403 from every invite admin route, and the admin authz CI guard stays green.
+- [ ] **AC-2** (S0) The link is shown once. The database holds only its hash. A token that is unknown, malformed, or differs by one character gets the identical "not recognised" response.
+- [ ] **AC-3** (S0) The expiry picker offers exactly 15, 30 and 60 days, defaulting to 30, read from the setting. Expiry is derived: an invite past its link expiry shows as expired in the list and on the page with no job having run. Changing the setting does not change an existing invite's expiry.
+- [ ] **AC-4** (S1) A champion invite with "no end date" produces a plan row with `cohort = 'champion'`, `cohort_expires_at = NULL`, `origin = 'invite'`. One with "12 months" produces `cohort_expires_at` 12 months after redemption. The row survives the invitee's first onboarding message unchanged except for its fact column.
+- [ ] **AC-5** (S1) Two concurrent redemptions of one invite produce exactly one account. Two concurrent redemptions of **two different** invites for the same email also produce exactly one account, and only the winner is burned. A failure after the claim leaves no burned invite without an account.
+- [ ] **AC-6** (S1) Redemption with a different email than invited is refused. A redeem request carrying a `cohort`, `tier`, `level` or `userId` field has no effect on what is written.
+- [ ] **AC-6a** (S1) Opening an invite whose email already has an account shows "you already have an account" and a link to the normal sign-in page. It creates **no session**, leaves the invite `pending`, leaves the plan row unchanged, and records `opened_by_existing_account_at`. The invite later shows as expired.
+- [ ] **AC-7** (S1) The lineage row shows L1, the invite id (the first one accepted), no parent, and `root_account_id` equal to the account itself.
+- [ ] **AC-8** (S1) A hand-delivered link cannot produce an email-confirmed account without proof of mailbox control.
+- [ ] **AC-9** (S1) The token appears in no Pino log, audit entry or referrer (checked in QA's manual record).
+- [ ] **AC-10** (S2) The email arrives as "<Inviter> via AgentPilot" from our verified domain, with Reply-To equal to the inviter's account email, containing the inviter's note, in the invite's language (the inviter's by default, overridable), with RTL for Hebrew. For an admin with no name on record the display name is "AgentPilot". Resend invalidates the previous link. A failed send is visible on the invite and does not lose the invite.
+- [ ] **AC-11** (S3) Google signup succeeds only when the Google-verified email matches the invited email.
+- [ ] **AC-12** (S4) Under `invite_only`, sign-up with no invite fails on the marketing form, on first-time Google, and on a direct Supabase `signUp` with the anon key. Sign-in and password reset for existing users are unaffected.
+- [ ] **AC-13** (S5) A paid invite ends with `tier` set only after a successful payment. Before payment the account can reach nothing but the "finish your payment" screen, has **no** `trial` plan row, stays there indefinitely with no reminder sent and no deletion, and appears to admins as "signed up, not paid". `first_paid_at` is stamped once. The admin view shows amount and currency read from the billing record.
+- [ ] **AC-14** (S6) The circle report's counts per level match the invite and lineage records for a seeded set of invites.
+
+---
+
+## 12. Technical recommendations for SA
+
+These are BA recommendations, for SA to approve or change. None is put to the user.
+
+| # | Question | BA recommendation |
+|---|---|---|
+| **T-1** | Storage | Two new tables: `business_os_invites` (the record, token hash, invite type and grant as validated JSON, `email_locked` defaulting true, issuer columns with an exactly-one CHECK, the persisted language, state columns, delivery facts) and `business_os_account_lineage` (§6.2, PK `account_id`). RLS/REVOKE pattern AB-12. Grant ids are **not** CHECK-listed in SQL (FR-12 of the entitlements requirement). Both are never-purged / person-owned. |
+| **T-2** | Provisioning a brand-new champion's plan row | A new server-side entitlements operation (for example `provision_from_invite`), sharing `adminOps`' validation (champion end date, no-basis, known tier) but **without** the RC-10 tenant pre-check, because the account is new by definition. It is called in-process, never as an HTTP self-call. Also extend the tenant definition (`isBusinessOsTenant`) to include "has a plan row with `origin = 'invite'`", so the Tiers page lookup and admin ops work before onboarding (AB-16). |
+| **T-3** | Creating the account | Server-side via the Supabase admin API in the redemption route, followed by a session hand-off **for the account just created**, on this origin, using the existing `generateLink` + `verifyOtp` pattern (AB-6). This keeps working after Slice 4 closes public signup, because admin-API user creation is not subject to the public signup switch. The hand-off must be unreachable for any account the redemption did not create in the same operation (BQ-7, §8.1). |
+| **T-4** | Atomic burn | A claim RPC on the AB-5 pattern (`UPDATE … WHERE state = pending AND not expired AND not revoked RETURNING`), plus either compensation (release the claim if user creation fails) or an idempotency key making a retry complete the same redemption. Recommendation: claim, then create, then provision, then stamp `redeemed_account_id`, with release-on-error. Auth's unique email is what makes "first accepted wins" hold across different invites to one email: the loser's user creation fails, and its claim is released. |
+| **T-5** | Mailbox proof for hand-delivered links | Record whether the current link was delivered by our email. If it was not, create the user **unconfirmed** and require a code or confirmation sent to the invited address before first sign-in. Alternatively, always send a one-time code to the address at signup. SA to weigh friction. |
+| **T-6** | Signup policy enforcement (Slice 4) | Enforce at the **auth layer**, not in a page, because a page cannot stop a direct `signUp` with the anon key. The options are Supabase's "disable new signups" setting (simplest; invite redemption still works via T-3; open signup later means flipping it back) or a Supabase *before-user-created* auth hook that reads the signup policy (the policy becomes data, and `open` later can mean an attribution hook instead of a switch). BA leans towards the hook for the §14 seam, but either satisfies FR-18. Either way it touches the **marketing app**, which is outside this repository. |
+| **T-7** | Token transport | The token in the URL fragment, read client-side and POSTed. `Referrer-Policy: no-referrer` on the invite page. Pino redaction for the field name. |
+| **T-8** | Email tracking | Store `provider_message_id` on the invite. Extend the Resend webhook matcher to look up invites when `email_sends` has no match, or record invite sends in `email_sends` if its owner column allows a platform send. SA to choose. |
+| **T-9** | Launch operation and trim list (technical note only; not a slice) | The user will clean up the data before switch-on (BQ-6). To support that cleanup, the launch **dry run** and the trim list should label accounts with `origin = 'invite'` and list **paid invitees with no tier** (signed up, never paid, BQ-8) separately, because the launch operation as written would make them free champions. Whether the operation should also exclude them automatically is SA's call. |
+| **T-10** | Missing `profiles` trigger in migrations (AB-14) | Not caused by this work, but invite redemption depends on the new user getting a `profiles` row. Recommend codifying the trigger (it is already tracked as a Wave C1 concern) or having redemption ensure the row through a repository. |
+| **T-11** | Sender identity (BQ-4, BQ-9) | Build the From as `"<Inviter Name> via AgentPilot" <invites@<verified-domain>>` and pass `from` and `replyTo` explicitly to `sendEmail`. **Do not pass `ownerUserId`**, which would trigger the transport's business-name lookup (`resolveSender`) and brand the email as the inviter's business. For an admin invite the inviter is the issuing admin: their name comes from their profile or auth metadata, falling back to the bare display name "AgentPilot", and the Reply-To is that admin's auth email, read server-side. The transport's default sender is currently `NeuronForge <notifications@neuronforge.app>`, so the verified domain and local part need a decision in the workplan. |
+| **T-12** | The inviter's language, determined and persisted (BQ-4) | **Never read it from `LanguageContext`**, which is localStorage-backed and display-only; CLAUDE.md forbids persisting a value seeded from it. Recommendation: resolve the inviter's language **server-side** from a persisted per-person preference (SA to name the authoritative column, e.g. on `user_preferences` or `profiles`; if none exists, the create form's explicit choice is the only source and defaults to `en`). The create form pre-selects that value, the inviter may change it, and the **submitted value is validated (`en`/`he`/`es`) and persisted on the invite row**. That column is the only source for the email and the invite page, so a later change to the inviter's preference does not change an invite already sent. |
+| **T-13** | Unpaid paid invitees and the onboarding trigger (BQ-8) | A paid invitee who created an account but has not paid must not reach onboarding: the first onboarding message would create a `cohort = 'trial'` plan row (AB-15), a free basis that BQ-3 rules out. Recommendation: a server-side gate (for example in the onboarding entry and the Business OS layout) that sends an account whose lineage says "paid invite, not yet paid" to the finish-payment screen, with no time limit and no job attached. SA may prefer instead to write the plan row at redemption with a no-access marker, but that must not break the R2-3 no-basis rule. |
+| **T-14** | Expiry setting (BQ-1) | One configuration setting holding the allowed options `[15, 30, 60]` and the default `30`. The create route validates against it (Zod), and the chosen number of days is stamped as an absolute `link_expires_at` on the invite. Code config next to the entitlements config is the simplest option. `system_settings_config` also works if the user wants to change it without a release. SA to choose. |
+| **T-15** | Issuance policy (GR-3) | A small config map from issuer kind (and, for accounts, the issuer's cohort) to the invite types it may issue. Today: `admin → [champion, basic, pro]`. It is enforced at creation and re-checked at redemption. The future `champion account → [basic]` entry, plus a per-inviter cap as an entitlements quantity capability (§14), slot in with no schema change. |
+
+---
+
+## 13. Business questions
+
+**All business questions are closed.** The user decided BQ-1 to BQ-9 on 2026-09-28. There are no open business questions.
+
+### 13.1 Decided by the user (2026-09-28)
+
+| # | Question | Decision and the user's rationale | Where applied |
+|---|---|---|---|
+| **BQ-1** | How long an invitation stays open | **A configurable setting. The admin picks 15, 30 or 60 days when creating an invite; the default is 30.** No free-form range. | §4.1, FR-1, FR-14, AC-3, T-14 |
+| **BQ-2** | Locked to the invited email? | **Yes, locked to the invited email by default.** "By default" leaves room for a later per-invite override, recorded as a hook (`email_locked`) and not built. | §4.3, FR-11, §14 |
+| **BQ-3** | Use before paying? | **No.** A paid invitee pays at signup. **The only free invite is a champion invite.** There is no trial invite type. A "free tier with limited expiry" invite may come later; it is designed for, not built. | §1, §5, FR-24, T-13, §14 |
+| **BQ-4** | Sender, language and style of the invitation email | **The email shows the inviter's name ("<Name> via AgentPilot"), is sent from our verified domain, and has Reply-To set to the inviter's own email.** It cannot be sent from the inviter's own mailbox, because of deliverability and DMARC. **The language defaults to the sender's language, the inviter can override it per invite, and the sender adds a personal note.** | FR-1, FR-15, FR-15a, §9, T-11, T-12 |
+| **BQ-5** | Level of an admin-issued non-champion invite | **L1 for every admin-issued invite.** The level is the invitation circle (L1 = invited by an admin, L2 = invited by an L1, and so on). **Its business purpose is to measure how far word of mouth spreads.** A basic report of signups and paid signups per level is wanted, and it can be a later slice. | §6, FR-27, Slice 6 |
+| **BQ-6** | Invited accounts at enforcement switch-on | **Not a concern for this requirement: the user will clean up the data before switch-on.** Kept only as a technical note for SA (T-9). The "before switch-on" slice is dropped (§10). | AB-17, AB-18, T-9, §10 |
+| **BQ-7** | Inviting an email that already has an account | **Allowed, with no validation at issue time.** When the invite is opened and the email already has an account, the person is sent to sign in; **the link itself never authenticates anyone.** The invite is **not burned**, **changes nothing** about their plan, stays unused and expires. **An admin changes plans on the Tiers page.** When several pending invites go to one email, **the first one accepted wins the lineage**, and the rest expire. | §4.2, §4.3, FR-2, FR-4, FR-8a, §8.1, AC-5, AC-6a, T-3, T-4 |
+| **BQ-8** | A paid invitee creates their account but never finishes paying | **They are held on the "finish your payment" screen with no time limit.** Admins see them as **"signed up, not paid"** and can follow up by hand. **No automatic reminders and no automatic deletion for now**; both are listed as future (§14). (The user accepted the recommended default.) | §4.3, GR-4, §6.4, FR-5, FR-24, FR-25, AC-13, T-9, T-13, §14 |
+| **BQ-9** | Sender identity for admin-issued invites | **Admin invites show the individual admin's own name ("<Name> via AgentPilot"), with Reply-To set to that admin's own email.** If the admin has no name on record, the display name falls back to **"AgentPilot"**. (The user accepted the recommended default: an invite is personal, and each admin is responsible for their own invitees.) | FR-15, AC-10, T-11, Slice 2 |
+
+**Invite types (user decision, 2026-09-28):** the only types are **Champion** (admin-only, free) and **Paid** (Essentials; Autopilot if an admin picks it; pay at signup). In the future, **champions will only be able to send paid Essentials invites, never free ones, because this is a closed system.** The friend chooses whether to sign up; if they do, it is a paid Essentials subscription. **Perks are win-win:** the inviting champion earns bonus credits for each paying subscriber they brought, and the new subscriber gets bonus credits too. This is designed for in §14 and not built.
+
+**Decided without asking** (recorded so they are visible and can be overridden): admins **can** resend and revoke (§4.2); invites are single-use (§4.3); a champion invite's access end is a length counted from signup or "no end date", chosen at creation (§5); a paid invite burns when the account is created, not on payment (§4.3); existing accounts get no back-filled lineage (§6.3).
+
+### 13.2 Open
+
+None.
+
+---
+
+## 14. Out of scope / future roadmap (designed for, not built)
+
+| Future feature | Not built now | The hook it needs, already in this design |
+|---|---|---|
+| **Champions invite friends (L2, L3, …), paid Essentials only** | No champion-facing invite UI or route | `issuer_kind = 'account'` / `issuer_account_id` on the invite (§6.2); `parent_account_id`, `root_account_id` and stored `level` on lineage; the **issuance policy** (GR-3, T-15) gains `champion account → [basic]`, so **champions can never issue a free invite**; per-issuer scoping (§8.2). Only new routes and UI are needed; there is no schema rewrite. **Depends on S-4a**, because every friend invite is paid, so it has no value before payment exists. |
+| **A cap on how many invites a champion can send** | No cap | Model the cap as an **entitlements capability** (a `quantity`, for example `referrals.invites`), so it varies by cohort/tier through the existing matrix and admins can raise it per account with an override. It is **not added to the catalog now**, because an unbuilt capability cannot be allocated. Name it to avoid confusion with `team.seats`. The issuance route counts the issuer's pending plus accepted invites against it. |
+| **Win-win perks: bonus credits to the inviting champion and to the new subscriber** | No perks | **Trigger: the invitee's first successful payment**, which is the lineage `first_paid_at` stamp (§6.4), written once by the S-4a webhook. It fires once per invitee and grants two entries, one to the inviter (`parent_account_id`) and one to the invitee, in the **shared credit ledger ("credit diary")**, consistent with the Credits Boost requirement's Q13. The amounts are a future business decision. Behaviour on refund or dispute follows whatever the credit-diary work decides for clawbacks. |
+| **Reminders to paid invitees who have not finished paying** | None (BQ-8) | "Signed up, not paid" is already derivable (a paid-invite lineage row with no `first_paid_at`, §6.4). A reminder would need a scheduled sender built on the durable-queue claim pattern (CLAUDE.md, `durable-queue-drain`), not a bare cron. |
+| **Removing accounts that signed up from a paid invite but never paid** | None (BQ-8) | The same derivation identifies them. Deletion must go through the platform's account-erasure path, which today is not wired to account deletion (a known backlog item), and never through a cascade from Business OS "Reset". Until then, removal is by hand in the pre-switch-on cleanup (T-9). |
+| **Per-invite override of the email lock** | Always locked (BQ-2) | `email_locked` on the invite, always `true` today. An override would let the invitee choose their own address, while the lineage still points at the invite. |
+| **A free invite with a limited expiry** ("free tier with limited expiry") | Not offered (BQ-3) | The grant model already expresses it as a cohort with an access end (for example `champion` with an end date, or the existing `trial` cohort). It needs only an issuance-policy entry and a UI option. |
+| **Open "free" signup from the marketing page** | Signup stays `invite_only` | The signup policy (FR-18, FR-21, T-6) switches to `open`. Organic signups get a lineage row with `source = 'organic'` at L1 (§6.3), and the plan row gets its default from the existing trigger (`trial`). UTM or campaign attribution would be an added lineage field. |
+| **Team invites / seats** | Different feature (entitlements §18) | Kept distinct in vocabulary (§1). |
+| **Using an invite to change an existing account's plan** | Never (BQ-7): the invite sends them to sign in | Plan changes stay on the Tiers page. |
+| **Bulk invites (CSV)** | Single invites only | The create operation is per-invite, so bulk is a loop plus a UI. |
+| **Building payment** | Owned by reuse-plan S-4a | FR-23 hands off to it. |
+
+---
+
+## 15. Notes on integration points
+
+| System | Impact |
+|---|---|
+| `lib/business-os/entitlements/adminOps.ts`, `BusinessOsAccountPlanRepository` | New champion provisioning operation sharing the validation (T-2). `isBusinessOsTenant` widened (AB-16). |
+| `business_os_account_plans` | New `origin` value `invite`. No schema change. |
+| `config/cohorts.ts`, `config/tierMatrix.ts`, `capabilityDisplay.ts` | Read-only: grantable ids and plan contents for the invite page. New small configs next to them: expiry options (T-14) and issuance policy (T-15). |
+| Launch operation, shadow report trim list | Label invite-origin accounts and list unpaid paid invitees for the pre-switch-on cleanup (T-9). |
+| Onboarding entry and the Business OS layout | Finish-payment gate for unpaid paid invitees (T-13, Slice 5). |
+| New: `business_os_invites`, `business_os_account_lineage` + repositories | §6, §7, T-1. Registered in `lib/business-os/purge/descriptors.ts` and `businessOwnedTables.ts` as person-owned/never-purged. |
+| New admin routes under `app/api/admin/business-os/invites/**`, new pages under `app/admin/` (invites list, circle report) | Gated by `requireAdmin` / layout. Counted by the admin authz CI guard (its caps may need the documented ratchet update). |
+| New public invite page and validate/redeem routes on the platform origin | Public (not under `(protected)`), rate-limited. |
+| `app/api/auth/handoff/**`, `app/auth/handoff/page.tsx` | Prior art and possibly the session hand-off for newly created accounts only (T-3). |
+| `lib/notifications/emailTransport.ts`, `lib/email/templates/**`, `app/api/webhooks/resend/route.ts` | New invite template with an explicit "<Name> via AgentPilot" sender (admin's own name, "AgentPilot" fallback) and inviter Reply-To, without `ownerUserId` (T-11); optional invite matching in the webhook (T-8). |
+| Persisted per-person language preference (SA to identify) | Default language of the invite (T-12). Never `LanguageContext`. |
+| **Marketing site (separate app, not in this repository)** | Slice 4: refusal message and signup-policy behaviour. Needs its owner. |
+| Supabase Auth project settings / auth hook | Slice 4 (T-6). The `profiles` trigger dependency (T-10). |
+| Reuse-plan S-4a (checkout, webhook `assign_tier`, `billing_events` product dimension) | Slice 5 hands off to it and stamps lineage payment milestones; future perks fire on that stamp. |
+| Credit diary (shared credit ledger) | Future perk grants (§14). |
+| `AuditTrailService` | §8.3 events. |
+
+---
+
+## 16. SA Review
+
+**Reviewed by SA — 2026-09-28**
+**Verdict: APPROVED WITH CONDITIONS.** The requirement is architecturally sound and every business decision (BQ-1 to BQ-9) can be delivered as decided. **There is no blocker.** Slice 0 may proceed to a workplan, which must address C-1 to C-13 (§16.4). L-1 to L-12 (§16.5) are recorded now so the later slice workplans inherit them; they do not gate Slice 0.
+
+### 16.1 As-built verification (§2)
+
+Checked against the code on this branch on 2026-09-28.
+
+| Claim | Verdict | SA note |
+|---|---|---|
+| AB-1 | ✅ Correct | `COHORT_IDS` (`config/cohorts.ts`) and `TIER_ORDER = ['basic','pro']` (`config/tierMatrix.ts`) exist. **Addition:** `tierLiteral.forbidden.test.ts` fails the build on any `basic`/`pro` literal outside `lib/business-os/entitlements/config/**` (equality baseline), so invite code, the admin page and the "Essentials by default" choice must derive tier ids from config (C-7). |
+| AB-2 | ⚠️ Correct, one correction | The table and columns are as stated. **But** `BusinessOsAccountPlanRepository.ensurePlanRow` hardcodes `origin: 'admin'`, requires an `adminId`, and is `ON CONFLICT DO NOTHING` that returns the existing row as `created: false`. It cannot write `origin = 'invite'`, and it would silently hand back a pre-existing row instead of failing. Invite provisioning needs its own write (L-5). The migration also documents `origin` as "provenance for humans, **not a control value**", which rules out branching on it (T-2, T-13 below). |
+| AB-3 | ⚠️ Correct, one correction | The three rules are real (`expires_at_required_for_champion`, `would_leave_no_basis`, the `tierEnum`). **But** `adminOps.ts` validates cohorts against a local literal `COHORT_VALUES = ['trial','champion']`, not against `COHORT_IDS`. GR-1 requires config-derived enums, so the invite path must build its Zod enums from `COHORT_IDS`/`TIER_ORDER` and must not import `COHORT_VALUES` (C-7). |
+| AB-4 | ✅ Correct | `requireAdmin` (`lib/admin/requireAdminRoute.ts`), `requireAdminPage` (`lib/admin/requireAdminPage.ts`, called by `app/admin/layout.tsx`), and `app/admin/business-os-tiers/` exist. |
+| AB-5 | ⚠️ Correct as atomic-claim prior art only | `claim_auth_handoff_code` is one `UPDATE … WHERE used_at IS NULL AND expires_at > now() RETURNING`, and every refusal is one message. **Do not copy the rest:** handoff codes are stored **in plaintext** (a UUID primary key), the function is `SECURITY DEFINER` with `search_path = public`, and the table has RLS on but no `REVOKE`. Invite tokens are hashed, and invite SQL follows C-2, not this file. |
+| AB-6 | ✅ Correct | `generateLink({ type: 'magiclink' })` then browser `verifyOtp` (`app/api/auth/handoff/redeem/route.ts`, `app/auth/handoff/page.tsx`). **Consequence for T-5:** verifying a magic link marks the email confirmed, so the hand-off by itself **is not** mailbox proof and must never run before mailbox proof (L-2). |
+| AB-7 | ✅ Correct | `lib/client/auth-actions.ts` (password + `signInWithOAuth`), `app/auth/callback/page.tsx`. |
+| AB-8 | ✅ Correct, two additions | Resend → SMTP → Gmail, never throws, returns `providerMessageId`, requires `kind`, accepts `from`/`replyTo`; `resolveSender` runs only when `ownerUserId` is given. **Additions:** (1) the Gmail fallback forces the sending address to `GMAIL_USER`, so our verified domain is not guaranteed on fallback (Reply-To still survives); (2) the transport logs the recipient address at `info`. Neither blocks this work; both go in the Slice 2 workplan (L-9). |
+| AB-9 to AB-11 | ✅ Correct | |
+| AB-12 | ⚠️ Correct in intent, copy with care | The **corrected** `20261005_business_os_entitlements.sql` uses `REVOKE ALL` from `anon`/`authenticated`/`PUBLIC`. It still takes privileges from `service_role` with an **enumerated** `REVOKE DELETE, TRUNCATE`, which is the anti-pattern the 20261009 privilege-fix lesson warns about (it leaves `MAINTAIN`, `REFERENCES`, `TRIGGER`). New tables use `REVOKE ALL … FROM service_role` too, then the narrow `GRANT` (C-2). |
+| AB-13 | ⚠️ Correct, one correction | `/login` and `/signup` are not routes here (`lib/utils/marketingUrl.ts`; no `app/login`, `app/signup`). No `auth.signUp`, `admin.createUser` or `inviteUserByEmail` call exists in `app/`, `lib/`, `components/`, `hooks/`. **Correction:** this repository **does** have one account-creating path: `signInWithGoogle` in `lib/client/auth-actions.ts` (used by `/test-business-os`) creates a user on first Google sign-in. Slice 4's auth-layer enforcement covers it automatically, but it must be on the Slice 4 test list (L-10). |
+| AB-14 | ✅ Correct | `app/auth/callback/page.tsx` documents that `create_user_settings_trigger` lives only in the Supabase project. |
+| AB-15 | ✅ Correct, one addition | Both triggers insert `cohort = 'trial'` and on conflict only fill a NULL fact. **Addition:** the migration notes that `onboarding_conversations` and `business_profiles` **accept user INSERTs under RLS**. A signed-in unpaid invitee could therefore insert an onboarding row directly with the anon key and their own JWT, and the trigger would mint a trial row. An app-level gate alone does not close T-13 (see T-13). |
+| AB-16 | ✅ Correct, one addition | `isBusinessOsTenant` = profile OR onboarding message. **Addition:** the read route `app/api/admin/business-os/entitlements/accounts/[accountId]/route.ts` uses the same function, so widening it changes both (intended). |
+| AB-17 | ✅ Correct, one clarification | `launch_champion_existing` exists as a **dry run only** (`app/api/admin/business-os/entitlements/launch/route.ts`; execution returns 501). It already skips existing champions, so invited champions (with or without an end date) are **not** altered. Only no-basis or trial rows would be converted (T-9). |
+| AB-18 to AB-21 | ✅ Correct | Not re-derived beyond the reuse-plan references. |
+| New: no public rate limiter | Fact | There is no request rate limiter for public routes in this repository, and an in-memory one does not work on Vercel serverless. Handled in C-4 and L-2. |
+| New: middleware allow-list | Fact | `middleware.ts` has an explicit public-path allow-list. The invite page path must be added, or signed-out visitors are redirected (C-4). |
+| New: `email_sends` | Fact | `email_sends` requires `user_id` (a business) and `contact_id NOT NULL` (a CRM contact), and stores `body_html`, which would store the invite link. It cannot hold invite sends (T-8). |
+| New: language column | Fact | `user_preferences.preferred_language` is the only persisted per-person language. It is **written by `LanguageContext`** (seeded from localStorage), so it is a reasonable **default suggestion** but not an authority. There is no repository for `user_preferences` (existing readers query it directly, which is non-compliant). |
+
+### 16.2 Mandatory-rule check (CLAUDE.md)
+
+| Rule | Result |
+|---|---|
+| Repository pattern | ✅ Required by FR-7 and §8.2. Two gaps to close: a `user_preferences` language read (C-8) and invite provisioning (L-5) each need a repository method; neither may copy the direct `.from('user_preferences')` calls in existing services. |
+| Zod on every boundary | ✅ FR-7, GR-1. Tightened in C-3 (token format), C-5 (`.strict()` bodies), C-7 (config-built enums). |
+| Pino | ✅ New files only; `middleware.ts` (touched by C-4) has no `console.*`. Any other touched file that has `console.*` must be flagged per the logging rule. |
+| `requireAdmin` / `requireAdminPage` | ✅ FR-7. Public routes must live **outside** `/api/admin/**` and carry no admin check, so the admin authz guard's counts and exemption caps do not move (C-4, C-5). |
+| Cross-tenant isolation (`tenant-isolation-guard`) | ✅ with conditions. The public validate/redeem routes are service-role paths driven by a caller-supplied value (the token), so the token hash plus the email lock **is** the ownership check, and every write is an explicit field allow-list from the server-side invite record (§8.1 "Tampered grant"). The account id written at redemption must come only from the `createUser` result of the same request (L-1). Admin list/revoke are platform-scope by design and must say so in code (C-13). |
+| Privilege grants | ✅ with C-2: `REVOKE ALL` (never an enumerated `REVOKE`) from `PUBLIC`, `anon`, `authenticated` **and** `service_role`, then `GRANT SELECT, INSERT, UPDATE TO service_role`. Functions: `REVOKE ALL`, then `GRANT EXECUTE TO service_role`. |
+| RLS | ✅ RLS on, no policies, on every new table (AB-12, §8.2). |
+| Serverless | ✅ No long-running work. Token generation uses Node `crypto`, so routes declare `runtime = 'nodejs'`. |
+
+### 16.3 Technical decisions T-1 to T-15
+
+| # | Decision | Rationale |
+|---|---|---|
+| **T-1** | **Approved with changes.** `business_os_invites` in Slice 0; `business_os_account_lineage` in Slice 1 (not Slice 0). **The grant is explicit columns, not JSON**: `invite_type`, `grant_kind` (`cohort`/`tier`), `grant_id`, `access_open_ended boolean`, `access_months integer`. Structural CHECKs only (shape, not values): exactly one issuer; champion access is either open-ended or a positive month count; not both revoked and redeemed; email stored normalised. Grant ids and language are **not** CHECK-listed. **No foreign keys to `auth.users`** on either table (issuer, redeemer, lineage account/parent/root), following RC-9. | JSON would hide the RC-4 state from SQL and from the circle report. No FK keeps the structural record through account deletion, which §9 requires and an `ON DELETE CASCADE` from `auth.users` would destroy. |
+| **T-2** | **Approved with changes.** Provision from the invite, in-process, never through `executeAdminOp` (its RC-10 pre-check returns `404 not_a_business_os_account` for a brand-new account). Extract the champion end-date rule and the config-built grant enum into a small pure validator shared by `adminOps` and the invite path. The plan-row write is a **new repository call** writing `origin = 'invite'`, done inside the redemption transaction (L-1, L-5), not `ensurePlanRow`. **Replace the tenant widening:** make `isBusinessOsTenant` "profile OR onboarding message OR **any plan row**", not "plan row with `origin = 'invite'`". | `ensurePlanRow` hardcodes `origin: 'admin'` and silently returns an existing row. `origin` is documented as provenance, "not a control value". A plan row only ever exists for a Business OS account (trigger, backfill, admin, invite), so "has a plan row" is generic and needs no invite knowledge in the entitlements module. |
+| **T-3** | **Approved.** Server-side `auth.admin.createUser({ email, password, email_confirm: true })` **after** mailbox proof (L-2), then `generateLink({ type: 'magiclink' })` for **that user id only**, returning `tokenHash` for `verifyOtp` in the browser. No `auth_handoff_codes` row is needed. Response `Cache-Control: no-store`. | Admin-API creation is not subject to the public signup switch, so it survives Slice 4. Minting only for the id the same request created keeps "the link never authenticates an existing account" (BQ-7) structural, not a runtime check. |
+| **T-4** | **Replaced.** Order: re-validate (read) → mailbox proof (L-2) → `createUser` → **one SQL function** that, in a single transaction, claims the invite (`WHERE token_hash = … AND redeemed_at IS NULL AND revoked_at IS NULL AND link_expires_at > now() AND email = …`), inserts the plan row (champion only; plain `INSERT`, so a conflict aborts), inserts the lineage row, stamps `redeemed_at`/`redeemed_account_id`, and returns the row. If it returns nothing, the route deletes the auth user it just created (compensation). A failed compensation is logged at `error` and audited as an orphan for admin cleanup. | Moves every database step into one transaction, leaving one non-transactional step (auth user creation) with one compensating action, instead of four steps each needing release-on-error. "First accepted wins" across different invites still holds through Auth's unique email: the loser's `createUser` fails before it claims anything. |
+| **T-5** | **Decided: always a one-time code.** Every redemption (password path) sends a 6-digit code to the invited address and requires it **before** `createUser`. The code is stored hashed on the invite with a 10-minute expiry and at most 5 attempts. | FR-3 shows the link to the admin at creation, so no link is ever delivered exclusively by email; "emailed link = proof" never holds. One uniform path is simpler and testable. The attempt counter is also the per-token rate limit. Google (Slice 3) is its own mailbox proof and skips the code. |
+| **T-6** | **Direction set; final choice in the Slice 4 workplan.** Prefer Supabase's "disable new signups" switch (auth layer, no code, covers the marketing form, first-time Google, direct `signUp`, and the harness's `signInWithGoogle`). Defer the before-user-created hook until open signup is scoped. **This requires Slice 3 to create Google invitees server-side** (verify the Google ID token, check the verified email equals the invited email, then `admin.createUser`), not through a Supabase OAuth sign-up, which the switch would refuse. The Slice 3 workplan must verify that later Google sign-ins link to that user by verified email. | Keeps every invite account creation on one server path (T-3), so the simplest auth-layer switch is enough. Whether a before-user-created hook fires on `admin.createUser` is unverified, which is a risk the switch does not carry. |
+| **T-7** | **Approved.** Token in the URL fragment, read client-side and POSTed; `Referrer-Policy: no-referrer` on the page; the token is never passed to a logger (Pino already redacts `token` and `*.token`, as a backstop only); never in audit details, never in `email_sends`. | Fragments never reach the server or access logs. |
+| **T-8** | **Decided: store `provider_message_id` on the invite**; the Resend webhook falls back to an invite lookup when no `email_sends` row matches. | `email_sends` needs a business `user_id` and a CRM `contact_id` and stores `body_html`, which would store the link. |
+| **T-9** | **Decided: exclude automatically, and label.** When the launch operation's execution is built, it must skip accounts whose lineage shows a paid invite with no `first_paid_at`; the dry run lists them and labels invite-origin accounts. Needed from Slice 5 onward (paid invitees cannot exist earlier). | With T-13's no-basis row, an unpaid invitee is exactly what the launch would turn into a free champion. The exclusion is one predicate; it backs up the user's manual cleanup (BQ-6) rather than replacing it. Invited champions are already skipped by the existing `alreadyChampion` branch. |
+| **T-10** | **Decided: ensure through a repository; do not codify the trigger here.** After `createUser`, redemption confirms the `profiles` row exists and inserts it idempotently if missing. Codifying `create_user_settings_trigger` stays with Wave C1. | Redemption must not depend on an uncodified trigger, but taking on Wave C1 would widen Slice 1. |
+| **T-11** | **Approved.** Explicit `from` (`"<Name> via AgentPilot" <local@verified-domain>`) and `replyTo` (the issuing admin's auth email, read server-side); never `ownerUserId`; `kind: 'transactional'` confirmed (one-to-one, sent because an admin chose this person, not a list send). The domain and local part are decided in the Slice 2 workplan and must be verified in Resend. | Matches the transport contract as built. |
+| **T-12** | **Approved with the column named.** Pre-select from `user_preferences.preferred_language`, read server-side through a new repository method; fall back to `en`. The admin's submitted value is Zod-validated against the email locale list (`en`/`he`/`es`) and persisted on the invite. The invite column is the **only** source for the page and the email. | `preferred_language` is written from `LanguageContext`, so it is a suggestion, not an authority. What is persisted is the admin's explicit choice on the form, which satisfies the CLAUDE.md rule. |
+| **T-13** | **Decided: two layers, both required in Slice 5.** (1) At a paid redemption, the SQL function writes the plan row with **no basis** (`cohort` and `tier` NULL, `origin = 'invite'`). The trigger's `ON CONFLICT` can then only fill a fact, so no trial row can ever be minted, even by a direct insert with the anon key. The resulting `no_assignment` anomaly is the correct fail-closed state under enforcement. R2-3 applies to admin operations and is not violated; the exception is documented in code. (2) The app gate from the BA recommendation on the onboarding entry and Business OS layout, keyed on the **lineage** (paid invite, no `first_paid_at`), never on `origin`. The shadow report must label these rows "awaiting payment", not as a defect. | Layer 1 is the only defence against a direct insert (AB-15 addition). Layer 2 is the only defence **before** enforcement is switched on, when a no-basis account still gets the full product (GR-5). |
+| **T-14** | **Decided: code config.** One exported constant (options `[15, 30, 60]`, default `30`) next to the entitlements config; the create route's Zod schema is built from it; `link_expires_at` and the chosen day count are stamped at creation. | Satisfies BQ-1's "one setting" with no new table or admin writer. Moving it to `system_settings_config` later is additive. |
+| **T-15** | **Approved.** The issuance policy is a config map under `lib/business-os/entitlements/config/`, checked at creation and re-checked at redemption. It also carries the **paid-invites-available switch** (false until Slice 5), which the server enforces (C-6). | Keeps tier literals inside the directory the tier-literal guard allows, and makes "Paid shown but disabled" a server rule, not just a UI state. |
+
+### 16.4 Conditions for the Slice 0 workplan
+
+| # | Condition |
+|---|---|
+| **C-1** | **One migration, one table.** `business_os_invites` only, with the T-1 columns needed through Slice 1 (`token_hash`, normalised email, `email_locked` default true, the explicit grant columns, issuer columns, `inviter_display_name` snapshot, `language`, `personal_note` with a length CHECK, `internal_reason`, `link_expiry_days`, `link_expires_at`, `first_viewed_at`, `revoked_at`/`revoked_by_admin_id`/`revoke_reason`, `redeemed_at`/`redeemed_account_id`, timestamps). Delivery and OTP columns arrive later, additively. Indexes on `token_hash` (UNIQUE) and email. Safe to apply before its code deploys, since nothing reads it yet. |
+| **C-2** | **Privileges.** `ENABLE ROW LEVEL SECURITY`, no policies. `REVOKE ALL ON TABLE … FROM PUBLIC, anon, authenticated, service_role;` then `GRANT SELECT, INSERT, UPDATE ON TABLE … TO service_role;`. **No enumerated `REVOKE` anywhere.** Any function (none is needed in Slice 0; revoke is a conditional `UPDATE`) follows the same shape with `SECURITY INVOKER` and `SET search_path = ''`. Ship a read-only `scripts/check-…-invites-migration.sql` that asserts the privilege end state, including `MAINTAIN`, `TRUNCATE`, `REFERENCES` and `TRIGGER`, and that no policy exists, following the entitlements SQL conventions (§9). |
+| **C-3** | **Token.** 32 bytes from `crypto.randomBytes`, base64url. Store only its SHA-256 digest (no slow hash or pepper: 256 bits of entropy makes that unnecessary, and a slow hash would defeat the indexed lookup). Zod-check the format before hashing. The raw token appears once, in the create response, with `Cache-Control: no-store`, and nowhere else: not in a log, audit entry, database column or error. The link is built from the app-origin helper with the token in the fragment. Tests assert no raw token in the row and neither token nor hash in the audit details. |
+| **C-4** | **Public surface.** The page path is added to the `middleware.ts` public allow-list. The page is a client shell that reads the fragment and POSTs to a validate route **outside `/api/admin/**`** (`runtime = 'nodejs'`, `dynamic = 'force-dynamic'`, `no-store`), with `Referrer-Policy: no-referrer`. Malformed, unknown and wrong tokens get one identical response. State (expired/revoked/used) is returned only on a hash match. The response is an explicit allow-list: inviter display name, note, grant display (from `presentation` / `capabilityDisplay`), language, link expiry, state. It never returns the inviter's email, any id, or the hash. `first_viewed_at` is a conditional `UPDATE … WHERE first_viewed_at IS NULL`. No in-memory rate limiter; per-IP limiting, if wanted, is a Vercel Firewall rule (ops), recorded as a follow-up. |
+| **C-5** | **Admin routes and page.** Under `app/api/admin/business-os/invites/**`; `requireAdmin` is the first statement of every handler; `.strict()` Zod bodies; reason of at least 3 characters; repository only; new `AUDIT_EVENTS` constants; audit non-blocking with `correlationId`. Revoke is a conditional `UPDATE` (`redeemed_at IS NULL AND revoked_at IS NULL`) returning 409 when the invite cannot be revoked. The page is `app/admin/business-os-invites/` and inherits the layout guard with no extra check. The admin authz guard stays green with no cap change. |
+| **C-6** | **Paid invites refused on the server.** The create route returns 409 for any tier grant while the T-15 switch is off. The disabled UI option is presentation, not the control. |
+| **C-7** | **Config and literals.** Expiry options (T-14) and the issuance policy with its switch (T-15) live under `lib/business-os/entitlements/config/` (or an invite config inside it). Grant enums are built from `COHORT_IDS` and `TIER_ORDER`, not from `adminOps`' `COHORT_VALUES`. The Paid default is derived from config (the first entry in `TIER_ORDER`), not written as `'basic'`. `tierLiteral.forbidden.test.ts` stays green with no baseline change. RC-4 is a required key in the create schema (open-ended or a month count). |
+| **C-8** | **Language.** Default from `user_preferences.preferred_language` through a **new** repository method (following the `new-repository` skill), falling back to `en`; submitted value Zod-validated and persisted; the page reads only the invite column. No `LanguageContext` anywhere on this path. |
+| **C-9** | **Inviter name.** Snapshot `inviter_display_name` at creation (from the admin's profile or auth metadata through a repository, falling back to "AgentPilot"), so the public route never reads admin data. |
+| **C-10** | **Purge and deletion registration.** Register `business_os_invites` as `never(...)` in `lib/business-os/purge/descriptors.ts`, plus `lib/business-os/businessOwnedTables.ts` / `accountDeletionPolicy.ts` as their tests require, so a Business OS Reset cannot touch it. |
+| **C-11** | **Expiry is derived.** One pure function derives the state from timestamps with an injected clock, and is used by both the list and the page. No cron, no stored `expired` state. |
+| **C-12** | **Tests.** Per route: happy path, 401/403, 400. Per repository method: a unit test. Plus: token-leak assertions (C-3), identical not-recognised responses (AC-2), derived expiry and a setting change leaving existing invites unchanged (AC-3), paid grant refused (C-6), and an injected `grant_id`/`issuer`/`userId` field rejected by `.strict()`. The admin-authz, tier-literal and `bos-entitlements` guards stay green. A manual QA record of the §10 Slice 0 demo. |
+| **C-13** | **Service-role documentation.** Every `supabaseServer` use states in code that invites are platform records, reached unscoped by design by admins and by token-hash from the public route. Admin repository methods are named for admin scope, so the future champion-issued path (§14) needs its own `issuerAccountId`-scoped methods and cannot reuse them by accident. |
+
+### 16.5 Conditions recorded for later slices (not Slice 0)
+
+| # | Slice | Condition |
+|---|---|---|
+| **L-1** | 1 | Redemption follows T-4 exactly. The account id written anywhere comes only from the same request's `createUser` result. The redeem body is the token, the password and the code; nothing else is read. |
+| **L-2** | 1 | One-time code per T-5. **This means Slice 1 sends one email** (the code, `kind: 'transactional'`, through `sendEmail`). Slice 1 is still demoable with a hand-pasted link; only the invitation email itself waits for Slice 2. Add `otp`/`code` to the Pino redaction paths. |
+| **L-3** | 1 | The "email already has an account" check (FR-8a, and the re-check at redemption) uses a `service_role`-only SQL function comparing `lower(email)` on `auth.users`, privileges per C-2. Not `listUsers` pagination. |
+| **L-4** | 1 | Widen `isBusinessOsTenant` per T-2 ("any plan row"), with tests on both the write path (`executeAdminOp`) and the read route. |
+| **L-5** | 1 | The plan-row write lives in the T-4 SQL function, called through a repository method; cohort id and expiry are passed in after TypeScript validation (C-7), so the SQL holds no plan names. |
+| **L-6** | 1 | `business_os_account_lineage`: `account_id` primary key, no FKs (T-1), `level` CHECK ≥ 1, privileges per C-2, registered per C-10. `first_paid_at` / `first_payment_ref` may arrive in Slice 5, additively. |
+| **L-7** | 1 | Ensure the `profiles` row through a repository after `createUser` (T-10). |
+| **L-8** | 1 | The session hand-off (T-3) is minted only for the user created in the same request. A signed-in visitor is asked to sign out first (§4.3). |
+| **L-9** | 2 | Sender per T-11. Record `provider_message_id` per T-8. The workplan states what the Gmail fallback does to the From address, and that the transport logs the recipient at `info`. Resend replaces `token_hash` on the same row, which invalidates the old link. |
+| **L-10** | 3–4 | T-6 direction: Google invitees created server-side; Slice 4 prefers the auth-layer switch. The AC-12 test list includes the `/test-business-os` Google sign-in (AB-13 correction). |
+| **L-11** | 5 | T-13 both layers, and T-9 launch exclusion. |
+| **L-12** | Unassigned | §9's 12-month anonymisation of unused invite emails needs a scheduled job, and no slice owns it. It must be built on the `durable-queue-drain` pattern when scheduled. Until then, record it as an open item. |
+
+### 16.6 Slice order
+
+The order is sound. **Slice 0 is independently shippable and small:** one additive migration that nothing reads until its code deploys, one repository (plus a narrow `user_preferences` read), two config constants, three admin handlers, one admin page, one public route and one public page. It depends on nothing in S-4a or G-1, and it changes no existing behaviour. The only cross-cutting edits are the `middleware.ts` allow-list line and the purge registrations. Two adjustments, neither of which changes the user's decisions: Slice 1 now sends a one-time code email (L-2), and Slice 3's Google path must be server-side so that Slice 4 can use the simple auth switch (T-6). Merging Slice 3 into Slice 1 is **not** recommended; keeping it separate keeps Slice 1 small.
+
+### 16.7 For the user
+
+No business decision is needed. For awareness only: every invitee who signs up with a password will receive a short one-time code by email during signup. This is how §8.1's "mailbox proof" is met, and it means the invitation link cannot be used by someone who does not control the invited inbox.
+
+### Approval
+
+[x] Requirement approved for Slice 0 workplan, subject to C-1 to C-13.
+
+---
+
+## Change History
+
+| Date | Change | Details |
+|------|--------|---------|
+| 2026-09-28 | Created | Draft requirement: as-built survey, invite lifecycle and burn rules, grant model on existing cohorts/tiers, L1/L2/L3 lineage designed for future user invites and perks, security/audit, six slices with done-means, SA recommendations T-1 to T-11, business questions BQ-1 to BQ-7. |
+| 2026-09-28 | User decisions BQ-1 to BQ-7 applied | Only two invite types now, Champion (admin-only, free) and Paid (basic, pro if an admin picks it; pay at signup); the trial invite was removed. Link expiry is a 15/30/60-day setting defaulting to 30. The email lock is "by default", with an override hook. The email is sent as "<Name> via AgentPilot" from our domain with the inviter's Reply-To, in the inviter's language (persisted on the invite, never from LanguageContext) and with a personal note. Levels are defined as invitation circles for measuring word of mouth, with a circle report (new Slice 6). Existing-email invites are allowed, send the person to sign in, are never burned, and never authenticate; the first invite accepted wins. The switch-on slice was dropped (the user cleans the data, T-9 kept). Slice 3 became Google sign-up only. Slice 5 is marked as the main growth path, blocked on S-4a and G-1. Future champion-to-friend paid invites and win-win perks are designed via an issuance policy, a cap capability and a first-payment trigger. Added T-12 to T-15. New open questions BQ-8 and BQ-9. |
+| 2026-09-28 | BQ-8 and BQ-9 decided; business questions closed | The user accepted both recommended defaults. BQ-8: an unpaid paid invitee is held on "finish your payment" with no time limit and shown to admins as "signed up, not paid"; automatic reminders and deletion are listed as future. BQ-9: admin invites show the individual admin's name ("<Name> via AgentPilot") with Reply-To set to that admin's email, falling back to "AgentPilot". Status set to "Business questions closed — ready for SA review"; §13.2 now reads "None". |
+| 2026-09-28 | SA review: APPROVED WITH CONDITIONS | Added §16. As-built claims verified, with corrections to AB-2 (`ensurePlanRow` hardcodes `origin = 'admin'`; `origin` is not a control value), AB-3 (`COHORT_VALUES` literal), AB-5 (plaintext codes, not a hashing precedent), AB-12 (enumerated `service_role` REVOKE), AB-13 (the harness's Google sign-in creates accounts) and AB-15 (user INSERTs under RLS defeat an app-only gate). T-1 to T-15 decided: explicit grant columns and no FKs; provisioning in one SQL transaction after `createUser`, with compensation; always a one-time code before account creation; tenant = "any plan row"; paid invitees held by a no-basis plan row plus a lineage-keyed gate; code config for expiry and issuance policy. Slice 0 conditions C-1 to C-13; later-slice conditions L-1 to L-12. No business decision needed. |

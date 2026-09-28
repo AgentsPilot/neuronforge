@@ -267,6 +267,57 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['buildCustomerPlanView', 'getEntitlementService', 'resolveAccountId'],
       why: 'The CUSTOMER read behind the "Your plan" settings section (S-4a step 1) — the first non-admin file in this list. It resolves the session account and formats the answer; it refuses nothing, and it has no capability id to gate on. Note `getEntitlementService` here is `getSnapshot`, which reports every capability, and NOT `check()`, which is the call that would make this a gate: if this file ever calls `check`, it belongs in ENFORCEMENT_POINTS instead of here. `resolveAccountId` is the account seam (SA P-1), which every external caller of the service must go through — `accountSeam.guard` enforces that product-wide.',
     },
+    // ── Business OS invites (invite-only signup, Slice 0) ──────────────────
+    // None of these refuses a capability. They read the invite config (expiry
+    // options, invite types, the issuance policy) and PREVIEW the plan an
+    // invite offers, the way the admin Tiers screen previews every plan.
+    // Redemption (Slice 1) writes a plan row; it does not gate a feature either.
+    {
+      file: 'app/api/admin/business-os/invites/route.ts',
+      symbols: ['getEntitlementConfig', 'getEntitlementMode'],
+      why: 'The admin invite list/create endpoint. It passes the config to the invite operations and reports the mode so the page can say champion access is recorded, not enforced (GR-5). It refuses no capability.',
+    },
+    {
+      file: 'app/api/admin/business-os/invites/[inviteId]/revoke/route.ts',
+      symbols: ['getEntitlementConfig'],
+      why: 'The admin invite revoke endpoint. It passes the config to label the revoked invite for the list. It refuses no capability.',
+    },
+    {
+      file: 'app/api/public/invites/validate/route.ts',
+      symbols: ['getEntitlementConfig'],
+      why: 'The public invite check. It passes the config so the offered plan can be described and a grant that left the config refused cleanly (GR-1). It resolves no real account and refuses no capability.',
+    },
+    {
+      file: 'lib/business-os/invites/adminInviteOps.ts',
+      symbols: [
+        'CHAMPION_ACCESS_MONTHS_MAX',
+        'EntitlementConfig',
+        'INVITE_ISSUANCE_POLICY',
+        'INVITE_LINK_EXPIRY',
+        'INVITE_TYPES',
+        'PAID_INVITE_TYPE',
+        'planLabel',
+        'type InviteTypeId',
+      ],
+      why: 'The admin invite operations. They read the invite config (T-14, T-15) and label plans for the admin list with `planLabel`. The Paid refusal here is an issuance rule on WHO MAY INVITE, not a capability gate on what an account may do.',
+    },
+    {
+      file: 'lib/business-os/invites/inviteOffer.ts',
+      // No resolver (SA M-3): the resolution lives in `planOfferView.ts`, inside
+      // the module, and this file gets only its read-only result.
+      symbols: ['EntitlementConfig', 'INVITE_TYPES', 'INVITE_TYPE_IDS', 'describePlanOffer', 'type PlanOfferCategory'],
+      why: 'Describes the plan an invite OFFERS through `describePlanOffer`, a read-only view inside the entitlements module that previews a plan the way `adminPlansView` and `customerPlanView` do. It imports no resolver and no decision function, so it cannot refuse a capability.',
+    },
+    {
+      file: 'lib/business-os/invites/inviteSchemas.ts',
+      symbols: ['CHAMPION_ACCESS_MONTHS_MAX', 'CHAMPION_INVITE_TYPE', 'INVITE_LINK_EXPIRY', 'PAID_INVITE_TYPE', 'TIER_ORDER'],
+      why: 'Zod schemas for the invite routes, built from the config (C-7) so the expiry options and tier ids are never re-listed. Validation of a request body, not a capability gate.',
+    },
+    {
+      file: 'lib/business-os/invites/publicInviteView.ts',
+      symbols: ['EntitlementConfig'],
+      why: 'The public invite view. A type import only: it hands the config to `inviteOffer`. It refuses no capability.',
+    },
   ];
 
   /** Every symbol a file imports from the entitlements module. */

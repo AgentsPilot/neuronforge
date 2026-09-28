@@ -91,6 +91,27 @@ export async function middleware(request: NextRequest) {
     }
   }
 
+  /*
+   * === THE PUBLIC INVITE PAGE (Business OS invite-only signup) ===
+   *
+   * `/invite#t=…` is opened by people who have no account yet, and by admins
+   * testing a link they just created. It must never be sent to onboarding: a
+   * signed-in visitor whose onboarding is incomplete would otherwise land on
+   * `/onboarding-chat` instead of the invitation (SA F-6).
+   *
+   * `Referrer-Policy: no-referrer` because this page carries a secret (T-7).
+   * The token itself is in the fragment, which no browser sends, but nothing
+   * about this page should ever leak its address to another origin.
+   *
+   * After the subdomain rewrite above on purpose: a business's own site may
+   * have an `/invite` page of its own, and that is still served as its site.
+   */
+  if (pathname === '/invite' || pathname.startsWith('/invite/')) {
+    const response = NextResponse.next()
+    response.headers.set('Referrer-Policy', 'no-referrer')
+    return response
+  }
+
   // Skip onboarding check for:
   // - Static files (images, fonts, HTML)
   // - API routes

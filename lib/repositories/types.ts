@@ -485,3 +485,97 @@ export interface FreeTierInsertOutcome {
 export interface FreeTierUpdateOutcome {
   updated: boolean;
 }
+
+// ============================================================================
+// Business OS invites (invite-only signup, Slice 0)
+// ============================================================================
+//
+// `business_os_invites` is a platform record, not tenant data: it has no
+// `user_id` column. See `BusinessOsInviteRepository` for why it is reached
+// unscoped, and by whom.
+
+/** Which entitlements basis an invite grants. Mirrors the `grant_kind` CHECK. */
+export type BusinessOsInviteGrantKind = 'cohort' | 'tier';
+
+/**
+ * One invite as the ADMIN surface reads it. Every column except `token_hash`,
+ * which no reader ever selects.
+ */
+export interface BusinessOsInvite {
+  id: string;
+  email: string;
+  email_locked: boolean;
+  invite_type: string;
+  grant_kind: BusinessOsInviteGrantKind;
+  grant_id: string;
+  access_open_ended: boolean | null;
+  access_months: number | null;
+  issuer_kind: 'admin' | 'account';
+  issuer_admin_id: string | null;
+  issuer_account_id: string | null;
+  inviter_display_name: string;
+  language: string;
+  personal_note: string | null;
+  internal_reason: string;
+  link_expiry_days: number;
+  link_expires_at: string;
+  first_viewed_at: string | null;
+  revoked_at: string | null;
+  revoked_by_admin_id: string | null;
+  revoke_reason: string | null;
+  redeemed_at: string | null;
+  redeemed_account_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * One invite as the PUBLIC page's lookup reads it: only what the page may show
+ * or needs to decide the state. No email, no issuer, no reasons, no hash.
+ * `id` is read so `markFirstViewed` can target the row; it is never returned.
+ */
+export interface BusinessOsInvitePublicView {
+  id: string;
+  grant_kind: BusinessOsInviteGrantKind;
+  grant_id: string;
+  access_open_ended: boolean | null;
+  access_months: number | null;
+  inviter_display_name: string;
+  language: string;
+  personal_note: string | null;
+  link_expires_at: string;
+  first_viewed_at: string | null;
+  revoked_at: string | null;
+  redeemed_at: string | null;
+}
+
+/**
+ * What an admin-issued invite is created with: the explicit allow-list.
+ *
+ * `issuer_kind` is not here: `createForAdmin` sets it to `admin` itself, so an
+ * admin-issued row can never claim an account issuer.
+ */
+export interface CreateBusinessOsInviteInput {
+  token_hash: string;
+  email: string;
+  invite_type: string;
+  grant_kind: BusinessOsInviteGrantKind;
+  grant_id: string;
+  access_open_ended: boolean | null;
+  access_months: number | null;
+  issuer_admin_id: string;
+  inviter_display_name: string;
+  language: string;
+  personal_note: string | null;
+  internal_reason: string;
+  link_expiry_days: number;
+  link_expires_at: string;
+}
+
+/** A revoke, as the conditional UPDATE needs it. */
+export interface RevokeBusinessOsInviteInput {
+  id: string;
+  adminId: string;
+  reason: string;
+  now: Date;
+}

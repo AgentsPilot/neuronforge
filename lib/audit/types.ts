@@ -75,6 +75,10 @@ export const AUDIT_ENTITY_TYPES = [
   // One Admin Archiving run (a row in archive_runs). Written only by
   // POST /api/admin/archiving/runs; the entity id is the run id.
   'archive_run',
+  // One Business OS invite (a row in business_os_invites). Written only by the
+  // admin invite routes under /api/admin/business-os/invites; the entity id is
+  // the invite id.
+  'business_os_invite',
 ] as const;
 
 export type EntityType = (typeof AUDIT_ENTITY_TYPES)[number];

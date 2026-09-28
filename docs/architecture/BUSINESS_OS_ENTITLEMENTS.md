@@ -1,6 +1,6 @@
 # Business OS entitlements
 
-> **Last Updated**: 2026-09-27
+> **Last Updated**: 2026-09-28
 
 ## Overview
 
@@ -30,6 +30,7 @@ What an account can do in Business OS, and why. This module answers one question
 | **Tier matrix** — what each plan includes | `config/tierMatrix.ts` | Pricing | The price list changes |
 | **Cohorts** — trial and champion | `config/cohorts.ts` | Product | The trial deal changes |
 | **Lifecycle overlay** — what each state allows | `config/lifecycle.ts` | Product | The grace/paused policy changes |
+| **Invites** — link expiry options, who may issue which invite type, and the Paid-invites switch | `config/invites.ts` | Product | The invite policy changes. `paidInvitesAvailable` stays `false` until invite-signup Slice 5 (the Business OS checkout, S-4a); flipping it is a config edit, and the create route refuses every Paid invite until then |
 | **Resolver** — puts them together | `resolver.ts`, `lifecycle.ts`, `decide.ts` | Engineering | Rarely |
 | **Service** — the one call sites use | `EntitlementService.ts` | Engineering | Rarely |
 
@@ -211,3 +212,4 @@ Two rules worth knowing before using them:
 | 2026-09-27 | Founding Partner points at Autopilot | `champion.base` is `{ tier: ’pro’ }`, reversing Q-B3, so design partners keep chat while it is in testing. **Their AI allowance is unchanged at 1,000 a month** — `CHAMPION_VALUES` sets it explicitly and an explicit cohort value beats the tier row, so they do not pick up Autopilot’s 2,000. Reversing it is the same one line |
 | 2026-09-27 | Chat named on the customer surface | The dedicated suppression and `customerPlanView.chat.test.ts` are gone (deleted in the same commit, per that file’s own instruction), because chat is available to everyone and in testing. Replaced by the narrower rule that survives enforcement: **the surface lists what a plan INCLUDES and never asserts what the customer’s current plan excludes** — `customerPlanView.noExclusions.test.ts` |
 | 2026-09-27 | Founding Partner gets FULL parity with Autopilot | The `ai.actions` override is gone: `CHAMPION_VALUES` now **reads the allowance from the tier its `base` names**, so champions get 2,000 a month rather than the 1,000 they were pinned at earlier the same day. "Founding Partners get the top plan free" is true without an exception, and the customer screen no longer offers a design partner an upgrade. Parity is **structural, not a copied number** — raise Autopilot and champions rise with it. **No other cohort value disagrees with the inherited row** (checked: `sms.messages`, `email.volume`, `team.seats`, `business.locations`) |
+| 2026-09-28 | Invite config added | `config/invites.ts` holds the invite link expiry options (15/30/60, default 30), the invite types and the grants each may carry (read from `COHORT_IDS` and `TIER_ORDER`), and the issuance policy with its Paid switch, off until Slice 5 (invite-only signup Slice 0, T-14, T-15) |

@@ -168,6 +168,17 @@ export const AUDIT_EVENTS = {
   BOS_ENTITLEMENT_LAUNCH_DRY_RUN: 'BOS_ENTITLEMENT_LAUNCH_DRY_RUN',
 
   // ==========================================
+  // BUSINESS OS INVITES (admin-only, server-written)
+  // ==========================================
+  // Invite-only signup, Slice 0. Entity type 'business_os_invite', id = the
+  // invite id. The details carry the grant, the expiry and the admin's reason,
+  // never the token, its hash or the invited email (C-3). The durable record is
+  // the invite row itself (issuer, timestamps, revoke reason); these entries are
+  // the investigation trail on top of it.
+  BOS_INVITE_CREATED: 'BOS_INVITE_CREATED',
+  BOS_INVITE_REVOKED: 'BOS_INVITE_REVOKED',
+
+  // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
   // ==========================================
   // One entry when a run starts and one when it ends. A run that stops at its
@@ -588,6 +599,18 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'critical',
     complianceFlags: ['SOC2'],
     description: 'An archive batch failed and was rolled back; the run can be continued',
+  },
+  // Business OS invites (Slice 0). Issuing or withdrawing a way into the
+  // product is an admin decision worth an entry, but it changes no account yet.
+  [AUDIT_EVENTS.BOS_INVITE_CREATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'An admin created a Business OS invite (grant, link expiry and reason recorded)',
+  },
+  [AUDIT_EVENTS.BOS_INVITE_REVOKED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'An admin revoked a Business OS invite before it was used',
   },
   [AUDIT_EVENTS.BUSINESS_DATA_PURGE_BLOCKED]: {
     severity: 'warning',
