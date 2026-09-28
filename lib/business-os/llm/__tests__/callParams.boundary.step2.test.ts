@@ -392,15 +392,43 @@ function facts(): BriefingFacts {
       awaitingPayment: [],
       first: { name: 'Michael', timeLocal: '09:00', serviceName: 'Assessment 1' },
       cancelled: [],
+      // Added when `BriefingFacts.appointments` gained them; empty because
+      // neither is what this fixture is about.
+      noShows: [],
+      syncFailures: 0,
     },
-    money: { owed: [], totalOwed: 0, currency: 'USD', mixedCurrency: false, receivedToday: 0, receivedCount: 0 },
+    // `money` and `outlook` both gained fields; all empty, because none of them
+    // is what this fixture is about. It exists to pin the request that goes on
+    // the wire, not to describe a business.
+    money: {
+      owed: [],
+      totalOwed: 0,
+      currency: 'USD',
+      mixedCurrency: false,
+      receivedToday: 0,
+      receivedCount: 0,
+      instalmentsDue: [],
+      retrying: 0,
+    },
     isQuiet: false,
     outlook: {
       newLeads: { count: 0, people: [] },
       quotesWaiting: { count: 0, people: [] },
       quotesOut: { count: 0, people: [] },
+      unanswered: { count: 0, people: [] },
+      refunded: { count: 0, people: [] },
     },
-  } as BriefingFacts;
+    /*
+     * Through `unknown`, as `correlationSummary` above already is.
+     *
+     * This fixture exists to pin the request that goes on the wire, not to model
+     * a business, so it is deliberately partial. Asserting the full shape means
+     * every field added to `BriefingFacts` breaks a test that is not about the
+     * briefing — which is what happened when `noShows`, `syncFailures`,
+     * `instalmentsDue`, `retrying`, `unanswered` and `refunded` arrived. The
+     * briefing's own tests cover its shape.
+     */
+  } as unknown as BriefingFacts;
 }
 
 const candidates: LeadReplyCandidate[] = [

@@ -29,6 +29,12 @@ export interface RefundConfirmationData {
   branding: BrandingData;
   /** Locale for email content (defaults to 'en') */
   locale?: Locale;
+  /**
+   * The BUSINESS's timezone, for naming the day the refund was issued.
+   * Optional so existing callers keep compiling; without it the date falls
+   * back to the server's zone, which is what every caller had before.
+   */
+  timezone?: string;
 }
 
 /**
@@ -49,11 +55,13 @@ export function generateRefundConfirmationEmail(data: RefundConfirmationData): {
   };
   const intlLocale = intlLocales[locale] || 'en-US';
 
+  /* The instant the refund was issued, named on the business's calendar. */
   const formattedRefundDate = data.refundDate.toLocaleDateString(intlLocale, {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
-    day: 'numeric'
+    day: 'numeric',
+    ...(data.timezone ? { timeZone: data.timezone } : {})
   });
 
   // Set locale on branding for RTL support

@@ -591,6 +591,23 @@ async function handleChatTurn(
      * Takes `sources` and `answerText` rather than reading them off a plan: a
      * resume turn never had one.
      */
+    /*
+     * EVERY CALL TO THE TWO HELPERS BELOW MUST BE `return await`, NOT `return`.
+     *
+     * They are async functions called from inside this handler's try/catch, and
+     * `return fn()` hands the caller the promise instead of awaiting it — so a
+     * rejection sails straight past the catch, past `runAiAction`, and out to
+     * Next, which answers with an HTML error page. The client then fails on
+     * `response.json()` and shows "Sorry, I couldn't process that", which is the
+     * one message that tells you nothing about what happened.
+     *
+     * It cost two bug reports. A write that named a contact by description
+     * raised an ordinary `BizQLValidationError` — the kind this handler already
+     * turns into a readable sentence — and the user got the generic client error
+     * instead, with the real message visible only in the server log.
+     *
+     * Not a style preference: `return await` inside a try IS the semantic.
+     */
     const completeWrites = async (args: {
       /** The planner's own steps — the confirmation policy is read off these. */
       writes: Array<MutateQuery | ForEachQuery>;
@@ -948,7 +965,7 @@ async function handleChatTurn(
             'Choice abandoned after two unmatched replies; planning the message instead'
           );
         } else {
-          return askChoice(
+          return await askChoice(
             {
               status: 'choice',
               kind: pendingChoice.kind,
@@ -999,14 +1016,14 @@ async function handleChatTurn(
         // Another slot was ambiguous too — "which David" and then "which of his
         // meetings". Asked one at a time, each carrying everything pinned so far.
         if (resumed.status === 'choice') {
-          return askChoice(resumed, {
+          return await askChoice(resumed, {
             sources: pendingChoice.sources,
             answerText: pendingChoice.answerText,
             utterance,
           });
         }
 
-        return completeWrites({
+        return await completeWrites({
           writes: pinned as Array<MutateQuery | ForEachQuery>,
           resolved: resumed.writes,
           sources: pendingChoice.sources,
@@ -1643,7 +1660,7 @@ async function handleChatTurn(
       const sources = plan.steps.filter((s): s is FindQuery => s.op === 'find');
 
       if (resolution.status === 'choice') {
-        return askChoice(resolution, {
+        return await askChoice(resolution, {
           sources,
           answerText: plan.answer?.text,
           utterance: message,
@@ -1652,7 +1669,7 @@ async function handleChatTurn(
         });
       }
 
-      return completeWrites({
+      return await completeWrites({
         writes,
         resolved: resolution.writes,
         sources,
@@ -1987,6 +2004,14 @@ async function handleChatTurn(
          * and applyAlternative refuses them again on the way out.
          */
         lastPlan: { steps: readSteps, answer: plan.answer, at: new Date().toISOString() },
+        /*
+         * The sentence as the user read it, figures and all.
+         *
+         * `plan.answer` above is the template — "{s1.value}" — so the next turn
+         * had no way to know the figure was $1,000, and read the user quoting it
+         * back as a filter. See ConversationContext.lastAnswer.
+         */
+        lastAnswer: answer.text || undefined,
         // One turn further back, for the "did you mean the ones we were just
         // talking about" chip — see ConversationContext.priorPlan.
         priorPlan: context.lastPlan,

@@ -601,6 +601,18 @@ async function sendByEmail(
     return null;
   } catch (error) {
     log.error({ err: error, invoiceId: invoice.id }, 'Failed to send invoice email');
-    return error instanceof InvoiceNotSendableError ? error : new Error('Failed to send invoice email');
+    /*
+     * Carry the real reason up, rather than replacing it with a category.
+     *
+     * This returned a bare `new Error('Failed to send invoice email')`, so the
+     * cron logged "Abandoned invoice could not be emailed" for what was
+     * actually a missing pdfkit font file inside the Lambda bundle. The message
+     * named the wrong subsystem — the mail never failed, the PDF did — and the
+     * only place the truth survived was the `err` on the line above.
+     */
+    if (error instanceof InvoiceNotSendableError) return error;
+
+    const because = error instanceof Error ? error.message : String(error);
+    return new Error(`Failed to send invoice email: ${because}`);
   }
 }

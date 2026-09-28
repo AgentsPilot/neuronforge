@@ -71,6 +71,9 @@ export function generateProposalEmail(data: ProposalEmailData): { subject: strin
         day: 'numeric',
         month: 'long',
         year: 'numeric',
+        // Read back in the zone it was anchored in, so "valid until" names the
+        // stored date rather than the server's view of noon UTC.
+        timeZone: 'UTC',
       })
     : null;
 

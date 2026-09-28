@@ -30,11 +30,14 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Send, Check, Clock, AlertCircle, FileText, Bell, Receipt } from 'lucide-react';
+import { toast } from 'sonner';
+import { Send, Check, Clock, AlertCircle, FileText, Bell, Receipt, Undo2, CalendarX } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import type { CurrencyCode } from '@/lib/business-os/LanguageContext';
 // One definition, in the registry that owns the vocabulary. Declared here too,
 // the two would drift the first time an action was added.
 import type { GapAction } from '@/lib/business-os/gaps/types';
+import { RefundModal } from '@/components/payments/RefundModal';
 
 export interface GapItemView {
   contactId: string;
@@ -42,6 +45,22 @@ export interface GapItemView {
   note: string | null;
   since: string;
   entityId: string | null;
+  /**
+   * What is held on it, where money is involved.
+   *
+   * Decides the row's action for `booking_cancelled`, where one gap has two
+   * moves: money on it is owed back, nothing on it is an hour to refill.
+   */
+  value?: number | null;
+  currency?: string | null;
+  /**
+   * A payment plan still charging this client for a cancelled booking.
+   *
+   * The row's real urgency, and why it is never allowed to expire: until the
+   * owner decides otherwise the card is debited again next period. Cancelling
+   * an appointment deliberately does not end a payment arrangement.
+   */
+  planLive?: boolean | null;
   /** Only an enquiry can have an automatic reply queued. */
   queued?: {
     label: string | null;
@@ -69,6 +88,9 @@ type RowState =
   | { kind: 'done' }
   | { kind: 'refused'; message: string };
 
+/** What `formatCurrency` can render. Anything else is shown as a bare figure. */
+const SUPPORTED_CURRENCIES: CurrencyCode[] = ['USD', 'EUR', 'ILS', 'GBP'];
+
 /** The icon says what KIND of work this is before the label is read. */
 const ACTION_ICON: Record<string, typeof Send> = {
   send_booking_link: Send,
@@ -76,12 +98,105 @@ const ACTION_ICON: Record<string, typeof Send> = {
   send_quote: Send,
   chase_intake: Bell,
   chase_payment: Receipt,
+  refund: Undo2,
+  bill_stage: Receipt,
+  cancel_booking: CalendarX,
 };
 
+/**
+ * The move for ONE row, which is not always the move for its gap.
+ *
+ * Every other gap has a single answer, so the action lives on the gap. A
+ * cancelled booking does not: if the client paid, the business is holding money
+ * for an appointment that is not happening and owes it back; if they did not,
+ * nothing is owed and what is left is an hour somebody else could have. Showing
+ * "Refund" on a booking nobody paid for would be a button that cannot work, and
+ * showing "Send booking link" on one where money is held hides the debt.
+ */
+function actionFor(gap: GapView, item: GapItemView): GapAction {
+  if (gap.id !== 'booking_cancelled') return gap.action;
+  /*
+   * A live plan takes precedence over an empty balance. Offering "send booking
+   * link" on a booking whose client is still being charged answers the wrong
+   * question entirely — the money is what needs a decision.
+   */
+  return moneyHeld(item) || item.planLive ? 'refund' : 'send_booking_link';
+}
+
+function moneyHeld(item: GapItemView): boolean {
+  return typeof item.value === 'number' && item.value > 0;
+}
+
+/**
+ * What the figure on a row MEANS, which is not the same on every gap.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `value` is one field carrying five different facts, and every row was
+ * labelled "holding" — the one reading that is true of exactly ONE of them.
+ *
+ *   booking_cancelled          money actually taken and not refunded   HELD
+ *   stage_awaiting_completion  work done that nobody has billed        NOT held
+ *   invoice_unpaid             what the client owes                    NOT held
+ *   quote_unsent               what the quote comes to                 NOT held
+ *   quote_awaiting_client      what the quote comes to                 NOT held
+ *
+ * So a phase waiting to be billed read "holding ₪705" — the exact opposite of
+ * what it is. The owner is holding nothing; the client has not been charged,
+ * and the button beside it says "mark done and bill".
+ *
+ * Defaults to `held`, because the default row IS the cancelled booking: a gap
+ * added later with a value that is genuinely held needs no entry here, and one
+ * that is not needs a deliberate line.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const VALUE_LABEL: Record<string, string> = {
+  stage_awaiting_completion: 'gaps.value.to_bill',
+  invoice_unpaid: 'gaps.value.owed',
+  quote_unsent: 'gaps.value.quoted',
+  quote_awaiting_client: 'gaps.value.quoted',
+};
+
+/**
+ * Identifies ONE row, for React and for the working/done/refused state.
+ *
+ * The contact alone is not enough. A person can have two unpaid invoices or
+ * cancel two appointments, and those rows then shared a key: React warned about
+ * the duplicate, and pressing the button on one of them showed "Done" on both
+ * while only one had actually been sent. The entity is what makes them two.
+ */
+function rowKey(gap: GapView, item: GapItemView): string {
+  return `${gap.id}:${item.contactId}:${item.entityId ?? ''}`;
+}
+
 export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
-  const { t, isRTL } = useLanguage();
+  const { t, isRTL, formatCurrency } = useLanguage();
+
+  /**
+   * The amount in the currency THE CLIENT WAS CHARGED.
+   *
+   * `formatCurrency` otherwise falls back to the device's remembered display
+   * currency, which is a per-browser preference and not what the invoice says.
+   * A business in Israel can bill a US client in dollars, and telling the owner
+   * they owe ₪400 when they are holding $400 is a wrong number on a refund
+   * button.
+   */
+  const money = (amount: number, currency?: string | null) => {
+    const code = (currency || '').toUpperCase();
+    // Only the four it knows. An unrecognised code would render as a symbol
+    // for a currency nobody was charged, so fall back to the plain figure.
+    return SUPPORTED_CURRENCIES.includes(code as CurrencyCode)
+      ? formatCurrency(amount, { currencyOverride: code as CurrencyCode })
+      : `${amount.toLocaleString()}${code ? ` ${code}` : ''}`;
+  };
   const router = useRouter();
   const [rows, setRows] = useState<Record<string, RowState>>({});
+  /** The booking whose refund dialog is open, if any. */
+  const [refunding, setRefunding] = useState<{
+    bookingId: string;
+    amount: number;
+    currency: string;
+    name: string;
+  } | null>(null);
 
   const setRow = (key: string, state: RowState) => setRows(prev => ({ ...prev, [key]: state }));
 
@@ -102,6 +217,13 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
         return item.entityId ? `/api/scheduling/bookings/${item.entityId}/intake` : null;
       case 'chase_payment':
         return item.entityId ? `/api/payments/invoices/${item.entityId}/send` : null;
+      case 'cancel_booking':
+        return item.entityId ? `/api/scheduling/bookings/${item.entityId}/cancel` : null;
+      /*
+       * No `refund` case on purpose: `act` opens `RefundModal` before reaching
+       * here, because refunding needs answers a fire-and-forget POST cannot
+       * give — stop the plan, tell the client, was this even a Stripe payment.
+       */
       default:
         return null;
     }
@@ -140,8 +262,40 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
     }
   };
 
+  /**
+   * The other answer to a refunded booking: leave it in the diary.
+   *
+   * A refund is not a cancellation — money goes back as goodwill while the
+   * session still happens — so this row has two answers and neither is a
+   * default. Saying "keep it" also lets the client's reminder resume, which is
+   * held while the question is open.
+   */
+  const keepAfterRefund = async (gap: GapView, item: GapItemView) => {
+    const key = rowKey(gap, item);
+    if (!item.entityId) return;
+
+    setRow(key, { kind: 'working' });
+    try {
+      const response = await fetch(
+        `/api/scheduling/bookings/${item.entityId}/keep-after-refund`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) }
+      );
+      const data = await response.json();
+
+      if (data?.success) {
+        setRow(key, { kind: 'done' });
+        setTimeout(() => onChanged?.(), 1200);
+        return;
+      }
+      setRow(key, { kind: 'refused', message: translateReason(t, data?.reason || data?.code) });
+    } catch {
+      setRow(key, { kind: 'refused', message: t('gaps.refused.generic') });
+    }
+  };
+
   const act = async (gap: GapView, item: GapItemView) => {
-    const key = `${gap.id}:${item.contactId}`;
+    const key = rowKey(gap, item);
+    const action = actionFor(gap, item);
 
     /*
      * Writing a quote is the one that is not a send.
@@ -149,12 +303,64 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
      * It needs the owner to decide what the work costs, so it opens the builder
      * they already use rather than pretending a button can answer it.
      */
-    if (gap.action === 'write_quote') {
-      router.push(`/business-os/crm?contact=${item.contactId}&action=quote`);
+    if (action === 'write_quote') {
+      /*
+       * Straight to the booking the quote is for.
+       *
+       * `&section=bookings` opens the drawer on the bookings section, where the
+       * consultation and its quote action are. This used to send
+       * `&action=quote`, which nothing on the CRM page read — so the button
+       * landed the owner on the contact's details with the booking collapsed,
+       * and the one thing they came to do was two clicks further on.
+       */
+      router.push(`/business-os/crm?contact=${item.contactId}&section=bookings`);
       return;
     }
 
-    const endpoint = endpointFor(gap.action, item);
+    /*
+     * Billing a phase is the other one that is not a send.
+     *
+     * The owner has to decide the work actually happened before the client is
+     * asked for money, so this opens the payments section where the phase and its
+     * "Mark done" control are. A one-click button here would be making that
+     * judgement on their behalf.
+     */
+    if (action === 'bill_stage') {
+      router.push(`/business-os/crm?contact=${item.contactId}&section=payments`);
+      return;
+    }
+
+    /*
+     * Refunding opens the dialog rather than posting.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * A direct POST was wrong in three separate ways, all of which `RefundModal`
+     * already answers: it never asked to stop a payment plan, so a client kept
+     * being charged; it never asked to tell the client, because that route
+     * defaults to silence; and it cannot refund a payment taken outside Stripe
+     * at all — a business that settles invoices by bank transfer got a button
+     * that always failed.
+     *
+     * Rather than teach a second refund path those three lessons, the row opens
+     * the one every other surface uses. It also lets the owner choose a partial
+     * amount, and stop the plan, neither of which a one-tap full refund can.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (action === 'refund') {
+      if (!item.entityId) {
+        setRow(key, { kind: 'refused', message: t('gaps.refused.generic') });
+        return;
+      }
+      setRefunding({
+        bookingId: item.entityId,
+        amount: typeof item.value === 'number' ? item.value : 0,
+        currency: item.currency || '',
+        name: item.name,
+      });
+      return;
+    }
+
+    const endpoint = endpointFor(action, item);
     if (!endpoint) {
       setRow(key, { kind: 'refused', message: t('gaps.refused.generic') });
       return;
@@ -165,6 +371,7 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        // Every remaining action is identified by its path; none takes a body.
         body: JSON.stringify({}),
       });
       const data = await response.json();
@@ -176,7 +383,10 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
       }
 
       // A refusal is a next step, not an error — show what the server said.
-      setRow(key, { kind: 'refused', message: data?.detail || translateReason(t, data?.reason) });
+      setRow(key, {
+        kind: 'refused',
+        message: data?.detail || translateReason(t, data?.reason || data?.code),
+      });
     } catch {
       setRow(key, { kind: 'refused', message: t('gaps.refused.generic') });
     }
@@ -226,9 +436,10 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
 
             <div className="flex flex-col gap-2">
               {gap.items.map(item => {
-                const key = `${gap.id}:${item.contactId}`;
+                const key = rowKey(gap, item);
                 const state = rows[key] ?? { kind: 'idle' };
-                const Icon = ACTION_ICON[gap.action || ''] || Send;
+                const action = actionFor(gap, item);
+                const Icon = ACTION_ICON[action || ''] || Send;
 
                 return (
                   <div
@@ -249,10 +460,43 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                         <p className="text-[11px] text-[var(--v2-text-muted)] mt-1 flex items-center gap-1">
                           <Clock className="w-3 h-3" />
                           {waitedFor(item.since, t)}
+                          {/*
+                            * The amount, said as what it IS on this gap.
+                            *
+                            * A row that says only "cancelled" reads as news.
+                            * The figure is what makes it a decision, and it is
+                            * the figure that decides which row is dealt with
+                            * first — so it has to be the RIGHT fact about the
+                            * money. See `VALUE_LABEL`.
+                            */}
+                          {moneyHeld(item) && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="font-medium text-[var(--v2-text-primary)]">
+                                {t(VALUE_LABEL[gap.id] ?? 'gaps.held')}{' '}
+                                {money(item.value as number, item.currency)}
+                              </span>
+                            </>
+                          )}
+                          {/*
+                            * Said even when nothing is held, because this is
+                            * not a detail about the row — it is money STILL
+                            * LEAVING the client's account for an appointment
+                            * that is not happening, and it continues until
+                            * somebody decides otherwise.
+                            */}
+                          {item.planLive && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="font-medium text-amber-600 dark:text-amber-400">
+                                {t('gaps.plan_still_charging')}
+                              </span>
+                            </>
+                          )}
                         </p>
                       </div>
 
-                      {gap.action && (
+                      {action && (
                         <button
                           type="button"
                           onClick={() => act(gap, item)}
@@ -270,7 +514,7 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                               <Icon className="w-3.5 h-3.5" />
                               {state.kind === 'working'
                                 ? t('gaps.working')
-                                : t(`gaps.action.${gap.action}`)}
+                                : t(`gaps.action.${action}`)}
                             </>
                           )}
                         </button>
@@ -306,6 +550,32 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                       </div>
                     )}
 
+                    {/*
+                      The second answer, in the shape the queued reply above
+                      already uses: a quiet text control rather than a second
+                      loud button. "Cancel it" is the likelier move and keeps
+                      the primary button; this is the one that says the session
+                      is still happening — and lets the client's reminder,
+                      held while the question is open, resume.
+                    */}
+                    {gap.id === 'booking_refunded' && state.kind === 'idle' && (
+                      <div
+                        className="mt-2 pt-2 border-t flex items-center justify-between gap-2"
+                        style={{ borderColor: 'var(--v2-border)' }}
+                      >
+                        <p className="text-[11px] text-[var(--v2-text-muted)] min-w-0">
+                          {t('gaps.refunded_hint')}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => keepAfterRefund(gap, item)}
+                          className="text-[11px] font-medium text-[var(--v2-primary)] hover:opacity-70 shrink-0"
+                        >
+                          {t('gaps.action.keep_booking')}
+                        </button>
+                      </div>
+                    )}
+
                     {rows[`queued:${item.contactId}`]?.kind === 'refused' && (
                       <p className="mt-2 text-[11px] flex items-start gap-1.5 text-[var(--v2-text-muted)]">
                         <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
@@ -326,6 +596,39 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
           </div>
         ))}
       </div>
+
+      {/*
+        The one refund dialog, opened from the dashboard.
+
+        It knows things a POST from here cannot: what is actually left to refund
+        (it re-reads the server figure rather than trusting the amount passed
+        in), whether a payment plan is still running, and whether the money came
+        through Stripe at all. Rendered inside the card because it portals out
+        of it anyway.
+      */}
+      {refunding && (
+        <RefundModal
+          isOpen
+          onClose={() => setRefunding(null)}
+          bookingId={refunding.bookingId}
+          originalAmount={refunding.amount}
+          currency={refunding.currency}
+          contactName={refunding.name}
+          isRTL={isRTL}
+          onSuccess={() => {
+            setRefunding(null);
+            // The row has changed — refetch so a settled one leaves the card.
+            onChanged?.();
+          }}
+          /*
+           * REQUIRED, not optional. The dialog renders no error of its own —
+           * every failure is handed to this callback — so leaving it off would
+           * make a refused refund look like nothing happened at all, on the one
+           * action here that moves real money.
+           */
+          onError={message => toast.error(message)}
+        />
+      )}
     </div>
   );
 }
@@ -370,10 +673,18 @@ const KNOWN_REASONS = new Set([
   'already_returned',
   'appointment_passed',
   'not_approved',
+  /*
+   * The refund route's own refusals, which arrive as `code` rather than
+   * `reason` and in upper case. Both are normalised below: a refusal the owner
+   * cannot read is a dead end on the one action that moves real money.
+   */
+  'ambiguous_target',
+  'not_positive',
 ]);
 
 function translateReason(t: (key: string) => string, reason?: string): string {
-  return reason && KNOWN_REASONS.has(reason)
-    ? t(`gaps.refused.${reason}`)
+  const key = reason?.toLowerCase();
+  return key && KNOWN_REASONS.has(key)
+    ? t(`gaps.refused.${key}`)
     : t('gaps.refused.generic');
 }

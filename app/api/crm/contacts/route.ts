@@ -19,15 +19,37 @@ const auditTrail = AuditTrailService.getInstance();
 
 // Validation schemas
 // Note: stage accepts any string since stages are dynamic from crm_pipeline_stages table
+/*
+ * An empty string from a form means "not filled in", so it is read as absent.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `z.string().min(1).optional()` permits UNDEFINED, not "". A browser form has
+ * no way to express undefined — every untouched text input posts "" — so
+ * adding a contact without choosing a source was refused:
+ *
+ *     "source: String must contain at least 1 character(s)"
+ *
+ * `first_name` and `stage` carry the same rule, and `email` is stricter still
+ * ("" is not a valid address), so the same submission failed for several
+ * reasons at once while the owner was told only "Invalid input".
+ *
+ * Normalising here rather than only at the one caller: this route is public to
+ * every client in the app, and the next form to post a blank field would hit
+ * exactly this again.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const blankAsAbsent = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess(value => (typeof value === 'string' && value.trim() === '' ? undefined : value), schema);
+
 const createContactSchema = z.object({
-  first_name: z.string().min(1).optional(),
+  first_name: blankAsAbsent(z.string().min(1).optional()),
   last_name: z.string().optional(),
-  email: z.string().email().optional(),
+  email: blankAsAbsent(z.string().email().optional()),
   phone: z.string().optional(),
-  stage: z.string().min(1).max(50).optional(),
+  stage: blankAsAbsent(z.string().min(1).max(50).optional()),
   tags: z.array(z.string()).optional(),
   custom_fields: z.record(z.any()).optional(),
-  source: z.string().min(1).max(50).optional()
+  source: blankAsAbsent(z.string().min(1).max(50).optional())
 });
 
 const listContactsSchema = z.object({
@@ -158,10 +180,24 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     if (error instanceof z.ZodError) {
       requestLogger.warn({ err: error }, 'Validation error');
+
+      /*
+       * Name the field that was wrong.
+       *
+       * This answered "Invalid input" and put the detail behind a
+       * `NODE_ENV === 'development'` check — so in production the owner was
+       * told a form of several fields was invalid, with nothing to say which.
+       * The field NAME is not sensitive; it is already visible on the form
+       * they are looking at. The values stay out of the response.
+       */
+      const firstIssue = error.errors[0];
+      const fieldName = firstIssue?.path?.filter(part => typeof part === 'string').join('.');
+
       return NextResponse.json(
         {
           success: false,
-          error: 'Invalid input',
+          error: fieldName ? `Invalid input: check the ${fieldName.replace(/_/g, ' ')} field` : 'Invalid input',
+          field: fieldName || undefined,
           details: process.env.NODE_ENV === 'development' ? error.errors : undefined
         },
         { status: 400 }

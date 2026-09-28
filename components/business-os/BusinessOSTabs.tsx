@@ -62,15 +62,16 @@ interface TabDef {
 
 /**
  * Order follows the working day: what needs attention, who it is for, what it
- * earned, how it is going, how people find you, and last the settings you
- * change rarely.
+ * earned, how people find you, how it is going, and last the settings you
+ * change rarely. The overview sits after Online presence because it is the
+ * step-back read on everything before it, not another thing to work through.
  */
 const TABS: TabDef[] = [
   { href: '/business-os', color: '#F97316', Icon: Sun, labelKey: 'nav.myday', fallback: 'My day' },
   { href: '/business-os/crm', color: '#8B5CF6', Icon: Users, labelKey: 'cap.people.name', fallback: 'People', capability: 'crm' },
   { href: '/business-os/orders', color: '#22C58B', Icon: Receipt, labelKey: 'nav.payments', fallback: 'Orders', capability: 'payments' },
-  { href: '/business-os/reports', color: '#22C58B', Icon: BarChart3, labelKey: 'cap.reports.name', fallback: 'Reports', capability: 'reports' },
   { href: '/business-os/website', color: '#4F6EF7', Icon: Globe, labelKey: 'cap.website.name', fallback: 'Online presence', capability: 'website' },
+  { href: '/business-os/reports', color: '#22C58B', Icon: BarChart3, labelKey: 'cap.reports.name', fallback: 'Business overview', capability: 'reports' },
   { href: null, color: '#D14E97', Icon: Settings, labelKey: 'cap.config.name', fallback: 'Configuration' },
 ];
 

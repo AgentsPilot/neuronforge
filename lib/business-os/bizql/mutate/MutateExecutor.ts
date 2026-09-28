@@ -1568,7 +1568,9 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
         bookingId: requireTargetId(q),
         userId: ctx.userId,
         startTime: data.start_time as string,
-        endTime: data.end_time as string,
+        // Passed through as given: absent means "keep the same length", which
+        // the service derives from the booking it loads anyway.
+        endTime: data.end_time as string | undefined,
       });
 
       return { data: result.data?.booking ?? null, error: result.error };
@@ -2094,8 +2096,31 @@ export async function executeMutate(
     // appear in the request, the user did not supply them, whatever language they
     // were speaking. Numbers are excluded because "an hour and a half" is a real
     // way to say 90.
+    //
+    // AND SO ARE DATES AND TIMES, for a stronger version of the same reason.
+    //
+    // A datetime is not prose the model composed; it is what date resolution
+    // produced from what the user said. "update start time to 11:00am" becomes
+    // `2026-09-24T11:00:00.000Z`, whose tokens are 2026, 09, 24t11 — none of
+    // which the user typed, and none of which they ever would. So the check
+    // below said INVENTED for a value the user had supplied as clearly as it can
+    // be supplied, and every required datetime was reported missing.
+    //
+    // That is worse than one bad answer: the fill loop then asks for the field,
+    // the reply is parsed into another ISO string, and that one is ungrounded
+    // too. Accumulating the reply into the utterance — the fix that stops this
+    // loop for text — cannot help, because no phrasing of a time contains the
+    // year. The same question comes back forever.
+    //
+    // Nothing is lost by exempting them. A date is either resolvable from what
+    // the user said or it is not: `parseSpokenDate` returns null on anything
+    // ambiguous, and an unresolvable date arrives here blank, which the check
+    // above already catches.
+    const isMoment = field.type === 'datetime' || field.format === 'date';
+
     const invented =
       !blank &&
+      !isMoment &&
       typeof value === 'string' &&
       options.utterance !== undefined &&
       !isGroundedIn(value, options.utterance);

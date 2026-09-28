@@ -70,7 +70,7 @@ const FACTS = {
   day: { timezone: 'UTC', date: '2026-09-16', startUtc: '2026-09-16T00:00:00.000Z', endUtc: '2026-09-17T00:00:00.000Z', localHour: 9 },
   appointments: { total: 1, ready: 0, completed: 0, awaitingIntake: [], awaitingPayment: [], cancelled: [], first: { name: OWNER_DATA, timeLocal: '14:30' } },
   money: { owed: [], totalOwed: 0, currency: 'USD', mixedCurrency: false, receivedToday: 0, receivedCount: 0 },
-  outlook: { newLeads: { count: 0, people: [] }, quotesWaiting: { count: 0, people: [] }, quotesOut: { count: 0, people: [] } },
+  outlook: { unanswered: { count: 0, people: [] }, refunded: { count: 0, people: [] }, newLeads: { count: 0, people: [] }, quotesWaiting: { count: 0, people: [] }, quotesOut: { count: 0, people: [] } },
   isQuiet: false,
 } as unknown as BriefingFacts;
 

@@ -559,7 +559,10 @@ export function SchedulingBookingModal({
   const timeAlreadyBooked = (() => {
     if (!formData.start_time || !formData.end_time) return false;
     const start = parseDateTimeLocal(formData.start_time, zone);
-    const end = new Date(formData.end_time);
+    // Same clock as the start — see the note in the validator below. Read in
+    // the browser's zone, this checked a New York start against an Israeli end,
+    // so the overlap question was about a slot nobody had proposed.
+    const end = parseDateTimeLocal(formData.end_time, zone);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
     return isSlotBooked(start, end, existingBookings, booking?.id);
   })();
@@ -1133,8 +1136,25 @@ export function SchedulingBookingModal({
     if (!formData.end_time) {
       errors.end_time = t('scheduling.booking.error_end_required') || 'End time is required';
     } else if (formData.start_time) {
+      /*
+       * BOTH sides parsed in the BUSINESS's zone, or this compares two
+       * different clocks.
+       *
+       * The end used to go through `new Date()`, which reads a
+       * `datetime-local` string in the BROWSER's zone, while the start went
+       * through the business's. For an owner in Israel running a New York
+       * business that is a seven-hour gap: 09:00 New York is 13:00 UTC, while
+       * 10:00 read as Israel is 07:00 UTC — so the end landed six hours BEFORE
+       * the start and the booking was refused.
+       *
+       * It fired for every appointment shorter than the offset, which is every
+       * appointment, and only for owners whose own zone differs from the
+       * business's — exactly who the timezone setting exists for. The submit
+       * path below already parsed both correctly, so nothing was ever SAVED
+       * wrong; the booking simply could not be made.
+       */
       const startTime = parseDateTimeLocal(formData.start_time, zone);
-      const endTime = new Date(formData.end_time);
+      const endTime = parseDateTimeLocal(formData.end_time, zone);
       if (endTime <= startTime) {
         errors.end_time = t('scheduling.booking.error_end_before_start') || 'End time must be after start time';
       }
@@ -1188,7 +1208,11 @@ export function SchedulingBookingModal({
       // If editing a no-show booking with new time, auto-confirm it (rescheduling)
       if (booking && booking.status === 'no_show') {
         const originalStart = new Date(booking.start_time).getTime();
-        const newStart = new Date(formData.start_time).getTime();
+        /* `booking.start_time` is a stored instant; `formData.start_time` is the
+           business's wall clock. Reading the second one in the browser's zone
+           made the two disagree by the owner's offset, so an untouched no-show
+           silently flipped to confirmed every time the form was saved. */
+        const newStart = parseDateTimeLocal(formData.start_time, zone).getTime();
         // If time changed, mark as confirmed (rescheduled)
         if (originalStart !== newStart) {
           requestBody.status = 'confirmed';
@@ -1950,7 +1974,10 @@ export function SchedulingBookingModal({
                 <Clock className="h-4 w-4 text-[#14B8A6]" />
                 <span className="font-medium text-[#0D9488]">{t('scheduling.booking.available_hours')}:</span>
                 {(() => {
-                  const selectedDate = new Date(formData.start_time);
+                  /* Which day's opening hours to show. Read in the browser's
+                     zone, a time near midnight resolved to the neighbouring
+                     day and the panel quoted the wrong day's hours. */
+                  const selectedDate = parseDateTimeLocal(formData.start_time, zone);
                   const dayAvailability = getAvailabilityForDay(selectedDate, availability, zone);
                   if (dayAvailability) {
                     return (

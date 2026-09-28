@@ -336,6 +336,38 @@ export async function POST(
      * stages and the invoice. Everyone else falls into the branch below and is
      * shown the same finished result.
      */
+    /*
+     * Never accept a revision of a quote the client ALREADY accepted.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * The claim below guards its own row and nothing else, so a revision of an
+     * accepted quote could be accepted too — raising a SECOND invoice and a
+     * second payment plan for one job, and leaving two signed documents where
+     * there should be one.
+     *
+     * Creating such a revision is now refused when the quote is written, so this
+     * exists for chains that already exist: a `sent` revision whose parent was
+     * accepted before that guard landed.
+     *
+     * Scoped to the PARENT in the chain, deliberately — not to everything
+     * sharing a booking. A business may quote the same appointment twice for
+     * genuinely separate work, and refusing that would block a sale nobody
+     * asked us to block. `accepted` is the code the page already has wording
+     * for: what the client needs to read is that this is settled.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (existing.supersedes_id) {
+      const { data: parent } = await proposalRepository.findByIdForToken(existing.supersedes_id);
+
+      if (parent?.status === 'accepted') {
+        requestLogger.warn(
+          { proposalId: existing.id, parentId: existing.supersedes_id },
+          'Refused: this revises a quote the client already accepted'
+        );
+        return NextResponse.json({ success: false, code: 'accepted' });
+      }
+    }
+
     const claimed = await proposalRepository.claimForAcceptance(existing.id);
     if (!claimed.data) {
       const { data: now } = await proposalRepository.findByIdForToken(existing.id);

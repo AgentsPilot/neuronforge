@@ -45,15 +45,21 @@ import { OPEN_PROPOSAL_STATUSES } from '@/lib/repositories/ProposalRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { CalendarSyncService } from '@/lib/services/CalendarSyncService';
-import { BookingEmailService } from '@/lib/services/BookingEmailService';
+import { BookingEmailService, getBusinessTimezone } from '@/lib/services/BookingEmailService';
+import { businessDateKey } from '@/lib/scheduling/businessTime';
 import {
   paymentInvoiceRepository,
+  paymentTransactionRepository,
   stripeConnectRepository,
   type PaymentInvoice,
 } from '@/lib/repositories/PaymentRepository';
 import { getStripeInvoiceService } from '@/lib/stripe/StripeInvoiceService';
 import { paymentReminderService } from '@/lib/services/PaymentReminderService';
 import { emitPaymentEvent } from '@/lib/services/PaymentEventService';
+import { voidInvoice } from '@/lib/payments/invoiceLifecycle';
+import { bookingPaymentState } from '@/lib/payments/bookingPaymentState';
+import { SERVICE_DATE_TERMS } from '@/lib/payments/invoiceTerms';
+import { isPlanStopped, PLAN_STOPPED_STATUSES } from '@/lib/payments/planStatus';
 
 const logger = createLogger({ service: 'BookingLifecycleService' });
 const auditTrail = AuditTrailService.getInstance();
@@ -88,11 +94,98 @@ export interface CancelBookingParams {
   offerRebooking?: boolean;
 }
 
+/**
+ * Invoice statuses that something will still chase, so cancelling the booking
+ * has to close them.
+ *
+ * `draft` is included: it was never sent, so cancelling it costs nothing and
+ * leaving it would put an invoice for a cancelled appointment in front of the
+ * owner the next time they opened the list.
+ */
+const CHASEABLE_INVOICE_STATUSES = ['draft', 'sent', 'overdue'];
+
+/**
+ * How a client cancellation is written into `cancellation_reason`.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE ONLY RECORD OF WHO CANCELLED.
+ *
+ * There is no column for it, so this prefix is what separates "the client could
+ * not make it" from "the business called it off" — and the dashboard's
+ * `booking_cancelled` gap reads it to decide whether the owner is told at all.
+ * An owner who cancelled a booking does not need the dashboard telling them
+ * they cancelled it.
+ *
+ * Exported so the gap matches on the SAME string the route writes. It was two
+ * literals in two files for one turn, and they already disagreed: the route
+ * wrote "Client cancelled: …" where the query looked for "Cancelled by client",
+ * so every cancellation that came with a reason — the ones a client bothered to
+ * explain — would have been silently invisible.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const CLIENT_CANCELLED_PREFIX = 'Cancelled by client';
+
+/** The reason text for a client cancellation, with whatever they said. */
+export function clientCancellationReason(reason?: string | null): string {
+  return reason ? `${CLIENT_CANCELLED_PREFIX}: ${reason}` : CLIENT_CANCELLED_PREFIX;
+}
+
 /** What actually happened to each side effect, so a caller can say so. */
 export interface CancelBookingOutcome {
   booking: SchedulingBooking;
   calendarEventRemoved: boolean;
   clientNotified: boolean;
+  /** Unpaid invoices moved to `cancelled`, so nothing chases them any more. */
+  invoicesCancelled: number;
+  /**
+   * Money the business is still holding for a booking that is not happening.
+   *
+   * Reported rather than acted on: a refund moves real money and belongs to a
+   * person, not to a cancellation. The owner-facing surfaces use this to ask.
+   * Zero when nothing was paid, which is the ordinary case.
+   */
+  amountHeld: number;
+  /** The currency `amountHeld` is in — a business may invoice in several. */
+  heldCurrency: string | null;
+  /**
+   * A payment plan that is STILL CHARGING this client, reported and left alone.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * DELIBERATELY NOT STOPPED HERE.
+   *
+   * Cancelling an appointment is not the same as ending someone's payment
+   * arrangement: a plan can fund more than this one booking, and ending it
+   * early is a decision with a client on the other side of it. The platform
+   * does not make that decision on its own — `cancelPlan` exists, is reached
+   * from the refund dialog and the Money page, and stays a human's to press.
+   *
+   * What follows from that is why this field exists at all: until the owner
+   * acts, the client's card WILL be charged again on schedule. So the surfaces
+   * that read this must be loud and must not let the row age away quietly.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  planLive: boolean;
+  /** Periods still to be charged on that plan, where the plan knows. */
+  periodsRemaining: number | null;
+  /**
+   * Quote stages closed so nothing chases the client for them.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The invoice scan is not the only chaser. `processOverdueItems` has a SECOND
+   * pass over `payment_plan_installments` — pending rows with a past due date,
+   * with no reference to the booking — and it emails the CLIENT in the owner's
+   * name on days 1, 3 and 7. So voiding the invoices stopped half of it: a
+   * quote's remaining stages went on demanding money for a cancelled job, and
+   * a stage already invoiced kept being chased through its installment row even
+   * after its invoice was voided.
+   *
+   * Only stages with NO live subscription behind them. A subscription plan's
+   * periods are real money still arriving — the plan is deliberately left
+   * running — and cancelling those rows would falsify the books. This stops the
+   * CHASING, never the money, which is the same line the invoice voiding draws.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  stagesClosed: number;
 }
 
 /**
@@ -162,6 +255,194 @@ export async function cancelBooking(
     } catch (err) {
       log.warn({ err, bookingId }, 'Calendar event delete threw');
     }
+  }
+
+  /*
+   * The invoices, settled two ways: stop chasing what was never paid, and
+   * report what was.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * An unpaid invoice used to survive the cancellation untouched, and the
+   * overdue scan reads `status in ('sent','overdue')` with no reference to the
+   * booking at all — so the platform went on emailing the client on days 1, 3
+   * and 7 past due, in the owner's name, demanding payment for an appointment
+   * that had been cancelled. Moving it to `cancelled` takes it out of that scan
+   * by itself; no change to the reminder service is needed.
+   *
+   * Anything already PAID is left exactly as it is. That is a record of money
+   * that moved, and rewriting it would be a lie about what happened. What this
+   * does instead is measure it, so the owner can be asked.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  let invoicesCancelled = 0;
+  let amountHeld = 0;
+  let heldCurrency: string | null = null;
+  let planLive = false;
+  let periodsRemaining: number | null = null;
+  let stagesClosed = 0;
+
+  try {
+    const { data: invoices } = await paymentInvoiceRepository.findByBookingId(bookingId, userId);
+
+    for (const invoice of invoices ?? []) {
+      if (CHASEABLE_INVOICE_STATUSES.includes(invoice.status)) {
+        /*
+         * `voidInvoice`, not a local status write.
+         *
+         * ───────────────────────────────────────────────────────────────────
+         * A Stripe-issued invoice lives in TWO places. Flipping the local row
+         * to `cancelled` stops this platform chasing it and does nothing at
+         * all to the other one: Stripe goes on sending its own reminders in
+         * the owner's name, and the hosted invoice page stays payable — so a
+         * client could pay, in full, for an appointment that was cancelled.
+         *
+         * `lib/payments/invoiceLifecycle` is where that is already handled,
+         * and the invoices tab and the chat both cancel through it. Voiding at
+         * the processor is best effort inside it: an invoice Stripe refuses
+         * (never finalized, already void) still gets its local change, which
+         * is the right trade — losing the void is a warning, losing the
+         * cancellation would be a bug.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        const { error } = await voidInvoice({ invoiceId: invoice.id, userId, request });
+
+        if (!error) invoicesCancelled += 1;
+        continue;
+      }
+
+    }
+
+    /*
+     * What the business is actually holding, from the PAYMENTS.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * NOT from the invoices, which is what this read first and which missed the
+     * commonest online sale outright. A client paying through the booking widget
+     * or a landing page produces a payment_transaction carrying `booking_id`
+     * and NO invoice at all — so an invoice-only sum reported nothing held,
+     * the owner was never asked about the refund, and the money simply stayed.
+     *
+     * `findSettledForBooking` asks both ways — transactions tied to the booking
+     * AND transactions tied to its invoices — and `bookingPaymentState` nets
+     * the refunds off. It is the same pair the delete guard below relies on, so
+     * "does this booking hold money" now has ONE answer in this file rather
+     * than two that disagree about direct payments.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const { data: settled } = await paymentTransactionRepository.findSettledForBooking(
+      bookingId,
+      (invoices ?? []).map(invoice => invoice.id),
+      userId
+    );
+
+    const held = bookingPaymentState(settled ?? []);
+    amountHeld = held.netHeld;
+    heldCurrency = (settled ?? []).find(row => row.currency)?.currency ?? null;
+
+    if (invoicesCancelled > 0 || amountHeld > 0) {
+      log.info({ bookingId, invoicesCancelled, amountHeld }, 'Settled the invoices for a cancelled booking');
+    }
+  } catch (err) {
+    // The booking is cancelled either way. An invoice left chaseable is a real
+    // problem and logged loudly, but not one worth failing the cancellation for.
+    log.error({ err, bookingId }, 'Could not settle the invoices for a cancelled booking');
+  }
+
+  /*
+   * Is a payment plan still charging this client? READ ONLY.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Nothing here stops it, on purpose — see `planLive` on the outcome. The
+   * platform does not end somebody's payment arrangement because an appointment
+   * was called off; `cancelPlan` is reached from the refund dialog and the
+   * Money page and stays the owner's to press.
+   *
+   * Its own try/catch, and its own statement: an unreadable plan must not cost
+   * the invoice work above it, and the invoice work failing must not hide a
+   * plan that is still taking money. `isPlanStopped` is the same predicate
+   * `cancelPlan` reads, so the two cannot disagree about what "live" means.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  try {
+    const { data: plan } = await supabaseServer
+      .from('payment_plan_subscriptions')
+      /*
+       * `installment_count`, NOT `periods_total` — which does not exist. One
+       * unknown name makes PostgREST reject the WHOLE select, so a typo here
+       * would report every cancelled booking as having no live plan: the
+       * silent-nothing failure this codebase has been bitten by before.
+       */
+      .select('id, status, installment_count, periods_paid, next_charge_at')
+      .eq('user_id', userId)
+      .eq('booking_id', bookingId)
+      /*
+       * Live plans only, and `maybeSingle` is safe BECAUSE of that filter: the
+       * partial unique index `idx_plan_subs_one_live_per_booking` allows at
+       * most one row per booking in exactly these statuses. Asking without the
+       * filter could match an old stopped plan alongside a live one, and
+       * `maybeSingle` would then throw — reporting "no plan" on precisely the
+       * booking that has two.
+       *
+       * The list is derived from `PLAN_STOPPED_STATUSES` rather than retyped,
+       * so this cannot drift from what `cancelPlan` considers finished.
+       */
+      .not('status', 'in', `(${PLAN_STOPPED_STATUSES.join(',')})`)
+      .maybeSingle();
+
+    // Belt and braces: the filter above already excluded the stopped ones.
+    if (plan && !isPlanStopped(plan.status as string)) {
+      planLive = true;
+
+      /*
+       * Null is UNKNOWN, not zero.
+       *
+       * `Number(null)` is 0, so reading these without the null check reported
+       * "0 periods remaining" for a plan whose counts could not be read — which
+       * says "nothing left to charge" about a plan that is still charging. Not
+       * knowing how many are left is not evidence that none are.
+       */
+      const count = plan.installment_count == null ? NaN : Number(plan.installment_count);
+      const paid = plan.periods_paid == null ? NaN : Number(plan.periods_paid);
+      periodsRemaining =
+        Number.isFinite(count) && Number.isFinite(paid) ? Math.max(0, count - paid) : null;
+
+      log.info(
+        { bookingId, planId: plan.id, periodsRemaining },
+        'Booking cancelled with a payment plan still charging; left running for the owner to decide'
+      );
+    }
+  } catch (err) {
+    log.error({ err, bookingId }, 'Could not check whether a payment plan is still charging');
+  }
+
+  /*
+   * Stop chasing the quote stages nobody will ever collect.
+   *
+   * See `stagesClosed` above for why this exists and why it is scoped the way
+   * it is. `subscription_id IS NULL` is the whole safety of it: those rows are
+   * a quote's milestones, which only ever become money if somebody invoices
+   * them, and this booking is off. A subscription's projected periods are
+   * excluded and left exactly as they are.
+   */
+  try {
+    const { data: closed } = await supabaseServer
+      .from('payment_plan_installments')
+      .update({ status: 'cancelled', next_retry_at: null, updated_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('booking_id', bookingId)
+      // Only what has not happened. A paid stage is a record of money that
+      // arrived and is never rewritten.
+      .eq('status', 'pending')
+      .is('subscription_id', null)
+      .select('id');
+
+    stagesClosed = closed?.length ?? 0;
+
+    if (stagesClosed > 0) {
+      log.info({ bookingId, stagesClosed }, 'Closed the quote stages for a cancelled booking');
+    }
+  } catch (err) {
+    log.error({ err, bookingId }, 'Could not close the quote stages for a cancelled booking');
   }
 
   /*
@@ -237,7 +518,17 @@ export async function cancelBooking(
   );
 
   return {
-    data: { booking, calendarEventRemoved, clientNotified },
+    data: {
+      booking,
+      calendarEventRemoved,
+      clientNotified,
+      invoicesCancelled,
+      amountHeld,
+      heldCurrency,
+      planLive,
+      periodsRemaining,
+      stagesClosed,
+    },
     error: null,
   };
 }
@@ -610,8 +901,15 @@ export async function createBookingInvoice(
     throw invoiceNumberResult.error;
   }
 
-  // Payable by the time the service happens.
-  const dueDate = new Date(bookingData.start_time).toISOString().split('T')[0];
+  /*
+   * Payable by the time the service happens — the day the BUSINESS holds the
+   * appointment on. Taking the UTC day of the stored instant named the day
+   * before for any business far enough ahead of UTC: a 09:00 appointment in
+   * Auckland is 20:00 the previous day in UTC, so the client was invoiced with
+   * a due date that had already passed.
+   */
+  const zone = await getBusinessTimezone(userId);
+  const dueDate = businessDateKey(new Date(bookingData.start_time), zone);
 
   const invoiceResult = await paymentInvoiceRepository.create({
     user_id: userId,
@@ -633,7 +931,7 @@ export async function createBookingInvoice(
       },
     ],
     due_date: dueDate,
-    payment_terms: 'Due on service date',
+    payment_terms: SERVICE_DATE_TERMS,
     notes: `Booking for ${bookingData.contact_name}`,
     internal_notes: `Auto-generated for booking ${bookingId}`,
     sent_at: new Date().toISOString(),
@@ -768,7 +1066,22 @@ export interface RescheduleBookingParams {
   bookingId: string;
   userId: string;
   startTime: string;
-  endTime: string;
+  /**
+   * Optional: omitted, the appointment keeps the length it already had.
+   *
+   * "Move it to 11" is a complete instruction about a 15-minute intro call, and
+   * it was not treated as one — `end_time` was required, so the chat asked when
+   * the meeting would finish. The person is looking at a card that says 10:00 to
+   * 10:15; being asked its duration reads as the system not having looked.
+   *
+   * Derivable rather than merely convenient: this function already loads the
+   * booking, so the old start and end are in hand before anything is decided.
+   * Requiring the caller to restate a figure we are about to read anyway is the
+   * kind of question a form asks, not a colleague.
+   *
+   * Pass it to CHANGE the length. Omit it to move the appointment.
+   */
+  endTime?: string;
   request?: NextRequest;
   logger?: ContextLogger;
 }
@@ -791,7 +1104,7 @@ export interface RescheduleBookingOutcome {
 export async function rescheduleBooking(
   params: RescheduleBookingParams
 ): Promise<SchedulingRepositoryResult<RescheduleBookingOutcome>> {
-  const { bookingId, userId, startTime, endTime, request } = params;
+  const { bookingId, userId, startTime, request } = params;
   const log = params.logger ?? logger;
 
   const existing = await schedulingBookingRepository.findById(bookingId, userId);
@@ -799,6 +1112,16 @@ export async function rescheduleBooking(
   if (!existing.data) return { data: null, error: new Error('Booking not found') };
 
   const previousStart = existing.data.start_time;
+
+  // Moving an appointment keeps its length unless the caller says otherwise.
+  // Read from the booking we just loaded, so "move it to 11" needs nothing more
+  // than the new start.
+  const endTime =
+    params.endTime ??
+    new Date(
+      new Date(startTime).getTime() +
+        (new Date(existing.data.end_time).getTime() - new Date(previousStart).getTime())
+    ).toISOString();
 
   // Unchanged times are a no-op, not a reschedule: emailing a client to tell
   // them nothing moved is worse than doing nothing.

@@ -9,7 +9,7 @@ import { Calendar, Plus, Loader2, X, Search, UserPlus } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { businessDayFor, wallClockToUtc } from '@/lib/business-os/businessDay';
-import { safeTimezone, toBusinessLocalInput, businessDateKey, businessInstant, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
+import { safeTimezone, toBusinessLocalInput, fromBusinessLocalInput, businessDateKey, businessInstant, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
 import { DEFAULT_AVAILABILITY, parseAvailability, type WeeklyAvailability } from '@/components/scheduling/AvailabilityEditor';
 import type { SchedulingService, SchedulingBooking } from '@/lib/repositories/SchedulingRepository';
 
@@ -39,6 +39,21 @@ const LOCALE_MAP: Record<string, string> = {
  */
 function formatDateTimeLocal(date: Date, timezone: string): string {
   return toBusinessLocalInput(date, timezone);
+}
+
+/**
+ * The same conversion, read back: a wall clock the owner typed into the form,
+ * as the instant the BUSINESS means by it.
+ *
+ * `formatDateTimeLocal` above renders the business's clock into the input, so
+ * the string that comes back out is the business's clock too. Reading it with
+ * `new Date()` measures it against the BROWSER's zone instead, and the two
+ * directions stop agreeing: an owner in Tel Aviv booking a New York business
+ * saw 09:00 in the field and sent 09:00 Israel — seven hours off — so the
+ * booking was written, mailed and shown to the client at the wrong hour.
+ */
+function parseDateTimeLocal(local: string, timezone: string): Date {
+  return fromBusinessLocalInput(local, timezone);
 }
 
 /**
@@ -316,27 +331,31 @@ export function SchedulingDialog({
         availabilityResponse.json()
       ]);
 
-      // Debug logging
-      console.log('📊 SchedulingDialog fetchAllData:', {
-        servicesCount: servicesData.success ? servicesData.services?.length : 0,
-        bookingsCount: bookingsData.success ? bookingsData.bookings?.length : 0,
-        bookingsData: bookingsData.success ? bookingsData.bookings : null,
-        availabilityExists: availabilityData.success && !!availabilityData.availability
-      });
+      /*
+       * Counts and flags, not the rows.
+       *
+       * This logged the whole `bookings` array — client names, emails and
+       * phone numbers — into the browser console, where it stays in the tab
+       * and in any session recording. What a diagnosis actually needs is
+       * whether each fetch returned anything.
+       */
+      logger.debug({
+        servicesCount: servicesData.success ? servicesData.services?.length ?? 0 : 0,
+        bookingsCount: bookingsData.success ? bookingsData.bookings?.length ?? 0 : 0,
+        availabilityExists: availabilityData.success && !!availabilityData.availability,
+      }, 'Fetched scheduling dialog data');
 
       if (servicesData.success) setServices(servicesData.services);
       if (bookingsData.success) {
-        console.log('📅 Setting bookings:', bookingsData.bookings);
         setBookings(bookingsData.bookings);
       }
       if (availabilityData.success && availabilityData.availability) {
         const parsed = parseAvailability(availabilityData.availability);
-        console.log('⏰ AVAILABILITY DEBUG:', {
-          raw: availabilityData.availability,
-          parsed,
-          today: DAY_KEYS[new Date().getDay()],
-          todaySlots: parsed[DAY_KEYS[new Date().getDay()]]
-        });
+        // Which days carry hours at all — enough to tell "closed" from
+        // "misparsed", without echoing the owner's whole week back.
+        logger.debug({
+          daysWithHours: DAY_KEYS.filter(k => (parsed[k]?.length ?? 0) > 0),
+        }, 'Parsed availability');
         setAvailability(parsed);
         if (availabilityData?.timezone) setTimezone(safeTimezone(availabilityData.timezone as string));
         // Ready even when the response carried no zone: UTC is then the real
@@ -571,7 +590,7 @@ export function SchedulingDialog({
   const handleServiceChange = (serviceId: string) => {
     const service = services.find(s => s.id === serviceId);
     if (service) {
-      const start = new Date(formData.start_time);
+      const start = parseDateTimeLocal(formData.start_time, timezone);
       const end = new Date(start.getTime() + (service.duration_minutes || 0) * 60 * 1000);
       setFormData(prev => ({
         ...prev,
@@ -587,18 +606,20 @@ export function SchedulingDialog({
     setFormError(null);
 
     try {
-      // Debug logging
-      console.log('📅 Creating booking:', {
-        startTime: formData.start_time,
-        endTime: formData.end_time,
-        startISO: new Date(formData.start_time).toISOString(),
-        endISO: new Date(formData.end_time).toISOString(),
-        currentBookings: bookings.filter(b => b.status !== 'cancelled' && b.status !== 'no_show').map(b => ({
-          start: b.start_time,
-          end: b.end_time,
-          status: b.status
-        }))
-      });
+      /*
+       * The conversion, which is the part worth being able to check: what the
+       * owner typed, the zone it was read in, and the instant that produces.
+       * The list of every other booking that used to ride along added nothing
+       * to that and put the diary in the console.
+       */
+      logger.debug({
+        typedStart: formData.start_time,
+        typedEnd: formData.end_time,
+        timezone,
+        startISO: parseDateTimeLocal(formData.start_time, timezone).toISOString(),
+        endISO: parseDateTimeLocal(formData.end_time, timezone).toISOString(),
+        otherBookingsCount: bookings.filter(b => b.status !== 'cancelled' && b.status !== 'no_show').length,
+      }, 'Creating booking');
 
       const response = await fetch('/api/scheduling/bookings', {
         method: 'POST',
@@ -610,8 +631,8 @@ export function SchedulingDialog({
           client_last_name: formData.client_last_name || undefined,
           client_email: formData.client_email,
           client_phone: formData.client_phone || undefined,
-          start_time: new Date(formData.start_time).toISOString(),
-          end_time: new Date(formData.end_time).toISOString(),
+          start_time: parseDateTimeLocal(formData.start_time, timezone).toISOString(),
+          end_time: parseDateTimeLocal(formData.end_time, timezone).toISOString(),
           /* The zone these times were composed in. It said 'UTC' regardless,
              so every confirmation email and client-facing page downstream
              presented the appointment at the wrong hour. */

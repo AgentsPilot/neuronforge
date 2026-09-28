@@ -1,62 +1,82 @@
-// /app/api/user/change-password/route.ts
-// User password change with security audit logging
+/**
+ * Change the signed-in user's password.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE CURRENT PASSWORD IS VERIFIED HERE, BECAUSE THE CLIENT NEVER DID.
+ *
+ * Three settings screens collected a "Current password", checked only that it
+ * was non-empty, and then called `supabase.auth.updateUser({ password })` from
+ * the browser — which does not take the old password and does not check one.
+ * Any characters at all in that box changed the password.
+ *
+ * So anyone reaching an unlocked laptop or a live session could lock the real
+ * owner out of their business without knowing a single credential, past a field
+ * that looked like it was stopping exactly that.
+ *
+ * This route is the only place a password changes now. It verifies the current
+ * one by signing in with it, and it records the attempt either way.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A GOOGLE ACCOUNT IS REFUSED, NOT QUIETLY GIVEN A PASSWORD.
+ *
+ * `updateUser({ password })` SUCCEEDS on an account that signs in with Google:
+ * it adds a password rather than changing one, since there is nothing to
+ * change. Under a heading that says "Change password", that silently mints a
+ * second credential the owner does not know exists — and it does not touch
+ * their Google password, which is the one they were trying to rotate.
+ *
+ * The verification step would already fail for them (there is no password to
+ * sign in with), but it fails as "current password is incorrect", which is a
+ * lie: there is no current password. `oauth_only` says what is actually true so
+ * the UI can point them at Google.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
+import { z } from 'zod';
+import { createLogger } from '@/lib/logger';
 import { auditLog } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
+import { isOAuthOnlyAccount, oauthProviderLabel } from '@/lib/authIdentities';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+const logger = createLogger({ module: 'ChangePasswordAPI' });
+
 /**
- * Change user password with security audit trail
+ * Eight characters, matching every client that calls this.
  *
- * Security Requirements:
- * - Requires current password verification
- * - Minimum 6 characters for new password
- * - Logs all password change attempts (successful and failed)
- * - SOC2 compliance logging
+ * The previous version required six while all three UIs required eight, so the
+ * only reachable effect of the difference was to accept a password the user had
+ * already been told was too short.
  */
-export async function POST(req: NextRequest) {
+const MIN_PASSWORD_LENGTH = 8;
+
+const ChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1, 'Enter your current password.'),
+  newPassword: z.string().min(
+    MIN_PASSWORD_LENGTH,
+    `Your new password must be at least ${MIN_PASSWORD_LENGTH} characters.`
+  ),
+});
+
+/** What the audit trail records about the caller. Never the password. */
+function requestContext(request: NextRequest) {
+  return {
+    ip_address:
+      request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown',
+    user_agent: request.headers.get('user-agent') || 'unknown',
+  };
+}
+
+export async function POST(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
-    const body = await req.json();
-    const { currentPassword, newPassword } = body;
-
-    // Validate input
-    if (!currentPassword || !newPassword) {
-      return NextResponse.json(
-        {
-          error: 'Missing required fields',
-          message: 'Both current password and new password are required',
-        },
-        { status: 400 }
-      );
-    }
-
-    if (newPassword.length < 6) {
-      return NextResponse.json(
-        {
-          error: 'Password too short',
-          message: 'New password must be at least 6 characters long',
-        },
-        { status: 400 }
-      );
-    }
-
-    if (currentPassword === newPassword) {
-      return NextResponse.json(
-        {
-          error: 'Same password',
-          message: 'New password must be different from current password',
-        },
-        { status: 400 }
-      );
-    }
-
-    // Authenticate user
     const cookieStore = await cookies();
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -70,129 +90,125 @@ export async function POST(req: NextRequest) {
       }
     );
 
+    // 1. Authenticate FIRST — before reading the body, so an unauthenticated
+    //    caller cannot even submit a candidate password to be checked.
     const { data: { user }, error: authError } = await supabase.auth.getUser();
-
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    console.log(`🔐 [PASSWORD CHANGE] User ${user.id} attempting password change`);
+    // 2. An account with no password cannot have one "changed".
+    if (isOAuthOnlyAccount(user)) {
+      const provider = oauthProviderLabel(user);
+      requestLogger.info(
+        { userId: user.id, provider },
+        'Refused a password change on an account that signs in with a provider'
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'oauth_only',
+          provider,
+          error: `You sign in with ${provider ?? 'a connected account'}, so there is no password to change here.`,
+        },
+        { status: 400 }
+      );
+    }
 
-    // Verify current password by attempting to sign in
+    // 3. Validate input.
+    const body = await request.json().catch(() => null);
+    const parsed = ChangePasswordSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { success: false, code: 'invalid_input', error: parsed.error.issues[0]?.message ?? 'Invalid request.' },
+        { status: 400 }
+      );
+    }
+    const { currentPassword, newPassword } = parsed.data;
+
+    if (currentPassword === newPassword) {
+      return NextResponse.json(
+        { success: false, code: 'unchanged', error: 'Your new password must be different from your current one.' },
+        { status: 400 }
+      );
+    }
+
+    // 4. Verify the current password by signing in with it.
+    //    The cookie writers above are no-ops, so this cannot overwrite the
+    //    caller's session with the one it mints.
     const { error: verifyError } = await supabase.auth.signInWithPassword({
       email: user.email!,
       password: currentPassword,
     });
 
     if (verifyError) {
-      console.log(`❌ [PASSWORD CHANGE] Current password verification failed for user ${user.id}`);
+      requestLogger.warn({ userId: user.id }, 'Current password verification failed');
 
-      // AUDIT TRAIL: Log failed password change attempt
-      try {
-        await auditLog({
-          action: 'USER_PASSWORD_CHANGE_FAILED',
-          entityType: 'user',
-          entityId: user.id,
-          userId: user.id,
-          resourceName: user.email || 'User',
-          details: {
-            timestamp: new Date().toISOString(),
-            reason: 'Current password verification failed',
-            ip_address: req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown',
-            user_agent: req.headers.get('user-agent') || 'unknown',
-          },
-          severity: 'warning',
-          complianceFlags: ['SOC2'],
-        });
-        console.log('✅ Failed password change attempt audited');
-      } catch (auditError) {
-        console.error('⚠️ Audit logging failed (non-critical):', auditError);
-      }
+      void auditLog({
+        action: 'USER_PASSWORD_CHANGE_FAILED',
+        entityType: 'user',
+        entityId: user.id,
+        userId: user.id,
+        resourceName: user.email || 'User',
+        details: { reason: 'Current password verification failed', ...requestContext(request) },
+        severity: 'warning',
+        complianceFlags: ['SOC2'],
+      }).catch(err => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
 
       return NextResponse.json(
-        {
-          error: 'Invalid password',
-          message: 'Current password is incorrect',
-        },
+        { success: false, code: 'invalid_current_password', error: 'That is not your current password.' },
         { status: 401 }
       );
     }
 
-    // Update password
-    const { error: updateError } = await supabase.auth.updateUser({
-      password: newPassword,
-    });
+    // 5. Change it.
+    const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
 
     if (updateError) {
-      console.error(`❌ [PASSWORD CHANGE] Password update failed for user ${user.id}:`, updateError);
+      requestLogger.error({ err: updateError, userId: user.id }, 'Password update failed');
 
-      // AUDIT TRAIL: Log failed password change
-      try {
-        await auditLog({
-          action: 'USER_PASSWORD_CHANGE_FAILED',
-          entityType: 'user',
-          entityId: user.id,
-          userId: user.id,
-          resourceName: user.email || 'User',
-          details: {
-            timestamp: new Date().toISOString(),
-            reason: updateError.message,
-            ip_address: req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown',
-            user_agent: req.headers.get('user-agent') || 'unknown',
-          },
-          severity: 'warning',
-          complianceFlags: ['SOC2'],
-        });
-      } catch (auditError) {
-        console.error('⚠️ Audit logging failed (non-critical):', auditError);
-      }
+      void auditLog({
+        action: 'USER_PASSWORD_CHANGE_FAILED',
+        entityType: 'user',
+        entityId: user.id,
+        userId: user.id,
+        resourceName: user.email || 'User',
+        details: { reason: updateError.message, ...requestContext(request) },
+        severity: 'warning',
+        complianceFlags: ['SOC2'],
+      }).catch(err => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
 
       return NextResponse.json(
         {
-          error: 'Password update failed',
-          message: updateError.message,
+          success: false,
+          code: 'update_failed',
+          error: 'We could not change your password. Please try again.',
+          details: process.env.NODE_ENV === 'development' ? updateError.message : undefined,
         },
         { status: 500 }
       );
     }
 
-    console.log(`✅ [PASSWORD CHANGE] Password updated successfully for user ${user.id}`);
+    requestLogger.info({ userId: user.id }, 'Password changed');
 
-    // AUDIT TRAIL: Log successful password change
-    try {
-      await auditLog({
-        action: AUDIT_EVENTS.USER_PASSWORD_CHANGED,
-        entityType: 'user',
-        entityId: user.id,
-        userId: user.id,
-        resourceName: user.email || 'User',
-        details: {
-          timestamp: new Date().toISOString(),
-          ip_address: req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown',
-          user_agent: req.headers.get('user-agent') || 'unknown',
-          // Never log actual passwords
-        },
-        severity: 'warning', // Security change = warning level
-        complianceFlags: ['SOC2'],
-      });
-      console.log('✅ Password change audited');
-    } catch (auditError) {
-      console.error('⚠️ Audit logging failed (non-critical):', auditError);
-    }
+    void auditLog({
+      action: AUDIT_EVENTS.USER_PASSWORD_CHANGED,
+      entityType: 'user',
+      entityId: user.id,
+      userId: user.id,
+      resourceName: user.email || 'User',
+      // Never the password, old or new.
+      details: requestContext(request),
+      severity: 'warning',
+      complianceFlags: ['SOC2'],
+    }).catch(err => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
 
-    return NextResponse.json({
-      success: true,
-      message: 'Password changed successfully',
-    });
+    return NextResponse.json({ success: true });
 
-  } catch (error: any) {
-    console.error('❌ [PASSWORD CHANGE] Unexpected error:', error);
-
+  } catch (error) {
+    requestLogger.error({ err: error }, 'Password change request failed');
     return NextResponse.json(
-      {
-        error: 'Password change failed',
-        message: error.message || 'An unexpected error occurred',
-      },
+      { success: false, error: 'We could not change your password. Please try again.' },
       { status: 500 }
     );
   }

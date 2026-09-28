@@ -1659,7 +1659,25 @@ function countSubjectProblem(
  * Kept as a prefix match on the message rather than a separate return channel:
  * `validatePlan` has one contract — a list of strings — and four callers.
  */
-const SOFT_PROBLEMS = ['answer.text is required.', 'answer.text cites no step.'];
+const SOFT_PROBLEMS = [
+  'answer.text is required.',
+  'answer.text cites no step.',
+  /*
+   * SOFT, and the measurement is why.
+   *
+   * Made hard first. "Any invoices past their due date?" was planned as
+   * `status neq "paid"`, refused three times, and the turn died — the user got
+   * nothing where before they got a broader answer than ideal. A narrower
+   * operator rule fixed that case, but the shape of the risk stays: this check
+   * compares a plan against an utterance, and a comparison that cannot be
+   * satisfied must not be able to cost the answer.
+   *
+   * So the repair round still acts on it, and a model that will not comply ships
+   * the plan it had. Pressure without a cliff, exactly as the two above.
+   */
+  'a declared grouping was bypassed.',
+  'a grouping was asked for and dropped.',
+];
 
 /**
  * Matched as a PREFIX, which is what keeps the two-read case hard.
@@ -1675,6 +1693,37 @@ const SOFT_PROBLEMS = ['answer.text is required.', 'answer.text cites no step.']
  */
 export function isSoftProblem(problem: string): boolean {
   return SOFT_PROBLEMS.some((prefix) => problem.startsWith(prefix));
+}
+
+/**
+ * Soft problems whose right degradation is a QUESTION, not a thinner answer.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY A THIRD CATEGORY
+ *
+ * The two categories were hard (refuse the turn) and soft (ship it anyway). Both
+ * are wrong for a filter the user never asked for.
+ *
+ *   "show me invoices that are archived"  ->  status eq "cancelled"
+ *                                         ->  "you have 1 invoices in the archive"
+ *
+ * `archived` is not a status this business has. Hard would kill the turn and give
+ * the user nothing. Soft ships a real cancelled invoice under a label they are
+ * about to act on, which is the worst of the three: confident, fluent and wrong.
+ *
+ * The planner has a third channel it is already allowed to use — `clarification`
+ * — and for this class it is the honest one. The question the user gets back
+ * names what could not be resolved, which is strictly more than either
+ * alternative gives them.
+ *
+ * Only reached when every repair round has already failed to fix it. A model
+ * that corrects itself never sees this path.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const ASK_INSTEAD_PROBLEMS = ['a declared grouping was bypassed.'];
+
+export function shouldAskInstead(problem: string): boolean {
+  return ASK_INSTEAD_PROBLEMS.some((prefix) => problem.startsWith(prefix));
 }
 
 /**
@@ -1773,6 +1822,234 @@ function validateAnalyseStep(plan: Plan, problems: string[]): void {
         `whose figures the answer is about.`
     );
   }
+}
+
+/**
+ * A declared semantic term may not be bypassed with a literal nobody said.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHAT THIS IS TESTING, AND WHY IT IS ONE FIELD-SHAPED RULE RATHER THAN PROSE
+ *
+ * Asked "¿qué facturas están sin pagar?" the planner emitted
+ * `status eq "overdue"`. Every existing check passed it: `overdue` IS a stored
+ * value. But `unpaid` is declared as `['sent','overdue']`, so the answer silently
+ * omitted every invoice that was sent and not yet late — a wrong figure about
+ * money owed, produced confidently.
+ *
+ * The rule the planner already has, in prose, is "if it shows semantic terms you
+ * MUST filter with {$semantic}". Measured twice this session: prose does not
+ * carry this class. A rule naming a bug with its own example scored 0/3, and
+ * typing the schema to forbid a wrong shape moved the repair rate from 45% to
+ * 58%. What DOES work is a closed vocabulary the model picks from — `entity`,
+ * `action` and `op` are enums and are almost always right.
+ *
+ * So this converts one prose rule into a check that names the term to use. It
+ * does not forbid the literal: "show me overdue invoices" is a real request and
+ * `overdue` is the right filter for it. It forbids the literal when the user did
+ * not say it, which is exactly the case where the declared grouping was meant.
+ *
+ * SCOPE. Only fields that DECLARE semanticTerms, because only there has the
+ * catalog said what the sanctioned grouping is. A field with no declared terms
+ * has no better answer to offer, and refusing its literals would be refusing the
+ * only vocabulary available.
+ *
+ * NOT `isGroundedIn`. That helper is the obvious candidate and it is wrong here:
+ * it is a substring test, so "paid" is "grounded in" "unpaid invoices" — the
+ * precise false positive this exists to catch — and its echo guard reports a
+ * one-word utterance that IS the label as ungrounded. Token-prefix matching
+ * instead, which handles "vencidas" for label "vencida" while still refusing
+ * "paid" for "unpaid".
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+/**
+ * Every field predicate in a `where`, however it is nested.
+ *
+ * `and` / `or` / `not` group predicates, and a relation predicate carries its own
+ * inner `where` about a DIFFERENT entity — so that one is not followed here, or a
+ * contact's status would be checked against an invoice's field list.
+ */
+function flattenWhere(where: unknown[] | undefined): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+
+  const walk = (list: unknown[] | undefined) => {
+    for (const item of list ?? []) {
+      if (typeof item !== 'object' || item === null) continue;
+      const node = item as Record<string, unknown>;
+
+      if (Array.isArray(node.and)) walk(node.and);
+      else if (Array.isArray(node.or)) walk(node.or);
+      else if (node.not) walk([node.not]);
+      else if (typeof node.relation === 'string') continue;
+      else out.push(node);
+    }
+  };
+
+  walk(where);
+  return out;
+}
+
+function saidIt(utterance: string, word: string): boolean {
+  const normalise = (text: string) =>
+    text
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const needle = normalise(word);
+  if (!needle) return false;
+
+  /*
+   * PREFIX, not substring, and not equality.
+   *
+   * Equality refuses "facturas vencidas" for the label "vencida", which is the
+   * user naming the status correctly in their own language. Substring accepts
+   * "paid" inside "unpaid", which is the bug. A token that STARTS with the word
+   * is the reading that gets both right.
+   *
+   * One leading Hebrew particle is dropped because it attaches to the word
+   * rather than standing apart: "באיחור" is "in delay", and a user may write
+   * "שבאיחור". Same rule the row resolver follows for "לאופיר".
+   */
+  return normalise(utterance)
+    .split(' ')
+    .some((token) => {
+      if (token.startsWith(needle)) return true;
+      const bare = /^[להבוש]/.test(token) ? token.slice(1) : '';
+      return bare.length > 1 && bare.startsWith(needle);
+    });
+}
+
+/**
+ * A question that ASKED for a grouping and got no filter at all.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE OTHER HALF OF THE BYPASS CHECK, AND THE MORE DANGEROUS ONE
+ *
+ *   "how much money am I owed in total?"  ->  sum(total) over invoices, where []
+ *
+ * Every invoice ever raised, paid and cancelled and refunded included, reported
+ * as what the business is owed. The bypass check next door cannot see it: there
+ * is no wrong literal to object to. The filter is simply absent, and an absent
+ * filter looks like a plan about everything, which is sometimes exactly right.
+ *
+ * What distinguishes the two is the QUESTION, so the question is what this reads.
+ * A field may declare cue words for a term (`semanticTermCues`), and those words
+ * never reach the prompt — they exist only here. If the user used one and the
+ * plan carries no predicate on that field, the grouping was asked for and
+ * dropped.
+ *
+ * SOFT, for the reason the bypass check is: this compares a plan against an
+ * utterance, and a comparison that cannot be satisfied must never cost the
+ * answer. The repair round acts on it; a model that will not comply ships what
+ * it had.
+ *
+ * Only `find` and `compute`. A write names its row by target, and a fan-out has
+ * its own guard.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function validateAskedGroupingNotDropped(
+  plan: Plan,
+  problems: string[],
+  userMessage?: string
+): void {
+  if (userMessage === undefined) return;
+
+  const said = (word: string) => saidIt(userMessage, word);
+
+  plan.steps.forEach((step, index) => {
+    const op = (step as { op?: string }).op;
+    if (op !== 'find' && op !== 'compute') return;
+
+    const entityKey = (step as { entity?: string }).entity;
+    const entity = entityKey ? CATALOG.entities[entityKey] : undefined;
+    if (!entity) return;
+
+    const filtered = new Set(
+      flattenWhere((step as { where?: unknown[] }).where)
+        .map((p) => p.field)
+        .filter((f): f is string => typeof f === 'string')
+    );
+
+    for (const [fieldKey, field] of Object.entries(entity.fields)) {
+      const cues = field.semanticTermCues;
+      if (!cues || filtered.has(fieldKey)) continue;
+
+      for (const [term, words] of Object.entries(cues)) {
+        if (!words.some(said)) continue;
+
+        problems.push(
+          `a grouping was asked for and dropped. steps[${index}]: the request asks about ` +
+            `'${term}', but nothing filters '${entity.key}.${fieldKey}' — so this covers every ` +
+            `${entity.key} regardless. Add {"field":"${fieldKey}","op":"eq","value":` +
+            `{"$semantic":"${term}"}}.`
+        );
+        break; // one term per field is enough to say
+      }
+    }
+  });
+}
+
+function validateSemanticTermNotBypassed(
+  plan: Plan,
+  problems: string[],
+  userMessage?: string
+): void {
+  // Nothing to compare against — the eval harness, a saved plan being
+  // re-validated, or a tapped alternative. All three are legitimate callers and
+  // none of them is a turn the user just typed.
+  if (userMessage === undefined) return;
+
+  plan.steps.forEach((step, index) => {
+    const entityKey = (step as { entity?: string }).entity;
+    const entity = entityKey ? CATALOG.entities[entityKey] : undefined;
+    if (!entity) return;
+
+    const predicates = flattenWhere((step as { where?: unknown[] }).where);
+
+    for (const predicate of predicates) {
+      const fieldKey = predicate.field;
+      if (typeof fieldKey !== 'string') continue;
+
+      const field = entity.fields[fieldKey];
+      const terms = Object.keys(field?.semanticTerms ?? {});
+      if (!field || terms.length === 0) continue;
+
+      const literals = (Array.isArray(predicate.value) ? predicate.value : [predicate.value]).filter(
+        (v): v is string => typeof v === 'string'
+      );
+
+      /*
+       * POSITIVE membership only.
+       *
+       * `status neq "paid"` is not picking one value instead of the grouping, it
+       * is excluding one — a different and often legitimate intent. Asked "any
+       * invoices past their due date?" the planner wrote exactly that, and
+       * refusing it exhausted the repair rounds and killed the turn: the user got
+       * nothing instead of a slightly broader answer than ideal.
+       */
+      const op = typeof predicate.op === 'string' ? predicate.op : 'eq';
+      if (op !== 'eq' && op !== 'in') continue;
+
+      for (const literal of literals) {
+        if (!field.enumValues?.includes(literal)) continue; // handled elsewhere
+
+        // The stored value, or its label in any language the catalog carries —
+        // a Hebrew user naming a status correctly must not be refused, and
+        // input validation has never consulted enumLabels before.
+        const labels = Object.values(field.enumLabels?.[literal] ?? {});
+        if ([literal, ...labels].some((word) => saidIt(userMessage, word))) continue;
+
+        problems.push(
+          `a declared grouping was bypassed. steps[${index}]: '${entity.key}.${fieldKey}' is ` +
+            `filtered to "${literal}", which the request never mentions. This field declares ` +
+            `${terms.map((t) => `{"$semantic":"${t}"}`).join(' ')} for exactly this — picking one ` +
+            `stored value instead silently drops the others. Use the term, or filter by a value ` +
+            `the user actually named.`
+        );
+      }
+    }
+  });
 }
 
 function validateNamedDateHasDigits(
@@ -2545,6 +2822,38 @@ function validateNoDuplicateSteps(plan: Plan, problems: string[]): void {
   });
 }
 
+/**
+ * Words that authorise contacting EVERYONE.
+ *
+ * A fan-out over an unfiltered find is how "send them a reminder" becomes an
+ * email to every record a business owns. The prose rule has always said so —
+ * "the find step MUST carry a filter saying who … never fall back to everyone"
+ * — and nothing enforced it, so the planner produced exactly that shape and the
+ * only thing standing between it and the send was the user reading a recipient
+ * count on an approval card.
+ *
+ * But "email all my contacts" is a real, supported request: the send action is
+ * bulk-capable with a ceiling of 100 precisely for it. So an unfiltered fan-out
+ * is not wrong in itself — it is wrong when nobody asked for everyone.
+ *
+ * Hence a grounding check rather than a ban, the same shape as the one that
+ * stops a write inventing a required value: the licence has to be traceable to
+ * what the user actually said, in whichever language they said it.
+ */
+const EVERYONE = [
+  // en
+  'all', 'every', 'everyone', 'everybody', 'entire',
+  // he — כולם, כל, לכל, כולן
+  'כולם', 'כולן', 'כל',
+  // es
+  'todos', 'todas', 'todo el', 'cada',
+];
+
+function authorisesEveryone(message: string): boolean {
+  const text = message.toLowerCase();
+  return EVERYONE.some((word) => text.includes(word.toLowerCase()));
+}
+
 export function validatePlan(plan: Plan, userMessage?: string): string[] {
   const problems: string[] = [];
 
@@ -2558,6 +2867,45 @@ export function validatePlan(plan: Plan, userMessage?: string): string[] {
   }
 
   plan.steps.forEach((step, i) => validateStep(step, i, problems, plan.answer?.text ?? ''));
+
+  /*
+   * A FAN-OUT OVER EVERYONE NEEDS TO HAVE BEEN ASKED FOR.
+   *
+   * Enforces what the fan-out rule states in prose. Checked here rather than in
+   * `validateStep` because it needs the whole plan: the filter in question is on
+   * a DIFFERENT step, the one the for_each iterates.
+   *
+   * Only when a message was supplied. The eval and the plan cache both call this
+   * without one, and refusing every fan-out in those paths would fail closed on
+   * the wrong axis.
+   */
+  if (userMessage !== undefined) {
+    const byId = new Map(
+      // Through `unknown`: an analyse step has no index signature, so a direct
+      // cast is refused.
+      (plan.steps ?? []).map((step) => [
+        (step as { id?: string }).id,
+        step as unknown as Record<string, unknown>,
+      ])
+    );
+
+    for (const step of plan.steps ?? []) {
+      const fanOut = step as { op?: string; over?: string; entity?: string };
+      if (fanOut.op !== 'for_each') continue;
+
+      const source = fanOut.over ? byId.get(fanOut.over) : undefined;
+      const where = (source?.where as unknown[] | undefined) ?? [];
+
+      if (where.length === 0 && !authorisesEveryone(userMessage)) {
+        problems.push(
+          `steps: this fans out over EVERY ${source?.entity ?? fanOut.entity ?? 'row'}, and the ` +
+            `request did not ask for everyone. Say who with a filter on '${fanOut.over}', or ask ` +
+            `with \`clarification\` — reading a pronoun as "everyone" is how a business contacts ` +
+            `its whole list by mistake.`
+        );
+      }
+    }
+  }
   validateFanOutSources(plan, problems);
   validateSendAddress(plan, problems);
   validateNoFabricatedThreshold(plan, problems);
@@ -2565,6 +2913,8 @@ export function validatePlan(plan: Plan, userMessage?: string): string[] {
   validateNoDuplicateSteps(plan, problems);
   validateAnalyseStep(plan, problems);
   validateNamedDateHasDigits(plan, problems, userMessage);
+  validateSemanticTermNotBypassed(plan, problems, userMessage);
+  validateAskedGroupingNotDropped(plan, problems, userMessage);
   validateAnswer(plan, problems, userMessage);
 
   return problems;

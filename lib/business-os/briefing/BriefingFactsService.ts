@@ -34,6 +34,15 @@ export interface OwedAmount {
   amount: number;
   currency: string;
   overdue: boolean;
+  /**
+   * When it falls due, as the calendar date on the invoice.
+   *
+   * Carried so a morning brief can tell "late" from "not due for six weeks".
+   * Without it every outstanding invoice read as a debt: a real briefing said
+   * "David still owes ₪4,250" about an invoice due on 9 November, which is not
+   * something to act on over breakfast in September.
+   */
+  dueDate: string | null;
 }
 
 export interface BriefingFacts {
@@ -67,6 +76,21 @@ export interface BriefingFacts {
       note?: string;
     };
     cancelled: Array<BriefedPerson & { reason?: string }>;
+    /**
+     * Booked, and nobody came.
+     *
+     * Distinct from `cancelled`: a cancellation frees the slot and is often
+     * fine; a no-show cost the hour. The briefing reported one and was silent
+     * about the other.
+     */
+    noShows: BriefedPerson[];
+    /**
+     * Appointments that never reached the owner's real calendar.
+     *
+     * `calendar_sync_error` is set and nothing tells them, so the first sign is
+     * a client arriving for a slot the owner had given away.
+     */
+    syncFailures: number;
   };
 
   money: {
@@ -91,6 +115,16 @@ export interface BriefingFacts {
     receivedToday: number;
     /** How many separate payments that was. */
     receivedCount: number;
+    /**
+     * Instalments on a payment plan that have fallen due and are unpaid.
+     *
+     * Money owed on a SCHEDULE rather than against an invoice, so invisible to
+     * `owed`, which reads `payment_invoices` only. A client paying a course
+     * over four months showed the owner nothing.
+     */
+    instalmentsDue: Array<{ name?: string; amount: number; currency: string; dueDate: string | null }>;
+    /** A card that has failed and is queued to try again. */
+    retrying: number;
   };
 
   /**
@@ -123,6 +157,17 @@ export interface BriefingFacts {
      * them to open the CRM to find out what, which is the errand the briefing
      * exists to save them. `people` is capped; `count` covers the rest.
      */
+    /**
+     * Somebody wrote in and still has no reply — whenever they wrote.
+     *
+     * `newLeads` counts contacts created TODAY, so an enquiry that arrived on
+     * Friday and was never answered is invisible on Monday morning. It is the
+     * gap the "reply to enquiries" automation exists to close, and the most
+     * actionable thing a morning briefing can carry.
+     */
+    unanswered: { count: number; people: Array<{ name: string; note?: string }> };
+    /** Bookings refunded — money that has gone back out. */
+    refunded: { count: number; people: Array<{ name: string; note?: string }>; value?: number; currency?: string };
     newLeads: {
       count: number;
       people: Array<{ name: string; note?: string }>;
@@ -152,6 +197,21 @@ export interface BriefingFacts {
      * judgement about a relationship, not a button.
      */
     quotesOut: {
+      count: number;
+      people: Array<{ name: string; note?: string }>;
+      value?: number;
+      currency?: string;
+    };
+
+    /**
+     * Phases of a quoted job the owner has not yet marked done.
+     *
+     * Money already agreed, on work that may well be finished, which nobody has
+     * asked for — because a phase has no date and nothing was reminding them.
+     * Like `quotesWaiting` this is the owner's move, and unlike `quotesOut` it is
+     * something they can act on today.
+     */
+    stagesToBill: {
       count: number;
       people: Array<{ name: string; note?: string }>;
       value?: number;
@@ -200,7 +260,7 @@ export async function buildBriefingFacts(
 ): Promise<BriefingFacts> {
   const limit = options.limit ?? 100;
 
-  const [bookingsResult, invoicesResult, paidTodayTxResult, paidTodayInvResult, nextBookingResult, newLeadsResult, gaps] =
+  const [bookingsResult, invoicesResult, paidTodayTxResult, paidTodayInvResult, nextBookingResult, newLeadsResult, gaps, instalmentsResult] =
     await Promise.all([
     schedulingBookingRepository.list(userId, {
       startDate: day.startUtc,
@@ -251,6 +311,24 @@ export async function buildBriefingFacts(
      * definitions.
      */
     findGaps(userId, { now: new Date(day.startUtc) }),
+    /*
+     * Payment-plan instalments: money owed on a SCHEDULE rather than an invoice.
+     *
+     * Nothing in the briefing has ever read this table. A client paying a
+     * course over four months, with the next instalment due the morning of
+     * their session, showed the owner nothing at all — and the question "has
+     * this person paid" is exactly what an owner asks before a meeting.
+     *
+     * The same rows carry `retry_count` / `next_retry_at`, so a card that keeps
+     * failing comes back in the same query rather than a second one.
+     */
+    supabaseServer
+      .from('payment_plan_installments')
+      .select('id, amount, currency, due_date, status, contact_id, booking_id, retry_count, next_retry_at')
+      .eq('user_id', userId)
+      .not('status', 'in', '("paid","cancelled","refunded")')
+      .lte('due_date', day.date)
+      .limit(limit),
   ]);
 
   if (bookingsResult.error) {
@@ -273,8 +351,16 @@ export async function buildBriefingFacts(
   const money = summariseMoney(
     invoices,
     paidTodayTxResult.data ?? [],
-    paidTodayInvResult.data ?? []
+    paidTodayInvResult.data ?? [],
+    (instalmentsResult.data ?? []) as InstalmentRow[]
   );
+
+  if (instalmentsResult.error) {
+    logger.warn(
+      { err: instalmentsResult.error, userId },
+      'Briefing could not read payment-plan instalments; money due on a plan will not be reported'
+    );
+  }
 
   if (paidTodayTxResult.error || paidTodayInvResult.error) {
     logger.warn(
@@ -328,7 +414,17 @@ export function isQuietDay(
     !money.receivedToday &&
     outlook.newLeads.count === 0 &&
     // A price nobody has named is somebody still waiting. Never a quiet day.
-    outlook.quotesWaiting.count === 0
+    outlook.quotesWaiting.count === 0 &&
+    /*
+     * A finished phase nobody has billed is money sitting still, and the owner is
+     * the only one who can move it. Same rule as an unwritten price: this is
+     * never a quiet day.
+     *
+     * Absent-safe for the same reason `money.receivedToday` is: a caller whose
+     * facts predate this field would otherwise make every day non-quiet and mail
+     * somebody daily.
+     */
+    (outlook.stagesToBill?.count ?? 0) === 0
   );
 }
 
@@ -343,6 +439,8 @@ type BookingRow = {
   payment_status?: string | null;
   payment_amount?: number | string | null;
   cancellation_reason?: string | null;
+  /** Set when the booking failed to reach the owner's real calendar. */
+  calendar_sync_error?: string | null;
   intake_sent_at?: string | null;
   intake_completed_at?: string | null;
   notes?: string | null;
@@ -367,8 +465,54 @@ function summariseAppointments(rows: BookingRow[], day: BusinessDay): BriefingFa
    * who had already been and gone.
    */
   const confirmed = rows.filter(r => r.status === 'confirmed');
-  const done = rows.filter(r => r.status === 'completed');
-  const live = [...confirmed, ...done];
+
+  /*
+   * FINISHED MEANS FINISHED, on the clock as well as in the column.
+   *
+   * `status === 'completed'` alone is not enough. The status can be set by hand
+   * at any time, and a booking marked complete before it starts made the
+   * briefing state something the owner could see was false: a brief sent at
+   * 07:10, whose first appointment was at 09:30, reported "1 of them is already
+   * done" about an 11:00 session.
+   *
+   * A session cannot have finished before it began, so the start time has to
+   * have passed as well. One marked complete ahead of time simply counts as an
+   * ordinary appointment until its hour arrives, which is the honest reading.
+   */
+  const now = Date.now();
+  const hasStarted = (r: BookingRow) => {
+    const start = r.start_time ? Date.parse(r.start_time) : NaN;
+    // Unparseable: treat as not yet started, so it is never reported as done
+    // on the strength of a date nobody could read.
+    return Number.isFinite(start) && start <= now;
+  };
+
+  const done = rows.filter(r => r.status === 'completed' && hasStarted(r));
+  const markedDoneEarly = rows.filter(r => r.status === 'completed' && !hasStarted(r));
+
+  /*
+   * A NO-SHOW IS STILL AN APPOINTMENT THE DAY HELD.
+   *
+   * The client booked, the hour was reserved and it is gone — the opposite of a
+   * cancellation, which hands the slot back. Excluding it from the count made
+   * the briefing contradict itself the moment the no-show fact was added: one
+   * real day had a cancellation at 09:00, a no-show at 09:30 and a finished
+   * session at 11:00, and read as "one appointment today, at 11:00, already
+   * done" beside "אופיר עומר didn't turn up" — two lines that, taken together,
+   * say the 11:00 was the one nobody attended.
+   *
+   * The same decision the verdict card's "booked this week" already records:
+   * cancelled is out, no-show is in, because the client DID book. See
+   * `app/api/business-os/stats/__tests__/bookedThisWeek.guard.test.ts`.
+   *
+   * In the total, never in `ready` or `completed`: nothing is outstanding on it
+   * and it did not happen.
+   */
+  const noShows = rows.filter(r => r.status === 'no_show');
+
+  // Still part of the day, and still ahead: an early-marked booking belongs in
+  // the total and in "what is coming", not in the finished count.
+  const live = [...confirmed, ...done, ...markedDoneEarly, ...noShows];
   const cancelled = rows.filter(r => r.status === 'cancelled');
 
   /*
@@ -428,6 +572,23 @@ function summariseAppointments(rows: BookingRow[], day: BusinessDay): BriefingFa
       timeLocal: timeIn(r.start_time, day.timezone),
       reason: r.cancellation_reason?.trim() || undefined,
     })),
+    /*
+     * Booked, and nobody came. Reported apart from cancellations because they
+     * are not the same news: a cancellation frees the slot, a no-show cost the
+     * hour. The briefing carried one and was silent about the other.
+     */
+    noShows: noShows.map(r => ({
+      name: displayName(r),
+      timeLocal: timeIn(r.start_time, day.timezone),
+    })),
+    /*
+     * Appointments that never reached the owner's real calendar.
+     *
+     * A count, not names: what the owner does about it is the same whichever
+     * booking failed — open the calendar settings — and naming them would
+     * spend a line of a six-line briefing on detail that changes nothing.
+     */
+    syncFailures: rows.filter(r => !!r.calendar_sync_error).length,
   };
 }
 
@@ -476,9 +637,28 @@ function summariseOutlook(
      * never sent it. Written-but-unsent is not better than unwritten — the work
      * is done and the client still has nothing.
      */
+    /*
+     * Somebody wrote in and has still had no reply — whenever they wrote.
+     *
+     * `newLeads` above counts contacts created TODAY, so an enquiry that
+     * arrived on Friday and was never answered was invisible on Monday
+     * morning. It is the most actionable thing a briefing can carry, and it is
+     * the gap the "reply to enquiries" automation exists to close — the
+     * dashboard has counted it all along and the briefing never said it.
+     */
+    unanswered: fromGaps(gaps, ['enquiry_unanswered']),
+    /* Money that has gone back out. Also counted by the dashboard, also unsaid. */
+    refunded: fromGaps(gaps, ['booking_refunded']),
     quotesWaiting: fromGaps(gaps, ['quote_unwritten', 'quote_unsent']),
     /* Out with the client, who has not answered. News, not an errand. */
     quotesOut: fromGaps(gaps, ['quote_awaiting_client']),
+    /*
+     * Named explicitly, because `fromGaps` is the only route a gap has into the
+     * briefing. Adding a definition to the registry does NOT surface it here —
+     * the narrator reads these groups, not the gap list — so a new gap that is
+     * not mapped is found, counted by the dashboard, and never mentioned.
+     */
+    stagesToBill: fromGaps(gaps, ['stage_awaiting_completion']),
   };
 }
 
@@ -624,12 +804,43 @@ function takingsFor(
   };
 }
 
-function summariseMoney(
+/** One row of `payment_plan_installments`, as the briefing reads it. */
+interface InstalmentRow {
+  amount?: number | string | null;
+  currency?: string | null;
+  due_date?: string | null;
+  status?: string | null;
+  contact_id?: string | null;
+  booking_id?: string | null;
+  retry_count?: number | null;
+  next_retry_at?: string | null;
+}
+
+/**
+ * The earlier of two due dates, either of which may be absent.
+ *
+ * An absent date is not "far away" — it is unknown, and must never win over a
+ * real one, or a debt due today disappears from a morning briefing behind a
+ * sibling invoice that carries no date at all.
+ */
+function earliest(a: string | null, b: string | null): string | null {
+  if (!a) return b;
+  if (!b) return a;
+  return a <= b ? a : b;
+}
+
+/**
+ * Exported for the tests that hold the per-person grouping. Not part of the
+ * module's contract — `buildBriefingFacts` is.
+ */
+export function summariseMoney(
   rows: InvoiceRow[],
   paidTodayTransactions: SettledRow[],
-  paidTodayInvoices: SettledRow[]
+  paidTodayInvoices: SettledRow[],
+  /** Plan instalments already due and unpaid. Money owed on a schedule. */
+  instalments: InstalmentRow[]
 ): BriefingFacts['money'] {
-  const owed: OwedAmount[] = rows
+  const perInvoice: OwedAmount[] = rows
     .map(row => {
       const gross = toNumber(row.amount);
       const refunded = toNumber(row.refunded_amount);
@@ -640,9 +851,48 @@ function summariseMoney(
         amount: outstanding,
         currency: (row.currency || 'USD').toUpperCase(),
         overdue: row.status === 'overdue',
+        dueDate: row.due_date ?? null,
       };
     })
     .filter(entry => entry.amount > 0 && entry.name.length > 0);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONE ENTRY PER PERSON, NOT PER INVOICE.
+   *
+   * `owed` was a list of invoices, and everything downstream read it as a list
+   * of people. A real account on 2026-09-27 had two unpaid invoices for דויד
+   * המלך (₪4,250 each) and one for אופיר עומר (₪300), and the briefing said
+   * "3 clients owe you ₪8,800" about TWO clients. The sum was right; the noun
+   * was wrong, which is worse — the owner reads the number and trusts it.
+   *
+   * It fixed the list form too: naming two debts individually printed דויד
+   * המלך twice, on consecutive lines, differing in nothing a reader could see.
+   *
+   * Grouped by person AND currency, because a client billed in two currencies
+   * is two amounts that must never be added — the same rule the totals below
+   * follow.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const byPerson = new Map<string, OwedAmount>();
+  for (const entry of perInvoice) {
+    const key = `${entry.name}\u0000${entry.currency}`;
+    const seen = byPerson.get(key);
+
+    if (!seen) {
+      byPerson.set(key, { ...entry });
+      continue;
+    }
+
+    seen.amount += entry.amount;
+    // Late anywhere is late: one overdue invoice makes the person overdue.
+    seen.overdue = seen.overdue || entry.overdue;
+    // The SOONEST date, so a debt half of which falls due today is not filtered
+    // out of the briefing as "not for six weeks".
+    seen.dueDate = earliest(seen.dueDate, entry.dueDate);
+  }
+
+  const owed = [...byPerson.values()];
 
   /*
    * Money is per-invoice currency, so a total across a mixed set is a number
@@ -668,6 +918,24 @@ function summariseMoney(
     mixedCurrency: byCurrency.size > 1,
     receivedToday: takings.total,
     receivedCount: takings.count,
+    /*
+     * Instalments are money owed too, and on a different clock.
+     *
+     * Kept apart from `owed` rather than merged into it: an invoice is chased
+     * as a whole, an instalment is one step of an arrangement the client is
+     * keeping to. Telling an owner "Dana owes ₪1,200" when Dana is three
+     * payments into a four-payment plan misrepresents a client who is paying.
+     */
+    instalmentsDue: instalments
+      .filter(i => (Number(i.amount) || 0) > 0)
+      .map(i => ({
+        amount: Number(i.amount) || 0,
+        currency: (i.currency || 'USD').toUpperCase(),
+        dueDate: i.due_date ?? null,
+      })),
+    // A card that failed and is queued to try again. A count: what the owner
+    // does about it is the same however many there are.
+    retrying: instalments.filter(i => (Number(i.retry_count) || 0) > 0).length,
   };
 }
 

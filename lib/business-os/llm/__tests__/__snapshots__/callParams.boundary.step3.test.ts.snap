@@ -37,7 +37,7 @@ exports[`T3-S: the request each Step 3 call site puts on the wire (AC-2) chat/pl
       "max_tokens": 1500,
       "messages": [
         {
-          "content": "sha256:9c95eef72182dceb3af823210a3a9af3147d4e17d0531bcd7b2e235af0989945 (len 31334)",
+          "content": "sha256:3a6b5dc00e99f636dc10cb5ca46f71e9292430abada5666a23fc823f56468adb (len 31356)",
           "role": "system",
         },
         {
@@ -49,7 +49,7 @@ Request: show my contacts",
         },
       ],
       "model": "gpt-4o-mini",
-      "prompt_cache_key": "bizchat-planner-e10997e0037d",
+      "prompt_cache_key": "bizchat-planner-17ac200be8ce",
       "temperature": 0,
       "tool_choice": "required",
       "tools": [

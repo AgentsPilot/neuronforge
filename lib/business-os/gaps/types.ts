@@ -42,8 +42,42 @@ export type GapId =
   | 'quote_unwritten'
   | 'quote_unsent'
   | 'quote_awaiting_client'
+  /**
+   * A booking the CLIENT cancelled.
+   *
+   * The owner has something to do either way, which is why this is here rather
+   * than only in the briefing: if money was paid it is owed back, and if it was
+   * not, an hour just came free that could still be filled.
+   *
+   * Before this, a client cancellation reached the owner through one email that
+   * never mentioned money and can be switched off, or a daily briefing covering
+   * a single day that has never sent. A cancellation three weeks out reached
+   * them through nothing at all.
+   */
+  | 'booking_cancelled'
+  /**
+   * A booking refunded in full that is STILL in the diary.
+   *
+   * Almost always a refund taken in the Stripe dashboard: the money side lands
+   * correctly, and the appointment carries on as if nothing happened — so the
+   * client is still sent "see you tomorrow" for a session they were refunded
+   * for, and the owner is never told the two are out of step.
+   *
+   * Never resolved automatically. A refund is not a cancellation: money goes
+   * back as goodwill while the session still happens, or a deposit is returned
+   * while the job continues on new terms. The owner answers, either way.
+   */
+  | 'booking_refunded'
   | 'intake_outstanding'
-  | 'invoice_unpaid';
+  | 'invoice_unpaid'
+  /**
+   * A phase of a quoted job, waiting on the owner to say the work happened.
+   *
+   * Has no due date and never will: `trigger: 'manual'` exists because no clock
+   * can decide when a phase is done. See the definition for why nothing surfaced
+   * it before.
+   */
+  | 'stage_awaiting_completion';
 
 /**
  * What the owner can do about a gap, if anything.
@@ -53,10 +87,21 @@ export type GapId =
  */
 export type GapAction =
   | 'send_booking_link'
+  /** Call off an appointment the money has already left. */
+  | 'cancel_booking'
+  /** Give back money held for a booking that is not happening. */
+  | 'refund'
   | 'write_quote'
   | 'send_quote'
   | 'chase_intake'
   | 'chase_payment'
+  /**
+   * Mark a phase done so it can be invoiced.
+   *
+   * NAVIGATES rather than posts, like `write_quote`: the owner has to decide the
+   * work happened, and a one-click button would be deciding it for them.
+   */
+  | 'bill_stage'
   | null;
 
 /** One stuck thing, named the way a person would refer to it. */
@@ -81,6 +126,19 @@ export interface GapItem {
    */
   value?: number;
   currency?: string;
+  /**
+   * A payment plan that is STILL CHARGING this client.
+   *
+   * Only `booking_cancelled` sets it. It is not a detail on the row so much as
+   * the reason the row exists: the appointment is off and the card is still
+   * being debited on schedule, and it stays that way until a person decides
+   * otherwise — the platform deliberately does not end a payment arrangement
+   * because an appointment was cancelled.
+   *
+   * Two consequences the surfaces must honour: a row carrying this NEVER ages
+   * off, and it is worth saying out loud even when nothing is held right now.
+   */
+  planLive?: boolean;
   /**
    * When the thing this is about actually HAPPENS, where it is in the future.
    *

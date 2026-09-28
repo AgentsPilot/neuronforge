@@ -571,6 +571,29 @@ export function LiveDashboard({
     [onGapsChanged]
   );
 
+  /**
+   * Save an owner notification, with NO `enabled` in the body.
+   *
+   * That omission is the whole point. The route reads an absent `enabled` as "no
+   * decision" and writes only the notification, so switching "tell me" off on an
+   * automation nobody has answered cannot be recorded as a decline of it.
+   *
+   * Rethrown rather than swallowed, so the card reverts its switch: this one is
+   * saved as it moves and has no later Approve press to correct it.
+   */
+  const handleOperationalNotify = useCallback(
+    async (id: string, next: { alertOwner: boolean }) => {
+      const response = await fetch('/api/business-os/automations/operational', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, ...next }),
+      });
+      if (!response.ok) throw new Error(`Save failed: ${response.status}`);
+      onGapsChanged?.();
+    },
+    [onGapsChanged]
+  );
+
   const [currentInsightIndex, setCurrentInsightIndex] = useState(0);
   const [automationConfig, setAutomationConfig] = useState<{
     processId: string;
@@ -1501,7 +1524,7 @@ export function LiveDashboard({
        * that is the more useful fact than a visitor count on its own.
        */
       const source = topLeadChannel
-        ? ` ${t('verdict.live.via') || 'Most came from'} ${topLeadChannel.label}.`
+        ? ` ${t('verdict.live.via', { channel: topLeadChannel.label }) || `Most came from ${topLeadChannel.label}`}.`
         : '';
 
       /*
@@ -2446,6 +2469,7 @@ export function LiveDashboard({
           insights={advisorInsights}
           operational={operationalPending}
           onOperationalDecide={handleOperationalDecide}
+          onOperationalNotify={handleOperationalNotify}
           currentIndex={currentInsightIndex}
           projection={advisorInsights[currentInsightIndex]?.projection}
           automationConfig={automationConfig}

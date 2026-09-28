@@ -133,6 +133,30 @@ async function operationalAutomations(
     log.warn({ err }, 'Meeting reminder settings unreadable; showing the defaults');
   }
 
+  /*
+   * The owner alert, read SEPARATELY for the same reason the reminder's settings
+   * are: one unknown column takes the whole select down with it, and this must
+   * not be able to make four automations report themselves unapproved.
+   *
+   * Unreadable means ON, matching `LeadAlertService`, which treats a switch it
+   * cannot read as on because silence is this feature's failure mode. A card
+   * that guessed OFF would invite an owner to enable something already running.
+   */
+  let alertOwner = true;
+  try {
+    const { data, error } = await supabaseServer
+      .from('business_profiles')
+      .select('lead_alert_email_enabled')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (error) throw error;
+    alertOwner = (data as { lead_alert_email_enabled?: boolean } | null)
+      ?.lead_alert_email_enabled !== false;
+  } catch (err) {
+    log.warn({ err }, 'Owner alert switch unreadable; showing it as on');
+  }
+
   const waitingByGap = new Map(all.map(gap => [gap.id, gap.count]));
 
   /*
@@ -157,6 +181,11 @@ async function operationalAutomations(
      * their one-line shape.
      */
     settings: automation.id === 'remind_about_meeting' ? reminderSettings : undefined,
+    /*
+     * Driven off the registry rather than off the id, so declaring
+     * `ownerAlertColumn` on the next automation is the whole change.
+     */
+    notifications: automation.ownerAlertColumn ? { alertOwner } : undefined,
   }));
 }
 
@@ -214,6 +243,22 @@ export async function GET(request: NextRequest) {
           note: item.note ?? null,
           since: item.since,
           entityId: item.entityId ?? null,
+          /*
+           * What is held on it, where money is involved.
+           *
+           * The card needs this to decide which button a row gets: a cancelled
+           * booking with money on it is a refund, and the same gap with nothing
+           * paid is a freed hour to refill. One gap, two moves, and the amount
+           * is what tells them apart.
+           */
+          value: item.value ?? null,
+          currency: item.currency ?? null,
+          /*
+           * A plan still charging this client. Carried through because it is
+           * the row's whole urgency: the appointment is off and the card is
+           * debited again next period until the owner decides otherwise.
+           */
+          planLive: item.planLive ?? false,
           queued: pending
             ? {
                 label: recommendation?.label ?? null,

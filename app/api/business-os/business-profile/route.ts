@@ -84,9 +84,15 @@ const brandingSchema = z.object({
   /**
    * Send the morning briefing by email as well as showing it on the dashboard.
    *
-   * Off unless the owner turns it on. Meaningful only once a timezone is set on
-   * user_preferences — without one "morning" resolves to UTC, and the settings
-   * form gates the switch on that rather than sending at the wrong hour.
+   * Off unless the owner turns it on. Meaningful only once a timezone is
+   * CONFIRMED on user_preferences: without one "morning" resolves to UTC, and
+   * `DailyBriefingDispatchService` skips the account rather than emailing at the
+   * wrong hour.
+   *
+   * The one switch that writes this is on the briefing card itself
+   * (`DailyBriefingCard`), which disables itself until that timezone exists. This
+   * comment used to say "the settings form gates the switch" — the settings copy
+   * did not, which is why it has been removed rather than given a second gate.
    */
   daily_briefing_email_enabled: z.boolean().optional(),
 

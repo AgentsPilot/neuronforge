@@ -35,6 +35,7 @@ import {
   termsValueForDays,
 } from '@/lib/payments/paymentTerms';
 import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
+import { dueDatesFor } from '@/lib/payments/planSchedule';
 import type { Proposal, PaymentShape } from '@/lib/repositories/ProposalRepository';
 
 const logger = createLogger({ service: 'ProposalAcceptanceService' });
@@ -158,8 +159,18 @@ export async function applyAcceptance(proposal: Proposal): Promise<AcceptanceRes
     return { invoiceId: null, planId, dueNow: 0 };
   }
 
-  // Only the first stage is billed now. The rest are raised as they fall due,
-  // or as the owner marks them complete.
+  /*
+   * Only the first stage is billed now.
+   *
+   * A MILESTONE stage waits for the owner to say the work happened, through
+   * `payment-stages/[id]/complete`. A DATED stage is billed by
+   * `PaymentReminderService.billDueDatedStages` when its date arrives.
+   *
+   * That second half used to be a claim rather than a fact: this comment said
+   * "the rest are raised as they fall due" and nothing raised them. The client
+   * was chased for a stage that had no invoice, which produced an email with a
+   * blank invoice number and no way to pay.
+   */
   const firstLabel =
     'label' in stages[0] && stages[0].label
       ? `${proposal.title} — ${stages[0].label}`
@@ -241,13 +252,43 @@ async function termsDaysFor(proposal: Proposal): Promise<number> {
   return resolveTermsDays(proposal.payment_terms_days, businessDays);
 }
 
-function dueDateFor(shape: PaymentShape, index: number, from: string): string {
+/**
+ * When stage `index` of this plan falls due.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE CALENDAR, NOT A FIXED NUMBER OF DAYS.
+ *
+ * This stepped `{weekly: 7, biweekly: 14, monthly: 30, quarterly: 91}` from the
+ * first due date. Weeks and fortnights are exactly that many days, so those were
+ * right — but a month is not 30 days and a quarter is not 91. A twelve-month plan
+ * accepted on the 15th billed its last stage on the 10th, five days adrift, and
+ * every month in between had slipped a little further.
+ *
+ * `dueDatesFor` is the arithmetic the regular-service plan already uses, written
+ * to match what Stripe does: calendar months, with the day clamped to the end of
+ * a short one — "31 January + 1 month is 28 February, not 3 March". Sharing it
+ * means a quote billed in instalments and a service billed in instalments now
+ * produce the same dates, which is what an owner comparing the two expects.
+ *
+ * `from` is still the anchor: stage 1 is the acceptance day plus the agreed
+ * terms, and the cadence steps from there. Only the step changed.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+/*
+ * Exported for its test, not for callers.
+ *
+ * It is pure, it is the arithmetic that decides when a client is asked for money,
+ * and it had no coverage at all while it was stepping a flat 30 days for a month.
+ * `applyAcceptance` around it needs four mocked collaborators to reach, so testing
+ * the schedule through it would test the mocks.
+ */
+export function dueDateFor(shape: PaymentShape, index: number, from: string): string {
   if (index === 0 || shape.kind !== 'installments') return from;
 
-  const date = new Date(`${from}T12:00:00Z`);
-  const step = { weekly: 7, biweekly: 14, monthly: 30, quarterly: 91 }[shape.frequency] ?? 30;
-  date.setUTCDate(date.getUTCDate() + step * index);
-  return date.toISOString().slice(0, 10);
+  // Noon UTC, so a date-only string cannot land on the previous day west of UTC.
+  const start = new Date(`${from}T12:00:00Z`);
+  const dates = dueDatesFor(start, shape.frequency, index + 1);
+  return dates[index].toISOString().slice(0, 10);
 }
 
 async function createPlan(
@@ -361,7 +402,50 @@ async function raiseInvoice(
     } as never);
 
     if (error) throw error;
-    return (data as { id: string }).id;
+    const invoiceId = (data as { id: string }).id;
+
+    /*
+     * The reminders this invoice never had.
+     *
+     * Nothing on the acceptance path scheduled any, so the deposit a client
+     * agreed to could pass its due date in silence and only be picked up once it
+     * was already late — by the overdue scan, days later. `scheduleInvoiceReminders`
+     * is what the booking path has always called for its own invoices; it writes
+     * the `upcoming_due` and `due_today` rows the owner's `payment_reminder_days_before`
+     * setting describes, and which had no effect on a quote until now.
+     *
+     * Here rather than at the two call sites: this function is the only place
+     * that knows the invoice's due date, and both the single-payment quote and a
+     * plan's first stage come through it.
+     *
+     * Non-blocking and swallowed. The acceptance is already committed and the
+     * client already owes the deposit; a reminder that could not be scheduled is
+     * not a reason to fail any of that.
+     */
+    if (proposal.contact_id) {
+      /*
+       * Imported here rather than at the top: the reminder service reaches the
+       * PDF renderer, an ES-module package Jest cannot transform, and a static
+       * import made this module unloadable in tests that only want `splitTotal`.
+       */
+      const { paymentReminderService } = await import('@/lib/services/PaymentReminderService');
+
+      void paymentReminderService
+        .scheduleInvoiceReminders(
+          proposal.user_id,
+          invoiceId,
+          proposal.contact_id,
+          dueDateFromTerms(termsDays)
+        )
+        .catch(err =>
+          logger.warn(
+            { err, proposalId: proposal.id, invoiceId },
+            'Invoice raised but its reminders could not be scheduled'
+          )
+        );
+    }
+
+    return invoiceId;
   } catch (error) {
     logger.error({ err: error, proposalId: proposal.id }, 'Failed to raise the invoice');
     return null;

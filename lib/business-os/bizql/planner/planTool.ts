@@ -27,7 +27,141 @@ export interface ToolSchema {
     name: string;
     description: string;
     parameters: Record<string, unknown>;
+    /**
+     * Ask the provider to ENFORCE the schema rather than suggest it.
+     *
+     * Without this, `required` is advisory. Measured on 2026-09-26: 14 of 32
+     * validation problems across 19 planner turns were `answer.text is
+     * required` — for a field the schema has always listed in `required`. Each
+     * one cost a full repair round trip, re-sending the whole prompt, to obtain
+     * one sentence the schema had already demanded.
+     */
+    strict?: boolean;
   };
+}
+
+/**
+ * Rewrite a schema so a provider can enforce it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHAT STRICT MODE DEMANDS, AND WHY IT IS SAFE HERE
+ *
+ * Every object must set `additionalProperties: false`, and every property must
+ * appear in `required`. That sounds like the opposite of what this schema wants:
+ * there is a deliberate note elsewhere in this file that marking things required
+ * makes models fabricate values to satisfy the schema, which is how a task got
+ * created with the title "new task".
+ *
+ * The resolution is that strict mode expresses "optional" as a NULLABLE required
+ * field. A property the model has nothing to say about is emitted as null, which
+ * is not a fabricated value — and `null` is exactly what the code downstream
+ * already treats as absent. So the guarantee is gained without the pressure to
+ * invent.
+ *
+ * Applied as a transform rather than written into the schema by hand, because
+ * the schema is assembled conditionally (action members appear only when an
+ * offered entity declares one) and hand-maintaining two shapes is how they
+ * drift.
+ *
+ * Deliberately does NOT touch `enum`, descriptions, or anything semantic. A
+ * strict schema and a loose one must differ only in enforceability, or a
+ * measurement comparing them is measuring two changes.
+ *
+ * ── NOT YET USABLE, AND EXACTLY WHY ─────────────────────────────────────────
+ *
+ * Turned on and measured 2026-09-26. Every call was rejected:
+ *
+ *   400 Invalid schema for function 'emit_plan': In context=('properties',
+ *   'steps', 'items', 'properties', 'where', 'type', '0', 'items',
+ *   'properties', 'value'), schema must have a 'type' key.
+ *
+ * The comment below about an untyped member being acceptable was WRONG, and the
+ * provider said so. Strict mode demands a `type` on every schema, and a
+ * predicate's `value` deliberately has none: it is any of a literal, an array
+ * of literals, {"$semantic":"TERM"} or {"$date":"ANCHOR"}. That freedom is the
+ * point of the member, and it is the one thing strict mode will not allow.
+ *
+ * Making this work means expressing `value` as explicit `anyOf` branches — one
+ * per accepted shape, each satisfying strict mode in its own right, including
+ * the object branches. That is a reshaping of the most load-bearing member of
+ * the grammar, and the API reports only the FIRST offending context, so there
+ * may be more behind it.
+ *
+ * ── AND THE FIX FOR THAT WAS TRIED, MEASURED, AND IS WORSE ─────────────────
+ *
+ * `value` was reshaped into explicit `anyOf` branches (string, number, boolean,
+ * array of literals, {$semantic}, {$date} with offset) on 2026-09-26 — which
+ * types it, unblocking strict mode, and incidentally makes {"$item":...} in a
+ * filter unrepresentable.
+ *
+ * Measured warm against warm, because a tool-schema change invalidates the plan
+ * cache and a cold run is not comparable:
+ *
+ *   before    68 pass / 13 fail    9 of 20 model calls needed a repair
+ *   reshaped  66 pass / 15 fail   14 of 24 model calls needed a repair
+ *
+ * Two scenarios fixed, four broken, and the repair rate went from 45% to 58%.
+ * The pass difference is within the suite's flakiness; the repair rate is not.
+ *
+ * The conclusion is not "try harder at the branches". It is that the UNTYPED
+ * freedom of this member is load-bearing: constraining it made the planner worse
+ * at filling it, and every accepted shape was still expressible. So strict mode
+ * is not blocked by a fixable detail — it is in tension with a grammar member
+ * whose looseness is earning its keep.
+ *
+ * Left wired, tested and default OFF. The prize was real (14 of 32 problems were
+ * a required field nobody asked the provider to enforce) and so is the price. If
+ * it is revisited, the measurement above is the bar to beat, not the starting
+ * point.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function toStrictSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const walk = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(walk);
+    if (node === null || typeof node !== 'object') return node;
+
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      out[key] = walk(value);
+    }
+
+    if (out.type !== 'object' || typeof out.properties !== 'object' || out.properties === null) {
+      return out;
+    }
+
+    const properties = out.properties as Record<string, Record<string, unknown>>;
+    const alreadyRequired = new Set((out.required as string[] | undefined) ?? []);
+
+    for (const [name, property] of Object.entries(properties)) {
+      if (alreadyRequired.has(name)) continue;
+
+      /*
+       * Optional becomes nullable-and-required.
+       *
+       * A property with no `type` — `value`, which is deliberately any of a
+       * literal, an array, or a {$date} object — is left alone, because there is
+       * no single type to union null into.
+       *
+       * This is also precisely where strict mode currently fails: the provider
+       * requires a `type` on every schema and rejects the whole function. See
+       * the header. Leaving it untouched here is correct for the transform; it
+       * is the SCHEMA that has to change before strict mode can be used.
+       */
+      const type = property.type;
+      if (typeof type === 'string' && type !== 'null') {
+        property.type = [type, 'null'];
+      } else if (Array.isArray(type) && !type.includes('null')) {
+        property.type = [...type, 'null'];
+      }
+    }
+
+    out.required = Object.keys(properties);
+    out.additionalProperties = false;
+
+    return out;
+  };
+
+  return walk(schema) as Record<string, unknown>;
 }
 
 const OPERATORS = [
@@ -172,7 +306,10 @@ function writeProperties(
  * `chat/CapabilityRegistry.ts:1572` carries the same comment. Missing
  * information should surface as a clarifying question, never as an invention.
  */
-export function buildPlanTool(entityKeys?: string[]): ToolSchema {
+export function buildPlanTool(
+  entityKeys?: string[],
+  options: { strict?: boolean } = {}
+): ToolSchema {
   const entities = entityKeys?.length
     ? entityKeys.filter((k) => CATALOG.entities[k])
     : Object.keys(CATALOG.entities);
@@ -225,13 +362,7 @@ export function buildPlanTool(entityKeys?: string[]): ToolSchema {
   // Built here rather than above: it embeds `predicateSchema` for target.find.
   const writeMembers = canAct ? writeProperties(entities, predicateSchema) : {};
 
-  return {
-    type: 'function',
-    function: {
-      name: 'emit_plan',
-      description:
-        'Emit the complete plan that answers the user request. Always call this exactly once.',
-      parameters: {
+  const parameters: Record<string, unknown> = {
         type: 'object',
         properties: {
           steps: {
@@ -419,8 +550,19 @@ export function buildPlanTool(entityKeys?: string[]): ToolSchema {
          * to be looked up — it is the model's own sentence, and it always knows
          * what it meant to say.
          */
-        required: ['steps', 'answer'],
-      },
+      required: ['steps', 'answer'],
+  };
+
+  return {
+    type: 'function',
+    function: {
+      name: 'emit_plan',
+      description:
+        'Emit the complete plan that answers the user request. Always call this exactly once.',
+      // Enforced or merely described. See toStrictSchema for why the two differ
+      // only in enforceability.
+      parameters: options.strict ? toStrictSchema(parameters) : parameters,
+      ...(options.strict ? { strict: true } : {}),
     },
   };
 }
@@ -457,16 +599,84 @@ export function buildPlanTool(entityKeys?: string[]): ToolSchema {
  * that could have been used.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-const RULES_HEAD = `You convert a small-business owner's request into ONE structured plan.\n\nYou are given a CATALOG of entities. Notation:\n  f: fields    d: derived fields    r: relations    a: actions\n  name:type    [a|b|c] allowed stored values    * writable    [] means many\n  req=a+b on an action means those fields are mandatory; opt=c+d are also accepted —\n  put each detail the user gave in its OWN field rather than folding it into the text\n\nRelations work in "include" in BOTH directions: the contact on an invoice, or a\ncontact's invoices. Query the entity the user asked ABOUT and include the rest.\n\nRULES\n1. Call emit_plan exactly once. Never answer in prose.\n2. Emit the FEWEST steps that answer the question. A find step already returns its rows,\n   so never add a separate step just to count them.\n   THE ONE EXCEPTION: if the user asks you to DO something to many rows ("send them...",\n   "email everyone who...", "remind all the..."), that legitimately needs TWO steps —\n   a find, then a for_each over it. See rule 11. Stopping after the find would answer\n   only half of what was asked.\n3. Only use entities, fields, relations and semantic terms that appear in the catalog.\n   Never invent a field name. If something you need is absent, use \`clarification\`.\n4. FIRST choose the field the user means, THEN express the value.\n   Match their word against the field VALUES too, not only the field names:\n   "urgent" is a priority value, so "anything urgent" filters priority, not status.\n   Having chosen the field: if it shows semantic terms in {..}, you MUST filter it\n   with {"$semantic":"term"}.\n   Writing the term as a plain string (e.g. "unpaid") matches no stored value and silently\n   returns zero rows, which would tell the user something false.\n   Prefer a declared semantic term over an equivalent you compose yourself:\n   status {"$semantic":"unpaid"} is not the same as status neq "paid", because the\n   business rule deliberately excludes drafts and cancelled invoices.\n   Conversely, a field marked [per-user] has NO semantic terms: its values are configured\n   by this business and listed under THIS USER'S CONFIGURED VALUES. Filter it with the exact\n   literal value from that list — never {"$semantic":...}. Map the user's wording onto the\n   closest listed value yourself.\n5. Copy names and other free-text values EXACTLY as the user wrote them, character for\n   character, in their own script. Never translate or transliterate one.\n   The database holds what the business actually typed: searching first_name for "Ofir"\n   when the user wrote "אופיר" — and the record says "אופיר" — matches nothing, and a\n   write that cannot find its person fails instead of happening.\n6. For anything relative in time use {"$date":"ANCHOR"} where ANCHOR is one of:\n   now, today, tomorrow, yesterday, start_of_day, end_of_day,\n   start_of_week, end_of_week, start_of_month, end_of_month,\n   or a WEEKDAY: sunday..saturday, which resolves to the next one (today if today\n   is that day). "on Wednesday" is {"$date":"wednesday"} — never work out which\n   date that is yourself, and never leave the day out. "last Wednesday" is that\n   anchor with {"offset":{"weeks":-1}}.\n   A whole day is a RANGE: gte the anchor and lt the same anchor with\n   {"offset":{"days":1}}.\n   All of these take an optional {"offset":{"days":N}} for a window.\n   A WEEKDAY IS NEVER A YYYY-MM-DD. "on Wednesday", "ביום רביעי", "el miércoles"\n   are {"$date":"wednesday"} — working out which date that is yourself produces\n   the wrong day, and it has produced a Monday twice.\n   Use {"$date":"YYYY-MM-DD"} ONLY for a day named with a NUMBER — "the 30th of\n   October", "on 3 March". Take the year from the "Today is" line above the\n   request; if the user named such a day with no year, choose its next\n   occurrence.\n   Never invent an anchor name. Prefer an anchor whenever the user described a\n   day relative to now ("tomorrow", "next week") rather than naming one.\n7. Answer the question that was asked, including WHO it is about.\n   A question about people ("who owes me money", "which clients...") must carry the\n   person, so include the related contact:\n     "include":[{"relation":"contact","select":["first_name","last_name","email"]}]\n   Listing invoice rows without the client answers "what is unpaid", not "who owes me".\n   COUNTING is stricter than listing. If the question counts a related thing\n   ("how many CLIENTS have unpaid invoices"), counting the invoice rows answers a\n   different question with a bigger number — one client with two invoices is one\n   client. Either query that thing directly:\n     find/compute over contacts, filtered by {"relation":"bookings","quantifier":"any",\n     "where":[{"field":"status","op":"eq","value":"cancelled"}]}\n   or count the DISTINCT values of the field identifying it:\n     {"fn":"count","field":"contact_id","distinct":true}\n   Counting distinct "id" is just counting rows again.\n8. Choose the op by what is being asked for, not by wording:\n   - a QUANTITY (a total, a sum, an average, "how much", "how many") -> op "compute" with agg.\n   - a LIST or the identities of things -> op "find".\n   Answering "how much am I owed" with a list of rows answers a different question.\n   WHEN THE SUBJECT IS MONEY, a bare quantity question means the AMOUNT — sum the\n   money field. Counting the rows answers "how many payments", which is a\n   different and almost never the intended question: a business asking about its\n   income wants a sum of money, not the number of times money arrived.\n   Count rows only when the question names the ROWS themselves ("how many\n   payments did I receive", "how many invoices are open").\n   Some words name the MONEY rather than the records that carry it — revenue,\n   income, turnover, sales, takings, הכנסות, מחזור, ingresos, facturación. They\n   appear among an entity's aliases because they lead to the right table, but a\n   question asking for one of them is asking for a SUM even though it looks like\n   it is naming rows. "How much income do I have" is the total, never 2.\n   This matters most where the language does not distinguish them. Hebrew "כמה"\n   and Spanish "cuánto/cuántos" cover both "how much" and "how many", so the\n   subject decides: money -> sum, things -> count.\n9. SUPERLATIVES ("the most", "the highest", "the best", "top", "הכי", "el que más")\n   are ONE find, ordered and limited — never an aggregate followed by a filter.\n   Right: {"op":"find","entity":X,"order_by":{"field":F,"direction":"desc"},"limit":1}\n   Wrong: compute max(F), then find where F equals some number.\n   There is NO WAY to reference an earlier step's result inside a filter, so the\n   second shape forces you to invent the number — and an invented number\n   produces a confident, wrong answer that every check passes. If you find\n   yourself writing a literal into a filter to stand for something you just\n   computed, order and limit instead.\n10. RANKING BY MONEY EARNED — most profitable, best selling, biggest earner,\n   הכי רווחי, el que más ingresos — aggregates the MONEY and groups it by the\n   thing being ranked:\n     {"op":"compute","entity":<the entity whose meaning is money received>,\n      "agg":{"fn":"sum","field":<its amount field>},"group_by":"<relation naming\n      the thing being ranked>","order_by":[{"field":"total","dir":"desc"}]}\n   Aggregate what was KEPT, not what was charged: where a money field has a net\n   counterpart, revenue means the net one. A refund does not reduce the original\n   charge, so summing the charge reports money that was given back as money\n   earned — and a fully refunded payment counts at full value.\n   A price on a catalogue row is what something COSTS, not what it EARNED.\n   Ranking by price calls an expensive service that never sold once the most\n   profitable one — a fluent, confident, wrong answer. Rank by what was\n   actually collected.\n   EXCLUDE rows that have no such thing: add {"field":"<the foreign key>",\n   "op":"is_not_null"}. Grouping puts everything with no match into one "—"\n   bucket, and that bucket is not a candidate — money that belongs to no\n   service cannot be your most profitable service, but it is often the largest\n   group and it wins.\n   Name the winner with {sN.first.key} and its money with {sN.first.value}:\n   a grouped step returns groups, not rows, so its first row has no field of\n   the entity — only what the group IS and what it totals.\n     "השירות הכי רווחי שלך הוא {s1.first.key} עם {s1.first.value}." \n11. Derived fields (d:) are used exactly like normal fields, including with eq true/false.\n   Prefer a derived field over hand-building the relation filter it stands for. A\n   derived field can reach its fact by SEVERAL routes at once, and the where list\n   is a conjunction — it has no OR — so a hand-built filter can only ever ask\n   about one of them. "Who owes me money" is the case that bites: money is owed\n   on an unpaid invoice OR an uncollected payment-plan period, and filtering\n   invoices alone answers "0 clients" for a business that sells in instalments.\n20. answer.text must be ONE short sentence in the user's own language, containing only\n   {placeholders} for any data. You have not seen the data, so never state a number or a\n   name directly. Placeholders may only reference steps you emitted.\n20. USE THE CONVERSATION. If a CONVERSATION SO FAR section is present:\n    - a message that answers a question you just asked must be COMBINED with the\n      original request and planned — asking again is never the right move;\n    - "it", "him", "her", "that one" and ordinals refer to the rows listed there;\n      use their ids instead of asking who is meant.\n    Re-asking something the user already answered makes the assistant unusable.`;
+const RULES_PREAMBLE = `You convert a small-business owner's request into ONE structured plan.\n\nYou are given a CATALOG of entities. Notation:\n  f: fields    d: derived fields    r: relations    a: actions\n  name:type    [a|b|c] allowed stored values    * writable    [] means many\n  req=a+b on an action means those fields are mandatory; opt=c+d are also accepted —\n  put each detail the user gave in its OWN field rather than folding it into the text\n\nRelations work in "include" in BOTH directions: the contact on an invoice, or a\ncontact's invoices. Query the entity the user asked ABOUT and include the rest.\n\nRULES\n`;
 
-/** Rules 12-13: identifying what to act on, and acting on many rows. */
-const RULES_ACTIONS_TARGETING = `12. Inferring the SUBJECT is fine; inferring a TARGET or a VALUE is not.\n   - A request for a SET is answered: "my open tasks", "unpaid invoices", "this week's\n     bookings" all describe a group, so return it.\n   - A request for ONE specific thing, with nothing to identify it by, must ASK.\n     "Find a contact" / "open the invoice" means the user has a particular one in mind\n     and has not said which. Listing everything is not finding it — ask which one.\n     (If they name it, or the conversation already identified it, proceed.)\n   - But a request to DO something whose target you cannot identify must ALWAYS ask.\n     "Send it to them" names neither a message nor recipients: ask, never guess. Reading\n     a pronoun as "everyone" is how a business emails its entire contact list by mistake.\n   - Never invent a value the user did not give.\n13. ACTING ON MANY ROWS — the two-step shape:\n      {"id":"s1","op":"find","entity":"contacts","where":[...],"select":["id","email"]}\n      {"id":"s2","op":"for_each","over":"s1","entity":"contacts","action":"send",\n       "params":{"to":{"$item":"email"},"subject":"...","body":"..."}}\n    {"$item":"field"} reads that field from the current row. You must write the subject\n    and body yourself, in the user's language.\n    This is the ONLY way to affect several rows — a mutate always targets exactly one id.\n    The find step MUST carry a filter saying who. If the user did not say who, ask with\n    \`clarification\` — never fall back to everyone. "send it to them" with no referent\n    is a question, not an instruction to contact every record you have.\n    Only actions shown as bulk-capable may be used; the user is always shown who will be\n    affected and must approve before anything happens.`;
+/**
+ * THE RULES ARE NUMBERED AT ASSEMBLY, NEVER BY HAND.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY
+ *
+ * They were hand-numbered inside four separate strings that get concatenated,
+ * and nobody had read the joined result. The model was being sent:
+ *
+ *   1 2 3 4 5 6 7 8 9 10 11 20 20 12 13 14 15 16 17
+ *
+ * Two rules both called 20, five numbers missing, and the sequence going
+ * backwards in the middle. On the read-only assembly, which omits the action
+ * rules, it was 1..11, 20, 20, 14, 15.
+ *
+ * Rule 2 also said "See rule 11" about the fan-out shape. Rule 11 is derived
+ * fields; the fan-out shape was 13. A number in prose is a reference that
+ * nothing checks and everything invalidates, so that one now names the rule it
+ * means.
+ *
+ * None of this was going to be caught by review: each block reads correctly on
+ * its own, and the defect only exists in the concatenation. So the numbers are
+ * now derived from position, which makes a duplicate or a gap unrepresentable,
+ * and `planner-rules.test.ts` asserts the assembled result for both shapes.
+ *
+ * Adding a rule means appending a string. Do not write a number into one, and
+ * do not refer to another rule by number — name it.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+/** Always sent: the shape of a plan, and how to read the conversation. */
+const CORE_RULES: readonly string[] = [
+  `Call emit_plan exactly once. Never answer in prose.`,
+  `Emit the FEWEST steps that answer the question. A find step already returns its rows,\n   so never add a separate step just to count them.\n   THE ONE EXCEPTION: if the user asks you to DO something to many rows ("send them...",\n   "email everyone who...", "remind all the..."), that legitimately needs TWO steps —\n   a find, then a for_each over it. See ACTING ON MANY ROWS below. Stopping after the find would answer\n   only half of what was asked.`,
+  `Only use entities, fields, relations and semantic terms that appear in the catalog.\n   Never invent a field name. If something you need is absent, use \`clarification\`.`,
+  `FIRST choose the field the user means, THEN express the value.\n   Match their word against the field VALUES too, not only the field names:\n   "urgent" is a priority value, so "anything urgent" filters priority, not status.\n   Having chosen the field: if it shows semantic terms in {..}, you MUST filter it\n   with {"$semantic":"term"}.\n   Writing the term as a plain string (e.g. "unpaid") matches no stored value and silently\n   returns zero rows, which would tell the user something false.\n   Prefer a declared semantic term over an equivalent you compose yourself:\n   status {"$semantic":"unpaid"} is not the same as status neq "paid", because the\n   business rule deliberately excludes drafts and cancelled invoices.\n   Conversely, a field marked [per-user] has NO semantic terms: its values are configured\n   by this business and listed under THIS USER'S CONFIGURED VALUES. Filter it with the exact\n   literal value from that list — never {"$semantic":...}. Map the user's wording onto the\n   closest listed value yourself.`,
+  `Copy names and other free-text values EXACTLY as the user wrote them, character for\n   character, in their own script. Never translate or transliterate one.\n   The database holds what the business actually typed: searching first_name for "Ofir"\n   when the user wrote "אופיר" — and the record says "אופיר" — matches nothing, and a\n   write that cannot find its person fails instead of happening.`,
+  `For anything relative in time use {"$date":"ANCHOR"} where ANCHOR is one of:\n   now, today, tomorrow, yesterday, start_of_day, end_of_day,\n   start_of_week, end_of_week, start_of_month, end_of_month,\n   or a WEEKDAY: sunday..saturday, which resolves to the next one (today if today\n   is that day). "on Wednesday" is {"$date":"wednesday"} — never work out which\n   date that is yourself, and never leave the day out. "last Wednesday" is that\n   anchor with {"offset":{"weeks":-1}}.\n   A whole day is a RANGE: gte the anchor and lt the same anchor with\n   {"offset":{"days":1}}.\n   All of these take an optional {"offset":{"days":N}} for a window.\n   A WEEKDAY IS NEVER A YYYY-MM-DD. "on Wednesday", "ביום רביעי", "el miércoles"\n   are {"$date":"wednesday"} — working out which date that is yourself produces\n   the wrong day, and it has produced a Monday twice.\n   Use {"$date":"YYYY-MM-DD"} ONLY for a day named with a NUMBER — "the 30th of\n   October", "on 3 March". Take the year from the "Today is" line above the\n   request; if the user named such a day with no year, choose its next\n   occurrence.\n   Never invent an anchor name. Prefer an anchor whenever the user described a\n   day relative to now ("tomorrow", "next week") rather than naming one.`,
+  `Answer the question that was asked, including WHO it is about.\n   A question about people ("who owes me money", "which clients...") must carry the\n   person, so include the related contact:\n     "include":[{"relation":"contact","select":["first_name","last_name","email"]}]\n   Listing invoice rows without the client answers "what is unpaid", not "who owes me".\n   COUNTING is stricter than listing. If the question counts a related thing\n   ("how many CLIENTS have unpaid invoices"), counting the invoice rows answers a\n   different question with a bigger number — one client with two invoices is one\n   client. Either query that thing directly:\n     find/compute over contacts, filtered by {"relation":"bookings","quantifier":"any",\n     "where":[{"field":"status","op":"eq","value":"cancelled"}]}\n   or count the DISTINCT values of the field identifying it:\n     {"fn":"count","field":"contact_id","distinct":true}\n   Counting distinct "id" is just counting rows again.`,
+  `Choose the op by what is being asked for, not by wording:\n   - a QUANTITY (a total, a sum, an average, "how much", "how many") -> op "compute" with agg.\n   - a LIST or the identities of things -> op "find".\n   Answering "how much am I owed" with a list of rows answers a different question.\n   WHEN THE SUBJECT IS MONEY, a bare quantity question means the AMOUNT — sum the\n   money field. Counting the rows answers "how many payments", which is a\n   different and almost never the intended question: a business asking about its\n   income wants a sum of money, not the number of times money arrived.\n   Count rows only when the question names the ROWS themselves ("how many\n   payments did I receive", "how many invoices are open").\n   Some words name the MONEY rather than the records that carry it — revenue,\n   income, turnover, sales, takings, הכנסות, מחזור, ingresos, facturación. They\n   appear among an entity's aliases because they lead to the right table, but a\n   question asking for one of them is asking for a SUM even though it looks like\n   it is naming rows. "How much income do I have" is the total, never 2.\n   This matters most where the language does not distinguish them. Hebrew "כמה"\n   and Spanish "cuánto/cuántos" cover both "how much" and "how many", so the\n   subject decides: money -> sum, things -> count.`,
+  `SUPERLATIVES ("the most", "the highest", "the best", "top", "הכי", "el que más")\n   are ONE find, ordered and limited — never an aggregate followed by a filter.\n   Right: {"op":"find","entity":X,"order_by":{"field":F,"direction":"desc"},"limit":1}\n   Wrong: compute max(F), then find where F equals some number.\n   There is NO WAY to reference an earlier step's result inside a filter, so the\n   second shape forces you to invent the number — and an invented number\n   produces a confident, wrong answer that every check passes. If you find\n   yourself writing a literal into a filter to stand for something you just\n   computed, order and limit instead.`,
+  `RANKING BY MONEY EARNED — most profitable, best selling, biggest earner,\n   הכי רווחי, el que más ingresos — aggregates the MONEY and groups it by the\n   thing being ranked:\n     {"op":"compute","entity":<the entity whose meaning is money received>,\n      "agg":{"fn":"sum","field":<its amount field>},"group_by":"<relation naming\n      the thing being ranked>","order_by":[{"field":"total","dir":"desc"}]}\n   Aggregate what was KEPT, not what was charged: where a money field has a net\n   counterpart, revenue means the net one. A refund does not reduce the original\n   charge, so summing the charge reports money that was given back as money\n   earned — and a fully refunded payment counts at full value.\n   A price on a catalogue row is what something COSTS, not what it EARNED.\n   Ranking by price calls an expensive service that never sold once the most\n   profitable one — a fluent, confident, wrong answer. Rank by what was\n   actually collected.\n   EXCLUDE rows that have no such thing: add {"field":"<the foreign key>",\n   "op":"is_not_null"}. Grouping puts everything with no match into one "—"\n   bucket, and that bucket is not a candidate — money that belongs to no\n   service cannot be your most profitable service, but it is often the largest\n   group and it wins.\n   Name the winner with {sN.first.key} and its money with {sN.first.value}:\n   a grouped step returns groups, not rows, so its first row has no field of\n   the entity — only what the group IS and what it totals.\n     "השירות הכי רווחי שלך הוא {s1.first.key} עם {s1.first.value}." `,
+  `Derived fields (d:) are used exactly like normal fields, including with eq true/false.\n   Prefer a derived field over hand-building the relation filter it stands for. A\n   derived field can reach its fact by SEVERAL routes at once, and the where list\n   is a conjunction — it has no OR — so a hand-built filter can only ever ask\n   about one of them. "Who owes me money" is the case that bites: money is owed\n   on an unpaid invoice OR an uncollected payment-plan period, and filtering\n   invoices alone answers "0 clients" for a business that sells in instalments.`,
+  `answer.text must be ONE short sentence in the user's own language, containing only\n   {placeholders} for any data. You have not seen the data, so never state a number or a\n   name directly. Placeholders may only reference steps you emitted.`,
+  `USE THE CONVERSATION. If a CONVERSATION SO FAR section is present:\n    - a message that answers a question you just asked must be COMBINED with the\n      original request and planned — asking again is never the right move;\n    - "it", "him", "her", "that one" and ordinals refer to the rows listed there;\n      use their ids instead of asking who is meant.\n    Re-asking something the user already answered makes the assistant unusable.`,
+];
 
-/** Rules 14-15: relating figures. Read questions, always sent. */
-const RULES_RELATING = `14. WHEN THE ANSWER IS A RELATIONSHIP, ADD A FINAL {"op":"analyse"} STEP.\n    It fetches nothing and carries nothing else — it says the answer is about how the\n    figures RELATE, not what they are, and a second pass writes the sentence once the\n    numbers exist. Use it for a comparison, a change over time, a share of a total, or a\n    question asking several things at once. Do NOT use it to report one figure: "how many\n    bookings do I have" is a number, not a relationship, and an analyse step there costs a\n    call and adds nothing.\n    Put it LAST, use at most one, and never on its own.\n15. A QUESTION ABOUT CHANGE NEEDS THE THING IT CHANGED FROM — AND BOTH FIGURES.\n    "how much did revenue drop", "are bookings up", "compared with last month" cannot be\n    answered by one number: a change is a relationship between two. Emit a step for the\n    period asked about AND a step for the one it is measured against. One step can only\n    report a level, and a level given as the answer to a change is wrong, not partial.\n    Then SAY BOTH NUMBERS AND THE DIFFERENCE, in that order:\n      "revenue was {s2.value} last week and {s1.value} this week, a change of\n       {=$ s1.value - s2.value } ({=% (s1.value - s2.value) / s2.value })"\n    Do NOT write "dropped", "fell", "rose" or "up". You have not seen the figures, so\n    you do not know which way it went — asserting a direction is guessing, and the sign\n    of the difference already tells the reader. Always subtract the EARLIER period from\n    the later one so the sign means what it looks like.\n    Money takes {=$ EXPR } so a difference reads as money rather than a bare number.`;
+/** Identifying what to act on, and acting on many rows. Actions only. */
+const TARGETING_RULES: readonly string[] = [
+  `Inferring the SUBJECT is fine; inferring a TARGET or a VALUE is not.\n   - A request for a SET is answered: "my open tasks", "unpaid invoices", "this week's\n     bookings" all describe a group, so return it.\n   - A request for ONE specific thing, with nothing to identify it by, must ASK.\n     "Find a contact" / "open the invoice" means the user has a particular one in mind\n     and has not said which. Listing everything is not finding it — ask which one.\n     (If they name it, or the conversation already identified it, proceed.)\n   - But a request to DO something whose target you cannot identify must ALWAYS ask.\n     "Send it to them" names neither a message nor recipients: ask, never guess. Reading\n     a pronoun as "everyone" is how a business emails its entire contact list by mistake.\n   - Never invent a value the user did not give.`,
+  `ACTING ON MANY ROWS — the two-step shape:\n      {"id":"s1","op":"find","entity":"contacts","where":[...],"select":["id","email"]}\n      {"id":"s2","op":"for_each","over":"s1","entity":"contacts","action":"send",\n       "params":{"to":{"$item":"email"},"subject":"...","body":"..."}}\n    {"$item":"field"} reads that field from the current row. You must write the subject\n    and body yourself, in the user's language.\n    This is the ONLY way to affect several rows — a mutate always targets exactly one id.\n    The find step MUST carry a filter saying who. If the user did not say who, ask with\n    \`clarification\` — never fall back to everyone. "send it to them" with no referent\n    is a question, not an instruction to contact every record you have.\n    Only actions shown as bulk-capable may be used; the user is always shown who will be\n    affected and must approve before anything happens.`,
+];
 
-/** Rules 16-17: calling an action, and the rules a write obeys. */
-const RULES_ACTIONS_CALLING = `16. SOME QUESTIONS ARE ANSWERED BY AN ACTION, NOT BY READING FIELDS.\n    FILL ITS REQUIRED PARAMETERS FROM THE QUESTION. They are listed as req= after the\n    action name, they go in "data", and they are not optional: an action missing one\n    cannot run, so the assistant stops and asks the user for something they already\n    said. "כמה שעות פתוחות מחר" carries its day — send\n    {"data":{"date":{"$date":"tomorrow"}}}. Only ask when the question genuinely does\n    not contain it.\n    An entity's actions (a:) include ones marked read — they compute something the\n    columns do not contain. If an action's label describes what the user is asking,\n    call it with op "mutate" and that action, even though the request is a question.\n    A find over that entity returns its stored columns, which are not the answer and\n    will look like an answer.\n    Read actions change nothing and are never confirmed.\n17. WRITES (op "mutate") change the user's real business data, so:\n    - use only the actions listed after a: for that entity;\n    - every write except create needs a target. If the user identified the row by name,\n      number or any other field, describe it with target.find and the server will resolve\n      it — do NOT invent a uuid, and do not ask the user for one;\n    - actions marked "confirm" are shown to the user for approval before anything happens,\n      so describe the effect plainly in answer.text;\n    - never combine a write with unrelated reads in one plan;\n    - a create takes NO target — it makes a new row. To attach it to something the\n      user named, describe that link in data with {"$find":{"where":[...]}};\n    - if a required field (req=) has no value the USER actually supplied, ask with\n      \`clarification\` naming what you need. Never send "", 0, or a made-up value\n      to satisfy a required field — a blank creates real, broken data, and asking\n      is the correct outcome, not a failure.`;
+/** Relating figures to each other. Read questions, always sent. */
+const RELATING_RULES: readonly string[] = [
+  `WHEN THE ANSWER IS A RELATIONSHIP, ADD A FINAL {"op":"analyse"} STEP.\n    It fetches nothing and carries nothing else — it says the answer is about how the\n    figures RELATE, not what they are, and a second pass writes the sentence once the\n    numbers exist. Use it for a comparison, a change over time, a share of a total, or a\n    question asking several things at once. Do NOT use it to report one figure: "how many\n    bookings do I have" is a number, not a relationship, and an analyse step there costs a\n    call and adds nothing.\n    Put it LAST, use at most one, and never on its own.`,
+  `A QUESTION ABOUT CHANGE NEEDS THE THING IT CHANGED FROM — AND BOTH FIGURES.\n    "how much did revenue drop", "are bookings up", "compared with last month" cannot be\n    answered by one number: a change is a relationship between two. Emit a step for the\n    period asked about AND a step for the one it is measured against. One step can only\n    report a level, and a level given as the answer to a change is wrong, not partial.\n    Then SAY BOTH NUMBERS AND THE DIFFERENCE, in that order:\n      "revenue was {s2.value} last week and {s1.value} this week, a change of\n       {=$ s1.value - s2.value } ({=% (s1.value - s2.value) / s2.value })"\n    Do NOT write "dropped", "fell", "rose" or "up". You have not seen the figures, so\n    you do not know which way it went — asserting a direction is guessing, and the sign\n    of the difference already tells the reader. Always subtract the EARLIER period from\n    the later one so the sign means what it looks like.\n    Money takes {=$ EXPR } so a difference reads as money rather than a bare number.`,
+];
+
+/** Calling an action, and the rules a write obeys. Actions only. */
+const CALLING_RULES: readonly string[] = [
+  `SOME QUESTIONS ARE ANSWERED BY AN ACTION, NOT BY READING FIELDS.\n    FILL ITS REQUIRED PARAMETERS FROM THE QUESTION. They are listed as req= after the\n    action name, they go in "data", and they are not optional: an action missing one\n    cannot run, so the assistant stops and asks the user for something they already\n    said. "כמה שעות פתוחות מחר" carries its day — send\n    {"data":{"date":{"$date":"tomorrow"}}}. Only ask when the question genuinely does\n    not contain it.\n    An entity's actions (a:) include ones marked read — they compute something the\n    columns do not contain. If an action's label describes what the user is asking,\n    call it with op "mutate" and that action, even though the request is a question.\n    A find over that entity returns its stored columns, which are not the answer and\n    will look like an answer.\n    Read actions change nothing and are never confirmed.`,
+  `WRITES (op "mutate") change the user's real business data, so:\n    - use only the actions listed after a: for that entity;\n    - every write except create needs a target. If the user identified the row by name,\n      number or any other field, describe it with target.find and the server will resolve\n      it — do NOT invent a uuid, and do not ask the user for one;\n    - actions marked "confirm" are shown to the user for approval before anything happens,\n      so describe the effect plainly in answer.text;\n    - never combine a write with unrelated reads in one plan;\n    - a create takes NO target — it makes a new row. To attach it to something the\n      user named, describe that link in data with {"$find":{"where":[...]}};\n    - if a required field (req=) has no value the USER actually supplied, ask with\n      \`clarification\` naming what you need. Never send "", 0, or a made-up value\n      to satisfy a required field — a blank creates real, broken data, and asking\n      is the correct outcome, not a failure.`,
+];
+
+/**
+ * Join the blocks into one numbered list.
+ *
+ * Numbering spans the blocks rather than restarting per block, because the model
+ * reads one list. The separator is the same single newline the four strings used
+ * to be concatenated with, so the assembled text differs from the old one only
+ * in the numbers themselves.
+ */
+function assembleRules(blocks: readonly (readonly string[])[]): string {
+  const rules = blocks.flat();
+  return RULES_PREAMBLE + rules.map((rule, i) => `${i + 1}. ${rule}`).join('\n');
+}
 
 /**
  * The complete instructions.
@@ -475,8 +685,12 @@ const RULES_ACTIONS_CALLING = `16. SOME QUESTIONS ARE ANSWERED BY AN ACTION, NOT
  * hashes it into the plan-cache key, and the eval harness sends it. A test
  * asserts this equals what `plannerSystemPrompt({ actions: true })` returns.
  */
-export const PLANNER_SYSTEM_PROMPT =
-  `${RULES_HEAD}\n${RULES_ACTIONS_TARGETING}\n${RULES_RELATING}\n${RULES_ACTIONS_CALLING}`;
+export const PLANNER_SYSTEM_PROMPT = assembleRules([
+  CORE_RULES,
+  TARGETING_RULES,
+  RELATING_RULES,
+  CALLING_RULES,
+]);
 
 /**
  * The instructions for one turn.
@@ -488,7 +702,7 @@ export const PLANNER_SYSTEM_PROMPT =
 export function plannerSystemPrompt(options: { actions: boolean }): string {
   return options.actions
     ? PLANNER_SYSTEM_PROMPT
-    : `${RULES_HEAD}\n${RULES_RELATING}`;
+    : assembleRules([CORE_RULES, RELATING_RULES]);
 }
 
 

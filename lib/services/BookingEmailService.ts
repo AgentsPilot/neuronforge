@@ -17,7 +17,7 @@ import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
 import { activitySentence, activityMoment, activityRecord } from '@/lib/business-os/activityText';
 import { BOOKING_LINK_ACTIVITY } from '@/lib/services/LeadBookingLinkService';
 import { formatCurrency } from '@/lib/email/templates/base-template';
-import { sendEmail, SendEmailResult } from '@/lib/notifications/emailTransport';
+import { sendEmail, resolveOwnerReplyTo, SendEmailResult } from '@/lib/notifications/emailTransport';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { safeExternalUrl } from '@/lib/branding/externalUrl';
@@ -27,7 +27,7 @@ import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository'
 // The same source `/book/manage/[token]/intake` reads, so the email asking for
 // an intake form and the page it links to cannot disagree about whether one exists.
 import { intakeRepository } from '@/lib/repositories/IntakeRepository';
-import { generateBookingConfirmationEmail, generateBookingCancellationEmail, generateBookingRescheduledEmail, generateMissedAppointmentEmail, generateICSContent } from '@/lib/email/templates/booking-confirmation';
+import { generateBookingConfirmationEmail, generateBookingCancellationEmail, generateBookingRescheduledEmail, generateMissedAppointmentEmail, generateICSContent, icsSequenceFor } from '@/lib/email/templates/booking-confirmation';
 import { resolveIntakeForSending } from '@/lib/business-os/intake/resolveIntake';
 import { generateInvoiceEmail } from '@/lib/email/templates/invoice';
 import { generatePaymentReceiptEmail } from '@/lib/email/templates/payment-receipt';
@@ -561,11 +561,22 @@ export class BookingEmailService {
         willShowPaymentButton: hasPendingPayment && !!paymentUrl
       }, 'Email data for booking confirmation');
 
-      // Generate email content
-      const { subject, html, icsContent } = generateBookingConfirmationEmail(emailData);
-
-      // Note: ICS data is included inline in the email HTML via generateBookingConfirmationEmail
-      // TODO: Attach ICS file to email for better calendar integration
+      /*
+       * The calendar invite, at last actually attached.
+       *
+       * It was being generated and then dropped — the variable was unused and
+       * the TODO here said so. Attaching it is what lets a client abroad see
+       * the appointment on THEIR OWN clock: the .ics carries the absolute
+       * instant (`DTSTART:...Z`), and every calendar renders that in the
+       * reader's zone, staying right even if they travel. That is a guarantee
+       * no wording inside the email body can make, because the body is
+       * rendered once on this server before it is sent.
+       */
+      const organizerEmail = await resolveOwnerReplyTo(userId);
+      const { subject, html, icsContent } = generateBookingConfirmationEmail(emailData, {
+        organizerEmail,
+        sequence: icsSequenceFor(booking.updated_at),
+      });
 
       /*
        * The invoice itself, when the service bills by one.
@@ -627,6 +638,18 @@ export class BookingEmailService {
         if (attachment) attachments.push(attachment);
       }
 
+      /*
+       * The invite rides with the confirmation, not instead of it. A booking
+       * with no time (a course, a product) has nothing to put in a calendar.
+       */
+      if (icsContent && emailData.hasSchedule !== false) {
+        attachments.push({
+          filename: 'appointment.ics',
+          content: Buffer.from(icsContent, 'utf8'),
+          contentType: 'text/calendar; method=REQUEST; charset=utf-8',
+        });
+      }
+
       // Send email
       const result = await sendEmail({
         kind: 'transactional',
@@ -677,7 +700,12 @@ export class BookingEmailService {
             kind: 'booking_confirmation_sent',
             service: service.service_name,
             bookingDate: booking.start_time || undefined,
-            timeZone: booking.timezone || undefined,
+            /* The business's clock, for the reason set out under WHY NOT
+               `booking.timezone` above: that column is whatever the creating
+               caller happened to send, so the activity entry and the
+               confirmation email could name two different hours for one
+               appointment. Already resolved for the email. */
+            timeZone: emailData.timezone,
           }),
           auto_logged: true,
           source_capability: 'scheduling',
@@ -951,13 +979,51 @@ export class BookingEmailService {
         locale
       });
 
+      /*
+       * A withdrawal for the client's calendar.
+       *
+       * The moment a confirmation starts carrying an invite, a cancellation
+       * has to carry its retraction — otherwise the appointment the client
+       * just cancelled sits in their calendar for ever, alarm and all. Same
+       * UID, a risen SEQUENCE and METHOD:CANCEL is what removes it.
+       */
+      const cancelIcs = booking.start_time && booking.end_time
+        ? generateICSContent(
+            {
+              clientName,
+              clientEmail,
+              serviceName: service.service_name,
+              dateTime: new Date(booking.start_time),
+              endTime: new Date(booking.end_time),
+              duration: 0,
+              timezone: await getBusinessTimezone(userId, booking.timezone),
+              rescheduleUrl: '',
+              cancelUrl: '',
+              bookingId,
+              branding,
+            } as Parameters<typeof generateICSContent>[0],
+            {
+              organizerEmail: await resolveOwnerReplyTo(userId),
+              sequence: icsSequenceFor(booking.updated_at),
+              method: 'CANCEL',
+            }
+          )
+        : null;
+
       // Send email
       const result = await sendEmail({
         kind: 'transactional',
         to: [clientEmail],
         subject,
         html,
-        ownerUserId: userId
+        ownerUserId: userId,
+        attachments: cancelIcs
+          ? [{
+              filename: 'appointment.ics',
+              content: Buffer.from(cancelIcs, 'utf8'),
+              contentType: 'text/calendar; method=CANCEL; charset=utf-8',
+            }]
+          : undefined,
       });
 
       if (result.sent) {
@@ -1164,7 +1230,7 @@ export class BookingEmailService {
       const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
 
       // Generate email
-      const { subject, html } = generateBookingRescheduledEmail({
+      const { subject, html, icsContent } = generateBookingRescheduledEmail({
         clientName,
         clientEmail,
         serviceName: service.service_name,
@@ -1178,6 +1244,16 @@ export class BookingEmailService {
         bookingId,
         branding,
         locale
+      }, {
+        organizerEmail: await resolveOwnerReplyTo(userId),
+        /*
+         * A RISING sequence, which is the whole reason a reschedule lands.
+         * The UID is unchanged, so a calendar compares sequences and ignores
+         * anything that has not moved — every reschedule until now was sent as
+         * SEQUENCE 0, so the client's calendar quietly kept the OLD time while
+         * the email announced the new one.
+         */
+        sequence: icsSequenceFor(booking.updated_at),
       });
 
       // Send email
@@ -1186,7 +1262,14 @@ export class BookingEmailService {
         to: [clientEmail],
         subject,
         html,
-        ownerUserId: userId
+        ownerUserId: userId,
+        attachments: icsContent
+          ? [{
+              filename: 'appointment.ics',
+              content: Buffer.from(icsContent, 'utf8'),
+              contentType: 'text/calendar; method=REQUEST; charset=utf-8',
+            }]
+          : undefined,
       });
 
       if (result.sent) {
@@ -1843,6 +1926,9 @@ export class BookingEmailService {
       // Build client name
       const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
 
+      // The business's clock, resolved once and reused by the CRM entry below.
+      const businessZone = await getBusinessTimezone(userId, booking.timezone);
+
       // Generate email
       const { subject, html } = generateIntakeRequestEmail({
         isReminder: !!options?.reminder,
@@ -1851,7 +1937,7 @@ export class BookingEmailService {
         serviceName: service.service_name,
         dateTime: startTime,
         duration: durationMinutes,
-        timezone: await getBusinessTimezone(userId, booking.timezone),
+        timezone: businessZone,
         location: undefined, // TODO: add location support
         intakeFormUrl,
         rescheduleUrl,
@@ -1912,7 +1998,8 @@ export class BookingEmailService {
             kind: 'intake_form_sent',
             service: service.service_name,
             bookingDate: booking.start_time || undefined,
-            timeZone: booking.timezone || undefined,
+            /* Same reasoning as the confirmation entry. */
+            timeZone: businessZone,
           }),
           auto_logged: true,
           source_capability: 'scheduling',
@@ -2120,6 +2207,7 @@ export class BookingEmailService {
         currency: refundData.currency,
         refundType: refundData.refundType,
         refundDate: new Date(),
+        timezone: await getBusinessTimezone(userId, booking.timezone),
         serviceName: service?.service_name,
         reason: refundData.reason,
         isManualRefund: refundData.isManualRefund,

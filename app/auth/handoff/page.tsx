@@ -92,6 +92,34 @@ function HandoffInner() {
               return 'refused';
             }
 
+            /*
+             * ─────────────────────────────────────────────────────────────────
+             * DO NOT NAVIGATE UNTIL THE SESSION CAN BE READ BACK.
+             *
+             * `verifyOtp` resolving means the exchange succeeded, NOT that the
+             * session has reached `localStorage` — supabase-js writes it
+             * through an async storage adapter. Navigating on the next line
+             * tore the page down mid-write, and the landing page then found no
+             * session at all.
+             *
+             * What that looked like: an owner whose onboarding finished weeks
+             * ago signed in and was shown the onboarding chat, because
+             * `/onboarding-chat` reads `onboarding_completed` only when it can
+             * see a session, and silently starts a fresh conversation when it
+             * cannot.
+             *
+             * Reading it back proves the write landed. A few short attempts
+             * rather than one, because the adapter may still be in flight, and
+             * a plain success if it never appears: the exchange DID work, and
+             * refusing here would strand someone who is actually signed in.
+             * ─────────────────────────────────────────────────────────────────
+             */
+            for (let attempt = 0; attempt < 10; attempt++) {
+              const { data: stored } = await supabase.auth.getSession();
+              if (stored?.session) break;
+              await new Promise(resolve => setTimeout(resolve, 50));
+            }
+
             return 'signed-in';
           },
           60_000

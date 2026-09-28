@@ -542,6 +542,20 @@ export function PaymentManagementModal({
                                     ? `${t('crm.payment.status_invoiced')} · ${t('crm.payment.due')} ${stageDate(stage.dueDate)}`
                                     : t('crm.payment.status_invoiced')
                                   : t('crm.payment.status_not_billed')}
+                              {/*
+                                Say where the answer is.
+                                "Not billed" is accurate and was a dead end: this
+                                modal has no way to raise it, and the note at the
+                                top of this file already says the next step there
+                                is to raise it rather than record money against
+                                it. It never said WHERE. The control lives on the
+                                booking's journey, in the drawer behind this.
+                              */}
+                              {!stage.invoiceId && (
+                                <span className="mt-0.5 block text-[11px] text-[var(--v2-text-muted)]">
+                                  {t('crm.payment.bill_it_hint')}
+                                </span>
+                              )}
                             </div>
                           </div>
 

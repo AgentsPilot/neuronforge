@@ -262,9 +262,20 @@ export function ShareGuide({
   }, []);
 
   /*
-   * Dismissal closes the dialog AND retires the hint. "Got it" is a statement
-   * about the guide, not about this dialog — reopening it tomorrow would make
-   * the button a liar.
+   * Dismissal retires the PROMPT, not the guide.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * "Got it" used to remove this for good: `return null`, no way back. But what
+   * the owner has finished with is being ASKED — the pulsing label taking up
+   * room beside their links. The content behind it stays worth re-reading,
+   * because the thing it explains is a list of six places a link can land and
+   * whether it is clickable in each, and nobody remembers that from one
+   * viewing.
+   *
+   * So dismissing shrinks it to a quiet icon in the same spot. The prompt is
+   * gone, the door is not, and the button still tells the truth: it stops
+   * asking.
+   * ───────────────────────────────────────────────────────────────────────────
    */
   const dismiss = () => {
     setOpen(false);
@@ -275,8 +286,6 @@ export function ShareGuide({
       // Nothing to do. It will return on the next load, which is survivable.
     }
   };
-
-  if (dismissed) return null;
 
   const chip = (label: string, tone: 'yes' | 'no') => (
     <span
@@ -301,21 +310,37 @@ export function ShareGuide({
   return (
     <>
       {/*
-        The hint. Small, and it pulses until it has been read — the animation
-        is the only thing that makes an owner wonder what it is, and a static
-        question mark beside four other icons is invisible.
+        Two sizes of the same door.
+
+        Unread, it pulses and says what it is — the animation is the only thing
+        that makes an owner wonder, and a static icon beside four others is
+        invisible. Once dismissed it keeps the icon and drops the pulse and the
+        label, so it costs a few pixels instead of a line, and can still be
+        opened when somebody forgets whether an Instagram caption is clickable.
       */}
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 px-2.5 py-1 text-[11px] font-medium text-[#8B5CF6] transition-colors hover:bg-[#8B5CF6]/20 ${
-          prefersReducedMotion ? '' : 'ap-attention'
-        }`}
-        title={t.title}
-      >
-        <Megaphone className="h-3 w-3" />
-        {t.hintLabel}
-      </button>
+      {dismissed ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="inline-flex shrink-0 items-center justify-center rounded-full p-1 text-[var(--v2-text-muted)] transition-colors hover:bg-[#8B5CF6]/10 hover:text-[#8B5CF6]"
+          title={t.title}
+          aria-label={t.title}
+        >
+          <Megaphone className="h-3.5 w-3.5" />
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 px-2.5 py-1 text-[11px] font-medium text-[#8B5CF6] transition-colors hover:bg-[#8B5CF6]/20 ${
+            prefersReducedMotion ? '' : 'ap-attention'
+          }`}
+          title={t.title}
+        >
+          <Megaphone className="h-3 w-3" />
+          {t.hintLabel}
+        </button>
+      )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent

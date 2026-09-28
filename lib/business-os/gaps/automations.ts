@@ -181,6 +181,31 @@ export interface OperationalAutomation {
    */
   requires?: 'intake_reaches_client' | 'takes_bookings';
 
+  /**
+   * A notification to the OWNER that travels with this automation on the card
+   * but is NOT part of it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * DELIBERATELY NOT `column`, AND DELIBERATELY NOT AN AUTOMATION OF ITS OWN.
+   *
+   * `column` above is the owner's consent for the platform to write to their
+   * CLIENT. This is the platform writing to the OWNER, which needs no consent
+   * and ships ON — the distinction this module's header calls out.
+   *
+   * They share a card because they are two halves of what happens when somebody
+   * gets in touch, and the card is the only screen an owner reliably meets. They
+   * do NOT share a verb: the automation is approved or declined, while this is a
+   * plain switch that saves the moment it moves and means something whether the
+   * automation is running or not.
+   *
+   * So it is also NOT the meeting reminder's `notifyOwner`. There, owner and
+   * client are two copies of one send, which is why at least one of them must
+   * stay on. Here "do not write to them, do not write to me" is a state an owner
+   * is entitled to, and nothing may forbid it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  ownerAlertColumn?: 'lead_alert_email_enabled';
+
   /** i18n keys. The copy lives with the other copy, not here. */
   labelKey: string;
   hintKey: string;
@@ -196,6 +221,16 @@ export const OPERATIONAL_AUTOMATIONS: OperationalAutomation[] = [
     // in mind when the reply lands.
     delayHours: 0.25,
     covers: ['invite', 'chase'],
+    /*
+     * "Tell me somebody is waiting", on the same card as "reply for me".
+     *
+     * It used to be a row in Settings, which an owner had no reason to open —
+     * the switch that decides whether they hear about an enquiry at all was
+     * filed two screens from the enquiry. This card always renders (no
+     * `requires`, and zero waiting is still offered), so it is the one place
+     * the pair can be met together.
+     */
+    ownerAlertColumn: 'lead_alert_email_enabled',
     labelKey: 'automation.reply_to_enquiries',
     hintKey: 'automation.reply_to_enquiries_hint',
   },

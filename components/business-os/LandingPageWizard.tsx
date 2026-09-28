@@ -15,7 +15,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { gapFixAction } from '@/lib/business-os/journeyGapFix';
+import { useGapFix } from '@/components/business-os/setup/useGapFix';
 import { publicSiteDisplayHost } from '@/lib/utils/origins';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -414,6 +414,7 @@ const LABELS = {
     fix_availability: 'Set working hours',
     fix_timezone: 'Set your timezone',
     fix_invoicing: 'Complete invoice details',
+    fix_processor: 'Connect payments',
     no_services: 'No services yet',
     no_services_desc: 'Create your first service to get started',
     create_new_service: 'Create New Service',
@@ -512,6 +513,7 @@ const LABELS = {
     fix_availability: 'Configurar horario',
     fix_timezone: 'Configura tu zona horaria',
     fix_invoicing: 'Completar datos de factura',
+    fix_processor: 'Conectar pagos',
     no_services: 'Sin servicios aún',
     no_services_desc: 'Crea tu primer servicio para comenzar',
     create_new_service: 'Crear Nuevo Servicio',
@@ -607,6 +609,7 @@ const LABELS = {
     fix_availability: 'הגדר שעות פעילות',
     fix_timezone: 'הגדירו אזור זמן',
     fix_invoicing: 'השלם פרטי חשבונית',
+    fix_processor: 'חיבור תשלומים',
     no_services: 'אין שירותים עדיין',
     no_services_desc: 'צור את השירות הראשון שלך כדי להתחיל',
     create_new_service: 'צור שירות חדש',
@@ -808,6 +811,9 @@ export function LandingPageWizard({
    * it rather than telling the owner to go and find it.
    */
   const { openConfiguration } = useConfigurationDialog();
+  // Where a readiness gap is actually cleared — a dialog tab, or the settings
+  // page for the timezone, which the dialog has no control for.
+  const runGapFix = useGapFix();
 
   /**
    * Take a service the editor just saved and make it usable by this wizard.
@@ -2060,7 +2066,7 @@ export function LandingPageWizard({
                     <button
                       type="button"
                       onClick={() =>
-                        openConfiguration(gapFixAction(gap.kind).tab, {
+                        runGapFix(gap.kind, {
                           /*
                             Ask again once they come back.
 
@@ -2083,7 +2089,9 @@ export function LandingPageWizard({
                         ? labels.fix_invoicing
                         : gap.kind === 'timezone'
                           ? labels.fix_timezone
-                          : labels.fix_availability}
+                          : gap.kind === 'processor'
+                            ? labels.fix_processor
+                            : labels.fix_availability}
                       <ArrowRight className={`w-3.5 h-3.5 ${language === 'he' ? 'rotate-180' : ''}`} />
                     </button>
                   </div>

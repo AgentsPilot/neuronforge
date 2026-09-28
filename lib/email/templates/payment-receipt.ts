@@ -49,11 +49,18 @@ export function generatePaymentReceiptEmail(data: PaymentReceiptData): {
   };
   const intlLocale = intlLocales[locale] || 'en-US';
 
+  /*
+   * The moment the payment was taken — a real instant, unlike the invoice's
+   * date-only due date — so it is named on the BUSINESS's calendar. With no
+   * zone it used the server's, and a payment taken at 21:00 in New York was
+   * receipted as the following day.
+   */
   const formattedPaymentDate = data.paymentDate.toLocaleDateString(intlLocale, {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
-    day: 'numeric'
+    day: 'numeric',
+    ...(data.timezone ? { timeZone: data.timezone } : {})
   });
 
   const formattedAppointmentDate = data.appointmentDate && data.timezone

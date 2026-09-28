@@ -6,6 +6,7 @@ import {
   originOption,
   type ContactSourceMetadata,
 } from '@/components/crm/contactSources';
+import { isContactInactive } from '@/components/crm/contactStatus';
 import { Badge } from '@/components/ui/badge';
 import { Mail, Phone, Calendar, GripVertical, User, Clock, CheckSquare } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -148,6 +149,15 @@ function PipelineFlowHeader({
 interface CRMPipelineViewProps {
   contacts: CRMContact[];
   stages: CRMPipelineStage[];
+  /**
+   * How many contacts each stage really holds, keyed by `stage_key`.
+   *
+   * The board only ever has a page of each column in hand, so counting the
+   * cards on screen would report the page size as the size of the business.
+   */
+  stageTotals?: Record<string, number>;
+  /** Fetch the next page for one column and append it. */
+  onLoadMore?: (stageKey: string) => void;
   onContactClick: (contact: CRMContact) => void;
   onContactUpdated: () => void;
 }
@@ -179,7 +189,7 @@ function getStageColors(hexColor: string | null) {
   };
 }
 
-export function CRMPipelineView({ contacts, stages, onContactClick, onContactUpdated }: CRMPipelineViewProps) {
+export function CRMPipelineView({ contacts, stages, stageTotals, onLoadMore, onContactClick, onContactUpdated }: CRMPipelineViewProps) {
   const { t, language } = useLanguage();
   const [draggedContact, setDraggedContact] = useState<CRMContact | null>(null);
   const [dragOverStage, setDragOverStage] = useState<string | null>(null);
@@ -299,10 +309,22 @@ export function CRMPipelineView({ contacts, stages, onContactClick, onContactUpd
     return (first + last).toUpperCase() || '?';
   };
 
-  // Calculate contact counts for each stage (for the flow header)
+  /*
+   * The counts in the funnel header: the stage's REAL size, not the page of it
+   * currently on screen.
+   *
+   * Counting the cards was right while the board held every contact. With each
+   * column loading twenty at a time it would report twenty for every stage, and
+   * the funnel — whose entire job is showing where people accumulate — would
+   * draw four equal blocks for any business past its first page.
+   *
+   * Falls back to the loaded count when no total was supplied, so the board
+   * still adds up if it is ever rendered with a plain list of contacts.
+   */
   const contactCounts: Record<string, number> = {};
   stages.forEach(stage => {
-    contactCounts[stage.stage_key] = getContactsByStage(stage.stage_key).length;
+    contactCounts[stage.stage_key] =
+      stageTotals?.[stage.stage_key] ?? getContactsByStage(stage.stage_key).length;
   });
 
   // Show empty state if no stages configured
@@ -388,6 +410,22 @@ export function CRMPipelineView({ contacts, stages, onContactClick, onContactUpd
                           <div className="font-semibold text-[var(--v2-text-primary)] group-hover:text-[#8B5CF6] transition-colors truncate">
                             {contact.first_name} {contact.last_name}
                           </div>
+                          {/*
+                            Inactive, said on the card.
+
+                            The column already says which STAGE they are in, but
+                            a card dragged out of context, or scanned in a list,
+                            carries no such signal — and "no longer a client" is
+                            the one fact about a contact that changes what you
+                            would do with them. Read by stage TYPE, so it holds
+                            for a pipeline that calls the stage `inactive` and
+                            for one that calls it `הושלם`.
+                          */}
+                          {isContactInactive(contact.stage, stages) && (
+                            <span className="inline-flex items-center gap-1 mt-0.5 px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-[var(--v2-border)]/40 text-[var(--v2-text-muted)]">
+                              {t('crm.contact.inactive_badge')}
+                            </span>
+                          )}
                           {/*
                             The same group the drawer lights, from the same
                             derivation — the card said "Website Booking" while
@@ -480,6 +518,29 @@ export function CRMPipelineView({ contacts, stages, onContactClick, onContactUpd
               );})}
 
               {/* Empty State */}
+              {/*
+                More in this column than are on screen.
+
+                Counted against the stage's real total rather than the page
+                size, because an optimistic move can put a card in a column it
+                was not fetched into — comparing to `PAGE_SIZE` would then
+                either offer a page that does not exist or hide one that does.
+              */}
+              {onLoadMore && (() => {
+                const total = stageTotals?.[stage.stage_key];
+                if (total === undefined || stageContacts.length >= total) return null;
+                return (
+                  <button
+                    type="button"
+                    onClick={() => onLoadMore(stage.stage_key)}
+                    className="w-full py-2 text-[12px] font-medium text-[#8B5CF6] hover:bg-[#8B5CF6]/5 border border-dashed border-[#8B5CF6]/40 transition-colors"
+                    style={{ borderRadius: 'var(--v2-radius-card)' }}
+                  >
+                    {t('crm.pipeline.load_more')} ({total - stageContacts.length})
+                  </button>
+                );
+              })()}
+
               {stageContacts.length === 0 && (
                 <div
                   className={`

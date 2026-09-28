@@ -37,7 +37,7 @@
     "test:plugins:smoke": "jest --config jest.config.js tests/plugins/ --testNamePattern=\"\\[smoke\\]\" --verbose",
     "test:plugins:ci": "jest --config jest.config.js tests/plugins/ --ci --forceExit --verbose",
     "test:plugins:all": "jest --config jest.config.js tests/plugins/ --verbose",
-    "eval:chat": "tsx --import ./scripts/env-preload.ts tests/business-os-chat/run-eval.ts",
+    "eval:chat": "tsx --import ./scripts/env-preload.ts --require ./scripts/chat-probe/preload.cjs tests/business-os-chat/run-eval.ts",
     "catalog:generate": "tsx scripts/generate-business-catalog.ts"
   },
   "dependencies": {

@@ -528,7 +528,20 @@ export function RefundModal({
               style={{ borderRadius: 'var(--v2-radius-button)' }}
             >
               <Banknote className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--v2-text-muted)]" />
-              <span>{t('payments.refund.manual_notice')}</span>
+              {/*
+                Two different reasons to be recording rather than refunding, and
+                only one of them is "this never went through a card".
+
+                The other is card money with no account left to send it back
+                through, where the standing sentence — "this payment did not go
+                through a processor" — is simply untrue, and would send an owner
+                looking for a cash payment that never existed.
+              */}
+              <span>
+                {serverBlock === 'ACCOUNT_GONE'
+                  ? t('payments.refund.no_processor_notice')
+                  : t('payments.refund.manual_notice')}
+              </span>
             </div>
           )}
 

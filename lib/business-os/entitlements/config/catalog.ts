@@ -158,22 +158,27 @@ export const CAPABILITIES = {
     labels: { en: 'Payment reminders and retries', he: 'תזכורות ותשלום חוזר', es: 'Recordatorios y reintentos de pago' },
     category: 'payments',
     shape: { kind: 'boolean' },
-    // NOT BUILT — corrected 2026-09-22 (QA C2-1), by the same rule that moved
-    // marketing.mass_email.
-    lifecycle: 'not_built',
+    /*
+     * BUILT 2026-09-25. It was `not_built` between 2026-09-22 (QA C2-1) and
+     * that date, because the sender was a stub — see the note below.
+     */
+    lifecycle: 'available',
     audience: 'client',
     messageClass: 'transactional',
     atLimit: 'none',
     sellableAsAddon: false,
     note:
-      'Everything except the send exists: BookingLifecycleService schedules reminders for every ' +
-      'booking invoice and the payment-reminders cron claims them. But ' +
-      'PaymentReminderService.sendEmailReminder (lib/services/PaymentReminderService.ts:500-527) ' +
-      'logs "Would send payment reminder email" and returns `true; // Simulated success`. ' +
-      'That is worse than a missing sender: the row is marked SENT while no client receives ' +
-      'anything, so the failure is invisible from inside the product. Marking this `available` ' +
-      'would sell a reminder that is recorded as delivered and never arrives. ' +
-      'Flip to `available` in the same change that makes the sender real.',
+      'The sender is real as of 2026-09-25. It was a stub that logged "Would send payment ' +
+      'reminder email" and returned `true; // Simulated success`, so the queue row was marked ' +
+      'SENT while no client received anything — a failure invisible from inside the product. ' +
+      'PaymentReminderService.sendEmailReminder now builds the message with ' +
+      'generateChaseInvoiceEmail (the same template the insight-triggered chase uses), sends it ' +
+      'as the business via ownerUserId, and returns the transport\'s real verdict so a failed ' +
+      'send is recorded as failed. Scheduling was always correct and remains so: ' +
+      'PaymentReminderService.processOverdueItems runs on the payment-reminders cron, compares ' +
+      'each overdue invoice against the owner\'s payment_overdue_reminder_days on that ' +
+      'business\'s own calendar (overdueCalendarDays), and schedules one reminder per matching ' +
+      'day — deduped by findRecentByInvoice. Only the SEND was missing.',
   },
   'payments.multi_currency': {
     labels: { en: 'Multiple currencies', he: 'מספר מטבעות', es: 'Varias monedas' },

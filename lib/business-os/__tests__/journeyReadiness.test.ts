@@ -167,17 +167,36 @@ describe('the timezone gap', () => {
     expect(message).toContain('wrong times');
   });
 
-  it('sends the owner to the tab that actually has the picker', () => {
+  it('sends the owner where the thing can actually be set', () => {
     /*
-     * Availability holds the hours; the timezone lives with the business's own
-     * details. Every surface used to map `isInvoicing ? 'invoice' :
-     * 'availability'`, so a third kind would have opened a tab where the thing
-     * the message names cannot be set.
+     * Each of these was verified against what the destination renders, not
+     * against what its name suggests.
      */
-    expect(gapFixAction('timezone').tab).toBe('business');
-    expect(gapFixAction('hours').tab).toBe('availability');
-    expect(gapFixAction('invoicing').tab).toBe('invoice');
-    expect(gapFixAction('processor').tab).toBe('payments');
+    const hours = gapFixAction('hours');
+    expect(hours).toMatchObject({ target: 'dialog', tab: 'availability' }); // AvailabilityEditor
+    const invoicing = gapFixAction('invoicing');
+    expect(invoicing).toMatchObject({ target: 'dialog', tab: 'invoice' });  // company + bank details
+    const processor = gapFixAction('processor');
+    expect(processor).toMatchObject({ target: 'dialog', tab: 'payments' }); // Stripe onboarding
+  });
+
+  it('sends the timezone gap to the settings page, not the dialog', () => {
+    /*
+     * This asserted `tab: 'business'` — and that was wrong in a way the test
+     * could not see, because it only compared the mapping against itself.
+     *
+     * The dialog's `business` tab renders `BusinessProfileSection`, which
+     * contains no timezone field; the whole ConfigurationDialog has not one
+     * mention of a timezone. The picker that writes `user_preferences.timezone`
+     * is on the Business OS settings page — the one the header gear opens.
+     *
+     * So the single gap that BLOCKS publishing a booking surface offered a
+     * "Set your timezone" button that opened a form where it could not be set.
+     */
+    const fix = gapFixAction('timezone');
+    expect(fix.target).toBe('route');
+    if (fix.target !== 'route') throw new Error('timezone must be a route fix');
+    expect(fix.href).toBe('/business-os/settings?section=timezone');
   });
 
   it('gives every kind a label, so none can open a tab unlabelled', () => {

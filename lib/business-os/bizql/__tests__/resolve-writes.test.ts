@@ -289,3 +289,64 @@ describe('pinChoice', () => {
     expect(data.title).toBe('Call back');
   });
 });
+
+describe('however the planner spells a described reference', () => {
+  /*
+   * REPORTED BY THE USER.
+   *
+   *   "add task to eyal omer" -> Sorry, I couldn't process that.
+   *
+   * The grammar says `$find`; the planner wrote the bare `find`, and its repair
+   * round left it alone. `isDescribedRef` looked only for the `$` spelling, so
+   * the object was never resolved and reached the column mapper, which refused
+   * to store an object in `contact_id`. A request expressed perfectly failed on
+   * a sigil.
+   */
+  const taskForBare = (value: string): MutateQuery =>
+    ({
+      id: 's1',
+      op: 'mutate',
+      entity: 'tasks',
+      action: 'create',
+      data: {
+        title: 'Call back',
+        contact_id: { find: { where: [{ field: 'first_name', op: 'eq', value }] } },
+      },
+    }) as unknown as MutateQuery;
+
+  it('resolves a bare `find` exactly as it resolves `$find`', async () => {
+    rows.contacts = [{ id: CONTACT_A, first_name: 'Eyal', last_name: 'Omer' }];
+
+    const outcome = await resolveWrites({
+      steps: [taskForBare('Eyal')],
+      ctx: CTX,
+      language: 'en',
+      currency: 'USD',
+    });
+
+    expect(outcome.status).toBe('resolved');
+    if (outcome.status !== 'resolved') return;
+
+    const data = (outcome.writes[0].step as MutateQuery).data as Record<string, unknown>;
+    expect(data.contact_id).toBe(CONTACT_A);
+  });
+
+  it('still asks which one when the bare spelling is ambiguous', async () => {
+    // The safety property must not depend on the spelling either.
+    rows.contacts = [
+      { id: CONTACT_A, first_name: 'Eyal', last_name: 'Omer' },
+      { id: CONTACT_B, first_name: 'Eyal', last_name: 'Cohen' },
+    ];
+
+    const outcome = await resolveWrites({
+      steps: [taskForBare('Eyal')],
+      ctx: CTX,
+      language: 'en',
+      currency: 'USD',
+    });
+
+    expect(outcome.status).toBe('choice');
+    if (outcome.status !== 'choice') return;
+    expect(outcome.slot).toEqual({ kind: 'reference', stepIndex: 0, field: 'contact_id' });
+  });
+});

@@ -224,7 +224,7 @@ export async function sendProposal(
     documentName: document?.file_name ?? null,
   });
 
-  await sendEmail({
+  const result = await sendEmail({
     kind: 'transactional',
     to: [contact.email],
     subject,
@@ -233,6 +233,19 @@ export async function sendProposal(
     ownerUserId: userId,
     ...(attachment ? { attachments: [attachment] } : {}),
   });
+
+  /*
+   * Nothing downstream may claim this was sent unless it was.
+   *
+   * `sendEmail` returns rather than throws when no transport delivers, so the
+   * discarded result meant a failed proposal still wrote a `proposal_sent`
+   * activity to the client's timeline and logged "Proposal sent". The owner
+   * would then be waiting on a reply to something the client never received.
+   */
+  if (!result.sent) {
+    log.error({ error: result.error ?? result.blocked }, 'Proposal not sent');
+    throw new Error(result.error ?? 'Proposal email could not be sent');
+  }
 
   await supabaseServer.from('crm_activities').insert({
     user_id: userId,

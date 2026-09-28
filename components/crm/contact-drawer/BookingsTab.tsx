@@ -57,6 +57,15 @@ interface BookingsTabProps {
     bookingId: string,
     context: { supersedesId: string | null; declineReason: string | null; declineNote: string | null }
   ) => void;
+  /**
+   * Read a quote that has already been sent.
+   *
+   * Separate from `onOpenProposalBuilder` because it is a different intent on the
+   * same dialog: that one writes, this one reads. The owner had no way to see what
+   * a sent quote actually said — the strip showed amounts and statuses, and the
+   * words lived only on the client's copy.
+   */
+  onViewProposal?: (bookingId: string, proposalId: string) => void;
   onSendInvoice?: (invoiceId: string, bookingId: string) => Promise<void>;
   /**
    * Send the confirmation email again — the "reminder" action on the journey.
@@ -208,6 +217,7 @@ export function BookingsTab({
   onSendIntake,
   onCompleteStage,
   onOpenProposalBuilder,
+  onViewProposal,
   onSendInvoice,
   onResendConfirmation,
   onSetBookingStatus,
@@ -393,8 +403,20 @@ export function BookingsTab({
     if (quoteState === 'sent' || quoteState === 'viewed') {
       return { text: t('crm.booking.quoted.sent'), ...blue };
     }
-    // No quote yet. Before the meeting it is simply upcoming; after it, the
-    // owner owes the client a price, and that is the whole point of the badge.
+    /*
+     * The catch-all is reached on `'none'` ONLY, and that is not an accident of
+     * this switch — it is enforced upstream. `proposalsFor` in the drawer drops
+     * drafts, and `pickProposal` then drops superseded, so `proposalStatus`
+     * arrives here as one of none/sent/viewed/accepted/declined/expired. There is
+     * no `draft` or `superseded` case to write; adding one would be dead code
+     * that reads as though it fired.
+     *
+     * `'none'` therefore covers two situations, and they want the same badge: no
+     * quote was ever written, or every version has been replaced with nothing
+     * standing. Either way the client holds no price and the owner owes them one.
+     */
+    // Before the meeting it is simply upcoming; after it, the owner owes the
+    // client a price, and that is the whole point of the badge.
     return meetingAhead
       ? { text: t('crm.booking.status.confirmed') || 'Upcoming', ...amber }
       : { text: t('crm.booking.quoted.awaiting_quote'), ...amber };
@@ -1127,11 +1149,15 @@ export function BookingsTab({
                                 <div className="flex items-baseline gap-2 pt-4 pb-2">
                                   {group.date ? (
                                     <>
+                                      {/* The day marker names the business's
+                                          day. Read on the owner's laptop, a
+                                          step near midnight sat under the
+                                          neighbouring date's heading. */}
                                       <span className="text-[16px] font-bold leading-none text-[var(--v2-text-primary)]">
-                                        {group.date.getDate()}
+                                        {new Intl.DateTimeFormat(language, timeZoneOptions({ day: 'numeric' })).format(group.date)}
                                       </span>
                                       <span className="text-[11px] tracking-wide text-[var(--v2-text-muted)]">
-                                        {new Intl.DateTimeFormat(language, { month: 'short' }).format(group.date)}
+                                        {new Intl.DateTimeFormat(language, timeZoneOptions({ month: 'short' })).format(group.date)}
                                       </span>
                                     </>
                                   ) : (
@@ -1277,6 +1303,63 @@ export function BookingsTab({
                                     payment.status !== 'free' &&
                                     refunded > 0;
 
+                                  /*
+                                   * Did any money actually reach the business?
+                                   *
+                                   * Not "is there a price on this" — an invoice
+                                   * carries its amount whether or not anybody
+                                   * paid it. A plan counts too: periods already
+                                   * taken are money in, even where the rest is
+                                   * still to come.
+                                   */
+                                  const moneyMoved = Boolean(
+                                    payment &&
+                                      (payment.status === 'paid' ||
+                                        payment.status === 'refunded' ||
+                                        refunded > 0 ||
+                                        (collectedOnPlan ?? 0) > 0)
+                                  );
+
+                                  /*
+                                   * A cancelled booking nobody paid for.
+                                   *
+                                   * ─────────────────────────────────────────
+                                   * The payment step still showed its amount
+                                   * and a "Manage payment" button, so a
+                                   * cancelled booking read as one with ₪300
+                                   * outstanding. There is nothing to manage:
+                                   * cancelling the booking cancelled the
+                                   * invoice with it, and voided it at Stripe,
+                                   * so nothing is owed and nothing can be
+                                   * refunded.
+                                   *
+                                   * The amount stays visible — it is what the
+                                   * job was going to cost — but the button goes
+                                   * and a chip says why nothing was ever paid.
+                                   * Without it, an owner looking at an
+                                   * unfinished checkout cannot tell "they never
+                                   * completed it" from "we are still waiting".
+                                   * ─────────────────────────────────────────
+                                   */
+                                  /*
+                                   * Was money ever ASKED for on this booking?
+                                   *
+                                   * The quoted case is the exception the button
+                                   * below already documents: a quoted job's
+                                   * booking carries the `free` placeholder
+                                   * because its price lived on the quote, so
+                                   * `free` there does not mean free.
+                                   */
+                                  const paymentExpected = isQuoted
+                                    ? true
+                                    : Boolean(payment) && payment?.status !== 'free';
+
+                                  const cancelledUnpaid =
+                                    isPaymentStep &&
+                                    booking.status === 'cancelled' &&
+                                    paymentExpected &&
+                                    !moneyMoved;
+
                                   const colors = STATUS_COLORS[step.status];
 
                                   /*
@@ -1366,7 +1449,11 @@ export function BookingsTab({
                                   const scheduleDetail =
                                     isScheduleStep && booking.start_time
                                       ? [
-                                          new Intl.DateTimeFormat(language, { weekday: 'long' })
+                                          // The business's weekday, not the
+                                          // viewer's: an evening appointment
+                                          // was named the next day for an
+                                          // owner logged in from abroad.
+                                          new Intl.DateTimeFormat(language, timeZoneOptions({ weekday: 'long' }))
                                             .format(new Date(booking.start_time)),
                                           meetingSettled
                                             ? // The same word the button used.
@@ -1756,8 +1843,19 @@ export function BookingsTab({
                                           above, and each row is one sentence:
                                           how much, what happened, when.
                                         */}
+                                        {/*
+                                          Shown from the FIRST version, not the second.
+                                          ─────────────────────────────────────────────
+                                          It began as a history, which only earns its
+                                          place once there are two. It is now also the
+                                          way to open a quote — so hiding it for a
+                                          single one left that quote unreadable, which
+                                          is what the separate "View quote" button used
+                                          to cover before it was removed as a second
+                                          door to the same place.
+                                        */}
                                         {isProposalStep &&
-                                          proposalVersions.length > 1 && (
+                                          proposalVersions.length > 0 && (
                                             <div
                                               className="mt-2 flex flex-col gap-px overflow-hidden"
                                               style={{
@@ -1779,7 +1877,31 @@ export function BookingsTab({
                                                         : 'transparent',
                                                     }}
                                                   >
-                                                  <div className="flex items-center gap-2">
+                                                  {/*
+                                                    Every version opens, whatever became of it.
+                                                    ─────────────────────────────────────────
+                                                    The strip could already SHOW the history and
+                                                    not open it: only the current version had a
+                                                    button, so the number a client refused was
+                                                    listed and unreadable. A declined quote is
+                                                    the one worth reading — it records what was
+                                                    offered and at what price it was refused,
+                                                    which is the only place that is written down.
+
+                                                    A button rather than a clickable div so it is
+                                                    reachable by keyboard, and the INNER line only:
+                                                    the decline note below is a paragraph, which
+                                                    cannot legally sit inside a button.
+                                                  */}
+                                                  <button
+                                                    type="button"
+                                                    onClick={e => {
+                                                      e.stopPropagation();
+                                                      onViewProposal?.(booking.id, version.id);
+                                                    }}
+                                                    className="flex w-full items-center gap-2 text-start hover:opacity-80 transition-opacity"
+                                                    title={t('crm.proposal.view') || 'View quote'}
+                                                  >
                                                     {/* A dot, not a coloured pill per row —
                                                         five stacked pills read as an alert
                                                         panel rather than a history. */}
@@ -1839,7 +1961,7 @@ export function BookingsTab({
                                                     >
                                                       {version.at ? formatShortDate(version.at) : ''}
                                                     </span>
-                                                  </div>
+                                                  </button>
 
                                                   {/* What the client said, under
                                                       the version they said it
@@ -2180,6 +2302,13 @@ export function BookingsTab({
                                               </span>
                                             )}
 
+                                          {cancelledUnpaid && (
+                                            <span className="px-2.5 py-0.5 rounded-full text-[11.5px] font-medium bg-gray-500/10 text-gray-600 dark:text-gray-400">
+                                              {t('crm.payment.request_cancelled') ||
+                                                'Payment request cancelled'}
+                                            </span>
+                                          )}
+
                                           {intakeExpandable && (
                                             <button
                                               type="button"
@@ -2205,8 +2334,10 @@ export function BookingsTab({
                                               A payment step that exists at all
                                               on a quoted booking means an
                                               invoice was raised. */}
-                                          {isPaymentStep && onManagePayment &&
-                                            (isQuoted ? true : payment && payment.status !== 'free') && (
+                                          {/* Nothing to manage on a cancelled
+                                              booking nobody paid for: the
+                                              invoice went with it. */}
+                                          {isPaymentStep && onManagePayment && paymentExpected && !cancelledUnpaid && (
                                             <button
                                               type="button"
                                               onClick={e => {
@@ -2280,6 +2411,17 @@ export function BookingsTab({
                                                 : t('crm.proposal.send') || 'Send a quote'}
                                             </button>
                                           )}
+
+                                          {/*
+                                            No "View quote" button here any more.
+
+                                            It opened only the CURRENT version, while the
+                                            version strip above listed every one and opened
+                                            none — so the quote a client refused was visible
+                                            and unreadable. Each row in that strip is now the
+                                            way in, which makes this a second door to one of
+                                            the places it already goes.
+                                          */}
 
                                           {isIntakeStep && !hasIntake && onSendIntake && booking.status !== 'cancelled' && (
                                             <button

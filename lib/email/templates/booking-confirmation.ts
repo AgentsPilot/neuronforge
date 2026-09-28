@@ -112,9 +112,63 @@ function formatDateForCalendar(date: Date): string {
 }
 
 /**
- * Generate .ics file content for calendar invite
+ * Options that decide whether a calendar believes this invite.
  */
-export function generateICSContent(data: BookingConfirmationData): string {
+export interface ICSOptions {
+  /**
+   * The address the email is actually sent FROM.
+   *
+   * An invite whose ORGANIZER is a different address than the sender is
+   * treated as spoofed by Gmail and Outlook, and any RSVP goes to whatever
+   * address is named here. This used to be hardcoded to a platform mailbox
+   * nobody reads, while the mail itself goes out under each owner's own
+   * resolved sender.
+   */
+  organizerEmail?: string;
+  /**
+   * Which revision of this appointment the invite describes.
+   *
+   * A calendar keyed on UID ignores an update whose SEQUENCE has not risen —
+   * so a reschedule sent as SEQUENCE 0, as every one of them was, left the
+   * OLD time sitting in the client's calendar while the email announced the
+   * new one. Derive it from the booking's `updated_at`, which only moves
+   * forward. See `icsSequenceFor`.
+   */
+  sequence?: number;
+  /**
+   * `REQUEST` books or updates; `CANCEL` withdraws.
+   *
+   * Without the cancel form, an appointment the client cancelled stays in
+   * their calendar for ever — which is a problem the moment we start
+   * attaching invites at all.
+   */
+  method?: 'REQUEST' | 'CANCEL';
+}
+
+/**
+ * A SEQUENCE number from the booking's last-modified time.
+ *
+ * Must be a non-negative 32-bit integer that never decreases for a given UID.
+ * Counted in seconds from 2020 rather than from the Unix epoch, which keeps it
+ * far inside the signed-32-bit ceiling instead of a few years short of it.
+ */
+export function icsSequenceFor(updatedAt: string | Date | null | undefined): number {
+  const EPOCH_2020 = Date.UTC(2020, 0, 1);
+  const t = updatedAt ? new Date(updatedAt).getTime() : NaN;
+  if (Number.isNaN(t) || t <= EPOCH_2020) return 0;
+  return Math.floor((t - EPOCH_2020) / 1000);
+}
+
+/**
+ * Generate .ics file content for calendar invite
+ *
+ * DTSTART/DTEND are emitted as UTC instants (`...Z`), which is what lets the
+ * client's own calendar show the appointment on the client's own clock —
+ * including after they travel — without us ever guessing their timezone.
+ */
+export function generateICSContent(data: BookingConfirmationData, options: ICSOptions = {}): string {
+  const { organizerEmail, sequence = 0, method = 'REQUEST' } = options;
+  const isCancel = method === 'CANCEL';
   const start = formatDateForCalendar(data.dateTime);
   const end = formatDateForCalendar(data.endTime);
   const now = formatDateForCalendar(new Date());
@@ -128,7 +182,7 @@ export function generateICSContent(data: BookingConfirmationData): string {
     'VERSION:2.0',
     'PRODID:-//NeuronForge//Booking//EN',
     'CALSCALE:GREGORIAN',
-    'METHOD:REQUEST',
+    `METHOD:${method}`,
     'BEGIN:VEVENT',
     `UID:${uid}`,
     `DTSTAMP:${now}`,
@@ -137,15 +191,22 @@ export function generateICSContent(data: BookingConfirmationData): string {
     `SUMMARY:${escape(data.serviceName)}`,
     `DESCRIPTION:${escape(`Appointment with ${data.branding.businessName}`)}`,
     data.location ? `LOCATION:${escape(data.location)}` : '',
-    `ORGANIZER;CN=${escape(data.branding.businessName)}:mailto:noreply@neuronforge.app`,
+    organizerEmail
+      ? `ORGANIZER;CN=${escape(data.branding.businessName)}:mailto:${organizerEmail}`
+      : '',
     `ATTENDEE;CN=${escape(data.clientName)};RSVP=TRUE:mailto:${data.clientEmail}`,
-    'STATUS:CONFIRMED',
-    'SEQUENCE:0',
-    'BEGIN:VALARM',
-    'TRIGGER:-PT1H',
-    'ACTION:DISPLAY',
-    `DESCRIPTION:Reminder: ${escape(data.serviceName)} in 1 hour`,
-    'END:VALARM',
+    isCancel ? 'STATUS:CANCELLED' : 'STATUS:CONFIRMED',
+    `SEQUENCE:${sequence}`,
+    // No alarm on a withdrawal — it would ring for an appointment that is off.
+    ...(isCancel
+      ? []
+      : [
+          'BEGIN:VALARM',
+          'TRIGGER:-PT1H',
+          'ACTION:DISPLAY',
+          `DESCRIPTION:Reminder: ${escape(data.serviceName)} in 1 hour`,
+          'END:VALARM',
+        ]),
     'END:VEVENT',
     'END:VCALENDAR'
   ].filter(Boolean);
@@ -167,7 +228,10 @@ export function generateCalendarLinks(data: BookingConfirmationData): CalendarLi
 /**
  * Generate booking confirmation email
  */
-export function generateBookingConfirmationEmail(data: BookingConfirmationData): {
+export function generateBookingConfirmationEmail(
+  data: BookingConfirmationData,
+  icsOptions: ICSOptions = {}
+): {
   subject: string;
   html: string;
   icsContent: string;
@@ -295,7 +359,7 @@ export function generateBookingConfirmationEmail(data: BookingConfirmationData):
   return {
     subject: (data.hasSchedule === false ? t.unscheduledSubject : t.subject)[locale](data.serviceName),
     html: wrapInBrandedTemplate(content, brandingWithLocale),
-    icsContent: generateICSContent(data)
+    icsContent: generateICSContent(data, icsOptions)
   };
 }
 
@@ -490,7 +554,7 @@ export function generateBookingRescheduledEmail(data: {
   bookingId: string;
   branding: BrandingData;
   locale?: Locale;
-}): {
+}, icsOptions: ICSOptions = {}): {
   subject: string;
   html: string;
   icsContent: string;
@@ -628,6 +692,6 @@ export function generateBookingRescheduledEmail(data: {
       ...data,
       dateTime: data.newDateTime,
       endTime: data.newEndTime
-    } as BookingConfirmationData)
+    } as BookingConfirmationData, icsOptions)
   };
 }

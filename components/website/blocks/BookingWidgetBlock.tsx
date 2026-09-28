@@ -1,9 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { Calendar, Clock, ArrowRight, Loader2 } from 'lucide-react';
 import type { BlockRendererProps, CapabilityConfig } from './types';
+import { businessDateKey, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'BookingWidgetBlock' });
 
 interface BookingWidgetContent {
   title?: string;
@@ -88,18 +92,30 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
 
   const [serviceOptions, setServiceOptions] = useState<ServiceOption[]>([]);
   const [selectedService, setSelectedService] = useState<string>('');
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  /*
+   * A business date key ("2026-09-21"), not a Date.
+   *
+   * Held as a Date, every read of it went through the VISITOR's calendar: the
+   * day buttons showed the visitor's days, and the slot request sent the UTC
+   * day of the visitor's midnight — so a client booking late in the evening
+   * from a zone behind UTC asked the business for tomorrow and was shown
+   * tomorrow's hours under today's label.
+   */
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  /** The business's zone, from the availability response. */
+  const [businessTimezone, setBusinessTimezone] = useState<string | null>(null);
   const [availableSlots, setAvailableSlots] = useState<string[]>([]);
   const [selectedTime, setSelectedTime] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [availabilityConfigured, setAvailabilityConfigured] = useState<boolean | null>(null);
 
-  // Generate next 7 days
-  const nextDays = Array.from({ length: 7 }, (_, i) => {
-    const date = new Date();
-    date.setDate(date.getDate() + i);
-    return date;
-  });
+  /* The next 7 days as the BUSINESS counts them. Falls back to the visitor's
+     zone only until the first availability response names the real one. */
+  const nextDays = useMemo(() => {
+    const zone = businessTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const first = businessDateKey(new Date(), zone);
+    return Array.from({ length: 7 }, (_, i) => shiftBusinessDateKey(first, i));
+  }, [businessTimezone]);
 
   // Fetch availability data from API
   useEffect(() => {
@@ -115,6 +131,10 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
 
         if (data.success) {
           setAvailabilityConfigured(data.availabilityConfigured);
+          // The zone the returned slots belong to.
+          if (typeof data.timezone === 'string' && data.timezone) {
+            setBusinessTimezone(data.timezone);
+          }
 
           if (data.services && data.services.length > 0) {
             type ApiService = { id: string; name: string; duration_minutes: number; price?: number; currency?: string };
@@ -158,7 +178,7 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
           }
         }
       } catch (error) {
-        console.error('Failed to fetch availability:', error);
+        logger.error({ err: error, subdomain }, 'Failed to fetch availability');
         setAvailabilityConfigured(false);
       } finally {
         setLoading(false);
@@ -180,7 +200,7 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
     const fetchSlots = async () => {
       setLoading(true);
       try {
-        const dateStr = selectedDate.toISOString().split('T')[0];
+        const dateStr = selectedDate;
         const response = await fetch(
           `/api/website/booking/availability?subdomain=${subdomain}&service_id=${selectedService}&date=${dateStr}`
         );
@@ -188,16 +208,20 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
 
         if (data.success && data.slots) {
           // Extract just the time from the ISO date strings
+          /* The hour the BUSINESS means, not the hour on the visitor's laptop. */
+          const zone = (typeof data.timezone === 'string' && data.timezone) ? data.timezone : undefined;
           const times = data.slots.map((slot: { start: string }) => {
             const date = new Date(slot.start);
-            return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false });
+            return date.toLocaleTimeString(locale, {
+              hour: '2-digit', minute: '2-digit', hour12: false, timeZone: zone
+            });
           });
           setAvailableSlots(times);
         } else {
           setAvailableSlots([]);
         }
       } catch (error) {
-        console.error('Failed to fetch slots:', error);
+        logger.error({ err: error, subdomain, selectedService }, 'Failed to fetch slots');
         setAvailableSlots([]);
       } finally {
         setLoading(false);
@@ -207,19 +231,12 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
     fetchSlots();
   }, [selectedDate, selectedService, subdomain, availabilityConfigured, locale]);
 
-  const formatDate = (date: Date) => {
-    return date.toLocaleDateString(locale, {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric'
-    });
-  };
 
   const handleBook = () => {
     // Build booking URL with service and flow parameters
     const params = new URLSearchParams();
     if (selectedService) params.set('service', selectedService);
-    if (selectedDate) params.set('date', selectedDate.toISOString());
+    if (selectedDate) params.set('date', selectedDate);
     if (selectedTime) params.set('time', selectedTime);
 
     // Pass client flow if configured (excluding confirmation)
@@ -395,25 +412,28 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
               {labels.selectDate}
             </label>
             <div className="flex gap-2 overflow-x-auto pb-2">
-              {nextDays.map((date, index) => (
+              {nextDays.map((dateKey: string, index: number) => (
                 <button
                   key={index}
-                  onClick={() => setSelectedDate(date)}
+                  onClick={() => setSelectedDate(dateKey)}
                   className={`flex-shrink-0 p-3 rounded-xl border-2 transition-all min-w-[80px] text-center ${
-                    selectedDate?.toDateString() === date.toDateString()
+                    selectedDate === dateKey
                       ? 'border-current'
                       : 'ap-line ap-hover-line'
                   }`}
                   style={{
-                    borderColor: selectedDate?.toDateString() === date.toDateString() ? primaryColor : undefined,
-                    backgroundColor: selectedDate?.toDateString() === date.toDateString() ? `${primaryColor}10` : undefined
+                    borderColor: selectedDate === dateKey ? primaryColor : undefined,
+                    backgroundColor: selectedDate === dateKey ? `${primaryColor}10` : undefined
                   }}
                 >
+                  {/* Both read off the key. Anchored at noon UTC and formatted
+                      in UTC, so the weekday and the number always name the same
+                      day the button selects, in every visitor's zone. */}
                   <p className="text-xs ap-ink-3">
-                    {date.toLocaleDateString(locale, { weekday: 'short' })}
+                    {new Date(`${dateKey}T12:00:00Z`).toLocaleDateString(locale, { weekday: 'short', timeZone: 'UTC' })}
                   </p>
                   <p className="text-lg font-semibold ap-ink">
-                    {date.getDate()}
+                    {Number(dateKey.slice(8, 10))}
                   </p>
                 </button>
               ))}

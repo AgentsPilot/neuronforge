@@ -68,10 +68,12 @@ export default function RescheduleBookingPage() {
    * server's English — a new code added later should read as "something went
    * wrong" in the right language, not leak an internal string.
    */
-  const rescheduleErrorText = (data: { code?: string; hours?: number }): string => {
+  const rescheduleErrorText = (data: { code?: string; hours?: number; limit?: number }): string => {
     switch (data.code) {
       case 'too_late':
         return t('rescheduleTooLate', { hours: String(data.hours ?? 24) });
+      case 'reschedule_limit':
+        return t('rescheduleLimit', { limit: String(data.limit ?? 2) });
       case 'not_found':
         return t('bookingNotFoundDesc');
       case 'invalid_link':

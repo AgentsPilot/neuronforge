@@ -44,6 +44,7 @@ import PhoneInput, { getCountryCallingCode, parsePhoneNumber } from 'react-phone
 import type { Country } from 'react-phone-number-input';
 import phoneCountryLabels from 'react-phone-number-input/locale/en';
 import 'react-phone-number-input/style.css';
+import { Switch } from '@/components/ui/switch';
 import { SearchableCountrySelect } from '@/components/crm/SearchableCountrySelect';
 import { MediaUploader } from '@/components/website/MediaUploader';
 import { toE164 } from '@/lib/branding/phone';
@@ -566,24 +567,47 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
               />
             </div>
             {/* min-w-0 lets the hint wrap inside the row instead of forcing
-                it wider; the checkbox keeps its own line and never splits
+                it wider; the toggle keeps its own line and never splits
                 from its label. */}
             <div className="flex-1 min-w-0">
               <p className="text-xs text-[var(--v2-text-secondary)] leading-snug">
                 {t('settings.business.logo_hint')}
               </p>
-              <label className="mt-2 flex items-start gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={branding.show_logo_on_smart_links}
-                  onChange={(e) => saveBranding({ show_logo_on_smart_links: e.target.checked })}
-                  disabled={savingBranding}
-                  className="w-3.5 h-3.5 mt-0.5 shrink-0 accent-[#D14E97]"
-                />
-                <span className="text-xs text-[var(--v2-text-secondary)] leading-snug">
+              <div className="mt-2 flex items-start gap-2">
+                {/*
+                  `dir="ltr"` is non-negotiable: Switch moves its thumb by a fixed
+                  rightward `translate-x-[20px]`, so inside an RTL track the thumb
+                  starts at the right edge and that shift carries it clean out.
+                  The row around it still mirrors.
+
+                  The section's own accent as an inline style, not a class: the
+                  shared Switch hardcodes `--v2-primary` in its class list and
+                  this project's `cn` is a plain join with no tailwind-merge, so a
+                  competing class would leave both on the element and let CSS
+                  source order decide. This is the accent the checkbox used.
+                */}
+                <div dir="ltr" className="mt-0.5 shrink-0">
+                  <Switch
+                    id="logo-on-smart-links"
+                    checked={branding.show_logo_on_smart_links}
+                    onCheckedChange={(checked) =>
+                      saveBranding({ show_logo_on_smart_links: checked })
+                    }
+                    disabled={savingBranding}
+                    style={
+                      branding.show_logo_on_smart_links
+                        ? { backgroundColor: CONFIG_ACCENT }
+                        : undefined
+                    }
+                  />
+                </div>
+                <label
+                  htmlFor="logo-on-smart-links"
+                  className="text-xs text-[var(--v2-text-secondary)] leading-snug cursor-pointer"
+                >
                   {t('settings.business.logo_on_smart_links')}
-                </span>
-              </label>
+                </label>
+              </div>
             </div>
           </div>
         </div>

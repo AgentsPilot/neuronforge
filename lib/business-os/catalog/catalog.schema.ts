@@ -233,6 +233,36 @@ export interface FieldDef {
    * the need for per-language phrasing examples.
    */
   semanticTerms?: Record<string, string[]>;
+  /**
+   * Words that ASK for a declared term — term → the words, in every language.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * NEVER SENT TO THE MODEL. That is the whole design.
+   *
+   * `semanticTerms` above deliberately carries no synonyms, and the catalog
+   * records why: adding them "produced 230 dead example strings in the previous
+   * version". That objection is about PROMPT content — phrasings shipped to a
+   * model in the hope it recognises one.
+   *
+   * These are not that. They are read only by a validator, to catch a question
+   * that asked for a grouping and got no filter at all:
+   *
+   *   "how much money am I owed in total?"  ->  sum(total) over invoices, where []
+   *
+   * which sums every invoice ever raised, paid and cancelled ones included, and
+   * reports it as what the business is owed. The bypass check next door cannot
+   * see this one: there is no wrong literal to object to, only a missing filter.
+   *
+   * Because they never reach the prompt they cannot become dead example strings,
+   * and they cost nothing per turn. A word that stops being useful is deleted
+   * with no effect on what the model is told.
+   *
+   * Keep them to words that UNAMBIGUOUSLY ask for the grouping. "owed" does;
+   * "invoice" does not. A cue that fires on an ordinary question buys a wasted
+   * repair round.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  semanticTermCues?: Record<string, string[]>;
 }
 
 /** Cardinality of a relation from the owning entity's point of view. */

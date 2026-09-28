@@ -84,6 +84,24 @@ export interface ConversationContext {
    */
   lastPlan?: RememberedPlan;
   /**
+   * The sentence the last answer actually said, figures and all.
+   *
+   * `lastPlan.answer.text` is the TEMPLATE — "Your revenue is {s1.value}" — so
+   * nothing in this context ever knew that the value was $1,000. That mattered
+   * the moment a user referred to the answer by its number:
+   *
+   *   "what is my revenue"                        -> $1,000.00
+   *   "which booking we have the $1000 revenue?"  -> bookings: 0
+   *                                                  (list bookings where amount is 1000)
+   *
+   * $1,000 is a total over payments. No single booking need hold that figure,
+   * and here none did — so a definite reference back to the previous answer was
+   * read as a filter, and answered with a confident zero.
+   *
+   * One short string, already rendered, so it costs nothing to carry.
+   */
+  lastAnswer?: string;
+  /**
    * The plan BEFORE that one.
    *
    * Kept for a single purpose: a question that names its entity but adds no
@@ -110,6 +128,14 @@ export interface RememberedPlan {
   answer?: { text: string; primary_step?: string };
   at: string;
 }
+
+/**
+ * Enough for a sentence with its figures in it, not a paragraph.
+ *
+ * Only the numbers and what they were about need to survive — "Your revenue is
+ * $1,000.00 and refunds total $0.00." is 48 characters.
+ */
+const MAX_ANSWER_CHARS = 240;
 
 const EMPTY: ConversationContext = { turns: [] };
 
@@ -163,6 +189,8 @@ export class ConversationMemory {
           ? { ...context.lastRows, items: context.lastRows.items.slice(0, MAX_ROWS) }
           : undefined,
         pendingQuestion: context.pendingQuestion,
+        // Capped like everything else here: this is context, not a transcript.
+        lastAnswer: context.lastAnswer?.slice(0, MAX_ANSWER_CHARS),
         // Only a read plan is worth keeping: an alternative re-runs a query,
         // never a write, and a stored mutate would be a loaded gun.
         lastPlan: context.lastPlan
@@ -263,13 +291,107 @@ export function renderContextForPrompt(context: ConversationContext): string {
       .join('\n  ');
 
     if (rows) {
+      /*
+       * Mid-clarification, these rows are BACKGROUND, not a template.
+       *
+       * When we asked the question, the request being completed is not the one
+       * the last answer was about — a clarification returns before the plan is
+       * stored, so `lastPlan` necessarily belongs to an older, different
+       * request. Framed as something to copy, it produced this:
+       *
+       *   "do I have a customer named Yael?" -> 0  (contacts, first_name=yael,
+       *                                              stage=Customer)
+       *   "find a contact"                   -> which contact?
+       *   "yael"                             -> 0  (contacts, first_name=yael,
+       *                                              stage=Customer)
+       *
+       * The second attempt says nothing about customers. It was filtered by
+       * stage anyway and returned another confident zero, for a reason the user
+       * had no way to undo.
+       *
+       * Still SHOWN, though — deleting them would break the opposite case, where
+       * the clarified request refers back ("the client with that booking") and
+       * the only record of what "that" was is right here.
+       */
+      const copyable =
+        `A follow-up with no subject of its own — "their total", "and the sum", "how ` +
+        `many of those", "show them" — is about THOSE rows: copy the entity and the ` +
+        `where VERBATIM and change only the aggregate. Never drop a filter, and never ` +
+        `add a step the new message did not ask for.\n` +
+        /*
+         * A figure has rows behind it, and they are still reachable.
+         *
+         * "what is my revenue" -> $1,000 -> "who is the client" was answered with
+         * a question back: which client? An ungrouped aggregate identifies
+         * nothing, so there was nothing to point at, and the model read "the
+         * client" as a fresh contacts lookup with no name in it.
+         *
+         * But the rows were never lost — the entity and the where that produced
+         * the $1,000 are printed directly above. Asking WHO or WHEN about a
+         * figure is the same query seen from a different angle, so it is answered
+         * by running it as a find rather than by starting over somewhere else.
+         *
+         * This is also why remembering the aggregated rows eagerly would be the
+         * wrong fix: it would cost a second query on every turn that states a
+         * figure, to serve the few that are asked about. The filter is already
+         * here, and re-running it costs nothing until someone asks.
+         */
+        `"Who is it", "which one", "who is the client", "when was it" ask about the ` +
+        `SAME rows from a different angle: keep the entity and the where, change the ` +
+        `operation from compute to find, and let the answer name the related record. ` +
+        `Do not start a fresh lookup on whichever entity the question mentions — the ` +
+        `rows are already picked out by the filter above.\n` +
+        /*
+         * The other half of the rule, which was implied and therefore ignored.
+         *
+         * "Never drop a filter" read as unconditional, so a message that merely
+         * named a noun still inherited the previous where — a search for "yael"
+         * kept a stage=Customer filter from a question two turns back. Naming the
+         * distinction precisely matters: "the client" names a noun and picks
+         * nothing, while "yael" picks. The narrowing is not lost by saying so —
+         * when the new query comes back unfiltered the route offers the previous
+         * filter as a one-tap chip ("only customers"), and an offer the user can
+         * see beats a filter they cannot.
+         */
+        `But if the new message supplies its OWN way of picking rows — a name, a ` +
+        `number, a date, a status — it is a NEW request: plan it from that message ` +
+        `alone and carry NOTHING from the rows above. Mentioning an entity is not ` +
+        `picking rows; giving a value that identifies them is. Inheriting a filter ` +
+        `nobody repeated is how a search returns zero for a reason the user cannot see.`;
+
+      const background =
+        `These are context only. The user is answering a question YOU asked about a ` +
+        `DIFFERENT request, so do NOT copy this entity or these filters into it. Use ` +
+        `them only to resolve a reference back — "that one", "those clients", "the ` +
+        `client with that booking" — if the combined request contains one.`;
+
       parts.push(
         `Your last answer was about these rows:\n  ${rows}\n` +
-          `A follow-up with no subject of its own — "their total", "and the sum", "how ` +
-          `many of those", "show them" — is about THOSE rows: copy the entity and the ` +
-          `where VERBATIM and change only the aggregate. Never drop a filter, and never ` +
-          `add a step the new message did not ask for.`
+          (context.pendingQuestion ? background : copyable)
       );
+
+      /*
+       * A figure you reported is not a value stored on a row.
+       *
+       * "which booking we have the $1000 revenue?" was planned as
+       * `find bookings where amount = 1000` and answered "bookings: 0". The
+       * $1,000 was a TOTAL over payments; no single booking need hold it, and
+       * none did. The user was naming the previous answer by its number — a
+       * definite reference, exactly like "them" — and it was read as data.
+       *
+       * This is the worse half of the pair, because it does not fail: it returns
+       * a confident zero about a question that was never asked. Only stated when
+       * the answer actually carried a figure, so ordinary turns pay nothing.
+       */
+      if (context.lastAnswer && /\d/.test(context.lastAnswer)) {
+        parts.push(
+          `That answer read: "${context.lastAnswer}"\n` +
+            `Its figures were AGGREGATED from those rows — none of them is a value stored ` +
+            `on any single row. If the user quotes one back — "the $1000 revenue", "those ` +
+            `4" — they are naming THAT ANSWER, not asking you to filter by the number. ` +
+            `Never put a figure from your own answer into a where clause.`
+        );
+      }
     }
   }
 

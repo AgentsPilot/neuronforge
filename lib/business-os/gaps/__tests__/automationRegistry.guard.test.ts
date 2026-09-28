@@ -67,6 +67,45 @@ describe('the automation registry', () => {
       expect(known.has(automation.gapId)).toBe(true);
     }
   });
+
+  it('never lets an owner alert share a column with a consent', () => {
+    /*
+     * `column` is the owner's permission for the platform to write to their
+     * CLIENT; `ownerAlertColumn` is whether the platform writes to the OWNER.
+     * One column serving both would make declining the automation switch off the
+     * alert too — the two are asked with different verbs precisely because they
+     * are different questions.
+     */
+    const consents = new Set(OPERATIONAL_AUTOMATIONS.map(a => a.column));
+
+    for (const automation of OPERATIONAL_AUTOMATIONS) {
+      if (!automation.ownerAlertColumn) continue;
+      expect(automation.ownerAlertColumn).not.toBe(automation.column);
+      expect(consents.has(automation.ownerAlertColumn as never)).toBe(false);
+    }
+  });
+});
+
+describe('the enquiry reply', () => {
+  const reply = automationById('reply_to_enquiries')!;
+
+  it('is registered', () => {
+    expect(reply).toBeDefined();
+  });
+
+  it('carries the owner alert, so the card can offer both together', () => {
+    expect(reply.ownerAlertColumn).toBe('lead_alert_email_enabled');
+  });
+
+  it('is offered to every business, which is what makes the card a safe home', () => {
+    /*
+     * The whole reason the alert switch moved out of Settings. An automation with
+     * a `requires` can be absent for a given business, and a switch that lives
+     * only on an absent card is unreachable — the trap the briefing card sets on
+     * a cold-start account.
+     */
+    expect(reply.requires).toBeUndefined();
+  });
 });
 
 describe('the meeting reminder', () => {
@@ -95,3 +134,35 @@ describe('the meeting reminder', () => {
     expect(reminder.carriedOutBy).toBeUndefined();
   });
 });
+
+describe('the phase-waiting gap', () => {
+  const gap = GAP_DEFINITIONS.find(g => g.id === 'stage_awaiting_completion');
+
+  it('is registered, or nothing surfaces a phase at all', () => {
+    expect(gap).toBeDefined();
+  });
+
+  it('blocks on the OWNER, which is what puts it on the Needs-you card', () => {
+    /*
+     * `findGaps` filters the card on exactly this. A phase waits on the owner to
+     * say the work happened — the client cannot do it, and cannot be chased for
+     * money nobody has billed.
+     */
+    expect(gap!.blocksOn).toBe('owner');
+  });
+
+  it('is stuck the moment it exists', () => {
+    // There is nothing to wait for: no date will ever arrive to make it billable.
+    expect(gap!.staleAfterHours).toBe(0);
+  });
+
+  it('navigates rather than sends', () => {
+    /*
+     * `bill_stage` has no entry in `NeedsYouCard`'s `endpointFor`, like
+     * `write_quote`. Billing a phase asks the owner to judge that work is
+     * finished, and no button should make that call for them.
+     */
+    expect(gap!.action).toBe('bill_stage');
+  });
+});
+

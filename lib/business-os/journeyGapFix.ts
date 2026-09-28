@@ -36,28 +36,54 @@ import type { JourneyGapKind } from '@/lib/business-os/journeyReadiness';
 /** A tab of the Business OS configuration dialog. */
 export type GapFixTab = 'availability' | 'business' | 'payments' | 'invoice';
 
-export interface GapFix {
-  tab: GapFixTab;
+interface GapFixLabel {
   /** Translation key, looked up first. */
   key: string;
   /** English shown when no translation exists for the active language. */
   fallback: string;
 }
 
+/**
+ * Where a Fix button goes.
+ *
+ * Two shapes, because not every gap is cleared in the configuration dialog.
+ * The timezone is the one that is not, and modelling it as a dialog tab is
+ * exactly how it came to point at a tab with no timezone control on it.
+ */
+export type GapFix =
+  | ({ target: 'dialog'; tab: GapFixTab } & GapFixLabel)
+  | ({ target: 'route'; href: string } & GapFixLabel);
+
 export function gapFixAction(kind: JourneyGapKind): GapFix {
   switch (kind) {
     case 'hours':
-      return { tab: 'availability', key: 'gap.fix.availability', fallback: 'Set your working hours' };
+      return { target: 'dialog', tab: 'availability', key: 'gap.fix.availability', fallback: 'Set your working hours' };
 
-    // The timezone lives with the business's own details, not with the hours it
-    // qualifies — which is the whole reason this mapping exists.
+    /*
+     * The timezone is NOT in the configuration dialog.
+     *
+     * It is stored on `user_preferences`, and the only control that writes it
+     * is the picker on the Business OS settings page. This pointed at the
+     * dialog's `business` tab, which renders `BusinessProfileSection` — a
+     * component with no timezone field anywhere in it. So the one gap that
+     * blocks publishing a booking surface sent the owner to a form that could
+     * not clear it, under a button reading "Set your timezone".
+     *
+     * That is the same failure this whole module was written to prevent, in
+     * the one case the dialog cannot serve: the destination has to be a route.
+     */
     case 'timezone':
-      return { tab: 'business', key: 'gap.fix.timezone', fallback: 'Set your timezone' };
+      return {
+        target: 'route',
+        href: '/business-os/settings?section=timezone',
+        key: 'gap.fix.timezone',
+        fallback: 'Set your timezone',
+      };
 
     case 'processor':
-      return { tab: 'payments', key: 'gap.fix.processor', fallback: 'Connect payments' };
+      return { target: 'dialog', tab: 'payments', key: 'gap.fix.processor', fallback: 'Connect payments' };
 
     case 'invoicing':
-      return { tab: 'invoice', key: 'gap.fix.invoicing', fallback: 'Complete invoice details' };
+      return { target: 'dialog', tab: 'invoice', key: 'gap.fix.invoicing', fallback: 'Complete invoice details' };
   }
 }

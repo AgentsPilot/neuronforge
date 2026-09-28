@@ -29,6 +29,7 @@ import { IntakeFormStep, type IntakeTemplate } from './IntakeFormStep';
 import { StripePaymentForm } from './StripePaymentForm';
 import { ConsentCheckbox, type ConsentCopy } from '@/components/public/ConsentCheckbox';
 import { useConsentCopy, consentPayload } from '@/hooks/useConsentCopy';
+import { fromBusinessLocalInput } from '@/lib/scheduling/businessTime';
 
 // ============================================================================
 // TYPES
@@ -1958,6 +1959,28 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
   const [slots, setSlots] = useState<TimeSlot[]>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [slotsReason, setSlotsReason] = useState<string | null>(null);
+  /*
+   * The BUSINESS's timezone, as reported by the availability API.
+   *
+   * The slots it returns are naive wall clocks ("2026-09-21T14:00:00") meaning
+   * the business's clock. Turning one back into an instant, or stamping a
+   * booking, used the visitor's browser zone instead — so a client in London
+   * booking a New York business sent an instant five hours out and labelled it
+   * `Europe/London`. Null until the first availability response arrives.
+   */
+  const [businessTimezone, setBusinessTimezone] = useState<string | null>(null);
+
+  /**
+   * A slot's wall clock ("2026-09-21T14:00:00") as an ISO instant.
+   *
+   * Falls back to the visitor's zone only if the API never reported one, which
+   * is the old behaviour and no worse than it was.
+   */
+  const businessLocalToISO = useCallback((wallClock: string): string => {
+    if (!businessTimezone) return new Date(wallClock).toISOString();
+    // `fromBusinessLocalInput` wants `YYYY-MM-DDTHH:mm`; slots carry seconds.
+    return fromBusinessLocalInput(wallClock.slice(0, 16), businessTimezone).toISOString();
+  }, [businessTimezone]);
 
   // Contact details
   const [clientName, setClientName] = useState('');
@@ -2184,6 +2207,11 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
             display_time: slot.display_time
           }));
           setSlots(mappedSlots);
+          // The zone those wall clocks belong to. Returned by the route all
+          // along; the widget simply never read it.
+          if (typeof data.timezone === 'string' && data.timezone) {
+            setBusinessTimezone(data.timezone);
+          }
           // Kept so the step can tell "no hours set at all" from "nothing free
           // on this date" — the same empty list, two different problems.
           setSlotsReason((data.reason as string) ?? null);
@@ -2286,9 +2314,15 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
             start_time: selectedSlot
               ? (selectedSlot.start.includes('Z')
                 ? selectedSlot.start
-                : new Date(selectedSlot.start).toISOString())
+                : businessLocalToISO(selectedSlot.start))
               : undefined,
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            /*
+             * The BUSINESS's zone, not the visitor's. This sent whatever zone
+             * the client's laptop happened to be in, and that value is what
+             * later renders the appointment in confirmation mail — so a
+             * booking made from abroad told everyone the wrong hour.
+             */
+            timezone: businessTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
             page_url: typeof window !== 'undefined' ? window.location.href : undefined,
             consent: consentPayload(consentCopy, consentGiven),
           }),
@@ -2326,11 +2360,17 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
     setError(null);
 
     try {
-      // Convert wall-clock time to ISO datetime (only if slot exists)
+      /*
+       * The chosen wall clock, as the instant the BUSINESS means by it.
+       *
+       * `new Date(...)` resolved it against the VISITOR's zone, so the same
+       * "2:00 PM" the widget displayed became a different instant for every
+       * client who booked it — and none of them the one the owner had open.
+       */
       const startTimeISO = selectedSlot
         ? (selectedSlot.start.includes('Z')
           ? selectedSlot.start
-          : new Date(selectedSlot.start).toISOString())
+          : businessLocalToISO(selectedSlot.start))
         : undefined;
 
       // In preview mode, don't pass subdomain - use authenticated user instead

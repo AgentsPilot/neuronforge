@@ -40,6 +40,15 @@ const dbState: {
   transactionsById: {},
   insertedKeys: [],
   insertedRows: [],
+  /*
+   * The business's payment account, as the refund path sees it.
+   *
+   * CONNECTED BY DEFAULT, because that is the precondition of the strict rule
+   * every other test here relies on: card money goes back to the card. Set to
+   * null only by the tests about a business that has removed its account, where
+   * there is no card route left and recording by hand is the only honest close.
+   */
+  connectAccount: { stripe_account_id: 'acct_connected' } as { stripe_account_id: string } | null,
 };
 
 jest.mock('@/lib/supabaseServer', () => ({
@@ -60,6 +69,9 @@ jest.mock('@/lib/supabaseServer', () => ({
       builder.limit = chain;
 
       builder.maybeSingle = async () => {
+        if (table === 'stripe_connect_accounts') {
+          return { data: dbState.connectAccount, error: null };
+        }
         if (table !== 'payment_transactions') return { data: dbState.existingRefund, error: null };
 
         // A group refund asks for each transaction in turn, so the harness has
@@ -133,6 +145,8 @@ beforeEach(() => {
   dbState.transactionsById = {};
   dbState.insertedKeys = [];
   dbState.insertedRows = [];
+  // Connected unless a test says otherwise — see `connectAccount`.
+  dbState.connectAccount = { stripe_account_id: 'acct_connected' };
   process.env.STRIPE_SECRET_KEY = 'sk_test_x';
 });
 
@@ -733,6 +747,131 @@ describe('refund — money returned by hand', () => {
     });
     await expect(getRefundability('user-1', 'tx-1')).resolves.toMatchObject({
       refundable: false,
+      recordable: false,
+    });
+  });
+});
+
+/*
+ * A business that has LEFT its payment processor.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The strict rule above — card money goes back to the card — is right while an
+ * account is connected and becomes a trap the moment one is removed. Owners
+ * leave Stripe (commonly to stop paying the percentage) and carry on invoicing;
+ * any card payment they were still holding could then never be given back. No
+ * refund could be issued, recording one was refused, and the client's money sat
+ * as "held" for ever behind a button that could not work.
+ *
+ * These assert the narrow escape: with NO account left, the owner can say they
+ * returned it another way, and the ledger records which of the two happened.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('refund — card money after the processor is gone', () => {
+  const noAccount = () => {
+    dbState.connectAccount = null;
+  };
+
+  it('records card money as returned when no account remains', async () => {
+    dbState.transaction = settledTransaction({ processor_type: 'stripe' });
+    noAccount();
+
+    const result = await refund({
+      userId: 'user-1',
+      transactionId: 'tx-1',
+      source: 'app',
+      manual: true,
+      clientRequestId: 'req-gone-1',
+    });
+
+    expect(result.ok).toBe(true);
+    // Nothing was asked of a processor that is not there any more.
+    expect(stripeRefundsCreate).not.toHaveBeenCalled();
+  });
+
+  /*
+   * The honesty of the ledger. `processor_type: 'manual'` now covers two
+   * different events, and only one means "this never went through a card". The
+   * flag is what keeps them apart, so the books never read as though a card was
+   * credited when it was not.
+   */
+  it('marks it as returned outside the processor, not as an ordinary manual refund', async () => {
+    dbState.transaction = settledTransaction({ processor_type: 'stripe' });
+    noAccount();
+
+    await refund({
+      userId: 'user-1',
+      transactionId: 'tx-1',
+      source: 'app',
+      manual: true,
+      clientRequestId: 'req-gone-2',
+    });
+
+    expect(dbState.insertedRows[0]).toMatchObject({
+      processor_type: 'manual',
+      status: 'succeeded',
+      metadata: { returned_outside_processor: true },
+    });
+  });
+
+  it('leaves an ordinary manual refund unmarked', async () => {
+    dbState.transaction = settledTransaction({
+      processor_type: 'manual',
+      stripe_payment_intent_id: null,
+      stripe_charge_id: null,
+    });
+
+    await refund({
+      userId: 'user-1',
+      transactionId: 'tx-1',
+      source: 'app',
+      manual: true,
+      clientRequestId: 'req-gone-3',
+    });
+
+    expect(dbState.insertedRows[0]).toMatchObject({ processor_type: 'manual' });
+    expect(dbState.insertedRows[0].metadata).toEqual({});
+  });
+
+  /*
+   * DISCONNECTED IS NOT GONE. Disconnecting stops new charges and keeps the
+   * account; a refund does not need `charges_enabled`, so the card route is
+   * still open and the strict rule still applies.
+   */
+  it('still refuses while an account is merely disconnected', async () => {
+    dbState.transaction = settledTransaction({ processor_type: 'stripe' });
+    dbState.connectAccount = { stripe_account_id: 'acct_disconnected' };
+
+    const result = await refund({
+      userId: 'user-1',
+      transactionId: 'tx-1',
+      source: 'app',
+      manual: true,
+      clientRequestId: 'req-gone-4',
+    });
+
+    expect(result).toMatchObject({ ok: false, code: 'NOT_REFUNDABLE' });
+    expect(dbState.insertedRows).toHaveLength(0);
+  });
+
+  it('tells the UI to offer recording rather than a refund that cannot work', async () => {
+    dbState.transaction = settledTransaction({ processor_type: 'stripe' });
+    noAccount();
+
+    const state = await getRefundability('user-1', 'tx-1');
+
+    expect(state).toMatchObject({
+      refundable: false,
+      reason: 'ACCOUNT_GONE',
+      recordable: true,
+    });
+  });
+
+  it('still offers an ordinary refund while the account is there', async () => {
+    dbState.transaction = settledTransaction({ processor_type: 'stripe' });
+
+    expect(await getRefundability('user-1', 'tx-1')).toMatchObject({
+      refundable: true,
       recordable: false,
     });
   });

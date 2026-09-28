@@ -286,6 +286,35 @@ All LLM calls go through `getProviderFactory()` (`@/lib/ai/providerFactory`) —
 
 **Before any code is committed:** QA agent must confirm at minimum the happy path and one failure path are tested.
 
+### The Business OS chat golden set
+
+Jest cannot test the chat's hardest half: the planner is one LLM call, so its
+output is non-deterministic and the bugs live in the PLAN it emitted rather than
+in any function's return value. `tests/business-os-chat/` sends real questions
+through the real planner and asserts on the plan (the IR), never on prose.
+
+`npm run eval:chat` — add `--runs=3` (flakiness), `--filter=owed`, `--user=<uuid>`,
+`--json`, or `--no-cache`.
+
+- **A scenario is one utterance, or a `turns` conversation** posted at the real
+  chat route, so the real conversation memory decides what turn two means. Every
+  cross-turn bug needs that: a filter inherited from two turns back, a figure the
+  assistant just reported used as a row value.
+- **Use `--no-cache` for any before-and-after.** On a warm suite most scenarios
+  are served from the plan cache and never reach the model, and any prompt or
+  tool-schema change invalidates that cache — so the next run is cold and the
+  last was warm. That has already produced one wrong conclusion. The summary
+  prints how many were cache-served.
+- **A scenario that names data needs it.** `tests/business-os-chat/seed-fixture.ts`
+  creates it, is idempotent, and takes `--check`. Hebrew scenarios need
+  Hebrew-named contacts: a Hebrew request deliberately does not match a
+  Latin-script record, and that refusal is correct.
+- **Reading a result:** the single-run noise band is at least ±3 scenarios, so a
+  smaller difference is not a result. Flaky is reported separately from failing.
+  When one fails, check first whether the expectation went stale or the account
+  lacks the data — of 26 failures examined on 2026-09-26, only about half were
+  defects.
+
 ---
 
 ## Documentation Standards
@@ -344,6 +373,7 @@ npm run lint                 # ESLint
 npm test                     # Full Jest suite (ignores .claude/ worktrees)
 npm test -- path/to/tests    # Subset
 npm run test:plugins         # Plugin tests only
+npm run eval:chat            # Business OS chat golden set (real planner, real account)
 ```
 
 ---

@@ -3,8 +3,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
-import { verifyBookingToken, BookingEmailService } from '@/lib/services/BookingEmailService';
-import { removeOwnerCalendarEvent } from '@/lib/scheduling/syncBookingCalendar';
+import { verifyBookingToken } from '@/lib/services/BookingEmailService';
+import { cancelBooking, clientCancellationReason } from '@/lib/services/BookingLifecycleService';
 import { notifyOwnerOfLead } from '@/lib/services/LeadAlertService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
@@ -117,42 +117,56 @@ export async function POST(
       );
     }
 
-    // Cancel booking
-    const { data: updatedBooking, error: updateError } = await supabaseServer
-      .from('scheduling_bookings')
-      .update({
-        status: 'cancelled',
-        cancellation_reason: reason ? `Client cancelled: ${reason}` : 'Cancelled by client',
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', bookingId)
-      .select()
-      .single();
+    /*
+     * The same cancellation the owner's route performs.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This wrote the status itself, then bolted the email and the calendar on
+     * afterwards — so everything added to `cancelBooking` since reached bookings
+     * the OWNER cancelled and not the ones a client did. Most consequentially
+     * the quote withdrawal, whose own comment describes the failure exactly: a
+     * client still holding a live link could accept next week a job the business
+     * had already written off. A client cancelling a quoted consultation is
+     * precisely when that happens, and it was the one path that did not withdraw.
+     *
+     * The guards above stay here, because they are this surface's alone: the
+     * token, the `confirmed` check and the service's notice window are what
+     * separate a client cancelling their own booking from the owner cancelling
+     * anybody's.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const cancellation = await cancelBooking({
+      bookingId,
+      userId: booking.user_id,
+      /*
+       * The prefix is the record of WHO cancelled, and the only thing that
+       * distinguishes this from the owner doing it. Built by the service that
+       * owns the wording, because the dashboard gap matches on it: a second
+       * copy of the string here is a cancellation the owner never hears about.
+       */
+      reason: clientCancellationReason(reason),
+      request,
+      logger: requestLogger,
+    });
 
-    if (updateError) {
-      requestLogger.error({ err: updateError }, 'Failed to cancel booking');
+    if (cancellation.error || !cancellation.data) {
+      requestLogger.error({ err: cancellation.error }, 'Failed to cancel booking');
       return NextResponse.json(
         { success: false, code: 'cancel_failed', error: 'Failed to cancel booking' },
         { status: 500 }
       );
     }
 
-    requestLogger.info({ bookingId, reason }, 'Booking cancelled by client');
-
-    // Send cancellation email (non-blocking)
-    BookingEmailService.sendCancellationEmail(bookingId, booking.user_id, reason)
-      .catch(err => requestLogger.warn({ err }, 'Cancellation email failed (non-blocking)'));
-
-    /*
-     * Free the slot in the owner's own calendar (non-blocking).
-     *
-     * Nothing did this. The hour stayed blocked after the client said they were
-     * not coming, so the owner held it for somebody who had already cancelled —
-     * the single most expensive thing on this path, because an hour nobody can
-     * book is an hour nobody pays for.
-     */
-    removeOwnerCalendarEvent(bookingId, booking.user_id, requestLogger)
-      .catch(err => requestLogger.warn({ err, bookingId }, 'Calendar removal failed'));
+    const updatedBooking = cancellation.data.booking;
+    requestLogger.info(
+      {
+        bookingId,
+        reason,
+        invoicesCancelled: cancellation.data.invoicesCancelled,
+        amountHeld: cancellation.data.amountHeld,
+      },
+      'Booking cancelled by client'
+    );
 
     /*
      * And tell them (non-blocking).
@@ -173,6 +187,12 @@ export async function POST(
       startTime: booking.start_time,
       timezone: booking.timezone,
       reason,
+      // What the business is now holding for an appointment that is not
+      // happening. The alert named the time and the reason and never this.
+      amountHeld: cancellation.data.amountHeld || undefined,
+      heldCurrency: cancellation.data.heldCurrency,
+      // Still charging, and left running deliberately — the owner decides.
+      planStillCharging: cancellation.data.planLive,
     }).catch(err => requestLogger.warn({ err, bookingId }, 'Owner alert failed (non-blocking)'));
 
     return NextResponse.json({

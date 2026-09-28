@@ -28,8 +28,8 @@
 
 import { Clock, FileText, ArrowRight } from 'lucide-react';
 import { gapFixAction } from '@/lib/business-os/journeyGapFix';
+import { useGapFix } from '@/components/business-os/setup/useGapFix';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
-import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
 
 /** The shape every consumer of `/api/business-os/journey-readiness` receives. */
 export interface JourneyGapView {
@@ -62,7 +62,7 @@ interface Props {
 
 export function JourneyGapNotice({ gaps, fallbackMessage, onResolved, onFixOpened }: Props) {
   const { t, language } = useLanguage();
-  const { openConfiguration } = useConfigurationDialog();
+  const runGapFix = useGapFix();
 
   const tr = (key: string, fallback: string): string => {
     const value = t(key);
@@ -113,14 +113,9 @@ export function JourneyGapNotice({ gaps, fallbackMessage, onResolved, onFixOpene
               <p className="text-sm text-[var(--v2-text-primary)]">{gap.message}</p>
               <button
                 type="button"
-                onClick={() => {
-                  onFixOpened?.();
-                  openConfiguration(fix.tab, {
-                    onClose: () => {
-                      void onResolved?.();
-                    },
-                  });
-                }}
+                onClick={() =>
+                  runGapFix(gap.kind, { onOpen: onFixOpened, onClose: onResolved })
+                }
                 className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#4F6EF7] hover:bg-[#3B5AE5] transition-colors"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >

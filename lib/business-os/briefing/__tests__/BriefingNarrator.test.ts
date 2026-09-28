@@ -1,4 +1,4 @@
-import { findUnsupportedFigures, findUntranslatedWords, composeFallback } from '../BriefingNarrator';
+import { findUnsupportedFigures, findUntranslatedWords, composeFallback, dropUnsupportedLines } from '../BriefingNarrator';
 import type { BriefingFacts } from '../BriefingFactsService';
 
 /*
@@ -19,8 +19,17 @@ jest.mock('@/lib/logger', () => ({
   createLogger: () => ({ warn: jest.fn(), info: jest.fn(), error: jest.fn(), debug: jest.fn() }),
 }));
 
-function facts(overrides: Partial<BriefingFacts> = {}): BriefingFacts {
-  return {
+/**
+ * Nested objects MERGE with the defaults rather than replacing them.
+ *
+ * A test that overrides one appointment field used to have to restate every
+ * other, so adding a fact to `BriefingFacts` broke every fixture in the file at
+ * once. Merging means a case says only what it is about.
+ */
+type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? Partial<T[K]> : T[K] };
+
+function facts(overrides: DeepPartial<BriefingFacts> = {}): BriefingFacts {
+  const base = {
     day: {
       timezone: 'Asia/Jerusalem',
       date: '2026-09-08',
@@ -36,19 +45,28 @@ function facts(overrides: Partial<BriefingFacts> = {}): BriefingFacts {
       awaitingPayment: [],
       first: { name: 'Michael', timeLocal: '09:00', serviceName: 'Assessment 1' },
       cancelled: [{ name: 'Dana', timeLocal: '15:00' }],
+      noShows: [],
+      syncFailures: 0,
     },
     money: {
-      owed: [{ name: 'John', amount: 250, currency: 'USD', overdue: true }],
+      owed: [{ name: 'John', amount: 250, currency: 'USD', overdue: true, dueDate: null }],
       totalOwed: 250,
       currency: 'USD',
       mixedCurrency: false, receivedToday: 0, receivedCount: 0,
+      instalmentsDue: [], retrying: 0,
     },
     isQuiet: false,
-    ...overrides,
-    // After the spread, so a `Partial` that names no outlook cannot widen the
-    // field to `undefined` — most cases in this file only care about today.
-    outlook: overrides.outlook ?? { newLeads: { count: 0, people: [] }, quotesWaiting: { count: 0, people: [] }, quotesOut: { count: 0, people: [] } },
+    outlook: { unanswered: { count: 0, people: [] }, refunded: { count: 0, people: [] }, newLeads: { count: 0, people: [] }, quotesWaiting: { count: 0, people: [] }, quotesOut: { count: 0, people: [] } },
   };
+
+  return {
+    ...base,
+    ...overrides,
+    day: { ...base.day, ...overrides.day },
+    appointments: { ...base.appointments, ...overrides.appointments },
+    money: { ...base.money, ...overrides.money },
+    outlook: { ...base.outlook, ...overrides.outlook },
+  } as BriefingFacts;
 }
 
 /**
@@ -119,10 +137,11 @@ describe('findUnsupportedFigures', () => {
   it('tolerates thousands separators and decimals on a real amount', () => {
     const large = facts({
       money: {
-        owed: [{ name: 'John', amount: 1250.5, currency: 'USD', overdue: false }],
+        owed: [{ name: 'John', amount: 1250.5, currency: 'USD', overdue: false, dueDate: null }],
         totalOwed: 1250.5,
         currency: 'USD',
         mixedCurrency: false, receivedToday: 0, receivedCount: 0,
+      instalmentsDue: [], retrying: 0,
       },
     });
 
@@ -204,10 +223,11 @@ describe('findUntranslatedWords', () => {
         first: { name: 'דויד המלך', timeLocal: '09:00' },
       },
       money: {
-        owed: [{ name: 'דויד המלך', amount: 200, currency: 'USD', overdue: false }],
+        owed: [{ name: 'דויד המלך', amount: 200, currency: 'USD', overdue: false, dueDate: null }],
         totalOwed: 200,
         currency: 'USD',
         mixedCurrency: false, receivedToday: 0, receivedCount: 0,
+      instalmentsDue: [], retrying: 0,
       },
     });
 
@@ -306,5 +326,174 @@ describe('naming the people who got in touch', () => {
     const withLeads = leads(1, [{ name: 'Dana Levi', note: '2 sessions a week' }]);
     const narrative = composeFallback(withLeads, 'en');
     expect(findUnsupportedFigures(narrative, withLeads)).toEqual([]);
+  });
+});
+
+/**
+ * The sum of two debts is not a fabrication.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `toPromptShape` sends `totalOwed` only when there are MORE than two debts;
+ * with one or two it lists them individually and the total never reaches the
+ * payload. But adding two amounts is the most natural thing a narrator does
+ * when shown two, so the guard called a correct sum invented and discarded the
+ * whole briefing.
+ *
+ * A business with one or two unpaid invoices is the ordinary case, so this
+ * rejected the narration nearly every day. One live account fell back to the
+ * templates on every briefing it ever received, while the model was called and
+ * paid for each time — the failure was invisible because the fallback reads
+ * like a briefing.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('findUnsupportedFigures — money the model may state', () => {
+  const twoDebts = {
+    day: { date: '2026-09-27', timezone: 'America/New_York', label: 'Sunday, September 27' },
+    appointments: {
+      total: 2, completed: 0, ready: 2,
+      awaitingIntake: [], awaitingPayment: [], cancelled: [],
+    },
+    money: {
+      owed: [
+        { name: 'David', amount: 4250, currency: 'ILS', overdue: false, dueDate: '2026-11-09' },
+        { name: 'Ofir', amount: 300, currency: 'ILS', overdue: false, dueDate: '2026-09-27' },
+      ],
+      totalOwed: 4550,
+      currency: 'ILS',
+      mixedCurrency: false,
+      receivedToday: 0,
+      receivedCount: 0,
+    },
+    outlook: {
+      newLeads: { count: 0, people: [] },
+      quotesWaiting: { count: 0, people: [] },
+      quotesOut: { count: 0 },
+    },
+    isQuiet: false,
+  } as unknown as Parameters<typeof findUnsupportedFigures>[1];
+
+  it('permits the total of two debts, which is never sent in the payload', () => {
+    // The exact narration that was rejected in production on 2026-09-27.
+    expect(findUnsupportedFigures('David and Ofir owe you 4,550.', twoDebts)).toEqual([]);
+  });
+
+  it('permits each debt on its own', () => {
+    expect(findUnsupportedFigures('David owes 4,250 and Ofir owes 300.', twoDebts)).toEqual([]);
+  });
+
+  it('permits the count of people who owe', () => {
+    expect(findUnsupportedFigures('2 clients owe you money.', twoDebts)).toEqual([]);
+  });
+
+  it('still catches a figure that is genuinely invented', () => {
+    // The guard has to keep working: 9,999 is nowhere in the facts.
+    expect(findUnsupportedFigures('They owe you 9,999.', twoDebts)).toEqual(['9999']);
+  });
+});
+
+/**
+ * A sentence about something that never happened.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The word and figure guards check HOW a thing is said. Neither can see a
+ * perfectly worded, correctly numbered claim about an event that does not
+ * exist. On 2026-09-27 the model wrote, in every sample run, that the client
+ * had not returned his intake form — when no form had ever been sent.
+ *
+ * The same rule covers absence-reporting ("no money came in today"), because
+ * it is the same fault: a sentence about a subject the day is silent on.
+ *
+ * Lines are dropped rather than the briefing rejected. Falling back over one
+ * bad sentence is how an owner ends up reading the flat template version.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('dropUnsupportedLines', () => {
+  const day = (over: Record<string, unknown> = {}) => ({
+    day: { date: '2026-09-27', timezone: 'UTC', label: 'Sunday' },
+    appointments: {
+      total: 2, completed: 0, ready: 1,
+      awaitingIntake: [], awaitingPayment: [],
+      cancelled: [{ name: 'Ofir', timeLocal: '09:00' }],
+      first: { name: 'Ofir', timeLocal: '09:30' },
+      ...(over.appointments as object ?? {}),
+    },
+    money: {
+      owed: [{ name: 'Ofir', amount: 300, currency: 'ILS', overdue: false, dueDate: '2026-09-27' }],
+      totalOwed: 300, currency: 'ILS', mixedCurrency: false,
+      receivedToday: 0, receivedCount: 0,
+      ...(over.money as object ?? {}),
+    },
+    outlook: {
+      newLeads: { count: 0, people: [] },
+      quotesWaiting: { count: 0, people: [] },
+      quotesOut: { count: 0 },
+      ...(over.outlook as object ?? {}),
+    },
+    isQuiet: false,
+  } as unknown as BriefingFacts);
+
+  it('drops the intake claim that was invented in production', () => {
+    const { kept, dropped } = dropUnsupportedLines(
+      'You have 2 appointments today.\nOfir has not returned his intake form.',
+      day(),
+      'en'
+    );
+
+    expect(dropped).toEqual(['Ofir has not returned his intake form.']);
+    expect(kept).toBe('You have 2 appointments today.');
+  });
+
+  it('drops it in Hebrew, which is where it actually happened', () => {
+    const { dropped } = dropUnsupportedLines(
+      'יש לך 2 פגישות היום.\nאופיר עומר לא השלים את הטופס.',
+      day(),
+      'he'
+    );
+
+    expect(dropped).toEqual(['אופיר עומר לא השלים את הטופס.']);
+  });
+
+  it('drops a line reporting an absence', () => {
+    // A briefing is what happened, not an inventory of what did not.
+    const { dropped } = dropUnsupportedLines(
+      'You have 2 appointments today.\nThere are no new enquiries.',
+      day(),
+      'en'
+    );
+
+    expect(dropped).toEqual(['There are no new enquiries.']);
+  });
+
+  it('keeps a subject the day genuinely has', () => {
+    // `cancelled` has an entry, so the cancellation line must survive.
+    const { kept, dropped } = dropUnsupportedLines('Ofir cancelled the 09:00.', day(), 'en');
+
+    expect(dropped).toEqual([]);
+    expect(kept).toBe('Ofir cancelled the 09:00.');
+  });
+
+  it('keeps money owed when somebody genuinely owes', () => {
+    const { dropped } = dropUnsupportedLines('Ofir owes 300.', day(), 'en');
+
+    expect(dropped).toEqual([]);
+  });
+
+  it('drops money owed when nobody does', () => {
+    const facts = day({ money: { owed: [], totalOwed: 0, currency: 'ILS', mixedCurrency: false, receivedToday: 0, receivedCount: 0 } });
+
+    expect(dropUnsupportedLines('Nobody owes you anything.', facts, 'en').dropped).toHaveLength(1);
+  });
+
+  it('removes only the offending line, never the whole briefing', () => {
+    const { kept } = dropUnsupportedLines(
+      'You have 2 appointments today.\nThere are no new enquiries.\nOfir cancelled the 09:00.',
+      day(),
+      'en'
+    );
+
+    expect(kept.split('\n')).toEqual([
+      'You have 2 appointments today.',
+      'Ofir cancelled the 09:00.',
+    ]);
   });
 });

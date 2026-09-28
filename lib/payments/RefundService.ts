@@ -37,6 +37,7 @@ import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository'
 import { activitySentence } from '@/lib/business-os/activityText';
 import { createLogger } from '@/lib/logger';
 import { resolveRefundAccount, stripeRequestOptions } from './stripeAccountContext';
+import { stripeConnectRepository } from '@/lib/repositories/PaymentRepository';
 import { fromMinorUnits, resolveRefundAmount } from './refundMath';
 
 const logger = createLogger({ module: 'RefundService' });
@@ -204,6 +205,41 @@ const NO_REFERENCE_MESSAGE =
   'This payment has no Stripe reference, so it cannot be refunded through Stripe. Return it to the client directly and record it against the booking.';
 
 /**
+ * Has this business still got a payment account money could go back through?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The question behind every "can this be refunded, or only recorded" decision
+ * below, and the distinction is the whole of it:
+ *
+ *   · DISCONNECTED keeps the account and only stops new charges. A refund does
+ *     not need `charges_enabled`, so the card route is still open and money
+ *     must go back the way it came.
+ *   · DELETED removes the account here and at Stripe. There is no card route
+ *     left at all, and pretending otherwise leaves a client's money stuck as
+ *     "held" for ever behind a button that cannot work.
+ *
+ * "Never had one" needs no special case: that business has no card payments, so
+ * nothing reaches this.
+ *
+ * An unreadable answer says YES, still connected. That keeps the strict rule in
+ * force — card money goes back to the card — and the cost of being wrong is a
+ * refund the owner has to chase, rather than a ledger claiming a card was
+ * credited when it was not.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function hasProcessorAccount(userId: string): Promise<boolean> {
+  try {
+    const { data, error } = await stripeConnectRepository.findByUserId(userId);
+    if (error) throw error;
+
+    return Boolean(data?.stripe_account_id);
+  } catch (err) {
+    logger.warn({ err, userId }, 'Could not read the payment account; treating it as connected');
+    return true;
+  }
+}
+
+/**
  * How much of a transaction can still be returned, and why not if it cannot.
  *
  * Exposed so the UI can show a real maximum and a real reason rather than
@@ -286,6 +322,39 @@ export async function getRefundability(userId: string, transactionId: string) {
        */
       recordable: processorType === 'manual',
       remaining,
+    };
+  }
+
+  /*
+   * Card money with no account left to send it through.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Everything above has said this payment is refundable — it has a charge, an
+   * amount and a resolved account. What it cannot have, once the business has
+   * removed its payment account, is a way to actually issue the refund. Left
+   * saying `refundable: true`, the dialog offers a Refund button that reaches
+   * Stripe, fails, and leaves the client's money stuck as "held" with no other
+   * route offered.
+   *
+   * So it is reported as RECORDABLE instead: the owner settles with the client
+   * another way — a transfer, another provider's link, cash — and says so. The
+   * ledger then closes on what actually happened rather than on a refund that
+   * never could.
+   *
+   * Asked LAST, and only for money that went through a processor, so the common
+   * case costs no extra query.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (!isManualMoney && !(await hasProcessorAccount(userId))) {
+    return {
+      refundable: false,
+      reason: 'ACCOUNT_GONE' as const,
+      detail:
+        'There is no payment account connected any more, so this cannot be returned through it. Return it to the client directly and record it here.',
+      processorType: tx.processor_type ?? null,
+      recordable: true,
+      remaining,
+      currency: tx.currency,
     };
   }
 
@@ -497,6 +566,14 @@ export async function refundGroup(request: {
    * nothing the owner asked for.
    */
   maxTotal?: number;
+  /**
+   * The business asserting it returned this money itself.
+   *
+   * Refused per leg while a payment account is still connected — see `refund`.
+   * Present here so refunding a whole booking behaves like refunding each of
+   * its payments, which is what the dashboard's button actually does.
+   */
+  manual?: boolean;
 }): Promise<GroupRefundOutcome> {
   const groupId = request.clientRequestId ?? crypto.randomUUID();
   const legs: GroupRefundLeg[] = [];
@@ -532,6 +609,17 @@ export async function refundGroup(request: {
       source: request.source,
       initiatedBy: request.initiatedBy,
       stripeReason: request.stripeReason,
+      /*
+       * Passed through so a booking refunded as a whole behaves like each of its
+       * payments refunded singly. Without it, a business that has removed its
+       * payment account could record a refund for one payment and not for the
+       * booking those payments belong to — which is the button the dashboard
+       * actually offers on a cancelled booking.
+       *
+       * `refund` still decides whether it is allowed: the flag is a request,
+       * and it is refused while an account remains connected.
+       */
+      manual: request.manual,
       /*
        * Derived from the group's id, not fresh per leg.
        *
@@ -625,20 +713,54 @@ export async function refund(request: RefundRequest): Promise<RefundResult> {
    */
   const isManual = request.manual === true && tx.processor_type === 'manual';
 
+  /*
+   * Card money returned by hand, because there is no card route left.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The rule below — card money goes back to the card — is right while an
+   * account is connected and becomes a trap the moment one is removed. A
+   * business that leaves Stripe (commonly to stop paying the percentage) keeps
+   * invoicing exactly as one that never had it, but any card payment it was
+   * still holding could never be given back: no refund could be issued, and
+   * recording one was refused. The money sat as "held" for ever.
+   *
+   * What happens in that situation is that the owner settles with the client
+   * another way. The platform's job is to let them say so, not to pretend it
+   * did not happen.
+   *
+   * Allowed only when no account remains — see `hasProcessorAccount`, which
+   * treats merely disconnected as still connected, because a refund does not
+   * need `charges_enabled`.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  let returnedOutsideProcessor = false;
+
   if (request.manual === true && !isManual) {
-    // Asked to record a manual refund against processor money. Refusing is the
-    // only safe answer: the client's card was never credited, and writing the
-    // row would close the invoice on a refund that did not happen.
-    log.warn(
+    if (await hasProcessorAccount(userId)) {
+      log.warn(
+        { transactionId: tx.id, processorType: tx.processor_type },
+        'Refused: manual refund requested for a payment taken through a processor'
+      );
+      return {
+        ok: false,
+        code: 'NOT_REFUNDABLE',
+        message: 'This payment was taken through a payment processor, so it has to be refunded through it.',
+      };
+    }
+
+    returnedOutsideProcessor = true;
+    log.info(
       { transactionId: tx.id, processorType: tx.processor_type },
-      'Refused: manual refund requested for a payment taken through a processor'
+      'Recording card money as returned outside the processor: no account remains'
     );
-    return {
-      ok: false,
-      code: 'NOT_REFUNDABLE',
-      message: 'This payment was taken through a payment processor, so it has to be refunded through it.',
-    };
   }
+
+  /*
+   * Both settle without calling a processor, and are kept apart so the ledger
+   * can say WHICH happened: money that never went through one, or card money
+   * the processor can no longer reach.
+   */
+  const settledByHand = isManual || returnedOutsideProcessor;
 
   /*
    * The account, before anything else. An unresolved charge must not reach
@@ -692,7 +814,7 @@ export async function refund(request: RefundRequest): Promise<RefundResult> {
    * budget for money that was never going to move.
    */
   const stripeTarget = resolveStripeRefundTarget(tx);
-  if (!isManual && !stripeTarget) {
+  if (!settledByHand && !stripeTarget) {
     log.warn({ transactionId: tx.id }, 'Refused: no Stripe payment intent or charge on this payment');
     return { ok: false, code: 'MISSING_REFERENCE', message: NO_REFERENCE_MESSAGE };
   }
@@ -724,14 +846,30 @@ export async function refund(request: RefundRequest): Promise<RefundResult> {
        * against a movement that is already complete, and nothing would ever
        * come along to close it.
        */
-      status: isManual ? 'succeeded' : 'pending',
-      succeeded_at: isManual ? new Date().toISOString() : null,
+      status: settledByHand ? 'succeeded' : 'pending',
+      succeeded_at: settledByHand ? new Date().toISOString() : null,
       reason: reason ?? null,
-      processor_type: isManual ? 'manual' : 'stripe',
+      /*
+       * `manual` for both, because no processor issued either. Which of the two
+       * it was is recorded in the metadata below, so the books never read as
+       * though a card was credited when it was not.
+       */
+      processor_type: settledByHand ? 'manual' : 'stripe',
       stripe_connect_account_id: stripeAccount,
       idempotency_key: idempotencyKey,
       source,
       initiated_by: initiatedBy ?? null,
+      /*
+       * How it settled, where that is not obvious from the row.
+       *
+       * `processor_type: 'manual'` covers two different events, and only one of
+       * them means "this money never went through a card". The other is card
+       * money returned by hand because the business removed its payment
+       * account — so the flag is written explicitly rather than inferred later
+       * from the absence of a reference, which is exactly the guesswork the
+       * refundability check above exists to stop.
+       */
+      metadata: returnedOutsideProcessor ? { returned_outside_processor: true } : {},
     })
     .select('id, processor_refund_id, status, amount')
     .single();
@@ -869,7 +1007,7 @@ export async function refund(request: RefundRequest): Promise<RefundResult> {
       }
   };
 
-  if (isManual) {
+  if (settledByHand) {
     /*
      * Done. No processor to call — the money already moved, by hand.
      *

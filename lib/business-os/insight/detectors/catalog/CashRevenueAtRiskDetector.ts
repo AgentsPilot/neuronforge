@@ -130,7 +130,9 @@ export class CashRevenueAtRiskDetector extends BaseDetector {
 
       this.supabase
         .from('payment_plan_installments')
-        .select('id, amount, currency, status, contact_id')
+        // `trigger` and `invoice_id` decide whether this is a debt at all — see
+        // the filter where the total is summed.
+        .select('id, amount, currency, status, contact_id, trigger, invoice_id')
         .eq('user_id', userId)
         .lt('created_at', agedBefore),
 
@@ -184,6 +186,21 @@ export class CashRevenueAtRiskDetector extends BaseDetector {
     let instalmentOwed = 0;
     for (const row of instalmentsResult.data ?? []) {
       if (!INSTALMENT_OUTSTANDING.has(String(row.status ?? '').toLowerCase())) continue;
+      /*
+       * A phase nobody has billed is not at risk — it has not been asked for.
+       *
+       * A `trigger: 'manual'` stage with no invoice is a phase of a quoted job
+       * waiting on the OWNER to say the work happened. Counting it here put the
+       * whole remaining value of every quoted job into a card about money the
+       * CLIENT is late on, and the card's own action is "chase overdue invoices"
+       * — so the owner was being pointed at their client over a bill that was
+       * never sent. The work it needs is on the Needs-you card, as
+       * `stage_awaiting_completion`.
+       *
+       * A DATED stage stays counted: the client agreed to pay on a date, and that
+       * is a real receivable whether or not its invoice has been raised yet.
+       */
+      if (row.trigger === 'manual' && !row.invoice_id) continue;
       const amount = toNumber(row.amount);
       if (amount <= 0) continue;
       instalmentOwed += amount;

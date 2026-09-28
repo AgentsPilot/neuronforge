@@ -65,6 +65,24 @@ export interface NewEnquiryEmailData {
   previousWhenLocal?: string | null;
   /** A cancellation only: what the client said, when they said anything. */
   reason?: string | null;
+  /**
+   * A cancellation only: money the business is holding for an appointment that
+   * is not happening.
+   *
+   * The alert named the time, the service and the reason and never the amount,
+   * which is the one detail that decides whether this needs dealing with today.
+   * Absent when nothing was paid, which is the ordinary case.
+   */
+  amountHeld?: number | null;
+  heldCurrency?: string | null;
+  /**
+   * A cancellation only: a payment plan that is STILL CHARGING this client.
+   *
+   * The most time-critical thing this email can say. Money held sits still
+   * until somebody acts; a live plan takes more of it every period, and this
+   * mail may be the only place the owner looks before the next charge.
+   */
+  planStillCharging?: boolean;
 
   /** Deep link to this person in the CRM. */
   contactUrl: string;
@@ -121,6 +139,18 @@ export function generateNewEnquiryEmail(data: NewEnquiryEmailData): {
   }
   if (isCancelled && data.reason) {
     rows.push(emailDetailRow(t.reasonLabel[locale], escapeHtml(data.reason), data.branding));
+  }
+  if (isCancelled && data.planStillCharging) {
+    rows.push(emailDetailRow(t.planLabel[locale], escapeHtml(t.planValue[locale]), data.branding));
+  }
+  if (isCancelled && typeof data.amountHeld === 'number' && data.amountHeld > 0) {
+    rows.push(
+      emailDetailRow(
+        t.heldLabel[locale],
+        escapeHtml(formatHeld(data.amountHeld, data.heldCurrency, locale)),
+        data.branding
+      )
+    );
   }
   if (data.referralSource) {
     rows.push(emailDetailRow(t.referralLabel[locale], escapeHtml(data.referralSource), data.branding));
@@ -230,4 +260,23 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/**
+ * The amount, in the currency the client was actually charged.
+ *
+ * Never the business's default: a business in Israel can invoice a US client in
+ * dollars, and an alert saying ₪400 over $400 held is a wrong number about
+ * somebody's money. An unknown code is printed beside the figure rather than
+ * guessed at.
+ */
+function formatHeld(amount: number, currency: string | null | undefined, locale: Locale): string {
+  const code = (currency || '').trim().toUpperCase();
+  if (!code) return amount.toLocaleString(locale);
+
+  try {
+    return new Intl.NumberFormat(locale, { style: 'currency', currency: code }).format(amount);
+  } catch {
+    return `${amount.toLocaleString(locale)} ${code}`;
+  }
 }

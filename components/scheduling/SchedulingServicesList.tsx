@@ -67,6 +67,20 @@ interface SchedulingServicesListProps {
 
 
 /**
+ * A row's values as one comparable string.
+ *
+ * Keys are sorted so the comparison is about the VALUES: `startRowEdit` builds
+ * its object with a spread in the middle and later edits append to it, so two
+ * objects holding identical values can serialise in different orders and would
+ * otherwise read as a change the owner never made.
+ */
+function rowFingerprint(values: Record<string, unknown>): string {
+  return JSON.stringify(
+    Object.entries(values).sort(([a], [b]) => a.localeCompare(b))
+  );
+}
+
+/**
  * Column widths, declared once.
  *
  * The list scrolls and the new-service line is pinned beneath it, which makes
@@ -134,9 +148,21 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     const reduceMotion = typeof window !== 'undefined'
       && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
+    /*
+     * `start`, not `nearest`.
+     *
+     * `nearest` scrolls the minimum needed, which for a notice sitting just off
+     * the top of the panel means it arrives barely in view with the fields it
+     * refers to still above the fold. The owner has to work out what the
+     * message is about.
+     *
+     * The notice is written at the top of the service being edited, so bringing
+     * IT to the top brings the whole service with it: the message, the fields
+     * it names, and the Publish button below them.
+     */
     notice.scrollIntoView({
       behavior: reduceMotion ? 'auto' : 'smooth',
-      block: 'nearest',
+      block: 'start',
     });
   }, [recentlyEditedId, publishError, noticeSeq]);
   // Row editing state - stores all editable values for a row
@@ -168,6 +194,21 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       return next;
     });
   };
+  /**
+   * The row's values as they were loaded, so Save can tell whether there is
+   * anything to save.
+   *
+   * Stored as a fingerprint rather than a second copy of the object: nothing
+   * reads the old values back, only compares them, and a string cannot drift
+   * out of step with the shape above when a field is added.
+   *
+   * Key order is sorted out of the comparison because `startRowEdit` builds the
+   * object with a spread in the middle while later edits append — two objects
+   * holding the same values could otherwise stringify differently and report a
+   * change nobody made.
+   */
+  const [editRowBaseline, setEditRowBaseline] = useState<string | null>(null);
+
   const [editRowValues, setEditRowValues] = useState<{
     name: string;
     /**
@@ -901,7 +942,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
 
   const startRowEdit = (service: SchedulingService) => {
     setEditingRowId(service.id);
-    setEditRowValues({
+    const initial = {
       name: service.service_name,
       // The optimistic copy wins: a description saved a moment ago from the
       // publish prompt is the one the owner just wrote.
@@ -921,11 +962,14 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       installment_frequency: service.installment_frequency || 'monthly',
       first_payment_due: service.first_payment_due || 'on_booking',
       first_payment_days: service.first_payment_days || 0
-    });
+    };
+    setEditRowValues(initial);
+    setEditRowBaseline(rowFingerprint(initial));
   };
 
   const cancelRowEdit = () => {
     setEditingRowId(null);
+    setEditRowBaseline(null);
     setEditRowValues({
       name: '',
       description: '',
@@ -1033,6 +1077,15 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         });
         // Highlight the row to draw attention to the publish button (persists until dialog closes)
         setRecentlyEditedId(serviceId);
+        /*
+         * The saved values become the new baseline, which is what disables Save.
+         *
+         * Without it Save stayed live after a save and re-submitting the same
+         * values re-raised "now publish it" — the owner pressing Save again
+         * because nothing told them it had worked, and being asked to publish
+         * a second time for a write that changed nothing.
+         */
+        setEditRowBaseline(rowFingerprint(editRowValues));
         setNoticeSeq(n => n + 1); // every save is an event, even a repeat of the same one
         if (wasLive) setPausedByEditId(serviceId);
         // Notify parent that this service was edited (now draft)
@@ -1157,6 +1210,40 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
      *
      * Width belongs to the field, so each one states its own.
      */
+    /*
+     * Whether this row differs from what was loaded — the one thing Save needs
+     * to know. A baseline of `null` means the row was never opened for edit, so
+     * there is nothing to compare and nothing to save.
+     */
+    const isRowDirty = editRowBaseline !== null && rowFingerprint(editRowValues) !== editRowBaseline;
+
+    /*
+     * A service with no description cannot be saved.
+     *
+     * It was asked for at PUBLISH, with a dialog, and the reasoning was sound
+     * for where it was written: the onboarding chat creates drafts quickly and
+     * stopping to write copy there is the friction that flow avoids. That
+     * concern is about the chat, which does not come through this panel — an
+     * owner editing a service here has already stopped to work on it.
+     *
+     * Asking now is also the kinder place: the publish dialog interrupts the
+     * one action the owner came to complete, whereas the field is already on
+     * screen with the cursor a tab away.
+     */
+    /*
+     * A name was ALREADY mandatory — `service_name: z.string().min(1)` in
+     * lib/validation/schedulingService.ts — and the panel enforced it silently:
+     * `saveNewRow` returned early with no message, and `saveRowEdit` did not
+     * check at all, so blanking the name of an existing service sent a write
+     * the API rejected and the owner saw nothing happen.
+     *
+     * Required in the schema, so it is marked required on the field and said
+     * out loud here.
+     */
+    const nameMissing = !values.name.trim();
+
+    const descriptionMissing = !values.description.trim();
+
     const field = 'px-3 py-2 text-sm bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:border-transparent';
     const fieldStyle = { borderRadius: 'var(--v2-radius-button)', ['--tw-ring-color' as string]: CONFIG_COLOR };
 
@@ -1169,8 +1256,21 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
      * is what the old table row had and what made "אופן מכירה" and "דורש תור?"
      * look like unrelated settings that happened to be adjacent.
      */
+    /**
+     * A pill group, and — under it — what the chosen pill actually does.
+     *
+     * The `why` line is the point. Testers read "Fixed price" as a statement
+     * about their pricing policy and chose "By quote" for ordinary priced
+     * services, which silently strips the price and the payment step from every
+     * public surface. A label can only name the setting; one sentence can say
+     * what the CLIENT will go through, which is the thing being decided.
+     *
+     * Rendered beneath the group rather than inside each pill: only the active
+     * option's consequence is relevant, and putting prose in a pill would make
+     * the row wrap differently for every language.
+     */
     const segment = (
-      options: { value: string; label: string; active: boolean; onClick: () => void }[]
+      options: { value: string; label: string; active: boolean; onClick: () => void; why?: string }[]
     ) => (
       <div
         role="group"
@@ -1195,6 +1295,23 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         ))}
       </div>
     );
+
+    /** The group, with the active option's consequence under it. */
+    const segmentWithWhy = (
+      options: { value: string; label: string; active: boolean; onClick: () => void; why?: string }[]
+    ) => {
+      const why = options.find(option => option.active)?.why;
+      return (
+        <div className="flex flex-col gap-1.5">
+          {segment(options)}
+          {why && (
+            <p className="text-[11.5px] leading-snug text-[var(--v2-text-muted)] max-w-[34ch]">
+              {why}
+            </p>
+          )}
+        </div>
+      );
+    };
 
     return (
       <>
@@ -1341,6 +1458,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               <label className="flex flex-col gap-1.5">
                 <span className="text-[12px] text-[var(--v2-text-secondary)]">
                   {t('config.services.column.service')}
+                  <span className="text-red-500 ms-0.5">*</span>
                 </span>
                 <input
                   type="text"
@@ -1359,6 +1477,21 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               <label className="flex flex-col gap-1.5">
                 <span className="text-[12px] text-[var(--v2-text-secondary)]">
                   {t('config.services.short_description')}
+                  <span className="text-red-500 ms-0.5">*</span>
+                </span>
+                {/*
+                  Why it is worth writing, said before the box rather than after
+                  a save is refused.
+
+                  This field is not decoration and not a note to self: clients
+                  read it at the moment they book, it is the body copy of any
+                  landing page built for the service, and it is what the
+                  insight side reads to work out what this business actually
+                  sells. A service called "Session" with no description is
+                  indistinguishable from any other, to a client and to us.
+                */}
+                <span className="text-[11.5px] leading-relaxed text-[var(--v2-text-muted)]">
+                  {t('config.services.short_description_why')}
                 </span>
                 {/* A textarea, because a description is prose. A single-line
                     input hid everything past the first line behind a cursor,
@@ -1390,18 +1523,20 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                 <span className="text-[12px] text-[var(--v2-text-secondary)]">
                   {t('config.services.column.sale_mode')}
                 </span>
-                {segment([
+                {segmentWithWhy([
                   {
                     value: 'direct',
                     label: t('config.services.sale_mode.direct'),
                     active: values.sale_mode === 'direct',
                     onClick: () => setValues(prev => ({ ...prev, sale_mode: 'direct' })),
+                    why: t('config.services.sale_mode.direct.why'),
                   },
                   {
                     value: 'proposal',
                     label: t('config.services.sale_mode.proposal'),
                     active: values.sale_mode === 'proposal',
                     onClick: () => setValues(prev => ({ ...prev, sale_mode: 'proposal' })),
+                    why: t('config.services.sale_mode.proposal.why'),
                   },
                 ])}
               </div>
@@ -1560,26 +1695,55 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
 
                     {/* Nothing to collect when nothing is charged, so the
                         question simply does not appear. */}
+                    {/* Nothing to collect when nothing is charged, so the
+                        question simply does not appear. */}
                     {price > 0 && (
-                      <span className="flex items-center gap-2">
-                        <span className="text-[12px] text-[var(--v2-text-secondary)] whitespace-nowrap">
-                          {t('config.services.when_collected')}
+                      <div className="flex flex-col gap-1.5">
+                        <span className="flex items-center gap-2">
+                          <span className="text-[12px] text-[var(--v2-text-secondary)] whitespace-nowrap">
+                            {t('config.services.when_collected')}
+                          </span>
+                          {segment([
+                            {
+                              value: 'online',
+                              label: t('config.services.collection.online'),
+                              active: values.collection === 'online',
+                              onClick: () => setValues(prev => ({ ...prev, collection: 'online' })),
+                            },
+                            {
+                              value: 'invoice',
+                              label: t('config.services.collection.invoice'),
+                              active: values.collection === 'invoice',
+                              onClick: () => setValues(prev => ({ ...prev, collection: 'invoice' })),
+                            },
+                          ])}
                         </span>
-                        {segment([
-                          {
-                            value: 'online',
-                            label: t('config.services.collection.online'),
-                            active: values.collection === 'online',
-                            onClick: () => setValues(prev => ({ ...prev, collection: 'online' })),
-                          },
-                          {
-                            value: 'invoice',
-                            label: t('config.services.collection.invoice'),
-                            active: values.collection === 'invoice',
-                            onClick: () => setValues(prev => ({ ...prev, collection: 'invoice' })),
-                          },
-                        ])}
-                      </span>
+
+                        {/* What the client actually goes through. The same two
+                            sentences the booking modal shows for these options,
+                            so the two surfaces describe one decision the same
+                            way rather than each in its own words. */}
+                        <p className="text-[11.5px] leading-snug text-[var(--v2-text-muted)] max-w-[40ch]">
+                          {values.collection === 'online'
+                            ? t('scheduling.modal.collection.online.why')
+                            : t('scheduling.modal.collection.invoice.why')}
+                        </p>
+
+                        {/*
+                          Said HERE, where the choice is made.
+                          Card collection needs a connected processor. Without
+                          one the client still reaches a payment step — it just
+                          cannot charge them — and the only existing signal was
+                          an unready dot in the journey strip further down, which
+                          is downstream of the decision that caused it.
+                        */}
+                        {values.collection === 'online' && !processorReady && (
+                          <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11.5px] leading-snug text-amber-600 dark:text-amber-400 max-w-[46ch]">
+                            <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+                            <span>{t('config.services.collection.no_processor')}</span>
+                          </p>
+                        )}
+                      </div>
                     )}
                   </div>
                 </label>
@@ -1760,6 +1924,23 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
 
         {/* Save and cancel */}
         <div className="flex-shrink-0 border-t border-[var(--v2-border)] px-5 py-3 flex items-center justify-end gap-2">
+          {/*
+            Why Save is greyed out, beside the greyed-out button.
+
+            A disabled control with no reason is its own defect: the owner
+            presses it, nothing happens, and there is nowhere to look. The only
+            blocking condition worth a sentence is the missing description —
+            "nothing has changed" explains itself, because they have just saved.
+          */}
+          {(nameMissing || descriptionMissing) && (
+            <span className="me-auto text-[12px] text-[var(--v2-text-muted)]">
+              {/* The name first: it is the field above, and fixing them in the
+                  order they appear is one less thing to work out. */}
+              {nameMissing
+                ? t('config.services.name_required')
+                : t('config.services.description_required')}
+            </span>
+          )}
           <button
             onClick={isNew ? cancelNewRow : cancelRowEdit}
             className="px-3.5 py-2 text-[13px] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-all"
@@ -1767,9 +1948,21 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           >
             {t('button.cancel')}
           </button>
+          {/*
+            Save is live only when there is something to save AND the service
+            can describe itself.
+
+            It was `disabled={saving}` alone, which left the button active the
+            instant a save finished. Pressing it again re-sent identical values
+            and re-raised the publish prompt — the owner asked to publish a
+            second time for a write that changed nothing.
+
+            A new service is exempt from the dirty check: it always has
+            something to save. It is not exempt from the description.
+          */}
           <button
             onClick={() => (isNew ? saveNewRow() : saveRowEdit(service!.id))}
-            disabled={saving}
+            disabled={saving || nameMissing || descriptionMissing || (!isNew && !isRowDirty)}
             className="inline-flex items-center gap-2 px-4 py-2 text-[13px] font-medium text-white transition-all disabled:opacity-50"
             style={{ borderRadius: 'var(--v2-radius-button)', backgroundColor: CONFIG_COLOR }}
           >
@@ -1903,6 +2096,21 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                       {/* State as a dot, not a column. Published-and-live,
                           draft, and switched-off are three states and this is
                           the only place the list needs to say which. */}
+                      {/*
+                        The dot carries the state, so it says what it means.
+
+                        It was `aria-hidden` with no text anywhere on the row —
+                        one and a half pixels of colour as the only answer to
+                        "can a client book this". Invisible to a screen reader,
+                        invisible to anyone not comparing dots, and the two
+                        badge helpers that would have said it in words are
+                        defined in this file and never called.
+
+                        A word beside it for the two states that need acting on
+                        — draft is waiting for a publish, paused is off sale on
+                        purpose. Live needs no label: it is the expected state
+                        and the green dot is enough.
+                      */}
                       <i
                         className="w-1.5 h-1.5 rounded-full flex-shrink-0"
                         style={{
@@ -1914,13 +2122,31 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                         }}
                         aria-hidden="true"
                       />
+                      <span className="sr-only">
+                        {isDraft
+                          ? t('scheduling.service.draft')
+                          : effective.is_active
+                            ? t('scheduling.service.active')
+                            : t('scheduling.service.inactive')}
+                      </span>
                       <span className="text-sm font-medium text-[var(--v2-text-primary)] truncate">
                         {effective.service_name}
                       </span>
                     </span>
-                    {/* The four facts that tell services apart, on one line. */}
+                    {/* The facts that tell services apart, on one line — led by
+                        the state, when the state is one the owner has to do
+                        something about. A draft is waiting to be published and
+                        a paused service is off sale; both are invisible to
+                        clients, and a colour dot alone never said so. Live
+                        services carry no label: that is the expected state and
+                        naming it on every row would bury the two that matter. */}
                     <span className="mt-1 block text-[12px] text-[var(--v2-text-secondary)] tabular-nums truncate">
                       {[
+                        isDraft
+                          ? t('scheduling.service.draft')
+                          : !effective.is_active
+                            ? t('scheduling.service.inactive')
+                            : null,
                         effective.sale_mode === 'proposal'
                           ? t('config.services.sale_mode.by_proposal')
                           : (effective.price ?? 0) > 0

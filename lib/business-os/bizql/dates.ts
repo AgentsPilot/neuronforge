@@ -42,9 +42,44 @@ export function partsInZone(date: Date, timezone: string): { y: number; m: numbe
 
 /** Offset of a timezone from UTC, in minutes, at a given instant. */
 function zoneOffsetMinutes(date: Date, timezone: string): number {
-  const utc = new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }));
-  const local = new Date(date.toLocaleString('en-US', { timeZone: timezone }));
-  return (local.getTime() - utc.getTime()) / 60_000;
+  /*
+   * Read from Intl's own PARTS, not from parsing a formatted string.
+   *
+   * This was `new Date(date.toLocaleString('en-US', { timeZone: … }))` twice,
+   * subtracted. That formats an instant into a human string and then asks
+   * `Date` to parse it back — in the HOST's zone, with the host's idea of what
+   * an unqualified "3/8/2026, 2:00:00 AM" means. On a spring-forward day that
+   * wall clock does not exist where the host is, so the parse silently shifts
+   * an hour and the offset came back as EDT on a date that was still EST.
+   *
+   * `formatToParts` hands back the numbers the zone actually shows, so nothing
+   * is parsed and nothing depends on where this runs. `hourCycle: 'h23'` keeps
+   * midnight as 00 rather than the 24 some locales produce.
+   */
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(date);
+
+  const at = (type: string) => Number(parts.find(part => part.type === type)?.value ?? '0');
+  const asIfUtc = Date.UTC(
+    at('year'),
+    at('month') - 1,
+    at('day'),
+    at('hour'),
+    at('minute'),
+    at('second')
+  );
+
+  // Both sides truncated to the second: `asIfUtc` carries no milliseconds, and
+  // the difference must be a whole number of minutes either way.
+  return (asIfUtc - Math.floor(date.getTime() / 1000) * 1000) / 60_000;
 }
 
 /**
@@ -71,16 +106,82 @@ export function containsCalendarDate(value: unknown): boolean {
   return false;
 }
 
-/** Midnight (local to `timezone`) of the given calendar day, as a UTC instant. */
+/**
+ * Midnight (local to `timezone`) of the given calendar day, as a UTC instant.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * TWO passes, and the second one is not a refinement — it is the answer.
+ *
+ * A single pass measured the zone's offset at NAIVE UTC MIDNIGHT, then applied
+ * it. But naive midnight is a different instant from the local midnight being
+ * solved for — thirteen hours apart for Auckland — and on a daylight-saving
+ * transition day the two fall on OPPOSITE SIDES of the change. The offset
+ * measured is then the wrong one, and the result lands in the neighbouring
+ * calendar day.
+ *
+ * Auckland, 27 September 2026, the day NZDT began at 2am:
+ *
+ *   naive midnight   2026-09-27T00:00Z   is 13:00 NZDT (+13) that day
+ *   one pass         −13h → 2026-09-26T11:00Z   = 23:00 on the 26th   wrong day
+ *   two passes       re-measure there: +12 → 2026-09-26T12:00Z = midnight on
+ *                    the 27th                                         correct
+ *
+ * That one day was enough to make `start_of_week` a Saturday and "this week" an
+ * eight-day window for every business in the zone.
+ *
+ * The second pass re-measures at the candidate instant, which is on the correct
+ * side of the transition. On an ordinary day both offsets are identical and the
+ * second pass changes nothing. Where local midnight does not exist at all — the
+ * few zones that spring forward AT midnight — this settles on the instant the
+ * clock jumped to, which is the first moment of that civil day.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 export function startOfDayUtc(y: number, m: number, d: number, timezone: string): Date {
-  // Start from the naive UTC midnight, then correct by the zone's offset.
   const naive = Date.UTC(y, m - 1, d, 0, 0, 0, 0);
-  const offset = zoneOffsetMinutes(new Date(naive), timezone);
-  return new Date(naive - offset * 60_000);
+  const guess = new Date(naive - zoneOffsetMinutes(new Date(naive), timezone) * 60_000);
+  return new Date(naive - zoneOffsetMinutes(guess, timezone) * 60_000);
 }
 
-function addDays(date: Date, days: number): Date {
-  return new Date(date.getTime() + days * 86_400_000);
+/**
+ * The same wall-clock day, `days` later, on the business's own calendar.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * NOT `getTime() + days * 86_400_000`, which is what this was.
+ *
+ * Every date in this module is an INSTANT standing for a civil day: the
+ * business's midnight, expressed in UTC. Adding a fixed 24 hours to that only
+ * reaches the next midnight in a zone whose offset never moves. Across a
+ * daylight-saving transition the civil day is 23 or 25 hours long, so the
+ * result lands an hour short or an hour over and falls into the NEIGHBOURING
+ * calendar date.
+ *
+ * Measured on 28 September 2026, the day after New Zealand moved to NZDT:
+ *
+ *                 UTC              Pacific/Auckland
+ *   today         27 Sep (Sun)     28 Sep (Mon)     — correct, no arithmetic
+ *   last 7 days   20 Sep (Sun)     20 Sep (Sun)     — should be the 21st
+ *   start_of_week 27 Sep (Sun)     26 Sep (Sat)     — should be the 27th
+ *
+ * So the chat answered "the last 7 days" over an eight-day window and started
+ * "this week" on a Saturday — for as long as the span kept crossing the
+ * transition, which for a four-week lookback is four weeks. Nothing looked
+ * wrong: the number returned is a real number, over the wrong days.
+ *
+ * The arithmetic therefore happens on the CALENDAR, where a day is always a
+ * day, and the result is turned back into an instant afterwards. `Date.UTC`
+ * normalises overflow, so day 0 and day 32 land in the right month without a
+ * special case. Same rule as `shiftBusinessDateKey` on the scheduling side.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function addDays(date: Date, days: number, timezone: string): Date {
+  const { y, m, d } = partsInZone(date, timezone);
+  const moved = new Date(Date.UTC(y, m - 1, d + days));
+  return startOfDayUtc(
+    moved.getUTCFullYear(),
+    moved.getUTCMonth() + 1,
+    moved.getUTCDate(),
+    timezone
+  );
 }
 
 /**
@@ -166,10 +267,10 @@ export function resolveDateExpr(
       resolved = today;
       break;
     case 'tomorrow':
-      resolved = addDays(today, 1);
+      resolved = addDays(today, 1, zone);
       break;
     case 'yesterday':
-      resolved = addDays(today, -1);
+      resolved = addDays(today, -1, zone);
       break;
     // Synonyms for the day boundaries. The planner reaches for these naturally
     // when expressing "today" as a range, and rejecting them cost a repair pass
@@ -178,14 +279,14 @@ export function resolveDateExpr(
       resolved = today;
       break;
     case 'end_of_day':
-      resolved = addDays(today, 1); // exclusive upper bound
+      resolved = addDays(today, 1, zone); // exclusive upper bound
       break;
     case 'start_of_week':
       // Week starts Sunday, matching this product's scheduling model.
-      resolved = addDays(today, -localDow);
+      resolved = addDays(today, -localDow, zone);
       break;
     case 'end_of_week':
-      resolved = addDays(today, 6 - localDow + 1); // exclusive upper bound
+      resolved = addDays(today, 6 - localDow + 1, zone); // exclusive upper bound
       break;
     case 'start_of_month':
       resolved = startOfDayUtc(y, m, 1, zone);
@@ -209,7 +310,7 @@ export function resolveDateExpr(
        * is why no separate backwards form is needed.
        */
       const target = WEEKDAY_INDEX[expr.$date];
-      resolved = addDays(today, (target - localDow + 7) % 7);
+      resolved = addDays(today, (target - localDow + 7) % 7, zone);
       break;
     }
     default:
@@ -250,7 +351,7 @@ function finishDate(
 
   if (offset) {
     const { days = 0, weeks = 0, months = 0 } = offset;
-    if (days || weeks) resolved = addDays(resolved, days + weeks * 7);
+    if (days || weeks) resolved = addDays(resolved, days + weeks * 7, zone);
     if (months) {
       const p = partsInZone(resolved, zone);
       const total = p.m - 1 + months;
