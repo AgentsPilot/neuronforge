@@ -7,7 +7,7 @@ exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) briefin
       "max_tokens": 320,
       "messages": [
         {
-          "content": "sha256:8134ca4560cf4310d5d85e0a3782f392ab5140a3f4374abd2f682e769f350f6c (len 8413)",
+          "content": "sha256:cc293d7be8f7a7d8567b08ec4f40e57eb6ca3bbebac7b154b70a858cdeea2ba0 (len 3126)",
           "role": "user",
         },
       ],
