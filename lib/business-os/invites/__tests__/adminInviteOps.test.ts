@@ -65,6 +65,7 @@ function rowFrom(input: CreateBusinessOsInviteInput, overrides: Partial<Business
     revoke_reason: null,
     redeemed_at: null,
     redeemed_account_id: null,
+    opened_by_existing_account_at: null,
     created_at: NOW.toISOString(),
     updated_at: NOW.toISOString(),
     ...overrides,
@@ -283,6 +284,17 @@ describe('toInviteListView (R-7)', () => {
     for (const key of ['token_hash', 'tokenHash', 'issuer_admin_id', 'internal_reason', 'redeemed_account_id']) {
       expect(view).not.toHaveProperty(key);
     }
+  });
+
+  it('Slice 1a: carries the existing-account stamp through unchanged', () => {
+    expect(toInviteListView(rowFrom(input), config, NOW).openedByExistingAccountAt).toBeNull();
+    const stamped = toInviteListView(
+      rowFrom(input, { opened_by_existing_account_at: '2026-10-02T09:00:00.000Z' }),
+      config,
+      NOW
+    );
+    expect(stamped.openedByExistingAccountAt).toBe('2026-10-02T09:00:00.000Z');
+    expect(stamped.state).toBe('pending');
   });
 
   it('labels the grant from config and derives the state', () => {

@@ -101,7 +101,7 @@ const GROUP_RULES: readonly GroupRule[] = [
   // Without this the eight entitlement events fall back to a group called "Bos".
   { prefix: 'BOS_ENTITLEMENT_', label: 'Business OS Entitlements' },
   // Same reason, for the two invite events (invite-only signup, Slice 0).
-  { prefix: 'BOS_INVITE_', label: 'Business OS Invites' },
+  { prefix: 'BOS_INVITE_', label: 'Business OS Signup Invites' },
   { prefix: 'AGENTKIT_', label: 'AgentKit' },
   { prefix: 'AIS_', label: 'Agent Intelligence Score' },
   { prefix: 'AI_PRICING_', label: 'AI Pricing' },

@@ -34,10 +34,37 @@ function stored(overrides: Partial<BusinessOsInvitePublicView> = {}): BusinessOs
   };
 }
 
-function harness(row: BusinessOsInvitePublicView | null, options: { lookupError?: boolean; markError?: boolean } = {}) {
+const INVITEE_EMAIL = 'invitee@example.com';
+
+interface HarnessOptions {
+  lookupError?: boolean;
+  markError?: boolean;
+  /** Does the invitee email already have an account? Default: no. */
+  hasAccount?: boolean;
+  emailError?: boolean;
+  emailMissing?: boolean;
+  accountError?: boolean;
+  /** The existing-account stamp was already set by an earlier view. */
+  alreadyStamped?: boolean;
+  stampError?: boolean;
+}
+
+function harness(row: BusinessOsInvitePublicView | null, options: HarnessOptions = {}) {
   const lookups: string[] = [];
   const warnings: Array<Record<string, unknown>> = [];
-  const repository: PublicInviteRepository & { markFirstViewed: jest.Mock } = {
+  const accountQuestions: string[] = [];
+  const accounts = {
+    emailHasAccount: jest.fn(async (email: string) => {
+      accountQuestions.push(email);
+      if (options.accountError) return { data: null, error: new Error('lookup failed') };
+      return { data: options.hasAccount === true, error: null };
+    }),
+  };
+  const repository: PublicInviteRepository & {
+    markFirstViewed: jest.Mock;
+    findInviteeEmailForPublicCheck: jest.Mock;
+    markOpenedByExistingAccount: jest.Mock;
+  } = {
     findByTokenHashForPublicView: jest.fn(async (hash: string) => {
       lookups.push(hash);
       if (options.lookupError) return { data: null, error: new Error('timeout') };
@@ -46,9 +73,24 @@ function harness(row: BusinessOsInvitePublicView | null, options: { lookupError?
     markFirstViewed: jest.fn(async () =>
       options.markError ? { data: null, error: new Error('update failed') } : { data: true, error: null }
     ),
+    findInviteeEmailForPublicCheck: jest.fn(async (id: string) => {
+      if (options.emailError) return { data: null, error: new Error('read failed') };
+      if (options.emailMissing) return { data: null, error: null };
+      return { data: id === INVITE_ID ? INVITEE_EMAIL : 'someone-else@example.com', error: null };
+    }),
+    markOpenedByExistingAccount: jest.fn(async () => {
+      if (options.stampError) return { data: null, error: new Error('stamp failed') };
+      return { data: options.alreadyStamped !== true, error: null };
+    }),
   };
-  const deps = { repository, config, now: NOW, logger: { warn: (context: Record<string, unknown>) => warnings.push(context) } };
-  return { deps, repository, lookups, warnings };
+  const deps = {
+    repository,
+    accounts,
+    config,
+    now: NOW,
+    logger: { warn: (context: Record<string, unknown>) => warnings.push(context) },
+  };
+  return { deps, repository, accounts, accountQuestions, lookups, warnings };
 }
 
 describe('AC-2: every bad token gets the same answer', () => {
@@ -139,11 +181,88 @@ describe('matched but not valid: the narrow allow-list', () => {
     ['used', stored({ redeemed_at: '2026-10-05T00:00:00.000Z' })],
     ['unavailable', stored({ grant_id: 'retired-cohort' })],
   ])('%s carries only state, language and the inviter name, and stamps nothing', async (state, row) => {
-    const { deps, repository } = harness(row);
+    const { deps, repository, accounts } = harness(row, { hasAccount: true });
     const outcome = await viewInviteByToken(TOKEN, deps);
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
     expect(outcome.response).toEqual({ state, language: 'he', inviterDisplayName: 'Dana' });
     expect(repository.markFirstViewed).not.toHaveBeenCalled();
+    // The account question is asked only for a pending, grant-available invite.
+    expect(repository.findInviteeEmailForPublicCheck).not.toHaveBeenCalled();
+    expect(accounts.emailHasAccount).not.toHaveBeenCalled();
+    expect(repository.markOpenedByExistingAccount).not.toHaveBeenCalled();
+  });
+});
+
+describe('FR-8a / L-3: the invited email already has an account (Slice 1a)', () => {
+  it('answers existing_account with exactly the narrow keys, and never the email', async () => {
+    const { deps } = harness(stored(), { hasAccount: true });
+    const outcome = await viewInviteByToken(TOKEN, deps);
+    expect(outcome).toEqual({
+      ok: true,
+      inviteId: INVITE_ID,
+      response: { state: 'existing_account', language: 'he', inviterDisplayName: 'Dana' },
+      firstOpenByExistingAccount: true,
+    });
+    expect(JSON.stringify(outcome.ok && outcome.response)).not.toContain(INVITEE_EMAIL);
+  });
+
+  it('decides before the offer and the first-view stamp: an existing account is not a signup view', async () => {
+    const { deps, repository } = harness(stored(), { hasAccount: true });
+    await viewInviteByToken(TOKEN, deps);
+    expect(repository.markFirstViewed).not.toHaveBeenCalled();
+    expect(repository.markOpenedByExistingAccount).toHaveBeenCalledWith(INVITE_ID, NOW);
+  });
+
+  it('R-4: the lookup is asked exactly once, about the email read for the MATCHED row, and nothing else', async () => {
+    const { deps, repository, accountQuestions } = harness(stored(), { hasAccount: true });
+    await viewInviteByToken(TOKEN, deps);
+    expect(repository.findInviteeEmailForPublicCheck).toHaveBeenCalledTimes(1);
+    expect(repository.findInviteeEmailForPublicCheck).toHaveBeenCalledWith(INVITE_ID);
+    expect(accountQuestions).toEqual([INVITEE_EMAIL]);
+  });
+
+  it('R-4: an unmatched token never reaches the email read or the lookup', async () => {
+    const { deps, repository, accounts } = harness(stored(), { hasAccount: true });
+    await viewInviteByToken(generateInviteToken(), deps);
+    await viewInviteByToken('abc', deps);
+    expect(repository.findInviteeEmailForPublicCheck).not.toHaveBeenCalled();
+    expect(accounts.emailHasAccount).not.toHaveBeenCalled();
+  });
+
+  it('reports the first open only once: a reload after the stamp is set carries no flag', async () => {
+    const { deps } = harness(stored(), { hasAccount: true, alreadyStamped: true });
+    const outcome = await viewInviteByToken(TOKEN, deps);
+    expect(outcome.ok && outcome.response.state).toBe('existing_account');
+    expect(outcome.ok && outcome.firstOpenByExistingAccount).toBeUndefined();
+  });
+
+  it('a failed stamp is logged and ignored, with no flag: the visitor still sees the page', async () => {
+    const { deps, warnings } = harness(stored(), { hasAccount: true, stampError: true });
+    const outcome = await viewInviteByToken(TOKEN, deps);
+    expect(outcome.ok && outcome.response.state).toBe('existing_account');
+    expect(outcome.ok && outcome.firstOpenByExistingAccount).toBeUndefined();
+    expect(warnings).toHaveLength(1);
+    expect(JSON.stringify(warnings)).not.toContain(INVITEE_EMAIL);
+    expect(JSON.stringify(warnings)).not.toContain(TOKEN);
+  });
+
+  it.each([
+    ['the email read fails', { emailError: true }],
+    ['the row has vanished between reads', { emailMissing: true }],
+    ['the account lookup fails', { accountError: true }],
+  ])('"no account" is never the default: when %s, the outcome is { ok: false } (try again)', async (_label, options) => {
+    const { deps, repository } = harness(stored(), { hasAccount: true, ...options });
+    expect(await viewInviteByToken(TOKEN, deps)).toEqual({ ok: false });
+    expect(repository.markFirstViewed).not.toHaveBeenCalled();
+  });
+
+  it('with no account, the Slice 0 valid path is unchanged and asks the question exactly once', async () => {
+    const { deps, accountQuestions, repository } = harness(stored());
+    const outcome = await viewInviteByToken(TOKEN, deps);
+    expect(outcome.ok && outcome.response.state).toBe('valid');
+    expect(accountQuestions).toEqual([INVITEE_EMAIL]);
+    expect(repository.markOpenedByExistingAccount).not.toHaveBeenCalled();
+    expect(JSON.stringify(outcome.ok && outcome.response)).not.toContain(INVITEE_EMAIL);
   });
 });

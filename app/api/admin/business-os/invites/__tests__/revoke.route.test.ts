@@ -103,6 +103,7 @@ function row(overrides: Partial<BusinessOsInvite> = {}): BusinessOsInvite {
     revoke_reason: null,
     redeemed_at: null,
     redeemed_account_id: null,
+    opened_by_existing_account_at: null,
     created_at: '2026-10-01T12:00:00.000Z',
     updated_at: '2026-10-01T12:00:00.000Z',
     ...overrides,
