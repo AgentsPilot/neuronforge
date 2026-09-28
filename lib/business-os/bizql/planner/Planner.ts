@@ -873,6 +873,8 @@ export class BizQLPlanner {
             // whole turn, and a plan beside it would be a second answer to a
             // question that has not been answered yet.
             clarification: askInstead[0],
+            // `diagnostics` reports cache: 'miss' itself, which is what a turn
+            // that reached the planner is.
             diagnostics: this.diagnostics({
               model,
               entities,
@@ -880,7 +882,6 @@ export class BizQLPlanner {
               started,
               promptTokens,
               completionTokens,
-              cache: cached.layer,
             }),
           };
         }

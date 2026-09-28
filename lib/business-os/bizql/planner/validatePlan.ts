@@ -2881,7 +2881,12 @@ export function validatePlan(plan: Plan, userMessage?: string): string[] {
    */
   if (userMessage !== undefined) {
     const byId = new Map(
-      (plan.steps ?? []).map((step) => [(step as { id?: string }).id, step as Record<string, unknown>])
+      // Through `unknown`: an analyse step has no index signature, so a direct
+      // cast is refused.
+      (plan.steps ?? []).map((step) => [
+        (step as { id?: string }).id,
+        step as unknown as Record<string, unknown>,
+      ])
     );
 
     for (const step of plan.steps ?? []) {
