@@ -36,7 +36,7 @@ import type { CreateBusinessOsInviteInput } from '../types';
 
 type Call = { method: string; args: unknown[] };
 
-function recordingClient(result: { data: unknown; error: unknown }) {
+function recordingClient(result: { data: unknown; error: unknown; count?: number | null }) {
   const calls: Call[] = [];
   const builder: Record<string, unknown> = {};
   for (const method of ['insert', 'update', 'select', 'eq', 'is', 'or', 'gt', 'order', 'limit', 'single', 'maybeSingle']) {
@@ -53,6 +53,16 @@ function recordingClient(result: { data: unknown; error: unknown }) {
     },
   } as unknown as SupabaseClient;
   return { client, calls };
+}
+
+/**
+ * The hotfix shape for a CAS that filters with `.or`: `.update(values, { count: 'exact' })`
+ * and no `.select` anywhere on the chain (see `casWon` in the repository).
+ */
+function expectCountOnlyUpdate(calls: Call[]) {
+  const update = calls.find((call) => call.method === 'update');
+  expect(update?.args[1]).toEqual({ count: 'exact' });
+  expect(calls.some((call) => call.method === 'select')).toBe(false);
 }
 
 const ID = '11111111-1111-4111-8111-111111111111';
@@ -353,7 +363,7 @@ describe('Slice 1b: the signup methods (token-scoped, compare-and-swap)', () => 
   });
 
   it('issueSignupCode: CAS on the observed send count AND last-sent time, pending, unexpired, no live claim; resets attempts', async () => {
-    const { client, calls } = recordingClient({ data: [{ id: ID }], error: null });
+    const { client, calls } = recordingClient({ data: null, error: null, count: 1 });
     const expiresAt = new Date('2026-10-01T12:10:00.000Z');
     const result = await new BusinessOsInviteRepository(client).issueSignupCode({
       id: ID,
@@ -382,8 +392,9 @@ describe('Slice 1b: the signup methods (token-scoped, compare-and-swap)', () => 
     expect(calls).toContainEqual({ method: 'is', args: ['revoked_at', null] });
     expect(calls).toContainEqual({ method: 'gt', args: ['link_expires_at', NOW.toISOString()] });
     expect(calls).toContainEqual({ method: 'or', args: [`claimed_at.is.null,claimed_at.lt."${CUTOFF.toISOString()}"`] });
+    expectCountOnlyUpdate(calls);
 
-    const lost = recordingClient({ data: [], error: null });
+    const lost = recordingClient({ data: null, error: null, count: 0 });
     expect(
       await new BusinessOsInviteRepository(lost.client).issueSignupCode({
         id: ID, observedSentCount: 2, observedLastSentAt: null, claimLeaseCutoff: CUTOFF, codeHash: CODE_HASH, expiresAt, sentCount: 3, windowStartedAt: NOW, now: NOW,
@@ -392,12 +403,13 @@ describe('Slice 1b: the signup methods (token-scoped, compare-and-swap)', () => 
   });
 
   it('issueSignupCode (MF-2): the first code ever compares last-sent IS NULL (null-safe)', async () => {
-    const { client, calls } = recordingClient({ data: [{ id: ID }], error: null });
+    const { client, calls } = recordingClient({ data: null, error: null, count: 1 });
     await new BusinessOsInviteRepository(client).issueSignupCode({
       id: ID, observedSentCount: 0, observedLastSentAt: null, claimLeaseCutoff: CUTOFF, codeHash: CODE_HASH, expiresAt: NOW, sentCount: 1, windowStartedAt: NOW, now: NOW,
     });
     expect(calls).toContainEqual({ method: 'is', args: ['signup_code_last_sent_at', null] });
     expect(calls).not.toContainEqual(expect.objectContaining({ method: 'eq', args: ['signup_code_last_sent_at', expect.anything()] }));
+    expectCountOnlyUpdate(calls);
   });
 
   it('countSignupCodeAttempt: CAS on the observed attempts AND the live code hash', async () => {
@@ -410,7 +422,7 @@ describe('Slice 1b: the signup methods (token-scoped, compare-and-swap)', () => 
   });
 
   it('claimForSignup (R-1): clears the code and claims, pending, not expired, no live claim, first claim => claimant IS NULL', async () => {
-    const { client, calls } = recordingClient({ data: [{ id: ID }], error: null });
+    const { client, calls } = recordingClient({ data: null, error: null, count: 1 });
     const result = await new BusinessOsInviteRepository(client).claimForSignup({
       id: ID,
       codeHash: CODE_HASH,
@@ -431,11 +443,12 @@ describe('Slice 1b: the signup methods (token-scoped, compare-and-swap)', () => 
     expect(calls).toContainEqual({ method: 'gt', args: ['link_expires_at', NOW.toISOString()] });
     expect(calls).toContainEqual({ method: 'or', args: [`claimed_at.is.null,claimed_at.lt."${CUTOFF.toISOString()}"`] });
     expect(calls).toContainEqual({ method: 'is', args: ['claimed_account_id', null] });
+    expectCountOnlyUpdate(calls);
   });
 
   it('claimForSignup (D-dev-1, I-6): re-taking a lapsed claim compares the observed claimant', async () => {
     const stale = '44444444-4444-4444-8444-444444444444';
-    const { client, calls } = recordingClient({ data: [], error: null });
+    const { client, calls } = recordingClient({ data: null, error: null, count: 0 });
     const result = await new BusinessOsInviteRepository(client).claimForSignup({
       id: ID,
       codeHash: CODE_HASH,
@@ -447,6 +460,40 @@ describe('Slice 1b: the signup methods (token-scoped, compare-and-swap)', () => 
     expect(result).toEqual({ data: false, error: null });
     expect(calls).toContainEqual({ method: 'eq', args: ['claimed_account_id', stale] });
     expect(calls).not.toContainEqual({ method: 'is', args: ['claimed_account_id', null] });
+    expectCountOnlyUpdate(calls);
+  });
+
+  /*
+   * Hotfix 2026-09-29. On production PostgREST an UPDATE with `.or(...)` and
+   * `.select(...)` fails with 42703 unless the `.or` column is also selected.
+   * The two `.or` CAS methods ask for `{ count: 'exact' }` instead, and the id
+   * filter makes 0 or 1 the only honest counts.
+   */
+  const orCasMethods: Array<[string, (repo: BusinessOsInviteRepository) => Promise<{ data: boolean | null; error: Error | null }>]> = [
+    [
+      'issueSignupCode',
+      (repo) =>
+        repo.issueSignupCode({ id: ID, observedSentCount: 0, observedLastSentAt: null, claimLeaseCutoff: CUTOFF, codeHash: CODE_HASH, expiresAt: NOW, sentCount: 1, windowStartedAt: NOW, now: NOW }),
+    ],
+    [
+      'claimForSignup',
+      (repo) =>
+        repo.claimForSignup({ id: ID, codeHash: CODE_HASH, accountId: ACCOUNT, observedClaimedAccountId: null, now: NOW, claimLeaseCutoff: CUTOFF }),
+    ],
+  ];
+
+  it.each(orCasMethods)('%s: count 1 wins, count 0 loses', async (_method, call) => {
+    expect(await call(new BusinessOsInviteRepository(recordingClient({ data: null, error: null, count: 1 }).client))).toEqual({ data: true, error: null });
+    expect(await call(new BusinessOsInviteRepository(recordingClient({ data: null, error: null, count: 0 }).client))).toEqual({ data: false, error: null });
+  });
+
+  it.each(orCasMethods)('%s: a count other than 0 or 1 (or none at all) is an error, never a win', async (_method, call) => {
+    for (const count of [2, null]) {
+      const result = await call(new BusinessOsInviteRepository(recordingClient({ data: null, error: null, count }).client));
+      expect(result.data).toBeNull();
+      expect(result.error).toBeInstanceOf(Error);
+      expect((result.error as Error & { code?: string }).code).toBe('CAS_ROW_COUNT');
+    }
   });
 
   it('releaseSignupClaim: only this claimant, only unredeemed', async () => {
