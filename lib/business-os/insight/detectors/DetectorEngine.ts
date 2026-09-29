@@ -54,6 +54,7 @@ import { CashPayoutBlockedDetector } from './catalog/CashPayoutBlockedDetector';
 import { PricingIntroOfferStuckDetector } from './catalog/PricingIntroOfferStuckDetector';
 import { CashBookingUnpaidDetector } from './catalog/CashBookingUnpaidDetector';
 import { CashWorkUnbilledDetector } from './catalog/CashWorkUnbilledDetector';
+import { CashCancelledUnrefundedDetector } from './catalog/CashCancelledUnrefundedDetector';
 import { CashIncomeDropDetector } from './catalog/CashIncomeDropDetector';
 import { CashClientConcentrationDetector } from './catalog/CashClientConcentrationDetector';
 import { ConvQuoteAcceptanceDropDetector } from './catalog/ConvQuoteAcceptanceDropDetector';
@@ -158,6 +159,7 @@ export class DetectorEngine {
        */
       new CashBookingUnpaidDetector(supabase),
       new CashWorkUnbilledDetector(supabase),
+      new CashCancelledUnrefundedDetector(supabase),
       new CashIncomeDropDetector(supabase),
       new CashClientConcentrationDetector(supabase),
       new ConvQuoteAcceptanceDropDetector(supabase),

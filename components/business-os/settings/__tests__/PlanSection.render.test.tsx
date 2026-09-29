@@ -31,8 +31,54 @@ import { previewAccountFor } from '@/lib/business-os/entitlements/planPresentati
 import { resolveEntitlements } from '@/lib/business-os/entitlements/resolver';
 import { readCodeConfig } from '@/lib/business-os/entitlements/source';
 
+/*
+ * The dictionary, for the handful of keys this file asserts on.
+ *
+ * The section names its sentences with keys and the component renders them, so a
+ * `t` that echoed the key would turn every assertion here into a check that the
+ * key is spelled right — which `planCopy.i18n.test.ts` already does, across all
+ * three languages. What THIS file is for is what a customer sees, so it renders
+ * the real English and keeps asserting the words.
+ *
+ * `language` matters as much as `t`: the date in "ends on {date}" is formatted
+ * by the component in the reader's locale, so without it there is no date to
+ * find.
+ */
+const COPY: Record<string, string> = {
+  'plan.includes': 'What your plan includes',
+  'plan.loading': 'Loading your plan…',
+  'plan.price.free_no_end': 'Free — no end date',
+  'plan.price.free': 'Free',
+  'plan.price.per_month': '{amount} a month',
+  'plan.ends_on': 'Your free access ends on {date}.',
+  'plan.ends_on_or_actions': 'Ends on {date}, or when the AI actions run out, whichever comes first.',
+  'plan.ends.while_paid': 'While the plan is paid for. An admin can set an end date on one account.',
+  'plan.changes.no_end_date':
+    'Your access has no end date. Business OS is normally a paid monthly plan, so if that ever changes for your account we will tell you first and you will be able to choose a plan.',
+  'plan.changes.on_end':
+    'When this ends you will be able to choose a paid monthly plan. Nothing is charged before you choose one.',
+  'plan.problem.unavailable':
+    'We could not load your plan just now. Nothing has changed about your account — please try again shortly.',
+  'plan.problem.no_record':
+    'We do not have a plan record for this account yet. Everything keeps working; get in touch if this stays here.',
+  'plan.move_before_then': 'Get in touch if you would like to move plan before then.',
+  'plan.category.crm': 'Clients (CRM)',
+  'plan.category.website_intake': 'Website and enquiries',
+  'plan.category.payments': 'Payments',
+  'plan.category.ai_chat': 'AI assistant',
+  'plan.category.marketing': 'Marketing',
+  'plan.category.insights': 'Insights',
+  'plan.category.support': 'Support',
+  'plan.category.platform': 'Platform',
+  'plan.category.addon': 'Add-ons',
+};
+
 jest.mock('@/lib/business-os/LanguageContext', () => ({
-  useLanguage: () => ({ t: (key: string) => key, isRTL: false }),
+  useLanguage: () => ({
+    t: (key: string) => COPY[key] ?? key,
+    isRTL: false,
+    language: 'en',
+  }),
 }));
 
 const NOW = new Date('2026-09-27T00:00:00.000Z');
@@ -96,7 +142,7 @@ describe('a Founding Partner', () => {
     await waitFor(() => expect(screen.queryByText(/Loading your plan/i)).not.toBeInTheDocument());
 
     // The date is on screen …
-    expect(screen.getByText(/1 December 2026/)).toBeInTheDocument();
+    expect(screen.getByText(/December 1, 2026/)).toBeInTheDocument();
     // … and nothing anywhere says the opposite, including the pill's tooltip and
     // the price line.
     expect(document.body.textContent ?? '').not.toMatch(/no end date/i);
@@ -145,7 +191,7 @@ describe('a Founding Partner', () => {
 
     for (const category of ['crm', 'payments']) {
       const row = payload.included.find((entry) => entry.category === category)!;
-      expect(included.getByText(row.label)).toBeInTheDocument();
+      expect(included.getByText(COPY[row.labelKey] ?? row.labelKey)).toBeInTheDocument();
       expect(included.getByText(row.summary)).toBeInTheDocument();
     }
 
@@ -210,7 +256,7 @@ describe('a trial', () => {
     await renderFor('trial');
 
     expect(screen.getByText('Test Flight')).toBeInTheDocument();
-    expect(screen.getByText(/Ends on \d+ \w+ \d{4}/)).toBeInTheDocument();
+    expect(screen.getByText(/ends on \w+ \d+, \d{4}/i)).toBeInTheDocument();
     expect(screen.getByText(/Nothing is charged before you choose one/i)).toBeInTheDocument();
   });
 });
@@ -345,7 +391,7 @@ describe('the contract with the server', () => {
     // server-built `summary`. Both are asserted, because a component that printed
     // the label and dropped the summary would still look like a list.
     for (const row of payload.included.slice(0, 3)) {
-      expect(included.getByText(row.label)).toBeInTheDocument();
+      expect(included.getByText(COPY[row.labelKey] ?? row.labelKey)).toBeInTheDocument();
       expect(included.getByText(row.summary)).toBeInTheDocument();
     }
   });

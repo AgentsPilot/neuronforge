@@ -33,6 +33,14 @@ import { AlertTriangle, Ban, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { STOP_REASONS, cancelReasonKey, type StopReason } from '@/lib/business-os/cancellationReasons';
 import { SwitchRow } from './SwitchRow';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 
@@ -64,6 +72,15 @@ export function CancelPlanModal({
   const [refundType, setRefundType] = useState<'full' | 'partial'>('full');
   const [partialAmount, setPartialAmount] = useState('');
   const [reason, setReason] = useState('');
+  /*
+   * Why the plan is being stopped. REQUIRED, nothing preselected.
+   *
+   * The textarea below used to be the whole answer, and it went nowhere: the
+   * route passed it to `cancelPlan`, which read it only inside the refund branch
+   * — so stopping a plan without refunding discarded it entirely. This is the
+   * half that gets stored and counted; the textarea is now the note beside it.
+   */
+  const [reasonCode, setReasonCode] = useState<StopReason | ''>('');
   const [loading, setLoading] = useState(false);
 
   if (!isOpen) return null;
@@ -103,6 +120,7 @@ export function CancelPlanModal({
           // already what the server does with no amount.
           refund_amount: refundCollected && refundType === 'partial' ? refundAmount : undefined,
           reason: reason || undefined,
+          reason_code: reasonCode,
         }),
       });
 
@@ -290,9 +308,32 @@ export function CancelPlanModal({
             </div>
           )}
 
+          {/* In this dialog, above the note it replaces as the real answer. */}
+          <div>
+            <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-[var(--v2-text-muted)]">
+              {t('payments.refund.cancel_reason_label') || 'Why is it being called off?'}
+              <span className="text-[#B42318]"> *</span>
+            </label>
+            <Select value={reasonCode} onValueChange={value => setReasonCode(value as StopReason)}>
+              <SelectTrigger className="w-full bg-[var(--v2-surface)] border-[var(--v2-border)] text-[13px] text-[var(--v2-text-primary)]">
+                <SelectValue
+                  placeholder={t('cancel.choose_reason') || 'Choose a reason'}
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {STOP_REASONS.map(code => (
+                  <SelectItem key={code} value={code}>
+                    {t(cancelReasonKey(code)) || code}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <div>
             <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-[var(--v2-text-muted)]">
               {t('payments.refund.reason_label')}
+              <span className="text-[#B42318]"> *</span>
             </label>
             <textarea
               value={reason}
@@ -318,7 +359,12 @@ export function CancelPlanModal({
           <Button
             type="submit"
             form="cancel-plan-form"
-            disabled={loading || amountInvalid}
+            // Mandatory: unreachable without a reason code.
+            /*
+             * The code AND the sentence, like every refund form. The code is
+             * what a report groups on; the note is what it cannot carry.
+             */
+            disabled={loading || amountInvalid || !reasonCode || !reason.trim()}
             className="bg-red-600 hover:bg-red-700"
           >
             {loading ? (

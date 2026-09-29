@@ -15,7 +15,7 @@
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
 import type { GapDefinition, GapItem } from './types';
-import { CLIENT_CANCELLED_PREFIX } from '@/lib/services/BookingLifecycleService';
+import { CLIENT_CANCELLED_PREFIX } from '@/lib/services/bookingCancellationReason';
 import { PLAN_STOPPED_STATUSES } from '@/lib/payments/planStatus';
 
 const logger = createLogger({ service: 'BusinessGaps' });
@@ -839,6 +839,29 @@ const stageAwaitingCompletion: GapDefinition = {
       const nameById = new Map((contacts || []).map(c => [c.id as string, personName(c)]));
 
       /*
+       * THE JOB THE PHASE BELONGS TO.
+       *
+       * Without it the row said only "באמצע" — "midway" — which is a label on a
+       * payment schedule and means nothing standing on its own. Midway through
+       * WHAT. The owner is being asked to confirm that a piece of work happened
+       * and to bill someone for it, and the row did not name the work.
+       *
+       * Taken from the quote the phase was agreed in, which is where the job got
+       * its name.
+       */
+      const proposalIds = [...new Set(rows.map(row => row.proposal_id).filter(Boolean))] as string[];
+
+      const { data: quotes } = proposalIds.length
+        ? await supabaseServer
+            .from('proposals')
+            .select('id, title')
+            .eq('user_id', userId)
+            .in('id', proposalIds)
+        : { data: [] };
+
+      const jobById = new Map((quotes || []).map(q => [q.id as string, str(q.title)]));
+
+      /*
        * One row per PHASE, not per person — unlike the quote gaps above.
        *
        * A job billed in three phases genuinely has two decisions waiting, they
@@ -848,7 +871,14 @@ const stageAwaitingCompletion: GapDefinition = {
       return rows.map(row => ({
         contactId: row.contact_id as string,
         name: nameById.get(row.contact_id as string) || 'Someone',
-        note: str(row.label),
+        /*
+         * The job, then the phase of it. Either half alone is unreadable: the
+         * job without the phase does not say which decision is waiting, and the
+         * phase without the job does not say what it is a phase OF.
+         */
+        note: [jobById.get(row.proposal_id as string), str(row.label)]
+          .filter(Boolean)
+          .join(' · ') || undefined,
         /*
          * When the stage was created, which is when the client accepted the quote.
          * There is no better answer: a phase has no date of its own, and that is

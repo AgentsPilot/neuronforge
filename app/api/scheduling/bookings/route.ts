@@ -25,6 +25,7 @@ import {
   describeJourneyGaps,
 } from '@/lib/business-os/journeyReadiness';
 import { safeTimezone } from '@/lib/scheduling/businessTime';
+import { journeySteps } from '@/lib/business-os/clientJourney';
 
 const logger = createLogger({ module: 'SchedulingBookingsAPI' });
 
@@ -32,8 +33,23 @@ const logger = createLogger({ module: 'SchedulingBookingsAPI' });
 // Contact can be provided directly OR created from client_* fields
 const createBookingSchema = z.object({
   service_id: z.string().uuid(),
-  start_time: z.string().datetime(),
-  end_time: z.string().datetime(),
+  /*
+   * Optional, because not every service has a time.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A course, a product, a deliverable — `is_scheduled: false` — is bought
+   * rather than booked into a slot, and its client journey has no scheduling
+   * step. The PUBLIC booking route has always allowed this and written nulls;
+   * this one demanded a datetime, so the same course booked from the CRM drawer
+   * asked the owner to pick an hour that means nothing and that no client ever
+   * saw a picker for.
+   *
+   * Both or neither: a start with no end is not a booking, and the service
+   * layer treats "no time" as a single state rather than two half-known ones.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  start_time: z.string().datetime().optional(),
+  end_time: z.string().datetime().optional(),
   timezone: z.string().optional(),
   notes: z.string().optional(),
   booking_source: z.string().optional(),
@@ -82,6 +98,46 @@ export async function POST(request: NextRequest) {
     // 2. Validate input
     const body = await request.json();
     const validated = createBookingSchema.parse(body);
+
+    /*
+     * Whether this service has a time at all, decided by the service — not by
+     * whether the caller happened to send one.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * `journeySteps` is the resolver every booking surface answers with, so the
+     * question "does this involve picking a time" has one answer across the
+     * public dialog, the smart link, the wizard and this route.
+     *
+     * FAILS CLOSED. A service that cannot be read is treated as scheduled, so a
+     * missing time is refused rather than quietly saved as an appointment with
+     * no hour. And a time sent for a service that has no date step is dropped
+     * rather than honoured: the journey is the authority, not the payload.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const { data: journeyService } = await supabaseServer
+      .from('scheduling_services')
+      .select('is_scheduled, collection, price, sale_mode')
+      .eq('id', validated.service_id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    const serviceNeedsSchedule = journeyService
+      ? journeySteps(journeyService).includes('datetime')
+      : true;
+
+    if (serviceNeedsSchedule && !(validated.start_time && validated.end_time)) {
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'time_required',
+          error: 'This service is booked into a time, so a start and end are required',
+        },
+        { status: 400 }
+      );
+    }
+
+    const startTime = serviceNeedsSchedule ? validated.start_time : undefined;
+    const endTime = serviceNeedsSchedule ? validated.end_time : undefined;
 
     requestLogger.info(
       { userId: user.id, serviceId: validated.service_id, contactId: validated.contact_id, clientEmail: validated.client_email },
@@ -243,8 +299,8 @@ export async function POST(request: NextRequest) {
       userId: user.id,
       serviceId: validated.service_id,
       contactId,
-      startTime: validated.start_time,
-      endTime: validated.end_time,
+      startTime,
+      endTime,
       timezone: validated.timezone || safeTimezone(ownerPrefs?.timezone),
       notes: validated.notes,
       bookingSource: validated.booking_source,

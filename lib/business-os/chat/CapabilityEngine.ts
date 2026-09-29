@@ -8,6 +8,7 @@
 import { getCapability, Capability } from './CapabilityRegistry';
 import type { CommandSession } from './CommandSessionRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
+import { deleteContact as removeContact } from '@/lib/services/ContactLifecycleService';
 import { crmTaskRepository, type TaskPriority } from '@/lib/repositories/CRMTaskRepository';
 import {
   schedulingServiceRepository,
@@ -228,7 +229,14 @@ export class CapabilityEngine {
 
   private async deleteContact(params: Record<string, unknown>): Promise<ExecutionResult> {
     const contactId = params.contact_id as string;
-    const result = await crmContactRepository.delete(contactId, this.userId);
+    /*
+     * Via the service, not the repository: a contact with any booking cannot be
+     * deleted directly (NOT NULL `contact_id` against an ON DELETE SET NULL
+     * foreign key), and the service is where the bookings and the money rule
+     * live. Its refusal message is already a sentence, which is what the chat
+     * shows. See `ContactLifecycleService`.
+     */
+    const result = await removeContact({ contactId, userId: this.userId });
 
     if (result.error) {
       return { success: false, error: result.error.message };

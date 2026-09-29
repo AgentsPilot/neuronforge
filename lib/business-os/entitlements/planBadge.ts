@@ -50,8 +50,15 @@ export const PLAN_SECTION_HREF = '/business-os/settings?section=plan';
 export interface PlanBadge {
   /** The customer-facing plan name, from config — never an internal id. */
   label: string;
-  /** Why it is shown, for a tooltip and for the accessible name. */
-  title: string;
+  /**
+   * Why it is shown, as a dictionary KEY for the pill to render.
+   *
+   * This module is `server-only` and cannot reach the platform's translations,
+   * so it names the sentence rather than writing it. The pill reads it, which
+   * keeps these two sentences in the same dictionary as every other screen
+   * instead of an English pair living here.
+   */
+  titleKey: string;
   href: string;
 }
 
@@ -90,11 +97,10 @@ export function planBadgeFor(
     // "See your plan." is correct again, and R4-7 is moot: it was a problem only
     // for the UNLINKED copy beside the plan heading, which the user has since
     // dropped. The one remaining pill is a link in the chrome, so telling somebody
-    // where it goes is exactly what a tooltip is for.
-    title:
-      endsAt === null
-        ? 'Everything included, free, with no end date. See your plan.'
-        : 'Everything included and free for now, with an end date set. See your plan.',
+    // where it goes is exactly what a tooltip is for. The wording now lives in the
+    // platform dictionary; the branch on `endsAt` still lives here, because which
+    // of the two is true is this module's question, not the component's.
+    titleKey: endsAt === null ? 'plan.badge.no_end' : 'plan.badge.ends',
     href: PLAN_SECTION_HREF,
   };
 }

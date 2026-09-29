@@ -370,9 +370,25 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         };
       }
 
-      // For landing pages, use block content directly (AI-generated content stored in blocks)
-      // BUT inject live service data for pricing blocks so prices stay current
-      if (isLandingPage) {
+      /*
+       * A pricing or CTA block that NAMES a service follows that service —
+       * wherever the block lives.
+       *
+       * This read `if (isLandingPage)`, so the identical block on an ordinary
+       * website page kept the price, name and journey flags it was saved with
+       * for ever, while the one on a landing page tracked its service. The live
+       * list was even fetched for it (`hasPricingBlock` / `hasCtaBlock` above)
+       * and then thrown away.
+       *
+       * The condition now says what actually matters: does this block name a
+       * service. A block that names none — a homepage's own hand-written
+       * pricing table — falls straight through exactly as before.
+       */
+      const namesAService = Boolean((block.content as Record<string, unknown>)?.serviceId);
+
+      // Landing pages also use their block content directly (AI-generated), which
+      // is what the `return block` at the end of this branch is for.
+      if (isLandingPage || namesAService) {
         /*
          * For pricing blocks, inject live service data from Scheduling.
          *
@@ -542,7 +558,28 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           }
         }
 
-        return block;
+        /*
+         * Landing pages stop here — their blocks carry their own content and
+         * must not be merged with the central copy. A service-naming block on
+         * an ORDINARY page has only had its figures refreshed above and still
+         * wants the merge below, so it falls through.
+         *
+         * ─────────────────────────────────────────────────────────────────────
+         * EXCEPT a services block, which is never page-specific content.
+         *
+         * This return came before the services handler below, so on a landing
+         * page a services block never reached it and the editor showed the
+         * SNAPSHOT saved when the page was generated: a service that had since
+         * been renamed, at a price it no longer had, and free services showing
+         * no price at all because the snapshot stored none. The public route
+         * has no early return here and was therefore right, which is why the
+         * published page and the builder disagreed.
+         *
+         * The list of services a business sells is the catalogue's to state,
+         * not the page's.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        if (isLandingPage && block.block_type !== 'services') return block;
       }
 
       const sectionName = BLOCK_TO_SECTION_MAP[block.block_type];
@@ -558,23 +595,27 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
       if (block.block_type === 'services') {
         if (liveServices.length > 0) {
-          // Get saved services to preserve hidden flags
-          const savedServices = (block.content as Record<string, unknown>)?.services as Array<{ name: string; hidden?: boolean }> | undefined;
-          const hiddenMap = new Map<string, boolean>();
+          /*
+           * Keyed by ID, with the name as a fallback — see the same merge in
+           * app/api/website/public/[subdomain]/route.ts. Renaming a service used
+           * to lose its hidden flag, so a service kept off the page came back.
+           */
+          const savedServices = (block.content as Record<string, unknown>)?.services as Array<{ id?: string; name?: string; hidden?: boolean }> | undefined;
+          const hiddenById = new Map<string, boolean>();
+          const hiddenByName = new Map<string, boolean>();
 
-          // Build map of hidden flags by service name
           if (savedServices && Array.isArray(savedServices)) {
             savedServices.forEach(s => {
-              if (s.name && s.hidden !== undefined) {
-                hiddenMap.set(s.name, s.hidden);
-              }
+              if (s.hidden === undefined) return;
+              if (s.id) hiddenById.set(s.id, s.hidden);
+              if (s.name) hiddenByName.set(s.name, s.hidden);
             });
           }
 
           // Merge live services with saved hidden flags
           const mergedServices = liveServices.map(service => ({
             ...service,
-            hidden: hiddenMap.get(service.name) ?? false
+            hidden: hiddenById.get(service.id) ?? hiddenByName.get(service.name) ?? false
           }));
 
           return {

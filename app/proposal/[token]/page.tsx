@@ -23,11 +23,18 @@ import { PublicShell } from '@/components/public/PublicShell';
 import { StatusCard } from '@/components/public/StatusCard';
 import { useOptionalPublicBrand } from '@/components/public/PublicBrandProvider';
 import { createPublicT } from '@/lib/i18n/public-pages';
+/*
+ * The decline codes come from the shared namespace, not a local literal.
+ *
+ * These four are STORED and deliberately not renamed even though three duplicate
+ * codes used elsewhere under different spellings — `cancellationReasons` carries
+ * the equivalence map so a report can union them. Importing the list is what
+ * stops a fifth spelling appearing here. `'other'` is already its last member.
+ */
+import { DECLINE_REASONS, type DeclineReason } from '@/lib/business-os/cancellationReasons';
 
 type Code = 'not_found' | 'accepted' | 'declined' | 'expired' | 'withdrawn' | 'superseded';
 
-const DECLINE_REASONS = ['too_expensive', 'timing', 'scope', 'chose_other'] as const;
-type DeclineReason = (typeof DECLINE_REASONS)[number] | 'other';
 
 interface ProposalView {
   /** Which version this is — sent back with an accept so it cannot drift. */
@@ -62,7 +69,16 @@ export default function ProposalPage() {
   const [showDecline, setShowDecline] = useState(false);
   /** Where an already-accepted quote is paid, and whether it still needs paying. */
   const [invoice, setInvoice] = useState<{ url: string; paid: boolean } | null>(null);
-  const [reason, setReason] = useState<DeclineReason>('too_expensive');
+  /*
+   * NOTHING PRESELECTED, and the send button is gated on it.
+   *
+   * This defaulted to 'too_expensive'. The send button was never gated, so every
+   * client who declined without touching the radios recorded "too expensive" —
+   * which means the stored decline reasons over-report price by however many
+   * clients never looked at the list. A default on a mandatory picker does not
+   * save the reader a click, it decides the answer for them.
+   */
+  const [reason, setReason] = useState<DeclineReason | ''>('');
   const [note, setNote] = useState('');
   /*
    * Whether they have opened the document.
@@ -360,7 +376,7 @@ export default function ProposalPage() {
             </p>
 
             <div className="mt-3 space-y-2">
-              {[...DECLINE_REASONS, 'other' as const].map(value => (
+              {DECLINE_REASONS.map(value => (
                 <label
                   key={value}
                   className="flex cursor-pointer items-center gap-2.5 px-3 py-2.5 text-sm"
@@ -413,7 +429,12 @@ export default function ProposalPage() {
               <BrandButton
                 fullWidth
                 loading={answering}
-                onClick={() => answer({ answer: 'decline', reason, note: note.trim() || undefined })}
+                // Mandatory. Unreachable without a reason rather than silently
+                // sending a default one.
+                disabled={!reason}
+                onClick={() =>
+                  reason && answer({ answer: 'decline', reason, note: note.trim() || undefined })
+                }
               >
                 {t('proposal.decline.send')}
               </BrandButton>

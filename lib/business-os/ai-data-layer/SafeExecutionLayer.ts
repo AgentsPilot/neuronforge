@@ -12,6 +12,7 @@ import { createLogger } from '@/lib/logger';
 import type { BookingStatus } from '@/lib/business-os/bookingStatus';
 import { z } from 'zod';
 import { crmContactRepository, type CRMContactListOptions } from '@/lib/repositories/CRMContactRepository';
+import { deleteContact as removeContact } from '@/lib/services/ContactLifecycleService';
 import { crmTaskRepository } from '@/lib/repositories/CRMTaskRepository';
 import {
   schedulingServiceRepository,
@@ -1855,7 +1856,13 @@ export class SafeExecutionLayer {
       }
       case 'delete': {
         if (!id) return { success: false, error: 'ID required for delete' };
-        const result = await crmContactRepository.delete(id, this.userId);
+      /*
+       * Via the service, not the repository: a contact with any booking cannot
+       * be deleted directly (NOT NULL `contact_id` against an ON DELETE SET NULL
+       * foreign key), and the service is where the bookings and the money rule
+       * live. See `ContactLifecycleService`.
+       */
+        const result = await removeContact({ contactId: id, userId: this.userId });
         return result.error
           ? { success: false, error: result.error.message }
           : { success: true };

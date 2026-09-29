@@ -164,6 +164,22 @@ export default function CRMPage() {
     }
   };
 
+  /**
+   * Open a contact named by `?contact=` that is not on the current page of the
+   * list.
+   *
+   * The URL parameter is cleared whatever happens, and that is the point. It
+   * used to be cleared only alongside a successful open, so a link naming a
+   * contact that no longer exists — a deleted one, most often — left `?contact=`
+   * sitting in the address bar. The effect that calls this runs on
+   * `[searchParams, contacts]`, so every later refresh of the list fired the
+   * same doomed fetch again: silently, forever, and once per edit anywhere on
+   * the page, because saving a contact refreshes the list.
+   *
+   * A link is consumed by being followed. If the contact could not be opened,
+   * the honest outcome is the list with a clean URL, not a parameter that
+   * retries on a loop with nothing to show for it.
+   */
   const fetchContactById = async (contactId: string, section?: DrawerSection) => {
     try {
       const response = await fetch(`/api/crm/contacts/${contactId}`);
@@ -171,10 +187,16 @@ export default function CRMPage() {
       if (data.success && data.contact) {
         setDrawerDefaultTab(section ?? 'details');
         setSelectedContact(data.contact);
-        router.replace('/business-os/crm', { scroll: false });
+      } else {
+        logger.warn(
+          { contactId, status: response.status },
+          'Link named a contact that could not be opened; staying on the list'
+        );
       }
     } catch (error) {
       logger.error({ err: error, contactId }, 'Failed to fetch contact by ID');
+    } finally {
+      router.replace('/business-os/crm', { scroll: false });
     }
   };
 

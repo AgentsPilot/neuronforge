@@ -30,12 +30,13 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import { proposalRepository, type Proposal } from '@/lib/repositories/ProposalRepository';
 import { splitTotal } from '@/lib/services/ProposalAcceptanceService';
 import { generateProposalToken } from '@/lib/business-os/proposalToken';
-import { generateProposalEmail } from '@/lib/email/templates/proposal';
+import { generateProposalEmail, generateQuoteStoppedEmail } from '@/lib/email/templates/proposal';
 import { resolveEmailBranding } from '@/lib/email/branding';
 import { sendEmail } from '@/lib/notifications/emailTransport';
 import { resolveUserLanguage } from '@/lib/business-os/userLanguage';
 import { resolveTermsDays } from '@/lib/payments/paymentTerms';
 import type { Locale } from '@/lib/i18n/config';
+import { recordEmailSend } from '@/lib/notifications/recordEmailSend';
 
 const logger = createLogger({ service: 'ProposalSendService' });
 
@@ -235,6 +236,26 @@ export async function sendProposal(
   });
 
   /*
+   * Recorded BEFORE the throw below, deliberately.
+   *
+   * A proposal that failed to send is exactly what someone will come looking
+   * for, and `recordEmailSend` writes it as `status: 'failed'` with the
+   * transport's own error. Recording after the throw would keep a record of
+   * successes only — which is the half nobody needs to investigate.
+   *
+   * Its `sent_at` is null on failure, so it stays out of the "emails sent"
+   * count, and the activity trigger ignores it.
+   */
+  await recordEmailSend({
+    userId,
+    contactId: proposal.contact_id,
+    toEmail: contact.email,
+    subject,
+    bodyHtml: html,
+    result,
+  });
+
+  /*
    * Nothing downstream may claim this was sent unless it was.
    *
    * `sendEmail` returns rather than throws when no transport delivers, so the
@@ -262,4 +283,145 @@ export async function sendProposal(
   log.info('Proposal sent');
 
   return { ok: true, proposal, alreadySent: false };
+}
+
+/**
+ * Tell the client the job has been stopped.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * HERE rather than in `cancelQuoteStages`, for the reason the prefix module
+ * exists: this file already resolves the client's language, the business's
+ * branding and the transport, and `lib/payments` should not acquire the email
+ * stack to send one notice. `cancelQuoteStages` reaches it through a lazy
+ * `await import()`, which also keeps the email transport out of the Jest graph
+ * of every test that touches money.
+ *
+ * BEST EFFORT, ALWAYS. The caller must not fail a stop because an email did not
+ * go: the invoices are already voided and the stages already closed, and a retry
+ * would find nothing left to do while the owner believed nothing had happened.
+ * It returns whether it sent, and says so in the log either way.
+ *
+ * The client was TOLD ABOUT THIS WORK before, which is why silence is not an
+ * option: they hold a quote they signed and invoices in their inbox that no
+ * longer stand.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function sendQuoteStoppedEmail(
+  proposalId: string,
+  userId: string,
+  facts: {
+    paidAmount: number;
+    refundedAmount: number;
+    invoicesVoided: number;
+    stagesClosed: number;
+    /** The owner's own sentence — already withheld by the caller if not shared. */
+    note?: string | null;
+    /** The reason code; the template renders its client-safe phrasing, never the code. */
+    reasonCode?: string | null;
+  }
+): Promise<{ sent: boolean }> {
+  try {
+    const { data: proposal } = await supabaseServer
+      .from('proposals')
+      .select('id, title, total, currency, contact_id')
+      .eq('id', proposalId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (!proposal) {
+      logger.warn({ proposalId }, 'Cannot tell the client the job stopped: quote not found');
+      return { sent: false };
+    }
+
+    const { data: contact } = await supabaseServer
+      .from('crm_contacts')
+      .select('email, first_name')
+      .eq('id', proposal.contact_id)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (!contact?.email) {
+      // Not an error. A quote can be raised against a contact with no email, and
+      // the stop itself has already happened correctly.
+      logger.info({ proposalId }, 'Job stopped, but the contact has no email address');
+      return { sent: false };
+    }
+
+    /*
+     * The CLIENT's language, not the owner's interface language — a Hebrew
+     * business with an English-speaking client must send English. Same resolution
+     * `sendProposal` uses above.
+     */
+    const { data: langRow } = await supabaseServer
+      .from('business_profiles')
+      .select('language')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    const locale = resolveUserLanguage({
+      profileLanguage: langRow?.language ?? null,
+    }).language as Locale;
+    const branding = await resolveEmailBranding(userId, locale);
+
+    const { subject, html } = generateQuoteStoppedEmail({
+      title: proposal.title,
+      total: Number(proposal.total) || 0,
+      currency: proposal.currency,
+      paidAmount: facts.paidAmount,
+      refundedAmount: facts.refundedAmount,
+      invoicesVoided: facts.invoicesVoided,
+      stagesClosed: facts.stagesClosed,
+      note: facts.note ?? null,
+      reasonCode: facts.reasonCode ?? null,
+      clientFirstName: contact.first_name ?? null,
+      branding,
+      locale,
+    });
+
+    const result = await sendEmail({
+      kind: 'transactional',
+      to: [contact.email],
+      subject,
+      html,
+      // The business as sender, not the platform.
+      ownerUserId: userId,
+    });
+
+    /*
+     * Recorded whether it sent or not, exactly as `sendProposal` does.
+     *
+     * `recordEmailSend` writes a failure as `status: 'failed'` with the
+     * transport's own error, and leaves `sent_at` null so it stays out of the
+     * "emails sent" count. Recording successes only would keep a record of the
+     * half nobody needs to investigate.
+     */
+    await recordEmailSend({
+      userId,
+      contactId: proposal.contact_id,
+      toEmail: contact.email,
+      subject,
+      bodyHtml: html,
+      result,
+    });
+
+    /*
+     * `result.sent`, NOT `result.success` — the transport returns rather than
+     * throws when nothing delivers, and there is no `success` field on it. An
+     * optional-chained check against a field that does not exist is always falsy,
+     * so this would have logged a failure on every successful send.
+     */
+    if (!result.sent) {
+      logger.warn(
+        { proposalId, error: result.error ?? result.blocked },
+        'Could not email the client that the job stopped'
+      );
+      return { sent: false };
+    }
+
+    logger.info({ proposalId, to: contact.email }, 'Told the client the job has been stopped');
+    return { sent: true };
+  } catch (err) {
+    logger.error({ err, proposalId }, 'Could not email the client that the job stopped');
+    return { sent: false };
+  }
 }

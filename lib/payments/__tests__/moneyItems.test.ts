@@ -410,7 +410,7 @@ describe('totals never count the same money twice', () => {
 
   it('survives empty input', () => {
     expect(buildMoneyItems({})).toEqual([]);
-    expect(totalMoney([])).toEqual({ collected: 0, outstanding: 0, refunded: 0, byCurrency: {} });
+    expect(totalMoney([])).toEqual({ collected: 0, outstanding: 0, refunded: 0, cancelled: 0, byCurrency: {} });
   });
 
   it('keeps currencies apart instead of summing them', () => {
@@ -431,8 +431,8 @@ describe('totals never count the same money twice', () => {
 
     const totals = totalMoney(items);
 
-    expect(totals.byCurrency.ILS).toEqual({ collected: 600, outstanding: 0, refunded: 0 });
-    expect(totals.byCurrency.USD).toEqual({ collected: 0, outstanding: 40, refunded: 0 });
+    expect(totals.byCurrency.ILS).toEqual({ collected: 600, outstanding: 0, refunded: 0, cancelled: 0 });
+    expect(totals.byCurrency.USD).toEqual({ collected: 0, outstanding: 40, refunded: 0, cancelled: 0 });
   });
 });
 
@@ -641,14 +641,14 @@ describe('who the row is for', () => {
 
 describe('a phase of a quoted job that nobody has billed', () => {
   /*
-   * The bug: `SETTLED_PERIOD_STATUSES` treats anything not paid or cancelled as a
-   * debt, so every unbilled phase of every quoted job was reported as money the
-   * client owed. None of those clients were late — none had been invoiced. It put
-   * the whole remaining value of each job into the Outstanding card and into
-   * `plan_owed_amount`, which is the figure an owner uses to judge who is behind.
+   * COUNTED, and this reversed an earlier decision.
    *
-   * The file's own rule, applied: `OUTSTANDING_STATUSES` already excludes a draft
-   * invoice because "nobody has been asked to pay them".
+   * It was excluded for a while, on the reasoning that `OUTSTANDING_STATUSES`
+   * excludes a draft invoice because "nobody has been asked to pay them". That
+   * is right about a CLIENT's debt and wrong about this page: it is the owner's
+   * book of business, and the question is what has been agreed and not yet
+   * collected. Excluding it rendered a three-payment plan as two, with a total
+   * that did not match the job.
    *
    * Asserted as a DIFFERENCE rather than an absolute. The deposit invoice that
    * gives the booking a row contributes its own figure, and pinning that number
@@ -703,13 +703,36 @@ describe('a phase of a quoted job that nobody has billed', () => {
   /** The deposit-only baseline, with nothing outstanding on the plan itself. */
   const baseline = owedWith(phase({ status: 'cancelled' }));
 
-  it('adds nothing to what is owed', () => {
-    expect(owedWith(phase())).toBe(baseline);
+  it('adds its amount to what is owed', () => {
+    // The owner has agreed it and not collected it. That is the definition this
+    // page uses, and it is why a 3-payment plan now totals as three.
+    expect(owedWith(phase())).toBe(baseline + 940);
   });
 
-  it('starts counting the moment the phase is billed', () => {
-    // An invoice exists, so the client has been asked. That is a real debt.
-    expect(owedWith(phase({ invoiceId: 'inv-2' }))).toBe(baseline + 940);
+  it('starts counting the moment the phase is billed, through its invoice', () => {
+    /*
+     * Billing raises an invoice for the same money, so the debt is counted by the
+     * ENTRY rather than by the period — counting both is the double count fixed
+     * below. This asserts the money appears exactly once, via the invoice.
+     */
+    const items = buildMoneyItems({
+      bookings: [booking()],
+      invoices: [
+        invoice({ id: 'inv-1', amount: 705 }),
+        invoice({ id: 'inv-2', amount: 940, status: 'sent', paid_at: null }),
+      ],
+      transactions: [],
+      plansByBookingId: {
+        'bk-1': {
+          id: 'plan-1',
+          installmentCount: 2,
+          periodsPaid: 1,
+          status: 'active',
+          periods: [paidDeposit, phase({ invoiceId: 'inv-2' })] as never,
+        },
+      },
+    });
+    expect(outstandingOf(items[0])).toBe(baseline + 940);
   });
 
   it('still counts a DATED period with no invoice yet', () => {
@@ -750,3 +773,71 @@ describe('a phase of a quoted job that nobody has billed', () => {
     expect(totalMoney(items).outstanding).toBe(outstandingOf(items[0]));
   });
 });
+
+describe('a plan period and the invoice that bills it are one debt', () => {
+  /*
+   * Billing a stage RAISES an invoice for the same money and writes its id back
+   * onto the stage. From that moment the money exists in both rows, and the
+   * totals counted both: on a live account an 800 stage with its own 800 invoice
+   * reported 1600 outstanding, and the Outstanding card was close to double the
+   * truth across every billed stage on the page.
+   */
+  const billedStage = (over: Record<string, unknown> = {}) =>
+    buildMoneyItems({
+      bookings: [booking()],
+      invoices: [invoice({ id: 'inv-8', amount: 800, status: 'sent', paid_at: null })],
+      transactions: [],
+      plansByBookingId: {
+        'bk-1': {
+          id: 'plan-1',
+          installmentCount: 1,
+          periodsPaid: 0,
+          status: 'active',
+          periods: [
+            {
+              id: 'p2',
+              installmentNumber: 2,
+              amount: 800,
+              currency: 'ILS',
+              dueDate: null,
+              status: 'billed',
+              paidAt: null,
+              transactionId: null,
+              trigger: 'manual',
+              invoiceId: 'inv-8',
+              ...over,
+            },
+          ] as never,
+        },
+      },
+    });
+
+  it('counts it once, not twice', () => {
+    expect(outstandingOf(billedStage()[0])).toBe(800);
+  });
+
+  it('keeps the card agreeing with the row', () => {
+    const items = billedStage();
+    expect(totalMoney(items).outstanding).toBe(outstandingOf(items[0]));
+  });
+
+  it('still counts a period with no invoice behind it', () => {
+    // A DATED stage not yet billed is a real receivable with no entry to
+    // represent it. Dropping every period would have swung the error the other
+    // way and under-reported instead.
+    const items = billedStage({ invoiceId: null, trigger: 'date', dueDate: '2026-11-09' });
+    expect(outstandingOf(items[0])).toBe(1600);
+  });
+
+  it('keys off the link, not the status', () => {
+    /*
+     * `settleInvoice` moves a stage to `paid` by trigger, and a stage cancelled
+     * after billing keeps its invoice — so `status === 'billed'` and "has an
+     * invoice" can disagree. The link is the fact that matters: something else
+     * is already counting this money.
+     */
+    const items = billedStage({ status: 'overdue' });
+    expect(outstandingOf(items[0])).toBe(800);
+  });
+});
+

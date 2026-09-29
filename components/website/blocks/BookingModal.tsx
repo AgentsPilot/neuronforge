@@ -16,7 +16,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Calendar, Clock, User, CreditCard, FileText, Check, ArrowLeft, ArrowRight, Loader2 } from 'lucide-react';
 import { ProcessFlowSection, type ProcessFlowFooterActions } from './ProcessFlowSection';
 import type { PageTheme, FlowStep, SelectedServiceData } from './types';
-import { journeySteps } from '@/lib/business-os/clientJourney';
+import { flowForService, hasJourneyFacts, type ServiceJourneyFacts } from './bookingAction';
 import { flowHasScheduling, flowHasClientInfo } from './types';
 import type { Locale } from '@/lib/i18n/config';
 
@@ -73,6 +73,28 @@ interface BookingModalProps {
    * since this component only renders in the owner's own preview.
    */
   paymentsEnabled?: boolean;
+  /**
+   * The owner looking at their own page in the editor, rather than a client.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THIS WAS HARDCODED `true` ON THE FLOW BELOW, AND IT IS NOT A COSMETIC FLAG.
+   *
+   * `ProcessFlowSection` reads it as "there is a logged-in owner here", so every
+   * request it makes sends `subdomain: ''` and no `userCode` and lets the route
+   * fall back to the authenticated user — and it fakes the intake save rather
+   * than posting it.
+   *
+   * That was right while this dialog existed only inside the builder's preview.
+   * It stopped being right the moment the smart link (`/c/{userCode}`) was
+   * rewritten onto this component: a client who is not the owner has no session
+   * to fall back to, so `booking/create` answered 401 and the dialog could not
+   * take a booking at all.
+   *
+   * Defaults to false — a public surface is the ordinary case, and the two
+   * preview routes say so explicitly.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  isPreview?: boolean;
 }
 
 // Step Indicator Component (moved from ProcessFlowSection for sticky header)
@@ -137,21 +159,6 @@ function StepIndicator({ steps, currentStep, completedSteps, primaryColor, isRTL
   );
 }
 
-/** `journeySteps` names its steps differently from this modal's flow keys. */
-const STEP_TO_FLOW: Record<string, FlowStep | undefined> = {
-  // Choosing what to buy is the modal's own 'services' screen, not a flow step.
-  service: undefined,
-  datetime: 'scheduling',
-  details: 'client_info',
-  // Where a quoted service ends: the client has asked, and the owner replies
-  // with a proposal. Not a form — the details step just before it collected
-  // everything — but the screen that says so.
-  request: 'request',
-  payment: 'payment',
-  intake: 'intake',
-  confirmation: 'confirmation',
-};
-
 export function BookingModal({
   isOpen,
   onClose,
@@ -164,6 +171,7 @@ export function BookingModal({
   userCode,
   initialService,
   paymentsEnabled,
+  isPreview = false,
   anchorTop = null
 }: BookingModalProps) {
   /*
@@ -257,29 +265,39 @@ export function BookingModal({
   // step the business may well be able to honour.
   const processorReady = paymentsEnabled !== false;
 
-  const serviceHasJourneyFacts =
-    initialService?.is_scheduled !== undefined ||
-    initialService?.collection !== undefined ||
-    initialService?.sale_mode !== undefined;
+  /*
+   * WHICHEVER SERVICE THE CLIENT IS ACTUALLY BUYING.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The journey was resolved ONCE, from the service a card handed in — so it
+   * was right for a client who arrived by clicking a card and wrong for every
+   * client who reached the catalogue and chose inside the dialog. They walked
+   * the PAGE's stored flow instead: a course that is never booked into an hour
+   * asked them to pick a time, because the page's other services have one.
+   *
+   * The flow reports what was chosen, and the journey is recomputed from it.
+   * `initialService` remains the answer until then — it is what the catalogue
+   * step is standing in for.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [chosenService, setChosenService] = useState<ServiceJourneyFacts | null>(null);
 
-  const effectiveFlow: FlowStep[] = serviceHasJourneyFacts
-    ? (journeySteps(
-        {
-          is_scheduled: initialService?.is_scheduled,
-          collection: initialService?.collection,
-          price: initialService?.price,
-          sale_mode: initialService?.sale_mode,
-        },
-        // Whether a card can actually be charged. This was hardcoded `true`,
-        // which left the payment screen to refuse — showing the visitor an error
-        // about the business's payment setup. That is the owner's concern, never
-        // the client's, so the step is dropped instead and the booking completes
-        // unpaid. Defaults to ready when the caller does not know, so a preview
-        // still renders the full journey.
-        { processorReady }
-      )
-        .map(step => STEP_TO_FLOW[step])
-        .filter((step): step is FlowStep => Boolean(step)))
+  // A new dialog is a new question. Without this, reopening from another card
+  // would still be answering for the service chosen in the last one.
+  useEffect(() => {
+    if (!isOpen) setChosenService(null);
+  }, [isOpen]);
+
+  const journeyService: ServiceJourneyFacts | null | undefined = chosenService ?? initialService ?? null;
+  const serviceHasJourneyFacts = hasJourneyFacts(journeyService);
+
+  const effectiveFlow: FlowStep[] = serviceHasJourneyFacts && journeyService
+    // Whether a card can actually be charged travels with it. This was hardcoded
+    // `true` once, which left the payment screen to refuse — showing the visitor
+    // an error about the business's payment setup. That is the owner's concern,
+    // never the client's, so the step is dropped instead and the booking
+    // completes unpaid.
+    ? flowForService(journeyService, { processorReady })
     : (clientFlow || ['scheduling', 'client_info', 'payment', 'confirmation']);
 
   // Use helper functions to handle both legacy 'booking' and new 'scheduling'/'client_info' steps
@@ -288,9 +306,18 @@ export function BookingModal({
   const hasPayment = effectiveFlow.includes('payment');
   const hasIntake = effectiveFlow.includes('intake');
 
-  // Determine initial step based on flow configuration
+  /*
+   * Determine initial step based on flow configuration.
+   *
+   * An IDENTIFIED service, not merely a named one: a card that knows which
+   * service it is but not its id (stored block content carries names alone)
+   * hands one up with an empty id, and the flow inside loads the catalogue to
+   * resolve it. The journey facts on it are still real, so `effectiveFlow`
+   * above uses them — only the STEP has to wait, and the flow reports back
+   * through `onStepChange` the moment it has its match.
+   */
   const getInitialStep = (): CurrentStep => {
-    if (!initialService) return 'services';
+    if (!initialService?.id) return 'services';
     if (hasScheduling) return 'datetime';
     if (hasClientInfo) return 'details';
     return 'services';
@@ -309,7 +336,7 @@ export function BookingModal({
 
   // Track current step and completed steps for the sticky header
   const [currentStep, setCurrentStep] = useState<CurrentStep>(getInitialStep());
-  const [completedSteps, setCompletedSteps] = useState<CurrentStep[]>(initialService ? ['services'] : []);
+  const [completedSteps, setCompletedSteps] = useState<CurrentStep[]>(initialService?.id ? ['services'] : []);
   const contentRef = useRef<HTMLDivElement>(null);
 
   const primaryColor = theme?.colors?.primary || '#4F6EF7';
@@ -366,12 +393,20 @@ export function BookingModal({
 
   // Reset state when modal opens/closes
   useEffect(() => {
-    if (isOpen) {
+    /*
+     * Not once the client has chosen inside the dialog.
+     *
+     * This recomputes the opening step whenever the flow changes — which is now
+     * something that HAPPENS MID-DIALOG, because choosing a service rewrites the
+     * journey. Left unguarded it would answer that change by sending the client
+     * back to the step the dialog opened on.
+     */
+    if (isOpen && !chosenService) {
       setCurrentStep(getInitialStep());
-      setCompletedSteps(initialService ? ['services'] : []);
+      setCompletedSteps(initialService?.id ? ['services'] : []);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, initialService, hasScheduling, hasClientInfo]);
+  }, [isOpen, initialService, hasScheduling, hasClientInfo, chosenService]);
 
   // Callback to sync step state from ProcessFlowSection
   const handleStepChange = useCallback((step: CurrentStep, completed: CurrentStep[]) => {
@@ -553,9 +588,10 @@ export function BookingModal({
                   useLiveData={true}
                   pageId={pageId}
                   subdomain={subdomain}
-            userCode={userCode}
-                  isPreview={true}
+                  userCode={userCode}
+                  isPreview={isPreview}
                   onStepChange={handleStepChange}
+                  onServiceChange={setChosenService}
                   onFooterActionsChange={setFooterActions}
                 />
               </div>

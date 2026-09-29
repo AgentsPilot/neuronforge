@@ -38,6 +38,8 @@ import {
   formatEmailDate,
   type BrandingData,
 } from './base-template';
+// The same table every other template in this folder reads from.
+import { emailTranslations, getEmailTranslation } from './translations';
 
 /**
  * How the owner wants to sound. Chosen once in the automation's settings.
@@ -124,24 +126,52 @@ export function generateChaseInvoiceEmail(data: ChaseInvoiceData): { subject: st
   const palette = emailPalette(branding);
   const money = formatCurrency(amount, currency);
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WRITTEN IN THE READER'S LANGUAGE, like every other template in this folder.
+   *
+   * This one was the exception: `locale` reached the date formatter and the
+   * wrapper and nothing else, so every sentence was hardcoded English with a
+   * localised date dropped into the middle of it. A Hebrew school chasing a
+   * Hebrew client sent:
+   *
+   *     Hi אופיר עומר, I hope you're well.
+   *     I wanted to check in about invoice INV-00006 for ₪300.00 …
+   *     It was due on יום ראשון, 27 בספטמבר 2026, 1 day ago.
+   *
+   * Three languages in one paragraph, to a paying client, over money. It is the
+   * single worst place in the product for the writing to look automated.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const t = emailTranslations.chaseInvoice;
+
   const opening =
     tone === 'friendly'
-      ? `Hi ${clientName}, I hope you're well.`
-      : tone === 'firm'
-        ? `Hi ${clientName},`
-        : `Hi ${clientName},`;
+      ? getEmailTranslation(t.openingFriendly, locale)(clientName)
+      : getEmailTranslation(t.opening, locale)(clientName);
 
   const ask =
     tone === 'firm'
-      ? `Invoice ${invoiceNumber} for ${money} is still outstanding and I'd be grateful if you could settle it.`
-      : `I wanted to check in about invoice ${invoiceNumber} for ${money}, which is still showing as unpaid.`;
+      ? getEmailTranslation(t.askFirm, locale)(invoiceNumber, money)
+      : getEmailTranslation(t.askFriendly, locale)(invoiceNumber, money);
 
   // Stated once, as a fact, with no adjective attached to it.
-  const timing = dueDate
-    ? `<p style="margin:0 0 16px;color:${palette.inkMuted};font-size:14px;">It was due on ${formatEmailDate(dueDate, timezone, { locale, includeTime: false })}${daysOverdue > 0 ? `, ${daysOverdue} ${daysOverdue === 1 ? 'day' : 'days'} ago` : ''}.</p>`
+  const dueText = dueDate
+    ? (() => {
+        const when = formatEmailDate(dueDate, timezone, { locale, includeTime: false });
+        return daysOverdue > 0
+          ? getEmailTranslation(t.dueOnOverdue, locale)(when, daysOverdue)
+          : getEmailTranslation(t.dueOn, locale)(when);
+      })()
     : '';
 
-  const button = payUrl ? emailButton('Pay invoice', payUrl, { branding }) : '';
+  const timing = dueText
+    ? `<p style="margin:0 0 16px;color:${palette.inkMuted};font-size:14px;">${dueText}</p>`
+    : '';
+
+  const button = payUrl
+    ? emailButton(getEmailTranslation(t.payButton, locale), payUrl, { branding })
+    : '';
 
   const html = wrapInBrandedTemplate(
     `
@@ -150,7 +180,7 @@ export function generateChaseInvoiceEmail(data: ChaseInvoiceData): { subject: st
       ${timing}
       ${button}
       <p style="margin:24px 0 0;font-size:14px;color:${palette.inkMuted};">
-        If you've already paid, please ignore this. Thank you.
+        ${getEmailTranslation(t.ignoreIfPaid, locale)}
       </p>
       <p style="margin:16px 0 0;font-size:16px;color:${palette.ink};">${businessName}</p>
     `,
@@ -159,7 +189,10 @@ export function generateChaseInvoiceEmail(data: ChaseInvoiceData): { subject: st
     { ...branding, locale }
   );
 
-  return { subject: `Invoice ${invoiceNumber} from ${businessName}`, html };
+  return {
+    subject: getEmailTranslation(t.subject, locale)(invoiceNumber, businessName),
+    html,
+  };
 }
 
 /* ----------------------------------------------------------------- nudge */
@@ -180,10 +213,14 @@ export function generateFollowupNudgeEmail(data: FollowupNudgeData): { subject: 
   const tone = data.tone ?? 'friendly';
   const palette = emailPalette(branding);
 
+  // Same fault as the chase above: `locale` reached the wrapper and nothing
+  // else, so every sentence was English whoever was reading it.
+  const t = emailTranslations.followupNudge;
+
   const greeting =
     tone === 'friendly'
-      ? `Hi ${clientName}, I hope you're keeping well.`
-      : `Hi ${clientName},`;
+      ? getEmailTranslation(t.greetingFriendly, locale)(clientName)
+      : getEmailTranslation(t.greeting, locale)(clientName);
 
   /*
    * The opening carries the reason; nothing else in the message does.
@@ -195,20 +232,25 @@ export function generateFollowupNudgeEmail(data: FollowupNudgeData): { subject: 
   const reason = data.reason ?? 'unspecified';
   const opening =
     reason === 'new_enquiry'
-      ? `${greeting} You got in touch about working together, and I wanted to follow up.`
+      ? getEmailTranslation(t.openingNewEnquiry, locale)(greeting)
       : reason === 'past_client'
-        ? `${greeting} It has been a little while since your last visit.`
+        ? getEmailTranslation(t.openingPastClient, locale)(greeting)
         : reason === 'after_intro'
-          ? `${greeting} I hope you enjoyed your first session.`
+          ? getEmailTranslation(t.openingAfterIntro, locale)(greeting)
           : greeting;
 
-  const next = serviceName ? `your next ${serviceName}` : 'your next session';
+  const next = serviceName
+    ? getEmailTranslation(t.nextNamed, locale)(serviceName)
+    : getEmailTranslation(t.nextGeneric, locale);
+
   const body =
     reason === 'new_enquiry'
-      ? `If you'd still like to go ahead, you can pick a time that suits you.`
-      : `I wanted to check whether you'd like to arrange ${next}.`;
+      ? getEmailTranslation(t.bodyNewEnquiry, locale)
+      : getEmailTranslation(t.bodyArrange, locale)(next);
 
-  const button = bookingUrl ? emailButton('Book a time', bookingUrl, { branding }) : '';
+  const button = bookingUrl
+    ? emailButton(getEmailTranslation(t.bookButton, locale), bookingUrl, { branding })
+    : '';
 
   const html = wrapInBrandedTemplate(
     `
@@ -216,7 +258,7 @@ export function generateFollowupNudgeEmail(data: FollowupNudgeData): { subject: 
       <p style="margin:0 0 16px;font-size:16px;color:${palette.ink};">${body}</p>
       ${button}
       <p style="margin:24px 0 0;font-size:14px;color:${palette.inkMuted};">
-        If now isn't the right time, just let me know and I'll leave it with you.
+        ${getEmailTranslation(t.noPressure, locale)}
       </p>
       <p style="margin:16px 0 0;font-size:16px;color:${palette.ink};">${businessName}</p>
     `,
@@ -225,7 +267,10 @@ export function generateFollowupNudgeEmail(data: FollowupNudgeData): { subject: 
     { ...branding, locale }
   );
 
-  return { subject: `Booking your next session with ${businessName}`, html };
+  return {
+    subject: getEmailTranslation(t.subject, locale)(businessName),
+    html,
+  };
 }
 
 /* -------------------------------------------------------------- reminder */
@@ -237,17 +282,22 @@ export function generateBookingReminderEmail(data: BookingReminderData): { subje
   const palette = emailPalette(branding);
   const when = formatEmailDate(startsAt, timezone, { locale });
 
-  const button = manageUrl ? emailButton('Reschedule or cancel', manageUrl, { branding }) : '';
+  // The third in this file with an unused `locale`. Same fix, same table.
+  const t = emailTranslations.bookingReminder;
+
+  const button = manageUrl
+    ? emailButton(getEmailTranslation(t.manageButton, locale), manageUrl, { branding })
+    : '';
 
   const html = wrapInBrandedTemplate(
     `
-      <p style="margin:0 0 16px;font-size:16px;color:${palette.ink};">Hi ${clientName},</p>
+      <p style="margin:0 0 16px;font-size:16px;color:${palette.ink};">${getEmailTranslation(t.greeting, locale)(clientName)}</p>
       <p style="margin:0 0 16px;font-size:16px;color:${palette.ink};">
-        A reminder about your ${serviceName} on ${when}.
+        ${getEmailTranslation(t.body, locale)(serviceName, when)}
       </p>
       ${button}
       <p style="margin:24px 0 0;font-size:14px;color:${palette.inkMuted};">
-        Looking forward to seeing you.
+        ${getEmailTranslation(t.closing, locale)}
       </p>
       <p style="margin:16px 0 0;font-size:16px;color:${palette.ink};">${businessName}</p>
     `,
@@ -256,5 +306,8 @@ export function generateBookingReminderEmail(data: BookingReminderData): { subje
     { ...branding, locale }
   );
 
-  return { subject: `Reminder: ${serviceName} on ${when}`, html };
+  return {
+    subject: getEmailTranslation(t.subject, locale)(serviceName, when),
+    html,
+  };
 }

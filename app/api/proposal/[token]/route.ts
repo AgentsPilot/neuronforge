@@ -13,6 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { DECLINE_REASONS } from '@/lib/business-os/cancellationReasons';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { verifyProposalToken } from '@/lib/business-os/proposalToken';
@@ -46,6 +47,21 @@ function blockingState(proposal: Proposal): ProposalPageCode | null {
   if (proposal.status === 'declined') return 'declined';
   if (proposal.status === 'withdrawn') return 'withdrawn';
   if (proposal.status === 'superseded') return 'superseded';
+  /*
+   * A job that was agreed and then ended early.
+   *
+   * MUST be listed, not left to fall through: an unhandled status returns null
+   * here and the page renders the quote as live and acceptable. A client holding
+   * an old link could then "accept" a job the business has already written off.
+   *
+   * Reported as `withdrawn` rather than as a new page code. The page's withdrawn
+   * copy — this quote is no longer available — is true of a stopped job, and it
+   * is what the client needs to know. A separate public code would mean new copy
+   * in three languages to tell them something they cannot act on either way.
+   * The distinction between "never agreed" and "agreed then stopped" matters to
+   * the BUSINESS, and that is where `stop_reason` records it.
+   */
+  if (proposal.status === 'stopped') return 'withdrawn';
   if (proposal.status === 'expired') return 'expired';
 
   if (proposal.valid_until) {
@@ -249,7 +265,12 @@ const answerSchema = z.discriminatedUnion('answer', [
     answer: z.literal('decline'),
     // One tap from a short list. The reason is what turns a lost quote into a
     // second attempt, so it is asked for rather than inferred.
-    reason: z.enum(['too_expensive', 'timing', 'scope', 'chose_other', 'other']),
+    /*
+     * From the shared list, not a literal. Two copies of the same five codes in
+     * two files is how the client and the server come to disagree about which
+     * are valid — and the page that offers them now imports the same constant.
+     */
+    reason: z.enum(DECLINE_REASONS),
     note: z.string().max(1000).optional(),
   }),
 ]);

@@ -36,6 +36,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { PaymentPlanSubscriptionRepository } from '@/lib/repositories/PaymentPlanSubscriptionRepository';
 import { isPlanStopped } from '@/lib/payments/planStatus';
+import type { StopReason } from '@/lib/business-os/cancellationReasons';
 import { refundGroup, resolveRefundTargets, type GroupRefundOutcome } from './RefundService';
 import { syncBookingsForTransactions } from './syncBookingPaymentState';
 
@@ -96,7 +97,26 @@ export async function cancelPlan(input: {
    * own.
    */
   refundAmount?: number;
+  /**
+   * The note behind the stop, and the refund's reason where one is issued.
+   *
+   * Prose. `reasonCode` is the countable half.
+   */
   reason?: string;
+  /**
+   * Why the plan was stopped, from `STOP_REASONS`.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * `reason` alone used to be the whole story, and it went nowhere: it was read
+   * in exactly one place, the `refundGroup` call below, which only runs when the
+   * caller also asked for a refund. Stopping a plan without refunding threw the
+   * reason away, and stopping one with a refund filed it as the REFUND's reason.
+   *
+   * Optional at this layer because callers predating it exist. The API requires
+   * it, like every other cancellation surface.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  reasonCode?: StopReason | null;
   clientRequestId?: string;
 }): Promise<CancelPlanResult> {
   const { data: plan } = await supabaseServer
@@ -124,7 +144,7 @@ export async function cancelPlan(input: {
      * shows as active forever.
      */
     logger.warn({ planId: plan.id }, 'Plan has no Stripe reference; closing the local record only');
-    await closeLocally(plan.id, plan.user_id);
+    await closeLocally(plan.id, plan.user_id, { code: input.reasonCode, note: input.reason });
     return { ok: true, cancelledPeriods: await cancelledCount(plan.id, plan.user_id) };
   }
 
@@ -185,7 +205,7 @@ export async function cancelPlan(input: {
     }
   }
 
-  await closeLocally(plan.id, plan.user_id);
+  await closeLocally(plan.id, plan.user_id, { code: input.reasonCode, note: input.reason });
   const cancelledPeriods = await cancelledCount(plan.id, plan.user_id);
 
   /*
@@ -221,7 +241,13 @@ export async function cancelPlan(input: {
   }
 
   logger.info(
-    { planId: plan.id, alreadyStopped, cancelledPeriods, refunded: refund?.refundedTotal ?? 0 },
+    {
+      planId: plan.id,
+      alreadyStopped,
+      cancelledPeriods,
+      reasonCode: input.reasonCode ?? null,
+      refunded: refund?.refundedTotal ?? 0,
+    },
     'Payment plan stopped'
   );
 
@@ -235,8 +261,18 @@ export async function cancelPlan(input: {
  * remaining installments from what the business is owed. Left `pending`, a
  * cancelled twelve-month plan goes on claiming eleven months of receivables.
  */
-async function closeLocally(planId: string, userId: string) {
-  await planRepo.close(planId, 'cancelled');
+async function closeLocally(
+  planId: string,
+  userId: string,
+  structured?: { code?: string | null; note?: string | null }
+) {
+  await planRepo.close(planId, 'cancelled', {
+    code: structured?.code ?? null,
+    note: structured?.note ?? null,
+    // Always the owner today. Nothing automated stops a plan, and claiming the
+    // client did would misattribute it in every report that reads the column.
+    cancelledBy: 'owner',
+  });
 
   /*
    * Scoped by `subscription_id` — this SALE — not by `payment_plan_id`, which

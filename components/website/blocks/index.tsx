@@ -187,6 +187,31 @@ export function WebsiteBlocks({
   const [selectedService, setSelectedService] = useState<SelectedServiceData | null>(null);
 
   /*
+   * Can this page open the booking dialog, or only link away to one?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The dialog used to be mounted for `isPreview` ALONE, and every booking
+   * control in every block asked `isPreview && onOpenBooking` before offering
+   * it. Neither `/site/[subdomain]` nor `/site/[subdomain]/[slug]` passes
+   * `isPreview` — they are published pages, not previews — so on the live site
+   * the dialog was never rendered and every "book" button quietly degraded to a
+   * link to `/site/{subdomain}/book`. A client clicking a service on a landing
+   * page therefore never saw the dialog the page was built around, and the
+   * services list's link does not even carry the service, so they arrived at a
+   * catalogue and had to choose again.
+   *
+   * The capability is the SUBDOMAIN, not the preview: it is what
+   * `booking/create` identifies the business by, and it is exactly what the
+   * dialog needs to work for an anonymous visitor. A preview has no subdomain
+   * of its own and books as the authenticated owner, which is the other case.
+   *
+   * Blocks are handed `onOpenBooking` only when this is true, so the presence
+   * of the handler IS the answer and no block has to re-derive it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const canOpenBookingDialog = isPreview || !!subdomain;
+
+  /*
    * Where the button that opened the dialog sits on the page.
    *
    * ───────────────────────────────────────────────────────────────────────────
@@ -436,14 +461,17 @@ export function WebsiteBlocks({
               bookingUrl={bookingUrl}
               subdomain={subdomain}
               isPreview={isPreview}
-              onOpenBooking={handleOpenBooking}
+              onOpenBooking={canOpenBookingDialog ? handleOpenBooking : undefined}
             />
           </div>
         );
       })}
 
-      {/* Booking Modal for preview mode */}
-      {isPreview && (
+      {/* The booking dialog — on the published page as well as in the preview.
+          `isPreview` still travels, because it is what decides whether the flow
+          inside books as the authenticated owner or as an anonymous client of
+          this subdomain. */}
+      {canOpenBookingDialog && (
         <BookingModal
           isOpen={bookingModalOpen}
           onClose={handleCloseBooking}
@@ -453,6 +481,7 @@ export function WebsiteBlocks({
           clientFlow={clientFlow}
           pageId={pageId}
           subdomain={subdomain}
+          isPreview={isPreview}
           initialService={selectedService}
           anchorTop={anchorTop}
           paymentsEnabled={paymentsEnabled}

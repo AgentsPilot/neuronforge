@@ -71,6 +71,14 @@ jest.mock('@/lib/repositories/BusinessProfileRepository', () => ({
  */
 const bookingState: { data: Record<string, unknown> | null } = { data: null };
 
+/*
+ * The service, because its `min_notice_hours` decides whether the reminder may
+ * offer a reschedule link at all. Left at the default the sender reads 24.
+ */
+const serviceState: { data: Record<string, unknown> | null } = {
+  data: { service_name: 'Initial assessment' },
+};
+
 function bookingAsRepositoryReturnsIt(overrides: Record<string, unknown> = {}) {
   return {
     id: 'bk-1',
@@ -96,7 +104,7 @@ function bookingAsRepositoryReturnsIt(overrides: Record<string, unknown> = {}) {
 jest.mock('@/lib/repositories/SchedulingRepository', () => ({
   schedulingBookingRepository: { findById: async () => ({ data: bookingState.data, error: null }) },
   schedulingServiceRepository: {
-    findById: async () => ({ data: { service_name: 'Initial assessment' }, error: null }),
+    findById: async () => ({ data: serviceState.data, error: null }),
   },
 }));
 
@@ -123,6 +131,7 @@ beforeEach(() => {
   sendOutcome.client = true;
   sendOutcome.owner = true;
   bookingState.data = bookingAsRepositoryReturnsIt();
+  serviceState.data = { service_name: 'Initial assessment' };
 });
 
 describe('sendMeetingReminder', () => {
@@ -373,5 +382,120 @@ describe('sendMeetingReminder', () => {
 
       expect(sent).toHaveLength(0);
     });
+  });
+});
+
+describe('the reschedule link is only offered while it would work', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * The reminder always invited the client to reschedule, and
+   * `/api/book/manage/[token]/reschedule` refuses anything inside the service's
+   * notice window with `too_late` and a 400. Nothing compared the two, so the
+   * button was a trap: press it, wait for a page, be told you are late.
+   *
+   * Not an edge case — the owner picks from `REMINDER_LEADS = [1, 2, 3, 24, 48]`
+   * and the window defaults to 24 hours, so four of the five choices produced a
+   * dead button.
+   *
+   * The owner's lead time is NOT overridden anywhere in these tests: the
+   * reminder still goes out when they asked. Only its content changes.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const hoursOut = (h: number) =>
+    bookingAsRepositoryReturnsIt({
+      start_time: new Date(Date.now() + h * 3_600_000).toISOString(),
+    });
+
+  /*
+   * `clientMail()` from above, not a local copy. A first version of this
+   * compared `m.to` — a string ARRAY — against a string, so it never matched:
+   * the `toContain` cases failed loudly and the `not.toContain` cases passed
+   * vacuously against an empty string. Exactly the false green these tests exist
+   * to prevent.
+   */
+  const clientHtml = () => clientMail()?.html ?? '';
+
+  it('offers it when there is more time left than the window', async () => {
+    bookingState.data = hoursOut(48);
+    serviceState.data = { service_name: 'Initial assessment', min_notice_hours: 24 };
+
+    await BookingEmailService.sendMeetingReminder('bk-1', 'u1', {
+      notifyClient: true,
+      notifyOwner: false,
+    });
+
+    expect(clientHtml()).toContain('/book/manage/');
+  });
+
+  it('withholds it inside the window', async () => {
+    // The 2-hour lead time against a 24-hour window — the commonest setting.
+    bookingState.data = hoursOut(2);
+    serviceState.data = { service_name: 'Initial assessment', min_notice_hours: 24 };
+
+    await BookingEmailService.sendMeetingReminder('bk-1', 'u1', {
+      notifyClient: true,
+      notifyOwner: false,
+    });
+
+    const html = clientHtml();
+    expect(html).not.toContain('/book/manage/');
+    // The reminder still goes — only the dead button is gone.
+    expect(html).toContain('Initial assessment');
+  });
+
+  it('withholds it exactly on the boundary', async () => {
+    /*
+     * 24 hours against a 24-hour window. The link would be technically valid the
+     * instant it was sent and refused minutes later, which is why the test is
+     * `>` and not `>=` — and why no margin was invented to paper over it.
+     */
+    bookingState.data = hoursOut(24);
+    serviceState.data = { service_name: 'Initial assessment', min_notice_hours: 24 };
+
+    await BookingEmailService.sendMeetingReminder('bk-1', 'u1', {
+      notifyClient: true,
+      notifyOwner: false,
+    });
+
+    expect(clientHtml()).not.toContain('/book/manage/');
+  });
+
+  it('respects a service with a longer window', async () => {
+    // 26 hours out, but this service wants 48. Still too late.
+    bookingState.data = hoursOut(26);
+    serviceState.data = { service_name: 'Initial assessment', min_notice_hours: 48 };
+
+    await BookingEmailService.sendMeetingReminder('bk-1', 'u1', {
+      notifyClient: true,
+      notifyOwner: false,
+    });
+
+    expect(clientHtml()).not.toContain('/book/manage/');
+  });
+
+  it('always offers it when the service has no window', async () => {
+    bookingState.data = hoursOut(1);
+    serviceState.data = { service_name: 'Initial assessment', min_notice_hours: 0 };
+
+    await BookingEmailService.sendMeetingReminder('bk-1', 'u1', {
+      notifyClient: true,
+      notifyOwner: false,
+    });
+
+    expect(clientHtml()).toContain('/book/manage/');
+  });
+
+  it('falls back to 24 hours when the service is unreadable', async () => {
+    // A booking whose service was deleted. Assuming no window would offer a link
+    // that the reschedule route — which applies the same `?? 24` — would refuse.
+    bookingState.data = hoursOut(2);
+    serviceState.data = null;
+
+    await BookingEmailService.sendMeetingReminder('bk-1', 'u1', {
+      notifyClient: true,
+      notifyOwner: false,
+    });
+
+    expect(clientHtml()).not.toContain('/book/manage/');
   });
 });

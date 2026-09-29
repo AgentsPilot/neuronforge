@@ -79,6 +79,16 @@ export interface OperationalSettings {
   hoursBefore: number;
   notifyClient: boolean;
   notifyOwner: boolean;
+  /**
+   * The tightest change deadline across the business's bookable services.
+   *
+   * Here so the picker can say what a lead time COSTS. The reminder invites the
+   * client to reschedule, and the reschedule route refuses anything inside the
+   * service's notice window — so with the default 24 hours, four of the five
+   * choices below produce a link the client cannot use. Optional so a payload
+   * that predates it still renders.
+   */
+  noticeHours?: number;
 }
 
 /** Whether the platform tells the OWNER, independent of the automation. */
@@ -562,7 +572,19 @@ export function InsightAdvisorCard({
     (next: OperationalSettings) => {
       setReminder(next);
       if (operationalItem?.enabled && onOperationalDecide) {
-        void onOperationalDecide(operationalItem.id, true, next);
+        /*
+         * Only the three WRITABLE fields go up. `noticeHours` is derived from the
+         * services and comes down from the gaps API to explain the choice — it is
+         * not the owner's to set. The save route's Zod is not strict today so an
+         * extra key would be stripped silently, which is precisely why sending it
+         * is worth avoiding: the day somebody adds `.strict()`, every lead-time
+         * change would start failing for a reason nobody would look for here.
+         */
+        void onOperationalDecide(operationalItem.id, true, {
+          hoursBefore: next.hoursBefore,
+          notifyClient: next.notifyClient,
+          notifyOwner: next.notifyOwner,
+        });
       }
     },
     [operationalItem, onOperationalDecide]
@@ -1019,6 +1041,44 @@ export function InsightAdvisorCard({
                   </button>
                 ))}
               </div>
+
+              {/*
+                What the chosen lead time costs, said here rather than discovered
+                by a client.
+
+                The reminder offers a reschedule link, and the reschedule route
+                refuses anything inside the service's notice window. At the
+                default 24 hours, four of the five choices above land inside it —
+                so this was a decision the owner made blind. The lead time itself
+                is never overridden: `sendMeetingReminder` simply withholds the
+                button when it cannot work, and this explains why.
+
+                `>` and not `>=`: a reminder sent exactly on the deadline carries
+                a link that is valid the instant it is sent and refused minutes
+                later. That is the case worth naming, not papering over with an
+                invented margin.
+              */}
+              {(() => {
+                const notice = reminder.noticeHours;
+                if (typeof notice !== 'number' || notice <= 0) return null;
+                const canChange = reminder.hoursBefore > notice;
+
+                return (
+                  <div
+                    style={{
+                      marginTop: '8px',
+                      fontSize: '12px',
+                      lineHeight: 1.5,
+                      color: canChange ? 'var(--v2-text-muted)' : '#B54708',
+                      textAlign: isRTL ? 'right' : 'left',
+                    }}
+                  >
+                    {canChange
+                      ? t('automation.reminder_can_change').replace('{hours}', String(notice))
+                      : t('automation.reminder_cannot_change').replace('{hours}', String(notice))}
+                  </div>
+                );
+              })()}
             </div>
 
             <div>

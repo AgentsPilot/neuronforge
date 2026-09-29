@@ -96,6 +96,16 @@ export default function ReportsPage() {
       /** Of those, the part spent collecting money that was later refunded. */
       refund_fees_kept_30d: number;
       /**
+       * Billed or agreed and then called off, ALL TIME and net of refunds.
+       *
+       * The only figure in this block that is not a 30-day window, which is why
+       * its card names its own period. Net of refunds so it cannot restate
+       * `refunds_amount_30d` beside it.
+       */
+      lost_potential_amount: number;
+      /** How many cancelled invoices and stopped plan phases make up that sum. */
+      lost_potential_count: number;
+      /**
        * Gross, refunds and net per currency — the only figures that may
        * honestly be added. Every headline total on this page is a sum ACROSS
        * currencies, which is meaningful only while there is one.
@@ -233,6 +243,8 @@ export default function ReportsPage() {
             charged_transactions_30d: data.stats.payments?.charged_transactions_30d ?? data.stats.payments?.successful_transactions_30d ?? 0,
             failed_transactions_30d: data.stats.payments?.failed_transactions_30d || 0,
             refunded_30d: data.stats.payments?.refunded_30d || 0,
+            lost_potential_amount: data.stats.payments?.lost_potential_amount || 0,
+            lost_potential_count: data.stats.payments?.lost_potential_count || 0,
             invoices_sent_30d: data.stats.payments?.invoices_sent_30d || 0,
             invoices_paid_30d: data.stats.payments?.invoices_paid_30d || 0,
             invoices_overdue: data.stats.payments?.invoices_overdue || 0,
@@ -731,6 +743,45 @@ export default function ReportsPage() {
                     ? `${money(refunded, { showFree: false })} ${t('reports.refunded')} · ${money(feesKept, { showFree: false })} ${t('reports.fees_kept') || 'in fees'}`
                     : `${money(refunded, { showFree: false })} ${t('reports.refunded')}`,
                   status: rate <= PERFORMANCE_THRESHOLDS.REFUND_RATE_GOOD ? 'success' : 'warning',
+                };
+              })()}
+              /*
+               * Potential money lost: billed or agreed, then called off.
+               *
+               * Here and NOT on the orders page, deliberately. That list is
+               * money in and out, and a write-off is neither — it is money that
+               * was never going to move. This card answers the other question:
+               * how much business did I agree and then not get.
+               *
+               * ── Why it cannot contradict the refund card beside it ─────────
+               * Refunding with "cancel booking" on VOIDS the unpaid invoices as
+               * it goes, so one booking can end with a refunded payment next to
+               * a cancelled invoice. The server nets refunds out of this figure
+               * (`cancelledMoneyOf`), so refunded money is reported by Refund
+               * Rate and never restated here. The two cards can sit side by side
+               * and be added up without counting the same money twice.
+               *
+               * ── All time, and it says so ──────────────────────────────────
+               * Every other card here is 30 days. This one is not: a loss does
+               * not stop being a loss on day 31, and the owner asked for the
+               * accumulated figure. Unlabelled that would be a trap, so the
+               * subtitle carries the period rather than leaving the reader to
+               * assume it matches its neighbours.
+               */
+              lostPotential={(() => {
+                const lost = stats?.payments.lost_potential_amount || 0;
+                const count = stats?.payments.lost_potential_count || 0;
+
+                return {
+                  value: money(lost, { showFree: false }),
+                  subtitle: `${count} ${t('reports.cancelled_count') || 'cancelled'} · ${t('reports.all_time') || 'all time'}`,
+                  /*
+                   * Nothing lost is a real success, unlike a 0% refund rate on
+                   * no collections: this business genuinely wrote nothing off.
+                   * Anything above zero is worth the owner's eye but is not a
+                   * failure — work gets cancelled — so warning, never danger.
+                   */
+                  status: lost === 0 ? 'success' : 'warning',
                 };
               })()}
             />

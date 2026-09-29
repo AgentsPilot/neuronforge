@@ -1,0 +1,48 @@
+-- Deleting a contact: hand the bookings back to the application
+--
+-- ─────────────────────────────────────────────────────────────────────────────
+-- WHAT WAS WRONG
+--
+-- 20260727_cancel_bookings_on_contact_delete.sql put a BEFORE DELETE trigger on
+-- crm_contacts that cleared the way by deleting the contact's bookings — but
+-- only WHERE start_time > now().
+--
+-- 20260810_remove_client_fields_and_total_amount.sql then made
+-- scheduling_bookings.contact_id NOT NULL, and left its foreign key as
+-- ON DELETE SET NULL.
+--
+-- From that day, deleting a contact who had any booking the trigger did NOT
+-- take — one already in the past, or one with no time at all — failed:
+--
+--   23502: null value in column "contact_id" of relation "scheduling_bookings"
+--          violates not-null constraint
+--
+-- NULL > now() is NULL, never true, so a PRODUCT booking (a course, anything
+-- bought without a time) blocked its client's deletion permanently. On the
+-- account where this was found that was every contact who had ever booked, and
+-- the API answered 500 with no explanation.
+--
+-- ─────────────────────────────────────────────────────────────────────────────
+-- WHAT HAPPENS NOW
+--
+-- lib/services/ContactLifecycleService.ts deletes the bookings first, in code
+-- that can be read and tested: bookings carrying no money go with the client,
+-- and money refuses the delete outright with a message saying so. Every path
+-- that deletes a contact — the API route, the chat, BizQL, the plugin — goes
+-- through it.
+--
+-- So this trigger has nothing left to do. It is dropped rather than widened,
+-- because what it did was silently delete appointments behind the application's
+-- back, on a rule (future only) that no reader of the code could see. Without
+-- it, a delete that skips the service now FAILS loudly on the foreign key
+-- instead of quietly destroying a booking.
+--
+-- The NOT NULL column and its ON DELETE SET NULL foreign key are deliberately
+-- left as they are: every booking must have a client (that is the point of the
+-- 20260810 migration), and the constraint is now the backstop that catches any
+-- future path which forgets the rule.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+DROP TRIGGER IF EXISTS delete_future_bookings_on_contact_delete_trigger ON crm_contacts;
+DROP TRIGGER IF EXISTS cancel_bookings_on_contact_delete_trigger ON crm_contacts;
+DROP FUNCTION IF EXISTS delete_future_bookings_on_contact_delete();

@@ -16,6 +16,14 @@ import { CancelPlanModal } from './CancelPlanModal';
 import { Input } from '@/components/ui/input';
 import { Ban, Banknote, Loader2, AlertTriangle, RotateCcw, Trash2 } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { STOP_REASONS, cancelReasonKey, type StopReason } from '@/lib/business-os/cancellationReasons';
 
 interface RefundModalProps {
   isOpen: boolean;
@@ -36,6 +44,14 @@ interface RefundModalProps {
   // Optional: for CRM drawer integration - show delete booking toggle
   bookingId?: string;
   showDeleteBookingOption?: boolean;
+  /**
+   * The booking's current status, so a terminal one is not offered a cancellation.
+   *
+   * Absent means unknown, which keeps the old behaviour for any caller not yet
+   * updated — the option shows. Better than hiding a control somebody needs
+   * because a prop was not threaded.
+   */
+  bookingStatus?: string;
   isRTL?: boolean;
 }
 
@@ -52,6 +68,7 @@ export function RefundModal({
   onError,
   bookingId,
   showDeleteBookingOption = false,
+  bookingStatus,
   isRTL = false
 }: RefundModalProps) {
   const { t, language } = useLanguage();
@@ -74,8 +91,17 @@ export function RefundModal({
   const [reasonKey, setReasonKey] = useState<string | null>(null);
   const [reasonText, setReasonText] = useState('');
 
-  // A chip wins when one is chosen; otherwise the owner's own words.
-  const reason = reasonKey ?? reasonText.trim();
+  /*
+   * BOTH are sent now, and both are required.
+   *
+   * This was `reasonKey ?? reasonText.trim()` — one or the other, never both —
+   * so a refund was either countable or explained. A ledger row reading
+   * `no_show` could not say the client rang ahead and was refunded anyway; one
+   * reading "client called, family emergency" could not be grouped with the
+   * other forty no-shows.
+   */
+  const reason = reasonKey ?? '';
+  const reasonNote = reasonText.trim();
   const [notifyContact, setNotifyContact] = useState(true);
   const [deleteBooking, setDeleteBooking] = useState(false);
 
@@ -121,6 +147,16 @@ export function RefundModal({
     installmentCount: number;
   } | null>(null);
   const [stopPlan, setStopPlan] = useState(false);
+  /*
+   * Why the arrangement is over. Required only when one of the two toggles below
+   * is on — a plain refund is not a cancellation, and the appointment may well
+   * still be happening.
+   *
+   * ONE code for both toggles, in this dialog rather than a new one: stopping the
+   * plan and cancelling the booking are one decision, and asking twice of
+   * somebody who already answered is how a required field becomes noise.
+   */
+  const [cancelReason, setCancelReason] = useState<StopReason | ''>('');
   /** The stop-plan dialog, opened when the money itself cannot come back. */
   const [showStopPlan, setShowStopPlan] = useState(false);
   /**
@@ -266,7 +302,28 @@ export function RefundModal({
    * A live payment plan does not withdraw the option — it forces the plan to
    * stop alongside it, below.
    */
-  const canOfferDelete = showDeleteBookingOption;
+  /*
+   * Only a booking there is still something to call off.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A COMPLETED appointment happened. The client came, the work was done, and
+   * the money is being returned after the fact — which is a refund, not a
+   * cancellation. Offering to cancel it invited the owner to erase the record of
+   * delivered work, and worse: the toggle posts `cancel_booking`, which emails
+   * the client that their appointment is cancelled. Somebody who attended and
+   * paid would have been told their session was called off.
+   *
+   * `no_show` and `cancelled` are terminal for the same reason — one is over,
+   * the other is already done.
+   *
+   * Unknown status still offers it: a caller that has not been updated should
+   * keep what it had rather than silently lose a control.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const CANCELLABLE_BOOKING_STATUSES = ['pending', 'confirmed'];
+  const canOfferDelete =
+    showDeleteBookingOption &&
+    (bookingStatus === undefined || CANCELLABLE_BOOKING_STATUSES.includes(bookingStatus));
 
   /*
    * A hidden switch must not still be armed.
@@ -353,12 +410,35 @@ export function RefundModal({
 
   const refundAmount = effectiveType === 'full' ? maxRefundable : parseFloat(partialAmount) || 0;
 
-  const formatCurrency = (amount: number) => {
+  /**
+   * Money, without the crash.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * `Intl.NumberFormat` THROWS on an empty or malformed currency code —
+   * `RangeError: Invalid currency code` — during RENDER. A caller that opened
+   * this dialog without knowing the currency did not get an ugly number, it took
+   * the whole page down.
+   *
+   * A refund dialog is the last place that should do that: it is open because
+   * somebody is trying to give money back. So a bad code degrades to the plain
+   * amount, and the caller's bug shows as a missing symbol rather than a white
+   * screen.
+   *
+   * Every currency in this file goes through here — the dialog's own and the
+   * processor fee's, which is a different code from a different source.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  const formatMoney = (amount: number, code: string) => {
     const locale = language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-US';
-    return new Intl.NumberFormat(locale, {
-      style: 'currency',
-      currency
-    }).format(amount);
+    try {
+      return new Intl.NumberFormat(locale, { style: 'currency', currency: code }).format(amount);
+    } catch {
+      return new Intl.NumberFormat(locale).format(amount);
+    }
+  };
+
+  const formatCurrency = (amount: number) => {
+    return formatMoney(amount, currency);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -395,13 +475,28 @@ export function RefundModal({
           // Said explicitly, never inferred by the server. Without it a target
           // with several payments is refused rather than guessed at.
           scope: isGroup ? 'all' : 'payment',
-          reason: reason || undefined,
+          reason,
+          reason_note: reasonNote,
           // Collected on every surface since this modal was written, and never
           // transmitted — the field did not exist on the route to receive it.
           notify_contact: notifyContact,
           // Never inferred server-side: stopping and refunding are separate
           // decisions with different right answers.
           stop_plan: stopPlan || undefined,
+          /*
+           * The switch that did nothing until now.
+           *
+           * It was held in state and handed to `onSuccess(deleteBooking)`, and
+           * every caller is written `onSuccess={() => ...}` — so it was passed to
+           * a function that discarded it. Sent to the server instead, beside
+           * `stop_plan`, which is the same kind of decision and already works
+           * that way: one place to get right rather than four, and the refund and
+           * the cancellation come back as one reported outcome.
+           */
+          cancel_booking: deleteBooking || undefined,
+          // Sent only when something is actually being called off; the route
+          // requires it exactly then.
+          cancel_reason: stopPlan || deleteBooking ? cancelReason : undefined,
           // The business asserting it returned the money itself. The server
           // still checks the payment really had no processor before it believes
           // this — the flag alone cannot close an invoice on a live card charge.
@@ -431,6 +526,25 @@ export function RefundModal({
         );
       }
 
+      /*
+       * The refund worked; the cancellation did not.
+       *
+       * Same treatment as the plan above, and for the same reason: closing
+       * quietly would leave the owner believing the slot was freed while the
+       * booking still holds it and the client still has a confirmation.
+       */
+      const cancelled = data.data?.booking_cancelled;
+      if (cancelled && cancelled.cancelled === false) {
+        onError?.(
+          `${t('payments.refund.booking_not_cancelled')}${cancelled.error ? ` ${cancelled.error}` : ''}`
+        );
+      }
+
+      /*
+       * The flag is still passed, and callers still ignore it. That is now
+       * correct rather than a bug: the server does the cancelling, and what the
+       * callers need from this argument is nothing — they refresh either way.
+       */
       onSuccess?.(deleteBooking);
       onClose();
     } catch (error) {
@@ -686,6 +800,7 @@ export function RefundModal({
           <div>
             <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-[var(--v2-text-muted)]">
               {t('payments.refund.reason_label')}
+              <span className="text-[#B42318]"> *</span>
             </label>
             {/* The usual reasons, as choices.
                 Typed free-hand, the same reason arrives as "no show", "noshow"
@@ -809,6 +924,35 @@ export function RefundModal({
                 }
               />
             )}
+
+            {/* The reason, only once something is being called off.
+                Appears in place rather than as a second dialog: this one already
+                holds the decision and the button. */}
+            {(stopPlan || deleteBooking) && (
+              <div className="pt-1">
+                <label className="block text-[12.5px] font-medium text-[var(--v2-text-secondary)] mb-1.5 rtl:text-right">
+                  {t('payments.refund.cancel_reason_label') || 'Why is it being called off?'}
+                  <span className="text-[#B42318]"> *</span>
+                </label>
+                <Select
+                  value={cancelReason}
+                  onValueChange={value => setCancelReason(value as StopReason)}
+                >
+                  <SelectTrigger className="w-full bg-[var(--v2-surface)] border-[var(--v2-border)] text-[var(--v2-text-primary)]">
+                    <SelectValue
+                      placeholder={t('cancel.choose_reason') || 'Choose a reason'}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {STOP_REASONS.map(code => (
+                      <SelectItem key={code} value={code}>
+                        {t(cancelReasonKey(code)) || code}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
 
           {/* ── What this costs ────────────────────────────────────────────
@@ -831,10 +975,7 @@ export function RefundModal({
                   <p>
                     {t('payments.refund.fee_kept').replaceAll(
                       '{fee}',
-                      new Intl.NumberFormat(
-                        language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-US',
-                        { style: 'currency', currency: processorFee.currency }
-                      ).format(processorFee.amount)
+                      formatMoney(processorFee.amount, processorFee.currency)
                     )}
                   </p>
                 )}
@@ -873,7 +1014,25 @@ export function RefundModal({
           form="refund-form"
           // Blocked means blocked. Leaving it live let the owner submit a
           // refund the server had already told this dialog it would refuse.
-          disabled={loading || !!blockMessage || (effectiveType === 'partial' && refundAmount <= 0)}
+          /*
+           * Also gated on the reason, but only when a toggle is on. A plain
+           * refund must stay one click away.
+           */
+          /*
+           * Both halves of the reason, as well as the money checks.
+           *
+           * Unreachable without them rather than rejected after the press: the
+           * route requires both, and letting the owner submit into a 400 on a
+           * money dialog is the worst place to discover a missing field.
+           */
+          disabled={
+            loading ||
+            !!blockMessage ||
+            (effectiveType === 'partial' && refundAmount <= 0) ||
+            !reason ||
+            !reasonNote ||
+            ((stopPlan || deleteBooking) && !cancelReason)
+          }
           className="bg-orange-600 hover:bg-orange-700"
         >
           {loading ? (

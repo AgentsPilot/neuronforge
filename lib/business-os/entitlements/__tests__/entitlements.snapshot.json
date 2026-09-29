@@ -41,7 +41,7 @@
         "included": 1,
         "purchasable": false
       },
-      "payments.reminders": false,
+      "payments.reminders": true,
       "marketing.mass_email": false,
       "marketing.posts": false,
       "sms.messages": {
@@ -93,7 +93,7 @@
         "included": 1,
         "purchasable": false
       },
-      "payments.reminders": false,
+      "payments.reminders": true,
       "marketing.mass_email": false,
       "marketing.posts": false,
       "sms.messages": {

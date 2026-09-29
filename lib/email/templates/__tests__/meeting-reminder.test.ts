@@ -76,6 +76,54 @@ describe('the client reminder', () => {
     expect(html).not.toContain('Change the time');
   });
 
+  it('drops the footnote with the button, because it names it', () => {
+    /*
+     * `footnote` reads "you can move it using the link above" and used to render
+     * unconditionally. `manageUrlFor` returns null when APP_URL is missing or the
+     * token cannot be signed, so reminders already went out pointing at a link
+     * that was not in the email — and the sender now also withholds the link once
+     * the notice window has closed, which would have made it every time.
+     */
+    const withLink = generateMeetingReminderEmail({
+      ...base,
+      manageUrl: 'https://example.test/manage/abc',
+      now: STARTS_AT.getTime() - 48 * HOUR,
+    });
+    expect(withLink.html).toContain('the link above');
+
+    const without = generateMeetingReminderEmail({
+      ...base,
+      manageUrl: null,
+      now: STARTS_AT.getTime() - 2 * HOUR,
+    });
+    expect(without.html).not.toContain('the link above');
+    // And nothing took its place: this email asks for nothing. See the test
+    // below, which forbids "reply to this" outright.
+    expect(without.html.toLowerCase()).not.toContain('reply');
+  });
+
+  it.each(['en', 'es', 'he'] as const)(
+    'never leaves a dangling link reference in %s',
+    locale => {
+      /*
+       * Per locale, because the footnote is three separate strings and an
+       * unconditional render would have stranded each of them. The unknown-locale
+       * fallback carries a fourth copy.
+       */
+      const { html } = generateMeetingReminderEmail({
+        ...base,
+        locale,
+        manageUrl: null,
+        now: STARTS_AT.getTime() - 2 * HOUR,
+      });
+
+      expect(html).not.toContain('undefined');
+      for (const phrase of ['link above', 'enlace de arriba', 'הקישור למעלה']) {
+        expect(html).not.toContain(phrase);
+      }
+    }
+  );
+
   it('asks for nothing', () => {
     /*
      * No confirmation, no reply, no "please let us know". A reminder that

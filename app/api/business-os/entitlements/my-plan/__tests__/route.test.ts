@@ -358,7 +358,9 @@ describe('the answer', () => {
 
     expect(response.status).toBe(200);
     expect(body.data.status).toBe('unavailable');
-    expect(body.data.problem).toMatch(/could not load/i);
+    // A key now: the component renders it, so the sentence reaches the reader in
+    // their own language rather than in the server's English.
+    expect(body.data.problem.key).toBe('plan.problem.unavailable');
   });
 
   it('a thrown error is a 500 that leaks nothing in production', async () => {

@@ -415,6 +415,20 @@ export function emailDetailRow(label: string, value: string, branding?: Branding
  * Generate a details table wrapper
  */
 export function emailDetailsTable(rows: string[], branding?: BrandingData): string {
+  /*
+   * No rows, no table.
+   *
+   * Callers build their rows conditionally and `.filter(Boolean)` the blanks, so
+   * an empty array is a normal outcome, not a mistake: a cancelled COURSE has no
+   * date, no time and often no reason, and every candidate row falls away. This
+   * still rendered its shell around them, and a coloured, padded table with an
+   * empty tbody is a blank strip sitting in the middle of the email.
+   *
+   * That was visible in a cancellation sent to a real client: the service name
+   * struck through, and beneath it a white bar with nothing in it.
+   */
+  if (rows.length === 0) return '';
+
   const tokens = helperTokens(branding);
   return `
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 16px 0; background-color: ${tokens.mutedSurface}; border-radius: ${tokens.radius}; padding: 16px;">
@@ -499,8 +513,16 @@ export function formatEmailDate(
     if (includeTime) {
       dateOptions.hour = 'numeric';
       dateOptions.minute = '2-digit';
-      // Always use 12-hour format with AM/PM for client-facing emails
-      dateOptions.hour12 = true;
+      /*
+       * The clock the READER uses, not the one English uses.
+       *
+       * Forcing `hour12` put a literal "AM" into a Hebrew sentence — "ב-יום
+       * שישי, 2 באוקטובר בשעה 10:00 AM" — because Hebrew and Spanish write the
+       * hour on a 24-hour clock and have no everyday word for AM. English
+       * keeps its 12-hour clock; the other two get theirs, which is what `he-IL`
+       * and `es-ES` already produce when nothing overrides them.
+       */
+      if (locale === 'en') dateOptions.hour12 = true;
       /*
        * Say WHICH clock this hour is on.
        *

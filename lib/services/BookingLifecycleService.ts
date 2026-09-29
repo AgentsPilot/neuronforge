@@ -31,6 +31,7 @@
  */
 
 import type { NextRequest } from 'next/server';
+import { REASONS_WITHOUT_REBOOKING, type CancelledBy } from '@/lib/business-os/cancellationReasons';
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import {
@@ -77,6 +78,35 @@ export interface CancelBookingParams {
   userId: string;
   reason?: string;
   /**
+   * The structured reason — a code from `cancellationReasons`, the note behind
+   * it, and who called it off.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * IN ADDITION TO `reason`, never instead of it.
+   *
+   * `reason` is the prose that goes into `cancellation_reason`, and for a client
+   * cancellation it carries `CLIENT_CANCELLED_PREFIX` — which the
+   * `booking_cancelled` gap and `CashCancelledUnrefundedDetector` still parse to
+   * work out who cancelled. Both keep working untouched; `cancelledBy` is the
+   * column they should move to, and moving them is a separate change with its
+   * own risk.
+   *
+   * Optional here because older callers exist — the calendar's quick-cancel, the
+   * Needs-you card's gap action. The API surfaces where a person is present
+   * REQUIRE a code.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  cancelReason?: string | null;
+  cancelNote?: string | null;
+  cancelledBy?: CancelledBy | null;
+  /**
+   * Whether the owner's note reaches the client's email.
+   *
+   * Defaults to true. Only the OWNER surfaces pass false — a client cancelling
+   * wrote the note themselves, so there is nothing to withhold from them.
+   */
+  shareNoteWithClient?: boolean;
+  /**
    * The originating HTTP request, when there is one. Only the audit trail uses
    * it — to record IP and user agent. Absent for the chat, which is a legitimate
    * caller rather than a degraded one.
@@ -104,31 +134,15 @@ export interface CancelBookingParams {
  */
 const CHASEABLE_INVOICE_STATUSES = ['draft', 'sent', 'overdue'];
 
-/**
- * How a client cancellation is written into `cancellation_reason`.
+/*
+ * The cancellation-reason prefix moved to its own module.
  *
- * ─────────────────────────────────────────────────────────────────────────────
- * THE ONLY RECORD OF WHO CANCELLED.
- *
- * There is no column for it, so this prefix is what separates "the client could
- * not make it" from "the business called it off" — and the dashboard's
- * `booking_cancelled` gap reads it to decide whether the owner is told at all.
- * An owner who cancelled a booking does not need the dashboard telling them
- * they cancelled it.
- *
- * Exported so the gap matches on the SAME string the route writes. It was two
- * literals in two files for one turn, and they already disagreed: the route
- * wrote "Client cancelled: …" where the query looked for "Cancelled by client",
- * so every cancellation that came with a reason — the ones a client bothered to
- * explain — would have been silently invisible.
- * ─────────────────────────────────────────────────────────────────────────────
+ * Re-exported here so every existing import keeps working. It left because two
+ * constants with no dependencies were dragging this service — the email
+ * transport, the calendar sync, the payment settlement path — into an insight
+ * detector that only wanted to compare a string.
  */
-export const CLIENT_CANCELLED_PREFIX = 'Cancelled by client';
-
-/** The reason text for a client cancellation, with whatever they said. */
-export function clientCancellationReason(reason?: string | null): string {
-  return reason ? `${CLIENT_CANCELLED_PREFIX}: ${reason}` : CLIENT_CANCELLED_PREFIX;
-}
+export { CLIENT_CANCELLED_PREFIX, clientCancellationReason } from './bookingCancellationReason';
 
 /** What actually happened to each side effect, so a caller can say so. */
 export interface CancelBookingOutcome {
@@ -198,12 +212,36 @@ export interface CancelBookingOutcome {
 export async function cancelBooking(
   params: CancelBookingParams
 ): Promise<SchedulingRepositoryResult<CancelBookingOutcome>> {
-  const { bookingId, userId, reason, request, offerRebooking } = params;
+  const { bookingId, userId, reason, request } = params;
+
+  /*
+   * Whether the email ends with "book again" — from the REASON, unless the
+   * caller said otherwise.
+   *
+   * A cancellation for `service_discontinued` was going out saying the service is
+   * no longer offered and then inviting the client to book it, with a button
+   * pointing at the page for the thing just withdrawn. The caller could not have
+   * known: `offerRebooking` predates reason codes and only ever meant "the
+   * business is closing down".
+   *
+   * An explicit value still wins. A caller that has thought about it — the
+   * closing-business path — is better informed than a lookup table.
+   */
+  const offerRebooking =
+    params.offerRebooking ??
+    (params.cancelReason ? !REASONS_WITHOUT_REBOOKING.has(params.cancelReason) : undefined);
   const log = params.logger ?? logger;
 
-  log.info({ bookingId, userId, reason }, 'Cancelling booking');
+  log.info(
+    { bookingId, userId, reason, cancelReason: params.cancelReason ?? null, cancelledBy: params.cancelledBy ?? null },
+    'Cancelling booking'
+  );
 
-  const result = await schedulingBookingRepository.cancel(bookingId, userId, reason);
+  const result = await schedulingBookingRepository.cancel(bookingId, userId, reason, {
+    code: params.cancelReason ?? null,
+    note: params.cancelNote ?? null,
+    cancelledBy: params.cancelledBy ?? null,
+  });
 
   if (result.error) return { data: null, error: result.error };
   if (!result.data) {
@@ -277,6 +315,15 @@ export async function cancelBooking(
   let invoicesCancelled = 0;
   let amountHeld = 0;
   let heldCurrency: string | null = null;
+  /*
+   * Collected and refunded, hoisted for the same reason `amountHeld` is: they are
+   * worked out inside the try below and read by the client email further down.
+   *
+   * Both, not just the remainder. Zero held means either "never paid" or
+   * "refunded in full", and those are opposite things to tell a client.
+   */
+  let collectedTotal = 0;
+  let refundedTotal = 0;
   let planLive = false;
   let periodsRemaining: number | null = null;
   let stagesClosed = 0;
@@ -337,6 +384,8 @@ export async function cancelBooking(
 
     const held = bookingPaymentState(settled ?? []);
     amountHeld = held.netHeld;
+    collectedTotal = held.collected;
+    refundedTotal = held.refunded;
     heldCurrency = (settled ?? []).find(row => row.currency)?.currency ?? null;
 
     if (invoicesCancelled > 0 || amountHeld > 0) {
@@ -438,6 +487,51 @@ export async function cancelBooking(
 
     stagesClosed = closed?.length ?? 0;
 
+    /*
+     * An ACCEPTED quote ends with the booking, not just its stages.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * The block above withdraws quotes, but only `OPEN_PROPOSAL_STATUSES` —
+     * draft, sent, viewed. An accepted one is deliberately not withdrawable,
+     * because money was created against it.
+     *
+     * Which left the exact state `cancelQuoteStages` was written to prevent:
+     * the stages just closed above, sitting under a quote that still reads
+     * `accepted` — indistinguishable from a job that finished and was paid in
+     * full. Stopping the job from the quote produced the right state; cancelling
+     * the same job from the booking did not.
+     *
+     * Conditional on `accepted`, like the stop path, so this cannot clobber
+     * declined, expired, withdrawn or superseded — and a second cancellation is
+     * a no-op rather than a rewritten `stopped_at`.
+     *
+     * The reason travels. One namespace, so the booking's cancel code is a valid
+     * stop code, and a report counting `client_not_paying` finds both.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    if (stagesClosed > 0 || params.cancelReason) {
+      const { data: stoppedQuotes } = await supabaseServer
+        .from('proposals')
+        .update({
+          status: 'stopped',
+          stop_reason: params.cancelReason ?? null,
+          stop_note: params.cancelNote?.trim() || null,
+          stopped_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('user_id', userId)
+        .eq('booking_id', bookingId)
+        .eq('status', 'accepted')
+        .select('id');
+
+      if ((stoppedQuotes?.length ?? 0) > 0) {
+        log.info(
+          { bookingId, stopped: stoppedQuotes?.length },
+          'Marked the accepted quote stopped along with its booking'
+        );
+      }
+    }
+
     if (stagesClosed > 0) {
       log.info({ bookingId, stagesClosed }, 'Closed the quote stages for a cancelled booking');
     }
@@ -503,6 +597,27 @@ export async function cancelBooking(
   } else try {
     const email = await BookingEmailService.sendCancellationEmail(bookingId, userId, reason, {
       offerRebooking,
+      // Undefined leaves it shared, which is what every caller that has not been
+      // updated — and every CLIENT cancellation — should keep doing.
+      shareNoteWithClient: params.shareNoteWithClient,
+      /*
+       * The same figure the owner is asked about, told to the client.
+       *
+       * Worked out above from the settled payments. Cancelling does not refund
+       * anything by design, so without this the client received a cancellation
+       * that said nothing about the money they had already paid.
+       */
+      amountHeld,
+      heldCurrency,
+      /*
+       * Collected and refunded, not just what is left.
+       *
+       * `bookingPaymentState` has worked all three out above. Sending only the
+       * remainder made "never paid" and "refunded in full" indistinguishable —
+       * both are zero held — and they are opposite things to tell a client.
+       */
+      paidAmount: collectedTotal,
+      refundedAmount: refundedTotal,
     });
     clientNotified = email.sent;
     if (!email.sent) {
@@ -576,8 +691,17 @@ export interface CreateBookingParams {
   serviceId: string;
   /** Already resolved and verified to belong to this user. */
   contactId: string;
-  startTime: string;
-  endTime: string;
+  /**
+   * When it happens — ABSENT for a service that is not scheduled.
+   *
+   * A course, a product, a deliverable: something bought rather than booked
+   * into a slot. `is_scheduled: false` on the service is what decides it, and
+   * the public booking route has always supported it by writing nulls. This
+   * path did not, so an owner booking the same course from the CRM drawer was
+   * asked to pick a time the client journey has no step for.
+   */
+  startTime?: string | null;
+  endTime?: string | null;
   timezone?: string;
   notes?: string;
   bookingSource?: string;
@@ -630,10 +754,27 @@ export async function createBooking(
 
   log.info({ userId, serviceId, contactId, startTime }, 'Creating booking');
 
+  /*
+   * Is there a slot to check at all?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * An unscheduled service occupies no time, so both guards below are asking
+   * about nothing: `checkOverlap` on an undefined range, and an external
+   * calendar that cannot block a slot that does not exist. Run anyway, they
+   * would compare against `undefined` and refuse or admit on nonsense.
+   *
+   * The booking itself is real either way — it carries the money, the intake
+   * form and the client journey. It simply has no hour attached.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const scheduled = Boolean(startTime && endTime);
+
   // 1. The slot must be free — of this user's own bookings, and of anything in
   //    the calendar they actually live by. Both refuse the booking outright:
   //    double-booking someone is not a warning.
-  const overlapCheck = await schedulingBookingRepository.checkOverlap(userId, startTime, endTime);
+  const overlapCheck = scheduled
+    ? await schedulingBookingRepository.checkOverlap(userId, startTime as string, endTime as string)
+    : { data: [], error: null };
 
   if (overlapCheck.error) {
     return { data: null, error: overlapCheck.error };
@@ -657,11 +798,13 @@ export async function createBooking(
     };
   }
 
-  const isBlockedByExternal = await CalendarSyncService.isSlotBlockedByExternalEvent(
-    userId,
-    startTime,
-    endTime
-  );
+  const isBlockedByExternal = scheduled
+    ? await CalendarSyncService.isSlotBlockedByExternalEvent(
+        userId,
+        startTime as string,
+        endTime as string
+      )
+    : false;
 
   if (isBlockedByExternal) {
     log.warn({ userId, startTime }, 'Booking blocked by external calendar event');
@@ -679,8 +822,13 @@ export async function createBooking(
     user_id: userId,
     service_id: serviceId,
     contact_id: contactId,
-    start_time: startTime,
-    end_time: endTime,
+    /*
+     * Null, not undefined. The column is nullable and the public booking route
+     * has always written null for a product, so two spellings of "no time"
+     * would give every reader two cases to handle instead of one.
+     */
+    start_time: startTime ?? null,
+    end_time: endTime ?? null,
     timezone,
     notes,
     booking_source: bookingSource,
@@ -892,7 +1040,8 @@ export async function createBookingInvoice(
     contact_id: string;
     contact_name: string;
     contact_email: string | null;
-    start_time: string;
+    /** Absent for a service that is not booked into a time. */
+    start_time?: string | null;
   },
   log: ContextLogger
 ): Promise<PaymentInvoice> {
@@ -909,7 +1058,26 @@ export async function createBookingInvoice(
    * a due date that had already passed.
    */
   const zone = await getBusinessTimezone(userId);
-  const dueDate = businessDateKey(new Date(bookingData.start_time), zone);
+
+  /*
+   * "Due on the service date" needs a service date.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A course or a product has none — it is bought, not booked into an hour —
+   * and `new Date(undefined)` is an Invalid Date, which would write a null due
+   * date or throw. So an unscheduled sale is payable on issue, which is what
+   * buying something ordinarily means.
+   *
+   * The TERMS change with it, and that matters beyond wording:
+   * `SERVICE_DATE_TERMS` is READ by the overdue chase, which holds an invoice
+   * carrying it while its session is still ahead. Writing it on a booking with
+   * no session would claim a rule nothing can evaluate.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const scheduledSale = Boolean(bookingData.start_time);
+  const dueDate = scheduledSale
+    ? businessDateKey(new Date(bookingData.start_time as string), zone)
+    : businessDateKey(new Date(), zone);
 
   const invoiceResult = await paymentInvoiceRepository.create({
     user_id: userId,
@@ -931,7 +1099,7 @@ export async function createBookingInvoice(
       },
     ],
     due_date: dueDate,
-    payment_terms: SERVICE_DATE_TERMS,
+    payment_terms: scheduledSale ? SERVICE_DATE_TERMS : 'due_on_receipt',
     notes: `Booking for ${bookingData.contact_name}`,
     internal_notes: `Auto-generated for booking ${bookingId}`,
     sent_at: new Date().toISOString(),
@@ -983,7 +1151,12 @@ export async function createBookingInvoice(
             total: Math.round(service.price! * 100),
           },
         ],
-        dueDate: new Date(bookingData.start_time),
+        /*
+         * The same rule as the local invoice above: due on the service date
+         * where there is one, on issue where there is not. `new Date(undefined)`
+         * is an Invalid Date, and Stripe would have been sent one.
+         */
+        dueDate: scheduledSale ? new Date(bookingData.start_time as string) : new Date(),
         currency: service.currency.toLowerCase(),
         description: `Invoice for ${service.service_name}`,
         metadata: {
@@ -1257,29 +1430,29 @@ export interface DeleteBookingOutcome {
   deletedInvoices: string[];
 }
 
-export async function deleteBooking(params: {
-  bookingId: string;
-  userId: string;
-  request?: NextRequest;
-  logger?: ContextLogger;
-}): Promise<SchedulingRepositoryResult<DeleteBookingOutcome>> {
-  const { bookingId, userId, request } = params;
-  const log = params.logger ?? logger;
-
+/**
+ * What a booking still HOLDS, and the invoices it raised.
+ *
+ * Lifted out of `deleteBooking` unchanged, because a second caller needs the
+ * same answer BEFORE it deletes anything. Removing a contact removes their
+ * bookings, and a guard that only refused when it reached the paid one would
+ * already have destroyed the two before it. So that caller asks every booking
+ * first, and only then deletes any.
+ *
+ * Exported for that reason alone — it is the money half of the delete guard,
+ * and a second copy of it would be a second set of answers.
+ */
+export async function heldOnBooking(
+  bookingId: string,
+  userId: string
+): Promise<SchedulingRepositoryResult<{ heldAmount: number; invoices: PaymentInvoice[] }>> {
   const { isSettledInvoice } = await import('@/lib/payments/invoiceSettlement');
   const { paymentTransactionRepository } = await import('@/lib/repositories/PaymentRepository');
-  const { deleteInvoice } = await import('@/lib/payments/invoiceLifecycle');
-
-  const existing = await schedulingBookingRepository.findById(bookingId, userId);
-  if (existing.error) return { data: null, error: existing.error };
-  if (!existing.data) return { data: null, error: new Error('Booking not found') };
 
   const invoicesResult = await paymentInvoiceRepository.findByBookingId(bookingId, userId);
   if (invoicesResult.error) return { data: null, error: invoicesResult.error as Error };
 
   const bookingInvoices = invoicesResult.data || [];
-
-  const { bookingPaymentState } = await import('@/lib/payments/bookingPaymentState');
 
   /*
    * Does this booking still HOLD money?
@@ -1319,7 +1492,35 @@ export async function deleteBooking(params: {
       0
     );
 
-  const heldAmount = Math.round((money.netHeld + invoiceHeld) * 100) / 100;
+  return {
+    data: {
+      heldAmount: Math.round((money.netHeld + invoiceHeld) * 100) / 100,
+      invoices: bookingInvoices,
+    },
+    error: null,
+  };
+}
+
+export async function deleteBooking(params: {
+  bookingId: string;
+  userId: string;
+  request?: NextRequest;
+  logger?: ContextLogger;
+}): Promise<SchedulingRepositoryResult<DeleteBookingOutcome>> {
+  const { bookingId, userId, request } = params;
+  const log = params.logger ?? logger;
+
+  const { isSettledInvoice } = await import('@/lib/payments/invoiceSettlement');
+  const { deleteInvoice } = await import('@/lib/payments/invoiceLifecycle');
+
+  const existing = await schedulingBookingRepository.findById(bookingId, userId);
+  if (existing.error) return { data: null, error: existing.error };
+  if (!existing.data) return { data: null, error: new Error('Booking not found') };
+
+  const money = await heldOnBooking(bookingId, userId);
+  if (money.error) return { data: null, error: money.error };
+
+  const { heldAmount, invoices: bookingInvoices } = money.data!;
 
   if (heldAmount > 0) {
     const paidInvoices = bookingInvoices.filter(isSettledInvoice);

@@ -82,3 +82,37 @@ export function bustSiteCache(subdomain: string | null | undefined): void {
     logger.warn({ err, subdomain }, 'Could not bust the public site cache');
   }
 }
+
+/**
+ * Throw away the cached pages of EVERY site this business has.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * For changes that are not about the website at all, but that the website
+ * shows: a service's name, price, duration or whether it is still active. The
+ * public pages read those live, so the data was already right — and the page
+ * still showed the old figure for up to a minute, because nothing told the
+ * cache. Every website edit busted it; the edits that most often change what a
+ * visitor is quoted did not.
+ *
+ * A business can have a homepage and several landing pages, so the subdomain is
+ * looked up rather than assumed, and duplicates collapse to one call.
+ *
+ * Never throws, for the same reason `bustSiteCache` does not: a failure here
+ * must not fail the owner's edit. It is imported lazily so that this module
+ * stays safe to import from anywhere.
+ */
+export async function bustSitesForUser(userId: string): Promise<void> {
+  try {
+    const { getWebsitePageRepository } = await import('@/lib/repositories/WebsitePageRepository');
+    const { supabaseServer } = await import('@/lib/supabaseServer');
+    const pages = await getWebsitePageRepository(supabaseServer).listByUser(userId);
+    if (pages.error || !pages.data) return;
+
+    const subdomains = new Set(
+      pages.data.map(page => page.subdomain).filter((sub): sub is string => Boolean(sub))
+    );
+    subdomains.forEach(bustSiteCache);
+  } catch (err) {
+    logger.warn({ err, userId }, 'Could not bust this business\'s public site caches');
+  }
+}

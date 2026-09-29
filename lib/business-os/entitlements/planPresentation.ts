@@ -35,6 +35,7 @@ import { isGrantingValue } from './schema';
 import type { EntitlementAccount } from './account';
 import type { EntitlementResolution } from './resolver';
 import type { EntitlementConfig } from './source';
+import { defaultLocale, type Locale } from '@/lib/i18n/config';
 import type { CapabilityDef, CapabilityValue } from './types';
 
 /**
@@ -147,14 +148,17 @@ export function describePlanEnding(
  */
 export function describePlanCapabilities(
   resolution: EntitlementResolution,
-  catalog: Record<string, CapabilityDef>
+  catalog: Record<string, CapabilityDef>,
+  locale: Locale = defaultLocale
 ): PlanCapabilityRow[] {
   return Object.entries(resolution.values).map(([capability, resolved]) => {
     const definition = catalog[capability];
 
     return {
       capability,
-      label: definition.labels.en,
+      // The catalog carries all three languages; reading `.en` was what put an
+      // English feature list in front of a Hebrew business.
+      label: labelIn(definition.labels, locale, capability),
       category: definition.category,
       display: describeCapabilityValue(resolved.value, definition),
       granting: isGrantingValue(resolved.value, definition),
@@ -178,15 +182,36 @@ export function describePlanCapabilities(
  * tier with no presentation should fall back to its own id, not borrow a
  * cohort's name.
  */
-export function planLabel(config: EntitlementConfig, planId: string): string {
+/**
+ * One of the labels the config already carries, in the language asked for.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Every plan, cohort and capability in the config is stored as
+ * `labels: { en, he, es }`. This module read `.en` and threw the other two away,
+ * in three places — so a Hebrew business saw its plan name and every feature in
+ * its list in English, while the translation sat in the file beside it.
+ *
+ * Falls back to English, then to the raw id. A missing translation should read
+ * as the English name, never as `tier_growth`.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function labelIn(labels: Partial<Record<Locale, string>> | undefined, locale: Locale, fallback: string): string {
+  return labels?.[locale] ?? labels?.en ?? fallback;
+}
+
+export function planLabel(
+  config: EntitlementConfig,
+  planId: string,
+  locale: Locale = defaultLocale
+): string {
   const isTier = config.tierOrder.includes(planId);
 
   if (isTier) {
     const presentation = config.matrix.presentation[planId as keyof typeof config.matrix.presentation];
-    return presentation?.labels?.en ?? planId;
+    return labelIn(presentation?.labels, locale, planId);
   }
 
-  return config.cohorts[planId as keyof typeof config.cohorts]?.labels?.en ?? planId;
+  return labelIn(config.cohorts[planId as keyof typeof config.cohorts]?.labels, locale, planId);
 }
 
 /**

@@ -89,6 +89,7 @@ import {
 import { resolveEntitlements } from './resolver';
 import type { EntitlementResolution } from './resolver';
 import { getEntitlementConfig, type EntitlementConfig } from './source';
+import { defaultLocale, type Locale } from '@/lib/i18n/config';
 import type { CapabilityDef, CapabilityValue } from './types';
 
 /**
@@ -180,8 +181,14 @@ export interface CustomerPlanFeature {
 export interface CustomerPlanCategory {
   /** The catalog's own category id. Stable, and what the order is keyed on. */
   category: string;
-  /** What the category is called to a customer. */
-  label: string;
+  /**
+   * The dictionary key for what the category is called to a customer.
+   *
+   * A key, not a word: the heading is read in the viewer's language. An
+   * unrecognised category falls back to its raw id, which is ugly on purpose —
+   * see `groupByCategory`.
+   */
+  labelKey: string;
   features: CustomerPlanFeature[];
   /** The feature names, joined — the one string a row prints. */
   summary: string;
@@ -202,7 +209,8 @@ export interface CustomerPlanUpgrade {
    */
   availableToBuy: boolean;
   /** Plain words for why there is nothing to press. `null` when there is. */
-  actionUnavailableBecause: string | null;
+  /** Why the button is not offered, as a key for the component to render. */
+  actionUnavailableBecause: PlanSentence | null;
   /**
    * Granted there, not here — grouped, for the same reason the included list is.
    *
@@ -253,6 +261,33 @@ export interface CustomerPlanUpgrade {
  * decision for SA and the user in step 2/3.
  */
 
+/**
+ * A sentence the CLIENT renders, so it speaks the viewer's language.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * This is WS-2 step 1b, which `readableDate` below already described: the server
+ * sends a KEY and, where the sentence names a day, an ISO date — and the
+ * component renders both through the platform dictionary every other screen
+ * uses.
+ *
+ * Composing the prose here was right while there was one language. It cannot be
+ * right in three: the copy would have to live in a second dictionary beside this
+ * module, and the date would be formatted in English regardless of who was
+ * reading. The reason the sentences moved server-side still holds — the
+ * component must not INVENT a claim — and a key satisfies it: the component
+ * chooses no wording, only the language it is read in.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export interface PlanSentence {
+  /** A key in the platform dictionary (`plan.*`). */
+  key: string;
+  /**
+   * The day the sentence names, ISO, for the component to format in the
+   * viewer's locale. Absent for sentences with no date in them.
+   */
+  date?: string | null;
+}
+
 export interface CustomerPlanView {
   /** `unavailable` is its own state: never rendered as "you have no plan". */
   status: 'ok' | 'no_plan_record' | 'unavailable';
@@ -289,13 +324,13 @@ export interface CustomerPlanView {
    * first pass dropped it whenever the note existed and silently cost the trial
    * its countdown.
    */
-  endsWhen: string | null;
+  endsWhen: PlanSentence | null;
   /**
    * Written for the cohorts: what happens when free access is not free.
    *
    * When this is set it is the ONLY ending sentence — see `endsWhen`.
    */
-  whenThisChanges: string | null;
+  whenThisChanges: PlanSentence | null;
   /**
    * Every capability the plan grants, grouped by category.
    *
@@ -307,7 +342,7 @@ export interface CustomerPlanView {
   /** `null` when there is nothing above this plan. */
   nextPlanUp: CustomerPlanUpgrade | null;
   /** Plain words for the customer when we cannot answer. `null` when we can. */
-  problem: string | null;
+  problem: PlanSentence | null;
 }
 
 /**
@@ -334,19 +369,24 @@ export interface CustomerPlanView {
  * be noticed and named, not silently swallowed — and `categoryOrder.test`
  * asserts every category in the catalog is named here.
  */
-const CATEGORY_PRESENTATION: ReadonlyArray<{ category: string; label: string }> = [
-  // The plain word AND the familiar acronym (user decision, 2026-09-27):
-  // "Clients" is what it is, "CRM" is what somebody has been calling it for
-  // twenty years, and the row has room for both.
-  { category: 'crm', label: 'Clients (CRM)' },
-  { category: 'website_intake', label: 'Website and enquiries' },
-  { category: 'payments', label: 'Payments' },
-  { category: 'ai_chat', label: 'AI assistant' },
-  { category: 'marketing', label: 'Marketing' },
-  { category: 'insights', label: 'Insights' },
-  { category: 'support', label: 'Support' },
-  { category: 'platform', label: 'Platform' },
-  { category: 'addon', label: 'Add-ons' },
+/**
+ * The category order, and the dictionary key for each heading.
+ *
+ * Keys rather than words, for the reason `PlanSentence` gives: the heading is
+ * read in the viewer's language. The plain word AND the familiar acronym stay
+ * paired in the copy itself (user decision, 2026-09-27) — "Clients" is what it
+ * is, "CRM" is what somebody has been calling it for twenty years.
+ */
+const CATEGORY_PRESENTATION: ReadonlyArray<{ category: string; labelKey: string }> = [
+  { category: 'crm', labelKey: 'plan.category.crm' },
+  { category: 'website_intake', labelKey: 'plan.category.website_intake' },
+  { category: 'payments', labelKey: 'plan.category.payments' },
+  { category: 'ai_chat', labelKey: 'plan.category.ai_chat' },
+  { category: 'marketing', labelKey: 'plan.category.marketing' },
+  { category: 'insights', labelKey: 'plan.category.insights' },
+  { category: 'support', labelKey: 'plan.category.support' },
+  { category: 'platform', labelKey: 'plan.category.platform' },
+  { category: 'addon', labelKey: 'plan.category.addon' },
 ];
 
 /** Features grouped into rows, in the order above. Empty categories are dropped. */
@@ -370,8 +410,9 @@ export function groupByCategory(
 
       return {
         category,
-        // An unnamed category shows its raw id rather than disappearing.
-        label: presentation?.label ?? category,
+        // An unnamed category shows its raw id rather than disappearing. It is
+        // not a key, so the component prints it as-is — which is the point.
+        labelKey: presentation?.labelKey ?? category,
         index: presentation?.index ?? CATEGORY_PRESENTATION.length,
         features: bucketFeatures,
         // Joined here, not in the component. A value worth printing is appended
@@ -396,7 +437,7 @@ export function groupByCategory(
     // allow-list over each object would (rightly) fail on it.
     .map((row) => ({
       category: row.category,
-      label: row.label,
+      labelKey: row.labelKey,
       features: row.features,
       summary: row.summary,
     }));
@@ -424,31 +465,10 @@ export function groupByCategory(
  * look like a fact — and the caller then omits the claim rather than printing
  * nonsense.
  *
- * Localising the format is WS-2 step 1b with the rest of the sentences — the
- * server will send the ISO date and a key, and the component will format it.
+ * DONE (WS-2 step 1b): the server now sends the ISO date and a key, and the
+ * component formats the date in the viewer's own locale — which is why the
+ * English month list that used to live here is gone.
  */
-const MONTHS = [
-  'January',
-  'February',
-  'March',
-  'April',
-  'May',
-  'June',
-  'July',
-  'August',
-  'September',
-  'October',
-  'November',
-  'December',
-];
-
-function readableDate(iso: string): string | null {
-  const date = new Date(iso);
-
-  if (Number.isNaN(date.getTime())) return null;
-
-  return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
-}
 
 /**
  * The ending sentence for a FREE plan, from the account's own end date.
@@ -475,19 +495,19 @@ function describeFreePlanEnding(
   config: EntitlementConfig,
   planId: string,
   resolution: EntitlementResolution
-): string | null {
+): PlanSentence | null {
   const endsAt = resolution.lifecycle.accessEndsAt;
 
   // No end date: the note says exactly that, at more length. One claim, one
   // place — which is what removed the original duplicate.
   if (endsAt === null) return null;
 
-  const when = readableDate(endsAt);
-
   // An unusable date is not a sentence (R4-6). Saying nothing is correct here: the
   // note below still tells the customer what happens when their plan ends, so the
-  // page reads as slightly less specific rather than as broken.
-  if (when === null) return null;
+  // page reads as slightly less specific rather than as broken. Still checked
+  // here, even though the component formats it: a key with an unparseable date
+  // would render "Ends on Invalid Date" in three languages instead of one.
+  if (Number.isNaN(new Date(endsAt).getTime())) return null;
 
   // Does this plan have a SECOND way of ending, besides the date?
   //
@@ -500,8 +520,8 @@ function describeFreePlanEnding(
   const runsOut = !!allowance && typeof allowance === 'object' && 'total' in (allowance as object);
 
   return runsOut
-    ? `Ends on ${when}, or when the AI actions run out — whichever comes first.`
-    : `Your free access ends on ${when}.`;
+    ? { key: 'plan.ends_on_or_actions', date: endsAt }
+    : { key: 'plan.ends_on', date: endsAt };
 }
 
 /** Granting, visible capabilities as the customer's feature list. */
@@ -540,7 +560,8 @@ function buildUpgrade(
   currentResolution: EntitlementResolution,
   current: PlanCapabilityRow[],
   nextPlanId: string,
-  now: Date
+  now: Date,
+  locale: Locale
 ): CustomerPlanUpgrade {
   const nextResolution = resolveEntitlements({
     config,
@@ -550,7 +571,7 @@ function buildUpgrade(
     now,
   });
 
-  const nextRows = describePlanCapabilities(nextResolution, catalog).filter(
+  const nextRows = describePlanCapabilities(nextResolution, catalog, locale).filter(
     (row) => !isHiddenFromCustomer(row.capability, catalog[row.capability])
   );
   const currentById = new Map(current.map((row) => [row.capability, row]));
@@ -602,7 +623,7 @@ function buildUpgrade(
 
   return {
     planId: nextPlanId,
-    name: planLabel(config, nextPlanId),
+    name: planLabel(config, nextPlanId, locale),
     monthlyPriceUsd: planMonthlyPriceUsd(config, nextPlanId),
     availableToBuy: flags.availableToBuy,
     actionUnavailableBecause: flags.availableToBuy
@@ -610,7 +631,7 @@ function buildUpgrade(
       // Deliberately does NOT repeat "Coming soon": the surface renders that as a
       // badge, and a sentence restating it is noise — it also made the two
       // indistinguishable to a reader looking for either.
-      : 'Get in touch if you would like to move plan before then.',
+      : { key: 'plan.move_before_then' },
     adds: groupByCategory(adds, catalog),
     improves,
     changes,
@@ -630,8 +651,17 @@ export function buildCustomerPlanView(input: {
   unavailable: boolean;
   now?: Date;
   config?: EntitlementConfig;
+  /**
+   * The language to read the CONFIG's labels in — plan names and feature names,
+   * which are data rather than copy and so are resolved here.
+   *
+   * The sentences are not: they travel as keys for the component to render. See
+   * `PlanSentence`.
+   */
+  locale?: Locale;
 }): CustomerPlanView {
   const now = input.now ?? new Date();
+  const locale = input.locale ?? defaultLocale;
   const config = input.config ?? getEntitlementConfig();
   const catalog = config.catalog as Record<string, CapabilityDef>;
 
@@ -656,8 +686,8 @@ export function buildCustomerPlanView(input: {
       ...empty,
       status: input.unavailable ? 'unavailable' : 'no_plan_record',
       problem: input.unavailable
-        ? 'We could not load your plan just now. Nothing has changed about your account — please try again shortly.'
-        : 'We do not have a plan record for this account yet. Everything keeps working; get in touch if this stays here.',
+        ? { key: 'plan.problem.unavailable' }
+        : { key: 'plan.problem.no_record' },
     };
   }
 
@@ -673,13 +703,13 @@ export function buildCustomerPlanView(input: {
       status: 'no_plan_record',
       state: resolution.state,
       problem:
-        'We do not have a plan record for this account yet. Everything keeps working; get in touch if this stays here.',
+        { key: 'plan.problem.no_record' },
     };
   }
 
   const planId = basis.kind === 'tier' ? basis.tier : basis.cohort;
   const isTier = basis.kind === 'tier';
-  const rows = describePlanCapabilities(resolution, catalog);
+  const rows = describePlanCapabilities(resolution, catalog, locale);
   const included = featuresFrom(rows, catalog);
   // Only for the free plans, and only as information: it says what a paid plan IS,
   // not that a decision has been made, so the eventual change is something the
@@ -691,8 +721,8 @@ export function buildCustomerPlanView(input: {
   const whenThisChanges = isTier
     ? null
     : resolution.lifecycle.accessEndsAt === null
-      ? 'Your access has no end date. Business OS is normally a paid monthly plan, so if that ever changes for your account we will tell you first and you will be able to choose a plan.'
-      : 'When this ends you will be able to choose a paid monthly plan. Nothing is charged before you choose one.';
+      ? { key: 'plan.changes.no_end_date' }
+      : { key: 'plan.changes.on_end' };
 
   const nextPlanId = nextPlanIdFor(config, resolution);
   const visibleRows = rows.filter((row) => !isHiddenFromCustomer(row.capability, catalog[row.capability]));
@@ -704,12 +734,12 @@ export function buildCustomerPlanView(input: {
   const upgrade =
     nextPlanId === null || nextPlanId === planId || !nextIsShown
       ? null
-      : buildUpgrade(config, catalog, resolution, visibleRows, nextPlanId, now);
+      : buildUpgrade(config, catalog, resolution, visibleRows, nextPlanId, now, locale);
 
   return {
     status: 'ok',
     planId,
-    name: planLabel(config, planId),
+    name: planLabel(config, planId, locale),
     kind: basis.kind,
     monthlyPriceUsd: planMonthlyPriceUsd(config, planId),
     free: !isTier,
@@ -729,7 +759,16 @@ export function buildCustomerPlanView(input: {
     // A paid plan runs while it is paid for; a free one is described by its own
     // end date (SA R3-1) — one rule, keyed on `lifecycle.accessEndsAt`.
     endsWhen: isTier
-      ? describePlanEnding(config, planId, resolution.values['ai.actions']?.value)
+      ? /*
+         * The key, not `describePlanEnding`.
+         *
+         * That function serves the ADMIN view too, which reads English prose, and
+         * its tier branch returns one constant sentence regardless of the AI
+         * allowance — so naming the key here is exactly equivalent for a customer
+         * and leaves the admin path untouched. Its other branches describe cohort
+         * durations and are only ever reached by admin.
+         */
+        { key: 'plan.ends.while_paid' }
       : describeFreePlanEnding(config, planId, resolution),
     whenThisChanges,
     included: groupByCategory(included, catalog),

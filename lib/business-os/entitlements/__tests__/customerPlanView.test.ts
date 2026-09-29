@@ -140,14 +140,14 @@ describe('a Founding Partner (champion)', () => {
     // With no plan above them, `whenThisChanges` is the only thing preparing a
     // champion for a future conversation — which makes it load-bearing rather
     // than decorative.
-    expect(view.whenThisChanges).toMatch(/paid monthly plan/i);
+    expect(view.whenThisChanges?.key).toBe('plan.changes.no_end_date');
   });
 
   it('is told what a paid plan is, so the day it changes is not the first they hear of it', () => {
-    expect(view.whenThisChanges).toMatch(/no end date/i);
-    expect(view.whenThisChanges).toMatch(/paid monthly plan/i);
+    expect(view.whenThisChanges?.key).toBe('plan.changes.no_end_date');
+    expect(view.whenThisChanges?.key).toBe('plan.changes.no_end_date');
     // And that nothing happens without them.
-    expect(view.whenThisChanges).toMatch(/tell you first/i);
+    expect(view.whenThisChanges?.key).toBe('plan.changes.no_end_date');
   });
 });
 
@@ -170,12 +170,12 @@ describe('a Founding Partner whose access has been given an end date', () => {
 
   it('stops saying "no end date" the moment there is one', () => {
     expect(view.accessEndsAt).not.toBeNull();
-    expect(view.whenThisChanges).not.toMatch(/no end date/i);
+    expect(view.whenThisChanges?.key).not.toBe('plan.changes.no_end_date');
   });
 
   it('says what happens next, and that nothing is charged without a choice', () => {
-    expect(view.whenThisChanges).toMatch(/choose a paid monthly plan/i);
-    expect(view.whenThisChanges).toMatch(/Nothing is charged before you choose/i);
+    expect(view.whenThisChanges?.key).toBe('plan.changes.on_end');
+    expect(view.whenThisChanges?.key).toBe('plan.changes.on_end');
   });
 
   it('is still free until then, and still has everything', () => {
@@ -195,10 +195,11 @@ describe('a trial (Test Flight)', () => {
 
     // The date, which is what `accessEndsAt` holds and what nothing rendered
     // before (SA R3-1). It leads, because a date needs no arithmetic.
-    expect(view.endsWhen).toMatch(/Ends on \d+ \w+ \d{4}/);
+    expect(view.endsWhen?.key).toBe('plan.ends_on_or_actions');
+    expect(view.endsWhen?.date).toBeTruthy();
     // And the reason it can end sooner, which the date alone cannot carry — read
     // off config, so shortening the trial changes what the customer is told.
-    expect(view.endsWhen).toMatch(/AI actions run out/);
+    expect(view.endsWhen?.key).toBe('plan.ends_on_or_actions');
   });
 
   it('is shown the paid plan and what it would actually add', () => {
@@ -247,7 +248,7 @@ describe('a trial (Test Flight)', () => {
   });
 
   it('is promised nothing is charged before they choose', () => {
-    expect(view.whenThisChanges).toMatch(/Nothing is charged before you choose/i);
+    expect(view.whenThisChanges?.key).toBe('plan.changes.on_end');
   });
 });
 
@@ -270,7 +271,7 @@ describe('Essentials and Autopilot — the two nobody is on yet', () => {
     expect(capabilityIdsOf(view.nextPlanUp?.adds).length).toBeGreaterThanOrEqual(9);
     // And the nine arrive as ONE row, which is the point of grouping them.
     expect(view.nextPlanUp?.adds).toHaveLength(1);
-    expect(view.nextPlanUp?.adds[0].label).toBe('AI assistant');
+    expect(view.nextPlanUp?.adds[0].labelKey).toBe('plan.category.ai_chat');
   });
 
   it('Essentials cannot be left by pressing anything yet', () => {
@@ -279,7 +280,7 @@ describe('Essentials and Autopilot — the two nobody is on yet', () => {
     expect(view.nextPlanUp?.availableToBuy).toBe(false);
     // The 'Coming soon' wording lives in the badge the component renders; the
     // payload carries the invitation, so the two are not the same string twice.
-    expect(view.nextPlanUp?.actionUnavailableBecause).toMatch(/get in touch/i);
+    expect(view.nextPlanUp?.actionUnavailableBecause?.key).toBe('plan.move_before_then');
   });
 
   it('Autopilot is told there is nothing above it, rather than shown an empty offer', () => {
@@ -562,7 +563,7 @@ describe('the two commercial flags decide what a customer is offered', () => {
 
     expect(view.nextPlanUp?.planId).toBe('growth');
     expect(view.nextPlanUp?.availableToBuy).toBe(false);
-    expect(view.nextPlanUp?.actionUnavailableBecause).toMatch(/get in touch/i);
+    expect(view.nextPlanUp?.actionUnavailableBecause?.key).toBe('plan.move_before_then');
   });
 });
 
@@ -579,7 +580,7 @@ describe('a plan is not told when it ends twice', () => {
     const view = viewFor('champion');
 
     expect(view.endsWhen).toBeNull();
-    expect(view.whenThisChanges).toMatch(/no end date/i);
+    expect(view.whenThisChanges?.key).toBe('plan.changes.no_end_date');
   });
 
   it('a TRIAL keeps its deadline — the two are not duplicates', () => {
@@ -588,14 +589,14 @@ describe('a plan is not told when it ends twice', () => {
     // NEXT; the two carry different information and both survive.
     const view = viewFor('trial');
 
-    expect(view.endsWhen).toMatch(/Ends on/);
-    expect(view.whenThisChanges).toMatch(/choose a paid monthly plan/i);
+    expect(view.endsWhen?.date).toBeTruthy();
+    expect(view.whenThisChanges?.key).toBe('plan.changes.on_end');
   });
 
   it('a paid plan keeps its line, because nothing else says it', () => {
     const view = viewFor('basic');
 
-    expect(view.endsWhen).toMatch(/While the plan is paid for/i);
+    expect(view.endsWhen?.key).toBe('plan.ends.while_paid');
     expect(view.whenThisChanges).toBeNull();
   });
 
@@ -637,13 +638,34 @@ describe('a plan is not told when it ends twice', () => {
       },
     ];
 
+    /*
+     * These surfaces name a dictionary KEY now; they no longer write the
+     * sentence. `endsWhen` and `whenThisChanges` are `PlanSentence` objects and
+     * the pill carries `titleKey`, so the old version of this loop — which
+     * kept only values that were `typeof === 'string'` and read `.title` —
+     * collected NOTHING and joined it into an empty string. Matching
+     * /no end date/ against '' passes every time, so this test went on
+     * reporting success while asserting nothing at all: the exact failure its
+     * own comment above was written about, arriving by a different route.
+     *
+     * So: compare keys, and match on `no_end`, which is the shared stem of both
+     * claims a surface can make — `plan.badge.no_end` and
+     * `plan.changes.no_end_date`.
+     */
     for (const { what, view, resolution } of cases) {
-      const claims = [view.endsWhen, view.whenThisChanges, planBadgeFor(resolution, config)?.title]
-        .filter((sentence): sentence is string => typeof sentence === 'string')
+      const claims = [
+        view.endsWhen?.key,
+        view.whenThisChanges?.key,
+        planBadgeFor(resolution, config)?.titleKey,
+      ]
+        .filter((key): key is string => typeof key === 'string')
         .join(' | ');
 
       if (view.accessEndsAt !== null) {
-        expect({ what, claims }).toEqual({ what, claims: expect.not.stringMatching(/no end date/i) });
+        // An empty `claims` is how this test went blind. Fail on it directly,
+        // so a future rename cannot quietly empty the list again.
+        expect({ what, saidSomething: claims !== '' }).toEqual({ what, saidSomething: true });
+        expect({ what, claims }).toEqual({ what, claims: expect.not.stringMatching(/no_end/i) });
       }
     }
   });
@@ -702,10 +724,10 @@ describe('a plan is not told when it ends twice', () => {
     });
 
     // The trial's allowance is a one-off total, so it says both ways it can end.
-    expect(trial.endsWhen).toMatch(/AI actions run out/);
+    expect(trial.endsWhen?.key).toBe('plan.ends_on_or_actions');
     // The champion's is monthly, so there is only the date.
-    expect(champion.endsWhen).not.toMatch(/run out/);
-    expect(champion.endsWhen).toMatch(/ends on/i);
+    expect(champion.endsWhen?.key).not.toBe('plan.ends_on_or_actions');
+    expect(champion.endsWhen?.key).toBe('plan.ends_on');
   });
 
   it('a champion WITH an end date is told the date, on both surfaces', () => {
@@ -721,11 +743,13 @@ describe('a plan is not told when it ends twice', () => {
     });
     const view = buildCustomerPlanView({ resolution: datedChampion, unavailable: false, now: NOW, config });
 
-    expect(view.endsWhen).toBe('Your free access ends on 1 December 2026.');
-    expect(view.whenThisChanges).toMatch(/choose a paid monthly plan/i);
+    // The KEY and the raw date; the component formats the day in the reader's
+    // locale, so the English sentence is no longer built here.
+    expect(view.endsWhen).toEqual({ key: 'plan.ends_on', date: '2026-12-01T00:00:00.000Z' });
+    expect(view.whenThisChanges?.key).toBe('plan.changes.on_end');
     // And the pill, which asserted the opposite as a constant.
-    expect(planBadgeFor(datedChampion, config)?.title).toMatch(/end date set/i);
-    expect(planBadgeFor(datedChampion, config)?.title).not.toMatch(/no end date/i);
+    expect(planBadgeFor(datedChampion, config)?.titleKey).toBe('plan.badge.ends');
+    expect(planBadgeFor(datedChampion, config)?.titleKey).toBe('plan.badge.ends');
   });
 
   it('every plan is told SOMETHING about its ending — never neither', () => {
@@ -757,7 +781,7 @@ describe('the included list is grouped by category', () => {
     const row = viewFor('champion').included.find((entry) => entry.category === 'ai_chat')!;
 
     expect(row.features.length).toBeGreaterThanOrEqual(10);
-    expect(row.label).toBe('AI assistant');
+    expect(row.labelKey).toBe('plan.category.ai_chat');
     // One string, joined server-side — the component prints it and composes
     // nothing.
     expect(row.summary.split(', ').length).toBe(row.features.length);
@@ -784,7 +808,7 @@ describe('the included list is grouped by category', () => {
     expect(order[0]).toBe('crm');
     // The plain word AND the acronym (user decision, 2026-09-27) — pinned because
     // it is a wording choice somebody made, not a default.
-    expect(viewFor('champion').included[0].label).toBe('Clients (CRM)');
+    expect(viewFor('champion').included[0].labelKey).toBe('plan.category.crm');
     expect(order.indexOf('website_intake')).toBeLessThan(order.indexOf('payments'));
     expect(order.indexOf('payments')).toBeLessThan(order.indexOf('ai_chat'));
     expect(order.indexOf('insights')).toBeLessThan(order.indexOf('support'));
@@ -802,7 +826,7 @@ describe('the included list is grouped by category', () => {
           [{ capability: Object.keys(catalog).find((id) => catalog[id].category === category)!, label: 'x', value: 'yes' }],
           catalog
         )[0];
-        return row.label !== category;
+        return row.labelKey !== category;
       })
     );
 
@@ -814,7 +838,7 @@ describe('the included list is grouped by category', () => {
     const adds = viewFor('basic').nextPlanUp!.adds;
 
     expect(adds).toHaveLength(1);
-    expect(adds[0].label).toBe('AI assistant');
+    expect(adds[0].labelKey).toBe('plan.category.ai_chat');
     expect(adds[0].features.length).toBeGreaterThanOrEqual(9);
   });
 });
@@ -827,8 +851,8 @@ describe('when there is no answer', () => {
     const view = buildCustomerPlanView({ resolution: null, unavailable: true, now: NOW, config });
 
     expect(view.status).toBe('unavailable');
-    expect(view.problem).toMatch(/could not load/i);
-    expect(view.problem).toMatch(/Nothing has changed/i);
+    expect(view.problem?.key).toBe('plan.problem.unavailable');
+    expect(view.problem?.key).toBe('plan.problem.unavailable');
     expect(view.included).toEqual([]);
     expect(view.name).toBeNull();
   });
@@ -837,8 +861,8 @@ describe('when there is no answer', () => {
     const view = buildCustomerPlanView({ resolution: null, unavailable: false, now: NOW, config });
 
     expect(view.status).toBe('no_plan_record');
-    expect(view.problem).toMatch(/do not have a plan record/i);
-    expect(view.problem).toMatch(/keeps working/i);
+    expect(view.problem?.key).toBe('plan.problem.no_record');
+    expect(view.problem?.key).toBe('plan.problem.no_record');
   });
 
   it('an account the resolver granted nothing is a missing record, not an empty plan', () => {

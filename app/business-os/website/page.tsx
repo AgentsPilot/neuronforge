@@ -187,6 +187,8 @@ interface SmartLink {
   metadata?: {
     journeyType?: 'contact-only' | 'full';
     serviceIds?: string[];
+    /** The services this link deliberately leaves off — see the smart-link API. */
+    excludedServiceIds?: string[];
     flow?: string[];
     destinationType?: 'form' | 'booking';
   } | null;
@@ -1153,6 +1155,8 @@ export default function WebsiteManagementPage() {
     metadata?: {
       journeyType?: 'contact-only' | 'full';
       serviceIds?: string[];
+      /** The services this link deliberately leaves off — see the smart-link API. */
+      excludedServiceIds?: string[];
       flow?: string[];
       destinationType?: 'form' | 'booking';
     } | null;

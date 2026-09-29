@@ -321,12 +321,17 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
      * Billing a phase is the other one that is not a send.
      *
      * The owner has to decide the work actually happened before the client is
-     * asked for money, so this opens the payments section where the phase and its
-     * "Mark done" control are. A one-click button here would be making that
-     * judgement on their behalf.
+     * asked for money, so this opens the phase rather than billing it. A
+     * one-click button here would be making that judgement on their behalf.
+     *
+     * `&section=bookings`, the same target as the quote above. This used to say
+     * `payments`, which is the wrong tab: `onCompleteStage` — the prop that
+     * raises the "mark done and bill" confirmation — is a prop of `BookingsTab`,
+     * and the payments section has never had that control. The button landed the
+     * owner on a tab where the thing they came to do does not exist.
      */
     if (action === 'bill_stage') {
-      router.push(`/business-os/crm?contact=${item.contactId}&section=payments`);
+      router.push(`/business-os/crm?contact=${item.contactId}&section=bookings`);
       return;
     }
 
@@ -371,8 +376,19 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // Every remaining action is identified by its path; none takes a body.
-        body: JSON.stringify({}),
+        /*
+         * Every remaining action is identified by its path and takes no body —
+         * except cancelling, which now requires a reason like every other
+         * cancellation surface.
+         *
+         * `refunded` is honest here and is the reason this card can stay ONE
+         * CLICK: the `booking_refunded` gap finds a booking that was fully
+         * refunded and is still on the books, so the owner pressing "cancel it"
+         * is confirming exactly that. Any other one-click cancel would have to
+         * invent a reason, which is why the calendar and the booking modal ask
+         * instead.
+         */
+        body: JSON.stringify(action === 'cancel_booking' ? { reason_code: 'refunded' } : {}),
       });
       const data = await response.json();
 
@@ -448,36 +464,71 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                     style={{ background: 'var(--v2-bg)' }}
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-[var(--v2-text-primary)] truncate">
-                          {item.name}
-                        </p>
-                        {item.note && (
-                          <p className="text-xs text-[var(--v2-text-muted)] line-clamp-2 mt-0.5">
-                            {item.note}
-                          </p>
-                        )}
-                        <p className="text-[11px] text-[var(--v2-text-muted)] mt-1 flex items-center gap-1">
-                          <Clock className="w-3 h-3" />
-                          {waitedFor(item.since, t)}
+                      <div className="min-w-0 flex-1">
+                        {/*
+                          * WHO, and WHICH THING OF THEIRS, on one line.
+                          *
+                          * The note was its own row — so a phase waiting to be
+                          * billed cost three stacked lines (name, "באמצע",
+                          * then the clock) for two facts. They belong together:
+                          * "אופיר עומר · באמצע" is one thought, and reads as
+                          * one.
+                          */}
+                        <p className="text-sm text-[var(--v2-text-primary)] flex items-baseline gap-2">
+                          <span className="truncate">
+                            <span className="font-medium">{item.name}</span>
+                            {item.note && (
+                              <span className="text-[var(--v2-text-muted)]"> · {item.note}</span>
+                            )}
+                          </span>
                           {/*
-                            * The amount, said as what it IS on this gap.
+                            * The amount, said as what it IS on this gap, on the
+                            * subject's line rather than after the clock.
                             *
-                            * A row that says only "cancelled" reads as news.
-                            * The figure is what makes it a decision, and it is
-                            * the figure that decides which row is dealt with
-                            * first — so it has to be the RIGHT fact about the
-                            * money. See `VALUE_LABEL`.
+                            * It used to sit mid-sentence beside the days, so the
+                            * figures wandered left and right down the list and
+                            * could not be compared without reading every row.
+                            * `ms-auto` lands every one of them on the same edge,
+                            * which turns a list of rows into a column of money —
+                            * and the money is what decides which row is dealt
+                            * with first. See `VALUE_LABEL` for why the WORD in
+                            * front of it changes per gap.
                             */}
                           {moneyHeld(item) && (
-                            <>
-                              <span aria-hidden="true">·</span>
-                              <span className="font-medium text-[var(--v2-text-primary)]">
+                            <span className="ms-auto shrink-0 text-[11px]">
+                              <span className="text-[var(--v2-text-muted)]">
                                 {t(VALUE_LABEL[gap.id] ?? 'gaps.held')}{' '}
+                              </span>
+                              <span className="font-semibold tabular-nums">
                                 {money(item.value as number, item.currency)}
                               </span>
-                            </>
+                            </span>
                           )}
+                        </p>
+
+                        <p className="text-[11px] text-[var(--v2-text-muted)] mt-1 flex items-center gap-1">
+                          <Clock className="w-3 h-3 shrink-0" />
+                          {/*
+                            * "17 days" alone is a measurement, not a fact.
+                            *
+                            * Seventeen days of WHAT — the owner asked exactly
+                            * that. Every gap starts its clock on a different
+                            * event: a phase counts from the day the client
+                            * accepted the quote, an invoice from the day it
+                            * fell due, an enquiry from the day they wrote in.
+                            * The row now names that event, and the exact date
+                            * stays in the tooltip rather than spending width on
+                            * a line that has to stay short.
+                            *
+                            * `gaps.waiting` is the fallback, for a gap added
+                            * later with no phrase of its own yet.
+                            */}
+                          <span title={startedOn(item.since)} className="truncate">
+                            {(t(`gaps.since.${gap.id}`) === `gaps.since.${gap.id}`
+                              ? t('gaps.waiting')
+                              : t(`gaps.since.${gap.id}`)
+                            ).replace('{t}', waitedFor(item.since, t))}
+                          </span>
                           {/*
                             * Said even when nothing is held, because this is
                             * not a detail about the row — it is money STILL
@@ -488,7 +539,7 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                           {item.planLive && (
                             <>
                               <span aria-hidden="true">·</span>
-                              <span className="font-medium text-amber-600 dark:text-amber-400">
+                              <span className="font-medium text-amber-600 dark:text-amber-400 truncate">
                                 {t('gaps.plan_still_charging')}
                               </span>
                             </>
@@ -645,6 +696,19 @@ function waitedFor(since: string, t: (key: string) => string): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}${t('gaps.hours_short')}`;
   return `${Math.floor(hours / 24)}${t('gaps.days_short')}`;
+}
+
+/**
+ * The date the clock started, for the tooltip beside it.
+ *
+ * "17 days" answers how long; this answers since when, which is the question
+ * an owner asks next and the one the row has no width to answer inline.
+ */
+function startedOn(since: string): string {
+  const date = new Date(since);
+  return Number.isNaN(date.getTime())
+    ? ''
+    : date.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
 /** Floored at a minute: "in 0 minutes" reads as already gone. */

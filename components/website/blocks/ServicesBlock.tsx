@@ -269,7 +269,7 @@ const INVOICE_TAIL: Record<string, string> = {
   he: 'חשבונית תישלח לאחר מכן',
 };
 
-export function ServicesBlock({ content, styles, theme, isRTL, className, clientFlow, bookingUrl, locale = 'en', isPreview, onOpenBooking }: BlockRendererProps) {
+export function ServicesBlock({ content, styles, theme, isRTL, className, clientFlow, bookingUrl, locale = 'en', onOpenBooking }: BlockRendererProps) {
   // Translation helper
   const t = (key: string, section: 'services' | 'common' = 'services') =>
     getBlockTranslation(section, key, locale);
@@ -425,31 +425,81 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
   // UUID regex for validation
   const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-  // Helper to convert service to SelectedServiceData for booking modal
+  /**
+   * The clicked card, as the dialog takes it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * AN UNUSABLE ID IS NOT AN UNKNOWN SERVICE.
+   *
+   * A card's id is filled in by the routes that serve the page, which replace
+   * the stored list with the live one. Stored block content itself carries only
+   * NAMES — every page in the database is written that way — so any surface
+   * that renders those blocks without that injection hands this function a card
+   * with no id at all.
+   *
+   * Returning null there threw away everything else the card knows, and the
+   * dialog opened on its catalogue asking the client to choose the service they
+   * had just clicked. The name is enough to find it: the dialog fetches the
+   * same live list the injection would have used, so it is handed the card with
+   * an EMPTY id and resolves the rest itself.
+   *
+   * The empty string is deliberate and load-bearing — `''` means "this is the
+   * service, I could not name its id", which is a different thing from `null`,
+   * "no service was chosen". Both reach the dialog; only the second opens the
+   * catalogue and stays there.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   const toSelectedServiceData = (service: ServiceItemWithRawData): SelectedServiceData | null => {
-    // Validate that service.id is a valid UUID - required for booking API
-    if (!service.id || !UUID_REGEX.test(service.id)) return null;
+    if (!service.name) return null;
     return {
-      id: service.id,
+      id: service.id && UUID_REGEX.test(service.id) ? service.id : '',
       name: service.name,
       description: service.description || null,
       duration_minutes: service.durationMinutes || 60,
       price: service.priceRaw ?? null,
       currency: service.currency || 'USD',
       // Carried through so the modal resolves this service's own journey. The
-      // card above already prints it from these two fields; without them the
-      // modal walked a different one.
+      // card above already prints it from these fields; without them the modal
+      // walked a different one.
       is_scheduled: service.is_scheduled,
-      collection: service.collection
+      collection: service.collection,
+      /*
+       * And whether it is quoted rather than bought.
+       *
+       * The card reads it — `ctaFor` says "request a quote" because of it — and
+       * then did not pass it, so the dialog behind that button resolved a DIRECT
+       * journey and asked for a card on work nobody has priced yet.
+       */
+      sale_mode: service.sale_mode ?? undefined
     };
   };
 
+  /**
+   * Can this card open the dialog, or must it fall back to the link?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The dialog itself is the whole answer — NOT whether this particular card
+   * can name its service.
+   *
+   * Two earlier readings were both wrong. Asking `isPreview` meant no published
+   * page could ever open it. Then asking for a usable `service.id` meant a card
+   * whose stored service predates ids — the name is stored where the id belongs
+   * — fell back to a link, which is how a "book" button on a live services list
+   * still navigated to the catalogue at `/site/{subdomain}/book`.
+   *
+   * Opening the dialog with no service is not a degraded outcome: it opens at
+   * its catalogue step, listing the SAME services from the same live source the
+   * link's destination would have shown, without leaving the page. The link
+   * survives only for a page with no dialog mounted at all.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const canOpenDialog = !!onOpenBooking;
+
   const handleBookingClick = (service: ServiceItemWithRawData) => {
     if (onOpenBooking) {
-      const serviceData = toSelectedServiceData(service);
-      if (serviceData) {
-        onOpenBooking(serviceData);
-      }
+      // Null where the card cannot identify its service: the dialog then opens
+      // on the catalogue and the client picks, rather than nothing happening.
+      onOpenBooking(toSelectedServiceData(service));
     }
   };
 
@@ -626,8 +676,19 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
             {services.map((service, index) => {
               const price = priceFor(service);
               const duration = formatDuration(service);
+              /*
+               * Open the dialog where there is one, link where there is not.
+               *
+               * This asked `isPreview && onOpenBooking` — and a PUBLISHED page
+               * passes no `isPreview`, so the dialog was unreachable from every
+               * service card on every live site and the client was sent to the
+               * catalogue at `/site/{subdomain}/book` to pick again. The
+               * handler is now handed down only where the dialog is mounted,
+               * so its presence is the whole question. The link stays as the
+               * fallback for a card whose service carries no id.
+               */
               const booking = hasBookingFlow
-                ? (isPreview && onOpenBooking && service.id
+                ? (canOpenDialog
                     ? { kind: 'open' as const }
                     : bookingUrl
                       ? { kind: 'link' as const }
@@ -880,7 +941,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                 {/* CTA Button with gradient */}
                 {hasBookingFlow && (
                   <div className="mt-6">
-                    {isPreview && onOpenBooking && service.id ? (
+                    {canOpenDialog ? (
                       <button
                         type="button"
                         onClick={() => handleBookingClick(service)}
@@ -1007,7 +1068,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                     </span>
                   )}
                   {hasBookingFlow && (
-                    isPreview && onOpenBooking && service.id ? (
+                    canOpenDialog ? (
                       <button
                         type="button"
                         onClick={() => handleBookingClick(service)}
@@ -1185,7 +1246,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   {/* Directly under the pinned price row above. */}
                   <div>
                   {hasBookingFlow && (
-                    isPreview && onOpenBooking && service.id ? (
+                    canOpenDialog ? (
                       <button
                         type="button"
                         onClick={() => handleBookingClick(service)}
@@ -1324,7 +1385,25 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                     </div>
                   )}
 
-                  {hasBookingFlow && bookingUrl && (
+                  {/* The featured service's call to action. This branch only
+                      ever drew an anchor — it was written before the dialog
+                      existed and was missed when the others learned about it,
+                      so the ONE service a page features was also the one that
+                      still navigated away. */}
+                  {hasBookingFlow && canOpenDialog ? (
+                    <button
+                      type="button"
+                      onClick={() => handleBookingClick(services[0])}
+                      className="inline-flex items-center gap-3 px-8 py-4 text-white font-semibold rounded-xl transition-all hover:shadow-2xl hover:scale-105"
+                      style={{
+                        background: `linear-gradient(135deg, ${primaryColor} 0%, ${secondaryColor} 100%)`
+                      }}
+                    >
+                      {firstStep === 'booking' && <Calendar className="w-5 h-5" />}
+                      {ctaFor(services[0])}
+                      <ArrowRight className="w-5 h-5" />
+                    </button>
+                  ) : hasBookingFlow && bookingUrl ? (
                     <a
                       href={bookingUrl}
                       className="inline-flex items-center gap-3 px-8 py-4 text-white font-semibold rounded-xl transition-all hover:shadow-2xl hover:scale-105"
@@ -1336,7 +1415,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                       {ctaFor(services[0])}
                       <ArrowRight className="w-5 h-5" />
                     </a>
-                  )}
+                  ) : null}
                 </div>
               </div>
             </motion.div>

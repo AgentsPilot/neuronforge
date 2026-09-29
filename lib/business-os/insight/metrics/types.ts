@@ -80,7 +80,14 @@ export type CashFlowMetricKey =
   /** Money that actually arrived in a period, net of refunds. */
   | 'cashflow.income_received'
   /** The largest single client's share of everything received. */
-  | 'cashflow.client_concentration';
+  | 'cashflow.client_concentration'
+  /**
+   * Money taken for an appointment that was then cancelled, and never returned.
+   *
+   * A liability rather than income: the business holds it, and may or may not
+   * owe it back depending on a cancellation policy no column records.
+   */
+  | 'cashflow.held_on_cancelled';
 
 // Retention metrics
 export type RetentionMetricKey =
