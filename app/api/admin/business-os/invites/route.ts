@@ -1,7 +1,9 @@
 /**
  * Business OS invites — list and create (invite-only signup, Slice 0).
  *
- *   GET  /api/admin/business-os/invites   the newest 200 invites + the form's options
+ *   GET  /api/admin/business-os/invites   the newest 500 invites + the form's options
+ *                                         (Slice 1c: the screen filters and searches them;
+ *                                         the route takes no query parameters)
  *   POST /api/admin/business-os/invites   create one invite; the link is shown ONCE
  *
  * ADMIN ONLY. `requireAdmin` is the first statement of each handler, with
@@ -73,7 +75,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'could_not_read_invites' }, { status: 500 });
     }
 
-    requestLogger.info({ invites: listed.invites.length }, 'Admin read the invite list');
+    requestLogger.info({ invites: listed.invites.length, truncated: listed.truncated }, 'Admin read the invite list');
 
     return NextResponse.json({
       success: true,
@@ -81,6 +83,8 @@ export async function GET(request: NextRequest) {
         invites: listed.invites,
         // T-16: "N signups stopped halfway" (counts and invite ids only).
         stoppedHalfway: listed.stoppedHalfway,
+        // Slice 1c: the ceiling was reached; older invites are not in this list.
+        truncated: listed.truncated,
         formOptions: buildInviteFormOptions(config),
         // GR-5: the page states that champion access is recorded, not enforced.
         enforcementMode: getEntitlementMode(),

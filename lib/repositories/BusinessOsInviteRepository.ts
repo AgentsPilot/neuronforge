@@ -87,8 +87,12 @@ export const BUSINESS_OS_INVITE_PUBLIC_COLUMNS =
   'id, grant_kind, grant_id, access_open_ended, access_months, inviter_display_name, language, ' +
   'personal_note, link_expires_at, first_viewed_at, revoked_at, redeemed_at';
 
-/** The admin list shows at most this many invites, newest first. */
-export const BUSINESS_OS_INVITE_LIST_LIMIT = 200;
+/**
+ * The admin list shows at most this many invites, newest first. Slice 1c
+ * (SA F-9) raised it from 200 so the screen's filters and search reach further;
+ * `INVITE_LIST_CEILING` in `adminInviteOps.ts` asks for the same number.
+ */
+export const BUSINESS_OS_INVITE_LIST_LIMIT = 500;
 
 export class BusinessOsInviteRepository {
   private supabase: SupabaseClient;

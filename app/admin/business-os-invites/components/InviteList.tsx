@@ -8,8 +8,9 @@
  * ever part of that record.
  *
  * The state arrives decided (`deriveInviteState` on the server); this list
- * never compares a date to decide whether a link has expired. Filters and email
- * search arrive with Slice 1, when the list grows (SA scope cut R-2).
+ * never compares a date to decide whether a link has expired. Slice 1c's filters
+ * and email search run in the page (`inviteFilter.ts`); this list renders
+ * whatever rows it is given.
  */
 
 import { useState } from 'react';
@@ -20,6 +21,8 @@ import { RevokeDialog } from './RevokeDialog';
 interface Props {
   invites: InviteRow[];
   onRevoked: (invite: InviteRow) => void;
+  /** Slice 1c: "no invites yet" and "nothing matches" are different answers. */
+  emptyMessage?: string;
 }
 
 const STATE_STYLE: Record<InviteState, { label: string; className: string }> = {
@@ -34,13 +37,13 @@ function day(iso: string | null): string {
   return iso ? iso.slice(0, 10) : '—';
 }
 
-export function InviteList({ invites, onRevoked }: Props) {
+export function InviteList({ invites, onRevoked, emptyMessage = 'No invites yet.' }: Props) {
   const [revoking, setRevoking] = useState<string | null>(null);
 
   if (invites.length === 0) {
     return (
       <p data-testid="invite-list-empty" className="text-sm text-slate-400">
-        No invites yet.
+        {emptyMessage}
       </p>
     );
   }
