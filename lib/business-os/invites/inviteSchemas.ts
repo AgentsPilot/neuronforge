@@ -128,3 +128,53 @@ export type RevokeInviteBody = z.infer<typeof revokeInviteSchema>;
  * this schema says nothing about any token.
  */
 export const validateInviteBodySchema = z.object({ token: z.string().max(512) }).strict();
+
+// ── Slice 1b: the signup bodies ─────────────────────────────────────────────
+
+/** bcrypt reads at most 72 BYTES and silently ignores the rest (SA R-13). */
+export const PASSWORD_MAX_BYTES = 72;
+export const PASSWORD_MIN_CHARACTERS = 8;
+
+/**
+ * A cheap character cap checked BEFORE the byte count (QA-1b-7), so a huge
+ * string is refused without being encoded. Any password over 72 bytes is
+ * refused anyway; 256 characters is far above every valid one.
+ */
+export const PASSWORD_MAX_CHARACTERS = 256;
+
+/** UTF-8 length, which is what bcrypt counts. */
+export function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
+/**
+ * The new account's password: at least 8 characters, at most 72 UTF-8 bytes
+ * (R-13). A multi-byte password under 72 characters can exceed 72 bytes, and
+ * bcrypt would then silently drop its tail. Never trimmed: spaces are the
+ * person's choice.
+ */
+const passwordSchema = z
+  .string()
+  .max(PASSWORD_MAX_CHARACTERS)
+  .refine((value) => characterCount(value) >= PASSWORD_MIN_CHARACTERS, {
+    message: `At least ${PASSWORD_MIN_CHARACTERS} characters`,
+  })
+  .refine((value) => utf8ByteLength(value) <= PASSWORD_MAX_BYTES, { message: 'Too long' });
+
+/** Request a code: the token and nothing else. */
+export const signupCodeRequestSchema = z.object({ token: z.string().max(512) }).strict();
+
+/**
+ * Complete the signup: the token, the code and the password, and NOTHING else
+ * (L-1, AC-6). An `email`, `userId`, `accountId`, `cohort`, `tier` or `level`
+ * key is a 400: the email, the grant and the account id come from the server.
+ */
+export const completeSignupSchema = z
+  .object({
+    token: z.string().max(512),
+    signupCode: z.string().regex(/^[0-9]{6}$/),
+    password: passwordSchema,
+  })
+  .strict();
+
+export type CompleteSignupBody = z.infer<typeof completeSignupSchema>;

@@ -527,6 +527,15 @@ export interface BusinessOsInvite {
   redeemed_account_id: string | null;
   /** Slice 1a (FR-8a): when the invite was first opened by an email that already had an account. */
   opened_by_existing_account_at: string | null;
+  /** Slice 1b (R-1): the server-generated account id a signup claimed this invite for, and when. */
+  claimed_at: string | null;
+  claimed_account_id: string | null;
+  /** Slice 1b (FR-12a, SA D-2): the last failure of a signup that stopped halfway. Never an email. */
+  redemption_failed_at: string | null;
+  redemption_failed_step: string | null;
+  redemption_error_code: string | null;
+  redemption_error_message: string | null;
+  redemption_failed_account_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -580,4 +589,100 @@ export interface RevokeBusinessOsInviteInput {
   adminId: string;
   reason: string;
   now: Date;
+  /**
+   * Slice 1b (I-2): a claim made at or after this instant is LIVE, and a live
+   * claim cannot be revoked (`signup_in_progress`).
+   */
+  claimLeaseCutoff: Date;
+}
+
+/**
+ * One invite as the SIGNUP routes read it (Slice 1b), by token hash only.
+ *
+ * Carries the invitee email because the account is created for exactly that
+ * address (email lock), and the code/claim counters the routes decide on. It is
+ * never returned to a visitor as-is: the routes build their own allow-listed
+ * responses.
+ */
+export interface BusinessOsInviteRedemptionView {
+  id: string;
+  email: string;
+  invite_type: string;
+  issuer_kind: 'admin' | 'account';
+  grant_kind: BusinessOsInviteGrantKind;
+  grant_id: string;
+  access_open_ended: boolean | null;
+  access_months: number | null;
+  language: string;
+  link_expires_at: string;
+  revoked_at: string | null;
+  redeemed_at: string | null;
+  signup_code_hash: string | null;
+  signup_code_expires_at: string | null;
+  signup_code_attempts: number;
+  signup_code_sent_count: number;
+  signup_code_window_started_at: string | null;
+  signup_code_last_sent_at: string | null;
+  claimed_at: string | null;
+  claimed_account_id: string | null;
+}
+
+/**
+ * Store a freshly issued code: a compare-and-swap on the send count AND the
+ * last-sent time observed with the row (SA MF-2), on a still-pending,
+ * unexpired invite with no live claim.
+ */
+export interface IssueSignupCodeInput {
+  id: string;
+  observedSentCount: number;
+  /**
+   * `signup_code_last_sent_at` as read with the row (`null` before the first
+   * code). The count alone is not enough: at a 24 h rollover every parallel
+   * request resets the count to the same value, so only the last-sent time
+   * tells the first writer from the rest.
+   */
+  observedLastSentAt: string | null;
+  claimLeaseCutoff: Date;
+  codeHash: string;
+  expiresAt: Date;
+  sentCount: number;
+  windowStartedAt: Date;
+  now: Date;
+}
+
+/** Count one attempt (a compare-and-swap on the observed attempt count and the live code). */
+export interface CountSignupCodeAttemptInput {
+  id: string;
+  observedAttempts: number;
+  codeHash: string;
+  now: Date;
+}
+
+/** Clear the code and claim the invite for a server-generated account id (R-1, D-dev-1). */
+export interface ClaimInviteForSignupInput {
+  id: string;
+  codeHash: string;
+  accountId: string;
+  /** The `claimed_account_id` read with the row: `null` for a first claim, the stale claimant otherwise (I-6). */
+  observedClaimedAccountId: string | null;
+  now: Date;
+  claimLeaseCutoff: Date;
+}
+
+/** The FR-12a record (SA D-2). Every value already scrubbed by the caller. */
+export interface RecordRedemptionFailureInput {
+  id: string;
+  claimedAccountId: string;
+  step: string;
+  errorCode: string | null;
+  errorMessage: string | null;
+  failedAccountId: string | null;
+  now: Date;
+}
+
+/** One lineage row, as the admin list reads it (Slice 1b). */
+export interface BusinessOsAccountLineageLevel {
+  account_id: string;
+  invite_id: string | null;
+  level: number;
 }

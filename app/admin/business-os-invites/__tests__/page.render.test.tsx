@@ -36,6 +36,10 @@ function row(overrides: Partial<InviteRow> = {}): InviteRow {
     revokeReason: null,
     redeemedAt: null,
     openedByExistingAccountAt: null,
+    redeemedAccountId: null,
+    level: null,
+    redemptionStoppedHalfway: false,
+    redemptionFailure: null,
     ...overrides,
   };
 }
@@ -118,6 +122,71 @@ describe('the list', () => {
     const list = await screen.findByTestId('invite-list');
     expect(within(list).getByTestId('invite-existing-account')).toHaveTextContent('Opened by an existing account');
     expect(within(list).getByTestId('invite-state')).toHaveTextContent('Pending');
+  });
+
+  it('Slice 1b: an accepted invite shows its account, the time and L1', async () => {
+    responder = () => ({
+      status: 200,
+      body: {
+        success: true,
+        data: payload({
+          invites: [row({ state: 'accepted', redeemedAt: '2026-10-03T09:00:00.000Z', redeemedAccountId: 'acct-123', level: 1 })],
+        }),
+      },
+    });
+    render(<BusinessOsInvitesPage />);
+    const list = await screen.findByTestId('invite-list');
+    const accepted = within(list).getByTestId('invite-accepted-account');
+    expect(accepted).toHaveTextContent('acct-123');
+    expect(accepted).toHaveTextContent('2026-10-03');
+    expect(accepted).toHaveTextContent('L1');
+  });
+
+  it('T-16: the banner counts signups that stopped halfway, and each row shows the step, code, message and account', async () => {
+    responder = () => ({
+      status: 200,
+      body: {
+        success: true,
+        data: payload({
+          invites: [
+            row({
+              id: 'invite-a',
+              redemptionStoppedHalfway: true,
+              redemptionFailure: {
+                at: '2026-10-03T09:00:00.000Z',
+                step: 'finalise',
+                errorCode: '23505',
+                errorMessage: 'duplicate key for [email]',
+                accountId: 'acct-9',
+              },
+            }),
+            row({ id: 'invite-b', email: 'second@example.com', redemptionStoppedHalfway: true }),
+          ],
+          stoppedHalfway: { count: 2, inviteIds: ['invite-a', 'invite-b'] },
+        }),
+      },
+    });
+    render(<BusinessOsInvitesPage />);
+    expect(await screen.findByTestId('stopped-halfway-banner')).toHaveTextContent('2 signups stopped halfway.');
+    // QA-1b-2: the banner names the recovery runbook (D-dev-14).
+    expect(screen.getByTestId('stopped-halfway-banner')).toHaveTextContent(
+      'docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_1_WORKPLAN.md'
+    );
+    const badges = screen.getAllByTestId('invite-stopped-halfway');
+    expect(badges).toHaveLength(2);
+    expect(badges[0]).toHaveTextContent('Step finalise');
+    expect(badges[0]).toHaveTextContent('code 23505');
+    expect(badges[0]).toHaveTextContent('duplicate key for [email]');
+    expect(badges[0]).toHaveTextContent('acct-9');
+    // The timeout case (D-3): no record, still flagged.
+    expect(badges[1]).toHaveTextContent('timed out before it could record why');
+  });
+
+  it('T-16: no banner when nothing stopped halfway, or when an older server sends no summary', async () => {
+    render(<BusinessOsInvitesPage />);
+    await screen.findByTestId('invite-list');
+    expect(screen.queryByTestId('stopped-halfway-banner')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('invite-stopped-halfway')).not.toBeInTheDocument();
   });
 
   it('Slice 1a: shows nothing extra for an invite never opened by an existing account', async () => {

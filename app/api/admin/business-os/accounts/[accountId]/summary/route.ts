@@ -37,6 +37,7 @@ import {
   readOk,
 } from '@/lib/business-os/usage/llmUsageVerification';
 import { isBusinessOsTenant } from '@/lib/business-os/entitlements/adminOps';
+import { businessOsAccountPlanRepository } from '@/lib/repositories/BusinessOsAccountPlanRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { onboardingConversationRepository } from '@/lib/repositories/OnboardingConversationRepository';
 import { tokenUsageRepository } from '@/lib/repositories/TokenUsageRepository';
@@ -126,6 +127,8 @@ export async function GET(request: NextRequest, context: { params: { accountId: 
       accountId,
       profileRepository: businessProfileRepository,
       onboardingRepository: onboardingConversationRepository,
+      // L-4 (invite-only signup, Slice 1b): a plan row alone makes a tenant.
+      planRepository: businessOsAccountPlanRepository,
     });
     if (isTenant === null) {
       return NextResponse.json({ success: false, error: 'tenant_check_failed' }, { status: 500 });

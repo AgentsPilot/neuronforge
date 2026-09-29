@@ -1,6 +1,6 @@
 {
  "generated": "2026-09-16",
- "count": 129,
+ "count": 130,
  "levels": {
   "admin_users": "never",
   "advisor_reports": "never",
@@ -33,6 +33,7 @@
   "business_chat_plan_cache": "reset",
   "business_chat_saved_plans": "reset",
   "business_chat_verified_questions": "reset",
+  "business_os_account_lineage": "never",
   "business_os_account_plans": "never",
   "business_os_entitlement_overrides": "never",
   "business_os_entitlement_shadow_events": "never",

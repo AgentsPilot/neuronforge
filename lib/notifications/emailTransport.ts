@@ -118,6 +118,18 @@ export interface SendEmailBase {
    * and replies go to the owner.
    */
   ownerUserId?: string;
+  /**
+   * Keep the recipient address out of this send's log lines (opt-in).
+   *
+   * Every other sender logs `to` at info, which is how an operator follows a
+   * booking email. A security message is different: the invite-signup code
+   * email is sent to someone who is not yet a customer, and its recipient must
+   * not sit in the logs next to "a sign-up code was sent". With this set, `to`
+   * is logged masked (`d•••@example.com`) and any email-shaped text in a
+   * provider's error message is replaced before it is logged or returned.
+   * The mail itself is unchanged.
+   */
+  redactRecipientInLogs?: boolean;
   /** Optional file attachments */
   attachments?: EmailAttachment[];
 }
@@ -202,6 +214,25 @@ function unsubscribeHeaders(p: SendEmailParams): Record<string, string> {
   return { 'List-Unsubscribe': `<${url}>` };
 }
 
+const EMAIL_SHAPED = /[^\s@<>()"',;:]+@[^\s@<>()"',;:]+/g;
+
+/** `dana@example.com` → `d•••@example.com`. */
+function maskAddress(address: string): string {
+  const at = address.lastIndexOf('@');
+  if (at <= 0) return '•••';
+  return `${Array.from(address.slice(0, at))[0]}•••@${address.slice(at + 1)}`;
+}
+
+/** The recipients as this send may log them (`redactRecipientInLogs`). */
+function recipientsForLog(p: SendEmailBase): string[] {
+  return p.redactRecipientInLogs ? p.to.map(maskAddress) : p.to;
+}
+
+/** A provider's error text as this send may log or return it. */
+function errorTextForLog(p: SendEmailBase, text: string): string {
+  return p.redactRecipientInLogs ? text.replace(EMAIL_SHAPED, '[email]') : text;
+}
+
 /** Returns the provider's message id, or undefined when it cannot be read. */
 async function sendViaResend(p: SendEmailParams): Promise<string | undefined> {
   // Build request body
@@ -246,7 +277,7 @@ async function sendViaResend(p: SendEmailParams): Promise<string | undefined> {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const errorText = await res.text();
+    const errorText = errorTextForLog(p, await res.text());
     logger.error({ status: res.status, error: errorText }, 'Resend API error');
     throw new Error(`Resend API error (${res.status}): ${errorText}`);
   }
@@ -482,7 +513,7 @@ export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
 
   // Log email send attempt with attachment info
   logger.info({
-    to: p.to,
+    to: recipientsForLog(p),
     subject: p.subject?.substring(0, 50),
     hasAttachments: !!(p.attachments && p.attachments.length > 0),
     attachmentCount: p.attachments?.length || 0,
@@ -510,11 +541,12 @@ export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
   if (resendConfigured()) {
     try {
       const providerMessageId = await sendViaResend(p);
-      logger.info({ to: p.to, provider: 'resend', providerMessageId }, 'Email sent');
+      logger.info({ to: recipientsForLog(p), provider: 'resend', providerMessageId }, 'Email sent');
       return { sent: true, provider: 'resend', providerMessageId };
     } catch (err: any) {
-      errors.push(`resend: ${err?.message ?? err}`);
-      logger.warn({ err: err?.message ?? String(err) }, 'Resend send failed — trying next transport');
+      const message = errorTextForLog(p, String(err?.message ?? err));
+      errors.push(`resend: ${message}`);
+      logger.warn({ err: message }, 'Resend send failed — trying next transport');
     }
   } else if (process.env.RESEND_API_KEY) {
     logger.warn('RESEND_API_KEY is set but is not a valid Resend key (must start with "re_") — skipping Resend');
@@ -524,11 +556,12 @@ export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
   if (smtpConfigured()) {
     try {
       await sendViaSMTP(p);
-      logger.info({ to: p.to, provider: 'smtp', host: process.env.SMTP_HOST }, 'Email sent');
+      logger.info({ to: recipientsForLog(p), provider: 'smtp', host: process.env.SMTP_HOST }, 'Email sent');
       return { sent: true, provider: 'smtp' };
     } catch (err: any) {
-      errors.push(`smtp: ${err?.message ?? err}`);
-      logger.warn({ err: err?.message ?? String(err), host: process.env.SMTP_HOST }, 'SMTP send failed — trying next transport');
+      const message = errorTextForLog(p, String(err?.message ?? err));
+      errors.push(`smtp: ${message}`);
+      logger.warn({ err: message, host: process.env.SMTP_HOST }, 'SMTP send failed — trying next transport');
     }
   }
 
@@ -536,17 +569,18 @@ export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
   if (gmailConfigured()) {
     try {
       await sendViaGmail(p);
-      logger.info({ to: p.to, provider: 'gmail' }, 'Email sent');
+      logger.info({ to: recipientsForLog(p), provider: 'gmail' }, 'Email sent');
       return { sent: true, provider: 'gmail' };
     } catch (err: any) {
-      errors.push(`gmail: ${err?.message ?? err}`);
-      logger.warn({ err: err?.message ?? String(err) }, 'Gmail send failed');
+      const message = errorTextForLog(p, String(err?.message ?? err));
+      errors.push(`gmail: ${message}`);
+      logger.warn({ err: message }, 'Gmail send failed');
     }
   }
 
   // 4. Nothing configured / all failed → report not sent (structured Pino only)
   logger.warn(
-    { to: p.to, subject: p.subject, errors: errors.length ? errors : undefined },
+    { to: recipientsForLog(p), subject: p.subject, errors: errors.length ? errors : undefined },
     'No email transport delivered the message (preview only)'
   );
   return { sent: false, provider: 'none', error: errors.join('; ') || 'no email transport configured' };

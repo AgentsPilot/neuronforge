@@ -40,6 +40,10 @@ jest.mock('@/lib/repositories/BusinessProfileRepository', () => ({
 jest.mock('@/lib/repositories/OnboardingConversationRepository', () => ({
   onboardingConversationRepository: {},
 }));
+const mockPlanRepository = { findEntitlementInputs: jest.fn() };
+jest.mock('@/lib/repositories/BusinessOsAccountPlanRepository', () => ({
+  businessOsAccountPlanRepository: mockPlanRepository,
+}));
 
 const mockListCalls = jest.fn();
 jest.mock('@/lib/repositories/TokenUsageRepository', () => ({
@@ -238,6 +242,15 @@ describe('the summary', () => {
     mockListCalls.mockResolvedValue({ data: { rows: CALLS, reachedCeiling: true }, error: null });
     const { data } = await (await call(ACCOUNT)).json();
     expect(data.aiSpend30d.status).toBe('incomplete');
+  });
+
+  it('R-8 / L-4: passes the plan repository to the tenant check, so a plan-row-only (invited) account is summarised, not 404ed', async () => {
+    asAdmin();
+    allReadsOk();
+    mockFindAdminIdentity.mockResolvedValue({ data: null, error: null });
+    const response = await call(ACCOUNT);
+    expect(response.status).toBe(200);
+    expect(mockIsTenant).toHaveBeenCalledWith(expect.objectContaining({ accountId: ACCOUNT, planRepository: mockPlanRepository }));
   });
 
   it('says "none" for a tenant with no business profile yet (onboarding in progress)', async () => {

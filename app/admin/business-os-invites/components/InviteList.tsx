@@ -2,6 +2,10 @@
 
 /**
  * FR-5 (the Slice 0 subset): the newest invites, each with its derived state.
+ * Slice 1b adds, per row: the account and time of an accepted invite with its
+ * invitation circle (L1), and the "signup stopped halfway" badge (T-16) with
+ * the recorded step, error code, scrubbed message and account id. No email is
+ * ever part of that record.
  *
  * The state arrives decided (`deriveInviteState` on the server); this list
  * never compares a date to decide whether a link has expired. Filters and email
@@ -79,6 +83,36 @@ export function InviteList({ invites, onRevoked }: Props) {
                     <p className="mt-1 text-xs text-slate-500">
                       {day(invite.revokedAt)}: {invite.revokeReason}
                     </p>
+                  )}
+                  {invite.state === 'accepted' && invite.redeemedAccountId && (
+                    <p data-testid="invite-accepted-account" className="mt-1 text-xs text-slate-400">
+                      <span className="font-mono">{invite.redeemedAccountId}</span>
+                      {' · '}
+                      {day(invite.redeemedAt)}
+                      {invite.level !== null && <> {' · '}L{invite.level}</>}
+                    </p>
+                  )}
+                  {invite.redemptionStoppedHalfway && (
+                    <div data-testid="invite-stopped-halfway" className="mt-1 rounded bg-amber-500/10 px-2 py-1 text-xs text-amber-200">
+                      <p className="font-medium">Signup stopped halfway</p>
+                      {invite.redemptionFailure ? (
+                        <p>
+                          Step {invite.redemptionFailure.step}
+                          {invite.redemptionFailure.errorCode && <> · code {invite.redemptionFailure.errorCode}</>}
+                          {invite.redemptionFailure.errorMessage && <> · {invite.redemptionFailure.errorMessage}</>}
+                          {invite.redemptionFailure.accountId && (
+                            <>
+                              {' · account '}
+                              <span className="font-mono">{invite.redemptionFailure.accountId}</span>
+                            </>
+                          )}
+                          {' · '}
+                          {day(invite.redemptionFailure.at)}
+                        </p>
+                      ) : (
+                        <p>The signup timed out before it could record why.</p>
+                      )}
+                    </div>
                   )}
                   {invite.openedByExistingAccountAt && (
                     <p data-testid="invite-existing-account" className="mt-1 text-xs text-amber-300">

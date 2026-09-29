@@ -194,14 +194,17 @@ describe('matched states', () => {
     expect(response.headers.get('referrer-policy')).toBe('no-referrer');
     const body = await response.json();
     expect(Object.keys(body.data).sort()).toEqual(
-      ['inviterDisplayName', 'language', 'linkExpiresAt', 'offer', 'personalNote', 'state'].sort()
+      ['inviterDisplayName', 'language', 'linkExpiresAt', 'maskedEmail', 'offer', 'personalNote', 'state'].sort()
     );
     expect(body.data.state).toBe('valid');
+    // Slice 1b (R-6, F-6): the address is masked; the full email never appears.
+    expect(body.data.maskedEmail).toBe('i•••@example.com');
     const text = JSON.stringify(body);
     expect(text).not.toContain(INVITE_ID);
     expect(text).not.toContain(HASH);
     expect(text).not.toContain(TOKEN);
-    expect(text).not.toContain('@');
+    expect(text).not.toContain('invitee@example.com');
+    expect(text.match(/@/g)).toHaveLength(1);
     expect(state.marks).toHaveLength(1);
   });
 

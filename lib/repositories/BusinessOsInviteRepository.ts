@@ -21,6 +21,12 @@
 //      `findInviteeEmailForPublicCheck` (the invitee email, read only so the
 //      server can ask whether it already has an account, and never returned to
 //      the visitor) and `markOpenedByExistingAccount` (FR-8a).
+//   3. The public SIGNUP routes (Slice 1b), which hold no identity either.
+//      They reach ONE row by token hash (`findByTokenHashForRedemption`) and
+//      then change it only through compare-and-swap methods keyed by that
+//      row's id and a value observed on it: the send count, the attempt count,
+//      the live code hash, the claimant. A lost race changes nothing and the
+//      route answers "try again" (workplan D-4, R-1, D-dev-1).
 //
 // FUTURE: champion-issued invites (requirement §14) must get their OWN methods,
 // scoped by `issuer_account_id` (for example `listForIssuerAccount`,
@@ -41,7 +47,12 @@ import type {
   AgentRepositoryResult as RepositoryResult,
   BusinessOsInvite,
   BusinessOsInvitePublicView,
+  BusinessOsInviteRedemptionView,
+  ClaimInviteForSignupInput,
+  CountSignupCodeAttemptInput,
   CreateBusinessOsInviteInput,
+  IssueSignupCodeInput,
+  RecordRedemptionFailureInput,
   RevokeBusinessOsInviteInput,
 } from './types';
 
@@ -52,7 +63,24 @@ export const BUSINESS_OS_INVITE_ADMIN_COLUMNS =
   'id, email, email_locked, invite_type, grant_kind, grant_id, access_open_ended, access_months, ' +
   'issuer_kind, issuer_admin_id, issuer_account_id, inviter_display_name, language, personal_note, ' +
   'internal_reason, link_expiry_days, link_expires_at, first_viewed_at, revoked_at, revoked_by_admin_id, ' +
-  'revoke_reason, redeemed_at, redeemed_account_id, opened_by_existing_account_at, created_at, updated_at';
+  'revoke_reason, redeemed_at, redeemed_account_id, opened_by_existing_account_at, claimed_at, claimed_account_id, ' +
+  'redemption_failed_at, redemption_failed_step, redemption_error_code, redemption_error_message, ' +
+  'redemption_failed_account_id, created_at, updated_at';
+
+/**
+ * What the signup routes read (Slice 1b). The email is here because the account
+ * is created for exactly that address; the routes never return it before
+ * mailbox proof. Never `token_hash`.
+ */
+export const BUSINESS_OS_INVITE_REDEMPTION_COLUMNS =
+  'id, email, invite_type, issuer_kind, grant_kind, grant_id, access_open_ended, access_months, language, ' +
+  'link_expires_at, revoked_at, redeemed_at, signup_code_hash, signup_code_expires_at, signup_code_attempts, ' +
+  'signup_code_sent_count, signup_code_window_started_at, signup_code_last_sent_at, claimed_at, claimed_account_id';
+
+/** A PostgREST `or` filter: no claim, or a claim older than the lease (I-2, I-6). */
+function noLiveClaim(cutoff: Date): string {
+  return `claimed_at.is.null,claimed_at.lt."${cutoff.toISOString()}"`;
+}
 
 /** What the public page's lookup reads (C-4): no email, no issuer, no reasons, no hash. */
 export const BUSINESS_OS_INVITE_PUBLIC_COLUMNS =
@@ -160,6 +188,11 @@ export class BusinessOsInviteRepository {
    * One conditional UPDATE, so a revoke racing a redemption (Slice 1) cannot
    * both win. `data` is `null` when no row matched; the caller tells "no such
    * invite" from "cannot be revoked" with `findByIdForAdmin`.
+   *
+   * Slice 1b (I-2): a LIVE signup claim (made after `claimLeaseCutoff`) also
+   * blocks the revoke. Once a signup has claimed the invite, the claim is the
+   * decision point; a revoke in the milliseconds before the account is created
+   * would otherwise leave an account its invite no longer points at.
    */
   async revokeForAdmin(input: RevokeBusinessOsInviteInput): Promise<RepositoryResult<BusinessOsInvite>> {
     const methodLogger = this.logger.child({ method: 'revokeForAdmin', inviteId: input.id, adminId: input.adminId });
@@ -176,6 +209,7 @@ export class BusinessOsInviteRepository {
         .eq('id', input.id)
         .is('redeemed_at', null)
         .is('revoked_at', null)
+        .or(noLiveClaim(input.claimLeaseCutoff))
         .select(BUSINESS_OS_INVITE_ADMIN_COLUMNS)
         .maybeSingle();
 
@@ -261,6 +295,198 @@ export class BusinessOsInviteRepository {
       return { data: Array.isArray(data) && data.length > 0, error: null };
     } catch (error) {
       methodLogger.error({ dbError: safeDbError(error) }, 'Failed to record an open by an existing account');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  // ============ Public signup (Slice 1b; no identity; by token hash, then CAS) ============
+
+  /**
+   * SIGNUP: the one invite whose token hashes to `tokenHash`, with the email and
+   * the code/claim counters, or `null`. Never logged: not the hash, not the email.
+   */
+  async findByTokenHashForRedemption(tokenHash: string): Promise<RepositoryResult<BusinessOsInviteRedemptionView>> {
+    const methodLogger = this.logger.child({ method: 'findByTokenHashForRedemption' });
+    try {
+      const { data, error } = await this.supabase
+        .from(INVITES)
+        .select(BUSINESS_OS_INVITE_REDEMPTION_COLUMNS)
+        .eq('token_hash', tokenHash)
+        .maybeSingle();
+
+      if (error) throw error;
+      return { data: (data ?? null) as unknown as BusinessOsInviteRedemptionView | null, error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to look up invite for signup');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  /**
+   * SIGNUP: store a freshly issued code, resetting the attempt count. `true`
+   * only when this call wrote it.
+   *
+   * A compare-and-swap on BOTH the send count and the last-sent time observed
+   * with the row (SA MF-2): at a 24 h rollover every parallel request computes
+   * the same reset count, so the count alone would let all of them win. The
+   * last-sent time changes on every write, so exactly one does. Also only on a
+   * pending, unexpired invite with no live claim.
+   */
+  async issueSignupCode(input: IssueSignupCodeInput): Promise<RepositoryResult<boolean>> {
+    const methodLogger = this.logger.child({ method: 'issueSignupCode', inviteId: input.id });
+    const at = input.now.toISOString();
+    try {
+      const query = this.supabase
+        .from(INVITES)
+        .update({
+          signup_code_hash: input.codeHash,
+          signup_code_expires_at: input.expiresAt.toISOString(),
+          signup_code_attempts: 0,
+          signup_code_sent_count: input.sentCount,
+          signup_code_window_started_at: input.windowStartedAt.toISOString(),
+          signup_code_last_sent_at: at,
+          updated_at: at,
+        })
+        .eq('id', input.id)
+        .eq('signup_code_sent_count', input.observedSentCount)
+        .is('redeemed_at', null)
+        .is('revoked_at', null)
+        .gt('link_expires_at', at)
+        .or(noLiveClaim(input.claimLeaseCutoff));
+
+      const { data, error } = await (input.observedLastSentAt === null
+        ? query.is('signup_code_last_sent_at', null)
+        : query.eq('signup_code_last_sent_at', input.observedLastSentAt)
+      ).select('id');
+
+      if (error) throw error;
+      return { data: Array.isArray(data) && data.length > 0, error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to store a signup code');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  /**
+   * SIGNUP: count one attempt against the live code, BEFORE it is compared
+   * (workplan D-5). A CAS on the observed attempt count AND the code hash, so
+   * five parallel guesses cannot all count as the first, and an attempt cannot
+   * be counted against a code that has since been replaced.
+   */
+  async countSignupCodeAttempt(input: CountSignupCodeAttemptInput): Promise<RepositoryResult<boolean>> {
+    const methodLogger = this.logger.child({ method: 'countSignupCodeAttempt', inviteId: input.id });
+    try {
+      const { data, error } = await this.supabase
+        .from(INVITES)
+        .update({ signup_code_attempts: input.observedAttempts + 1, updated_at: input.now.toISOString() })
+        .eq('id', input.id)
+        .eq('signup_code_attempts', input.observedAttempts)
+        .eq('signup_code_hash', input.codeHash)
+        .select('id');
+
+      if (error) throw error;
+      return { data: Array.isArray(data) && data.length > 0, error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to count a signup code attempt');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  /**
+   * SIGNUP: clear the matched code and claim the invite for a server-generated
+   * account id, in ONE compare-and-swap (R-1). Conditional on: the same code
+   * hash, still pending (not redeemed, not revoked, not expired), no LIVE claim,
+   * and the claimant being the one observed with the row (D-dev-1): `null` for a
+   * first claim, the stale claimant when a lapsed claim is re-taken (I-6).
+   */
+  async claimForSignup(input: ClaimInviteForSignupInput): Promise<RepositoryResult<boolean>> {
+    const methodLogger = this.logger.child({ method: 'claimForSignup', inviteId: input.id });
+    const at = input.now.toISOString();
+    try {
+      let query = this.supabase
+        .from(INVITES)
+        .update({
+          signup_code_hash: null,
+          signup_code_expires_at: null,
+          claimed_at: at,
+          claimed_account_id: input.accountId,
+          updated_at: at,
+        })
+        .eq('id', input.id)
+        .eq('signup_code_hash', input.codeHash)
+        .is('redeemed_at', null)
+        .is('revoked_at', null)
+        .gt('link_expires_at', at)
+        .or(noLiveClaim(input.claimLeaseCutoff));
+
+      query =
+        input.observedClaimedAccountId === null
+          ? query.is('claimed_account_id', null)
+          : query.eq('claimed_account_id', input.observedClaimedAccountId);
+
+      const { data, error } = await query.select('id');
+
+      if (error) throw error;
+      return { data: Array.isArray(data) && data.length > 0, error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to claim an invite for signup');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  /**
+   * SIGNUP: release a claim, only after a POSITIVE "no such user" (I-4,
+   * D-dev-2). A CAS on the same claimant on an unredeemed invite, so it can
+   * never release someone else's claim or a finished redemption. A failed
+   * release is harmless: no account exists, and the claim lapses after the
+   * lease.
+   */
+  async releaseSignupClaim(id: string, accountId: string, now: Date): Promise<RepositoryResult<boolean>> {
+    const methodLogger = this.logger.child({ method: 'releaseSignupClaim', inviteId: id });
+    try {
+      const { data, error } = await this.supabase
+        .from(INVITES)
+        .update({ claimed_at: null, claimed_account_id: null, updated_at: now.toISOString() })
+        .eq('id', id)
+        .eq('claimed_account_id', accountId)
+        .is('redeemed_at', null)
+        .select('id');
+
+      if (error) throw error;
+      return { data: Array.isArray(data) && data.length > 0, error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to release a signup claim');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  /**
+   * SIGNUP: the FR-12a record of a signup that stopped with its claim KEPT
+   * (SA D-2). Keyed on the invite id and the claimant; the last failure wins;
+   * never cleared. The caller passes values already scrubbed (no email).
+   */
+  async recordRedemptionFailure(input: RecordRedemptionFailureInput): Promise<RepositoryResult<boolean>> {
+    const methodLogger = this.logger.child({ method: 'recordRedemptionFailure', inviteId: input.id });
+    const at = input.now.toISOString();
+    try {
+      const { data, error } = await this.supabase
+        .from(INVITES)
+        .update({
+          redemption_failed_at: at,
+          redemption_failed_step: input.step,
+          redemption_error_code: input.errorCode,
+          redemption_error_message: input.errorMessage,
+          redemption_failed_account_id: input.failedAccountId,
+          updated_at: at,
+        })
+        .eq('id', input.id)
+        .eq('claimed_account_id', input.claimedAccountId)
+        .select('id');
+
+      if (error) throw error;
+      return { data: Array.isArray(data) && data.length > 0, error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to record a stopped signup');
       return { data: null, error: toError(error) };
     }
   }

@@ -31,6 +31,26 @@ export interface InviteRow {
   redeemedAt: string | null;
   /** Slice 1a (FR-8a): the invite was opened by an email that already had an account. */
   openedByExistingAccountAt: string | null;
+  /** Slice 1b: the account created from this invite, once accepted. */
+  redeemedAccountId: string | null;
+  /** Slice 1b: the invitation circle (1 for an admin invite), or null. */
+  level: number | null;
+  /** Slice 1b (FR-12a, T-16): the signup stopped halfway (derived on the server). */
+  redemptionStoppedHalfway: boolean;
+  /** Slice 1b (SA D-2): the last recorded failure. Never an email. */
+  redemptionFailure: {
+    at: string;
+    step: string;
+    errorCode: string | null;
+    errorMessage: string | null;
+    accountId: string | null;
+  } | null;
+}
+
+/** T-16: the banner summary (counts and invite ids only). */
+export interface StoppedHalfwaySummary {
+  count: number;
+  inviteIds: string[];
 }
 
 export interface InviteTypeOption {
@@ -54,6 +74,8 @@ export interface InviteFormOptions {
 /** GET /api/admin/business-os/invites → `data`. */
 export interface InvitesPayload {
   invites: InviteRow[];
+  /** Slice 1b (T-16). Absent from an older server: treated as none. */
+  stoppedHalfway?: StoppedHalfwaySummary;
   formOptions: InviteFormOptions;
   enforcementMode: EnforcementMode;
 }

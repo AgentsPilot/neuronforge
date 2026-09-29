@@ -10,7 +10,7 @@
  * `lib/business-os/invites/__tests__/publicInviteView.test.ts`.
  *
  * ALLOW-LIST, not a deny-list: a new caller must be argued for in a diff.
- * Slice 1b adds `lib/business-os/invites/inviteRedemption.ts` and its test.
+ * Slice 1b added the redemption flow and its production wiring.
  *
  * The repository is deliberately NOT exported from the `lib/repositories`
  * barrel: an import through the barrel would name only `@/lib/repositories`,
@@ -45,6 +45,12 @@ const ALLOWED = new Set(
     // Their tests (they replace the instance with a fake).
     'lib/business-os/invites/__tests__/publicInviteView.test.ts',
     'app/api/public/invites/validate/__tests__/route.test.ts',
+    // Slice 1b: the redemption flow types the dependency, and the production
+    // wiring hands it the instance. Its argument is always the matched invite
+    // row's email and the server-generated account id (I-3), never request data.
+    'lib/business-os/invites/inviteRedemption.ts',
+    'lib/business-os/invites/redemptionDeps.ts',
+    'lib/business-os/invites/__tests__/redemptionDeps.test.ts',
   ].map((file) => file.split('/').join(sep))
 );
 
