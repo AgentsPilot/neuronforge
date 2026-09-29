@@ -258,6 +258,9 @@ export function tierMatrixSchema(
             // selling. Adding a tier must make somebody answer both.
             shownToCustomers: z.boolean(),
             availableToBuy: z.boolean(),
+            // FYI only today (2026-09-29) — see `TierPresentation.active`. Required
+            // for the same reason as the two above.
+            active: z.boolean(),
           })
           .strict()
           .superRefine((entry, ctx) => {
@@ -370,6 +373,9 @@ export function cohortsSchema(tierOrder: readonly string[], catalog: CatalogLike
       // nothing else may appear here.
       values: z.object(valuesShape).strict(),
       graceHistory: historySchema,
+      // FYI only today (2026-09-29) — see `CohortConfigShape.active`. Required,
+      // so a new cohort must say whether it is active rather than inherit an answer.
+      active: z.boolean(),
       durationHistory: historySchema.optional(),
       clockStartsAt: z.enum(['first_onboarding_message', 'profile_created']).optional(),
     })

@@ -231,6 +231,25 @@ export function planCommercialFlags(
   };
 }
 
+/**
+ * Is this plan active? The ONE reader, for tiers and cohorts alike.
+ *
+ * The flag lives in two places because the plans do — a tier's `presentation`
+ * block, a cohort's own config beside its `labels` — and this is the only
+ * function that knows which, the way `planCommercialFlags` is for the tier flags.
+ *
+ * **FYI only (2026-09-29).** Read by the admin Tiers page and by nothing that
+ * decides anything; `planActive.noEffect.test.ts` holds that. `false` for an
+ * unknown id, which cannot happen for a validated config.
+ */
+export function planActive(config: EntitlementConfig, planId: string): boolean {
+  if (config.tierOrder.includes(planId)) {
+    return config.matrix.presentation[planId as keyof typeof config.matrix.presentation]?.active ?? false;
+  }
+
+  return config.cohorts[planId as keyof typeof config.cohorts]?.active ?? false;
+}
+
 /** For a cohort, the tier it resolves through. `null` for a tier. */
 export function planInheritsFrom(config: EntitlementConfig, planId: string): string | null {
   if (config.tierOrder.includes(planId)) return null;

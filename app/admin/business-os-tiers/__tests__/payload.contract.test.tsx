@@ -148,6 +148,8 @@ describe('the fixture in the render suite still matches the server', () => {
     for (const plan of payload.plans) {
       expect(keysOf(plan)).toEqual(
         [
+          // FYI-only marker (2026-09-29), on every plan including the cohorts.
+          'active',
           'aiActions',
           // The two commercial flags (2026-09-27). Listed explicitly, like every
           // other field: this test exists so a field added server-side and never

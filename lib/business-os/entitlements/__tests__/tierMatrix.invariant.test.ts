@@ -94,6 +94,26 @@ describe('FR-3 / FR-7 — the other ways a matrix can be wrong', () => {
     expect(() => validateEntitlementConfig(config)).toThrow(/availableToBuy/);
   });
 
+  it('requires `active` on every TIER, and on every COHORT (2026-09-29)', () => {
+    // FYI only today, but required for the same reason as the commercial flags:
+    // a default would answer "is this plan active?" silently. Cohorts have no
+    // `presentation` block, so theirs lives beside `labels` — and the cohort
+    // schema is `.strict()`, so it is checked there too.
+    const withoutTierFlag = withMatrix((matrix) => {
+      const presentation = matrix.presentation as Record<string, Record<string, unknown>>;
+      delete presentation.basic.active;
+    });
+    expect(() => validateEntitlementConfig(withoutTierFlag)).toThrow(/tier matrix/);
+
+    const config = fixtureConfig();
+    const cohorts = config.cohorts as unknown as Record<string, Record<string, unknown>>;
+    const withoutCohortFlag = {
+      ...config,
+      cohorts: { ...cohorts, trial: Object.fromEntries(Object.entries(cohorts.trial).filter(([key]) => key !== 'active')) },
+    } as unknown as typeof config;
+    expect(() => validateEntitlementConfig(withoutCohortFlag)).toThrow();
+  });
+
   it('requires BOTH flags rather than defaulting either', () => {
     // A default would decide a commercial question silently, and either default
     // is wrong: `true` publishes a plan nobody meant to publish, `false` hides one
