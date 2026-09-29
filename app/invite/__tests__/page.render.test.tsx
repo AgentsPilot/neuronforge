@@ -43,7 +43,10 @@ jest.mock('@/lib/client/auth-actions', () => ({
     session.user = null;
     return { ok: true };
   },
+  signInWithPassword: async () => ({ ok: true }),
 }));
+
+jest.mock('next/navigation', () => ({ useRouter: () => ({ replace: jest.fn() }) }));
 
 import InvitePage from '../page';
 import { INVITE_PAGE_COPY } from '../invitePageCopy';
@@ -56,6 +59,7 @@ const validData = {
   inviterDisplayName: 'Dana',
   personalNote: 'Welcome aboard, would love your feedback',
   linkExpiresAt: '2026-10-31T12:00:00.000Z',
+  maskedEmail: 'i•••@example.com',
   offer: {
     planName: 'Fixture Free Plan',
     free: true,
@@ -126,7 +130,7 @@ describe('the token (T-7, D-11)', () => {
 });
 
 describe('each state', () => {
-  it('valid: the inviter, the note, the plan, what it includes, the expiry, and the R-4 line', async () => {
+  it('valid: the inviter, the note, the plan, what it includes, the expiry, and (Slice 1b) the signup form', async () => {
     render(<InvitePage />);
     const section = await screen.findByTestId('invite-state-valid');
     expect(section).toHaveTextContent('Dana invited you');
@@ -136,9 +140,11 @@ describe('each state', () => {
     expect(section).toHaveTextContent('No end date');
     expect(section).toHaveTextContent('Contacts, Pipelines');
     expect(section).toHaveTextContent('October 31, 2026');
-    expect(screen.getByTestId('invite-signup-not-yet')).toHaveTextContent(
-      "You can't create your account from this page yet. Dana will let you know when you can."
-    );
+    // Slice 1b: the R-4 line is gone; the form offers a code to the MASKED address, with no email field.
+    expect(screen.queryByTestId('invite-signup-not-yet')).not.toBeInTheDocument();
+    const signup = await screen.findByTestId('invite-signup');
+    expect(signup).toHaveTextContent("We'll email a 6-digit code to i•••@example.com");
+    expect(screen.getByRole('button', { name: 'Send me a code' })).toBeInTheDocument();
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   });
 
@@ -277,6 +283,18 @@ describe('Slice 1a: a signed-in visitor is asked to sign out first (L-8)', () =>
     expect(JSON.parse(String(calls[1].init?.body))).toEqual({ token: TOKEN });
   });
 
+  it('Slice 1b (L-8): a signed-in visitor on a valid invite gets no signup form', async () => {
+    session.user = { id: 'user-1', email: 'someone@example.com' };
+    render(<InvitePage />);
+    await screen.findByTestId('invite-signed-in');
+    expect(screen.queryByTestId('invite-signup')).not.toBeInTheDocument();
+  });
+
+  it('SA N-1: the notice body reads correctly on an existing-account invite', () => {
+    expect(INVITE_PAGE_COPY.en.signedInBody).toBe('Sign out to continue with this invitation.');
+    expect(INVITE_PAGE_COPY.en.signedInBody).not.toContain('can only be accepted');
+  });
+
   it('a signed-out visitor sees no notice', async () => {
     render(<InvitePage />);
     await screen.findByTestId('invite-state-valid');
@@ -359,7 +377,7 @@ describe('language (C-8)', () => {
     render(<InvitePage />);
     await screen.findByTestId('invite-state-valid');
     expect(screen.getByTestId('invite-page')).toHaveAttribute('dir', 'ltr');
-    expect(screen.getByTestId('invite-signup-not-yet')).toHaveTextContent(INVITE_PAGE_COPY.es.signupNotYet('Dana'));
+    expect(await screen.findByTestId('invite-signup')).toHaveTextContent(INVITE_PAGE_COPY.es.signup.codeWillGoTo('i•••@example.com'));
   });
 
   it('ignores the browser language', async () => {
@@ -392,7 +410,7 @@ describe('the note is text, never HTML', () => {
 describe('source rules', () => {
   const read = (file: string) => readFileSync(join(process.cwd(), 'app', 'invite', file), 'utf8');
 
-  it.each(['page.tsx', 'layout.tsx', 'invitePageCopy.ts', 'useSignedInVisitor.ts'])('%s uses no dangerouslySetInnerHTML, LanguageContext, navigator.language or console', (file) => {
+  it.each(['page.tsx', 'layout.tsx', 'invitePageCopy.ts', 'useSignedInVisitor.ts', 'SignupForm.tsx'])('%s uses no dangerouslySetInnerHTML, LanguageContext, navigator.language or console', (file) => {
     const source = read(file).replace(/\/\*[\s\S]*?\*\//g, '');
     expect(source).not.toContain('dangerouslySetInnerHTML');
     expect(source).not.toMatch(/LanguageContext|useLanguage/);

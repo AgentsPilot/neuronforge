@@ -691,3 +691,43 @@ describe('resetPlanState', () => {
     expect(error).toBeTruthy();
   });
 });
+
+describe('provisionFromInvite (invite-only signup Slice 1b; L-5, I-5, F-8)', () => {
+  const input = {
+    inviteId: '11111111-1111-4111-8111-111111111111',
+    accountId: '33333333-3333-4333-8333-333333333333',
+    email: 'invitee@example.com',
+    cohort: 'champion',
+  };
+
+  it('calls the finalise function with exactly the four server-derived arguments and returns the invite id', async () => {
+    const { client, calls, builder } = mockSupabase({ data: input.inviteId, error: null });
+    const result = await new BusinessOsAccountPlanRepository(client).provisionFromInvite(input);
+    expect(result).toEqual({ data: input.inviteId, error: null });
+    expect(calls.rpc).toEqual([
+      'business_os_finalise_invite_redemption',
+      { p_invite_id: input.inviteId, p_account_id: input.accountId, p_email: input.email, p_cohort: input.cohort },
+    ]);
+    // One transaction in SQL: no table write from here.
+    expect(builder.insert).not.toHaveBeenCalled();
+    expect(builder.update).not.toHaveBeenCalled();
+    expect(builder.delete).not.toHaveBeenCalled();
+  });
+
+  it('a row that no longer matches is { data: null, error: null }', async () => {
+    const { client } = mockSupabase({ data: null, error: null });
+    expect(await new BusinessOsAccountPlanRepository(client).provisionFromInvite(input)).toEqual({ data: null, error: null });
+  });
+
+  it('a database error is scrubbed to { code, message }, and the email is never logged (M-1)', async () => {
+    const { client } = mockSupabase({
+      data: null,
+      error: { code: '23505', message: 'duplicate key value violates unique constraint', details: `Key (user_id)=(x) for ${input.email}`, hint: '' },
+    });
+    const result = await new BusinessOsAccountPlanRepository(client).provisionFromInvite(input);
+    expect(result.data).toBeNull();
+    expect(result.error).not.toHaveProperty('details');
+    expect((result.error as Error & { code?: string }).code).toBe('23505');
+    expect(JSON.stringify(result.error)).not.toContain(input.email);
+  });
+});

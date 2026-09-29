@@ -102,13 +102,109 @@ describe('emailHasAccount (L-3)', () => {
   });
 });
 
+const ACCOUNT = '33333333-3333-4333-8333-333333333333';
+const PASSWORD = 'correct horse battery';
+
+function authClient(options: {
+  create?: { data: unknown; error: unknown } | 'throw';
+  getUser?: { data: unknown; error: unknown } | 'throw';
+}) {
+  const calls: Array<{ method: string; args: unknown }> = [];
+  const client = {
+    auth: {
+      admin: {
+        createUser: async (args: unknown) => {
+          calls.push({ method: 'createUser', args });
+          if (options.create === 'throw') throw Object.assign(new Error(`network down for ${EMAIL}`), { status: 500 });
+          return options.create ?? { data: { user: { id: ACCOUNT } }, error: null };
+        },
+        getUserById: async (args: unknown) => {
+          calls.push({ method: 'getUserById', args });
+          if (options.getUser === 'throw') throw new Error('network down');
+          return options.getUser ?? { data: { user: { id: ACCOUNT } }, error: null };
+        },
+      },
+    },
+  } as unknown as SupabaseClient;
+  return { client, calls };
+}
+
+describe('createConfirmedUser (T-3 as amended, R-1, I-3)', () => {
+  it('creates a confirmed user with exactly { id, email, password, email_confirm } and no metadata', async () => {
+    const { client, calls } = authClient({});
+    const result = await new AuthAccountRepository(client).createConfirmedUser({ id: ACCOUNT, email: EMAIL, password: PASSWORD });
+    expect(result).toEqual({ ok: true, id: ACCOUNT });
+    expect(calls).toEqual([{ method: 'createUser', args: { id: ACCOUNT, email: EMAIL, password: PASSWORD, email_confirm: true } }]);
+  });
+
+  it('returns the id the provider created, so the caller can refuse a mismatch (I-3)', async () => {
+    const { client } = authClient({ create: { data: { user: { id: 'other-id' } }, error: null } });
+    expect(await new AuthAccountRepository(client).createConfirmedUser({ id: ACCOUNT, email: EMAIL, password: PASSWORD })).toEqual({
+      ok: true,
+      id: 'other-id',
+    });
+  });
+
+  it.each([
+    ['email_exists', 'email_exists'],
+    ['user_already_exists', 'email_exists'],
+    ['weak_password', 'weak_password'],
+    ['unexpected_failure', 'other'],
+  ])('maps the auth error code %s to %s', async (code, kind) => {
+    const { client } = authClient({ create: { data: { user: null }, error: { code, status: 422, message: `refused for ${EMAIL}` } } });
+    const result = await new AuthAccountRepository(client).createConfirmedUser({ id: ACCOUNT, email: EMAIL, password: PASSWORD });
+    expect(result).toMatchObject({ ok: false, kind, code });
+  });
+
+  it('a throw is an "other" failure, never an exception', async () => {
+    const { client } = authClient({ create: 'throw' });
+    const result = await new AuthAccountRepository(client).createConfirmedUser({ id: ACCOUNT, email: EMAIL, password: PASSWORD });
+    expect(result).toMatchObject({ ok: false, kind: 'other' });
+  });
+
+  it('never logs the email or the password, on success or failure', async () => {
+    await new AuthAccountRepository(authClient({}).client).createConfirmedUser({ id: ACCOUNT, email: EMAIL, password: PASSWORD });
+    await new AuthAccountRepository(
+      authClient({ create: { data: null, error: { code: 'weak_password', status: 422, message: `bad for ${EMAIL}` } } }).client
+    ).createConfirmedUser({ id: ACCOUNT, email: EMAIL, password: PASSWORD });
+    await new AuthAccountRepository(authClient({ create: 'throw' }).client).createConfirmedUser({ id: ACCOUNT, email: EMAIL, password: PASSWORD });
+    const text = JSON.stringify(logged).toLowerCase();
+    expect(text).not.toContain(EMAIL.toLowerCase());
+    expect(text).not.toContain(PASSWORD);
+  });
+});
+
+describe('findUserExists (I-4, I-6, D-dev-2)', () => {
+  it('true when the user exists, false only on a definite 404 / user_not_found', async () => {
+    expect(await new AuthAccountRepository(authClient({}).client).findUserExists(ACCOUNT)).toEqual({ data: true, error: null });
+    expect(
+      await new AuthAccountRepository(authClient({ getUser: { data: { user: null }, error: { status: 404, message: 'not found' } } }).client).findUserExists(ACCOUNT)
+    ).toEqual({ data: false, error: null });
+    expect(
+      await new AuthAccountRepository(authClient({ getUser: { data: { user: null }, error: { code: 'user_not_found', status: 400, message: 'x' } } }).client).findUserExists(ACCOUNT)
+    ).toEqual({ data: false, error: null });
+  });
+
+  it('anything else is an error (the caller then keeps its claim: never release on uncertainty)', async () => {
+    const failing = await new AuthAccountRepository(
+      authClient({ getUser: { data: null, error: { status: 500, message: 'upstream' } } }).client
+    ).findUserExists(ACCOUNT);
+    expect(failing.data).toBeNull();
+    expect(failing.error).toBeInstanceOf(Error);
+
+    const thrown = await new AuthAccountRepository(authClient({ getUser: 'throw' }).client).findUserExists(ACCOUNT);
+    expect(thrown.data).toBeNull();
+    expect(thrown.error).toBeInstanceOf(Error);
+  });
+});
+
 describe('the door stays narrow', () => {
   const source = readFileSync(join(process.cwd(), 'lib', 'repositories', 'AuthAccountRepository.ts'), 'utf8');
   const code = source.replace(/^\s*\/\/.*$/gm, '');
 
-  it('exposes only the methods Slice 1 needs', () => {
+  it('exposes only the methods Slice 1 needs (and no delete, invariant I-1)', () => {
     const methods = Object.getOwnPropertyNames(AuthAccountRepository.prototype).filter((name) => name !== 'constructor');
-    expect(methods).toEqual(['emailHasAccount']);
+    expect(methods.sort()).toEqual(['createConfirmedUser', 'emailHasAccount', 'findUserExists']);
   });
 
   it('never pages through users and never deletes one (L-3, invariant I-1)', () => {

@@ -38,6 +38,7 @@ import {
 } from '@/lib/business-os/invites/adminInviteOps';
 import { createInviteSchema } from '@/lib/business-os/invites/inviteSchemas';
 import { createLogger } from '@/lib/logger';
+import { businessOsAccountLineageRepository } from '@/lib/repositories/BusinessOsAccountLineageRepository';
 import { businessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
 import { userProfileRepository } from '@/lib/repositories/UserProfileRepository';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
@@ -59,7 +60,13 @@ export async function GET(request: NextRequest) {
 
   try {
     const config = getEntitlementConfig();
-    const listed = await listInvitesForAdmin({ repository: businessOsInviteRepository, config, now: new Date() });
+    const listed = await listInvitesForAdmin({
+      repository: businessOsInviteRepository,
+      lineage: businessOsAccountLineageRepository,
+      config,
+      now: new Date(),
+      logger: requestLogger,
+    });
 
     if (!listed.ok) {
       requestLogger.error('Failed to read invites');
@@ -72,6 +79,8 @@ export async function GET(request: NextRequest) {
       success: true,
       data: {
         invites: listed.invites,
+        // T-16: "N signups stopped halfway" (counts and invite ids only).
+        stoppedHalfway: listed.stoppedHalfway,
         formOptions: buildInviteFormOptions(config),
         // GR-5: the page states that champion access is recorded, not enforced.
         enforcementMode: getEntitlementMode(),

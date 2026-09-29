@@ -78,6 +78,16 @@ jest.mock('@/lib/repositories/UserProfileRepository', () => ({
   },
 }));
 
+const lineageCalls: string[][] = [];
+jest.mock('@/lib/repositories/BusinessOsAccountLineageRepository', () => ({
+  businessOsAccountLineageRepository: {
+    findByInviteIdsForAdmin: async (ids: string[]) => {
+      lineageCalls.push(ids);
+      return { data: ids.map((id) => ({ account_id: 'acct-1', invite_id: id, level: 1 })), error: null };
+    },
+  },
+}));
+
 jest.mock('@/lib/repositories/BusinessOsInviteRepository', () => ({
   businessOsInviteRepository: {
     listRecentForAdmin: async () => {
@@ -104,6 +114,13 @@ jest.mock('@/lib/repositories/BusinessOsInviteRepository', () => ({
           redeemed_at: null,
           redeemed_account_id: null,
           opened_by_existing_account_at: null,
+          claimed_at: null,
+          claimed_account_id: null,
+          redemption_failed_at: null,
+          redemption_failed_step: null,
+          redemption_error_code: null,
+          redemption_error_message: null,
+          redemption_failed_account_id: null,
           created_at: '2026-10-01T12:00:00.000Z',
           updated_at: '2026-10-01T12:00:00.000Z',
         },
@@ -169,6 +186,13 @@ function storedRow(overrides: Partial<BusinessOsInvite> = {}): BusinessOsInvite 
     redeemed_at: null,
     redeemed_account_id: null,
     opened_by_existing_account_at: null,
+    claimed_at: null,
+    claimed_account_id: null,
+    redemption_failed_at: null,
+    redemption_failed_step: null,
+    redemption_error_code: null,
+    redemption_error_message: null,
+    redemption_failed_account_id: null,
     created_at: '2026-10-01T12:00:00.000Z',
     updated_at: '2026-10-01T12:00:00.000Z',
     ...overrides,
@@ -271,6 +295,21 @@ describe('GET', () => {
     expect(paid.available).toBe(false);
     expect(paid.unavailableReason).toBe('available when payments are live');
     expect(['off', 'shadow', 'enforce']).toContain(body.data.enforcementMode);
+  });
+
+  it('Slice 1b: an accepted row carries its account and L1 (lineage read only for accepted rows); the T-16 summary is present', async () => {
+    lineageCalls.length = 0;
+    state.rows = [
+      storedRow({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', redeemed_at: '2026-10-02T00:00:00.000Z', redeemed_account_id: 'acct-1', claimed_at: '2026-10-02T00:00:00.000Z', claimed_account_id: 'acct-1' }),
+      // A claim long past the lease (the route reads the real clock).
+      storedRow({ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', claimed_at: '2020-01-01T00:00:00.000Z', claimed_account_id: 'acct-2' }),
+    ];
+    const body = await (await GET(new NextRequest(URL_BASE))).json();
+    const [accepted, stopped] = body.data.invites;
+    expect(accepted).toMatchObject({ state: 'accepted', redeemedAccountId: 'acct-1', level: 1, redemptionStoppedHalfway: false });
+    expect(stopped).toMatchObject({ redemptionStoppedHalfway: true, redemptionFailure: null });
+    expect(lineageCalls).toEqual([['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']]);
+    expect(body.data.stoppedHalfway).toEqual({ count: 1, inviteIds: ['bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'] });
   });
 
   it('500 on a repository error', async () => {

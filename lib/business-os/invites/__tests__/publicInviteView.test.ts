@@ -135,8 +135,11 @@ describe('the valid state', () => {
     if (!outcome.ok) return;
     const response = outcome.response as Record<string, unknown>;
     expect(Object.keys(response).sort()).toEqual(
-      ['inviterDisplayName', 'language', 'linkExpiresAt', 'offer', 'personalNote', 'state'].sort()
+      ['inviterDisplayName', 'language', 'linkExpiresAt', 'maskedEmail', 'offer', 'personalNote', 'state'].sort()
     );
+    // Slice 1b (R-6): the first character of the local part, and the domain. Never the full email.
+    expect(response.maskedEmail).toBe('i•••@example.com');
+    expect(JSON.stringify(response)).not.toContain(INVITEE_EMAIL);
     expect(Object.keys(response.offer as object).sort()).toEqual(['access', 'free', 'included', 'monthlyPriceUsd', 'planName'].sort());
     expect(response.state).toBe('valid');
     expect(response.language).toBe('he');

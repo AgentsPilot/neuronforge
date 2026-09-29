@@ -18,8 +18,8 @@
  * The personal note is rendered as text: React escapes it, and there is no
  * `dangerouslySetInnerHTML` anywhere on this path.
  *
- * Slice 0 has no signup form: a valid invite ends with the R-4 line saying
- * account creation is not available from here yet.
+ * Slice 1b: a valid invite ends with the signup form (`SignupForm.tsx`) for a
+ * signed-out visitor. The Slice 0 "not from this page yet" line is gone.
  *
  * ── Slice 1a ────────────────────────────────────────────────────────────────
  * `existing_account` (FR-8a): the invited email already has an account. The
@@ -38,6 +38,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { marketingUrl } from '@/lib/utils/origins';
 
 import { INVITE_PAGE_COPY, directionOf, inviteLocaleOf, type InviteLocale } from './invitePageCopy';
+import { SignupForm } from './SignupForm';
 import { useSignedInVisitor } from './useSignedInVisitor';
 
 type InviteAccess =
@@ -62,6 +63,8 @@ type InviteResponse =
       personalNote: string | null;
       linkExpiresAt: string;
       offer: InviteOffer;
+      /** Slice 1b (R-6): the invited address, masked. The full email arrives only after signup. */
+      maskedEmail: string;
     }
   | {
       state: 'existing_account' | 'expired' | 'revoked' | 'used' | 'unavailable';
@@ -256,9 +259,16 @@ export default function InvitePage() {
 
             <p className="text-sm text-slate-600">{copy.linkExpires(formatDate(data.linkExpiresAt, locale))}</p>
 
-            <p data-testid="invite-signup-not-yet" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
-              {copy.signupNotYet(data.inviterDisplayName)}
-            </p>
+            {/* Slice 1b: the form, only for a visitor the session check says is
+                signed out (L-8). A signed-in visitor sees the notice above. */}
+            {visitor.status === 'signed_out' && tokenRef.current && (
+              <SignupForm
+                token={tokenRef.current}
+                maskedEmail={data.maskedEmail}
+                copy={copy.signup}
+                signInLabel={copy.signIn}
+              />
+            )}
           </section>
         )}
 

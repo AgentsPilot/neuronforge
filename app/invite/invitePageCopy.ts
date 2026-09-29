@@ -38,8 +38,8 @@ export interface InvitePageCopy {
   accessWhilePaid: string;
   includedHeading: string;
   linkExpires: (date: string) => string;
-  /** R-4 (SA ruling F-10): the Slice 0 line on a valid invite. Removed by Slice 1. */
-  signupNotYet: (name: string) => string;
+  /** Slice 1b: the signup form (FR-11). */
+  signup: SignupCopy;
   expiredHeading: string;
   revokedHeading: string;
   usedHeading: string;
@@ -61,6 +61,45 @@ export interface InvitePageCopy {
   retry: string;
 }
 
+/**
+ * The signup form's words (Slice 1b). Error messages are keyed by the server's
+ * machine-readable error code, so the page never guesses what went wrong.
+ */
+export interface SignupCopy {
+  heading: string;
+  codeWillGoTo: (maskedEmail: string) => string;
+  sendCode: string;
+  sending: string;
+  codeSentTo: (maskedEmail: string) => string;
+  codeLabel: string;
+  passwordLabel: string;
+  passwordHint: string;
+  confirmLabel: string;
+  create: string;
+  creating: string;
+  resend: string;
+  readyHeading: string;
+  readyBody: string;
+  errors: {
+    code_format: string;
+    password_short: string;
+    password_long: string;
+    password_mismatch: string;
+    code_invalid: (attemptsRemaining: number) => string;
+    code_expired: string;
+    code_locked: string;
+    code_recently_sent: (seconds: number) => string;
+    code_limit_reached: string;
+    code_not_sent: string;
+    existing_account: string;
+    signup_in_progress: string;
+    signed_in: string;
+    weak_password: string;
+    no_longer_available: string;
+    generic: string;
+  };
+}
+
 export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
   en: {
     loading: 'Checking your invitation…',
@@ -75,7 +114,41 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     accessWhilePaid: 'While the plan is paid for',
     includedHeading: 'What it includes',
     linkExpires: (date) => `You can accept this invitation until ${date}.`,
-    signupNotYet: (name) => `You can't create your account from this page yet. ${name} will let you know when you can.`,
+    signup: {
+      heading: 'Create your account',
+      codeWillGoTo: (masked) => `We'll email a 6-digit code to ${masked} to confirm it's you.`,
+      sendCode: 'Send me a code',
+      sending: 'Sending…',
+      codeSentTo: (masked) => `We sent a 6-digit code to ${masked}. It is valid for 10 minutes.`,
+      codeLabel: '6-digit code',
+      passwordLabel: 'Choose a password',
+      passwordHint: 'At least 8 characters.',
+      confirmLabel: 'Confirm the password',
+      create: 'Create my account',
+      creating: 'Creating your account…',
+      resend: 'Send a new code',
+      readyHeading: 'Your account is ready',
+      readyBody: 'Sign in with your email and the password you just chose.',
+      errors: {
+        code_format: 'Enter the 6 digits from the email.',
+        password_short: 'The password needs at least 8 characters.',
+        password_long: 'That password is too long. Please choose a shorter one.',
+        password_mismatch: 'The two passwords do not match.',
+        code_invalid: (left) => (left === 1 ? 'That code is not right. 1 try left.' : `That code is not right. ${left} tries left.`),
+        code_expired: 'That code has expired. Send a new one.',
+        code_locked: 'Too many wrong tries for this code. Send a new one.',
+        code_recently_sent: (seconds) => `A code was just sent. You can ask for another in ${seconds} seconds.`,
+        code_limit_reached: 'Too many codes were sent today. Please try again tomorrow.',
+        code_not_sent: 'We could not send the email just now. Please try again.',
+        existing_account: 'This email already has an account. Sign in instead.',
+        signup_in_progress: 'This invitation is being used right now. Please wait a moment and try again.',
+        signed_in: 'Sign out before accepting this invitation.',
+        // SA N-1: the code was used up by this attempt, so a new one is needed.
+        weak_password: 'That password is too easy to guess. Send a new code, then choose another password.',
+        no_longer_available: 'This invitation can no longer be used.',
+        generic: 'Something went wrong. Please try again.',
+      },
+    },
     expiredHeading: 'This invitation has expired',
     revokedHeading: 'This invitation was withdrawn',
     usedHeading: 'This invitation has already been used',
@@ -87,7 +160,8 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     existingAccountBody:
       'This invitation was sent to an email address that already has an account. Sign in to continue. Nothing about your account has changed.',
     signedInHeading: (email) => (email ? `You're signed in as ${email}` : "You're already signed in"),
-    signedInBody: 'An invitation can only be accepted by someone who is signed out. Sign out to continue.',
+    // SA N-1: reads correctly on both a valid and an existing-account invite.
+    signedInBody: 'Sign out to continue with this invitation.',
     signOut: 'Sign out',
     signingOut: 'Signing out…',
     notRecognisedHeading: "We don't recognise this invitation",
@@ -108,7 +182,40 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     accessWhilePaid: 'כל עוד התוכנית בתשלום',
     includedHeading: 'מה כלול',
     linkExpires: (date) => `אפשר לקבל את ההזמנה עד ${date}.`,
-    signupNotYet: (name) => `עדיין אי אפשר ליצור חשבון מהעמוד הזה. עדכון יגיע מאת ${name} כשזה יתאפשר.`,
+    signup: {
+      heading: 'יצירת החשבון',
+      codeWillGoTo: (masked) => `נשלח קוד בן 6 ספרות אל ${LTR_ISOLATE}${masked}${POP_ISOLATE} כדי לוודא שזו הכתובת שלך.`,
+      sendCode: 'שליחת קוד',
+      sending: 'שולחים…',
+      codeSentTo: (masked) => `שלחנו קוד בן 6 ספרות אל ${LTR_ISOLATE}${masked}${POP_ISOLATE}. הקוד תקף ל־10 דקות.`,
+      codeLabel: 'קוד בן 6 ספרות',
+      passwordLabel: 'בחירת סיסמה',
+      passwordHint: '8 תווים לפחות.',
+      confirmLabel: 'אימות הסיסמה',
+      create: 'יצירת החשבון',
+      creating: 'יוצרים את החשבון…',
+      resend: 'שליחת קוד חדש',
+      readyHeading: 'החשבון מוכן',
+      readyBody: 'אפשר להתחבר עם כתובת המייל והסיסמה שנבחרה עכשיו.',
+      errors: {
+        code_format: 'יש להזין את 6 הספרות מהמייל.',
+        password_short: 'הסיסמה צריכה להכיל 8 תווים לפחות.',
+        password_long: 'הסיסמה ארוכה מדי. אפשר לבחור סיסמה קצרה יותר.',
+        password_mismatch: 'שתי הסיסמאות אינן זהות.',
+        code_invalid: (left) => (left === 1 ? 'הקוד שגוי. נשאר ניסיון אחד.' : `הקוד שגוי. נשארו ${left} ניסיונות.`),
+        code_expired: 'תוקף הקוד פג. אפשר לשלוח קוד חדש.',
+        code_locked: 'היו יותר מדי ניסיונות שגויים לקוד הזה. אפשר לשלוח קוד חדש.',
+        code_recently_sent: (seconds) => `קוד נשלח זה עתה. אפשר לבקש קוד נוסף בעוד ${seconds} שניות.`,
+        code_limit_reached: 'נשלחו יותר מדי קודים היום. אפשר לנסות שוב מחר.',
+        code_not_sent: 'לא הצלחנו לשלוח את המייל כרגע. אפשר לנסות שוב.',
+        existing_account: 'כבר יש חשבון עם כתובת המייל הזו. אפשר להתחבר.',
+        signup_in_progress: 'ההזמנה נמצאת בשימוש כרגע. כדאי לחכות רגע ולנסות שוב.',
+        signed_in: 'צריך להתנתק לפני קבלת ההזמנה.',
+        weak_password: 'קל מדי לנחש את הסיסמה הזו. צריך לשלוח קוד חדש ואז לבחור סיסמה אחרת.',
+        no_longer_available: 'אי אפשר להשתמש יותר בהזמנה הזו.',
+        generic: 'משהו השתבש. אפשר לנסות שוב.',
+      },
+    },
     expiredHeading: 'תוקף ההזמנה פג',
     revokedHeading: 'ההזמנה בוטלה',
     usedHeading: 'כבר נעשה שימוש בהזמנה הזו',
@@ -123,7 +230,7 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     // so its characters keep their order inside the right-to-left sentence.
     signedInHeading: (email) =>
       email ? `החיבור הנוכחי הוא כ־${LTR_ISOLATE}${email}${POP_ISOLATE}` : 'יש כבר חיבור פעיל בדפדפן הזה',
-    signedInBody: 'אפשר לקבל הזמנה רק כשאין חיבור פעיל. צריך להתנתק כדי להמשיך.',
+    signedInBody: 'צריך להתנתק כדי להמשיך עם ההזמנה הזו.',
     signOut: 'התנתקות',
     signingOut: 'מתנתקים…',
     notRecognisedHeading: 'לא זיהינו את ההזמנה הזו',
@@ -144,7 +251,40 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     accessWhilePaid: 'Mientras el plan esté pagado',
     includedHeading: 'Qué incluye',
     linkExpires: (date) => `Puedes aceptar esta invitación hasta el ${date}.`,
-    signupNotYet: (name) => `Todavía no puedes crear tu cuenta desde esta página. ${name} te avisará cuando puedas.`,
+    signup: {
+      heading: 'Crea tu cuenta',
+      codeWillGoTo: (masked) => `Te enviaremos un código de 6 dígitos a ${masked} para confirmar que eres tú.`,
+      sendCode: 'Enviarme un código',
+      sending: 'Enviando…',
+      codeSentTo: (masked) => `Hemos enviado un código de 6 dígitos a ${masked}. Es válido durante 10 minutos.`,
+      codeLabel: 'Código de 6 dígitos',
+      passwordLabel: 'Elige una contraseña',
+      passwordHint: 'Al menos 8 caracteres.',
+      confirmLabel: 'Confirma la contraseña',
+      create: 'Crear mi cuenta',
+      creating: 'Creando tu cuenta…',
+      resend: 'Enviar un código nuevo',
+      readyHeading: 'Tu cuenta está lista',
+      readyBody: 'Inicia sesión con tu correo y la contraseña que acabas de elegir.',
+      errors: {
+        code_format: 'Introduce los 6 dígitos del correo.',
+        password_short: 'La contraseña necesita al menos 8 caracteres.',
+        password_long: 'Esa contraseña es demasiado larga. Elige una más corta.',
+        password_mismatch: 'Las dos contraseñas no coinciden.',
+        code_invalid: (left) => (left === 1 ? 'Ese código no es correcto. Te queda 1 intento.' : `Ese código no es correcto. Te quedan ${left} intentos.`),
+        code_expired: 'Ese código ha caducado. Pide uno nuevo.',
+        code_locked: 'Demasiados intentos fallidos con este código. Pide uno nuevo.',
+        code_recently_sent: (seconds) => `Acabamos de enviar un código. Puedes pedir otro dentro de ${seconds} segundos.`,
+        code_limit_reached: 'Se han enviado demasiados códigos hoy. Inténtalo de nuevo mañana.',
+        code_not_sent: 'No pudimos enviar el correo ahora. Inténtalo de nuevo.',
+        existing_account: 'Este correo ya tiene una cuenta. Inicia sesión.',
+        signup_in_progress: 'Esta invitación se está usando ahora mismo. Espera un momento y vuelve a intentarlo.',
+        signed_in: 'Cierra la sesión antes de aceptar esta invitación.',
+        weak_password: 'Esa contraseña es demasiado fácil de adivinar. Pide un código nuevo y elige otra contraseña.',
+        no_longer_available: 'Esta invitación ya no se puede usar.',
+        generic: 'Algo salió mal. Inténtalo de nuevo.',
+      },
+    },
     expiredHeading: 'Esta invitación ha caducado',
     revokedHeading: 'Esta invitación fue retirada',
     usedHeading: 'Esta invitación ya se ha utilizado',
@@ -156,7 +296,7 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     existingAccountBody:
       'Esta invitación se envió a un correo que ya tiene una cuenta. Inicia sesión para continuar. No ha cambiado nada en tu cuenta.',
     signedInHeading: (email) => (email ? `Has iniciado sesión como ${email}` : 'Ya has iniciado sesión'),
-    signedInBody: 'Solo se puede aceptar una invitación sin haber iniciado sesión. Cierra la sesión para continuar.',
+    signedInBody: 'Cierra la sesión para continuar con esta invitación.',
     signOut: 'Cerrar sesión',
     signingOut: 'Cerrando sesión…',
     notRecognisedHeading: 'No reconocemos esta invitación',

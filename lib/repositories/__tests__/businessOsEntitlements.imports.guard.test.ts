@@ -102,11 +102,36 @@ const ALLOWED = new Set(
     // Declared here rather than routed through the barrel to dodge the match:
     // hiding a referrer is worse than declaring one. See the header.
     'lib/business-os/entitlements/__tests__/dormantChampions.test.ts',
+    // ── Invite-only signup Slice 1b, 2026-09-28 ────────────────────────────
+    // The account summary route passes the plan repository to the widened
+    // tenant check (L-4: "any plan row" makes a tenant). READ ONLY: it calls
+    // `findEntitlementInputs` through `isBusinessOsTenant` and nothing else
+    // (SA R-8). An admin route, gated by `requireAdmin`.
+    'app/api/admin/business-os/accounts/[accountId]/summary/route.ts',
+    'app/api/admin/business-os/accounts/[accountId]/summary/__tests__/route.test.ts',
+    // The redemption's production wiring. It may call exactly ONE plan-state
+    // write, `provisionFromInvite` (the finalise function), after mailbox
+    // proof, the invite claim and the account creation; the test below pins
+    // that it calls no other write method (F-8).
+    'lib/business-os/invites/redemptionDeps.ts',
+    'lib/business-os/invites/__tests__/redemptionDeps.test.ts',
   ].map((p) => p.split('/').join(sep))
 );
 
 /** The methods that CHANGE entitlement state. Component 5's admin routes own these. */
-const WRITE_METHODS = ['ensurePlanRow', 'updatePlan', 'createOverride', 'endOverride', 'resetPlanState'];
+const WRITE_METHODS = [
+  'ensurePlanRow',
+  'updatePlan',
+  'createOverride',
+  'endOverride',
+  'resetPlanState',
+  // Invite-only signup Slice 1b (F-8): the finalise function writes a plan row.
+  'provisionFromInvite',
+];
+
+/** The one invite-redemption file allowed to name the plan repository, and the one write it may call. */
+const INVITE_REDEMPTION_WIRING = 'lib/business-os/invites/redemptionDeps.ts';
+const INVITE_REDEMPTION_WRITE = 'provisionFromInvite';
 
 /**
  * Allowed files that are NOT the repository layer and NOT an admin route.
@@ -216,6 +241,8 @@ describe('RC-15 — entitlement repository referrers', () => {
       // the write calls; it is not a route, so it needs its own category rather
       // than being smuggled in as a "reader".
       if (!isTest && p === 'lib/business-os/entitlements/adminOps.ts') of.push('admin_ops');
+      // 3c. The invite redemption's wiring (Slice 1b): one write, checked below.
+      if (!isTest && p === INVITE_REDEMPTION_WIRING) of.push('invite_redemption');
       // 4. Tests, which name these symbols in order to assert on them.
       if (isTest) of.push('test');
       return of;
@@ -228,6 +255,14 @@ describe('RC-15 — entitlement repository referrers', () => {
     // If this fails: say which of the four the new file is. If it is none of
     // them, it does not belong in ALLOWED.
     expect(misclassified).toEqual([]);
+  });
+
+  it('Slice 1b (F-8): the invite redemption wiring calls provisionFromInvite and NO other plan-state write', () => {
+    const source = readFileSync(join(ROOT, ...INVITE_REDEMPTION_WIRING.split('/')), 'utf8');
+    expect(source).toMatch(new RegExp(`\\.${INVITE_REDEMPTION_WRITE}\\s*\\(`));
+    for (const method of WRITE_METHODS.filter((name) => name !== INVITE_REDEMPTION_WRITE)) {
+      expect(source).not.toMatch(new RegExp(`\\.${method}\\s*\\(`));
+    }
   });
 
   it('the allowed list names files that exist', () => {

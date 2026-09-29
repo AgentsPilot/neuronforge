@@ -108,9 +108,13 @@ export type {
   BusinessOsInvite,
   BusinessOsInviteGrantKind,
   BusinessOsInvitePublicView,
+  BusinessOsInviteRedemptionView,
   CreateBusinessOsInviteInput,
   RevokeBusinessOsInviteInput,
+  BusinessOsAccountLineageLevel,
 } from './types';
+// Lineage (Slice 1b). Written only by the finalise function; read by the admin list.
+export { BusinessOsAccountLineageRepository, businessOsAccountLineageRepository } from './BusinessOsAccountLineageRepository';
 
 // Types
 export type {

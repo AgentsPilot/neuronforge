@@ -66,6 +66,13 @@ function rowFrom(input: CreateBusinessOsInviteInput, overrides: Partial<Business
     redeemed_at: null,
     redeemed_account_id: null,
     opened_by_existing_account_at: null,
+    claimed_at: null,
+    claimed_account_id: null,
+    redemption_failed_at: null,
+    redemption_failed_step: null,
+    redemption_error_code: null,
+    redemption_error_message: null,
+    redemption_failed_account_id: null,
     created_at: NOW.toISOString(),
     updated_at: NOW.toISOString(),
     ...overrides,
@@ -357,7 +364,44 @@ describe('listInvitesForAdmin', () => {
       config,
       now: NOW,
     });
-    expect(outcome).toEqual({ ok: true, invites: [toInviteListView(row, config, NOW)] });
+    expect(outcome).toEqual({
+      ok: true,
+      invites: [toInviteListView(row, config, NOW)],
+      stoppedHalfway: { count: 0, inviteIds: [] },
+    });
+  });
+
+  it('SA N-3: a failed lineage read is logged, and the list still answers with unknown levels', async () => {
+    const row = rowFrom(
+      {
+        token_hash: 'a'.repeat(64),
+        email: 'x@example.com',
+        invite_type: CHAMPION_INVITE_TYPE,
+        grant_kind: 'cohort',
+        grant_id: championGrant,
+        access_open_ended: true,
+        access_months: null,
+        issuer_admin_id: ADMIN,
+        inviter_display_name: 'Dana',
+        language: 'en',
+        personal_note: null,
+        internal_reason: 'Reason',
+        link_expiry_days: 30,
+        link_expires_at: '2026-10-31T12:00:00.000Z',
+      },
+      { redeemed_at: NOW.toISOString(), redeemed_account_id: 'acct-1', claimed_at: NOW.toISOString(), claimed_account_id: 'acct-1' }
+    );
+    const warnings: unknown[] = [];
+    const outcome = await listInvitesForAdmin({
+      repository: { listRecentForAdmin: async () => ({ data: [row], error: null }) },
+      lineage: { findByInviteIdsForAdmin: async () => ({ data: null, error: new Error('timeout') }) },
+      config,
+      now: NOW,
+      logger: { warn: (...args: unknown[]) => warnings.push(args) },
+    });
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) expect(outcome.invites[0].level).toBeNull();
+    expect(warnings).toHaveLength(1);
   });
 
   it('a repository error is { ok: false }', async () => {
@@ -406,7 +450,13 @@ describe('revokeInviteForAdmin', () => {
     const outcome = await revokeInviteForAdmin(INVITE_ID, { reason: 'Wrong person' }, d);
     expect(outcome.ok).toBe(true);
     if (outcome.ok) expect(outcome.invite.state).toBe('revoked');
-    expect(d.repository.revokeForAdmin).toHaveBeenCalledWith({ id: INVITE_ID, adminId: ADMIN, reason: 'Wrong person', now: NOW });
+    expect(d.repository.revokeForAdmin).toHaveBeenCalledWith({
+      id: INVITE_ID,
+      adminId: ADMIN,
+      reason: 'Wrong person',
+      now: NOW,
+      claimLeaseCutoff: new Date(NOW.getTime() - 120_000),
+    });
     expect(d.repository.findByIdForAdmin).not.toHaveBeenCalled();
   });
 
@@ -417,6 +467,18 @@ describe('revokeInviteForAdmin', () => {
 
   it('no row matched but it exists (accepted or already revoked): 409', async () => {
     const outcome = await revokeInviteForAdmin(INVITE_ID, { reason: 'Wrong person' }, deps({ data: null, error: null }, { data: base, error: null }));
+    expect(outcome).toEqual({ ok: false, status: 409, error: 'invite_not_revocable' });
+  });
+
+  it('Slice 1b (I-2): a LIVE signup claim answers 409 signup_in_progress', async () => {
+    const claimed = { ...base, claimed_at: new Date(NOW.getTime() - 30_000).toISOString(), claimed_account_id: '55555555-5555-4555-8555-555555555555' };
+    const outcome = await revokeInviteForAdmin(INVITE_ID, { reason: 'Wrong person' }, deps({ data: null, error: null }, { data: claimed, error: null }));
+    expect(outcome).toEqual({ ok: false, status: 409, error: 'signup_in_progress' });
+  });
+
+  it('Slice 1b: a LAPSED claim is not "in progress" (the CAS decided; the answer is the generic 409)', async () => {
+    const stale = { ...base, claimed_at: new Date(NOW.getTime() - 600_000).toISOString(), claimed_account_id: '55555555-5555-4555-8555-555555555555' };
+    const outcome = await revokeInviteForAdmin(INVITE_ID, { reason: 'Wrong person' }, deps({ data: null, error: null }, { data: stale, error: null }));
     expect(outcome).toEqual({ ok: false, status: 409, error: 'invite_not_revocable' });
   });
 
