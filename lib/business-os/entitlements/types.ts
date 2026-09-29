@@ -231,6 +231,23 @@ export interface TierPresentation {
    */
   availableToBuy: boolean;
   /**
+   * Is this plan ACTIVE? **FYI only — it changes nothing.** (user decision, 2026-09-29)
+   *
+   * An admin-facing marker, shown on the plan's card in the admin Tiers page and
+   * nowhere else. It does not alter the resolver, what an account on the plan can
+   * do, the customer's "Your plan" section, the Founding Partner pill or the
+   * shadow report — `planActive.noEffect.test.ts` flips it off on every plan and
+   * asserts all of those are byte-identical.
+   *
+   * What `false` should eventually DO is undecided: stop new assignments? hide
+   * the plan from customers? affect accounts already on it? Until that is decided
+   * it is a label, and nothing may read it as a switch.
+   *
+   * Required, not defaulted, like the commercial flags: a default would answer
+   * the question silently.
+   */
+  active: boolean;
+  /**
    * The customer-facing name, per locale.
    *
    * The internal id and the marketing name move at different speeds: renaming a
@@ -291,6 +308,26 @@ export interface CohortConfigShape<ExplicitValues> {
   values: ExplicitValues;
   /** How long grace lasts for this cohort, as a history (S-7). */
   graceHistory: readonly HistoryEntry[];
+  /**
+   * Is this plan ACTIVE? **FYI only — it changes nothing.** (user decision, 2026-09-29)
+   *
+   * An admin-facing marker, shown on the plan's card in the admin Tiers page and
+   * nowhere else. It does not alter the resolver, what an account on the plan can
+   * do, the customer's "Your plan" section, the Founding Partner pill or the
+   * shadow report — `planActive.noEffect.test.ts` flips it off on every plan and
+   * asserts all of those are byte-identical.
+   *
+   * What `false` should eventually DO is undecided: stop new assignments? hide
+   * the plan from customers? affect accounts already on it? Until that is decided
+   * it is a label, and nothing may read it as a switch.
+   *
+   * Lives here for a cohort, beside `labels`, because cohorts have no
+   * `presentation` block — a cohort is not a product, so the commercial flags do
+   * not apply to it, but whether the plan is active does. Required, not defaulted,
+   * like the tier flags: a default would answer
+   * the question silently.
+   */
+  active: boolean;
   /** Trial only: how long the trial runs. */
   durationHistory?: readonly HistoryEntry[];
   /** Trial only: which recorded fact starts the clock (Q-B3). */

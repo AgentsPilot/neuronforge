@@ -167,6 +167,11 @@ export const COHORTS = {
     // Present rather than optional so a missing translation shows up as a
     // visible duplicate on a pricing page instead of an `undefined`.
     labels: { en: 'Test Flight', he: 'Test Flight', es: 'Test Flight' },
+    // FYI ONLY — NOT A SWITCH (user decision, 2026-09-29). Shown on the admin
+    // Tiers card and read by nothing else. Open question before it does
+    // anything: what should inactive DO — stop new assignments? hide the plan
+    // from customers? affect accounts already on it?
+    active: true,
     // Beta capabilities are included on top of the tier row. Setting this to []
     // keeps beta for champions only — one value, no code.
     includeLifecycle: ['beta'],
@@ -204,6 +209,8 @@ export const COHORTS = {
      */
     base: { tier: CHAMPION_BASE_TIER },
     labels: { en: 'Founding Partner', he: 'Founding Partner', es: 'Founding Partner' },
+    // FYI only, like the trial's — see the note there.
+    active: true,
     includeLifecycle: ['beta'],
     values: CHAMPION_VALUES,
     // D-4: a longer runway than a trial, because a champion who lapses is a

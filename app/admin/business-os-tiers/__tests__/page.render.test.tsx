@@ -30,6 +30,7 @@ function plan(overrides: Partial<Plan> = {}): Plan {
     // one of them would pass by luck.
     shownToCustomers: true,
     availableToBuy: false,
+    active: true,
     inheritsFrom: null,
     aiActions: '500 per month',
     endsWhen: 'While the plan is paid for.',
@@ -114,6 +115,25 @@ describe('which plans are public, and which are sellable', () => {
 
     expect(screen.getByTestId('plan-paid-plan-shown')).toHaveTextContent(/shown to customers/i);
     expect(screen.getByTestId('plan-paid-plan-buyable')).toHaveTextContent(/not available to buy/i);
+  });
+
+  it('an INACTIVE plan is unmistakable, and says it is FYI only (2026-09-29)', async () => {
+    // Words AND styling: the badge reads INACTIVE and the card is dashed and
+    // dimmed, so the state is never carried by styling alone. The tooltip says it
+    // changes nothing, because "inactive" otherwise reads as a switch.
+    await renderPage(payload({ plans: [plan({ active: false })] }));
+
+    const badge = screen.getByTestId('plan-paid-plan-active');
+    expect(badge).toHaveTextContent('INACTIVE');
+    expect(badge).toHaveAttribute('title', expect.stringMatching(/FYI only/i));
+    expect(screen.getByTestId('plan-paid-plan').className).toMatch(/border-dashed/);
+  });
+
+  it('an active plan says "active" quietly and is not dashed', async () => {
+    await renderPage();
+
+    expect(screen.getByTestId('plan-paid-plan-active')).toHaveTextContent(/^active$/);
+    expect(screen.getByTestId('plan-paid-plan').className).not.toMatch(/border-dashed/);
   });
 
 });

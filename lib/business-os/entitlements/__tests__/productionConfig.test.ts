@@ -48,12 +48,14 @@ describe('the shipped configuration', () => {
       monthlyPriceUsd: 79,
       shownToCustomers: true,
       availableToBuy: false,
+      active: true,
     });
     expect(matrix.presentation.pro).toEqual({
       labels: { en: 'Autopilot', he: 'Autopilot', es: 'Autopilot' },
       monthlyPriceUsd: 129,
       shownToCustomers: true,
       availableToBuy: false,
+      active: true,
     });
   });
 
@@ -70,6 +72,20 @@ describe('the shipped configuration', () => {
     for (const tier of ['basic', 'pro'] as const) {
       expect(matrix.presentation[tier].shownToCustomers).toBe(true);
       expect(matrix.presentation[tier].availableToBuy).toBe(false);
+    }
+  });
+
+  it('ships all four plans ACTIVE (2026-09-29)', () => {
+    // FYI only today — `planActive.noEffect.test.ts` holds that it changes
+    // nothing. Pinned here anyway, so marking a plan inactive shows up in a diff
+    // as the decision it is.
+    const config = getEntitlementConfig(new CodeTierMatrixSource());
+
+    for (const tier of ['basic', 'pro'] as const) {
+      expect(config.matrix.presentation[tier].active).toBe(true);
+    }
+    for (const cohort of ['trial', 'champion'] as const) {
+      expect(config.cohorts[cohort].active).toBe(true);
     }
   });
 
