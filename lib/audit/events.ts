@@ -193,6 +193,12 @@ export const AUDIT_EVENTS = {
   BOS_INVITE_PLAN_PROVISIONED: 'BOS_INVITE_PLAN_PROVISIONED',
   BOS_INVITE_REDEMPTION_REFUSED: 'BOS_INVITE_REDEMPTION_REFUSED',
   BOS_INVITE_REDEMPTION_INCOMPLETE: 'BOS_INVITE_REDEMPTION_INCOMPLETE',
+  // Slice 2a: the invitation email of a create. Actor = the admin (SA R-8).
+  // SENT carries the provider and, from Resend, its message id; NOT_SENT the
+  // reason class (`sender_not_configured` or `transport_failed`). Never the
+  // invitee email, the link, the token, its hash or a provider's error text.
+  BOS_INVITE_EMAIL_SENT: 'BOS_INVITE_EMAIL_SENT',
+  BOS_INVITE_EMAIL_NOT_SENT: 'BOS_INVITE_EMAIL_NOT_SENT',
 
   // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
@@ -652,6 +658,16 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'A Business OS invite signup stopped halfway; the claim was kept for recovery',
+  },
+  [AUDIT_EVENTS.BOS_INVITE_EMAIL_SENT]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS invitation email was handed to the email provider (provider and message id recorded)',
+  },
+  [AUDIT_EVENTS.BOS_INVITE_EMAIL_NOT_SENT]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS invitation email was not sent, or not confirmed in time; the admin was shown the link to copy (reason class only)',
   },
   [AUDIT_EVENTS.BUSINESS_DATA_PURGE_BLOCKED]: {
     severity: 'warning',

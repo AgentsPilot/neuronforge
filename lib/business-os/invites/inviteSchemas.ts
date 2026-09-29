@@ -85,6 +85,13 @@ const commonCreateFields = {
   language: z.enum(locales),
   personalNote: personalNoteSchema,
   reason: reasonSchema,
+  /**
+   * Slice 2a (FR-14): email the invitation now. REQUIRED, with no default: an
+   * older client that does not know about the email is refused (400) rather
+   * than silently emailing someone. The sender, the Reply-To and the link are
+   * never request fields; `.strict()` refuses `from`, `replyTo` and the like.
+   */
+  sendEmail: z.boolean(),
 };
 
 /**

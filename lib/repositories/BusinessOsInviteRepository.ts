@@ -34,7 +34,14 @@
 // which would hand one champion every invite on the platform.
 //
 // `token_hash` is written once, by `createForAdmin`, and never selected by any
-// method. No method logs a token, a hash or an email.
+// method. `recordInviteEmailOutcome` (Slice 2a) FILTERS on it, so an outcome
+// lands only on the link that was emailed. No method logs a token, a hash or an
+// email.
+//
+// Slice 2a: `inviter_reply_to` (an admin's own email) is written at creation
+// and read by no select here; `email_problem_detail` is written by the outcome
+// record and read by no select either. Both are for investigation in the SQL
+// editor, never for a screen.
 //
 // Methods never throw: they return `{ data, error }`. A database error is
 // reduced to `{ code, message }` before it is logged or returned (`safeDbError`),
@@ -52,6 +59,7 @@ import type {
   CountSignupCodeAttemptInput,
   CreateBusinessOsInviteInput,
   IssueSignupCodeInput,
+  RecordInviteEmailOutcomeInput,
   RecordRedemptionFailureInput,
   RevokeBusinessOsInviteInput,
 } from './types';
@@ -65,7 +73,8 @@ export const BUSINESS_OS_INVITE_ADMIN_COLUMNS =
   'internal_reason, link_expiry_days, link_expires_at, first_viewed_at, revoked_at, revoked_by_admin_id, ' +
   'revoke_reason, redeemed_at, redeemed_account_id, opened_by_existing_account_at, claimed_at, claimed_account_id, ' +
   'redemption_failed_at, redemption_failed_step, redemption_error_code, redemption_error_message, ' +
-  'redemption_failed_account_id, created_at, updated_at';
+  'redemption_failed_account_id, email_attempted_at, email_sent_at, email_provider_message_id, email_problem, ' +
+  'email_problem_at, created_at, updated_at';
 
 /**
  * What the signup routes read (Slice 1b). The email is here because the account
@@ -159,6 +168,8 @@ export class BusinessOsInviteRepository {
           internal_reason: input.internal_reason,
           link_expiry_days: input.link_expiry_days,
           link_expires_at: input.link_expires_at,
+          inviter_reply_to: input.inviter_reply_to,
+          email_attempted_at: input.email_attempted_at,
         })
         .select(BUSINESS_OS_INVITE_ADMIN_COLUMNS)
         .single();
@@ -254,6 +265,55 @@ export class BusinessOsInviteRepository {
       return { data: (data ?? null) as unknown as BusinessOsInvite | null, error: null };
     } catch (error) {
       methodLogger.error({ dbError: safeDbError(error) }, 'Failed to revoke invite');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  /**
+   * ADMIN: record how the invitation email for the CURRENT link ended (Slice
+   * 2a, D-6). `true` only when this call wrote it.
+   *
+   * A compare-and-swap on the invite id AND the hash of the link that was
+   * emailed: once a resend (Slice 2b) replaces the link, a slow outcome for the
+   * old one matches no row and the caller logs a warning. Built field by field;
+   * a sent outcome clears any problem, a problem leaves `email_sent_at` alone.
+   * The caller passes a detail that is already scrubbed and capped.
+   *
+   * Counted with `{ count: 'exact' }` and NO `.select()`: the written row is not
+   * needed, and it keeps this write off the PostgREST shape that fails (an
+   * UPDATE whose filters include `.or()` AND a `.select()` returns a misleading
+   * 42703, found on production for Slice 1b). `true` only on exactly one row.
+   */
+  async recordInviteEmailOutcome(input: RecordInviteEmailOutcomeInput): Promise<RepositoryResult<boolean>> {
+    const methodLogger = this.logger.child({ method: 'recordInviteEmailOutcome', inviteId: input.id });
+    const at = input.now.toISOString();
+    const patch =
+      input.outcome.kind === 'sent'
+        ? {
+            email_sent_at: at,
+            email_provider_message_id: input.outcome.providerMessageId,
+            email_problem: null,
+            email_problem_at: null,
+            email_problem_detail: null,
+            updated_at: at,
+          }
+        : {
+            email_problem: input.outcome.problem,
+            email_problem_at: at,
+            email_problem_detail: input.outcome.detail,
+            updated_at: at,
+          };
+    try {
+      const { error, count } = await this.supabase
+        .from(INVITES)
+        .update(patch, { count: 'exact' })
+        .eq('id', input.id)
+        .eq('token_hash', input.tokenHash);
+
+      if (error) throw error;
+      return { data: count === 1, error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to record the invitation email outcome');
       return { data: null, error: toError(error) };
     }
   }

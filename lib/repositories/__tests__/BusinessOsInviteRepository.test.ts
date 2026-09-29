@@ -89,6 +89,8 @@ function input(): CreateBusinessOsInviteInput {
     internal_reason: 'Design partner',
     link_expiry_days: 30,
     link_expires_at: '2026-10-31T12:00:00.000Z',
+    inviter_reply_to: 'admin@example.com',
+    email_attempted_at: '2026-10-01T12:00:00.000Z',
   };
 }
 
@@ -159,6 +161,86 @@ describe('createForAdmin', () => {
     const serialised = JSON.stringify(logged);
     expect(serialised).not.toContain(HASH);
     expect(serialised).not.toContain('dana@example.com');
+  });
+});
+
+describe('Slice 2a: the invitation email columns and outcome', () => {
+  it('the admin columns carry the email facts, but never the reply-to snapshot or the problem detail', () => {
+    const columns = BUSINESS_OS_INVITE_ADMIN_COLUMNS.split(', ');
+    for (const column of ['email_attempted_at', 'email_sent_at', 'email_provider_message_id', 'email_problem', 'email_problem_at']) {
+      expect(columns).toContain(column);
+    }
+    expect(columns).not.toContain('inviter_reply_to');
+    expect(columns).not.toContain('email_problem_detail');
+    for (const constant of [BUSINESS_OS_INVITE_PUBLIC_COLUMNS, BUSINESS_OS_INVITE_REDEMPTION_COLUMNS]) {
+      expect(constant).not.toContain('inviter_reply_to');
+      expect(constant).not.toMatch(/email_(attempted|sent|provider|problem)/);
+    }
+  });
+
+  it('createForAdmin writes the reply-to snapshot and the attempt stamp it is given', async () => {
+    const { client, calls } = recordingClient({ data: { id: ID }, error: null });
+    await new BusinessOsInviteRepository(client).createForAdmin({ ...input(), inviter_reply_to: null, email_attempted_at: null });
+    const insert = calls.find((call) => call.method === 'insert')?.args[0] as Record<string, unknown>;
+    expect(insert.inviter_reply_to).toBeNull();
+    expect(insert.email_attempted_at).toBeNull();
+    expect(insert).not.toHaveProperty('email_sent_at');
+    expect(insert).not.toHaveProperty('email_provider_message_id');
+  });
+
+  it('recordInviteEmailOutcome (sent): CAS on id AND token_hash, sets sent and the id, clears any problem', async () => {
+    const { client, calls } = recordingClient({ data: null, error: null, count: 1 });
+    const result = await new BusinessOsInviteRepository(client).recordInviteEmailOutcome({
+      id: ID,
+      tokenHash: HASH,
+      now: NOW,
+      outcome: { kind: 'sent', providerMessageId: 'msg_123' },
+    });
+
+    expect(result).toEqual({ data: true, error: null });
+    expect(calls.find((call) => call.method === 'update')?.args[1]).toEqual({ count: 'exact' });
+    expect(calls.find((call) => call.method === 'update')?.args[0]).toEqual({
+      email_sent_at: NOW.toISOString(),
+      email_provider_message_id: 'msg_123',
+      email_problem: null,
+      email_problem_at: null,
+      email_problem_detail: null,
+      updated_at: NOW.toISOString(),
+    });
+    expect(calls.filter((call) => call.method === 'eq')).toEqual([
+      { method: 'eq', args: ['id', ID] },
+      { method: 'eq', args: ['token_hash', HASH] },
+    ]);
+    // No `.select()` and no `.or()`: the 42703 shape found on production (Slice 1b).
+    expect(calls.some((call) => call.method === 'select' || call.method === 'or')).toBe(false);
+  });
+
+  it('recordInviteEmailOutcome (problem): writes exactly the problem trio, never email_sent_at', async () => {
+    const { client, calls } = recordingClient({ data: null, error: null, count: 1 });
+    await new BusinessOsInviteRepository(client).recordInviteEmailOutcome({
+      id: ID,
+      tokenHash: HASH,
+      now: NOW,
+      outcome: { kind: 'problem', problem: 'not_sent', detail: 'sender_not_configured' },
+    });
+    expect(calls.find((call) => call.method === 'update')?.args[0]).toEqual({
+      email_problem: 'not_sent',
+      email_problem_at: NOW.toISOString(),
+      email_problem_detail: 'sender_not_configured',
+      updated_at: NOW.toISOString(),
+    });
+  });
+
+  it('recordInviteEmailOutcome: a lost CAS (the link was replaced) is false, not an error', async () => {
+    const { client } = recordingClient({ data: null, error: null, count: 0 });
+    const result = await new BusinessOsInviteRepository(client).recordInviteEmailOutcome({
+      id: ID,
+      tokenHash: HASH,
+      now: NOW,
+      outcome: { kind: 'sent', providerMessageId: null },
+    });
+    expect(result).toEqual({ data: false, error: null });
+    expect(JSON.stringify(logged)).not.toContain(HASH);
   });
 });
 
@@ -596,6 +678,8 @@ describe('C-13: the service-role reason is written down, and the admin methods a
         'claimForSignup',
         'releaseSignupClaim',
         'recordRedemptionFailure',
+        // Slice 2a: the invitation email outcome, a CAS on (id, token_hash).
+        'recordInviteEmailOutcome',
       ].sort()
     );
   });
@@ -660,6 +744,10 @@ describe('M-1 (C-3): a database error never carries row values into a log or a r
     ['markFirstViewed', (repo) => repo.markFirstViewed(ID, NOW)],
     ['findInviteeEmailForPublicCheck', (repo) => repo.findInviteeEmailForPublicCheck(ID)],
     ['markOpenedByExistingAccount', (repo) => repo.markOpenedByExistingAccount(ID, NOW)],
+    [
+      'recordInviteEmailOutcome',
+      (repo) => repo.recordInviteEmailOutcome({ id: ID, tokenHash: HASH, now: NOW, outcome: { kind: 'sent', providerMessageId: 'msg_1' } }),
+    ],
   ];
 
   for (const [label, dbError] of rowLeakingErrors()) {

@@ -29,6 +29,8 @@ import type { BusinessOsInvite, CreateBusinessOsInviteInput } from '@/lib/reposi
 import { LINEAGE_LOOKUP_LIMIT } from '@/lib/repositories/BusinessOsAccountLineageRepository';
 import { BUSINESS_OS_INVITE_LIST_LIMIT } from '@/lib/repositories/BusinessOsInviteRepository';
 
+import type { SendEmailParams, SendEmailResult } from '@/lib/notifications/emailTransport';
+
 import {
   INVITER_NAME_FALLBACK,
   INVITE_LINEAGE_BATCH,
@@ -37,6 +39,7 @@ import {
   buildInviteFormOptions,
   createInviteForAdmin,
   listInvitesForAdmin,
+  resolveInviteFormLanguage,
   revokeInviteForAdmin,
   toInviteListView,
   type CreateInviteDeps,
@@ -49,7 +52,11 @@ const NOW = new Date('2026-10-01T12:00:00.000Z');
 const config = getEntitlementConfig();
 const championGrant = INVITE_TYPES[CHAMPION_INVITE_TYPE].defaultGrantId;
 
-function rowFrom(input: CreateBusinessOsInviteInput, overrides: Partial<BusinessOsInvite> = {}): BusinessOsInvite {
+/** Slice 2a: the two email fields are optional here, so the older fixtures read as "not emailed". */
+type RowInput = Omit<CreateBusinessOsInviteInput, 'inviter_reply_to' | 'email_attempted_at'> &
+  Partial<Pick<CreateBusinessOsInviteInput, 'inviter_reply_to' | 'email_attempted_at'>>;
+
+function rowFrom(input: RowInput, overrides: Partial<BusinessOsInvite> = {}): BusinessOsInvite {
   return {
     id: INVITE_ID,
     email: input.email,
@@ -82,6 +89,11 @@ function rowFrom(input: CreateBusinessOsInviteInput, overrides: Partial<Business
     redemption_error_code: null,
     redemption_error_message: null,
     redemption_failed_account_id: null,
+    email_attempted_at: input.email_attempted_at ?? null,
+    email_sent_at: null,
+    email_provider_message_id: null,
+    email_problem: null,
+    email_problem_at: null,
     created_at: NOW.toISOString(),
     updated_at: NOW.toISOString(),
     ...overrides,
@@ -97,15 +109,23 @@ function championBody(overrides: Record<string, unknown> = {}): CreateInviteBody
     language: 'he',
     personalNote: 'Welcome aboard',
     reason: 'QA slice 0 demo',
+    sendEmail: false,
     ...overrides,
   });
 }
 
-function harness(profile: { data: unknown; error: unknown } = { data: { full_name: 'Dana Levi' }, error: null }) {
+const SENDER = 'team@agentpilot.example';
+
+function harness(
+  profile: { data: unknown; error: unknown } = { data: { full_name: 'Dana Levi' }, error: null },
+  email: { result?: SendEmailResult; sender?: string | undefined; recorded?: boolean } = {}
+) {
   const inserted: CreateBusinessOsInviteInput[] = [];
   const warnings: Array<{ context: Record<string, unknown>; message: string }> = [];
+  const sent: SendEmailParams[] = [];
   const deps: CreateInviteDeps = {
     adminId: ADMIN,
+    adminEmail: 'Admin@Example.com',
     config,
     now: NOW,
     repository: {
@@ -113,13 +133,23 @@ function harness(profile: { data: unknown; error: unknown } = { data: { full_nam
         inserted.push(input);
         return { data: rowFrom(input), error: null };
       }),
+      recordInviteEmailOutcome: jest.fn(async () => ({ data: email.recorded ?? true, error: null })),
     },
     profileRepository: {
       findById: jest.fn(async () => profile as never),
     },
     logger: { warn: (context, message) => warnings.push({ context, message }) },
+    email: {
+      sendEmail: jest.fn(async (params: SendEmailParams) => {
+        sent.push(params);
+        return email.result ?? { sent: true, provider: 'resend' as const, providerMessageId: 'msg_1' };
+      }),
+      senderAddress: () => ('sender' in email ? email.sender : SENDER),
+      now: () => NOW,
+      logger: { info: () => undefined, warn: (context, message) => warnings.push({ context, message }) },
+    },
   };
-  return { deps, inserted, warnings };
+  return { deps, inserted, warnings, sent };
 }
 
 describe('createInviteForAdmin', () => {
@@ -188,6 +218,8 @@ describe('createInviteForAdmin', () => {
         'internal_reason',
         'link_expiry_days',
         'link_expires_at',
+        'inviter_reply_to',
+        'email_attempted_at',
       ].sort()
     );
     expect(inserted[0].grant_id).toBe(championGrant);
@@ -203,9 +235,11 @@ describe('createInviteForAdmin', () => {
       linkExpiryDays: INVITE_LINK_EXPIRY.defaultDays,
       language: 'en',
       reason: 'Referred',
+      sendEmail: true,
     });
     const outcome = await createInviteForAdmin(body, deps);
     expect(outcome).toEqual({ ok: false, status: 409, error: 'paid_invites_not_available' });
+    expect(deps.email.sendEmail).not.toHaveBeenCalled();
     expect(deps.repository.createForAdmin).not.toHaveBeenCalled();
     expect(deps.profileRepository.findById).not.toHaveBeenCalled();
     expect(INVITE_ISSUANCE_POLICY.paidInvitesAvailable).toBe(false);
@@ -272,6 +306,122 @@ describe('createInviteForAdmin', () => {
   });
 });
 
+describe('Slice 2a: the invitation email on create (FR-14 to FR-16)', () => {
+  it('sendEmail false: nothing is sent, no attempt stamped, and the result says not_emailed', async () => {
+    const { deps, inserted, sent } = harness();
+    const outcome = await createInviteForAdmin(championBody({ sendEmail: false }), deps);
+    expect(outcome.ok && outcome.email).toEqual({ requested: false, status: 'not_emailed' });
+    expect(sent).toHaveLength(0);
+    expect(inserted[0].email_attempted_at).toBeNull();
+    expect(deps.repository.recordInviteEmailOutcome).not.toHaveBeenCalled();
+    expect(outcome.ok && outcome.invite.emailStatus).toBe('not_emailed');
+  });
+
+  it('sendEmail true: attempt stamped with the row, sent AFTER the insert, the link equals the returned link', async () => {
+    const { deps, inserted, sent } = harness();
+    const outcome = await createInviteForAdmin(championBody({ sendEmail: true }), deps);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+
+    expect(inserted[0].email_attempted_at).toBe(NOW.toISOString());
+    expect(sent).toHaveLength(1);
+    expect(sent[0].html).toContain(outcome.link);
+    expect(sent[0].to).toEqual(['x@example.com']);
+    expect(sent[0].from).toBe(`"Dana Levi via AgentPilot" <${SENDER}>`);
+    expect(outcome.email).toEqual({ requested: true, status: 'sent', provider: 'resend', providerMessageId: 'msg_1', recorded: true });
+    expect(outcome.invite.emailStatus).toBe('sent');
+  });
+
+  it('R-12: the plan name in the email is the planLabel computed here', async () => {
+    const { deps, sent } = harness();
+    await createInviteForAdmin(championBody({ sendEmail: true }), deps);
+    expect(sent[0].html).toContain(planLabel(config, championGrant));
+  });
+
+  it('D-2: the Reply-To is the gate email, normalised, snapshotted on the row; missing → null and no replyTo', async () => {
+    const withEmail = harness();
+    await createInviteForAdmin(championBody({ sendEmail: true }), withEmail.deps);
+    expect(withEmail.inserted[0].inviter_reply_to).toBe('admin@example.com');
+    expect(withEmail.sent[0].replyTo).toBe('admin@example.com');
+
+    const without = harness();
+    without.deps.adminEmail = undefined;
+    await createInviteForAdmin(championBody({ sendEmail: true }), without.deps);
+    expect(without.inserted[0].inviter_reply_to).toBeNull();
+    expect(Object.keys(without.sent[0])).not.toContain('replyTo');
+
+    const garbage = harness();
+    garbage.deps.adminEmail = 'not an address';
+    await createInviteForAdmin(championBody({ sendEmail: false }), garbage.deps);
+    expect(garbage.inserted[0].inviter_reply_to).toBeNull();
+    expect(garbage.warnings.some((entry) => /Reply-To/.test(entry.message))).toBe(true);
+  });
+
+  it('R-2: sender not configured → still created, link returned, not_sent + sender_not_configured, nothing sent', async () => {
+    const { deps, sent } = harness(undefined, { sender: undefined });
+    const outcome = await createInviteForAdmin(championBody({ sendEmail: true }), deps);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(sent).toHaveLength(0);
+    expect(outcome.link).toMatch(/#t=/);
+    expect(outcome.email).toEqual({ requested: true, status: 'not_sent', reason: 'sender_not_configured', recorded: true });
+    expect(outcome.invite.emailStatus).toBe('not_sent');
+  });
+
+  it('FR-16: a transport failure is still a created invite with its link, shown as not_sent', async () => {
+    const { deps } = harness(undefined, { result: { sent: false, provider: 'none', error: 'resend: 500' } });
+    const outcome = await createInviteForAdmin(championBody({ sendEmail: true }), deps);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.link).toMatch(/#t=/);
+    expect(outcome.email).toMatchObject({ requested: true, status: 'not_sent', reason: 'transport_failed' });
+  });
+
+  it('an outcome that could not be recorded is shown as unknown (what the list will say)', async () => {
+    const { deps } = harness(undefined, { recorded: false });
+    const outcome = await createInviteForAdmin(championBody({ sendEmail: true }), deps);
+    expect(outcome.ok && outcome.email).toMatchObject({ status: 'sent', recorded: false });
+    expect(outcome.ok && outcome.invite.emailStatus).toBe('unknown');
+  });
+
+  it('SMTP / Gmail (no message id) → sent_untracked', async () => {
+    const { deps } = harness(undefined, { result: { sent: true, provider: 'gmail' } });
+    const outcome = await createInviteForAdmin(championBody({ sendEmail: true }), deps);
+    expect(outcome.ok && outcome.invite.emailStatus).toBe('sent_untracked');
+  });
+});
+
+describe('resolveInviteFormLanguage (Slice 2a, C-8 as amended, D-8)', () => {
+  const warnings: string[] = [];
+  const logger = { warn: (_context: Record<string, unknown>, message: string) => warnings.push(message) };
+
+  beforeEach(() => {
+    warnings.length = 0;
+  });
+
+  it('reads the admin preference by the admin id', async () => {
+    const findPreferredLanguage = jest.fn(async () => ({ data: 'he' as const, error: null }));
+    expect(await resolveInviteFormLanguage({ adminId: ADMIN, preferences: { findPreferredLanguage }, logger })).toBe('he');
+    expect(findPreferredLanguage).toHaveBeenCalledWith(ADMIN);
+  });
+
+  it('no usable preference → en, silently', async () => {
+    const findPreferredLanguage = jest.fn(async () => ({ data: null, error: null }));
+    expect(await resolveInviteFormLanguage({ adminId: ADMIN, preferences: { findPreferredLanguage }, logger })).toBe('en');
+    expect(warnings).toHaveLength(0);
+  });
+
+  it('a read error or a throw → en with a warning', async () => {
+    const errored = jest.fn(async () => ({ data: null, error: new Error('db') }));
+    expect(await resolveInviteFormLanguage({ adminId: ADMIN, preferences: { findPreferredLanguage: errored }, logger })).toBe('en');
+    const thrown = jest.fn(async () => {
+      throw new Error('boom');
+    });
+    expect(await resolveInviteFormLanguage({ adminId: ADMIN, preferences: { findPreferredLanguage: thrown }, logger })).toBe('en');
+    expect(warnings).toHaveLength(2);
+  });
+});
+
 describe('toInviteListView (R-7)', () => {
   const input: CreateBusinessOsInviteInput = {
     token_hash: 'a'.repeat(64),
@@ -288,7 +438,29 @@ describe('toInviteListView (R-7)', () => {
     internal_reason: 'Secret internal reason',
     link_expiry_days: 30,
     link_expires_at: '2026-10-31T12:00:00.000Z',
+    inviter_reply_to: 'admin@example.com',
+    email_attempted_at: null,
   };
+
+  it('Slice 2a: carries the derived email status, never the message id or the Reply-To', () => {
+    expect(toInviteListView(rowFrom(input), config, NOW)).toMatchObject({ emailStatus: 'not_emailed', emailStatusAt: null });
+    const sent = toInviteListView(
+      rowFrom(input, {
+        email_attempted_at: NOW.toISOString(),
+        email_sent_at: '2026-10-01T12:00:03.000Z',
+        email_provider_message_id: 'msg_secretish',
+      }),
+      config,
+      NOW
+    );
+    expect(sent).toMatchObject({ emailStatus: 'sent', emailStatusAt: '2026-10-01T12:00:03.000Z' });
+    const serialised = JSON.stringify(sent);
+    expect(serialised).not.toContain('msg_secretish');
+    expect(serialised).not.toContain('admin@example.com');
+    for (const key of ['emailProviderMessageId', 'email_provider_message_id', 'emailProblemDetail', 'inviterReplyTo']) {
+      expect(sent).not.toHaveProperty(key);
+    }
+  });
 
   it('has exactly the list-row keys, and none of the hidden columns', () => {
     const view = toInviteListView(rowFrom(input, { redeemed_account_id: null }), config, NOW);
@@ -324,6 +496,12 @@ describe('toInviteListView (R-7)', () => {
 
 describe('buildInviteFormOptions', () => {
   const options = buildInviteFormOptions(config);
+
+  it('Slice 2a (D-8): pre-selects the language it is given, and only a supported one', () => {
+    expect(buildInviteFormOptions(config, 'he').defaultLanguage).toBe('he');
+    expect(buildInviteFormOptions(config, 'es').defaultLanguage).toBe('es');
+    expect(buildInviteFormOptions(config, 'fr' as never).defaultLanguage).toBe('en');
+  });
 
   it('expiry options and default from config; languages from the locale list; default en (C-8 as amended)', () => {
     expect(options.expiryDays).toEqual([...INVITE_LINK_EXPIRY.optionsDays]);

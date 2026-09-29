@@ -31,6 +31,7 @@ function champion(overrides: Record<string, unknown> = {}): Record<string, unkno
     language: 'en',
     personalNote: 'Welcome aboard',
     reason: 'Design partner',
+    sendEmail: true,
     ...overrides,
   };
 }
@@ -43,6 +44,7 @@ function paid(overrides: Record<string, unknown> = {}): Record<string, unknown> 
     linkExpiryDays: INVITE_LINK_EXPIRY.defaultDays,
     language: 'he',
     reason: 'Referred by a partner',
+    sendEmail: false,
     ...overrides,
   };
 }
@@ -133,6 +135,25 @@ describe('createInviteSchema', () => {
   ])('refuses %s', (_label, overrides) => {
     expect(createInviteSchema.safeParse(champion(overrides)).success).toBe(false);
   });
+
+  it('Slice 2a: sendEmail is a REQUIRED boolean (an older client is refused, never emailed by default)', () => {
+    expect(createInviteSchema.parse(champion({ sendEmail: false })).sendEmail).toBe(false);
+    expect(createInviteSchema.parse(champion({ sendEmail: true })).sendEmail).toBe(true);
+    for (const body of [champion(), paid()]) {
+      delete body.sendEmail;
+      expect(createInviteSchema.safeParse(body).success).toBe(false);
+    }
+    for (const sendEmail of ['true', 1, null]) {
+      expect(createInviteSchema.safeParse(champion({ sendEmail })).success).toBe(false);
+    }
+  });
+
+  it.each(['from', 'replyTo', 'inviterReplyTo', 'inviter_reply_to', 'link', 'senderAddress'])(
+    'Slice 2a: an injected %s is refused by .strict() (the sender and Reply-To come from the server)',
+    (key) => {
+      expect(createInviteSchema.safeParse(champion({ [key]: 'x@example.com' })).success).toBe(false);
+    }
+  );
 
   it('refuses a body that is not an object', () => {
     for (const body of [null, 'x', 1, []]) {

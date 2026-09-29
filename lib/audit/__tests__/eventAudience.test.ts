@@ -46,9 +46,10 @@ describe('AUDIT_EVENT_AUDIENCE is exhaustive over the catalogue', () => {
   // +2 Business OS (BOS_INVITE_CREATED, BOS_INVITE_REVOKED): invite-only signup, Slice 0.
   // +1 Business OS (BOS_INVITE_OPENED_BY_EXISTING_ACCOUNT): invite-only signup, Slice 1a.
   // +4 Business OS (BOS_INVITE_REDEEMED, _PLAN_PROVISIONED, _REDEMPTION_REFUSED, _REDEMPTION_INCOMPLETE): Slice 1b.
-  it('pins the split: 22 Business OS, 61 shared, 84 AgentsPilot', () => {
-    expect(registered).toHaveLength(167);
-    expect(eventsTagged('bos')).toHaveLength(22);
+  // +2 Business OS (BOS_INVITE_EMAIL_SENT, BOS_INVITE_EMAIL_NOT_SENT): Slice 2a.
+  it('pins the split: 24 Business OS, 61 shared, 84 AgentsPilot', () => {
+    expect(registered).toHaveLength(169);
+    expect(eventsTagged('bos')).toHaveLength(24);
     expect(eventsTagged('shared')).toHaveLength(61);
     expect(eventsTagged('agentspilot')).toHaveLength(84);
   });

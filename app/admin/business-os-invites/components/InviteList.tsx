@@ -7,6 +7,9 @@
  * the recorded step, error code, scrubbed message and account id. No email is
  * ever part of that record.
  *
+ * Slice 2a adds the invitation email's status (`deriveInviteEmailStatus` on the
+ * server): Not emailed, Sent, Sent (not tracked), Not sent or Unknown.
+ *
  * The state arrives decided (`deriveInviteState` on the server); this list
  * never compares a date to decide whether a link has expired. Slice 1c's filters
  * and email search run in the page (`inviteFilter.ts`); this list renders
@@ -15,7 +18,7 @@
 
 import { useState } from 'react';
 
-import type { InviteRow, InviteState } from '../types';
+import type { InviteEmailStatus, InviteRow, InviteState } from '../types';
 import { RevokeDialog } from './RevokeDialog';
 
 interface Props {
@@ -30,6 +33,19 @@ const STATE_STYLE: Record<InviteState, { label: string; className: string }> = {
   expired: { label: 'Expired', className: 'bg-slate-500/20 text-slate-300' },
   revoked: { label: 'Revoked', className: 'bg-rose-500/20 text-rose-300' },
   accepted: { label: 'Accepted', className: 'bg-emerald-500/20 text-emerald-300' },
+};
+
+/** Slice 2a: the invitation email. "Sent" means the provider accepted it, not that it arrived. */
+const EMAIL_STYLE: Record<InviteEmailStatus, { label: string; className: string; title: string }> = {
+  not_emailed: { label: 'Not emailed', className: 'bg-slate-500/20 text-slate-300', title: 'The link was copied, not emailed' },
+  sent: { label: 'Sent', className: 'bg-emerald-500/20 text-emerald-300', title: 'Accepted by the email provider' },
+  sent_untracked: {
+    label: 'Sent (not tracked)',
+    className: 'bg-emerald-500/10 text-emerald-200',
+    title: 'Sent through a fallback transport that reports no delivery',
+  },
+  not_sent: { label: 'Not sent', className: 'bg-rose-500/20 text-rose-300', title: 'The email did not go out' },
+  unknown: { label: 'Unknown', className: 'bg-amber-500/20 text-amber-300', title: 'An email was attempted but no result was recorded' },
 };
 
 /** A calendar date, the same everywhere: the ISO date part, in UTC. */
@@ -60,6 +76,7 @@ export function InviteList({ invites, onRevoked, emptyMessage = 'No invites yet.
             <th className="px-3 py-2">Created</th>
             <th className="px-3 py-2">Link expires</th>
             <th className="px-3 py-2">State</th>
+            <th className="px-3 py-2">Email</th>
             <th className="px-3 py-2">First opened</th>
             <th className="px-3 py-2" />
           </tr>
@@ -67,6 +84,7 @@ export function InviteList({ invites, onRevoked, emptyMessage = 'No invites yet.
         <tbody className="divide-y divide-slate-700/60 text-slate-200">
           {invites.map((invite) => {
             const style = STATE_STYLE[invite.state];
+            const emailStyle = invite.emailStatus ? EMAIL_STYLE[invite.emailStatus] : undefined;
             const canRevoke = invite.state === 'pending' || invite.state === 'expired';
             return (
               <tr key={invite.id} data-testid={`invite-row-${invite.id}`} className="align-top">
@@ -121,6 +139,19 @@ export function InviteList({ invites, onRevoked, emptyMessage = 'No invites yet.
                     <p data-testid="invite-existing-account" className="mt-1 text-xs text-amber-300">
                       Opened by an existing account ({day(invite.openedByExistingAccountAt)})
                     </p>
+                  )}
+                </td>
+                <td className="px-3 py-2">
+                  {emailStyle ? (
+                    <span
+                      data-testid="invite-email-status"
+                      title={emailStyle.title}
+                      className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${emailStyle.className}`}
+                    >
+                      {emailStyle.label}
+                    </span>
+                  ) : (
+                    <span className="text-slate-500">—</span>
                   )}
                 </td>
                 <td className="px-3 py-2 text-slate-400">{day(invite.firstViewedAt)}</td>
