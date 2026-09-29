@@ -389,6 +389,15 @@ const EXCLUDED: PurgeDescriptor[] = [
   never('business_os_entitlement_shadow_events', U,
     'Aggregated "what would have been gated" counters. Platform observability about the product, not the owner\'s business data.'),
 
+  // Credit deduction slice 3b-i (SA-S8, workplan §6.5): the credit ledger (any service, one pool).
+  // `never` for the same reason as the plan rows above, and more so: this is
+  // the bill. Keyed to auth.users, not business_profiles, so no Reset or Purge
+  // can reach it through the business cascade either.
+  never('business_os_credit_charges', U,
+    'The bill: one row per charged Business OS action, AI or any other service. Never purged and never archived — a Reset that removed it would erase what the account was charged. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
+  never('business_os_credit_totals', U,
+    'The running total of business_os_credit_charges per billing period. Derived from the bill and rebuilt from it; never purged. Keyed to auth.users (ON DELETE CASCADE), not business_profiles.'),
+
   // Admin Archiving (Slice 2, condition C-4)
   never('archive_runs', G,
     'The platform run log of archiving: who ran it, when, which cutoff, how many rows. No user_id and no business content, counts only. Never archived and never purged.'),
@@ -398,6 +407,13 @@ const EXCLUDED: PurgeDescriptor[] = [
     'The platform run record of the Business OS scheduled jobs: job name, times, an outcome word, an error class and numeric counts. No user_id and no business content. Platform monitoring data, pruned at 30 days by the recorder; never purged.'),
   never('bos_cron_run_recording', G,
     'One row: when the cron run record was installed. Platform monitoring baseline, no user_id; never purged.'),
+
+  // Invite-only signup, Slice 0 (condition C-10, SA ruling F-1).
+  never('business_os_invites', G,
+    'Platform record of who was invited, by which admin, on what grant, and whether it was used. No user_id: not tenant data, so a Reset or Purge must never touch it (a Reset that removed it would also let an owner re-enter as a fresh invitee). Deliberately NOT in USER_OWNED_TABLES: the account-deletion sweep deletes by user_id, which this table does not have. Erasure of the invitee email is requirement L-12, designed in the Slice 1 workplan.'),
+  // Invite-only signup, Slice 1b (L-6, C-10).
+  never('business_os_account_lineage', G,
+    'Platform record of who invited whom (the invitation circle, level, parent, root). Keyed on account_id, deliberately no user_id: not tenant data, and a Reset or Purge that removed it would let an owner re-enter as the referral of someone else. Not in USER_OWNED_TABLES for the same reason as business_os_invites; it holds no email, and keeps its pseudonymous ids after erasure (SA F-12).'),
 
   // §8.12 Account configuration and unowned tables
   never('notification_settings', U, 'Account configuration that survives the business.'),

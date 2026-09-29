@@ -99,14 +99,15 @@ const BASE: TierRow = {
   'payments.card': true,
   'payments.multi_currency': true,
   /*
-   * Moved here from the `not_built` block on 2026-09-28.
+   * `not_built` until 2026-09-25, when the sender stopped simulating success.
    *
-   * It sat there reading `false, // the sender returns a simulated success`,
-   * which was true until 2026-09-25: `sendEmailReminder` logged "Would send
-   * payment reminder email" and returned `true; // Simulated success`, so a
-   * queue row was marked SENT while no client received anything. The catalog
-   * was moved to `lifecycle: 'available'` when the real sender landed and this
-   * line was not, so the config still withheld a feature that works.
+   * Moved here from the `not_built` block on 2026-09-28. It sat there reading
+   * `false, // the sender returns a simulated success`, which was true until
+   * 2026-09-25: `sendEmailReminder` logged "Would send payment reminder email"
+   * and returned `true; // Simulated success`, so a queue row was marked SENT
+   * while no client received anything. The catalog was moved to
+   * `lifecycle: 'available'` when the real sender landed and this line was not,
+   * so the config still withheld a feature that works.
    *
    * Nothing enforces this capability at runtime yet, so the effect was on what
    * a customer is TOLD: a Founding Partner saw 28 of the 29 things they have,

@@ -1,0 +1,10 @@
+[
+  {
+    "version": 0,
+    "usdPerCredit": 0.001,
+    "status": "provisional",
+    "matrixVersion": 1,
+    "decidedOn": "2026-09-28",
+    "derivation": "Working figure from requirement §2 (BD-1): one credit is about a tenth of a US cent of real provider cost. Provisional: slice 5 derives the real value from slice 4 measurement together with the plan allowances (FR-37, BD-8)."
+  }
+]

@@ -213,6 +213,21 @@ export const LITERAL_SCOPE_INCLUSIONS: ReadonlyArray<LiteralScopeInclusion> = [
     reason:
       'Business OS LLM model-settings admin route: reaches the catalog through adminSettingsView, so the direct-import rule misses it, but it serves the model picker and must never write a model id.',
   },
+  {
+    file: 'lib/business-os/llm/chargePricing.ts',
+    reason:
+      'Business OS credit deduction charge policy: reaches the catalog through chargeClassification, so the direct-import rule misses it, but it prices an action for a charge and must never write a model id or a price.',
+  },
+  {
+    file: 'lib/business-os/llm/chargeResolver.ts',
+    reason:
+      'Business OS credit deduction slice 3: the one cost-to-credits conversion and the charge record builder. It reaches the catalog through chargePricing (and a type-only import of aiActionAudit), so the direct-import rule misses it, but it decides what an action is charged and must never write a model id or a price.',
+  },
+  {
+    file: 'lib/business-os/llm/aiChargeRecorder.ts',
+    reason:
+      'Business OS credit deduction slice 3b-ii: the one writer of the AI credit charge, called at the end of runAiAction. It reaches the catalog through chargeResolver and a type-only import of aiActionAudit, so the direct-import rule misses it, but it writes what an action is charged and must never write a model id or a price.',
+  },
 ];
 
 export function literalScope(

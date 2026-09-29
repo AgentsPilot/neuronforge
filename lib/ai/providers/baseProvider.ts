@@ -1,6 +1,6 @@
 // lib/ai/providers/baseProvider.ts
 import { AIAnalyticsService, AICallData } from '@/lib/analytics/aiAnalytics';
-import { notifyUsage } from '@/lib/ai/usageScope';
+import { notifyUsage, type UsageCallPricing } from '@/lib/ai/usageScope';
 
 
 export interface CallContext {
@@ -93,6 +93,12 @@ export abstract class BaseAIProvider {
        * no migration.
        */
       cachedInputTokens?: number;
+      /**
+       * Whether `cost` came from a usable price, where the provider says so
+       * (deduction layer slice 2). Goes to the usage scope ONLY, never to the
+       * ledger: `token_usage` records exactly what it did before.
+       */
+      pricing?: UsageCallPricing;
     }
   ): Promise<T> {
     const startTime = Date.now();
@@ -119,6 +125,7 @@ export abstract class BaseAIProvider {
         outputTokens: metrics.outputTokens,
         costUsd: metrics.cost,
         success: true,
+        ...(metrics.pricing ? { pricing: metrics.pricing } : {}),
       });
       
       // Track successful call with all context fields

@@ -390,7 +390,7 @@ Each doc owns its own status. Read it when the "Read when" column matches your t
 | [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md) | Any `/api/admin/*` route, `/admin` page, or admin check — includes current coverage and what is not yet true | — |
 | [BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_REQUIREMENT.md) | Any Business OS AI call; operators: [model settings runbook](/docs/runbooks/BUSINESS_OS_LLM_MODEL_SETTINGS_RUNBOOK.md) | `bos-llm-call-standards` |
 | [BUSINESS_OS_INSIGHTS_MODULE.md](/docs/architecture/BUSINESS_OS_INSIGHTS_MODULE.md) | `lib/business-os/insight/**`, insight routes and crons. ⚠️ Two unrelated systems are called "insights" | `business-os-insights` |
-| [BUSINESS_OS_ENTITLEMENTS.md](/docs/architecture/BUSINESS_OS_ENTITLEMENTS.md) | `lib/business-os/entitlements/**` or what a plan includes | — |
+| [BUSINESS_OS_ENTITLEMENTS.md](/docs/architecture/BUSINESS_OS_ENTITLEMENTS.md) | `lib/business-os/entitlements/**`, what a plan includes, or **any import from that module** (type-only included) | `business-os-entitlements` |
 | [BUSINESS_OS_EVENT_DRIVEN_MIGRATION_PLAN.md](/docs/architecture/BUSINESS_OS_EVENT_DRIVEN_MIGRATION_PLAN.md) §8.1 | Background jobs, crons, queue drains | `durable-queue-drain` |
 | [BUSINESS_OS_TEST_PAGE_SCOPE.md](/docs/BUSINESS_OS_TEST_PAGE_SCOPE.md) / [V2_TEST_PAGE_SCOPE.md](/docs/V2_TEST_PAGE_SCOPE.md) | Test harnesses `/test-business-os`, `/test-plugins-v2` | — |
 | [REPOSITORY_STRATEGY.md](/docs/REPOSITORY_STRATEGY.md) | Data-access design questions | `new-repository` |

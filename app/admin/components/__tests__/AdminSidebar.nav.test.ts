@@ -102,6 +102,7 @@ describe('section order', () => {
     expect(hrefsOf('Businesses')).toEqual([
       '/admin/users',
       '/admin/business-os-tiers',
+      '/admin/business-os-invites',
       '/admin/messages',
     ]);
     expect(hrefsOf('Settings')).toEqual([
@@ -127,10 +128,13 @@ describe('every admin page is reachable, exactly once', () => {
   const onDisk = adminPageRoutes();
 
   it('found the admin pages on disk (guards the scan itself)', () => {
-    // 26 pages: slice 4 moved the legacy dashboard to its own route, Admin
-    // Archiving slice 1 added /admin/archiving, and slice 5 added
-    // /admin/jobs-queues. If this drops, the scan broke rather than the sidebar.
-    expect(onDisk.length).toBeGreaterThanOrEqual(26);
+    // 27 pages: slice 4 moved the legacy dashboard to its own route, Admin
+    // Archiving slice 1 added /admin/archiving, slice 5 added
+    // /admin/jobs-queues, and invite-only signup slice 0 added
+    // /admin/business-os-invites. If this drops, the scan broke rather than
+    // the sidebar.
+    expect(onDisk.length).toBeGreaterThanOrEqual(27);
+    expect(onDisk).toContain('/admin/business-os-invites');
     expect(onDisk).toContain('/admin/archiving');
     expect(onDisk).toContain('/admin/jobs-queues');
     expect(onDisk).toContain('/admin/platform-dashboard');
@@ -142,8 +146,9 @@ describe('every admin page is reachable, exactly once', () => {
     const expected = onDisk.filter((r) => !UNLISTED.includes(r));
     expect([...allHrefs].sort()).toEqual(expected);
     // 22 before, + the legacy dashboard (slice 4) + Archiving (Admin Archiving
-    // slice 1) + Scheduled jobs & queues (slice 5).
-    expect(allHrefs).toHaveLength(25);
+    // slice 1) + Scheduled jobs & queues (slice 5) + Invites (invite-only
+    // signup slice 0).
+    expect(allHrefs).toHaveLength(26);
   });
 
   it('never lists the same page twice', () => {
@@ -178,6 +183,12 @@ describe('labels are honest', () => {
     const item = sections.flatMap((s) => s.items).find((i) => i.href === '/admin/users');
     expect(item?.name).toBe('Businesses');
     expect(item?.description).toContain('Business OS');
+  });
+
+  it('the invite page is called "Signup Invites" (Slice 1a), and its route is unchanged', () => {
+    const item = sections.flatMap((s) => s.items).find((i) => i.href === '/admin/business-os-invites');
+    expect(item?.name).toBe('Signup Invites');
+    expect(item?.description).toBe('Business OS invite links');
   });
 
   it('item names are unique (they are the React keys)', () => {

@@ -42,6 +42,12 @@ export const loggerConfig: pino.LoggerOptions = {
       'secret',
       '*.password',
       '*.token',
+      // Invite-only signup, Slice 1b (R-3): the emailed sign-up code. Not
+      // `code`/`*.code`, which would censor every `dbError.code` and `err.code`.
+      'signupCode',
+      '*.signupCode',
+      'otp',
+      '*.otp',
       '*.apiKey',
       'req.headers.authorization',
       'req.headers.cookie',

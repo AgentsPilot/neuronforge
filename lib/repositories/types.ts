@@ -485,3 +485,237 @@ export interface FreeTierInsertOutcome {
 export interface FreeTierUpdateOutcome {
   updated: boolean;
 }
+
+// ============================================================================
+// Business OS invites (invite-only signup, Slice 0)
+// ============================================================================
+//
+// `business_os_invites` is a platform record, not tenant data: it has no
+// `user_id` column. See `BusinessOsInviteRepository` for why it is reached
+// unscoped, and by whom.
+
+/** Which entitlements basis an invite grants. Mirrors the `grant_kind` CHECK. */
+export type BusinessOsInviteGrantKind = 'cohort' | 'tier';
+
+/**
+ * One invite as the ADMIN surface reads it. Every column except `token_hash`,
+ * which no reader ever selects.
+ */
+export interface BusinessOsInvite {
+  id: string;
+  email: string;
+  email_locked: boolean;
+  invite_type: string;
+  grant_kind: BusinessOsInviteGrantKind;
+  grant_id: string;
+  access_open_ended: boolean | null;
+  access_months: number | null;
+  issuer_kind: 'admin' | 'account';
+  issuer_admin_id: string | null;
+  issuer_account_id: string | null;
+  inviter_display_name: string;
+  language: string;
+  personal_note: string | null;
+  internal_reason: string;
+  link_expiry_days: number;
+  link_expires_at: string;
+  first_viewed_at: string | null;
+  revoked_at: string | null;
+  revoked_by_admin_id: string | null;
+  revoke_reason: string | null;
+  redeemed_at: string | null;
+  redeemed_account_id: string | null;
+  /** Slice 1a (FR-8a): when the invite was first opened by an email that already had an account. */
+  opened_by_existing_account_at: string | null;
+  /** Slice 1b (R-1): the server-generated account id a signup claimed this invite for, and when. */
+  claimed_at: string | null;
+  claimed_account_id: string | null;
+  /** Slice 1b (FR-12a, SA D-2): the last failure of a signup that stopped halfway. Never an email. */
+  redemption_failed_at: string | null;
+  redemption_failed_step: string | null;
+  redemption_error_code: string | null;
+  redemption_error_message: string | null;
+  redemption_failed_account_id: string | null;
+  /**
+   * Slice 2a (FR-14 to FR-16, workplan D-5 to D-7): the invitation email facts
+   * of the CURRENT link. Read to derive the list's email status, and never put
+   * in a view as-is: the list shows `emailStatus`, not these. `email_problem_detail`
+   * and `inviter_reply_to` are deliberately NOT read by the admin surface.
+   */
+  email_attempted_at: string | null;
+  email_sent_at: string | null;
+  email_provider_message_id: string | null;
+  email_problem: string | null;
+  email_problem_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * One invite as the PUBLIC page's lookup reads it: only what the page may show
+ * or needs to decide the state. No email, no issuer, no reasons, no hash.
+ * `id` is read so `markFirstViewed` can target the row; it is never returned.
+ */
+export interface BusinessOsInvitePublicView {
+  id: string;
+  grant_kind: BusinessOsInviteGrantKind;
+  grant_id: string;
+  access_open_ended: boolean | null;
+  access_months: number | null;
+  inviter_display_name: string;
+  language: string;
+  personal_note: string | null;
+  link_expires_at: string;
+  first_viewed_at: string | null;
+  revoked_at: string | null;
+  redeemed_at: string | null;
+}
+
+/**
+ * What an admin-issued invite is created with: the explicit allow-list.
+ *
+ * `issuer_kind` is not here: `createForAdmin` sets it to `admin` itself, so an
+ * admin-issued row can never claim an account issuer.
+ */
+export interface CreateBusinessOsInviteInput {
+  token_hash: string;
+  email: string;
+  invite_type: string;
+  grant_kind: BusinessOsInviteGrantKind;
+  grant_id: string;
+  access_open_ended: boolean | null;
+  access_months: number | null;
+  issuer_admin_id: string;
+  inviter_display_name: string;
+  language: string;
+  personal_note: string | null;
+  internal_reason: string;
+  link_expiry_days: number;
+  link_expires_at: string;
+  /**
+   * Slice 2a (D-2): the issuing admin's own auth email, lower-cased, taken from
+   * the gate and never from the request body. `null` when the gate has none;
+   * the invitation then goes out with no Reply-To.
+   */
+  inviter_reply_to: string | null;
+  /** Slice 2a (D-5): stamped at insert when an invitation email is requested. */
+  email_attempted_at: string | null;
+}
+
+/**
+ * Slice 2a (D-6): how one invitation send ended, recorded by a compare-and-swap
+ * on the invite id AND the hash of the link that was emailed, so an outcome
+ * for a link that has since been replaced (Slice 2b) changes nothing.
+ */
+export interface RecordInviteEmailOutcomeInput {
+  id: string;
+  tokenHash: string;
+  now: Date;
+  outcome:
+    | { kind: 'sent'; providerMessageId: string | null }
+    | { kind: 'problem'; problem: string; detail: string | null };
+}
+
+/** A revoke, as the conditional UPDATE needs it. */
+export interface RevokeBusinessOsInviteInput {
+  id: string;
+  adminId: string;
+  reason: string;
+  now: Date;
+  /**
+   * Slice 1b (I-2): a claim made at or after this instant is LIVE, and a live
+   * claim cannot be revoked (`signup_in_progress`).
+   */
+  claimLeaseCutoff: Date;
+}
+
+/**
+ * One invite as the SIGNUP routes read it (Slice 1b), by token hash only.
+ *
+ * Carries the invitee email because the account is created for exactly that
+ * address (email lock), and the code/claim counters the routes decide on. It is
+ * never returned to a visitor as-is: the routes build their own allow-listed
+ * responses.
+ */
+export interface BusinessOsInviteRedemptionView {
+  id: string;
+  email: string;
+  invite_type: string;
+  issuer_kind: 'admin' | 'account';
+  grant_kind: BusinessOsInviteGrantKind;
+  grant_id: string;
+  access_open_ended: boolean | null;
+  access_months: number | null;
+  language: string;
+  link_expires_at: string;
+  revoked_at: string | null;
+  redeemed_at: string | null;
+  signup_code_hash: string | null;
+  signup_code_expires_at: string | null;
+  signup_code_attempts: number;
+  signup_code_sent_count: number;
+  signup_code_window_started_at: string | null;
+  signup_code_last_sent_at: string | null;
+  claimed_at: string | null;
+  claimed_account_id: string | null;
+}
+
+/**
+ * Store a freshly issued code: a compare-and-swap on the send count AND the
+ * last-sent time observed with the row (SA MF-2), on a still-pending,
+ * unexpired invite with no live claim.
+ */
+export interface IssueSignupCodeInput {
+  id: string;
+  observedSentCount: number;
+  /**
+   * `signup_code_last_sent_at` as read with the row (`null` before the first
+   * code). The count alone is not enough: at a 24 h rollover every parallel
+   * request resets the count to the same value, so only the last-sent time
+   * tells the first writer from the rest.
+   */
+  observedLastSentAt: string | null;
+  claimLeaseCutoff: Date;
+  codeHash: string;
+  expiresAt: Date;
+  sentCount: number;
+  windowStartedAt: Date;
+  now: Date;
+}
+
+/** Count one attempt (a compare-and-swap on the observed attempt count and the live code). */
+export interface CountSignupCodeAttemptInput {
+  id: string;
+  observedAttempts: number;
+  codeHash: string;
+  now: Date;
+}
+
+/** Clear the code and claim the invite for a server-generated account id (R-1, D-dev-1). */
+export interface ClaimInviteForSignupInput {
+  id: string;
+  codeHash: string;
+  accountId: string;
+  /** The `claimed_account_id` read with the row: `null` for a first claim, the stale claimant otherwise (I-6). */
+  observedClaimedAccountId: string | null;
+  now: Date;
+  claimLeaseCutoff: Date;
+}
+
+/** The FR-12a record (SA D-2). Every value already scrubbed by the caller. */
+export interface RecordRedemptionFailureInput {
+  id: string;
+  claimedAccountId: string;
+  step: string;
+  errorCode: string | null;
+  errorMessage: string | null;
+  failedAccountId: string | null;
+  now: Date;
+}
+
+/** One lineage row, as the admin list reads it (Slice 1b). */
+export interface BusinessOsAccountLineageLevel {
+  account_id: string;
+  invite_id: string | null;
+  level: number;
+}

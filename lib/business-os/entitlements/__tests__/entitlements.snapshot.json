@@ -1,5 +1,5 @@
 {
-  "generated": "2026-09-23",
+  "generated": "2026-09-29",
   "matrixVersion": 1,
   "tiers": {
     "basic": {
@@ -13,6 +13,7 @@
       "payments.invoices": true,
       "payments.card": true,
       "payments.multi_currency": true,
+      "payments.reminders": true,
       "marketing.lead_response": true,
       "insights.checks": true,
       "insights.channels": true,
@@ -41,7 +42,6 @@
         "included": 1,
         "purchasable": false
       },
-      "payments.reminders": true,
       "marketing.mass_email": false,
       "marketing.posts": false,
       "sms.messages": {
@@ -65,6 +65,7 @@
       "payments.invoices": true,
       "payments.card": true,
       "payments.multi_currency": true,
+      "payments.reminders": true,
       "marketing.lead_response": true,
       "insights.checks": true,
       "insights.channels": true,
@@ -93,7 +94,6 @@
         "included": 1,
         "purchasable": false
       },
-      "payments.reminders": true,
       "marketing.mass_email": false,
       "marketing.posts": false,
       "sms.messages": {

@@ -1,0 +1,183 @@
+// lib/repositories/AuthAccountRepository.ts
+// The one door to `auth.users` for Business OS invite-only signup.
+//
+// INTENTIONAL SERVICE-ROLE CLIENT (RLS bypass). Whether an email already has an
+// account is not something a visitor may ask: it is asked only by the invite
+// path, only after a 256-bit invite token has matched a row, and only about
+// THAT row's email (requirement §16.5 L-3, §8.1; workplan D-12, SA R-4).
+//
+// The lookup is `business_os_auth_email_has_account` (migration 20261013): a
+// hardened SECURITY DEFINER function that returns a boolean and nothing else,
+// executable by `service_role` only. `listUsers` pagination is deliberately not
+// used (L-3): it would page through every account on the platform to answer a
+// yes/no question.
+//
+// WHO MAY IMPORT THIS FILE is pinned by
+// `lib/repositories/__tests__/authAccountRepository.callers.guard.test.ts`.
+// It is not exported from the `lib/repositories` barrel on purpose, so that
+// every importer names it and the guard can see them.
+//
+// Slice 1b adds exactly two more doors, both used only by the redemption flow:
+// `createConfirmedUser` (T-3 as amended: the account is created server-side,
+// with the id the invite was ALREADY claimed for, after mailbox proof) and
+// `findUserExists` (I-4/I-6: "does a user with this id exist?", yes/no/unknown).
+//
+// No method here deletes a user, now or later (Slice 1 invariant I-1; the
+// repo-wide no-deletion-paths guard). A signup that stops halfway keeps its
+// claim and is finished by recovery, never undone by a delete (SA R-1).
+//
+// Methods never throw: they return `{ data, error }`. A database error is
+// reduced to `{ code, message }` before it is logged or returned, and no email
+// is ever logged.
+
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
+import { createLogger, type Logger } from '@/lib/logger';
+import { safeDbError, type SafeDbError } from './BusinessOsInviteRepository';
+import type { AgentRepositoryResult as RepositoryResult } from './types';
+
+/** The SQL function the lookup calls (migration 20261013). */
+export const EMAIL_HAS_ACCOUNT_FUNCTION = 'business_os_auth_email_has_account';
+
+/**
+ * The outcome of creating the account (Slice 1b). Failures carry a CLASS, the
+ * provider's error code and a message; the caller scrubs the message before
+ * it is stored (SA D-2). The password never appears in either.
+ */
+export type CreateConfirmedUserOutcome =
+  | { ok: true; id: string }
+  | {
+      ok: false;
+      kind: 'email_exists' | 'weak_password' | 'other';
+      code: string | null;
+      message: string;
+    };
+
+/** The auth error codes that mean "an account already uses this email". */
+const EMAIL_TAKEN_CODES = new Set(['email_exists', 'user_already_exists']);
+
+/** Read the fields of an auth error without trusting its shape. */
+function authErrorFacts(error: unknown): { code: string | null; status: number | null; message: string } {
+  const record = error && typeof error === 'object' ? (error as Record<string, unknown>) : {};
+  return {
+    code: typeof record.code === 'string' ? record.code : null,
+    status: typeof record.status === 'number' ? record.status : null,
+    message: typeof record.message === 'string' ? record.message : 'Unknown auth error',
+  };
+}
+
+export class AuthAccountRepository {
+  private supabase: SupabaseClient;
+  private logger: Logger;
+
+  constructor(supabaseClient?: SupabaseClient) {
+    this.supabase = supabaseClient || defaultSupabase;
+    this.logger = createLogger({ service: 'AuthAccountRepository' });
+  }
+
+  /**
+   * Does any account already use this email? (FR-8a, L-3.)
+   *
+   * The caller must pass the email of an invite row it has already matched by
+   * token hash, never a value from a request. The answer is a boolean: no id,
+   * no metadata.
+   */
+  async emailHasAccount(email: string): Promise<RepositoryResult<boolean>> {
+    const methodLogger = this.logger.child({ method: 'emailHasAccount' });
+    try {
+      const { data, error } = await this.supabase.rpc(EMAIL_HAS_ACCOUNT_FUNCTION, {
+        p_email: email.trim().toLowerCase(),
+      });
+
+      if (error) throw error;
+      // Anything but a real boolean is a broken contract, and "no account" must
+      // never be the answer by default: the caller would then offer signup to
+      // someone who already has an account.
+      if (typeof data !== 'boolean') {
+        throw { code: null, message: 'Account lookup returned a non-boolean result' } satisfies SafeDbError;
+      }
+      return { data, error: null };
+    } catch (error) {
+      const safe = safeDbError(error);
+      methodLogger.error({ dbError: safe }, 'Account lookup failed');
+      const out = new Error(safe.message) as Error & { code?: string };
+      if (safe.code) out.code = safe.code;
+      return { data: null, error: out };
+    }
+  }
+
+  /**
+   * Create a CONFIRMED account for an invite that is already claimed for `id`
+   * (T-3 as amended, R-1, I-3).
+   *
+   * - `id` is generated by the server and recorded on the invite BEFORE this
+   *   call, so the account and the claim are bound before the account exists.
+   * - `email` is the invite row's email (the email lock), never request data.
+   * - `email_confirm: true` because mailbox control was proven by the code.
+   * - No metadata: nothing a caller sends reaches the auth user.
+   *
+   * The caller checks that the returned id equals `id` (I-3). Logs carry the
+   * error code and HTTP status only: never the email, never the password.
+   */
+  async createConfirmedUser(input: { id: string; email: string; password: string }): Promise<CreateConfirmedUserOutcome> {
+    const methodLogger = this.logger.child({ method: 'createConfirmedUser', accountId: input.id });
+    try {
+      const { data, error } = await this.supabase.auth.admin.createUser({
+        id: input.id,
+        email: input.email,
+        password: input.password,
+        email_confirm: true,
+      });
+
+      if (error) {
+        const facts = authErrorFacts(error);
+        const kind = EMAIL_TAKEN_CODES.has(facts.code ?? '')
+          ? 'email_exists'
+          : facts.code === 'weak_password'
+            ? 'weak_password'
+            : 'other';
+        methodLogger.warn({ authErrorCode: facts.code, authStatus: facts.status, kind }, 'Account creation refused');
+        return { ok: false, kind, code: facts.code, message: facts.message };
+      }
+
+      const createdId = data?.user?.id;
+      if (typeof createdId !== 'string') {
+        methodLogger.error('Account creation returned no user id');
+        return { ok: false, kind: 'other', code: null, message: 'Account creation returned no user id' };
+      }
+      return { ok: true, id: createdId };
+    } catch (error) {
+      const facts = authErrorFacts(error);
+      methodLogger.error({ authErrorCode: facts.code, authStatus: facts.status }, 'Account creation threw');
+      return { ok: false, kind: 'other', code: facts.code, message: facts.message };
+    }
+  }
+
+  /**
+   * Does a user with this id exist? (I-4, I-6, D-dev-2.)
+   *
+   * `true` / `false` only on a definite answer; anything else is an error, and
+   * the caller must then KEEP its claim ("never release on uncertainty").
+   */
+  async findUserExists(id: string): Promise<RepositoryResult<boolean>> {
+    const methodLogger = this.logger.child({ method: 'findUserExists', accountId: id });
+    try {
+      const { data, error } = await this.supabase.auth.admin.getUserById(id);
+      if (error) {
+        const facts = authErrorFacts(error);
+        if (facts.status === 404 || facts.code === 'user_not_found') return { data: false, error: null };
+        methodLogger.error({ authErrorCode: facts.code, authStatus: facts.status }, 'User lookup failed');
+        const out = new Error(facts.message) as Error & { code?: string };
+        if (facts.code) out.code = facts.code;
+        return { data: null, error: out };
+      }
+      return { data: Boolean(data?.user?.id), error: null };
+    } catch (error) {
+      const facts = authErrorFacts(error);
+      methodLogger.error({ authErrorCode: facts.code, authStatus: facts.status }, 'User lookup threw');
+      return { data: null, error: new Error(facts.message) };
+    }
+  }
+}
+
+export const authAccountRepository = new AuthAccountRepository();

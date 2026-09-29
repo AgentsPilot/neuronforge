@@ -159,6 +159,15 @@ export const USER_OWNED_TABLES: Record<string, string> = {
   business_os_entitlement_shadow_events:
     'Counters of what the entitlement resolver would have decided. Platform observability ' +
     'about the product, not data the owner entered about their clients.',
+
+  business_os_credit_charges:
+    'The commercial record of what the account was charged in Business OS credits, for AI or ' +
+    'any other chargeable service (one credit pool). Keyed to ' +
+    'auth.users, not business_profiles, so a business Reset cannot erase it.',
+
+  business_os_credit_totals:
+    'A running total of business_os_credit_charges per billing period — derived from the bill, ' +
+    'so it follows the account for the same reason.',
   profiles: 'Account level.',
   plugin_connections: 'Account level — the user\'s own third-party credentials.',
   admin_users: 'Platform authorization.',

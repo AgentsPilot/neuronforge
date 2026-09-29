@@ -27,7 +27,8 @@ import {
   Layers,
   HeartPulse,
   Archive,
-  Clock
+  Clock,
+  MailPlus
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -131,6 +132,15 @@ const navigationSections: NavSection[] = [
         // Names the product so it is never mistaken for the AgentsPilot free
         // tier on the onboarding page.
         description: 'Business OS plans, read-only'
+      },
+      {
+        // Invite-only signup, Slice 0: issue, list and revoke invite links.
+        // Named "Signup Invites" (Slice 1a, user request) so it is not read as
+        // team or seat invites, which are a different feature.
+        name: 'Signup Invites',
+        href: '/admin/business-os-invites',
+        icon: MailPlus,
+        description: 'Business OS invite links'
       },
       {
         name: 'Messages',

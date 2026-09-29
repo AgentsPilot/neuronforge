@@ -168,6 +168,39 @@ export const AUDIT_EVENTS = {
   BOS_ENTITLEMENT_LAUNCH_DRY_RUN: 'BOS_ENTITLEMENT_LAUNCH_DRY_RUN',
 
   // ==========================================
+  // BUSINESS OS INVITES (admin-only, server-written)
+  // ==========================================
+  // Invite-only signup, Slice 0. Entity type 'business_os_invite', id = the
+  // invite id. The details carry the grant, the expiry and the admin's reason,
+  // never the token, its hash or the invited email (C-3). The durable record is
+  // the invite row itself (issuer, timestamps, revoke reason); these entries are
+  // the investigation trail on top of it.
+  BOS_INVITE_CREATED: 'BOS_INVITE_CREATED',
+  BOS_INVITE_REVOKED: 'BOS_INVITE_REVOKED',
+  // Slice 1a (FR-8a): an invite was opened and its email already had an
+  // account. Anonymous actor; written once per invite (the row's
+  // `opened_by_existing_account_at` stamp decides). Nothing was burned or
+  // changed, and no session was created.
+  BOS_INVITE_OPENED_BY_EXISTING_ACCOUNT: 'BOS_INVITE_OPENED_BY_EXISTING_ACCOUNT',
+  // Slice 1b: a champion signed up from an invite. REDEEMED and PLAN_PROVISIONED
+  // are written together, after the finalise function succeeded (actor = the new
+  // account). REFUSED is a terminal refusal (an email that already has an
+  // account at account creation, or the code attempts used up). INCOMPLETE is a
+  // signup that stopped halfway with its claim kept (FR-12a, SA D-2): its details
+  // repeat the invite row's failure record, never an email, token, code or
+  // password.
+  BOS_INVITE_REDEEMED: 'BOS_INVITE_REDEEMED',
+  BOS_INVITE_PLAN_PROVISIONED: 'BOS_INVITE_PLAN_PROVISIONED',
+  BOS_INVITE_REDEMPTION_REFUSED: 'BOS_INVITE_REDEMPTION_REFUSED',
+  BOS_INVITE_REDEMPTION_INCOMPLETE: 'BOS_INVITE_REDEMPTION_INCOMPLETE',
+  // Slice 2a: the invitation email of a create. Actor = the admin (SA R-8).
+  // SENT carries the provider and, from Resend, its message id; NOT_SENT the
+  // reason class (`sender_not_configured` or `transport_failed`). Never the
+  // invitee email, the link, the token, its hash or a provider's error text.
+  BOS_INVITE_EMAIL_SENT: 'BOS_INVITE_EMAIL_SENT',
+  BOS_INVITE_EMAIL_NOT_SENT: 'BOS_INVITE_EMAIL_NOT_SENT',
+
+  // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
   // ==========================================
   // One entry when a run starts and one when it ends. A run that stops at its
@@ -588,6 +621,53 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'critical',
     complianceFlags: ['SOC2'],
     description: 'An archive batch failed and was rolled back; the run can be continued',
+  },
+  // Business OS invites (Slice 0). Issuing or withdrawing a way into the
+  // product is an admin decision worth an entry, but it changes no account yet.
+  [AUDIT_EVENTS.BOS_INVITE_CREATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'An admin created a Business OS invite (grant, link expiry and reason recorded)',
+  },
+  [AUDIT_EVENTS.BOS_INVITE_REVOKED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'An admin revoked a Business OS invite before it was used',
+  },
+  [AUDIT_EVENTS.BOS_INVITE_OPENED_BY_EXISTING_ACCOUNT]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS invite was opened for an email that already has an account; the visitor was sent to sign in and nothing changed',
+  },
+  [AUDIT_EVENTS.BOS_INVITE_REDEEMED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS invite was redeemed: an account was created from it (invitation circle recorded)',
+  },
+  [AUDIT_EVENTS.BOS_INVITE_PLAN_PROVISIONED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A plan row was provisioned from a Business OS invite (champion cohort, origin invite)',
+  },
+  [AUDIT_EVENTS.BOS_INVITE_REDEMPTION_REFUSED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS invite signup was refused (reason class only)',
+  },
+  [AUDIT_EVENTS.BOS_INVITE_REDEMPTION_INCOMPLETE]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS invite signup stopped halfway; the claim was kept for recovery',
+  },
+  [AUDIT_EVENTS.BOS_INVITE_EMAIL_SENT]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS invitation email was handed to the email provider (provider and message id recorded)',
+  },
+  [AUDIT_EVENTS.BOS_INVITE_EMAIL_NOT_SENT]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS invitation email was not sent, or not confirmed in time; the admin was shown the link to copy (reason class only)',
   },
   [AUDIT_EVENTS.BUSINESS_DATA_PURGE_BLOCKED]: {
     severity: 'warning',

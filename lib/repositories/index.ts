@@ -47,6 +47,20 @@ export type {
   BusinessOsShadowEvent,
   BusinessOsShadowEventInput,
 } from './BusinessOsEntitlementShadowRepository';
+// Business OS credit ledger, any service (credit deduction slice 3b-i). Server-only,
+// service role, write-only through one RPC; no caller until slice 3b-ii — a
+// source guard in its test enforces that, barrel included.
+export {
+  BusinessOsCreditChargeRepository,
+  businessOsCreditChargeRepository,
+  BOS_RECORD_CREDIT_CHARGE_RPC,
+} from './BusinessOsCreditChargeRepository';
+export type {
+  BusinessOsCreditChargeInput,
+  BusinessOsCreditChargeWriteResult,
+  BusinessOsCreditChargeTrigger,
+  BusinessOsCreditChargeAnchorSource,
+} from './BusinessOsCreditChargeRepository';
 export {
   OrganizationRepository,
   organizationRepository,
@@ -101,6 +115,23 @@ export type {
   TokenUsageWindow,
   UsageSummaryRpcRow,
 } from './TokenUsageRepository';
+// Business OS invites (invite-only signup, Slice 0). Admin-scoped and
+// token-scoped methods only; see the repository header (C-13).
+export { BusinessOsInviteRepository, businessOsInviteRepository } from './BusinessOsInviteRepository';
+export type {
+  BusinessOsInvite,
+  BusinessOsInviteGrantKind,
+  BusinessOsInvitePublicView,
+  BusinessOsInviteRedemptionView,
+  CreateBusinessOsInviteInput,
+  RecordInviteEmailOutcomeInput,
+  RevokeBusinessOsInviteInput,
+  BusinessOsAccountLineageLevel,
+} from './types';
+// User preferences (invite signup Slice 2a, C-8): read-only, scoped by user_id.
+export { UserPreferencesRepository, userPreferencesRepository } from './UserPreferencesRepository';
+// Lineage (Slice 1b). Written only by the finalise function; read by the admin list.
+export { BusinessOsAccountLineageRepository, businessOsAccountLineageRepository } from './BusinessOsAccountLineageRepository';
 
 // Types
 export type {

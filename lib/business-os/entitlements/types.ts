@@ -5,6 +5,11 @@
 // Workplan: docs/workplans/business-os-subscription-entitlements.md §4.4–§4.7
 // Requirement: docs/requirements/BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md
 //
+// ⚠️ IMPORTING THIS FROM OUTSIDE THE MODULE? Even `import type` must be
+// registered in the same change — see the `business-os-entitlements` skill
+// (KNOWN_NON_GATE_IMPORTERS in __tests__/enforcementPoints.test.ts), then run
+// `npm run test:bos-entitlements`.
+//
 // ── WHY THE TYPES CARRY THIS MUCH WEIGHT ────────────────────────────────────
 // Two things must be impossible to get wrong:
 //

@@ -19,6 +19,18 @@ interface PricingInfo {
   output: number;
 }
 
+/** The shape of one price row, per 1000 tokens. Exported as a type only (for `inCodeTokenPrices`). */
+export type TokenPriceInfo = Readonly<PricingInfo>;
+
+/**
+ * Whether a model has a usable price (deduction layer slice 2, SQ-13 (1)).
+ *
+ * `priced` means a row exists AND is > 0 on the input side, and > 0 on the
+ * output side unless the model is input-only (embeddings). A row at 0 is not a
+ * price: it is exactly the silent $0 the deduction layer must not charge on.
+ */
+export type PriceStatus = 'priced' | 'unpriced';
+
 // In-memory cache to avoid repeated database queries
 let pricingCache: Map<string, PricingInfo> = new Map();
 let cacheLastUpdated: number = 0;
@@ -244,15 +256,13 @@ export async function calculateCost(
 }
 
 /**
- * Synchronous version of calculateCost for when pricing is already cached
- * Falls back to database pricing if not in cache
+ * The synchronous price lookup: the warm cache, then the in-code table.
+ *
+ * Extracted verbatim from `calculateCostSync` (deduction layer slice 2, SA
+ * Q-2) so that the cost and `getPriceStatusSync` can never read different
+ * rows. Logs nothing; the caller decides what a miss means.
  */
-export function calculateCostSync(
-  provider: string,
-  modelName: string,
-  inputTokens: number,
-  outputTokens: number
-): number {
+function lookupPricingSync(provider: string, modelName: string): PricingInfo | undefined {
   const key = `${provider}:${modelName}`;
   let pricing = pricingCache.get(key);
 
@@ -263,6 +273,61 @@ export function calculateCostSync(
       pricing = providerFallback[modelName as keyof typeof providerFallback] as PricingInfo | undefined;
     }
   }
+
+  return pricing;
+}
+
+/**
+ * Whether `calculateCostSync` would price this model with a usable, non-zero
+ * price (deduction layer slice 2). Read-only and SILENT: the missing-price warn
+ * still fires once per call, from `calculateCostSync`.
+ *
+ * TOTAL by contract (SA C-2): it runs inside `callWithTracking`'s `try` (via a
+ * provider's `extractMetrics`), where a throw would record a call the provider
+ * already billed as a $0 failure. Any non-string or empty input is `unpriced`.
+ */
+export function getPriceStatusSync(provider: string, modelName: string): PriceStatus {
+  if (typeof provider !== 'string' || typeof modelName !== 'string' || provider === '' || modelName === '') {
+    return 'unpriced';
+  }
+  const pricing = lookupPricingSync(provider, modelName);
+  if (!pricing) return 'unpriced';
+  // D-0 C-1: a row at 0 is not a price. `> 0` is false for NaN too.
+  const usable =
+    pricing.input > 0 && (pricing.output > 0 || isInputOnlyPricedModel(provider, modelName));
+  return usable ? 'priced' : 'unpriced';
+}
+
+/**
+ * A deep-frozen COPY of the in-code token price table (deduction layer slice
+ * 2, SQ-9 and SA S-5): the source of Business OS's conservative fallback rates
+ * and of its price-coverage test. A copy, so no caller can change what
+ * `calculateCostSync` reads; frozen, because `as const` on the table is
+ * type-only. This module gains a read accessor and no billing policy.
+ */
+export function inCodeTokenPrices(): Readonly<Record<string, Readonly<Record<string, TokenPriceInfo>>>> {
+  const copy: Record<string, Readonly<Record<string, TokenPriceInfo>>> = {};
+  for (const [provider, entries] of Object.entries(FALLBACK_PRICING)) {
+    const models: Record<string, TokenPriceInfo> = {};
+    for (const [model, price] of Object.entries(entries as Record<string, PricingInfo>)) {
+      models[model] = Object.freeze({ input: price.input, output: price.output });
+    }
+    copy[provider] = Object.freeze(models);
+  }
+  return Object.freeze(copy);
+}
+
+/**
+ * Synchronous version of calculateCost for when pricing is already cached
+ * Falls back to database pricing if not in cache
+ */
+export function calculateCostSync(
+  provider: string,
+  modelName: string,
+  inputTokens: number,
+  outputTokens: number
+): number {
+  const pricing = lookupPricingSync(provider, modelName);
 
   if (!pricing) {
     logger.warn({ provider, model: modelName }, 'No pricing found; recording $0 for this call');

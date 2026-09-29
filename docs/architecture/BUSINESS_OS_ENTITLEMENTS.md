@@ -1,6 +1,6 @@
 # Business OS entitlements
 
-> **Last Updated**: 2026-09-27
+> **Last Updated**: 2026-09-29
 
 ## Overview
 
@@ -19,6 +19,8 @@ What an account can do in Business OS, and why. This module answers one question
 7. [Before enforcement can be switched on](#before-enforcement-can-be-switched-on)
 8. [Admin operations](#admin-operations)
 9. [Ops checks](#ops-checks)
+10. [Importing the module from outside it](#importing-the-module-from-outside-it)
+11. [Metering: the credit ledger](#metering-the-credit-ledger)
 
 ---
 
@@ -30,6 +32,7 @@ What an account can do in Business OS, and why. This module answers one question
 | **Tier matrix** — what each plan includes | `config/tierMatrix.ts` | Pricing | The price list changes |
 | **Cohorts** — trial and champion | `config/cohorts.ts` | Product | The trial deal changes |
 | **Lifecycle overlay** — what each state allows | `config/lifecycle.ts` | Product | The grace/paused policy changes |
+| **Invites** — link expiry options, who may issue which invite type, and the Paid-invites switch | `config/invites.ts` | Product | The invite policy changes. `paidInvitesAvailable` stays `false` until invite-signup Slice 5 (the Business OS checkout, S-4a); flipping it is a config edit, and the create route refuses every Paid invite until then |
 | **Resolver** — puts them together | `resolver.ts`, `lifecycle.ts`, `decide.ts` | Engineering | Rarely |
 | **Service** — the one call sites use | `EntitlementService.ts` | Engineering | Rarely |
 
@@ -148,6 +151,8 @@ Cross-instance staleness is bounded at 30 s: an admin change invalidates the loc
 | `shadow` | Everything resolved and recorded; **nothing refused**. **What production runs, on purpose, to collect data first** (2026-09-27) |
 | `enforce` | Decisions acted on. Slice 2 onwards |
 
+**Metering is not mode-gated** (credit deduction SA ruling Q-4). The credit ledger (see [Metering](#metering-the-credit-ledger)) records a charge in **every** mode, `off` included. A charge is a *measurement*, like `token_usage` and the AI audit entry, neither of which reads the mode; the mode governs entitlement *decisions* (resolve, record shadow events, refuse). So `off`'s "nothing recorded" above covers shadow events, **not** the ledger, and an environment where the variable is unset still charges. Do not add a mode check to the charge path.
+
 `enforce` is **refused and downgraded to `shadow`** while no tier is configured (UD-2), logged at `error`. Since 2026-09-23 two tiers are configured, so that gate no longer fires — it stays as the guard against an emptied matrix. **This does not mean `enforce` is safe to set:** nothing calls a decision until Slice 2, there is no billing until Slice 4, and G-1 blocks both.
 
 ## Before enforcement can be switched on
@@ -192,8 +197,42 @@ Two rules worth knowing before using them:
 | What would tier X cost? | `shadow-report?from=…&to=…&asTier=X` |
 | What does setup cost in AI actions? | `shadow-report?…&includeSetupAi=true` — sized against p90 with headroom (B-12) |
 | Applying it all | [BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md](/docs/BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md) |
+| Did the credit ledger land? | `scripts/check-bos-credit-charges-migration.sql` (read-only, one grid, row 0 the verdict), then the write probe `scripts/probe-bos-credit-charges-migration.sql` — see [Metering](#metering-the-credit-ledger) |
 
 > **Editing any of these SQL files?** The three the operator pastes — `preflight-`, `check-` and `rollback-` — carry **no `--` comments at all** and no prose in any string. They are several small standalone statements, with no single-letter aliases, and every row emits a short `fix` key that [the runbook](/docs/BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md) explains. That is not tidiness: two pastes failed with `ERROR: 42P01: relation "a" does not exist`, the editor's parser cannot be inspected, and the answer is to stop giving it anything to misparse. `scripts/__tests__/entitlementSqlScripts.guard.test.ts` enforces it, and its header is explicit that it is **hygiene, not a proof the file will paste**.
+
+---
+
+## Importing the module from outside it
+
+Any file outside `lib/business-os/entitlements/` that imports from it — **a type-only import included** — must be registered in the same change: as a gate in `config/enforcementPoints.ts`, or as a non-gate in `KNOWN_NON_GATE_IMPORTERS` (`__tests__/enforcementPoints.test.ts`) with the exact symbols it imports and why it refuses nothing. That is what keeps the admin screen's per-capability "no gate yet" marker true.
+
+The same applies to a capability id or tier name written as a literal, and to switching a capability to `available` (grant it in `BASE`, then `npm run entitlements:snapshot`). The full table, the review checklist and the definition of done (`npm run test:bos-entitlements`) are in the **`business-os-entitlements` skill** (`.claude/skills/business-os-entitlements/SKILL.md`). The CI check is not required, so the skill is where this gets caught.
+
+---
+
+## Metering: the credit ledger
+
+Credit deduction layer, slice 3 ([workplan](/docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_3_WORKPLAN.md), [requirement](/docs/requirements/BUSINESS_OS_LLM_DEDUCTION_LAYER_REQUIREMENT.md)). **Status: the schema is applied on PROD (3b-i, 2026-09-29 08:13:51 UTC). 3b-ii writes a charge for every Business OS AI action; charging starts at 3b-ii's production go-live, a moment RM records in the workplan §15 (and below).** Nothing reads either table before slices 4, 6 and 9, and nothing is refused: `balance.ts` still answers "sufficient" to everything.
+
+**Not AI-specific** (user decision 2026-09-29). Every chargeable action — AI or not, e.g. a notification email to a client — will eventually have a measured cost converted to credits, all from **one credit pool** per account, following the same procedure as AI with few exceptions. Each charge row names its `service` (an identifier checked by format, not a closed list, so a new service needs no schema change); the totals row stays **one per account and period**, never split by service. Slice 3 records only `service = 'ai'`; nothing non-AI is built yet. Every charge has a **grouping id**, whatever the service — a group may hold one action (a bulk send is one group, one action id per email).
+
+| Object | What it is |
+|---|---|
+| `business_os_credit_charges` | The bill. One thin row per charged Business OS action of any service (`kind = 'charge'`): action id (unique, the idempotency key), account, billing period, grouping id, credits (6 dp), cost in USD (10 dp), credit value version, fallback-priced flag (priced from a fallback rate rather than the measured one: AI sets it when a model is missing from the price table; another service only if it defines its own documented fallback, otherwise `false`), service, action type, trigger (`owner` / `scheduled` / `external`) and outcome. Slice 4's corrections are rows of `kind = 'adjustment'` in the same table; they carry no service of their own and inherit it from the charge they adjust. **Never updated in place** — `service_role` holds only SELECT and INSERT. No tokens, models, call names or owner text |
+| `business_os_credit_totals` | The running total per account and billing period — one pool across every service — split by trigger plus an adjustment bucket, with `credits_total = owner + scheduled + external + adjustment` enforced by a CHECK. Derived: it can always be rebuilt from the ledger (checker row C7) |
+| `business_os_record_credit_charge(...)` | The one write path: inserts the charge and moves the total in one transaction, idempotent on the action id. `SECURITY INVOKER`, `service_role` only. Repository: `BusinessOsCreditChargeRepository` |
+| `business_os_credit_period_start(anchor, at)` | The one definition of a billing period: the latest `period_anchor + n months` at or before `at`, in UTC, `n` counted from the anchor (a 31st anchor gives Jan 31 → Feb 28 → Mar 31). An account with no plan row is charged in the UTC calendar month |
+
+**Who can see what.** Owners may SELECT their own rows through the API (including `service`), **except** the cost and fallback columns (`cost_usd`, `is_fallback_priced`, `cost_usd_total`, `fallback_priced_count`): a column-level grant, so an owner-session `select=*` is refused and a column added later is hidden by default. No client role can write either table or execute either function.
+
+**Lifecycle.** Both tables are `never` in the purge registry and keyed to `auth.users`, not `business_profiles`, so a business Reset cannot reach them. On account deletion the ledger is **minimised** (`user_id` set to NULL by the foreign key) and the totals are **deleted** (cascade).
+
+**The credit value** is `lib/business-os/entitlements/config/creditValue.ts` — version 0, provisional, about $0.001 of provider cost per credit — recorded on every row as `credit_value_version`.
+
+**How an AI charge is written (3b-ii).** At the end of every `runAiAction` (`lib/business-os/llm/aiActionAudit.ts`), after the audit entry is queued, `recordAiCharge` (`lib/business-os/llm/aiChargeRecorder.ts`) builds the row from the action's in-memory calls and writes it through the repository with `service = 'ai'` (one exported constant, `AI_CHARGE_SERVICE`). The write is **awaited with a 1,500 ms budget** (`BOS_AI_CHARGE_WRITE_BUDGET_MS`), is never retried, and **never throws**: a failed, refused or timed-out write is one `error` log (`bos_ai_charge_write_failed`, or `bos_ai_charge_not_written` when no row could be built) and the action's own result is unchanged. A timed-out write's fate is *unknown* (it may still have committed); the action id makes any repeat harmless. An action with no AI call writes nothing and waits for nothing. The recorder is the ledger's only writer (a source guard in the repository test pins it).
+
+**Charging start:** *to be recorded by RM at 3b-ii's production go-live (workplan §6.4 step 6).* Rows between the 3b-i apply time and that moment are developer or preview traffic on developers' own accounts (environments share the production database).
 
 ---
 
@@ -211,3 +250,8 @@ Two rules worth knowing before using them:
 | 2026-09-27 | Founding Partner points at Autopilot | `champion.base` is `{ tier: ’pro’ }`, reversing Q-B3, so design partners keep chat while it is in testing. **Their AI allowance is unchanged at 1,000 a month** — `CHAMPION_VALUES` sets it explicitly and an explicit cohort value beats the tier row, so they do not pick up Autopilot’s 2,000. Reversing it is the same one line |
 | 2026-09-27 | Chat named on the customer surface | The dedicated suppression and `customerPlanView.chat.test.ts` are gone (deleted in the same commit, per that file’s own instruction), because chat is available to everyone and in testing. Replaced by the narrower rule that survives enforcement: **the surface lists what a plan INCLUDES and never asserts what the customer’s current plan excludes** — `customerPlanView.noExclusions.test.ts` |
 | 2026-09-27 | Founding Partner gets FULL parity with Autopilot | The `ai.actions` override is gone: `CHAMPION_VALUES` now **reads the allowance from the tier its `base` names**, so champions get 2,000 a month rather than the 1,000 they were pinned at earlier the same day. "Founding Partners get the top plan free" is true without an exception, and the customer screen no longer offers a design partner an upgrade. Parity is **structural, not a copied number** — raise Autopilot and champions rise with it. **No other cohort value disagrees with the inherited row** (checked: `sms.messages`, `email.volume`, `team.seats`, `business.locations`) |
+| 2026-09-28 | Invite config added | `config/invites.ts` holds the invite link expiry options (15/30/60, default 30), the invite types and the grants each may carry (read from `COHORT_IDS` and `TIER_ORDER`), and the issuance policy with its Paid switch, off until Slice 5 (invite-only signup Slice 0, T-14, T-15) |
+| 2026-09-28 | Importing the module from outside it | New section and the `business-os-entitlements` skill, after three misses in three days reached main (9ffdf05b, #129, #134): an unregistered importer, including a type-only one, and a capability switched to `available` without being granted in `BASE` |
+| 2026-09-28 | Invite redemption writes plan rows; tenant definition widened | Invite-only signup Slice 1b. A champion invite redeemed from the invite page writes the account's plan row with `origin = 'invite'` through `BusinessOsAccountPlanRepository.provisionFromInvite` (the SQL function `business_os_finalise_invite_redemption`, one transaction with the lineage row and the redeemed stamp; the end date is computed in SQL from the invite row). `provisionFromInvite` is listed in the imports guard's write methods. `isBusinessOsTenant` is now **profile OR onboarding message OR any plan row** (L-4), so an invited champion is visible on the Tiers page before onboarding; the plan row is read only when the other two say no. The RC-4 champion end-date rule moved to `grantRules.ts`, shared by the admin operations and the invite path |
+| 2026-09-29 | Metering: the credit ledger | New section for credit deduction slice 3b-i: the charge and totals tables, the write RPC, the period function, the owner column grant, the lifecycle verdicts and the credit value; the schema exists and nothing writes yet. **The mode flag** now states that metering is not mode-gated and records in every mode, `off` included (SA Q-4 / SF-6). Ops checks gains the ledger checker and write probe. Same day, per the user's decision that the ledger is not AI-specific: objects renamed (`business_os_ai_charges` → `business_os_credit_charges`, `business_os_ai_charge_totals` → `business_os_credit_totals`, `business_os_record_ai_charge` → `business_os_record_credit_charge`, `business_os_ai_period_start` → `business_os_credit_period_start`) and a `service` column added; one credit pool, totals not split by service |
+| 2026-09-29 | Metering: charging wired (3b-ii) | Credit deduction slice 3b-ii: every Business OS AI action now writes one charge through `aiChargeRecorder.ts` at the end of `runAiAction` — awaited, 1,500 ms budget, no retry, never throws, `service = 'ai'` from one constant. The Metering section's status now records the 3b-i PROD apply time and a placeholder for the charging start (RM, at go-live). No mode check, no refusal, `balance.ts` untouched |

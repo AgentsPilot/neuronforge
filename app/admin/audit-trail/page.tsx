@@ -19,6 +19,7 @@ import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { OPERATOR_AUDIENCES } from '@/lib/audit/eventAudience';
 import { createLogger } from '@/lib/logger';
 import { ArchivedBeforeNotice } from '@/app/admin/components/ArchivedBeforeNotice';
+import { BusinessAccountPicker } from './BusinessAccountPicker';
 
 // Structured logging works in a client component: lib/logger.ts configures
 // Pino's `browser: { asObject: true }` transport, and the sibling admin page
@@ -47,7 +48,15 @@ interface AuditLogEntry {
   action: string;
   entity_type: string;
   entity_id: string;
-  resource_name: string;
+  /**
+   * Nullable on purpose. `resource_name` is optional at write time
+   * (AuditTrailService stores `input.resourceName || null`) and roughly 44% of
+   * rows have none — some because the writer never set one, some DELIBERATELY:
+   * lib/business-os/llm/aiActionAudit.ts omits it because the field "could carry
+   * content or credentials" (a Layer 3 privacy decision). So a missing name is
+   * not an error, and the UI must not present the entity id in its place.
+   */
+  resource_name: string | null;
   details: any;
   changes: any;
   severity: string;
@@ -56,6 +65,21 @@ interface AuditLogEntry {
   users?: {
     email?: string;
     full_name?: string;
+  } | null;
+  /**
+   * The business this row belongs to, from `business_profiles.company_name`
+   * keyed by `user_id`. Null when the account has no business profile — every
+   * agent-platform row. `company_name` itself can be null for a business that
+   * has not named itself.
+   *
+   * ABSENT (undefined) is a third state and means something different: the
+   * route's name lookup failed, so this row's business is UNKNOWN rather than
+   * absent. The response's top-level `businessLookup: 'failed'` carries that.
+   * Nothing renders it today — both states currently show no business — but the
+   * payload keeps them distinguishable so a future consumer can say "unknown".
+   */
+  business?: {
+    company_name?: string | null;
   } | null;
 }
 
@@ -99,6 +123,34 @@ function filtersFromUrl(params: URLSearchParams | null): FilterState {
 }
 
 /**
+ * What the active account chip is labelled with.
+ *
+ * The chip used to print `filters.userId.slice(0, 8)` — a truncated GUID, which
+ * names nothing to the operator reading it. The readable identity is already in
+ * memory: the route filters on `user_id`, so every loaded row belongs to the
+ * filtered account and already carries `business.company_name` and `users`
+ * (audit-trail slice: resource + business name). So this is a read of state,
+ * never a fetch.
+ *
+ * Business name first because that is what an operator calls the account, then
+ * the same `email → full_name` chain the rows use, and finally the truncated id
+ * when there is nothing to fall back on — no rows loaded yet, or a filter that
+ * matched none. Saying the id then is honest; a placeholder would not be.
+ *
+ * The `user_id === userId` test is load-bearing, not defensive tidiness: `logs`
+ * still holds the PREVIOUS filter's rows while the next request is in flight, so
+ * without it the chip would briefly label this account with another one's name.
+ */
+function accountFilterLabel(logs: AuditLogEntry[], userId: string): string {
+  const own = logs.filter((log) => log.user_id === userId);
+  const name =
+    own.find((log) => log.business?.company_name)?.business?.company_name ||
+    own.find((log) => log.users?.email)?.users?.email ||
+    own.find((log) => log.users?.full_name)?.users?.full_name;
+  return name || `${userId.slice(0, 8)}…`;
+}
+
+/**
  * The closed set of `AiAuditDetails` fields this screen renders (FR-A5 / AC-A5):
  * exactly what lib/business-os/llm/aiActionAudit.ts records, minus nothing this
  * criterion names and plus nothing it does not.
@@ -134,9 +186,18 @@ const asCount = (value?: number): string | undefined =>
 const asList = (value?: string[]): string | undefined =>
   Array.isArray(value) && value.length > 0 ? value.filter((v) => typeof v === 'string').join(', ') : undefined;
 
-/** Costs are stored rounded to a micro-dollar, so six decimals is the stored precision. */
+/**
+ * The stored cost at its stored precision: at least 6 and at most 10 decimals,
+ * trailing zeros trimmed down to 6. Entries written before deduction slice 2
+ * are rounded to a micro-dollar and so render exactly as they always did;
+ * later ones are rounded to 10 decimals (SQ-14), so a ~2e-7 USD embedding
+ * shows as $0.0000002 rather than $0.000000. Built from `toFixed`, never
+ * `String(n)`, so a small cost is never shown in exponent notation (SA Q-5).
+ */
 const asUsd = (value?: number): string | undefined =>
-  typeof value === 'number' && Number.isFinite(value) ? `$${value.toFixed(6)}` : undefined;
+  typeof value === 'number' && Number.isFinite(value)
+    ? `$${value.toFixed(10).replace(/(\.\d{6}\d*?)0+$/, '$1')}`
+    : undefined;
 
 function AiDetailValue({ label, value }: { label: string; value?: string }) {
   if (value === undefined) return null;
@@ -359,6 +420,14 @@ function AuditTrailPageContent() {
     });
   };
 
+  // Deliberately NOT updated by this PR: the export keeps the old columns and
+  // the old `resource_name` fallback semantics, so the page and the CSV now
+  // differ. Closing that divergence is blocked on a PRE-EXISTING defect here —
+  // the rows below are built with a bare `.join(',')`, with no quoting and no
+  // escaping. A value containing a comma shifts every later column, and a value
+  // starting with `=`, `+`, `-` or `@` is a spreadsheet formula-injection
+  // vector. Whoever adds the Business column must fix the quoting FIRST;
+  // widening an unescaped row builder widens the bug with it.
   const exportLogs = () => {
     const csv = [
       ['Timestamp', 'Action', 'Entity', 'Resource', 'Severity', 'User'].join(','),
@@ -448,7 +517,14 @@ function AuditTrailPageContent() {
                 data-testid="account-filter-chip"
                 className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-blue-500/20 text-blue-200"
               >
-                Account {filters.userId.slice(0, 8)}…
+                {/* The full id stays reachable on hover: the visible text either
+                    replaces it with a name or truncates it, so a title is the
+                    only place an operator can still read the id they filtered by
+                    (the row's own "User:" line shows the id only when there is no
+                    email or name to show instead). */}
+                <span className="truncate max-w-[18rem]" title={filters.userId}>
+                  Account {accountFilterLabel(logs, filters.userId)}
+                </span>
                 <button
                   type="button"
                   aria-label="Show every account"
@@ -462,6 +538,16 @@ function AuditTrailPageContent() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {/* Account — the only filter here applied at the DATABASE level to a
+                single account (route.ts `.eq('user_id', accountId)`), so it is
+                first: everything below narrows within it. Before this the filter
+                could only be cleared, never set, unless the operator already knew
+                the account's UUID. */}
+            <BusinessAccountPicker
+              selectedAccountId={filters.userId}
+              onSelect={(userId) => setFilters({ ...filters, userId })}
+            />
+
             {/* Search */}
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-2">Search</label>
@@ -751,14 +837,43 @@ function AuditTrailPageContent() {
                     <span className="text-slate-500">
                       Entity: <span className="text-slate-300">{log.entity_type}</span>
                     </span>
-                    <span className="text-slate-500">
-                      Resource: <span className="text-slate-300">{log.resource_name || log.entity_id}</span>
-                    </span>
+                    {/* A missing resource name must READ as missing. This used to
+                        be `log.resource_name || log.entity_id`, which printed the
+                        entity's GUID under the label "Resource:" — so an operator
+                        could not tell a named object from an unnamed one, and the
+                        rows that omit the name on purpose (aiActionAudit's Layer 3
+                        privacy decision) looked like rows with a name nobody could
+                        read.
+
+                        Two distinct renderings, no error styling: this is a normal
+                        state for ~44% of rows, not a defect. When there is no name
+                        the id is shown LABELLED AS AN ID and in mono, which is what
+                        it is. Fixing the writers is deliberately out of scope —
+                        making the gap visible first is the point. */}
+                    {log.resource_name ? (
+                      <span className="text-slate-500">
+                        Resource: <span className="text-slate-300">{log.resource_name}</span>
+                      </span>
+                    ) : (
+                      <span className="text-slate-500">
+                        Entity id:{' '}
+                        <span className="font-mono text-xs text-slate-400" title={log.entity_id}>
+                          {log.entity_id}
+                        </span>
+                      </span>
+                    )}
                     {log.user_id && (
                       <span className="text-slate-500">
                         User: <span className="text-slate-300">
                           {log.users?.email || log.users?.full_name || log.user_id}
                         </span>
+                      </span>
+                    )}
+                    {/* Blank is honest: an agent-platform row has no business
+                        profile, and a placeholder would only add noise. */}
+                    {log.business?.company_name && (
+                      <span className="text-slate-500">
+                        Business: <span className="text-slate-300">{log.business.company_name}</span>
                       </span>
                     )}
                   </div>
@@ -793,6 +908,26 @@ function AuditTrailPageContent() {
                           <div className="text-xs text-slate-400 mb-1">User</div>
                           <div className="text-sm font-semibold text-slate-200 truncate">
                             {log.users?.email || log.users?.full_name || log.user_id}
+                          </div>
+                        </div>
+                      )}
+                      {/* Omitted entirely when the account has no business profile. */}
+                      {log.business?.company_name && (
+                        <div className="bg-slate-800/30 rounded-lg p-3">
+                          <div className="text-xs text-slate-400 mb-1">Business</div>
+                          <div className="text-sm font-semibold text-slate-200 truncate">
+                            {log.business.company_name}
+                          </div>
+                        </div>
+                      )}
+                      {/* Shown only when there IS a name. The "Entity ID" card above
+                          already carries the id, so a nameless row is not padded with
+                          a duplicate of it. */}
+                      {log.resource_name && (
+                        <div className="bg-slate-800/30 rounded-lg p-3">
+                          <div className="text-xs text-slate-400 mb-1">Resource</div>
+                          <div className="text-sm font-semibold text-slate-200 truncate">
+                            {log.resource_name}
                           </div>
                         </div>
                       )}

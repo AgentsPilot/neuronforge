@@ -37,6 +37,7 @@ import type {
 } from '@/lib/repositories/BusinessOsAccountPlanRepository';
 import type { BusinessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import type { OnboardingConversationRepository } from '@/lib/repositories/OnboardingConversationRepository';
+import { championEndDecisionMissing } from './grantRules';
 import { isGrantingValue, valueSchemaFor } from './schema';
 import type { CatalogLike } from './schema';
 import type { EntitlementConfig } from './source';
@@ -217,6 +218,7 @@ export async function executeAdminOp(op: AdminOp, ctx: AdminOpContext): Promise<
     accountId: ctx.accountId,
     profileRepository: ctx.profileRepository,
     onboardingRepository: ctx.onboardingRepository,
+    planRepository: ctx.planRepository,
   });
   if (isTenant === null) return { ok: false, status: 500, error: 'tenant_check_failed' };
   if (!isTenant) return { ok: false, status: 404, error: 'not_a_business_os_account' };
@@ -253,9 +255,17 @@ export async function executeAdminOp(op: AdminOp, ctx: AdminOpContext): Promise<
   }
 }
 
-/** RC-10: a profile OR any onboarding message makes someone a tenant. */
 /**
  * Is this account a Business OS tenant at all?
+ *
+ * RC-10, widened by invite-only signup Slice 1b (L-4, T-2): a business profile
+ * OR any onboarding message OR **any plan row** makes someone a tenant. Why
+ * "any plan row": a plan row exists only for a Business OS account (the
+ * onboarding/profile triggers, the backfill, an admin operation, or an invite
+ * redemption), so it is generic and needs no invite knowledge here. It is what
+ * lets an invited champion appear on the Tiers page before they onboard. The
+ * plan row is read LAST, only when the other two say no, so an onboarded
+ * account costs no extra query.
  *
  * **Exported because the READ path needs the same answer** (QA NEW-2). It was
  * private, so `accounts/[accountId]/route.ts` re-implemented it — and the two
@@ -271,6 +281,7 @@ export async function isBusinessOsTenant(inputs: {
   accountId: string;
   profileRepository: AdminOpContext['profileRepository'];
   onboardingRepository: AdminOpContext['onboardingRepository'];
+  planRepository: Pick<BusinessOsAccountPlanRepository, 'findEntitlementInputs'>;
 }): Promise<boolean | null> {
   const profile = await inputs.profileRepository.findByUserId(inputs.accountId);
   if (profile.error) return null;
@@ -278,7 +289,11 @@ export async function isBusinessOsTenant(inputs: {
 
   const latest = await inputs.onboardingRepository.getLatestMessageAt(inputs.accountId);
   if (latest.error) return null;
-  return latest.data !== null;
+  if (latest.data !== null) return true;
+
+  const plan = await inputs.planRepository.findEntitlementInputs(inputs.accountId);
+  if (plan.error || !plan.data) return null;
+  return plan.data.plan !== null;
 }
 
 async function ensureRow(
@@ -293,7 +308,7 @@ async function ensureRow(
   }
 
   // RC-4: a champion must say whether the access ends. Silence is not "forever".
-  if (op.cohort === 'champion' && op.expiresAt === undefined) {
+  if (championEndDecisionMissing(op.cohort, op.expiresAt)) {
     return { ok: false, status: 400, error: 'expires_at_required_for_champion' };
   }
 
@@ -329,7 +344,7 @@ async function setCohort(
   ctx: AdminOpContext,
   plan: BusinessOsAccountPlan
 ): Promise<AdminOpOutcome> {
-  if (op.cohort === 'champion' && op.expiresAt === undefined) {
+  if (championEndDecisionMissing(op.cohort, op.expiresAt)) {
     return { ok: false, status: 400, error: 'expires_at_required_for_champion' };
   }
 
@@ -508,7 +523,7 @@ async function resetPlanState(
     return { ok: false, status: 409, error: 'tier_assigned', details: { tier: plan.tier } };
   }
 
-  if (op.cohort === 'champion' && op.expiresAt === undefined) {
+  if (championEndDecisionMissing(op.cohort, op.expiresAt)) {
     return { ok: false, status: 400, error: 'expires_at_required_for_champion' };
   }
   if (op.cohort === 'trial' && !op.trialClock) {

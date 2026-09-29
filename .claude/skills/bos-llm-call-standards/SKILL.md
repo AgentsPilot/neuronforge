@@ -110,6 +110,9 @@ Every AI action writes exactly one `audit_trail` entry that summarises its LLM c
 - **AI entries are operator-only.** Owner reads exclude them in the query (`AuditTrailRepository.listOwnerEntries`). The owner RLS policy hides them from direct reads (`supabase/migrations/20260930_audit_trail_owner_policy_hides_ai_actions.sql`). A browser can never write one (the allow-list in `lib/audit/requestSchemas.ts`).
 - **Server-only:** `aiActionAudit.ts` reaches the provider layer and `node:async_hooks`. No `'use client'` module may import it, even indirectly (the PR #53 build failure). Keep pure helpers in dependency-free files, like `lib/business-os/briefing/briefingLines.ts`, and run `next build`.
 - **Known limit (KI-B):** the audit service queues and batches, so an entry can be delayed or occasionally lost; the calls are always in the usage ledger under the same group.
+- **The second output: the credit charge** (credit deduction slice 3b-ii; `docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_3_WORKPLAN.md` §3.7–§3.8). After the entry is queued and the unpriced-call check has run, `runAiAction` writes **one charge row** through `recordAiCharge` (`lib/business-os/llm/aiChargeRecorder.ts`) → `BusinessOsCreditChargeRepository`, joined to the entry by `details.actionId`. It is the **only sanctioned awaited write** in `runAiAction`: **awaited, budgeted at `BOS_AI_CHARGE_WRITE_BUDGET_MS` (1,500 ms), never retried, never throws**, built from the **same** call list and the **same** decision (identities and failure) as the entry, so the two never disagree. A failure is one `error` event (`bos_ai_charge_write_failed` / `bos_ai_charge_not_written`), never an exception into the action; a timed-out write's fate is *unknown*. `service = 'ai'` comes from `AI_CHARGE_SERVICE`, never from input. An action with no call awaits nothing. It records in every entitlements mode and refuses nothing.
+  - **Do not** add another awaited write, a retry, or a second writer of the ledger; do not read the account or group for the charge from anywhere but `runAiAction`. The recorder and `chargeResolver.ts` import only **types** from `aiActionAudit.ts` (no runtime cycle; a source guard pins it).
+  - **A test that runs the real `runAiAction`** with a real call and valid identities reaches this write: `jest.mock('@/lib/business-os/llm/aiChargeRecorder', …)` in that suite (or fake the repository), so no charge write leaves the test process.
 
 ## Standard 7: Proof (the definition of done)
 
@@ -155,6 +158,7 @@ Layer 2 moved every catalogued call onto settings an operator can change without
 - [ ] The model and temperature come from `resolveBosLlmSettings`, inside `withModelFallback`; `enabled: false` makes no call; the default is in `modelSettingsPolicy.ts`
 - [ ] `typecheck:bos-llm` 0 new, baseline unchanged; `check:bos-llm-literals` passes; the LLM Usage tab green; the usage snapshot unchanged
 - [ ] The action is wrapped in `runAiAction` (one entry, never awaited); failures signalled with `markFailed`; no `'use client'` path imports it; `next build` passes
+- [ ] The charge stays the only awaited write in `runAiAction` (budgeted, never throws, one writer); a suite running the real `runAiAction` with a real call mocks `aiChargeRecorder` or the repository
 
 ## Anti-patterns (probable bugs)
 
@@ -164,8 +168,10 @@ Layer 2 moved every catalogued call onto settings an operator can change without
 - **`as never` / `as any` around a context or attribution** to silence the catalog's types. Fix the call name instead.
 - **A fresh `newBosGroupId()` per call** instead of per action (one action becomes many groups).
 - **`await AuditTrail.log(…)`** on a request path, or an audit entry per call.
+- **A charge written outside `runAiAction`,** a charge write with no time budget, or one whose failure can throw into the action.
 - **A direct `openai.*` call "just for this one feature",** or a model name or price literal in feature code.
 - **`model: 'gpt-4o'` or `temperature: 0.7` at a call site** — including the disguised forms `settings.temperature ?? 0.7`, `OPENAI_MODELS.GPT_4O_MINI`, and a request built OUTSIDE the `withModelFallback` callback so the retry re-sends the refused model.
+- **Borrowing a type or helper from `lib/business-os/entitlements/`** (for example `Labels` for diary text) without registering the file with the entitlements guard. It turned main's entitlements check red for three merges (#130). Follow the `business-os-entitlements` skill in the same change.
 - **A shared helper that imports the catalog.** Every file that imports the helper is then pulled into the `typecheck:bos-llm` gate with it. This is why `lib/platformAccount.ts` imports nothing: the catalog imports it, never the reverse (Layer 1.5 OQ-G).
 
 ## When NOT to use

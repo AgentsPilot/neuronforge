@@ -574,10 +574,31 @@ describe('GET /accounts/[accountId] — the contract the admin screen renders (Q
     expect(write.status).toBe(200);
   });
 
+  it('L-4 (invite-only signup, Slice 1b): a plan row alone makes a tenant, on the read AND the write path', async () => {
+    // An invited champion before onboarding: no profile, no onboarding message,
+    // but a plan row written at redemption.
+    state.isTenant = false;
+    state.plan = { ...CHAMPION_PLAN };
+
+    const read = await accountRoute.GET(
+      get(`/api/admin/business-os/entitlements/accounts/${ACCOUNT}`),
+      { params: { accountId: ACCOUNT } }
+    );
+    const write = await accountRoute.POST(
+      post(`/api/admin/business-os/entitlements/accounts/${ACCOUNT}`, { op: 'set_cohort', cohort: 'trial', reason: 'support case' }),
+      { params: { accountId: ACCOUNT } }
+    );
+
+    expect(read.status).toBe(200);
+    expect(write.status).toBe(200);
+  });
+
   it('404s an id that is not a Business OS account', async () => {
     // Was a 200 with a confident panel until 2026-09-24: an agent-platform-only
     // id, or a deleted account, read as a Business OS account with a plan.
+    // Slice 1b (L-4): "not a tenant" now also means "no plan row".
     state.isTenant = false;
+    state.plan = null;
 
     const response = await accountRoute.GET(
       get(`/api/admin/business-os/entitlements/accounts/${ACCOUNT}`),
@@ -590,6 +611,7 @@ describe('GET /accounts/[accountId] — the contract the admin screen renders (Q
 
   it('the write path answers the same way, so the two cannot disagree', async () => {
     state.isTenant = false;
+    state.plan = null;
 
     const response = await accountRoute.POST(
       post(`/api/admin/business-os/entitlements/accounts/${ACCOUNT}`, {

@@ -18,6 +18,14 @@ const mockGetUser = jest.fn();
  * values — so this file keeps asserting exactly what it asserted before, with
  * no configuration read and no I/O.
  */
+// Credit deduction slice 3b-ii (SA Q-7 / SF-3): this suite runs the real
+// runAiAction, whose credit charge write would otherwise leave the process
+// (and reach a real database if the shell exported real credentials).
+jest.mock('@/lib/business-os/llm/aiChargeRecorder', () => ({
+  AI_CHARGE_SERVICE: 'ai',
+  recordAiCharge: jest.fn().mockResolvedValue(undefined),
+}));
+
 jest.mock('@/lib/business-os/llm/modelSettings', () => {
   const actual = jest.requireActual('@/lib/business-os/llm/modelSettings');
   return {

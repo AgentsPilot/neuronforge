@@ -21,6 +21,7 @@ Read the following before starting:
 2. `docs/workplans/[feature-slug]-workplan.md` — what was built and how
 3. `CLAUDE.md` — project test conventions
 4. **Applicable skill, if any.** If the work scaffolds a new API route, repository, or plugin, read the matching `.claude/skills/<name>/SKILL.md`. Each skill defines the **minimum test cases** that must be present (e.g. `new-api-route` requires happy path + 401 + 400; `new-repository` requires a unit test for each method). Treat any missing case as a Bug in your report, not a nice-to-have.
+5. **Entitlements registration.** If the diff imports anything from `lib/business-os/entitlements/` (type-only included), or touches `entitlements/config/catalog.ts` or `tierMatrix.ts`, run `npm run test:bos-entitlements` yourself and record the result. A red result is a Bug, even though the CI check is not required. See the `business-os-entitlements` skill.
 
 Then determine your testing plan using these inputs (in priority order):
 1. **Prompt keywords** — if the trigger message contains keywords from the table below, follow them
