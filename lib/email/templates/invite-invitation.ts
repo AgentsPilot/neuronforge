@@ -37,7 +37,8 @@
  */
 
 import type { Locale } from '@/lib/i18n/config';
-import { emailButton, formatEmailDate, wrapInBrandedTemplate, type BrandingData } from './base-template';
+import { platformEmailBranding } from '@/lib/email/platformBranding';
+import { emailButton, formatEmailDate, wrapInBrandedTemplate } from './base-template';
 
 /** What the invitation offers, decided by the caller from the invite row. */
 export type InvitationOffer =
@@ -134,13 +135,6 @@ const COPY: Record<Locale, Copy> = {
   },
 };
 
-/** The platform's own look: no business branding (the invitee has no business yet). */
-const PLATFORM_BRANDING: Omit<BrandingData, 'locale'> = {
-  businessName: 'AgentPilot',
-  primaryColor: '#0f172a',
-  secondaryColor: '#334155',
-};
-
 /** HTML-escape text the admin typed. Each template keeps its own (no shared helper exists). */
 function escapeHtml(value: string): string {
   return value
@@ -168,6 +162,9 @@ export function generateInviteInvitationEmail(data: InviteInvitationEmailData): 
   text: string;
 } {
   const t = COPY[data.locale] ?? COPY.en;
+  // The platform's own look, with the AgentPilot wordmark: the invitee has no
+  // business yet (Slice 3a, E-2).
+  const branding = platformEmailBranding(data.locale);
   const isRTL = data.locale === 'he';
   const dir = isRTL ? 'rtl' : 'ltr';
   const align = isRTL ? 'right' : 'left';
@@ -195,7 +192,7 @@ export function generateInviteInvitationEmail(data: InviteInvitationEmailData): 
       <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.6;"><span dir="ltr">${escapeHtml(data.planName)}</span> · ${offer
         .map(escapeHtml)
         .join(' · ')}</p>
-      ${emailButton(escapeHtml(t.button), link, { branding: { ...PLATFORM_BRANDING, locale: data.locale } })}
+      ${emailButton(escapeHtml(t.button), link, { branding })}
       <p style="margin: 16px 0 4px; font-size: 13px;">${escapeHtml(t.plainLink)}</p>
       <p dir="ltr" style="margin: 0 0 16px; font-size: 13px; text-align: left; word-break: break-all; font-family: monospace;">${link}</p>
       <p style="margin: 0 0 16px; font-size: 14px; line-height: 1.6;">${escapeHtml(t.validUntil(expiry))}</p>
@@ -219,7 +216,7 @@ export function generateInviteInvitationEmail(data: InviteInvitationEmailData): 
 
   return {
     subject: subjectSafe(name ? t.subject(name) : t.subjectFallback),
-    html: wrapInBrandedTemplate(content, { ...PLATFORM_BRANDING, locale: data.locale }),
+    html: wrapInBrandedTemplate(content, branding),
     text,
   };
 }
