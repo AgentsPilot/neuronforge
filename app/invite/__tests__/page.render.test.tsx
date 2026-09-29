@@ -4,6 +4,11 @@
  * The public invite page: the token is read from the fragment, stripped from
  * the address BEFORE the request, sent only in a POST body; each state renders
  * in the invite's own language (RTL for Hebrew); the note is text, never HTML.
+ *
+ * Slice 1a: the `existing_account` state sends the person to the normal
+ * sign-in page and signs nobody in; a signed-in visitor is asked to sign out
+ * first (L-8). The browser session and the audited sign-out are faked at the
+ * module boundary, so the real `useSignedInVisitor` hook runs.
  */
 
 import '@testing-library/jest-dom';
@@ -11,6 +16,34 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+
+const session = {
+  user: null as { id: string; email: string | null } | null,
+  getSessionRejects: false,
+  /** QA-3: when set, getSession waits for this promise before answering. */
+  gate: null as Promise<void> | null,
+  signOuts: [] as Array<Record<string, unknown>>,
+};
+
+jest.mock('@/lib/supabaseClient', () => ({
+  supabase: {
+    auth: {
+      getSession: async () => {
+        if (session.gate) await session.gate;
+        if (session.getSessionRejects) throw new Error('storage unavailable');
+        return { data: { session: session.user ? { user: session.user } : null }, error: null };
+      },
+    },
+  },
+}));
+
+jest.mock('@/lib/client/auth-actions', () => ({
+  signOutUser: async (opts: Record<string, unknown>) => {
+    session.signOuts.push(opts);
+    session.user = null;
+    return { ok: true };
+  },
+}));
 
 import InvitePage from '../page';
 import { INVITE_PAGE_COPY } from '../invitePageCopy';
@@ -37,6 +70,10 @@ let calls: Array<{ url: string; init?: RequestInit }> = [];
 let respond: () => { status: number; body: unknown } = () => ({ status: 200, body: { success: true, data: validData } });
 
 beforeEach(() => {
+  session.user = null;
+  session.getSessionRejects = false;
+  session.gate = null;
+  session.signOuts = [];
   events = [];
   calls = [];
   respond = () => ({ status: 200, body: { success: true, data: validData } });
@@ -160,6 +197,152 @@ describe('each state', () => {
   });
 });
 
+describe('Slice 1a: the invited email already has an account (FR-8a)', () => {
+  const existing = (language = 'en') => ({
+    status: 200,
+    body: { success: true, data: { state: 'existing_account', language, inviterDisplayName: 'Dana' } },
+  });
+
+  it('says so and sends the person to the normal sign-in page; no offer, no note, no form', async () => {
+    respond = () => existing();
+    render(<InvitePage />);
+    const section = await screen.findByTestId('invite-state-existing_account');
+    expect(section).toHaveTextContent(INVITE_PAGE_COPY.en.existingAccountHeading);
+    expect(section).toHaveTextContent(INVITE_PAGE_COPY.en.existingAccountBody);
+    const signIn = screen.getByTestId('invite-sign-in');
+    expect(signIn).toHaveAttribute('href', expect.stringContaining('/login'));
+    expect(signIn.getAttribute('href')).not.toContain(TOKEN);
+    expect(screen.queryByTestId('invite-plan')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('invite-note')).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(calls).toHaveLength(1);
+  });
+
+  it.each([
+    ['he', 'rtl'],
+    ['es', 'ltr'],
+  ])('renders in the invite language (%s, %s)', async (language, dir) => {
+    respond = () => existing(language);
+    render(<InvitePage />);
+    const section = await screen.findByTestId('invite-state-existing_account');
+    const copy = INVITE_PAGE_COPY[language as 'he' | 'es'];
+    expect(section).toHaveTextContent(copy.existingAccountHeading);
+    expect(screen.getByTestId('invite-sign-in')).toHaveTextContent(copy.signIn);
+    expect(screen.getByTestId('invite-page')).toHaveAttribute('dir', dir);
+  });
+});
+
+describe('Slice 1a: a signed-in visitor is asked to sign out first (L-8)', () => {
+  it('on a valid invite: names the account and offers Sign out; the offer is still visible', async () => {
+    session.user = { id: 'user-1', email: 'someone@example.com' };
+    render(<InvitePage />);
+    const notice = await screen.findByTestId('invite-signed-in');
+    expect(notice).toHaveTextContent("You're signed in as someone@example.com");
+    expect(notice).toHaveTextContent(INVITE_PAGE_COPY.en.signedInBody);
+    expect(screen.getByTestId('invite-state-valid')).toBeInTheDocument();
+  });
+
+  it('on an existing-account invite: shows the notice and hides the Sign in button', async () => {
+    session.user = { id: 'user-1', email: 'someone@example.com' };
+    respond = () => ({
+      status: 200,
+      body: { success: true, data: { state: 'existing_account', language: 'en', inviterDisplayName: 'Dana' } },
+    });
+    render(<InvitePage />);
+    await screen.findByTestId('invite-signed-in');
+    expect(screen.getByTestId('invite-state-existing_account')).toBeInTheDocument();
+    expect(screen.queryByTestId('invite-sign-in')).not.toBeInTheDocument();
+  });
+
+  it.each(['expired', 'revoked', 'used', 'unavailable'])('not shown on a %s invite (nothing to accept)', async (state) => {
+    session.user = { id: 'user-1', email: 'someone@example.com' };
+    respond = () => ({ status: 200, body: { success: true, data: { state, language: 'en', inviterDisplayName: 'Dana' } } });
+    render(<InvitePage />);
+    await screen.findByTestId(`invite-state-${state}`);
+    expect(screen.queryByTestId('invite-signed-in')).not.toBeInTheDocument();
+  });
+
+  it('Sign out goes through the audited sign-out for this browser, then re-checks the invite', async () => {
+    session.user = { id: 'user-1', email: 'someone@example.com' };
+    const user = userEvent.setup();
+    render(<InvitePage />);
+    await screen.findByTestId('invite-signed-in');
+    await user.click(screen.getByRole('button', { name: INVITE_PAGE_COPY.en.signOut }));
+
+    await waitFor(() => expect(screen.queryByTestId('invite-signed-in')).not.toBeInTheDocument());
+    expect(session.signOuts).toEqual([
+      { scope: 'local', user: { id: 'user-1', email: 'someone@example.com' }, method: 'invite-page' },
+    ]);
+    await waitFor(() => expect(calls).toHaveLength(2));
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({ token: TOKEN });
+  });
+
+  it('a signed-out visitor sees no notice', async () => {
+    render(<InvitePage />);
+    await screen.findByTestId('invite-state-valid');
+    expect(screen.queryByTestId('invite-signed-in')).not.toBeInTheDocument();
+  });
+
+  it('an unreadable session is treated as signed out for display only', async () => {
+    session.getSessionRejects = true;
+    render(<InvitePage />);
+    await screen.findByTestId('invite-state-valid');
+    expect(screen.queryByTestId('invite-signed-in')).not.toBeInTheDocument();
+  });
+
+  it('QA-3: the Sign in button stays hidden while the session check is pending, even after the invite check answered', async () => {
+    let release: () => void = () => undefined;
+    session.gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    session.user = { id: 'user-1', email: 'someone@example.com' };
+    respond = () => ({
+      status: 200,
+      body: { success: true, data: { state: 'existing_account', language: 'en', inviterDisplayName: 'Dana' } },
+    });
+    render(<InvitePage />);
+    await screen.findByTestId('invite-state-existing_account');
+    expect(screen.queryByTestId('invite-sign-in')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('invite-signed-in')).not.toBeInTheDocument();
+
+    release();
+    await screen.findByTestId('invite-signed-in');
+    expect(screen.queryByTestId('invite-sign-in')).not.toBeInTheDocument();
+  });
+
+  it('QA-3: a signed-out visitor sees Sign in once the session check answers', async () => {
+    let release: () => void = () => undefined;
+    session.gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    respond = () => ({
+      status: 200,
+      body: { success: true, data: { state: 'existing_account', language: 'en', inviterDisplayName: 'Dana' } },
+    });
+    render(<InvitePage />);
+    await screen.findByTestId('invite-state-existing_account');
+    expect(screen.queryByTestId('invite-sign-in')).not.toBeInTheDocument();
+    release();
+    expect(await screen.findByTestId('invite-sign-in')).toBeInTheDocument();
+  });
+
+  it('QA-6: in Hebrew the email is isolated left-to-right inside the right-to-left sentence', async () => {
+    session.user = { id: 'user-1', email: 'someone@example.com' };
+    respond = () => ({ status: 200, body: { success: true, data: { ...validData, language: 'he' } } });
+    render(<InvitePage />);
+    const notice = await screen.findByTestId('invite-signed-in');
+    expect(notice.textContent).toContain('\u2066someone@example.com\u2069');
+    expect(INVITE_PAGE_COPY.he.signedInHeading('a@b.co')).toMatch(/\u2066a@b\.co\u2069$/);
+    expect(screen.getByTestId('invite-page')).toHaveAttribute('dir', 'rtl');
+  });
+
+  it('with no email on the session, still says someone is signed in', async () => {
+    session.user = { id: 'user-1', email: null };
+    render(<InvitePage />);
+    expect(await screen.findByTestId('invite-signed-in')).toHaveTextContent("You're already signed in");
+  });
+});
+
 describe('language (C-8)', () => {
   it('renders in the invite\'s language, right to left for Hebrew', async () => {
     respond = () => ({ status: 200, body: { success: true, data: { ...validData, language: 'he' } } });
@@ -209,7 +392,7 @@ describe('the note is text, never HTML', () => {
 describe('source rules', () => {
   const read = (file: string) => readFileSync(join(process.cwd(), 'app', 'invite', file), 'utf8');
 
-  it.each(['page.tsx', 'layout.tsx', 'invitePageCopy.ts'])('%s uses no dangerouslySetInnerHTML, LanguageContext, navigator.language or console', (file) => {
+  it.each(['page.tsx', 'layout.tsx', 'invitePageCopy.ts', 'useSignedInVisitor.ts'])('%s uses no dangerouslySetInnerHTML, LanguageContext, navigator.language or console', (file) => {
     const source = read(file).replace(/\/\*[\s\S]*?\*\//g, '');
     expect(source).not.toContain('dangerouslySetInnerHTML');
     expect(source).not.toMatch(/LanguageContext|useLanguage/);

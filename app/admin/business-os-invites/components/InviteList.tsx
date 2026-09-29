@@ -80,6 +80,11 @@ export function InviteList({ invites, onRevoked }: Props) {
                       {day(invite.revokedAt)}: {invite.revokeReason}
                     </p>
                   )}
+                  {invite.openedByExistingAccountAt && (
+                    <p data-testid="invite-existing-account" className="mt-1 text-xs text-amber-300">
+                      Opened by an existing account ({day(invite.openedByExistingAccountAt)})
+                    </p>
+                  )}
                 </td>
                 <td className="px-3 py-2 text-slate-400">{day(invite.firstViewedAt)}</td>
                 <td className="px-3 py-2">

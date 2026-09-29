@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Business OS Invites — issue, list and revoke invite links (invite-only
+ * Business OS Signup Invites — issue, list and revoke invite links (invite-only
  * signup, Slice 0).
  *
  * ── Why this page adds no guard of its own ──────────────────────────────────
@@ -70,7 +70,7 @@ export default function BusinessOsInvitesPage() {
       <header className="border-b border-slate-700">
         <div className="flex flex-wrap items-start justify-between gap-4 pb-4">
           <div>
-            <h1 className="mb-1 text-xl font-semibold text-white">Business OS Invites</h1>
+            <h1 className="mb-1 text-xl font-semibold text-white">Business OS Signup Invites</h1>
             <p className="max-w-3xl text-sm text-slate-400">
               Business OS is invite-only. Create an invite for one email address, copy its link, and follow it here.
               A link is shown once, when you create it.
@@ -112,8 +112,16 @@ export default function BusinessOsInvitesPage() {
         <>
           <EnforcementNote mode={payload.enforcementMode} />
 
+          {/* Keyed by invite so each new link mounts a fresh panel. Without the key,
+              React reuses the previous panel and its "Copied" state carries over to a
+              link that was never copied, and an admin pastes the old one. */}
           {created && (
-            <CreatedLinkPanel link={created.link} email={created.invite.email} onDismiss={() => setCreated(null)} />
+            <CreatedLinkPanel
+              key={created.invite.id}
+              link={created.link}
+              email={created.invite.email}
+              onDismiss={() => setCreated(null)}
+            />
           )}
 
           {creating && (

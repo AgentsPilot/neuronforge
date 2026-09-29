@@ -32,6 +32,7 @@ Before doing anything else:
    - Business OS AI/LLM call → `bos-llm-call-standards`
    - Background job / cron draining a table → `durable-queue-drain`
    - Any claim about a DB column or table → `business-os-schema-check`
+   - **Any import from `lib/business-os/entitlements/`** (type-only imports included), a capability id or tier name written as a literal, or a catalog / tier-matrix change → `business-os-entitlements`. It applies even when the work is not about plans, which is exactly when it has been missed. Run `npm run test:bos-entitlements` before handing over.
    - Business OS Insights → `business-os-insights`; V6 pipeline / `lib/pilot/` → `v6-pipeline`; `/v2/agents/new` → `agent-creation-flow`; calibration → `calibration`
 5. If anything in the requirement is unclear, ask the BA before proceeding
 

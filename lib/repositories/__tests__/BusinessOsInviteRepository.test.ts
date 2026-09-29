@@ -83,6 +83,10 @@ beforeEach(() => {
 });
 
 describe('column constants', () => {
+  it('the admin columns carry the Slice 1a existing-account stamp', () => {
+    expect(BUSINESS_OS_INVITE_ADMIN_COLUMNS.split(', ')).toContain('opened_by_existing_account_at');
+  });
+
   it('no select constant includes token_hash', () => {
     expect(BUSINESS_OS_INVITE_ADMIN_COLUMNS).not.toContain('token_hash');
     expect(BUSINESS_OS_INVITE_PUBLIC_COLUMNS).not.toContain('token_hash');
@@ -265,6 +269,65 @@ describe('findByTokenHashForPublicView', () => {
   });
 });
 
+describe('findInviteeEmailForPublicCheck (Slice 1a, D-12)', () => {
+  it('reads exactly the email column of the one row, by id', async () => {
+    const { client, calls } = recordingClient({ data: { email: 'dana@example.com' }, error: null });
+    const result = await new BusinessOsInviteRepository(client).findInviteeEmailForPublicCheck(ID);
+    expect(result).toEqual({ data: 'dana@example.com', error: null });
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_invites'] },
+      { method: 'select', args: ['email'] },
+      { method: 'eq', args: ['id', ID] },
+      { method: 'maybeSingle', args: [] },
+    ]);
+  });
+
+  it('no row is null data; an error is returned and the email is never logged', async () => {
+    const none = recordingClient({ data: null, error: null });
+    expect(await new BusinessOsInviteRepository(none.client).findInviteeEmailForPublicCheck(ID)).toEqual({
+      data: null,
+      error: null,
+    });
+
+    const ok = recordingClient({ data: { email: 'dana@example.com' }, error: null });
+    await new BusinessOsInviteRepository(ok.client).findInviteeEmailForPublicCheck(ID);
+    const failing = recordingClient({ data: null, error: { message: 'timeout' } });
+    const result = await new BusinessOsInviteRepository(failing.client).findInviteeEmailForPublicCheck(ID);
+    expect(result.error?.message).toBe('timeout');
+    expect(JSON.stringify(logged)).not.toContain('dana@example.com');
+  });
+});
+
+describe('markOpenedByExistingAccount (Slice 1a, FR-8a, D-13)', () => {
+  it('stamps only while the stamp is empty, sets updated_at, and reports true when this call set it', async () => {
+    const { client, calls } = recordingClient({ data: [{ id: ID }], error: null });
+    const result = await new BusinessOsInviteRepository(client).markOpenedByExistingAccount(ID, NOW);
+    expect(result).toEqual({ data: true, error: null });
+    expect(calls.find((call) => call.method === 'update')?.args[0]).toEqual({
+      opened_by_existing_account_at: NOW.toISOString(),
+      updated_at: NOW.toISOString(),
+    });
+    expect(calls).toContainEqual({ method: 'eq', args: ['id', ID] });
+    expect(calls).toContainEqual({ method: 'is', args: ['opened_by_existing_account_at', null] });
+    expect(calls).toContainEqual({ method: 'select', args: ['id'] });
+  });
+
+  it('reports false when the stamp was already set (no row came back)', async () => {
+    const { client } = recordingClient({ data: [], error: null });
+    expect(await new BusinessOsInviteRepository(client).markOpenedByExistingAccount(ID, NOW)).toEqual({
+      data: false,
+      error: null,
+    });
+  });
+
+  it('returns the error on failure', async () => {
+    const { client } = recordingClient({ data: null, error: { message: 'boom' } });
+    const result = await new BusinessOsInviteRepository(client).markOpenedByExistingAccount(ID, NOW);
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('boom');
+  });
+});
+
 describe('markFirstViewed', () => {
   it('stamps first_viewed_at only while it is null, and sets updated_at', async () => {
     const { client, calls } = recordingClient({ data: null, error: null });
@@ -302,8 +365,10 @@ describe('C-13: the service-role reason is written down, and the admin methods a
         'createForAdmin',
         'findByIdForAdmin',
         'findByTokenHashForPublicView',
+        'findInviteeEmailForPublicCheck',
         'listRecentForAdmin',
         'markFirstViewed',
+        'markOpenedByExistingAccount',
         'revokeForAdmin',
       ].sort()
     );
@@ -349,6 +414,8 @@ describe('M-1 (C-3): a database error never carries row values into a log or a r
     ['revokeForAdmin', (repo) => repo.revokeForAdmin({ id: ID, adminId: ADMIN, reason: 'Wrong person', now: NOW })],
     ['findByTokenHashForPublicView', (repo) => repo.findByTokenHashForPublicView(HASH)],
     ['markFirstViewed', (repo) => repo.markFirstViewed(ID, NOW)],
+    ['findInviteeEmailForPublicCheck', (repo) => repo.findInviteeEmailForPublicCheck(ID)],
+    ['markOpenedByExistingAccount', (repo) => repo.markOpenedByExistingAccount(ID, NOW)],
   ];
 
   for (const [label, dbError] of rowLeakingErrors()) {

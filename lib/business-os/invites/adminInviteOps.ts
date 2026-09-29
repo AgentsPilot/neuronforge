@@ -75,6 +75,8 @@ export interface InviteListView {
   revokedAt: string | null;
   revokeReason: string | null;
   redeemedAt: string | null;
+  /** Slice 1a (FR-8a): the invite was opened by an email that already had an account. */
+  openedByExistingAccountAt: string | null;
 }
 
 /** The exact keys of `InviteListView`, for tests that pin the allow-list. */
@@ -94,6 +96,7 @@ export const INVITE_LIST_VIEW_KEYS: ReadonlyArray<keyof InviteListView> = [
   'revokedAt',
   'revokeReason',
   'redeemedAt',
+  'openedByExistingAccountAt',
 ];
 
 /** The one row → view mapper (R-7). Built field by field; nothing is spread. */
@@ -114,6 +117,7 @@ export function toInviteListView(row: BusinessOsInvite, config: EntitlementConfi
     revokedAt: row.revoked_at,
     revokeReason: row.revoke_reason,
     redeemedAt: row.redeemed_at,
+    openedByExistingAccountAt: row.opened_by_existing_account_at,
   };
 }
 

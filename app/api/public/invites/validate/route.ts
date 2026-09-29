@@ -17,6 +17,14 @@
  * only for a body that is not `{ token: string }`, which says nothing about any
  * token. 503 means the lookup itself failed and the visitor should try again.
  *
+ * ── An email that already has an account (Slice 1a, FR-8a) ─────────────────
+ * For a matched, pending invite whose email already has an account, the answer
+ * is `existing_account`: the page sends the person to the normal sign-in page.
+ * Nothing authenticates anyone here, and nothing is burned or changed (BQ-7).
+ * The first such open is audited (`BOS_INVITE_OPENED_BY_EXISTING_ACCOUNT`,
+ * anonymous actor, the invite id only), then flushed before the response,
+ * because a serverless instance can freeze after it (WC-7).
+ *
  * ── Logs ────────────────────────────────────────────────────────────────────
  * The correlation id and the outcome; the invite id only on a match. Never the
  * token, never its hash. (Pino also redacts `token`, as a backstop only.)
@@ -27,11 +35,14 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
+import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import { validateInviteBodySchema } from '@/lib/business-os/invites/inviteSchemas';
 import { viewInviteByToken } from '@/lib/business-os/invites/publicInviteView';
 import { createLogger } from '@/lib/logger';
+import { authAccountRepository } from '@/lib/repositories/AuthAccountRepository';
 import { businessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
+import { AuditTrailService } from '@/lib/services/AuditTrailService';
 
 // Node for node:crypto; dynamic because every answer depends on the request
 // and must never be cached (C-4, R-6).
@@ -39,6 +50,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const logger = createLogger({ module: 'PublicInviteValidateAPI' });
+const auditTrail = AuditTrailService.getInstance();
 
 /** On every response, success or not. */
 const RESPONSE_HEADERS = {
@@ -63,6 +75,7 @@ export async function POST(request: NextRequest) {
   try {
     const outcome = await viewInviteByToken(parsed.data.token, {
       repository: businessOsInviteRepository,
+      accounts: authAccountRepository,
       config: getEntitlementConfig(),
       now: new Date(),
       logger: requestLogger,
@@ -82,6 +95,23 @@ export async function POST(request: NextRequest) {
         : { outcome: outcome.response.state },
       'Invite checked'
     );
+
+    if (outcome.firstOpenByExistingAccount && outcome.inviteId) {
+      // Durable record: the row's `opened_by_existing_account_at`. This is the
+      // investigation trail on top of it. No email, no token, no hash.
+      await auditTrail
+        .log({
+          action: AUDIT_EVENTS.BOS_INVITE_OPENED_BY_EXISTING_ACCOUNT,
+          entityType: 'business_os_invite',
+          entityId: outcome.inviteId,
+          userId: null,
+          actorId: null,
+          details: { correlationId },
+          request,
+        })
+        .catch((err) => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
+      await auditTrail.flush().catch((err) => requestLogger.error({ err }, 'Audit flush failed'));
+    }
 
     return NextResponse.json({ success: true, data: outcome.response }, { status: 200, headers: RESPONSE_HEADERS });
   } catch (error) {

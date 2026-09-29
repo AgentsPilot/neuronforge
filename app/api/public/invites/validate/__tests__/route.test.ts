@@ -5,6 +5,10 @@
  *
  * Public by design: there is no 401 or 403 to test (SA ruling F-2). No auth
  * module is even mocked; the route must not import one.
+ *
+ * Slice 1a: the `existing_account` state (FR-8a, L-3), its once-only audit
+ * entry flushed before the response, and "try again" (never "no account") when
+ * the account lookup fails.
  */
 
 import { readFileSync } from 'fs';
@@ -21,6 +25,15 @@ const state = {
   lookups: 0,
   marks: [] as Array<{ id: string; now: Date }>,
   logs: [] as unknown[],
+  inviteeEmail: 'invitee@example.com',
+  hasAccount: false,
+  accountError: false,
+  accountQuestions: [] as string[],
+  alreadyStamped: false,
+  existingMarks: [] as string[],
+  audit: [] as Array<Record<string, unknown>>,
+  events: [] as string[],
+  flushRejects: false,
 };
 
 jest.mock('@/lib/logger', () => {
@@ -46,6 +59,36 @@ jest.mock('@/lib/repositories/BusinessOsInviteRepository', () => ({
       state.marks.push({ id, now });
       return { data: true, error: null };
     },
+    findInviteeEmailForPublicCheck: async () => ({ data: state.inviteeEmail, error: null }),
+    markOpenedByExistingAccount: async (id: string) => {
+      state.existingMarks.push(id);
+      return { data: !state.alreadyStamped, error: null };
+    },
+  },
+}));
+
+jest.mock('@/lib/repositories/AuthAccountRepository', () => ({
+  authAccountRepository: {
+    emailHasAccount: async (email: string) => {
+      state.accountQuestions.push(email);
+      if (state.accountError) return { data: null, error: new Error('lookup failed') };
+      return { data: state.hasAccount, error: null };
+    },
+  },
+}));
+
+jest.mock('@/lib/services/AuditTrailService', () => ({
+  AuditTrailService: {
+    getInstance: () => ({
+      log: async (entry: Record<string, unknown>) => {
+        state.audit.push(entry);
+        state.events.push('log');
+      },
+      flush: async () => {
+        state.events.push('flush');
+        if (state.flushRejects) throw new Error('flush failed');
+      },
+    }),
   },
 }));
 
@@ -103,6 +146,15 @@ beforeEach(() => {
   state.lookups = 0;
   state.marks = [];
   state.logs = [];
+  state.inviteeEmail = 'invitee@example.com';
+  state.hasAccount = false;
+  state.accountError = false;
+  state.accountQuestions = [];
+  state.alreadyStamped = false;
+  state.existingMarks = [];
+  state.audit = [];
+  state.events = [];
+  state.flushRejects = false;
 });
 
 describe('R-6: route declarations', () => {
@@ -169,6 +221,81 @@ describe('matched states', () => {
     const body = await (await validate({ token: TOKEN })).json();
     expect(body.data).toEqual({ state: expected, language: 'en', inviterDisplayName: 'Dana' });
     expect(state.marks).toHaveLength(0);
+  });
+});
+
+describe('Slice 1a: the invited email already has an account (FR-8a)', () => {
+  beforeEach(() => {
+    state.hasAccount = true;
+  });
+
+  it('answers existing_account with only state, language and the inviter name; no email, id or hash', async () => {
+    const response = await validate({ token: TOKEN });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+    const body = await response.json();
+    expect(body).toEqual({ success: true, data: { state: 'existing_account', language: 'en', inviterDisplayName: 'Dana' } });
+    const text = JSON.stringify(body);
+    expect(text).not.toContain('@');
+    expect(text).not.toContain(INVITE_ID);
+    expect(text).not.toContain(HASH);
+    expect(state.marks).toHaveLength(0);
+    expect(state.existingMarks).toEqual([INVITE_ID]);
+  });
+
+  it('asks the lookup only about the matched invite email, never about request data', async () => {
+    await validate({ token: TOKEN });
+    expect(state.accountQuestions).toEqual(['invitee@example.com']);
+    await validate({ token: generateInviteToken() });
+    expect(state.accountQuestions).toHaveLength(1);
+  });
+
+  it('audits the first open once, anonymously, with the invite id and no email, token or hash, then flushes', async () => {
+    await validate({ token: TOKEN });
+    expect(state.audit).toHaveLength(1);
+    const entry = state.audit[0];
+    expect(entry.action).toBe('BOS_INVITE_OPENED_BY_EXISTING_ACCOUNT');
+    expect(entry.entityType).toBe('business_os_invite');
+    expect(entry.entityId).toBe(INVITE_ID);
+    expect(entry.userId).toBeNull();
+    expect(entry.actorId).toBeNull();
+    const serialised = JSON.stringify({ ...entry, request: undefined });
+    expect(serialised).not.toContain('invitee@example.com');
+    expect(serialised).not.toContain(TOKEN);
+    expect(serialised).not.toContain(HASH);
+    expect(state.events).toEqual(['log', 'flush']);
+  });
+
+  it('a reload after the stamp is set writes no second audit entry', async () => {
+    state.alreadyStamped = true;
+    const body = await (await validate({ token: TOKEN })).json();
+    expect(body.data.state).toBe('existing_account');
+    expect(state.audit).toHaveLength(0);
+    expect(state.events).toEqual([]);
+  });
+
+  it('a rejected flush still answers 200', async () => {
+    state.flushRejects = true;
+    const response = await validate({ token: TOKEN });
+    expect(response.status).toBe(200);
+    expect((await response.json()).data.state).toBe('existing_account');
+  });
+
+  it('a failed account lookup is 503 "try again", never "no account" and never valid', async () => {
+    state.accountError = true;
+    const response = await validate({ token: TOKEN });
+    expect(response.status).toBe(503);
+    expect((await response.json()).error).toBe('unavailable_try_again');
+    expect(state.marks).toHaveLength(0);
+    expect(state.audit).toHaveLength(0);
+  });
+
+  it('no email reaches any log line', async () => {
+    await validate({ token: TOKEN });
+    state.accountError = true;
+    await validate({ token: TOKEN });
+    expect(JSON.stringify(state.logs)).not.toContain('invitee@example.com');
   });
 });
 

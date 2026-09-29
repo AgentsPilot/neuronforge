@@ -185,6 +185,12 @@ describe('labels are honest', () => {
     expect(item?.description).toContain('Business OS');
   });
 
+  it('the invite page is called "Signup Invites" (Slice 1a), and its route is unchanged', () => {
+    const item = sections.flatMap((s) => s.items).find((i) => i.href === '/admin/business-os-invites');
+    expect(item?.name).toBe('Signup Invites');
+    expect(item?.description).toBe('Business OS invite links');
+  });
+
   it('item names are unique (they are the React keys)', () => {
     const names = sections.flatMap((s) => s.items.map((i) => i.name));
     expect(new Set(names).size).toBe(names.length);

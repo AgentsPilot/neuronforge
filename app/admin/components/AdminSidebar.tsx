@@ -135,7 +135,9 @@ const navigationSections: NavSection[] = [
       },
       {
         // Invite-only signup, Slice 0: issue, list and revoke invite links.
-        name: 'Invites',
+        // Named "Signup Invites" (Slice 1a, user request) so it is not read as
+        // team or seat invites, which are a different feature.
+        name: 'Signup Invites',
         href: '/admin/business-os-invites',
         icon: MailPlus,
         description: 'Business OS invite links'

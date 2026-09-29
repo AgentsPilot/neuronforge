@@ -525,6 +525,8 @@ export interface BusinessOsInvite {
   revoke_reason: string | null;
   redeemed_at: string | null;
   redeemed_account_id: string | null;
+  /** Slice 1a (FR-8a): when the invite was first opened by an email that already had an account. */
+  opened_by_existing_account_at: string | null;
   created_at: string;
   updated_at: string;
 }

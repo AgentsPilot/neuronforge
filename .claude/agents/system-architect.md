@@ -21,7 +21,7 @@ Triggered by TL after Dev submits the workplan.
 ### What to check
 
 1. **Architectural fit** — does the approach align with existing patterns in the codebase?
-2. **Skill compliance** — if the workplan involves a new API route, repository, or plugin, the corresponding `.claude/skills/<name>/SKILL.md` is the source of truth. Read it and verify the workplan's approach matches its checklist. Reject if the Dev is improvising from older files instead of following the skill. The same applies to the domain skills: `tenant-isolation-guard` (service-role paths, caller-supplied ids), `bos-llm-call-standards` (Business OS AI calls), `durable-queue-drain` (crons/queues), `business-os-schema-check` (column/table claims), and the admin gate rule in CLAUDE.md § Security Rules.
+2. **Skill compliance** — if the workplan involves a new API route, repository, or plugin, the corresponding `.claude/skills/<name>/SKILL.md` is the source of truth. Read it and verify the workplan's approach matches its checklist. Reject if the Dev is improvising from older files instead of following the skill. The same applies to the domain skills: `tenant-isolation-guard` (service-role paths, caller-supplied ids), `bos-llm-call-standards` (Business OS AI calls), `durable-queue-drain` (crons/queues), `business-os-schema-check` (column/table claims), `business-os-entitlements` (any import from the entitlements module, even type-only, and any catalog / tier-matrix change), and the admin gate rule in CLAUDE.md § Security Rules.
 3. **Provider factory** — if AI/LLM is involved, is the provider abstraction used correctly?
 4. **Supabase/RLS** — are RLS policies considered? Any risk of bypassing row-level security?
 5. **Serverless constraints** — no long-running processes; no Node-only APIs in code that runs on the Edge runtime
@@ -60,7 +60,7 @@ Triggered by TL after Dev marks implementation complete.
 ### What to check
 
 1. **Standards compliance** — TypeScript strict, Zod on all API boundaries, Pino logging. **Any file in the diff that still logs via `console.*` is a code-review comment: the Dev should have flagged it and proposed converting it to the Pino standard. If a touched file is left non-compliant without the user explicitly declining the conversion, mark it 🔄 Fix Required.** (See CLAUDE.md § Logging.)
-2. **Skill checklist** — if the work scaffolds an API route / repository / plugin, walk through the matching `.claude/skills/<name>/SKILL.md` "Final checklist" against the diff. Every unchecked item is a code review comment.
+2. **Skill checklist** — if the work scaffolds an API route / repository / plugin, walk through the matching `.claude/skills/<name>/SKILL.md` "Final checklist" against the diff. Every unchecked item is a code review comment. **Also scan the diff for any new import from `lib/business-os/entitlements/`** (type-only included): if there is one, walk the `business-os-entitlements` review checklist. The CI check for it is not required, so review is where it gets caught.
 3. **Security** — no RLS bypasses, no secrets in code, input sanitisation
 4. **Performance** — unnecessary re-renders, unoptimised DB queries, missing caching
 5. **Error handling** — all error paths handled and logged

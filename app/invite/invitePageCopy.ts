@@ -19,6 +19,10 @@
 
 export type InviteLocale = 'en' | 'he' | 'es';
 
+/** Unicode LEFT-TO-RIGHT ISOLATE and POP DIRECTIONAL ISOLATE (QA-6). */
+export const LTR_ISOLATE = '\u2066';
+export const POP_ISOLATE = '\u2069';
+
 export const INVITE_LOCALES: readonly InviteLocale[] = ['en', 'he', 'es'];
 
 export interface InvitePageCopy {
@@ -43,6 +47,14 @@ export interface InvitePageCopy {
   askForNew: (name: string) => string;
   usedBody: string;
   signIn: string;
+  /** Slice 1a (FR-8a): the invited email already has an account. */
+  existingAccountHeading: string;
+  existingAccountBody: string;
+  /** Slice 1a (L-8): someone is already signed in on this browser. */
+  signedInHeading: (email: string | null) => string;
+  signedInBody: string;
+  signOut: string;
+  signingOut: string;
   notRecognisedHeading: string;
   notRecognisedBody: string;
   errorHeading: string;
@@ -71,6 +83,13 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     askForNew: (name) => `Ask ${name} for a new one.`,
     usedBody: 'If you already have an account, sign in instead.',
     signIn: 'Sign in',
+    existingAccountHeading: 'You already have an account',
+    existingAccountBody:
+      'This invitation was sent to an email address that already has an account. Sign in to continue. Nothing about your account has changed.',
+    signedInHeading: (email) => (email ? `You're signed in as ${email}` : "You're already signed in"),
+    signedInBody: 'An invitation can only be accepted by someone who is signed out. Sign out to continue.',
+    signOut: 'Sign out',
+    signingOut: 'Signing out…',
     notRecognisedHeading: "We don't recognise this invitation",
     notRecognisedBody: 'Check that you opened the whole link, or ask the person who invited you for a new one.',
     errorHeading: "We couldn't check your invitation just now. Please try again.",
@@ -97,6 +116,16 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     askForNew: (name) => `אפשר לבקש הזמנה חדשה מאת ${name}.`,
     usedBody: 'אם כבר יש לך חשבון, אפשר פשוט להתחבר.',
     signIn: 'התחברות',
+    existingAccountHeading: 'כבר יש חשבון עם כתובת המייל הזו',
+    existingAccountBody:
+      'ההזמנה נשלחה לכתובת מייל שכבר יש לה חשבון. אפשר להתחבר כדי להמשיך. שום דבר בחשבון לא השתנה.',
+    // QA-6: the email is wrapped in a left-to-right isolate (U+2066 … U+2069),
+    // so its characters keep their order inside the right-to-left sentence.
+    signedInHeading: (email) =>
+      email ? `החיבור הנוכחי הוא כ־${LTR_ISOLATE}${email}${POP_ISOLATE}` : 'יש כבר חיבור פעיל בדפדפן הזה',
+    signedInBody: 'אפשר לקבל הזמנה רק כשאין חיבור פעיל. צריך להתנתק כדי להמשיך.',
+    signOut: 'התנתקות',
+    signingOut: 'מתנתקים…',
     notRecognisedHeading: 'לא זיהינו את ההזמנה הזו',
     notRecognisedBody: 'כדאי לבדוק שנפתח הקישור המלא, או לבקש הזמנה חדשה ממי ששלח אותה.',
     errorHeading: 'לא הצלחנו לבדוק את ההזמנה כרגע. אפשר לנסות שוב.',
@@ -123,6 +152,13 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     askForNew: (name) => `Pide a ${name} una nueva.`,
     usedBody: 'Si ya tienes una cuenta, inicia sesión.',
     signIn: 'Iniciar sesión',
+    existingAccountHeading: 'Ya tienes una cuenta',
+    existingAccountBody:
+      'Esta invitación se envió a un correo que ya tiene una cuenta. Inicia sesión para continuar. No ha cambiado nada en tu cuenta.',
+    signedInHeading: (email) => (email ? `Has iniciado sesión como ${email}` : 'Ya has iniciado sesión'),
+    signedInBody: 'Solo se puede aceptar una invitación sin haber iniciado sesión. Cierra la sesión para continuar.',
+    signOut: 'Cerrar sesión',
+    signingOut: 'Cerrando sesión…',
     notRecognisedHeading: 'No reconocemos esta invitación',
     notRecognisedBody: 'Comprueba que abriste el enlace completo o pide una nueva a quien te invitó.',
     errorHeading: 'No pudimos comprobar tu invitación en este momento. Inténtalo de nuevo.',
