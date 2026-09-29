@@ -9,6 +9,9 @@
  */
 
 import { createLogger } from '@/lib/logger';
+import { clientFacingCancelReason } from '@/lib/email/templates/translations';
+import { splitClientCancellationReason } from '@/lib/services/bookingCancellationReason';
+import { REASONS_WITHOUT_REBOOKING } from '@/lib/business-os/cancellationReasons';
 import {
   generateMeetingReminderEmail,
   generateOwnerMeetingReminderEmail,
@@ -17,7 +20,8 @@ import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
 import { activitySentence, activityMoment, activityRecord } from '@/lib/business-os/activityText';
 import { BOOKING_LINK_ACTIVITY } from '@/lib/services/LeadBookingLinkService';
 import { formatCurrency } from '@/lib/email/templates/base-template';
-import { sendEmail, resolveOwnerReplyTo, SendEmailResult } from '@/lib/notifications/emailTransport';
+import { sendEmail, resolveOwnerReplyTo } from '@/lib/notifications/emailTransport';
+import { recordEmailSend } from '@/lib/notifications/recordEmailSend';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { safeExternalUrl } from '@/lib/branding/externalUrl';
@@ -353,73 +357,47 @@ async function recordBookingLinkSent(
   if (error) throw error;
 }
 
-async function logEmailSend(params: {
-  userId: string;
-  contactId: string | null;
-  toEmail: string;
-  subject: string;
-  bodyHtml: string;
-  result: SendEmailResult;
-}): Promise<void> {
-  const { userId, contactId, toEmail, subject, bodyHtml, result } = params;
+/**
+ * The cancellation reason as the CLIENT should read it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Three things happen here and each one was a leak.
+ *
+ * 1. The stored `CLIENT_CANCELLED_PREFIX` is English, and must stay English —
+ *    the `booking_cancelled` gap matches it with `.ilike` and
+ *    `CashCancelledUnrefundedDetector` with `.startsWith`. It was going out
+ *    verbatim, so a Hebrew client read "Cancelled by client" about their own
+ *    cancellation. Translated on the way out instead, reusing the client-safe
+ *    phrasing for `client_cancelled` rather than a second copy of the sentence.
+ *
+ * 2. The owner's free text was emailed verbatim, always. It is now withheld when
+ *    they asked for it to be.
+ *
+ * 3. With the note withheld the client used to get nothing. They now get the
+ *    reason code's neutral phrasing, so the email still explains itself.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function cancellationReasonForClient(input: {
+  /** The stored prose, prefix and all. */
+  prose: string | null;
+  /** The structured code, where one exists. */
+  code: string | null;
+  shareNote: boolean;
+  locale: 'en' | 'es' | 'he';
+}): string | undefined {
+  const { byClient, note } = splitClientCancellationReason(input.prose);
 
-  // Skip logging if no contact_id (can't associate with a contact)
-  if (!contactId) {
-    logger.debug({ toEmail, subject }, 'Skipping email log - no contact_id');
-    return;
+  // The client's OWN cancellation: their words, always theirs to read back.
+  if (byClient) {
+    const label = clientFacingCancelReason('client_cancelled', input.locale);
+    if (note) return label ? `${label}: ${note}` : note;
+    return label;
   }
 
-  try {
-    /*
-     * The transport that actually sent it.
-     *
-     * This was `result.provider === 'resend' ? 'resend' : 'resend'` — a ternary
-     * whose two branches are the same value, so every row claimed Resend
-     * whatever had really sent the mail. An SMTP or Gmail send was recorded as
-     * Resend, and the column became unable to hold a fact.
-     *
-     * It cost a real investigation: 63 rows all reading `resend` were taken as
-     * proof the platform was on Resend, while its API key is configured
-     * nowhere — meaning those sends went out over one of the other two
-     * transports and nothing in the database could say which.
-     */
-    const provider = result.provider;
-
-    await emailSendRepository.create({
-      user_id: userId,
-      contact_id: contactId,
-      to_email: toEmail,
-      subject,
-      body_html: bodyHtml,
-      status: result.sent ? 'sent' : 'failed',
-      sent_at: result.sent ? new Date().toISOString() : null,
-      provider,
-      /*
-       * The provider's own id, not null.
-       *
-       * This was hardcoded `null` while the transport discarded Resend's
-       * response body entirely, so no row on the platform had one — and
-       * without it a delivery webhook has no way to find the send an event
-       * belongs to. `opened_at` and `clicked_at` were columns nothing could
-       * ever write.
-       */
-      provider_message_id: result.providerMessageId ?? null,
-      error_message: result.error || null,
-      sequence_id: null,
-      sequence_step_id: null,
-      campaign_id: null,
-      open_count: 0,
-      click_count: 0,
-      delivered_at: null,
-      opened_at: null,
-      clicked_at: null
-    });
-
-    logger.debug({ contactId, subject, sent: result.sent }, 'Email logged to email_sends');
-  } catch (err) {
-    // Non-blocking - just log the error
-    logger.warn({ err, contactId, subject }, 'Failed to log email to email_sends (non-blocking)');
-  }
+  // An owner cancellation. The note only if they shared it, otherwise the
+  // code's neutral phrasing — never the code, never nothing.
+  if (input.shareNote && note) return note;
+  return clientFacingCancelReason(input.code, input.locale);
 }
 
 export class BookingEmailService {
@@ -671,7 +649,7 @@ export class BookingEmailService {
       }
 
       // Log email to email_sends table (non-blocking)
-      logEmailSend({
+      recordEmailSend({
         userId,
         contactId: booking.contact_id,
         toEmail: clientEmail,
@@ -838,7 +816,7 @@ export class BookingEmailService {
       }
 
       // Log email to email_sends table (non-blocking)
-      logEmailSend({
+      recordEmailSend({
         userId,
         contactId,
         toEmail: paymentData.customerEmail,
@@ -906,6 +884,38 @@ export class BookingEmailService {
        * message and points at a page that is about to stop existing.
        */
       offerRebooking?: boolean;
+      /**
+       * Whether the owner's free-text note goes to the client.
+       *
+       * ─────────────────────────────────────────────────────────────────────
+       * DEFAULTS TO TRUE, and only an OWNER cancellation may turn it off.
+       *
+       * When the CLIENT cancels, the note is their own words — there is nothing
+       * to withhold, and hiding it would be withholding it from the person who
+       * wrote it. The client-facing cancel route never passes this.
+       *
+       * When the OWNER cancels, the note field reads like somewhere to keep an
+       * internal remark and it is emailed verbatim. This is the switch that
+       * stops that, leaving the client a neutral phrasing of the reason instead.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      shareNoteWithClient?: boolean;
+      /**
+       * Money the business is still holding for this booking, if any.
+       *
+       * Supplied by `cancelBooking`, which has already worked it out from the
+       * settled payments and nets the refunds off. Passed in rather than
+       * recomputed so the figure the client is told matches the one the owner is
+       * being asked about, to the agora.
+       *
+       * Zero or absent means nothing was paid, or it has all been returned, and
+       * the email says nothing about money at all.
+       */
+      amountHeld?: number;
+      heldCurrency?: string | null;
+      /** Collected before any refund, and how much of it has gone back. */
+      paidAmount?: number;
+      refundedAmount?: number;
     }
   ): Promise<EmailResult> {
     const requestLogger = logger.child({ bookingId, userId, action: 'sendCancellationEmail' });
@@ -913,6 +923,12 @@ export class BookingEmailService {
     try {
       // Fetch user's preferred language from profile
       const locale = await getBusinessLocale(userId);
+      /*
+       * Shared unless the owner said otherwise. `?? true` rather than a truthy
+       * check, so an explicit `false` is honoured while an absent option keeps
+       * the behaviour every existing caller already has.
+       */
+      const shareNoteWithClient = options?.shareNoteWithClient ?? true;
 
       // Fetch booking
       const bookingResult = await schedulingBookingRepository.findById(bookingId, userId);
@@ -970,8 +986,66 @@ export class BookingEmailService {
         serviceName: service.service_name,
         dateTime: startTime,
         timezone: await getBusinessTimezone(userId, booking.timezone),
-        reason: reason || booking.cancellation_reason || undefined,
+        /*
+         * The free text, or ONLY the reason — the owner's choice.
+         *
+         * ─────────────────────────────────────────────────────────────────────
+         * `reason` here is the prose from `cancellation_reason`, which carries
+         * whatever the owner typed. That has always been emailed to the client
+         * verbatim, and the note field reads like somewhere to keep an internal
+         * remark: "not paying, avoid in future" is a reasonable thing to write
+         * down and a terrible thing to send.
+         *
+         * When the owner turns sharing off, the client gets a NEUTRAL phrasing of
+         * the reason code instead — never the code itself, and never the note.
+         * `client_not_paying` is an accurate record and an accusation to receive.
+         *
+         * Falls through to no reason line when the code has no client-safe
+         * phrasing (`test_booking`, `other`), which is better than either.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        reason: cancellationReasonForClient({
+          prose: reason || booking.cancellation_reason || null,
+          code: booking.cancel_reason ?? null,
+          shareNote: shareNoteWithClient,
+          locale,
+        }),
         bookAgainUrl,
+        /*
+         * The figure and the place, as the confirmation carries them.
+         *
+         * Both were available here and neither was passed, so the cancellation
+         * was the thinner of the two emails about the same booking. On a course
+         * or anything else bought without a time it was thinner than empty: no
+         * date, no time, usually no reason, and the details panel rendered as a
+         * blank strip under a struck-through service name.
+         *
+         * Priced from the SERVICE, which is where the confirmation reads it too.
+         */
+        price: service.price ?? undefined,
+        currency: service.currency ?? undefined,
+        /*
+         * What is still held, so the client is not left guessing.
+         *
+         * The platform deliberately does NOT refund on cancellation: a refund
+         * moves real money and belongs to a person. That is right, and it left
+         * the client with a cancelled booking, a charge on their card and an
+         * email that mentioned neither.
+         */
+        amountHeld: options?.amountHeld,
+        heldCurrency: options?.heldCurrency ?? undefined,
+        /*
+         * The full picture, not just what is left.
+         *
+         * `amountHeld` alone cannot distinguish "never paid" from "paid and
+         * refunded in full" — both are zero — and those are opposite messages to
+         * send somebody. `paidAmount` and `refundedAmount` are what separate them.
+         */
+        paidAmount: options?.paidAmount,
+        refundedAmount: options?.refundedAmount,
+        /* So "book again" opens on this service instead of a list of everything. */
+        serviceId: booking.service_id,
+        location: undefined, // TODO: add location support, as on the confirmation
         // Same test as the confirmation: a booking with no start time was never
         // an appointment, so cancelling it is cancelling an order.
         hasSchedule: Boolean(booking.start_time),
@@ -1033,7 +1107,7 @@ export class BookingEmailService {
       }
 
       // Log email to email_sends table (non-blocking)
-      logEmailSend({
+      recordEmailSend({
         userId,
         contactId: booking.contact_id,
         toEmail: clientEmail,
@@ -1148,7 +1222,7 @@ export class BookingEmailService {
         requestLogger.warn({ error: result.error }, 'Failed to send missed-appointment email');
       }
 
-      logEmailSend({
+      recordEmailSend({
         userId,
         contactId: booking.contact_id,
         toEmail: clientEmail,
@@ -1279,7 +1353,7 @@ export class BookingEmailService {
       }
 
       // Log email to email_sends table (non-blocking)
-      logEmailSend({
+      recordEmailSend({
         userId,
         contactId: booking.contact_id,
         toEmail: clientEmail,
@@ -1407,7 +1481,7 @@ export class BookingEmailService {
       }
 
       // Log email to email_sends table (non-blocking)
-      logEmailSend({
+      recordEmailSend({
         userId,
         contactId,
         toEmail: formData.email,
@@ -1508,7 +1582,7 @@ export class BookingEmailService {
       }
 
       // Log email to email_sends table (non-blocking)
-      logEmailSend({
+      recordEmailSend({
         userId,
         contactId,
         toEmail: formData.email,
@@ -1590,6 +1664,42 @@ export class BookingEmailService {
         clientEmail ||
         'there';
 
+      /*
+       * Can the client still act on this reminder?
+       *
+       * ─────────────────────────────────────────────────────────────────────
+       * The reminder has always invited them to reschedule, and the reschedule
+       * route refuses anything inside the service's notice window with
+       * `too_late` and a 400. Nothing compared the two, so the button was a
+       * trap: the client pressed it, waited for a page, and was told they were
+       * late — after being invited.
+       *
+       * It is not an edge case. The lead time comes from `REMINDER_LEADS`
+       * ([1, 2, 3, 24, 48] in `InsightAdvisorCard`) and the window defaults to
+       * 24 hours, so FOUR of the five choices an owner can make produced a dead
+       * button.
+       *
+       * The owner's lead time is deliberately NOT overridden. Somebody who picks
+       * two hours wants a same-day nudge, and sending it a day early because the
+       * platform disagrees is worse than the bug. What changes is the email:
+       * outside the window it says "confirm or change this", inside it says
+       * "don't forget".
+       *
+       * No margin. The test is exactly "more time left than the window". A
+       * draft added an hour for dispatch lag and reading time — an invented
+       * constant. The case it hid is 24 hours against a 24-hour window, where
+       * the link is valid when sent and dead ten minutes later; that is the
+       * owner's to see in the picker, not ours to paper over.
+       *
+       * The service is already loaded above, so this costs no query.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      const noticeHours = Number(
+        (serviceResult.data as { min_notice_hours?: number | null } | null)?.min_notice_hours ?? 24
+      );
+      const hoursUntilStart = (startsAt.getTime() - Date.now()) / 3_600_000;
+      const canStillChange = hoursUntilStart > noticeHours;
+
       const results: boolean[] = [];
       const failures: string[] = [];
 
@@ -1618,7 +1728,14 @@ export class BookingEmailService {
              * without the button; "you have an appointment tomorrow" is still
              * worth sending.
              */
-            manageUrl: manageUrlFor(booking.id, clientEmail, requestLogger),
+            /*
+             * Null once the notice window has closed — see `canStillChange`.
+             * The template renders no button for null and picks a footnote that
+             * does not point at one.
+             */
+            manageUrl: canStillChange
+              ? manageUrlFor(booking.id, clientEmail, requestLogger)
+              : null,
             branding,
             locale,
           });
@@ -1660,7 +1777,7 @@ export class BookingEmailService {
            * end to end and still report nothing for the one automation it was
            * built to measure.
            */
-          logEmailSend({
+          recordEmailSend({
             userId,
             contactId: booking.contact_id ?? null,
             toEmail: clientEmail,
@@ -1736,7 +1853,7 @@ export class BookingEmailService {
 
           // Logged against the same contact the appointment is with: the row
           // is about that booking, whoever the copy went to.
-          logEmailSend({
+          recordEmailSend({
             userId,
             contactId: booking.contact_id ?? null,
             toEmail: ownerEmail,
@@ -1977,7 +2094,7 @@ export class BookingEmailService {
       }
 
       // Log email to email_sends table (non-blocking)
-      logEmailSend({
+      recordEmailSend({
         userId,
         contactId: booking.contact_id,
         toEmail: clientEmail,
@@ -2121,7 +2238,7 @@ export class BookingEmailService {
       }
 
       // Log email to email_sends table (non-blocking)
-      logEmailSend({
+      recordEmailSend({
         userId,
         contactId: booking.contact_id,
         toEmail: clientEmail,
@@ -2194,7 +2311,18 @@ export class BookingEmailService {
 
       // Somewhere the client can actually book — see `resolveBookingUrl`.
       // Never the business's own site: see the note there.
-      const bookAgainUrl = await resolveBookingUrl(userId, profileResult.data);
+      /*
+       * Suppressed for the reasons that make it a contradiction — the same rule
+       * `cancelBooking` applies to the cancellation email.
+       *
+       * A refund for a booking cancelled as `service_discontinued` was ending
+       * with "would you like to book again?" over a link to the service just
+       * withdrawn. The refund email is a second chance to say the same wrong
+       * thing, and it was passing the URL unconditionally.
+       */
+      const bookAgainUrl = REASONS_WITHOUT_REBOOKING.has(booking.cancel_reason ?? '')
+        ? undefined
+        : await resolveBookingUrl(userId, profileResult.data);
 
       // Build client name
       const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
@@ -2232,7 +2360,7 @@ export class BookingEmailService {
       }
 
       // Log email to email_sends table (non-blocking)
-      logEmailSend({
+      recordEmailSend({
         userId,
         contactId: booking.contact_id,
         toEmail: clientEmail,

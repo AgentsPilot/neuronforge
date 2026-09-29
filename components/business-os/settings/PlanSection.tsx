@@ -66,9 +66,25 @@ interface PlanFeature {
  * on a read-only screen, and hiding most of what a plan includes is the opposite
  * of what this section is for.
  */
+/**
+ * A sentence the server named but did not write: a dictionary key, and an ISO
+ * date where the sentence mentions a day.
+ *
+ * Declared here rather than imported from `customerPlanView`, for the reason
+ * every other payload shape in this file is: the component describes what it
+ * receives over HTTP, and importing the server's type would make a UI file
+ * reach into the entitlements module — which `enforcementPoints.test.ts`
+ * refuses, and was right to refuse when this first tried it.
+ */
+interface PlanSentence {
+  key: string;
+  date?: string | null;
+}
+
 interface PlanCategory {
   category: string;
-  label: string;
+  /** A dictionary key, so the heading is read in the viewer's language. */
+  labelKey: string;
   features: PlanFeature[];
   summary: string;
 }
@@ -85,7 +101,7 @@ interface PlanUpgrade {
   name: string;
   monthlyPriceUsd: number;
   availableToBuy: boolean;
-  actionUnavailableBecause: string | null;
+  actionUnavailableBecause: PlanSentence | null;
   adds: PlanCategory[];
   improves: PlanChange[];
   /** Different there, but not rankable — shown as a change, never as a gain. */
@@ -101,15 +117,69 @@ export interface PlanPayload {
   free: boolean;
   state: string | null;
   accessEndsAt: string | null;
-  endsWhen: string | null;
-  whenThisChanges: string | null;
+  endsWhen: PlanSentence | null;
+  whenThisChanges: PlanSentence | null;
   included: PlanCategory[];
   nextPlanUp: PlanUpgrade | null;
-  problem: string | null;
+  problem: PlanSentence | null;
+}
+
+/**
+ * A sentence the server named but did not write.
+ *
+ * The server sends a dictionary key and, where the sentence names a day, an ISO
+ * date — so the wording comes from the platform's own translations and the DATE
+ * is formatted in the reader's locale rather than in English.
+ *
+ * Module-level because two components render these: the section and the
+ * plan-above card below it. `t` and the language are passed in, since the
+ * dictionary lives on the hook.
+ */
+function renderSentence(
+  value: PlanSentence | null | undefined,
+  t: (key: string) => string,
+  language: string
+): string | null {
+  if (!value?.key) return null;
+
+  const text = t(value.key);
+  if (!value.date) return text;
+
+  const day = new Date(value.date);
+  // An unusable date is not a sentence — the same rule the server applies before
+  // it names one at all.
+  if (Number.isNaN(day.getTime())) return null;
+
+  /*
+   * The same map the dashboard and the scheduling dialog use — a bare `en` is a
+   * language, not a locale, and the three the platform speaks each want their
+   * own region for the month name and the day order.
+   */
+  const locale = language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-US';
+
+  return text.replace(
+    '{date}',
+    day.toLocaleDateString(locale, {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      /*
+       * In UTC, because the instant is one.
+       *
+       * A cohort expiry is stored as midnight UTC, and the sentence this fills
+       * used to be built server-side from `getUTCDate()`. Formatting it in the
+       * browser's zone instead moves it a day for every reader west of UTC — an
+       * end date a day early, on the one line of this page that is a promise.
+       */
+      timeZone: 'UTC',
+    })
+  );
 }
 
 export function PlanSection() {
-  const { isRTL } = useLanguage();
+  const { t, isRTL, language } = useLanguage();
+
+  const sentence = (value: PlanSentence | null | undefined) => renderSentence(value, t, language);
   const [plan, setPlan] = useState<PlanPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -117,6 +187,19 @@ export function PlanSection() {
   useEffect(() => {
     let cancelled = false;
 
+    /*
+     * No language on the request, deliberately.
+     *
+     * Plan and feature NAMES are config data and are resolved server-side — from
+     * the reader's own stored preference, not from anything sent here. That
+     * route's guard protects the property that there is nothing to read in a
+     * request, so no `?accountId=` can ever be honoured; a `?lang=` would have
+     * been the first crack in it.
+     *
+     * Re-fetched when the language changes so those names catch up once the
+     * preference is saved. The SENTENCES do not wait for that — they are keys,
+     * rendered below, and switch immediately.
+     */
     fetch('/api/business-os/entitlements/my-plan')
       .then((response) => response.json())
       .then((body) => {
@@ -139,13 +222,14 @@ export function PlanSection() {
     return () => {
       cancelled = true;
     };
-  }, []);
+    // Re-fetched on a language change, so the names follow the interface.
+  }, [language]);
 
   if (loading) {
     return (
       <div className="flex items-center gap-2 py-2 text-sm text-[var(--v2-text-muted)]" aria-busy="true">
         <Loader2 className="w-4 h-4 animate-spin" />
-        <span>Loading your plan…</span>
+        <span>{t('plan.loading')}</span>
       </div>
     );
   }
@@ -153,14 +237,12 @@ export function PlanSection() {
   // A failed fetch and a plan that includes nothing must not look the same.
   if (failed || !plan) {
     return (
-      <Notice>
-        We could not load your plan just now. Nothing has changed about your account — please try again shortly.
-      </Notice>
+      <Notice>{t('plan.problem.unavailable')}</Notice>
     );
   }
 
   if (plan.status !== 'ok') {
-    return <Notice>{plan.problem ?? 'We could not load your plan just now.'}</Notice>;
+    return <Notice>{sentence(plan.problem) ?? t('plan.problem.unavailable')}</Notice>;
   }
 
   return (
@@ -169,22 +251,24 @@ export function PlanSection() {
       <div>
         <div className="flex items-baseline gap-2 flex-wrap">
           <span className="text-base text-[var(--v2-text-primary)]">{plan.name}</span>
-          <span className="text-sm text-[var(--v2-text-muted)]">{priceLine(plan)}</span>
+          <span className="text-sm text-[var(--v2-text-muted)]">{priceLine(plan, t)}</span>
           {/* No plan pill here (user decision, 2026-09-27): the plan name is
               already the first thing on this line, so a pill beside it repeats it.
               The one pill lives in the chrome, beside the logo. */}
         </div>
-        {plan.endsWhen && <p className="text-xs text-[var(--v2-text-muted)] mt-1">{plan.endsWhen}</p>}
+        {sentence(plan.endsWhen) && (
+          <p className="text-xs text-[var(--v2-text-muted)] mt-1">{sentence(plan.endsWhen)}</p>
+        )}
       </div>
 
       {/* Free plans only: what happens when free is not free. Written now so the
           change is something the customer has already read once. */}
-      {plan.whenThisChanges && <Notice>{plan.whenThisChanges}</Notice>}
+      {sentence(plan.whenThisChanges) && <Notice>{sentence(plan.whenThisChanges)}</Notice>}
 
       {/* What you have */}
       <div>
         <h4 className="text-xs uppercase tracking-wide text-[var(--v2-text-muted)] mb-2">
-          What your plan includes
+          {t('plan.includes')}
         </h4>
         {plan.included.length === 0 ? (
           <p className="text-sm text-[var(--v2-text-muted)]">
@@ -194,12 +278,12 @@ export function PlanSection() {
           // Named so a screen reader says which list this is, and so a test can
           // scope to it: an unnamed second list two elements down carries similar
           // numbers, and a positional query silently followed it.
-          <ul className="space-y-2" aria-label="What your plan includes">
+          <ul className="space-y-2" aria-label={t('plan.includes')}>
             {plan.included.map((row) => (
               <li key={row.category} className="flex items-start gap-2">
                 <Check className="w-4 h-4 shrink-0 mt-0.5 text-[var(--v2-primary)]" />
                 <span className="text-sm min-w-0">
-                  <span className="text-[var(--v2-text-primary)]">{row.label}</span>
+                  <span className="text-[var(--v2-text-primary)]">{t(row.labelKey)}</span>
                   <span className="block text-[var(--v2-text-muted)]">{row.summary}</span>
                 </span>
               </li>
@@ -215,6 +299,9 @@ export function PlanSection() {
 }
 
 function NextPlanUp({ upgrade }: { upgrade: PlanUpgrade }) {
+  const { t, language } = useLanguage();
+  const sentence = (value: PlanSentence | null | undefined) => renderSentence(value, t, language);
+
   return (
     <div className="pt-4 border-t border-[var(--v2-border)]">
       <h4 className="text-xs uppercase tracking-wide text-[var(--v2-text-muted)] mb-2 flex items-center gap-1.5">
@@ -237,7 +324,7 @@ function NextPlanUp({ upgrade }: { upgrade: PlanUpgrade }) {
             <li key={row.category} className="flex items-start gap-2">
               <Check className="w-4 h-4 shrink-0 mt-0.5 text-[var(--v2-text-muted)]" />
               <span className="text-sm min-w-0">
-                <span className="text-[var(--v2-text-primary)]">{row.label}</span>
+                <span className="text-[var(--v2-text-primary)]">{t(row.labelKey)}</span>
                 <span className="block text-[var(--v2-text-muted)]">{row.summary}</span>
               </span>
             </li>
@@ -309,7 +396,7 @@ function NextPlanUp({ upgrade }: { upgrade: PlanUpgrade }) {
           <span className="inline-block px-1.5 py-0.5 me-1.5 bg-[var(--v2-bg)] text-[var(--v2-text-muted)] rounded">
             Coming soon
           </span>
-          {upgrade.actionUnavailableBecause}
+          {sentence(upgrade.actionUnavailableBecause)}
         </p>
       )}
     </div>
@@ -326,10 +413,22 @@ function Notice({ children }: { children: React.ReactNode }) {
 }
 
 /** "Free, no end date" or "$79 a month". Reads the flag, never the number alone. */
-function priceLine(plan: PlanPayload): string {
+/**
+ * `t` is passed in rather than reached for: this is a module-level helper, and
+ * the dictionary lives on the hook inside the component.
+ */
+function priceLine(plan: PlanPayload, t: (key: string) => string): string {
   if (plan.free) {
-    return plan.accessEndsAt === null ? 'Free — no end date' : 'Free';
+    return plan.accessEndsAt === null ? t('plan.price.free_no_end') : t('plan.price.free');
   }
-  return plan.monthlyPriceUsd ? `$${plan.monthlyPriceUsd} a month` : '';
+  /*
+   * The price stays in dollars and in digits, which every language reads. What
+   * needed translating was "a month", so the whole line is one key with the
+   * figure substituted — a translator cannot reorder `$79` and `a month` if the
+   * words are glued to the number here.
+   */
+  return plan.monthlyPriceUsd
+    ? t('plan.price.per_month').replace('{amount}', `$${plan.monthlyPriceUsd}`)
+    : '';
 }
 

@@ -245,12 +245,55 @@ export async function POST(request: NextRequest) {
         .select('id')
         .single();
 
-      if (paymentError) {
-        // NOT non-blocking. The booking was about to be marked paid regardless,
-        // which is the exact inversion `invoiceSettlement` was rewritten to
-        // avoid: money recorded nowhere, a booking claiming it arrived, and
-        // nothing refundable. Stripe has the money either way — failing here
-        // means the webhook settles it instead, which is the correct authority.
+      /*
+       * A DUPLICATE IS NOT A FAILURE. IT MEANS THE WEBHOOK GOT HERE FIRST.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * `payment_transactions.stripe_payment_intent_id` is unique, and Stripe's
+       * `payment_intent.succeeded` webhook records the same payment from the
+       * other side. Whichever arrives second violates that constraint — and on
+       * a cold serverless invocation, or a dev compile, it is routinely this
+       * one: the webhook fired while this route was still compiling.
+       *
+       * Treating 23505 like any other insert error cost a real client: the money
+       * was taken and recorded (correctly, and linked to the booking by the
+       * webhook via `metadata.booking_id`), this route returned 500 before
+       * reaching the update below, and so the booking stayed `pending` while its
+       * `payment_status` read `paid`. No confirmation email was sent at all. The
+       * owner saw an unconfirmed booking; the client saw nothing and had paid
+       * €100.
+       *
+       * The constraint did exactly its job — it stopped the money being counted
+       * twice. What was wrong was reading that as "the payment is not recorded".
+       * So the existing row is adopted and the finalisation continues.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const isDuplicate = paymentError?.code === '23505';
+
+      if (isDuplicate) {
+        const { data: existing } = await supabaseServer
+          .from('payment_transactions')
+          .select('id')
+          .eq('stripe_payment_intent_id', data.payment_intent_id)
+          .maybeSingle();
+
+        paymentTransactionId = existing?.id ?? null;
+
+        requestLogger.info(
+          {
+            bookingId: booking.id,
+            paymentIntentId: data.payment_intent_id,
+            paymentTransactionId,
+          },
+          'The webhook recorded this payment first; adopting its transaction and continuing'
+        );
+      } else if (paymentError) {
+        // A real insert failure. Still not non-blocking: the booking was about
+        // to be marked paid regardless, which is the exact inversion
+        // `invoiceSettlement` was rewritten to avoid — money recorded nowhere, a
+        // booking claiming it arrived, and nothing refundable. Stripe has the
+        // money either way, so failing here leaves the webhook to settle it,
+        // which is the correct authority.
         requestLogger.error(
           { err: paymentError, bookingId: booking.id, paymentIntentId: data.payment_intent_id },
           'Could not record the payment; leaving the booking for the webhook to settle'
@@ -299,15 +342,35 @@ export async function POST(request: NextRequest) {
     // the booking UPDATE-to-confirmed (contact_id set) — not inserted here (was double-logging).
     // (Scheduling plugin workplan §2 0.2.)
 
-    // Send booking confirmation email (non-blocking)
+    /*
+     * AWAITED, for the same reason as in `booking/create`.
+     *
+     * A promise dispatched after the response has no owner: the invocation is
+     * frozen when it responds, and the confirmation, the intake request and the
+     * `booking_confirmation_sent` activity are lost together without anything
+     * rejecting. This is the paid path, so the client has just been charged —
+     * the one case where silence is least acceptable.
+     */
     // skipInvoice=true since payment is already completed
-    BookingEmailService.sendBookingConfirmation(booking.id, ownerId, { skipInvoice: true })
-      .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Booking confirmation email failed'));
+    const [confirmation, intakeRequest] = await Promise.allSettled([
+      BookingEmailService.sendBookingConfirmation(booking.id, ownerId, { skipInvoice: true }),
+      // Send intake form request email
+      // This helps clients prepare for their appointment
+      BookingEmailService.sendIntakeFormRequest(booking.id, ownerId),
+    ]);
 
-    // Send intake form request email (non-blocking)
-    // This helps clients prepare for their appointment
-    BookingEmailService.sendIntakeFormRequest(booking.id, ownerId)
-      .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Intake form request email failed'));
+    if (confirmation.status === 'rejected') {
+      requestLogger.warn({ err: confirmation.reason, bookingId: booking.id }, 'Booking confirmation email failed');
+    } else if (!confirmation.value?.sent) {
+      requestLogger.warn(
+        { bookingId: booking.id, error: confirmation.value?.error },
+        'Booking confirmation email was not delivered to any transport'
+      );
+    }
+
+    if (intakeRequest.status === 'rejected') {
+      requestLogger.warn({ err: intakeRequest.reason, bookingId: booking.id }, 'Intake form request email failed');
+    }
 
     /*
      * No email to the owner for a booking, deliberately.

@@ -6,6 +6,7 @@
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
+import type { CancelledBy } from '@/lib/business-os/cancellationReasons';
 import type { BookingStatus } from '@/lib/business-os/bookingStatus';
 import { SLOT_HOLDING_STATUSES } from '@/lib/business-os/bookingStatus';
 import { createLogger } from '@/lib/logger';
@@ -163,6 +164,10 @@ export interface SchedulingBooking {
   timezone: string;
   status: BookingStatus;
   cancellation_reason: string | null;
+  /** Structured cancellation: the code, the note, and who called it off. */
+  cancel_reason?: string | null;
+  cancel_note?: string | null;
+  cancelled_by?: CancelledBy | null;
   payment_status: 'pending' | 'paid' | 'refunded';
   payment_id: string | null;
   notes: string | null;
@@ -206,8 +211,16 @@ export interface SchedulingBookingInsert {
   user_id: string;
   service_id: string;
   contact_id: string; // Required - must create/find contact first
-  start_time: string;
-  end_time: string;
+  /**
+   * Null for a service that is not scheduled.
+   *
+   * A course or a product is bought, not booked into a slot. The column has
+   * always been nullable and the public booking route has always written null
+   * for one; this type simply said otherwise, which is why the owner-side path
+   * could not express it.
+   */
+  start_time: string | null;
+  end_time: string | null;
   timezone?: string;
   status?: BookingStatus;
   payment_status?: 'pending' | 'paid' | 'refunded';
@@ -219,6 +232,9 @@ export interface SchedulingBookingInsert {
 export interface SchedulingBookingUpdate {
   status?: BookingStatus;
   cancellation_reason?: string | null;
+  cancel_reason?: string | null;
+  cancel_note?: string | null;
+  cancelled_by?: CancelledBy | null;
   payment_status?: 'pending' | 'paid' | 'refunded';
   payment_id?: string | null;
   internal_notes?: string | null;
@@ -1310,11 +1326,33 @@ export class SchedulingBookingRepository {
   async cancel(
     id: string,
     userId: string,
-    reason?: string
+    reason?: string,
+    /**
+     * The structured half: a code from `cancellationReasons`, the note behind it,
+     * and who called it off.
+     *
+     * Separate from `reason` rather than replacing it. `reason` is the prose
+     * `cancellation_reason` has always held — including the
+     * `CLIENT_CANCELLED_PREFIX` that a gap and a detector still parse — and
+     * rewriting it would break them. This adds the columns those readers should
+     * move to, without moving them today.
+     *
+     * Optional at this layer only because rows cancelled by older code paths
+     * exist; the API requires a code on everything new.
+     */
+    structured?: {
+      code?: string | null;
+      note?: string | null;
+      cancelledBy?: CancelledBy | null;
+    }
   ): Promise<SchedulingRepositoryResult<SchedulingBooking>> {
     return this.update(id, userId, {
       status: 'cancelled',
-      cancellation_reason: reason || null
+      cancellation_reason: reason || null,
+      cancel_reason: structured?.code || null,
+      // Trimmed to null: '' would read as a note that exists and says nothing.
+      cancel_note: structured?.note?.trim() || null,
+      cancelled_by: structured?.cancelledBy || null
     });
   }
 

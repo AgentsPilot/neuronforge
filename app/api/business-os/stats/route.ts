@@ -11,6 +11,7 @@ import { getUser } from '@/lib/auth';
 import { computeStageFlow, parseStageMove } from '@/lib/business-os/insight/stageFlow';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { DISPATCHED_EMAIL_STATUSES } from '@/lib/business-os/emailSendStatus';
 import { WebsiteAnalyticsRepository } from '@/lib/repositories/WebsiteAnalyticsRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { intakeRepository } from '@/lib/repositories/IntakeRepository';
@@ -31,6 +32,7 @@ import {
   type ProfileField,
   type InvoiceField,
 } from '@/lib/business-os/setup/profileReadiness';
+import { cancelledMoneyOf, cancelledPlanMoneyOf } from '@/lib/payments/moneyItems';
 import { UNATTRIBUTED_SERVICE_ID } from '@/lib/business-os/reports/constants';
 import { resolveCapabilityKeys } from '@/lib/business-os/businessShape.server';
 
@@ -303,6 +305,16 @@ interface CapabilityStats {
     charged_transactions_30d?: number;
     failed_transactions_30d: number;
     refunded_30d: number;
+    /**
+     * Money billed or agreed and then called off, all-time, net of refunds.
+     *
+     * NOT `cancelled_30d` — that one is a count of cancelled BOOKINGS and lives
+     * under `scheduling`. Two different things, and naming them alike once
+     * already made them read as one.
+     */
+    lost_potential_amount: number;
+    /** How many cancelled invoices and stopped plan phases make up that sum. */
+    lost_potential_count: number;
     invoices_sent_30d: number;
     invoices_paid_30d: number;
     invoices_overdue: number;
@@ -640,12 +652,30 @@ export async function GET(request: NextRequest) {
         .select('amount')
         .eq('user_id', user.id)
         .in('status', ['pending', 'sent', 'overdue']),
-      // Email: emails sent in last 30 days (use email_sends table)
+      /*
+       * Email: how much mail actually LEFT the platform in the last 30 days.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * `.in(DISPATCHED_EMAIL_STATUSES)`, not `.eq('status', 'sent')`.
+       *
+       * The delivery webhook rewrites `status` to `bounced` or `complained`
+       * when the provider reports one — days after the send. Asking for 'sent'
+       * exactly meant those rows silently LEFT this count, so a figure that can
+       * only ever go up would start going down, with nothing on the dashboard
+       * accounting for it. A bounced email was still sent; the question here is
+       * how much mail went out.
+       *
+       * `failed` is excluded because it never went out — and note that its
+       * `sent_at` IS non-null, written optimistically when the send was
+       * attempted, so the `.gte('sent_at', …)` below does not exclude it. This
+       * status list is the only thing that does.
+       * ───────────────────────────────────────────────────────────────────────
+       */
       supabaseServer
         .from('email_sends')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', user.id)
-        .eq('status', 'sent')
+        .in('status', [...DISPATCHED_EMAIL_STATUSES])
         .gte('sent_at', periodStart),
       // Email: active sequences
       supabaseServer
@@ -1297,7 +1327,23 @@ export async function GET(request: NextRequest) {
       .from('payment_plan_installments')
       .select('amount')
       .eq('user_id', user.id)
-      .in('status', ['pending', 'overdue']);
+      .in('status', ['pending', 'overdue'])
+      /*
+       * Only stages nothing else is counting.
+       *
+       * Billing a stage RAISES an invoice for the same money and writes its id
+       * back onto the stage. From that moment the debt is in `pendingInvoicesAmount`
+       * above, and adding the stage to it counted the same money twice — the
+       * figure below is their SUM, so every billed-but-unpaid stage inflated
+       * `totalOwedAmount` by its own amount.
+       *
+       * The same rule the money list uses (`billedAsAnEntry` in `moneyItems`), so
+       * the reports page and the orders page cannot disagree about one debt.
+       *
+       * A stage with no invoice is still counted: an accepted milestone waiting
+       * on the owner is agreed money with nothing else representing it.
+       */
+      .is('invoice_id', null);
 
     if (installmentError) {
       // Said out loud. Swallowed, this reports a business with live plans as
@@ -1310,6 +1356,90 @@ export async function GET(request: NextRequest) {
       0
     );
     const planPendingCount = unpaidInstallments?.length || 0;
+
+    /**
+     * Potential money lost: billed or agreed, then called off.
+     *
+     * Feeds the reports page's Money Lost card, and only that.
+     *
+     * NOT the orders page: that list is money in and out — what arrived and what
+     * is still coming — and a write-off is neither. NOT the insight dashboard
+     * either, where three detectors already report cancellations from the BOOKING
+     * price on a window; a second all-time figure derived from the INVOICE would
+     * disagree with them the moment a discount or an uninvoiced booking pulled
+     * the two apart. See `cancelledMoneyOf` for the full note.
+     *
+     * ── The rule lives in `moneyItems`, not here ──────────────────────────────
+     * `cancelledMoneyOf` / `cancelledPlanMoneyOf` are shared with the orders
+     * money engine on purpose. Both take loose rows so this route can hand them
+     * raw DB records. Do not inline the arithmetic: it nets refunds, and a second
+     * copy that forgot to would disagree with the refund card by exactly the
+     * refunded amount while looking perfectly reasonable.
+     *
+     * ── All-time, like the owed figures above ─────────────────────────────────
+     * Not windowed, for the same reason `planOwedAmount` is not: a loss does not
+     * stop being a loss on day 31, and the pending-invoice figures beside it are
+     * all-time too despite the `_30d` in the names they feed. The reader is told
+     * which it is in the card's own subtitle.
+     */
+    const [cancelledInvoicesResult, cancelledStagesResult] = await Promise.all([
+      supabaseServer
+        .from('payment_invoices')
+        .select('status, amount, refunded_amount, currency')
+        .eq('user_id', user.id)
+        .eq('status', 'cancelled')
+        /*
+         * Sent only. A binned draft lost nobody anything — the client was never
+         * told a number, so no number was ever coming. `voidInvoice` cancels
+         * drafts alongside sent invoices, so this filter is load-bearing, not
+         * defensive. Mirrors why `OUTSTANDING_STATUSES` excludes drafts.
+         */
+        .not('sent_at', 'is', null),
+      supabaseServer
+        .from('payment_plan_installments')
+        .select('status, amount')
+        .eq('user_id', user.id)
+        .eq('status', 'cancelled')
+        /*
+         * A cancelled stage that HAS an invoice is already counted above as that
+         * cancelled invoice. Counting both writes the same phase off twice — the
+         * identical trap `.is('invoice_id', null)` avoids for owed money.
+         */
+        .is('invoice_id', null),
+    ]);
+
+    if (cancelledInvoicesResult.error || cancelledStagesResult.error) {
+      // Said out loud rather than swallowed: silently reporting zero lost reads
+      // as a clean record the business has not necessarily earned.
+      requestLogger.warn(
+        { err: cancelledInvoicesResult.error || cancelledStagesResult.error },
+        'Could not read cancelled money for the lost-potential figure'
+      );
+    }
+
+    const lostFromInvoices = (cancelledInvoicesResult.data || []).reduce(
+      (sum: number, row: { status: string; amount: number; refunded_amount?: number | null }) =>
+        sum +
+        cancelledMoneyOf({
+          status: row.status,
+          amount: row.amount,
+          refunded: row.refunded_amount,
+          // Already filtered to sent in the query; naming it keeps the shared
+          // rule's second guard meaningful rather than accidentally satisfied.
+          sentAt: 'sent',
+        }),
+      0
+    );
+
+    const lostFromStages = (cancelledStagesResult.data || []).reduce(
+      (sum: number, row: { status: string; amount: number }) =>
+        sum + cancelledPlanMoneyOf({ status: row.status, amount: row.amount, invoiceId: null }),
+      0
+    );
+
+    const lostPotentialAmount = lostFromInvoices + lostFromStages;
+    const lostPotentialCount =
+      (cancelledInvoicesResult.data?.length || 0) + (cancelledStagesResult.data?.length || 0);
 
     /** Everything a client still owes, however it was arranged. */
     const totalOwedAmount = pendingInvoicesAmount + planOwedAmount;
@@ -2055,6 +2185,8 @@ export async function GET(request: NextRequest) {
          * refund, which is the thing being counted.
          */
         refunded_30d: (refundLedger30d ?? []).length,
+        lost_potential_amount: lostPotentialAmount,
+        lost_potential_count: lostPotentialCount,
         invoices_sent_30d: invoiceCounts.sent,
         invoices_paid_30d: invoiceCounts.paid,
         invoices_overdue: overdueInvoices || 0,

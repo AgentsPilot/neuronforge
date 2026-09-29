@@ -22,6 +22,7 @@ import { WebsiteBlockRepository, WebsiteBlock } from '@/lib/repositories/Website
 import { WebsiteContentRepository, WebsiteContent, SectionType } from '@/lib/repositories/WebsiteContentRepository';
 import { SchedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { loadServicePaymentPlans, type ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
+import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { formatPrice } from '@/lib/website-builder/servicePrice';
 import { toServiceCard } from '@/lib/website-builder/serviceCard';
 
@@ -326,8 +327,23 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
       const sectionName = BLOCK_TO_SECTION_MAP[block.block_type];
 
-      // For landing pages, inject live service data into pricing and CTA blocks
-      if (isLandingPage) {
+      /*
+       * A pricing or CTA block that NAMES a service follows that service —
+       * wherever the block lives.
+       *
+       * This read `if (isLandingPage)`, so the identical block on an ordinary
+       * website page kept the price, name and journey flags it was saved with
+       * for ever, while the one on a landing page tracked its service. The live
+       * list was even fetched for it (`hasPricingBlock` / `hasCtaBlock` above)
+       * and then thrown away.
+       *
+       * The condition now says what actually matters: does this block name a
+       * service. A block that names none — a homepage's own hand-written
+       * pricing table — falls straight through exactly as before.
+       */
+      const namesAService = Boolean((block.content as Record<string, unknown>)?.serviceId);
+
+      if (isLandingPage || namesAService) {
         // PRICING: Inject live service data for accurate pricing
         /*
          * NOT gated on `liveServices.length > 0`.
@@ -454,23 +470,34 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       // SERVICES: Always use live services from Scheduling capability
       if (block.block_type === 'services') {
         if (liveServices.length > 0) {
-          // Get saved services to preserve hidden flags
-          const savedServices = (block.content as Record<string, unknown>)?.services as Array<{ name: string; hidden?: boolean }> | undefined;
-          const hiddenMap = new Map<string, boolean>();
+          /*
+           * Which services the owner chose to hide — keyed by ID, not by name.
+           *
+           * The name was the only key, so RENAMING a service silently lost its
+           * hidden flag and a service deliberately kept off the page reappeared
+           * on it. The name is still read as a fallback, because blocks saved
+           * before services carried an id here have nothing else to match on.
+           */
+          const savedServices = (block.content as Record<string, unknown>)?.services as Array<{ id?: string; name?: string; hidden?: boolean }> | undefined;
+          const hiddenById = new Map<string, boolean>();
+          const hiddenByName = new Map<string, boolean>();
 
           if (savedServices && Array.isArray(savedServices)) {
             savedServices.forEach(s => {
-              if (s.name && s.hidden !== undefined) {
-                hiddenMap.set(s.name, s.hidden);
-              }
+              if (s.hidden === undefined) return;
+              if (s.id) hiddenById.set(s.id, s.hidden);
+              if (s.name) hiddenByName.set(s.name, s.hidden);
             });
           }
+
+          const isHidden = (service: { id: string; name: string }) =>
+            hiddenById.get(service.id) ?? hiddenByName.get(service.name) ?? false;
 
           // Merge live services with saved hidden flags, filter out hidden ones for public display
           const visibleServices = liveServices
             .map(service => ({
               ...service,
-              hidden: hiddenMap.get(service.name) ?? false
+              hidden: isHidden(service)
             }))
             .filter(s => !s.hidden);
 
@@ -515,9 +542,27 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     // request — tracking here recorded a null referrer, Node's user-agent and
     // the app server's IP for every visitor.
 
+    /*
+     * Can this business actually be charged right now?
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * The booking dialog drops its payment step when the answer is no, and it
+     * reads an unanswered question as YES — deliberately, so a caller that
+     * cannot answer does not remove a step the business could honour. The
+     * published site could answer and never did, because it had nowhere to read
+     * it from: this is the only call it makes.
+     *
+     * The same resolver the booking routes use (`booking/create`,
+     * `booking/availability`), so the page a client sees and the decision the
+     * route makes cannot disagree.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const paymentCapability = await resolvePaymentCollectionCapability(supabaseServer, userId);
+
     return NextResponse.json({
       success: true,
       status: 'live',
+      processorReady: paymentCapability.canCollect,
       page: {
         title: pageResult.data.title,
         meta_description: pageResult.data.meta_description,

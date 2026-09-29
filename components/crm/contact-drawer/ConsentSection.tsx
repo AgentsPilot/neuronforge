@@ -18,7 +18,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { MailCheck, MailX, Loader2 } from 'lucide-react';
+import { MailCheck, MailX, MailQuestion, Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { CollapsibleSection } from '../CollapsibleSection';
@@ -55,6 +55,21 @@ interface ConsentState {
  * happened. Unknown methods fall through to the raw value instead, which at
  * least says something true.
  */
+/**
+ * The two inputs on this panel, themed.
+ *
+ * They carried a border and nothing else — no background and no text colour — so
+ * they fell through to the browser default and rendered as a white box with black
+ * text inside a dark drawer. A border token alone is not enough: an input has to
+ * name all three, because the UA stylesheet supplies the two it leaves out.
+ *
+ * `placeholder:` too. Left to the UA it is a light grey chosen against white.
+ */
+const FIELD =
+  'w-full rounded-md border border-[var(--v2-border)] bg-[var(--v2-surface)] ' +
+  'px-3 py-2 text-sm text-[var(--v2-text-primary)] ' +
+  'placeholder:text-[var(--v2-text-muted)]';
+
 const KNOWN_METHODS = [
   'web_form',
   'double_optin_confirm',
@@ -80,13 +95,39 @@ export function ConsentSection({ contactId, isRTL }: Props) {
   const [wording, setWording] = useState('');
   const [when, setWhen] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // The read failed. Distinct from "no consent": see `load` below.
+  const [unavailable, setUnavailable] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const response = await fetch(`/api/crm/contacts/${contactId}/consent`);
       const json = await response.json();
-      if (json.success) setState(json.data);
+      if (json.success) {
+        setState(json.data);
+        setUnavailable(false);
+      } else {
+        /*
+         * A failed read is not a refusal.
+         *
+         * This branch did not exist: a non-success response left `state` null,
+         * and null reaches the summary below as `state?.consented` — falsy — so
+         * the section announced "Not given". That is an affirmative claim that
+         * this person declined marketing consent, made on the strength of a
+         * request that never answered. Consent is the one fact on this record
+         * that decides whether it is lawful to email them, so inventing it from
+         * a 404 is the worst available default.
+         *
+         * Say we could not read it instead, and let the rest of the section
+         * stay closed rather than render a state nobody established.
+         */
+        setUnavailable(true);
+        logger.warn(
+          { contactId, status: response.status, error: json.error },
+          'Could not read consent; showing it as unknown rather than as refused'
+        );
+      }
     } catch (err) {
+      setUnavailable(true);
       logger.error({ err, contactId }, 'Could not load consent');
     } finally {
       setLoading(false);
@@ -136,7 +177,9 @@ export function ConsentSection({ contactId, isRTL }: Props) {
 
   const summary = loading
     ? t('crm.consent.checking')
-    : noEmail
+    : unavailable
+      ? t('crm.consent.unavailable')
+      : noEmail
       ? t('crm.consent.no_email')
       : state?.consented
         ? t('crm.consent.agreed_on')
@@ -148,13 +191,16 @@ export function ConsentSection({ contactId, isRTL }: Props) {
     <CollapsibleSection
       title={t('crm.consent.title')}
       icon={
-        state?.consented ? (
-          <MailCheck className="w-4 h-4 text-emerald-600" />
+        // MailX reads as "they said no", so an unreadable state must not use it.
+        unavailable ? (
+          <MailQuestion className="w-4 h-4 text-[var(--v2-text-muted)]" />
+        ) : state?.consented ? (
+          <MailCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
         ) : (
-          <MailX className="w-4 h-4 text-gray-400" />
+          <MailX className="w-4 h-4 text-[var(--v2-text-muted)]" />
         )
       }
-      badge={<span className="text-xs text-gray-500">{summary}</span>}
+      badge={<span className="text-xs text-[var(--v2-text-secondary)]">{summary}</span>}
       isRTL={isRTL}
     >
       <div className="space-y-4 text-sm">
@@ -163,13 +209,13 @@ export function ConsentSection({ contactId, isRTL }: Props) {
           subscriber keeps their roster row precisely so this line can exist.
         */}
         {!loading && state?.subscribedAt && (
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-[var(--v2-text-secondary)]">
             {t('crm.consent.subscriber_since').replace('{date}', formatDate(state.subscribedAt))}
           </p>
         )}
 
         {!loading && !noEmail && !state?.consented && (
-          <p className="text-gray-500">{t('crm.consent.explain_not_given')}</p>
+          <p className="text-[var(--v2-text-secondary)]">{t('crm.consent.explain_not_given')}</p>
         )}
 
         {/* The history. This is what answers a data request, so it shows the
@@ -177,21 +223,21 @@ export function ConsentSection({ contactId, isRTL }: Props) {
         {!loading && (state?.events?.length ?? 0) > 0 && (
           <ul className="space-y-3">
             {state!.events.map((event) => (
-              <li key={event.id} className="border-s-2 ps-3" style={{ borderColor: '#e5e7eb' }}>
+              <li key={event.id} className="border-s-2 ps-3" style={{ borderColor: 'var(--v2-border)' }}>
                 <div className="flex items-center gap-2">
                   <span
                     className={
                       event.decision === 'granted'
-                        ? 'font-medium text-emerald-700'
-                        : 'font-medium text-gray-600'
+                        ? 'font-medium text-emerald-700 dark:text-emerald-400'
+                        : 'font-medium text-[var(--v2-text-secondary)]'
                     }
                   >
                     {event.decision === 'granted'
                       ? t('crm.consent.event_granted')
                       : t('crm.consent.event_withdrawn')}
                   </span>
-                  <span className="text-xs text-gray-500">{formatDate(event.occurred_at)}</span>
-                  <span className="text-xs text-gray-400">
+                  <span className="text-xs text-[var(--v2-text-secondary)]">{formatDate(event.occurred_at)}</span>
+                  <span className="text-xs text-[var(--v2-text-muted)]">
                     ·{' '}
                     {KNOWN_METHODS.includes(event.method)
                       ? t(`crm.consent.method.${event.method}`)
@@ -199,14 +245,14 @@ export function ConsentSection({ contactId, isRTL }: Props) {
                   </span>
                 </div>
                 {event.statement_text && (
-                  <p className="mt-1 text-xs text-gray-500 italic">“{event.statement_text}”</p>
+                  <p className="mt-1 text-xs text-[var(--v2-text-secondary)] italic">“{event.statement_text}”</p>
                 )}
               </li>
             ))}
           </ul>
         )}
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
         {!loading && !noEmail && (
           <div className="flex flex-wrap gap-2">
@@ -236,27 +282,36 @@ export function ConsentSection({ contactId, isRTL }: Props) {
         )}
 
         {showGrantForm && (
-          <div className="space-y-2 rounded-lg border border-gray-200 p-3">
-            <p className="text-xs text-gray-500">{t('crm.consent.offline_hint')}</p>
+          <div className="space-y-2 rounded-lg border border-[var(--v2-border)] p-3">
+            <p className="text-xs text-[var(--v2-text-secondary)]">{t('crm.consent.offline_hint')}</p>
             <textarea
               value={wording}
               onChange={(e) => setWording(e.target.value)}
               rows={3}
-              className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm"
+              className={FIELD}
               placeholder={t('crm.consent.offline_placeholder')}
             />
-            <label className="block text-xs text-gray-500">
+            <label className="block text-xs text-[var(--v2-text-secondary)]">
               {t('crm.consent.when_agreed')}
               <input
                 type="date"
                 value={when}
                 onChange={(e) => setWhen(e.target.value)}
-                className="mt-1 block rounded-md border border-gray-200 px-2 py-1 text-sm"
+                className={`${FIELD} mt-1 block w-auto px-2 py-1`}
               />
             </label>
             <div className="flex gap-2">
+              {/*
+                Explicit colours, because the `Button` default variant has none.
+                It resolves to `bg-primary text-primary-foreground`, and neither
+                class exists: `tailwind.config.js` defines `v2.primary`, never a
+                bare `primary`, and no stylesheet defines `--primary`. So the
+                default variant emits no background and no colour — this Save read
+                as bare text, and in a dark drawer there was nothing behind it.
+              */}
               <Button
                 size="sm"
+                className="bg-[var(--v2-primary)] text-white hover:opacity-90"
                 disabled={saving || !wording.trim()}
                 onClick={() =>
                   record({

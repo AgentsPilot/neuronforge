@@ -18,6 +18,7 @@ import {
 } from '@/lib/services/ServiceReferenceService';
 import { z } from 'zod';
 import { updateServiceSchema } from '@/lib/validation/schedulingService';
+import { bustSitesForUser } from '@/lib/website-builder/siteCache';
 // One schema for create and update, so the two cannot drift apart again.
 
 const logger = createLogger({ module: 'SchedulingServiceAPI' });
@@ -170,6 +171,15 @@ export async function PUT(
       })
       .catch(err => requestLogger.error({ err }, 'Audit failed'));
 
+    /*
+     * The public pages quote this service. They read it live, but they are
+     * cached for up to a minute — so without this the owner changes a price and
+     * the site keeps quoting the old one for as long as the cache holds. Every
+     * WEBSITE edit already did this; the edits that most often change what a
+     * visitor is quoted did not.
+     */
+    await bustSitesForUser(user.id);
+
     // 5. Return success
     requestLogger.info({ serviceId, userId: user.id }, 'Service updated successfully');
     return NextResponse.json({
@@ -303,6 +313,15 @@ export async function DELETE(
         request
       })
       .catch(err => requestLogger.error({ err }, 'Audit failed'));
+
+    /*
+     * The public pages quote this service. They read it live, but they are
+     * cached for up to a minute — so without this the owner changes a price and
+     * the site keeps quoting the old one for as long as the cache holds. Every
+     * WEBSITE edit already did this; the edits that most often change what a
+     * visitor is quoted did not.
+     */
+    await bustSitesForUser(user.id);
 
     // 7. Return success
     requestLogger.info({ serviceId, userId: user.id }, 'Service deleted successfully');

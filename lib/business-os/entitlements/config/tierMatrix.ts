@@ -98,7 +98,23 @@ const BASE: TierRow = {
   'payments.invoices': true,
   'payments.card': true,
   'payments.multi_currency': true,
-  // `not_built` until 2026-09-25, when the sender stopped simulating success.
+  /*
+   * `not_built` until 2026-09-25, when the sender stopped simulating success.
+   *
+   * Moved here from the `not_built` block on 2026-09-28. It sat there reading
+   * `false, // the sender returns a simulated success`, which was true until
+   * 2026-09-25: `sendEmailReminder` logged "Would send payment reminder email"
+   * and returned `true; // Simulated success`, so a queue row was marked SENT
+   * while no client received anything. The catalog was moved to
+   * `lifecycle: 'available'` when the real sender landed and this line was not,
+   * so the config still withheld a feature that works.
+   *
+   * Nothing enforces this capability at runtime yet, so the effect was on what
+   * a customer is TOLD: a Founding Partner saw 28 of the 29 things they have,
+   * and the missing one was payment reminders. `featuresFrom` lists only
+   * granting rows, which is why an ungranted-but-available capability vanishes
+   * from the plan rather than showing as off.
+   */
   'payments.reminders': true,
   'marketing.lead_response': true,
   'insights.checks': true,

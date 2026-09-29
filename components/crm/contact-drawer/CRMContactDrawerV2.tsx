@@ -6,11 +6,19 @@ import { NoShowConfirmDialog } from '@/components/scheduling/NoShowConfirmDialog
 import { businessCollectsIntake } from '@/lib/business-os/intakeReach';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
-  User, FolderOpen, Trash2, UserX, UserCheck, Check, Calendar, X, Upload, File, FileText, MessageSquare, Receipt
+  User, FolderOpen, Trash2, UserX, UserCheck, Check, Calendar, X, Upload, File, FileText, MessageSquare, Receipt, EyeOff
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -18,6 +26,7 @@ import { SchedulingBookingModal } from '@/components/scheduling/SchedulingBookin
 import { createLogger } from '@/lib/logger';
 import { fetchContactMoney } from '@/lib/payments/fetchContactMoney';
 import { transactionMoneyArrived } from '@/lib/payments/bookingPaymentState';
+import type { EmailSendStatus } from '@/lib/business-os/emailSendStatus';
 import type { SchedulingService, SchedulingBooking } from '@/lib/repositories/SchedulingRepository';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { toast } from 'sonner';
@@ -36,10 +45,19 @@ import { BookingsTab } from './BookingsTab';
 import { FormSubmissionsSection } from './FormSubmissionsSection';
 import { PaymentManagementModal } from './PaymentManagementModal';
 import { ProposalBuilderModal } from './ProposalBuilderModal';
+import { StopQuoteDialog } from './StopQuoteDialog';
+import {
+  OWNER_CANCEL_REASONS,
+  cancelReasonKey,
+  type OwnerCancelReason,
+} from '@/lib/business-os/cancellationReasons';
 import { PaymentsSection } from './PaymentsSection';
 import { ConsentSection } from './ConsentSection';
 import { InvoiceModal } from '@/components/payments/InvoiceModal';
 import { RefundModal } from '@/components/payments/RefundModal';
+// The same switch the refund and stop-plan dialogs use, so one kind of choice
+// has one kind of control across the drawer.
+import { SwitchRow } from '@/components/payments/SwitchRow';
 
 import type {
   CRMContact,
@@ -67,7 +85,20 @@ interface ExtendedBookingData {
   booking: Appointment;
   payment: SessionPayment | null;
   confirmationEmail?: {
-    status: 'sent' | 'delivered' | 'opened' | 'clicked' | 'bounced' | 'failed' | 'pending';
+    /*
+     * The shared roster, not a hand-written copy of it.
+     *
+     * This literal union omitted `'complained'`, and `types.ts` had already been
+     * corrected to `EmailSendStatus` for exactly that reason — so the fix landed
+     * on `BookingConfirmationEmail` while THIS declaration, the one
+     * `buildJourneySteps` actually reads, kept the old list. The comment there
+     * says the compiler could not object to treating a spam complaint as a
+     * completed step; it could not object because of this line.
+     *
+     * Naming the roster means the next status added to `EMAIL_SEND_STATUSES`
+     * reaches here on its own, instead of waiting to be noticed twice.
+     */
+    status: EmailSendStatus;
     sentAt?: string;
     openedAt?: string;
     subject?: string;  // Email subject line
@@ -88,7 +119,7 @@ interface ExtendedBookingData {
 /** The half of a proposal the drawer needs. */
 export interface DrawerProposal {
   id: string;
-  status: 'draft' | 'sent' | 'viewed' | 'accepted' | 'declined' | 'expired' | 'withdrawn' | 'superseded';
+  status: 'draft' | 'sent' | 'viewed' | 'accepted' | 'declined' | 'expired' | 'withdrawn' | 'superseded' | 'stopped';
   title: string;
   /** Kept so a revision can open on the last version rather than on a blank form. */
   description: string | null;
@@ -105,6 +136,9 @@ export interface DrawerProposal {
   valid_until: string | null;
   decline_reason: string | null;
   decline_note: string | null;
+  /** Why an accepted job was stopped part-way, and the owner's own sentence. */
+  stop_reason: string | null;
+  stop_note: string | null;
   sent_at: string | null;
   viewed_at: string | null;
   decided_at: string | null;
@@ -451,7 +485,22 @@ function buildJourneySteps(
      * the same question: "the meeting is over" and "the job is off" only looked
      * alike while nothing could say the second one.
      */
-    const jobClosed = isCancelled;
+    /*
+     * A STOPPED quote closes the job too, not just a cancelled booking.
+     *
+     * Without this the step fell through every branch below to `'active'` and
+     * `waitingOn: 'client'` — so a job the owner had just stopped read as live and
+     * waiting on the client, and the header badge went back to "awaiting a quote".
+     * The booking is untouched by stopping a quote (there may be nothing to
+     * cancel — a bookingless quote has no appointment), so `isCancelled` alone
+     * could never see it.
+     *
+     * One line covers three things, which is why it belongs here rather than in
+     * each branch: the step becomes `failed`, `waitingOn` becomes `closed`, and
+     * the "Send a quote" button — gated on `waitingOn === 'owner'` — stops
+     * inviting a new price for work that has ended.
+     */
+    const jobClosed = isCancelled || proposal?.status === 'stopped';
 
     const status: BookingJourneyStep['status'] = jobClosed
       ? 'failed'
@@ -476,6 +525,12 @@ function buildJourneySteps(
       metadata: {
         proposalId: proposal?.id ?? null,
         proposalStatus: proposal?.status ?? 'none',
+        /*
+         * The quote's own title, so a confirmation dialog can name the job
+         * instead of showing a uuid. Flattened here like every other field: the
+         * step's metadata crosses into a presentational component.
+         */
+        title: proposal?.title ?? null,
         /*
          * Which side the ball is on — the one fact both the label and the
          * button read, so the strip cannot say "waiting on the meeting" beside
@@ -517,6 +572,14 @@ function buildJourneySteps(
           // 10,000 is a different story from the same objection twice.
           declineReason: v.decline_reason,
           declineNote: v.decline_note,
+          /*
+           * Per version too, for the same reason the decline reason is: a job
+           * stopped because the client would not pay and one stopped because the
+           * business could not finish are different stories, and the strip is
+           * where an owner goes back to read them.
+           */
+          stopReason: v.stop_reason,
+          stopNote: v.stop_note,
         })),
       },
     });
@@ -669,7 +732,21 @@ function buildJourneySteps(
          * emails by hand. The send route decides which document that is —
          * invoice while owed, receipt once settled.
          */
-        canResend: Boolean(payment.outstandingInvoiceId || payment.invoiceId),
+        /*
+         * Nothing to send once money has gone back.
+         *
+         * The send route refuses a refunded invoice — it would be a bill for
+         * money the client was just given, carrying a live pay button — but the
+         * button was still drawn, so the owner pressed it and got an error for
+         * their trouble. A control that cannot succeed should not be offered.
+         *
+         * `refundedAmount` rather than `status`: a PARTIAL refund deliberately
+         * leaves the status at `paid`, and the invoice is no more sendable for
+         * that.
+         */
+        canResend:
+          Boolean(payment.outstandingInvoiceId || payment.invoiceId) &&
+          (payment.refundedAmount ?? 0) <= 0,
         // Which document the button will send, so it can say so.
         invoiceSettled: !payment.outstandingInvoiceId && payment.status === 'paid'
       } : undefined
@@ -704,9 +781,20 @@ function buildJourneySteps(
   steps.push({
     id: `${booking.id}-confirmation`,
     key: 'confirmation',
+    /*
+     * `complained` belongs with the failures.
+     *
+     * It matched none of these branches and fell through to the `: 'completed'`
+     * default at the end, so a client who marked the confirmation as spam had
+     * that step drawn as a green tick — asserting the opposite of what happened,
+     * which is worse than saying nothing.
+     *
+     * The compiler could not catch it: `BookingConfirmationEmail.status` in
+     * ./types.ts omitted `'complained'`, so the ladder looked exhaustive.
+     */
     status: emailStatus === 'opened' || emailStatus === 'clicked' ? 'completed' :
             emailStatus === 'delivered' || emailStatus === 'sent' ? 'completed' :
-            emailStatus === 'bounced' || emailStatus === 'failed' ? 'failed' :
+            emailStatus === 'bounced' || emailStatus === 'complained' || emailStatus === 'failed' ? 'failed' :
             emailStatus === 'pending' ? 'active' : 'completed',
     details: emailDetails,
     timestamp: confirmationEmail?.sentAt || booking.created_at  // Email sent when booking created
@@ -1086,6 +1174,19 @@ function toAppointment(booking: BookingWithService): Appointment {
     timezone: booking.timezone ?? undefined,
     status: booking.status,
     notes: booking.notes ?? undefined,
+    /*
+     * Why it was cancelled, and by whom.
+     *
+     * This function copies field BY FIELD rather than spreading, which is
+     * deliberate — the card should get what it needs and not a whole DB row —
+     * but it also means a new column is invisible until it is named here. The
+     * API returns the full row and the badge was written to read these, and the
+     * reason still showed nothing, because it stopped at this line.
+     */
+    cancel_reason: booking.cancel_reason ?? null,
+    cancel_note: booking.cancel_note ?? null,
+    cancelled_by: booking.cancelled_by ?? null,
+    cancellation_reason: booking.cancellation_reason ?? null,
     intake_responses: booking.intake_responses ?? undefined,
     intake_completed_at: booking.intake_completed_at ?? undefined,
     created_at: booking.created_at ?? undefined,
@@ -1312,6 +1413,18 @@ export function CRMContactDrawerV2({
      Completing and marking a no-show are internal record-keeping. */
   const [pendingCancelBookingId, setPendingCancelBookingId] = useState<string | null>(null);
   /*
+   * Why the owner is cancelling. MANDATORY, and nothing preselected.
+   *
+   * The owner's list is the long one — they see the no-shows, the double
+   * bookings, the duplicates and the slots that were moved rather than dropped,
+   * and those last three are what let a report stop counting non-cancellations
+   * as cancellations.
+   */
+  const [cancelReasonCode, setCancelReasonCode] = useState<OwnerCancelReason | ''>('');
+  const [cancelReasonNote, setCancelReasonNote] = useState('');
+  /* Whether that note is emailed to the client. Shared by default. */
+  const [shareCancelNote, setShareCancelNote] = useState(true);
+  /*
    * The booking awaiting a no-show confirmation.
    *
    * Confirmed for the same reason cancelling is, and one more: a no-show is a
@@ -1321,6 +1434,14 @@ export function CRMContactDrawerV2({
    */
   const [pendingNoShowBookingId, setPendingNoShowBookingId] = useState<string | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  /*
+   * The accepted job the owner is stopping, if any.
+   *
+   * Held here rather than in the tab, for the reason the quote builder is: the
+   * accordion can close under the dialog, and a half-typed reason must not
+   * vanish with it.
+   */
+  const [stopQuoteTarget, setStopQuoteTarget] = useState<{ id: string; title: string | null } | null>(null);
   const [selectedBookingForPayment, setSelectedBookingForPayment] = useState<SessionCardData | null>(null);
   const [cancellingBooking, setCancellingBooking] = useState(false);
   /**
@@ -2436,7 +2557,17 @@ export function CRMContactDrawerV2({
         onClose();
         onContactUpdated();
       } else {
-        setErrorMessage(data.error || t('crm.drawer.delete_error'));
+        /*
+         * A client who has paid cannot be deleted, and that is a decision rather
+         * than a fault. The route says so with a code, because the sentence
+         * itself has to arrive in the reader's own language — the server's is
+         * English whatever the drawer is set to.
+         */
+        setErrorMessage(
+          data.code === 'contact_holds_money'
+            ? t('crm.drawer.delete_blocked_paid')
+            : data.error || t('crm.drawer.delete_error')
+        );
       }
     } catch (error) {
       console.error('Failed to delete contact:', error);
@@ -2737,6 +2868,20 @@ export function CRMContactDrawerV2({
                   setSelectedBookingForPayment(session);
                   setShowPaymentModal(true);
                 }}
+                onStopQuote={(proposalId, proposalTitle) =>
+                  setStopQuoteTarget({ id: proposalId, title: proposalTitle })
+                }
+                /*
+                 * The same RefundModal a cancellation opens, not the payment
+                 * manager. `originalAmount: 0` is only a placeholder — the modal
+                 * asks the server what is actually refundable for this booking
+                 * and `serverRemaining` overrides it, which is the whole reason
+                 * a quoted job can be refunded without the caller knowing which
+                 * stage invoice holds the money.
+                 */
+                onRefundJob={(bookingId, currency, amount) =>
+                  setRefundAfterCancel({ bookingId, amount, currency })
+                }
                 onIntakeSaved={() => {
                   fetchSessions(contact.id, { silent: true });
                   fetchActivities(contact.id, { silent: true });
@@ -3266,6 +3411,52 @@ export function CRMContactDrawerV2({
         </DialogContent>
       </Dialog>
 
+      {/* Stopping an accepted job: the money and the job, in one press.
+          Mounted out here for the same reason the builder is — the section can
+          collapse underneath it. */}
+      <StopQuoteDialog
+        proposalId={stopQuoteTarget?.id ?? null}
+        proposalTitle={stopQuoteTarget?.title ?? null}
+        onClose={() => setStopQuoteTarget(null)}
+        onStopped={held => {
+          /*
+           * Both, and silently.
+           *
+           * The journey reads the quote's status and the payment rows, and one
+           * press changed both — refreshing only sessions would leave the strip
+           * showing "accepted" beside stages that are now cancelled.
+           */
+          fetchSessions(contact.id, { silent: true });
+          fetchActivities(contact.id, { silent: true });
+
+          /*
+           * Then the STANDARD refund dialog, exactly as cancelling a booking
+           * does it — and only when money is actually held, so a job nobody paid
+           * for does not open a refund over nothing.
+           *
+           * Handed off rather than built into the stop dialog: this one carries
+           * the partial amounts, the over-refund guard and the notify toggle,
+           * and a second refund control in the same drawer behaving differently
+           * reads as a bug.
+           */
+          if (held.collected > 0 && stopQuoteTarget) {
+            const bookingId = sessions.find(s =>
+              (s.journeySteps ?? []).some(
+                step => step.metadata?.proposalId === stopQuoteTarget.id
+              )
+            )?.booking.id;
+
+            if (bookingId) {
+              setRefundAfterCancel({
+                bookingId,
+                amount: held.collected,
+                currency: held.currency || 'USD',
+              });
+            }
+          }
+        }}
+      />
+
       {/* The quote builder.
           Mounted beside the payment modal rather than inside the tab, so it
           survives the accordion closing under it — an owner who collapses the
@@ -3407,20 +3598,77 @@ export function CRMContactDrawerV2({
                 ).replace('{name}', contact.first_name || '');
               })()}
             </p>
+
+            <div className="mt-4">
+              <label className="block text-[13px] font-medium text-[var(--v2-text-secondary)] mb-1.5 rtl:text-right">
+                {t('crm.booking.cancel_reason_label') || 'Why is it being cancelled?'}
+                <span className="text-[#B42318]"> *</span>
+              </label>
+              {/* A dropdown here, radios on the client's page: this list is
+                  fourteen items and the client's is six. Fourteen radios is a
+                  scrolling wall inside a confirm dialog. */}
+              <Select
+                value={cancelReasonCode}
+                onValueChange={value => setCancelReasonCode(value as OwnerCancelReason)}
+              >
+                <SelectTrigger className="w-full bg-[var(--v2-surface)] border-[var(--v2-border)] text-[var(--v2-text-primary)]">
+                  <SelectValue
+                    placeholder={t('cancel.choose_reason') || 'Choose a reason'}
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {OWNER_CANCEL_REASONS.map(code => (
+                    <SelectItem key={code} value={code}>
+                      {t(cancelReasonKey(code)) || code}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Textarea
+                value={cancelReasonNote}
+                onChange={e => setCancelReasonNote(e.target.value)}
+                rows={2}
+                maxLength={1000}
+                placeholder={t('crm.booking.cancel_note_placeholder') || 'Anything worth remembering (optional)'}
+                className="mt-2 bg-[var(--v2-surface)] border-[var(--v2-border)] text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)]"
+              />
+
+              {/* The note is emailed to the client verbatim unless this is
+                  ticked. Shown only once something has been typed — an empty
+                  note has nothing to keep private. */}
+              {cancelReasonNote.trim().length > 0 && (
+                <div className="mt-2 rounded-lg border border-[var(--v2-border)]">
+                  <SwitchRow
+                    checked={!shareCancelNote}
+                    onChange={next => setShareCancelNote(!next)}
+                    isRTL={isRTL}
+                    icon={<EyeOff className="h-3.5 w-3.5 text-[#B54708]" />}
+                    label={t('cancel.hide_note_label') || 'Keep this note private, do not email it to the client'}
+                  />
+                </div>
+              )}
+            </div>
           </div>
           <div className={`flex gap-3 ${isRTL ? 'flex-row-reverse' : ''}`}>
             <Button
               variant="outline"
-              onClick={() => setPendingCancelBookingId(null)}
+              onClick={() => {
+                setPendingCancelBookingId(null);
+                setCancelReasonCode('');
+                setCancelReasonNote('');
+                setShareCancelNote(true);
+              }}
               disabled={cancellingBooking}
             >
               {t('common.cancel') || 'Cancel'}
             </Button>
             <Button
               className="bg-red-600 hover:bg-red-700 text-white"
-              disabled={cancellingBooking}
+              // Mandatory: unreachable without a reason.
+              disabled={cancellingBooking || !cancelReasonCode}
               onClick={async () => {
-                if (!pendingCancelBookingId) return;
+                if (!pendingCancelBookingId || !cancelReasonCode) return;
                 setCancellingBooking(true);
                 try {
                   const response = await fetch(
@@ -3428,7 +3676,11 @@ export function CRMContactDrawerV2({
                     {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({})
+                      body: JSON.stringify({
+                        reason_code: cancelReasonCode,
+                        reason: cancelReasonNote.trim() || undefined,
+                        share_note_with_client: shareCancelNote
+                      })
                     }
                   );
                   const data = await response.json();

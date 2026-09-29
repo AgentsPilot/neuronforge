@@ -22,6 +22,19 @@ const logger = createLogger({ module: 'SmartLinksAPI' });
 const SmartLinkMetadataSchema = z.object({
   journeyType: z.enum(['contact-only', 'full']).optional(),
   serviceIds: z.array(z.string()).optional(),
+  /**
+   * The services this link deliberately does NOT offer.
+   *
+   * A booking link follows the catalogue: a service added next month belongs on
+   * it without anybody editing the link. So what is worth storing is the
+   * owner's exception — "everything except these two" — rather than the list of
+   * everything, which is frozen the day it is written and was how a link came
+   * to be named "5 services" while serving three.
+   *
+   * `serviceIds` stays for the other kind of link: ONE service, chosen on
+   * purpose, which is a promotion rather than a catalogue.
+   */
+  excludedServiceIds: z.array(z.string()).optional(),
   flow: z.array(z.string()).optional(),
   destinationType: z.enum(['form', 'booking']).optional()
 }).optional();

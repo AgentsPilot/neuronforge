@@ -1,6 +1,6 @@
 'use client';
 
-import { CheckCircle2, FileText, AlertCircle, RotateCcw } from 'lucide-react';
+import { CheckCircle2, FileText, AlertCircle, RotateCcw, XCircle } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 
 interface HealthMetric {
@@ -14,13 +14,22 @@ interface FinancialHealthGridProps {
   collectionRate: HealthMetric;
   outstanding: HealthMetric;
   refundRate: HealthMetric;
+  /**
+   * Money billed or agreed and then called off.
+   *
+   * Optional so the one existing caller keeps type-checking, and omitted rather
+   * than defaulted: a business whose stats call failed has an UNKNOWN loss, and
+   * a confident "₪0 lost" would be the one wrong thing to say about it.
+   */
+  lostPotential?: HealthMetric;
 }
 
 export function FinancialHealthGrid({
   successRate,
   collectionRate,
   outstanding,
-  refundRate
+  refundRate,
+  lostPotential
 }: FinancialHealthGridProps) {
   const { language } = useLanguage();
   const isRTL = language === 'he';
@@ -45,6 +54,16 @@ export function FinancialHealthGrid({
       en: 'Refund Rate',
       es: 'Tasa de Reembolso',
       he: 'שיעור החזרים'
+    },
+    /*
+     * Not "cancelled". The number is what the cancelling COST, which is the
+     * thing the owner is looking for, and a card headed "Cancelled" beside a
+     * money figure reads as money that was cancelled back to them.
+     */
+    lostPotential: {
+      en: 'Money Lost',
+      es: 'Dinero Perdido',
+      he: 'כסף שאבד'
     },
     title: {
       en: 'Financial Health',
@@ -89,6 +108,19 @@ export function FinancialHealthGrid({
           text: 'text-purple-600 dark:text-purple-400',
           value: 'text-purple-600 dark:text-purple-400'
         };
+      /*
+       * Rose, not the orange Late Payments wears. Late money is still coming;
+       * this money is not, and two cards in the same shade would say the two
+       * situations are the same kind of problem.
+       */
+      case 'lostPotential':
+        return {
+          border: 'border-rose-400 dark:border-rose-500',
+          accent: 'bg-rose-500',
+          dot: 'bg-rose-500',
+          text: 'text-rose-600 dark:text-rose-400',
+          value: 'text-rose-600 dark:text-rose-400'
+        };
       default:
         return {
           border: 'border-gray-400 dark:border-gray-500',
@@ -104,7 +136,8 @@ export function FinancialHealthGrid({
     { key: 'successRate', data: successRate, icon: CheckCircle2 },
     { key: 'collectionRate', data: collectionRate, icon: FileText },
     { key: 'outstanding', data: outstanding, icon: AlertCircle },
-    { key: 'refundRate', data: refundRate, icon: RotateCcw }
+    { key: 'refundRate', data: refundRate, icon: RotateCcw },
+    ...(lostPotential ? [{ key: 'lostPotential', data: lostPotential, icon: XCircle }] : [])
   ];
 
   return (
@@ -121,7 +154,7 @@ export function FinancialHealthGrid({
       </div>
 
       {/* Stats Grid - Copied from PaymentTransactionList pattern */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className={`grid grid-cols-2 gap-3 ${lostPotential ? 'lg:grid-cols-5' : 'lg:grid-cols-4'}`}>
         {metrics.map(({ key, data, icon: Icon }) => {
           const colors = getMetricColor(key);
 

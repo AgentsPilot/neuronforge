@@ -50,11 +50,31 @@ export interface BookingConfirmationData {
    *
    * Defaults to true, so every existing caller sends the appointment email it
    * always sent. False strips everything that assumes a slot — the date, time
-   * and duration rows, the calendar invitation, the reschedule link — and
-   * switches to order wording.
+   * and duration rows, the calendar invitation, the whole Manage Booking
+   * section — and switches to order wording.
    *
    * The test is the booking's own start time. Nothing else in the data
    * distinguishes a course from a session.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THE MANAGE SECTION GOES ENTIRELY, NOT JUST THE RESCHEDULE BUTTON
+   *
+   * It used to strip only the reschedule half, so an order for a PRODUCT arrived
+   * with a lone Cancel button under a "Need changes?" heading. Both things
+   * behind that section are appointment-shaped, and for a product neither
+   * worked:
+   *
+   *   - `cancelUrl` leads to the manage page, which reads `start_time`. That is
+   *     null for a product, `new Date(null)` is the Unix epoch, and the client
+   *     was shown a 1 January 1970 appointment.
+   *   - The page's 24-hours-notice rule then measured against that 1970 date,
+   *     found it half a million hours in the past, and refused — telling the
+   *     client it was too late to cancel something that has no date at all.
+   *
+   * An order is cancelled by talking to the business, which is what the closing
+   * line of this email already offers. Saying nothing here beats offering a
+   * button that leads to a fabricated date and a refusal.
+   * ───────────────────────────────────────────────────────────────────────────
    */
   hasSchedule?: boolean;
   branding: BrandingData;
@@ -327,7 +347,8 @@ export function generateBookingConfirmationEmail(
     </table>
     `}
 
-    <!-- Manage Booking Section -->
+    <!-- Manage Booking. Omitted with no schedule: see hasSchedule. -->
+    ${data.hasSchedule === false ? '' : `
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; padding-top: 24px; border-top: 1px solid ${c.line};">
       <tr>
         <td>
@@ -336,11 +357,9 @@ export function generateBookingConfirmationEmail(
           </p>
           <table role="presentation" cellspacing="0" cellpadding="0" border="0">
             <tr>
-              ${data.hasSchedule === false ? '' : `
               <td style="padding-${locale === 'he' ? 'left' : 'right'}: 8px;">
                 ${emailOutlineButton(tIntake.reschedule[locale], data.rescheduleUrl, { branding: data.branding })}
               </td>
-              `}
               <td>
                 ${emailOutlineButton(tIntake.cancel[locale], data.cancelUrl, { color: emailTone('danger', brandingWithLocale).text })}
               </td>
@@ -349,6 +368,7 @@ export function generateBookingConfirmationEmail(
         </td>
       </tr>
     </table>
+    `}
 
     <!-- Final Note -->
     <p style="margin: 24px 0 0; font-size: 13px; color: ${c.inkFaint}; line-height: 1.5;">
@@ -374,6 +394,41 @@ export function generateBookingCancellationEmail(data: {
   reason?: string;
   bookAgainUrl?: string;
   /**
+   * What the client paid, or agreed to pay.
+   *
+   * The confirmation email carries this and the cancellation did not, so the one
+   * message a client is most likely to check a figure against was the one with no
+   * figure on it. On a cancelled ORDER it is the only concrete detail there is:
+   * with no date, no time and often no reason, the panel had nothing in it at all.
+   */
+  price?: number;
+  currency?: string;
+  /** Where it would have been. Carried for the same reason: the confirmation has it. */
+  location?: string;
+  /**
+   * Money the business is still holding for this booking.
+   *
+   * Cancelling deliberately does not refund anything - see `cancelBooking`,
+   * which reports the figure and leaves the decision to a person. That is the
+   * right call, and it left a hole here: the client got a cancellation for a
+   * booking they had paid for, with no mention of the payment.
+   */
+  amountHeld?: number;
+  heldCurrency?: string | null;
+  /**
+   * What was actually collected, before any refund.
+   *
+   * With `refundedAmount` below this is what lets the email say which of four
+   * things happened — nothing paid, paid and held, refunded in full, refunded in
+   * part — instead of printing a price and leaving the reader to guess. A price
+   * answers neither "am I owed money" nor "do I still owe any".
+   */
+  paidAmount?: number;
+  /** How much of it has gone back. */
+  refundedAmount?: number;
+  /** The service this was, so "book again" can point at it rather than a list. */
+  serviceId?: string | null;
+  /**
    * Was a time booked? Defaults to true, so existing callers are unchanged.
    *
    * False switches to order wording and drops the date and time rows, which
@@ -398,6 +453,73 @@ export function generateBookingCancellationEmail(data: {
   const c = emailPalette(brandingWithLocale);
   // The appointment that is no longer happening.
   const cancelled = emailTone('danger', brandingWithLocale);
+
+  /*
+   * What happened to the money, in the one place that answers it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * FOUR STATES, NOT A PRICE.
+   *
+   * The email showed "Price EUR 100" and stopped there. A client who had paid
+   * could not tell whether a refund was coming; one who had not could not tell
+   * whether they still owed it. Both are the question somebody opens a
+   * cancellation to answer, and a price answers neither.
+   *
+   * Rendered BEFORE the invitation to book again, deliberately: nobody wants to
+   * be asked to buy the thing again while the money for the last one is
+   * unaccounted for.
+   *
+   * Nothing here promises a refund that has not happened. Cancelling does not
+   * refund, because that is the owner's decision with their policy behind it, so
+   * the held cases report the figure and name who will settle it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const money = (amount: number) =>
+    formatCurrency(amount, data.heldCurrency || data.currency || 'USD');
+
+  /*
+   * Straight back to the thing that was cancelled.
+   *
+   * `resolveBookingUrl` returns the business's booking page, which lists
+   * everything they sell. For somebody whose course was just cancelled that is a
+   * haystack: they have to recognise it among the rest. Both booking surfaces
+   * already accept `?service=` and pre-select it, so the only thing missing was
+   * putting it on the link.
+   *
+   * Appended defensively rather than with a template: the resolved URL may
+   * already carry a query string, and a second `?` silently breaks the whole
+   * parameter list.
+   */
+  const bookAgainHref = (() => {
+    if (!data.bookAgainUrl || !data.serviceId) return data.bookAgainUrl;
+    const joiner = data.bookAgainUrl.includes('?') ? '&' : '?';
+    return `${data.bookAgainUrl}${joiner}service=${encodeURIComponent(data.serviceId)}`;
+  })();
+
+  const paid = data.paidAmount ?? 0;
+  const refunded = data.refundedAmount ?? 0;
+  const held = data.amountHeld ?? 0;
+
+  const moneyNotice =
+    paid <= 0 && held <= 0 && refunded <= 0
+      ? // Never collected. Worth saying: on a cancelled order carrying a price,
+        // silence reads as a bill still owed.
+        emailNoticeBox(t.notPaid[locale], 'info', brandingWithLocale)
+      : refunded > 0 && held <= 0
+        ? emailNoticeBox(t.refundedInFull[locale](money(refunded)), 'success', brandingWithLocale)
+        : refunded > 0 && held > 0
+          ? emailNoticeBox(
+              t.refundedPartly[locale](money(refunded), money(held), data.branding.businessName),
+              'warning',
+              brandingWithLocale
+            )
+          : held > 0
+            ? emailNoticeBox(
+                t.heldNotice[locale](money(held), data.branding.businessName),
+                'warning',
+                brandingWithLocale
+              )
+            : '';
 
   // Split date and time
   const dateParts = formattedDate.split(locale === 'he' ? ' בשעה ' : ' at ');
@@ -426,18 +548,57 @@ export function generateBookingCancellationEmail(data: {
             // moment of purchase as an appointment that had been struck out.
             data.hasSchedule === false ? '' : emailDetailRow(tIntake.dateLabel[locale], dateStr, brandingWithLocale),
             data.hasSchedule !== false && timeStr ? emailDetailRow(tIntake.timeLabel[locale], timeStr, brandingWithLocale) : '',
+            data.location ? emailDetailRow(tIntake.locationLabel[locale], data.location, brandingWithLocale) : '',
+            /*
+             * The price, as the confirmation shows it.
+             *
+             * Deliberately the same label and the same formatter, because it is
+             * the same number: a client comparing the cancellation against the
+             * confirmation that preceded it should not have to work out whether
+             * two differently-worded figures mean the same thing.
+             *
+             * It carries the most weight on an ORDER, which has no date and no
+             * time to show and often no reason either.
+             */
+            data.price && data.price > 0
+              ? emailDetailRow(
+                  emailTranslations.bookingConfirmation.priceLabel[locale],
+                  formatCurrency(data.price, data.currency || 'USD'),
+                  brandingWithLocale
+                )
+              : '',
             data.reason ? emailDetailRow(t.reasonLabel[locale], data.reason, brandingWithLocale) : ''
           ].filter(Boolean), brandingWithLocale)}
         </td>
       </tr>
     </table>
 
+    ${moneyNotice}
+
     ${data.bookAgainUrl ? `
-    <!-- Book Again -->
+    <!--
+      Book again, in the language of what was actually cancelled.
+
+      A COURSE is not an appointment. "Would you like to book a new appointment?"
+      over a cancelled course asked about a meeting that never existed, and the
+      button said "find another time" when there was no time to find.
+
+      The prompt also NAMES the thing now. "Book a new appointment" invited the
+      client back to a list of everything on offer and left them to find what
+      they had lost; the link carries the service id, so the page opens on it.
+    -->
     <p style="margin: 0 0 16px; font-size: 14px; color: ${c.inkMuted};">
-      ${t.bookAgainPrompt[locale]}
+      ${
+        data.hasSchedule === false
+          ? t.unscheduledBookAgainPrompt[locale](data.serviceName)
+          : t.bookAgainPromptNamed[locale](data.serviceName)
+      }
     </p>
-    ${emailButton(t.bookAgain[locale], data.bookAgainUrl, { branding: data.branding })}
+    ${emailButton(
+      data.hasSchedule === false ? t.unscheduledBookAgain[locale] : t.bookAgain[locale],
+      bookAgainHref,
+      { branding: data.branding }
+    )}
     ` : ''}
 
     <!-- Final Note -->

@@ -2429,6 +2429,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // A signed header with an empty body is not a signature problem, and saying
+    // "Signature verification failed" for it sends the next reader hunting for a
+    // secret mismatch that isn't there. It means the request was aborted between
+    // the headers and the body — the sender gave up while this route was still
+    // being served. Locally that is the dev server cold-compiling this file (it
+    // is thousands of lines) or having died, while `stripe listen` times out and
+    // drops the connection; the handler then runs against a stream that is
+    // already gone and reads ''. Still a 400: Stripe retries on it, and the CLI,
+    // which does not retry, has nothing to resend anyway.
+    if (!body) {
+      console.error(
+        '❌ [Webhook] Empty request body with a stripe-signature header present — ' +
+        'the request was aborted before the body arrived (check the server is up ' +
+        'and the route is warm). Signature timestamp:',
+        signature.split(',')[0]
+      );
+      return NextResponse.json({ error: 'Empty request body' }, { status: 400 });
+    }
+
     // Either secret verifies.
     //
     // Connected-account events can arrive at the same endpoint as platform ones,

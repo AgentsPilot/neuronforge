@@ -4,6 +4,7 @@ import { UserPluginConnections } from './user-plugin-connections';
 import { PluginManagerV2 } from './plugin-manager-v2';
 import { BasePluginExecutor } from './base-plugin-executor';
 import { crmContactRepository, CRMContactUpdate } from '@/lib/repositories/CRMContactRepository';
+import { deleteContact as removeContact } from '@/lib/services/ContactLifecycleService';
 import { crmTaskRepository, CRMTaskUpdate } from '@/lib/repositories/CRMTaskRepository';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
@@ -113,7 +114,9 @@ export class CRMPluginExecutor extends BasePluginExecutor {
 
       case 'delete_contact':
         this.requireParam(params.id, 'id');
-        return this.unwrap(await crmContactRepository.delete(params.id, userId));
+        // Via the service — see `ContactLifecycleService`: a contact with any
+        // booking cannot be deleted directly, and money refuses the delete.
+        return this.unwrap(await removeContact({ contactId: params.id, userId }));
 
       // ---------------- TASKS ----------------
       case 'add_task':

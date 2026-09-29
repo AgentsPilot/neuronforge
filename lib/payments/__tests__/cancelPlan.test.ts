@@ -14,7 +14,7 @@ const subscriptionsCancel = jest.fn();
 const dbState: {
   plan: Record<string, unknown> | null;
   installmentUpdates: Array<{ filters: Record<string, unknown>; row: Record<string, unknown> }>;
-  closed: Array<{ id: string; status: string }>;
+  closed: Array<{ id: string; status: string; structured?: Record<string, unknown> }>;
 } = { plan: null, installmentUpdates: [], closed: [] };
 
 jest.mock('@/lib/supabaseServer', () => ({
@@ -48,8 +48,10 @@ jest.mock('@/lib/supabaseServer', () => ({
 
 jest.mock('@/lib/repositories/PaymentPlanSubscriptionRepository', () => ({
   PaymentPlanSubscriptionRepository: jest.fn().mockImplementation(() => ({
-    close: async (id: string, status: string) => {
-      dbState.closed.push({ id, status });
+    close: async (id: string, status: string, structured?: Record<string, unknown>) => {
+      // The third argument is captured, because it is the whole point of the
+      // reason columns: dropping it here would make the assertions below vacuous.
+      dbState.closed.push({ id, status, structured });
       return { data: null, error: null };
     },
   })),
@@ -201,7 +203,11 @@ describe('cancelPlan', () => {
     const result = await cancelPlan({ planId: 'plan-1', userId: 'user-1', stripe });
 
     expect(result.ok).toBe(true);
-    expect(dbState.closed).toEqual([{ id: 'plan-1', status: 'cancelled' }]);
+    // `structured` is now always passed — null code and note for a caller
+    // that named no reason. See the reason-recording block below.
+    expect(dbState.closed).toEqual([
+      { id: 'plan-1', status: 'cancelled', structured: { code: null, note: null, cancelledBy: 'owner' } },
+    ]);
   });
 
   it('changes NOTHING when Stripe refuses for any other reason', async () => {
@@ -268,6 +274,96 @@ describe('cancelPlan', () => {
     expect(result.ok).toBe(true);
     expect(schedulesCancel).not.toHaveBeenCalled();
     expect(subscriptionsCancel).not.toHaveBeenCalled();
-    expect(dbState.closed).toEqual([{ id: 'plan-1', status: 'cancelled' }]);
+    // `structured` is now always passed — null code and note for a caller
+    // that named no reason. See the reason-recording block below.
+    expect(dbState.closed).toEqual([
+      { id: 'plan-1', status: 'cancelled', structured: { code: null, note: null, cancelledBy: 'owner' } },
+    ]);
+  });
+});
+
+describe('why the plan was stopped is recorded', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * `reason` used to go NOWHERE unless a refund was also requested.
+   *
+   * It was read in exactly one place — the `refundGroup` call — inside
+   * `if (input.refundCollected && plan.booking_id)`. So stopping a plan without
+   * refunding discarded it, and stopping one WITH a refund filed it as the
+   * refund's reason rather than the plan's. Plans were the last of five ways to
+   * call something off that recorded nothing countable.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  it('stores the code on the plan, with no refund involved', async () => {
+    dbState.plan = {
+      id: 'plan-1',
+      user_id: 'user-1',
+      booking_id: 'bk-1',
+      status: 'active',
+      stripe_schedule_id: 'sched_x',
+      stripe_subscription_id: null,
+      stripe_connect_account_id: null,
+    };
+
+    await cancelPlan({
+      planId: 'plan-1',
+      userId: 'user-1',
+      stripe,
+      reasonCode: 'client_not_paying',
+      reason: 'stopped answering after phase 2',
+    });
+
+    expect(dbState.closed).toEqual([
+      {
+        id: 'plan-1',
+        status: 'cancelled',
+        structured: {
+          code: 'client_not_paying',
+          note: 'stopped answering after phase 2',
+          // Always the owner: nothing automated stops a plan, and claiming the
+          // client did would misattribute it in every report reading the column.
+          cancelledBy: 'owner',
+        },
+      },
+    ]);
+  });
+
+  it('records it on the no-Stripe-reference path too', async () => {
+    /*
+     * A plan recorded but never bound to Stripe returns early, through its own
+     * `closeLocally` call. That early return is the kind of second exit that gets
+     * missed when a field is threaded through a function.
+     */
+    dbState.plan = {
+      id: 'plan-1',
+      user_id: 'user-1',
+      booking_id: null,
+      status: 'pending',
+      stripe_schedule_id: null,
+      stripe_subscription_id: null,
+      stripe_connect_account_id: null,
+    };
+
+    await cancelPlan({ planId: 'plan-1', userId: 'user-1', stripe, reasonCode: 'scope_changed' });
+
+    expect(dbState.closed[0].structured).toMatchObject({ code: 'scope_changed' });
+  });
+
+  it('stores null when an older caller passes no code', async () => {
+    // The chat can stop a plan from a sentence that named no reason, and refusing
+    // would be the wrong trade — there is nobody waiting to answer a follow-up.
+    dbState.plan = {
+      id: 'plan-1',
+      user_id: 'user-1',
+      booking_id: null,
+      status: 'active',
+      stripe_schedule_id: 'sched_x',
+      stripe_subscription_id: null,
+      stripe_connect_account_id: null,
+    };
+
+    await cancelPlan({ planId: 'plan-1', userId: 'user-1', stripe });
+
+    expect(dbState.closed[0].structured).toMatchObject({ code: null, note: null });
   });
 });

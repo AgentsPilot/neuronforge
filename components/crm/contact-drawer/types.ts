@@ -5,6 +5,7 @@ import type { BookingStatus } from '@/lib/business-os/bookingStatus';
 import type { IntakeQuestion } from '@/lib/business-os/intake/types';
 import type { CRMActivity } from '@/lib/repositories/CRMActivityRepository';
 import type { CRMPipelineStage } from '@/lib/repositories/CRMPipelineStagesRepository';
+import type { EmailSendStatus } from '@/lib/business-os/emailSendStatus';
 
 export interface PaymentTransaction {
   id: string;
@@ -50,6 +51,17 @@ export interface Appointment {
   payment_status?: 'pending' | 'paid' | 'refunded';  // Payment status from booking
   payment_id?: string;        // Transaction ID for refunds
   notes?: string;
+  /**
+   * Why it was cancelled, and by whom.
+   *
+   * `cancel_reason` is the countable code from `cancellationReasons`;
+   * `cancellation_reason` is the older free text and is the FALLBACK for rows
+   * cancelled before the code existed — dropping it would erase what they say.
+   */
+  cancel_reason?: string | null;
+  cancel_note?: string | null;
+  cancelled_by?: 'client' | 'owner' | 'system' | null;
+  cancellation_reason?: string | null;
   intake_responses?: IntakeResponses;
   intake_completed_at?: string;
   created_at?: string;  // For product purchases, use created_at as the order date
@@ -78,8 +90,21 @@ export interface ContactEmail {
   id: string;
   subject: string;
   to_email: string;
-  status: 'pending' | 'sent' | 'delivered' | 'opened' | 'clicked' | 'bounced' | 'failed';
+  /*
+   * From the shared roster, not a local union. The inline version omitted
+   * `'complained'` — a value the delivery webhook writes — which is why nothing
+   * flagged the places that then failed to handle it.
+   */
+  status: EmailSendStatus;
   sent_at: string | null;
+  /**
+   * When the recipient's mail server accepted it.
+   *
+   * On the wire already — the emails route selects the whole row — and only this
+   * type was hiding it. It is the one delivery fact the platform now learns,
+   * since open and click tracking are deliberately off.
+   */
+  delivered_at: string | null;
   opened_at: string | null;
   created_at: string;
 }
@@ -191,9 +216,15 @@ export interface SessionPayment {
 export interface BookingConfirmationEmail {
   id: string;
   subject: string;
-  status: 'pending' | 'sent' | 'delivered' | 'opened' | 'clicked' | 'bounced' | 'failed';
+  /*
+   * From the shared roster. This union omitted `'complained'`, which is exactly
+   * why `buildJourneySteps` could paint a spam complaint as a completed step
+   * without the compiler objecting.
+   */
+  status: EmailSendStatus;
   sentAt?: string;
   openedAt?: string;
+  deliveredAt?: string;
 }
 
 // Client info snapshot at time of booking (to detect changes)

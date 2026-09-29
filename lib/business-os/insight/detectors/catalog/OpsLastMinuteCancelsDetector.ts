@@ -10,6 +10,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
+/*
+ * The grouping rule, shared with the other cancellation detector rather than
+ * copied. It prefers the structured code, folds spellings that mean the same
+ * thing, and falls back to the old prose for rows that predate the code.
+ */
+import { cancelReasonBucket } from '@/lib/business-os/cancellationReasons';
 
 export class OpsLastMinuteCancelsDetector extends BaseDetector {
   definition: DetectorDefinition = {
@@ -89,7 +95,7 @@ export class OpsLastMinuteCancelsDetector extends BaseDetector {
     // Get cancelled bookings from last week (use updated_at since cancelled_at doesn't exist)
     const { data: cancelledBookings, error } = await this.supabase
       .from('scheduling_bookings')
-      .select('id, start_time, updated_at, payment_amount, cancellation_reason')
+      .select('id, start_time, updated_at, payment_amount, cancellation_reason, cancel_reason')
       .eq('user_id', userId)
       .eq('status', 'cancelled')
       .gte('updated_at', weekAgo.toISOString())
@@ -162,8 +168,14 @@ export class OpsLastMinuteCancelsDetector extends BaseDetector {
       hourBreakdown[bucket] = (hourBreakdown[bucket] || 0) + 1;
     });
 
+    /*
+     * By CODE, with the prose as a fallback — see the same note in
+     * `RetCancellationSpikeDetector`. Grouping on free text made the key the
+     * whole sentence, and once the cancel surfaces became structured it made
+     * every client cancellation one bucket reading "Cancelled by client".
+     */
     const reasons = lastMinuteCancels.reduce((acc, b) => {
-      const reason = b.cancellation_reason || 'No reason';
+      const reason = cancelReasonBucket(b, 'No reason');
       acc[reason] = (acc[reason] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);

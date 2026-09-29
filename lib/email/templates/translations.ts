@@ -525,6 +525,23 @@ export const emailTranslations = {
   },
 
   bookingCancellation: {
+    /*
+     * Money the business is still holding.
+     *
+     * REPORTS, never promises. Cancelling does not refund: that is a decision the
+     * owner makes, with their own policy behind it, and an email that said "you
+     * will be refunded" would commit them to something they may not owe. It also
+     * must not say the opposite. So it states the fact and names who will settle
+     * it, which is all the platform actually knows.
+     */
+    heldNotice: {
+      en: (amount: string, businessName: string) =>
+        `<strong>${amount} is still held for this booking.</strong> ${businessName} will be in touch about it.`,
+      es: (amount: string, businessName: string) =>
+        `<strong>Todavía hay ${amount} retenidos por esta reserva.</strong> ${businessName} se pondrá en contacto contigo al respecto.`,
+      he: (amount: string, businessName: string) =>
+        `<strong>${amount} עדיין מוחזקים עבור ההזמנה הזאת.</strong> ${businessName} ייצור איתך קשר בנוגע לכך.`
+    },
     subject: {
       en: (serviceName: string) => `Appointment cancelled - ${serviceName}`,
       es: (serviceName: string) => `Cita cancelada - ${serviceName}`,
@@ -578,6 +595,72 @@ export const emailTranslations = {
       en: 'This business has ceased operating, so your appointment has been cancelled. Please contact the owner directly with any questions.',
       es: 'Este negocio ha cesado su actividad, por lo que tu cita ha sido cancelada. Por favor, contacta directamente con el propietario si tienes alguna pregunta.',
       he: 'העסק הפסיק את פעילותו, ולכן הפגישה שלך בוטלה. לכל שאלה, אנא צרו קשר ישירות עם בעל העסק.'
+    },
+    /*
+     * What happened to the money, said plainly and in four states.
+     *
+     * The cancellation used to show a price and nothing else, so a client who had
+     * paid could not tell whether they were owed a refund, and a client who had
+     * not could not tell whether they still owed anything. The price alone
+     * answers neither question, and it is the question anybody reading a
+     * cancellation actually has.
+     *
+     * NEVER promises a refund that has not happened: `stillHeld` reports and
+     * names who will settle it, because whether a refund is owed is the
+     * business's policy and not something this platform can assert.
+     */
+    notPaid: {
+      en: 'Nothing was paid for this, so there is nothing to refund and nothing left to pay.',
+      es: 'No se pagó nada por esto, así que no hay nada que reembolsar ni nada pendiente de pago.',
+      he: 'לא שולם עבור זה דבר, ולכן אין מה להחזיר ואין מה לשלם.'
+    },
+    refundedInFull: {
+      en: (amount: string) => `<strong>${amount} has been refunded in full.</strong> It can take a few days to appear, depending on your bank.`,
+      es: (amount: string) => `<strong>Se han reembolsado ${amount} en su totalidad.</strong> Puede tardar unos días en aparecer, según tu banco.`,
+      he: (amount: string) => `<strong>${amount} הוחזרו במלואם.</strong> ההחזר עשוי להופיע תוך מספר ימים, תלוי בבנק שלכם.`
+    },
+    refundedPartly: {
+      en: (refunded: string, held: string, businessName: string) =>
+        `<strong>${refunded} has been refunded</strong> of what you paid. ${held} is still held; ${businessName} will be in touch about it.`,
+      es: (refunded: string, held: string, businessName: string) =>
+        `<strong>Se han reembolsado ${refunded}</strong> de lo que pagaste. Todavía hay ${held} retenidos; ${businessName} se pondrá en contacto contigo al respecto.`,
+      he: (refunded: string, held: string, businessName: string) =>
+        `<strong>${refunded} הוחזרו</strong> מתוך מה ששילמתם. ${held} עדיין מוחזקים; ${businessName} ייצור איתכם קשר בנוגע לכך.`
+    },
+    paidLabel: {
+      en: '✅ Paid',
+      es: '✅ Pagado',
+      he: '✅ שולם'
+    },
+    refundedLabel: {
+      en: '↩️ Refunded',
+      es: '↩️ Reembolsado',
+      he: '↩️ הוחזר'
+    },
+    /*
+     * A course is not an appointment.
+     *
+     * "Would you like to book a new appointment?" under a cancelled COURSE asked
+     * about a meeting that never existed, and the button said "find another
+     * time" when there was no time to find. The unscheduled wording asks the
+     * question that actually applies, and the link goes to the same thing that
+     * was cancelled rather than to a list of everything on offer.
+     */
+    unscheduledBookAgainPrompt: {
+      en: (serviceName: string) => `Would you like to sign up for ${serviceName} again?`,
+      es: (serviceName: string) => `¿Te gustaría volver a apuntarte a ${serviceName}?`,
+      he: (serviceName: string) => `תרצו להירשם שוב ל${serviceName}?`
+    },
+    unscheduledBookAgain: {
+      en: 'Sign up again',
+      es: 'Apuntarme de nuevo',
+      he: 'הרשמה מחדש'
+    },
+    /** The scheduled variant, now naming what it is rebooking. */
+    bookAgainPromptNamed: {
+      en: (serviceName: string) => `Would you like to book ${serviceName} for another time?`,
+      es: (serviceName: string) => `¿Te gustaría reservar ${serviceName} para otro momento?`,
+      he: (serviceName: string) => `תרצו לקבוע מועד אחר ל${serviceName}?`
     },
     bookAgainPrompt: {
       en: 'Would you like to book a new appointment?',
@@ -862,6 +945,202 @@ export const emailTranslations = {
    * The proposal a client is asked to accept, and the two notes to the owner
    * that follow their answer.
    */
+  /**
+   * The quote stopped part-way — what the client is told.
+   *
+   * Written to be EXPLANATORY, because this is the email a client reads twice.
+   * They agreed to a price, paid some of it, and are now being told the work has
+   * ended: every number they might reach for has to be on the page or they will
+   * reply asking for it. So it names the job, what was agreed, what they paid,
+   * what is cancelled, and what happens to the money — in that order.
+   *
+   * It does NOT blame. The reason codes are the owner's internal vocabulary
+   * ('client_not_paying', 'owner_cannot_deliver') and several of them would be an
+   * accusation in a client's inbox. The owner's own note is shown when they wrote
+   * one; the code never is.
+   */
+  /**
+   * Reason codes as a CLIENT should read them.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A SEPARATE SET FROM THE OWNER'S LABELS, and not an optional nicety.
+   *
+   * The owner picks from their own vocabulary — 'client_not_paying',
+   * 'client_no_show', 'client_unresponsive' — and those are accurate notes to
+   * keep and accusations to receive. "You did not turn up" in an inbox reads as
+   * a charge to answer, and the owner choosing a code for their own records did
+   * not choose to send that sentence.
+   *
+   * So each code has a second, neutral phrasing here. The client learns that the
+   * booking is off and roughly why, without being told off. Codes with no entry
+   * fall back to no reason line at all, which is better than leaking the raw
+   * code into an email.
+   *
+   * ── IDENTICAL TO THE OWNER'S LABEL UNLESS THERE IS A REASON NOT TO BE ───────
+   *
+   * Only these FIVE differ, and every one is about the client themselves:
+   *
+   *   client_cancelled     third person -> second: "the client asked to cancel"
+   *                        is a strange thing to read about yourself
+   *   client_stopped       same reason
+   *   client_no_show       "the client did not turn up" -> "the appointment was
+   *                        missed": the fact without the finger
+   *   client_unresponsive  "stopped answering" -> "we were unable to reach you"
+   *   client_not_paying    "will not pay" -> "payment was still outstanding"
+   *
+   * EVERY OTHER CODE MUST MATCH `cancel.reason.<code>` in `LanguageContext`
+   * WORD FOR WORD. Six of them used to differ for no reason — the owner read
+   * "כפל הזמנות" while the client was sent "התנגשות ביומן אצלנו" — which looks
+   * exactly like a bug, because two texts that mean the same thing and are not
+   * the same text are indistinguishable from a mistake.
+   *
+   * The pairing is asserted in `clientFacingCancelReason.test.ts`.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  cancelReasonForClient: {
+    client_cancelled: {
+      en: 'Cancelled at your request',
+      es: 'Cancelado a petición tuya',
+      he: 'בוטל לבקשתכם',
+    },
+    client_no_show: {
+      en: 'The appointment was missed',
+      es: 'No se asistió a la cita',
+      he: 'הפגישה לא התקיימה',
+    },
+    client_unresponsive: {
+      en: 'We were unable to reach you',
+      es: 'No pudimos contactarte',
+      he: 'לא הצלחנו ליצור איתכם קשר',
+    },
+    client_not_paying: {
+      en: 'Payment was still outstanding',
+      es: 'El pago seguía pendiente',
+      he: 'התשלום טרם הוסדר',
+    },
+    client_cost: { en: 'The price', es: 'El precio', he: 'המחיר' },
+    client_stopped: {
+      en: 'Stopped at your request',
+      es: 'Detenido a petición tuya',
+      he: 'נעצר לבקשתכם',
+    },
+    owner_unavailable: {
+      en: 'We could not make the time',
+      es: 'No pudimos en ese horario',
+      he: 'לא יכולנו בשעה הזו',
+    },
+    owner_double_booked: {
+      en: 'Double booked',
+      es: 'Horario duplicado',
+      he: 'כפל הזמנות',
+    },
+    owner_cannot_deliver: {
+      en: 'We could not deliver it',
+      es: 'No pudimos entregarlo',
+      he: 'לא הצלחנו לספק',
+    },
+    service_discontinued: {
+      en: 'We no longer offer this',
+      es: 'Ya no ofrecemos esto',
+      he: 'אנחנו לא מציעים את זה יותר',
+    },
+    duplicate: { en: 'Duplicate booking', es: 'Reserva duplicada', he: 'הזמנה כפולה' },
+    rescheduled: {
+      en: 'Moved to another time',
+      es: 'Movida a otro horario',
+      he: 'הועברה לשעה אחרת',
+    },
+    scope_changed: {
+      en: 'The job changed',
+      es: 'El trabajo cambió',
+      he: 'העבודה השתנתה',
+    },
+    refunded: {
+      en: 'Refunded, so it is not going ahead',
+      es: 'Reembolsado, así que no sigue adelante',
+      he: 'הוחזר כסף, ולכן זה לא מתקיים',
+    },
+    /*
+     * No 'test_booking' and no 'other'.
+     *
+     * "A test booking" tells a real client their appointment was practice, and
+     * "another reason" is a line that says nothing while looking like it should.
+     * Both fall through to no reason line, which is the honest result.
+     */
+  },
+  quoteStopped: {
+    subject: {
+      en: 'Update on {title}',
+      es: 'Actualización sobre {title}',
+      he: 'עדכון בנוגע ל{title}',
+    },
+    greeting: { en: 'Hello {name},', es: 'Hola {name},', he: 'שלום {name},' },
+    greetingPlain: { en: 'Hello,', es: 'Hola,', he: 'שלום,' },
+    intro: {
+      en: 'We are writing to let you know that the remaining work on {title} has been stopped, so nothing further will be scheduled or invoiced.',
+      es: 'Te escribimos para informarte de que el trabajo restante de {title} se ha detenido, por lo que no se programará ni facturará nada más.',
+      he: 'רצינו לעדכן שהעבודה שנותרה על {title} נעצרה, ולכן לא נקבע ולא נחייב שום דבר נוסף.',
+    },
+    agreedLabel: { en: 'Originally agreed', es: 'Acordado inicialmente', he: 'הוסכם במקור' },
+    paidLabel: { en: 'Paid so far', es: 'Pagado hasta ahora', he: 'שולם עד כה' },
+    cancelledLabel: { en: 'Now cancelled', es: 'Ahora cancelado', he: 'בוטל כעת' },
+    stagesHeading: {
+      en: 'What has been cancelled',
+      es: 'Lo que se ha cancelado',
+      he: 'מה בוטל',
+    },
+    invoicesVoided: {
+      en: '{count} unpaid invoice was cancelled, so please disregard it.',
+      es: 'Se canceló {count} factura impagada, por lo que puedes ignorarla.',
+      he: 'חשבונית אחת שלא שולמה בוטלה, אפשר להתעלם ממנה.',
+    },
+    invoicesVoidedPlural: {
+      en: '{count} unpaid invoices were cancelled, so please disregard them.',
+      es: 'Se cancelaron {count} facturas impagadas, por lo que puedes ignorarlas.',
+      he: '{count} חשבוניות שלא שולמו בוטלו, אפשר להתעלם מהן.',
+    },
+    stagesClosed: {
+      en: '{count} stage that had not been invoiced will not be billed.',
+      es: '{count} etapa que no se había facturado no se cobrará.',
+      he: 'שלב אחד שלא חויב לא ייחויב.',
+    },
+    stagesClosedPlural: {
+      en: '{count} stages that had not been invoiced will not be billed.',
+      es: '{count} etapas que no se habían facturado no se cobrarán.',
+      he: '{count} שלבים שלא חויבו לא ייחויבו.',
+    },
+    reasonHeading: { en: 'Reason:', es: 'Motivo:', he: 'סיבה:' },
+    noteHeading: { en: 'A note from us', es: 'Una nota nuestra', he: 'הערה מאיתנו' },
+    /* Nothing was collected: say so, or a cancelled job carrying a price reads
+       as a bill still owed. */
+    moneyNone: {
+      en: 'Nothing was charged for this work, and there is nothing left to pay.',
+      es: 'No se cobró nada por este trabajo y no queda nada por pagar.',
+      he: 'לא חויבתם על העבודה הזו, ולא נותר דבר לשלם.',
+    },
+    moneyRefundedFull: {
+      en: '{amount} has been refunded in full to your original payment method. It usually appears within 5 to 10 business days.',
+      es: 'Se han reembolsado {amount} en su totalidad a tu método de pago original. Suele aparecer en un plazo de 5 a 10 días hábiles.',
+      he: 'סך של {amount} הוחזר במלואו לאמצעי התשלום המקורי. בדרך כלל זה מופיע בתוך 5 עד 10 ימי עסקים.',
+    },
+    moneyRefundedPartly: {
+      en: '{refunded} has been refunded to your original payment method, usually within 5 to 10 business days. {kept} covers the work already completed and is not being returned.',
+      es: 'Se han reembolsado {refunded} a tu método de pago original, normalmente en 5 a 10 días hábiles. {kept} corresponde al trabajo ya realizado y no se devuelve.',
+      he: 'סך של {refunded} הוחזר לאמצעי התשלום המקורי, בדרך כלל בתוך 5 עד 10 ימי עסקים. {kept} מכסה את העבודה שכבר בוצעה ואינו מוחזר.',
+    },
+    /* Paid and NOT refunded. Deliberately explicit: silence here is what makes a
+       client email back asking where their money is. */
+    moneyKept: {
+      en: '{amount} was already paid for work that has been completed, and is not being refunded. If you believe something is wrong, please reply to this email and we will look into it.',
+      es: 'Ya se pagaron {amount} por el trabajo realizado y no se reembolsan. Si crees que hay un error, responde a este correo y lo revisaremos.',
+      he: 'סך של {amount} שולם עבור עבודה שבוצעה, ואינו מוחזר. אם לדעתכם משהו אינו תקין, השיבו למייל הזה ונבדוק.',
+    },
+    questions: {
+      en: 'If you have any questions about this, just reply to this email.',
+      es: 'Si tienes alguna duda, responde a este correo.',
+      he: 'לכל שאלה בנושא, אפשר פשוט להשיב למייל הזה.',
+    },
+  },
   proposal: {
     paymentTermsLabel: {
       en: 'Payment terms',
@@ -1077,10 +1356,25 @@ export const emailTranslations = {
   // REFUND CONFIRMATION EMAIL
   // ==========================================
   refundConfirmation: {
+    /*
+     * The AMOUNT is in the subject, and that is not decoration.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This read "Refund processed - {business}" for every refund, so two partial
+     * refunds on one booking produced two identical subjects to the same
+     * address. Gmail threads by subject: the second collapsed into the first and
+     * looked like it had never been sent. It had — the send is recorded, seven
+     * seconds after the refund — but nobody could tell.
+     *
+     * The amount is the one thing that distinguishes a second partial refund
+     * from the first, and it is also what the client most wants to know before
+     * opening anything.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
     subject: {
-      en: (businessName: string) => `Refund processed - ${businessName}`,
-      es: (businessName: string) => `Reembolso procesado - ${businessName}`,
-      he: (businessName: string) => `ההחזר בוצע - ${businessName}`
+      en: (businessName: string, amount: string) => `${amount} refunded - ${businessName}`,
+      es: (businessName: string, amount: string) => `${amount} reembolsado - ${businessName}`,
+      he: (businessName: string, amount: string) => `הוחזרו ${amount} - ${businessName}`
     },
     greeting: {
       en: 'Refund Processed',
@@ -1348,6 +1642,178 @@ export const emailTranslations = {
       es: 'Servicio',
       he: 'שירות'
     }
+  },
+
+  // ==========================================
+  // CHASING AN UNPAID INVOICE
+  //
+  // Deliberately does NOT lead with how late it is. The number of days is a
+  // fact about the business's records, not about the client's intentions, and
+  // opening with it turns a reminder into an accusation. It appears once,
+  // plainly, after the amount.
+  //
+  // Every sentence here used to be hardcoded English while the DATE beside it
+  // was formatted in the reader's own language — so a Hebrew school chasing a
+  // Hebrew client sent "It was due on יום ראשון, 27 בספטמבר 2026".
+  // ==========================================
+  chaseInvoice: {
+    subject: {
+      en: (invoiceNumber: string, businessName: string) => `Invoice ${invoiceNumber} from ${businessName}`,
+      es: (invoiceNumber: string, businessName: string) => `Factura ${invoiceNumber} de ${businessName}`,
+      he: (invoiceNumber: string, businessName: string) => `חשבונית ${invoiceNumber} מ-${businessName}`
+    },
+    openingFriendly: {
+      en: (clientName: string) => `Hi ${clientName}, I hope you're well.`,
+      es: (clientName: string) => `Hola ${clientName}, espero que estés bien.`,
+      he: (clientName: string) => `שלום ${clientName}, מקווה ששלומך טוב.`
+    },
+    opening: {
+      en: (clientName: string) => `Hi ${clientName},`,
+      es: (clientName: string) => `Hola ${clientName},`,
+      he: (clientName: string) => `שלום ${clientName},`
+    },
+    askFriendly: {
+      en: (invoiceNumber: string, money: string) =>
+        `I wanted to check in about invoice ${invoiceNumber} for ${money}, which is still showing as unpaid.`,
+      es: (invoiceNumber: string, money: string) =>
+        `Quería consultarte por la factura ${invoiceNumber} de ${money}, que sigue figurando como impagada.`,
+      he: (invoiceNumber: string, money: string) =>
+        `רציתי לבדוק לגבי חשבונית ${invoiceNumber} על סך ${money}, שעדיין מופיעה כלא שולמה.`
+    },
+    askFirm: {
+      en: (invoiceNumber: string, money: string) =>
+        `Invoice ${invoiceNumber} for ${money} is still outstanding and I'd be grateful if you could settle it.`,
+      es: (invoiceNumber: string, money: string) =>
+        `La factura ${invoiceNumber} de ${money} sigue pendiente y te agradecería que la liquidaras.`,
+      he: (invoiceNumber: string, money: string) =>
+        `חשבונית ${invoiceNumber} על סך ${money} עדיין פתוחה, ואשמח אם תוכל להסדיר אותה.`
+    },
+    dueOn: {
+      en: (date: string) => `It was due on ${date}.`,
+      es: (date: string) => `Vencía el ${date}.`,
+      he: (date: string) => `מועד התשלום שלה היה ${date}.`
+    },
+    dueOnOverdue: {
+      en: (date: string, days: number) =>
+        `It was due on ${date}, ${days} ${days === 1 ? 'day' : 'days'} ago.`,
+      es: (date: string, days: number) =>
+        `Vencía el ${date}, hace ${days} ${days === 1 ? 'día' : 'días'}.`,
+      he: (date: string, days: number) =>
+        days === 1
+          ? `מועד התשלום שלה היה ${date}, לפני יום.`
+          : `מועד התשלום שלה היה ${date}, לפני ${days} ימים.`
+    },
+    payButton: {
+      en: 'Pay invoice',
+      es: 'Pagar factura',
+      he: 'לתשלום החשבונית'
+    },
+    ignoreIfPaid: {
+      en: "If you've already paid, please ignore this. Thank you.",
+      es: 'Si ya lo has pagado, ignora este mensaje. Gracias.',
+      he: 'אם כבר שילמת, אפשר להתעלם מהודעה זו. תודה.'
+    }
+  },
+
+  // ==========================================
+  // NUDGING SOMEBODY WHO WENT QUIET
+  //
+  // None of these states the silence back to the recipient. "We noticed you
+  // stopped replying" is the honest content and nobody wants to receive it, so
+  // each opening picks up where the relationship actually left off instead.
+  // ==========================================
+  followupNudge: {
+    subject: {
+      en: (businessName: string) => `Booking your next session with ${businessName}`,
+      es: (businessName: string) => `Reserva tu próxima sesión con ${businessName}`,
+      he: (businessName: string) => `לקביעת המפגש הבא שלך עם ${businessName}`
+    },
+    greetingFriendly: {
+      en: (clientName: string) => `Hi ${clientName}, I hope you're keeping well.`,
+      es: (clientName: string) => `Hola ${clientName}, espero que estés bien.`,
+      he: (clientName: string) => `שלום ${clientName}, מקווה ששלומך טוב.`
+    },
+    greeting: {
+      en: (clientName: string) => `Hi ${clientName},`,
+      es: (clientName: string) => `Hola ${clientName},`,
+      he: (clientName: string) => `שלום ${clientName},`
+    },
+    openingNewEnquiry: {
+      en: (greeting: string) => `${greeting} You got in touch about working together, and I wanted to follow up.`,
+      es: (greeting: string) => `${greeting} Nos escribiste para trabajar juntos y quería darte seguimiento.`,
+      he: (greeting: string) => `${greeting} פנית אלינו בנוגע לעבודה משותפת, ורציתי לחזור אליך.`
+    },
+    openingPastClient: {
+      en: (greeting: string) => `${greeting} It has been a little while since your last visit.`,
+      es: (greeting: string) => `${greeting} Ha pasado un tiempo desde tu última visita.`,
+      he: (greeting: string) => `${greeting} עבר קצת זמן מאז הביקור האחרון שלך.`
+    },
+    openingAfterIntro: {
+      en: (greeting: string) => `${greeting} I hope you enjoyed your first session.`,
+      es: (greeting: string) => `${greeting} Espero que hayas disfrutado tu primera sesión.`,
+      he: (greeting: string) => `${greeting} מקווה שנהנית מהמפגש הראשון.`
+    },
+    bodyNewEnquiry: {
+      en: "If you'd still like to go ahead, you can pick a time that suits you.",
+      es: 'Si todavía quieres seguir adelante, puedes elegir la hora que te convenga.',
+      he: 'אם עדיין מתאים לך להתקדם, אפשר לבחור מועד שנוח לך.'
+    },
+    bodyArrange: {
+      en: (next: string) => `I wanted to check whether you'd like to arrange ${next}.`,
+      es: (next: string) => `Quería preguntarte si te gustaría concertar ${next}.`,
+      he: (next: string) => `רציתי לבדוק אם תרצה לקבוע ${next}.`
+    },
+    nextNamed: {
+      en: (serviceName: string) => `your next ${serviceName}`,
+      es: (serviceName: string) => `tu próxima ${serviceName}`,
+      he: (serviceName: string) => `את ${serviceName} הבא שלך`
+    },
+    nextGeneric: {
+      en: 'your next session',
+      es: 'tu próxima sesión',
+      he: 'את המפגש הבא שלך'
+    },
+    bookButton: {
+      en: 'Book a time',
+      es: 'Reservar hora',
+      he: 'לקביעת מועד'
+    },
+    noPressure: {
+      en: "If now isn't the right time, just let me know and I'll leave it with you.",
+      es: 'Si ahora no es buen momento, dímelo y lo dejo en tus manos.',
+      he: 'אם זה לא הזמן המתאים, פשוט עדכן אותי ואשאיר את זה אצלך.'
+    }
+  },
+
+  // ==========================================
+  // REMINDING A CLIENT OF AN APPOINTMENT
+  // ==========================================
+  bookingReminder: {
+    subject: {
+      en: (serviceName: string, when: string) => `Reminder: ${serviceName} on ${when}`,
+      es: (serviceName: string, when: string) => `Recordatorio: ${serviceName} el ${when}`,
+      he: (serviceName: string, when: string) => `תזכורת: ${serviceName} ב-${when}`
+    },
+    greeting: {
+      en: (clientName: string) => `Hi ${clientName},`,
+      es: (clientName: string) => `Hola ${clientName},`,
+      he: (clientName: string) => `שלום ${clientName},`
+    },
+    body: {
+      en: (serviceName: string, when: string) => `A reminder about your ${serviceName} on ${when}.`,
+      es: (serviceName: string, when: string) => `Un recordatorio sobre tu ${serviceName} el ${when}.`,
+      he: (serviceName: string, when: string) => `תזכורת לגבי ${serviceName} שלך ב-${when}.`
+    },
+    manageButton: {
+      en: 'Reschedule or cancel',
+      es: 'Reprogramar o cancelar',
+      he: 'שינוי מועד או ביטול'
+    },
+    closing: {
+      en: 'Looking forward to seeing you.',
+      es: 'Nos vemos pronto.',
+      he: 'נתראה בקרוב.'
+    }
   }
 } as const;
 
@@ -1414,4 +1880,23 @@ export function formatEmailDateLocalized(
       hour12: locale !== 'he'
     });
   }
+}
+
+/**
+ * What a CLIENT is told a cancellation was for, or nothing.
+ *
+ * Returns undefined rather than the code for anything with no client-safe
+ * phrasing — `test_booking` and `other` deliberately have none. Leaking
+ * `client_not_paying` into an inbox is worse than saying nothing at all.
+ */
+export function clientFacingCancelReason(
+  code: string | null | undefined,
+  locale: 'en' | 'es' | 'he'
+): string | undefined {
+  if (!code) return undefined;
+  const entry = (emailTranslations.cancelReasonForClient as Record<
+    string,
+    Record<string, string> | undefined
+  >)[code];
+  return entry?.[locale];
 }

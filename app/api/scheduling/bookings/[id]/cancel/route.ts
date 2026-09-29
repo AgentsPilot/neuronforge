@@ -7,12 +7,30 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { cancelBooking } from '@/lib/services/BookingLifecycleService';
+import { OWNER_CANCEL_REASONS } from '@/lib/business-os/cancellationReasons';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'SchedulingBookingCancelAPI' });
 
 const cancelBookingSchema = z.object({
-  reason: z.string().optional()
+  /*
+   * REQUIRED, from the OWNER's list — the longer one.
+   *
+   * The owner sees what a client never reports: a no-show, a double booking, a
+   * duplicate, a slot that was moved rather than dropped. Those last three are
+   * the codes that let a report stop counting non-cancellations as cancellations.
+   */
+  reason_code: z.enum(OWNER_CANCEL_REASONS),
+  reason: z.string().max(1000).optional(),
+  /*
+   * Whether the note above reaches the client's email.
+   *
+   * Defaults to TRUE, which is the behaviour this route has always had. The
+   * owner turns it off when the note is for their own records — and the client
+   * then gets a neutral phrasing of the reason instead of nothing, so the email
+   * still explains itself.
+   */
+  share_note_with_client: z.boolean().optional().default(true)
 });
 
 export async function POST(
@@ -47,6 +65,12 @@ export async function POST(
       bookingId,
       userId: user.id,
       reason: validated.reason,
+      cancelReason: validated.reason_code,
+      cancelNote: validated.reason,
+      // The owner pressed it. `cancelledBy` is the column that replaces parsing
+      // CLIENT_CANCELLED_PREFIX out of the prose.
+      cancelledBy: 'owner',
+      shareNoteWithClient: validated.share_note_with_client,
       request,
       logger: requestLogger
     });

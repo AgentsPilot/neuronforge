@@ -74,9 +74,24 @@ interface ServiceOption {
   name: string;
   duration: number;
   price?: string;
+  /*
+   * The raw facts, kept beside the display string.
+   *
+   * `price` above is already formatted for the card, and a formatted price
+   * cannot be handed to the booking dialog — it needs the number, the currency
+   * and the two journey facts that decide whether this service picks a time and
+   * whether it takes a card. The availability endpoint publishes all four; this
+   * widget was the one caller that dropped them, because it only ever built a
+   * query string.
+   */
+  description?: string | null;
+  priceRaw?: number | null;
+  currency?: string;
+  is_scheduled?: boolean;
+  collection?: 'online' | 'invoice' | null;
 }
 
-export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, className, subdomain, clientFlow }: BlockRendererProps) {
+export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, className, subdomain, clientFlow, onOpenBooking }: BlockRendererProps) {
   const {
     title,
     subtitle,
@@ -137,7 +152,16 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
           }
 
           if (data.services && data.services.length > 0) {
-            type ApiService = { id: string; name: string; duration_minutes: number; price?: number; currency?: string };
+            type ApiService = {
+              id: string;
+              name: string;
+              description?: string | null;
+              duration_minutes: number;
+              price?: number | null;
+              currency?: string;
+              is_scheduled?: boolean;
+              collection?: 'online' | 'invoice' | null;
+            };
             let live = data.services as ApiService[];
 
             /*
@@ -173,7 +197,14 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
               id: s.id,
               name: s.name,
               duration: s.duration_minutes,
-              price: s.price ? `${s.currency || 'USD'} ${s.price}` : undefined
+              price: s.price ? `${s.currency || 'USD'} ${s.price}` : undefined,
+              // Carried so this widget can open the dialog for the service the
+              // client picked, rather than only pointing a URL at it.
+              description: s.description ?? null,
+              priceRaw: s.price ?? null,
+              currency: s.currency || 'USD',
+              is_scheduled: s.is_scheduled,
+              collection: s.collection ?? null
             })));
           }
         }
@@ -233,6 +264,44 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
 
 
   const handleBook = () => {
+    /*
+     * The dialog, where the page has one.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This button only ever did `window.location.href = '/book?…'` — an
+     * app-absolute path with no business in it. It resolves correctly ONLY on a
+     * real subdomain host, where middleware rewrites `/book` to
+     * `/site/{subdomain}/book`. Reached at the path form the platform itself
+     * links to (`/site/{subdomain}/…`), the same href leaves the business's site
+     * for the platform's own `/book`, and the client's chosen service, day and
+     * hour go with it.
+     *
+     * Every other converting section on the page opens the dialog; this one was
+     * never handed the opener. It is now, and the navigation stays as the
+     * fallback for a surface with no dialog mounted.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (onOpenBooking) {
+      const picked = serviceOptions.find(s => s.id === selectedService);
+      onOpenBooking(
+        picked
+          ? {
+              id: picked.id,
+              name: picked.name,
+              description: picked.description ?? null,
+              duration_minutes: picked.duration,
+              price: picked.priceRaw ?? null,
+              currency: picked.currency || 'USD',
+              is_scheduled: picked.is_scheduled,
+              collection: picked.collection ?? null,
+            }
+          : // Nothing picked: the dialog opens on its catalogue and the client
+            // chooses there, which is the same list this widget is showing.
+            null
+      );
+      return;
+    }
+
     // Build booking URL with service and flow parameters
     const params = new URLSearchParams();
     if (selectedService) params.set('service', selectedService);
@@ -478,7 +547,17 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
           {/* Book Button */}
           <button
             onClick={handleBook}
-            disabled={!selectedDate || !selectedTime || (serviceOptions.length > 0 && !selectedService)}
+            /*
+             * A day and an hour are required only for the HANDOFF, which carries
+             * them in a query string. The dialog asks for them itself, on live
+             * availability, so demanding them here would make the client pick a
+             * time twice — and the second pick is the one that counts.
+             */
+            disabled={
+              onOpenBooking
+                ? serviceOptions.length > 0 && !selectedService
+                : !selectedDate || !selectedTime || (serviceOptions.length > 0 && !selectedService)
+            }
             className="w-full flex items-center justify-center gap-2 px-6 py-4 text-white font-semibold rounded-lg shadow-lg disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 transition-all"
             style={{
               backgroundColor: primaryColor,

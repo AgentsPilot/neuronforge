@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * The quiet plan pill — beside the logo in the Business OS chrome.
  *
@@ -37,14 +39,26 @@
  */
 
 import Link from 'next/link';
+import { useLanguage } from '@/lib/business-os/LanguageContext';
 
 export interface PlanBadgeProps {
   label: string;
-  title: string;
+  /**
+   * WHY the pill is there, as a dictionary key rather than a sentence.
+   *
+   * The pill is built in a server layout, which cannot reach the platform's
+   * translations — so it names the sentence and this component reads it. That
+   * keeps the tooltip in the same dictionary as every other screen instead of a
+   * second copy of the same two sentences living beside the resolver.
+   */
+  titleKey: string;
   href: string;
 }
 
-export function PlanBadgePill({ label, title, href }: PlanBadgeProps) {
+export function PlanBadgePill({ label, titleKey, href }: PlanBadgeProps) {
+  const { t } = useLanguage();
+  const title = t(titleKey);
+
   return (
     <Link
       href={href}

@@ -27,7 +27,26 @@ export type ProposalStatus =
   | 'declined'
   | 'expired'
   | 'withdrawn'
-  | 'superseded';
+  | 'superseded'
+  /**
+   * Agreed, started, and ended early.
+   *
+   * Terminal, like `withdrawn` and `superseded`, and deliberately NOT either of
+   * them: `withdrawn` means the offer came off the table before anyone agreed,
+   * so reusing it for a part-paid job would make the two indistinguishable in
+   * the analytics `stop_reason` exists to feed. See
+   * `20260928b_proposal_stopped_state.sql`.
+   */
+  | 'stopped';
+
+/*
+ * The stop-reason vocabulary lives in `lib/business-os/cancellationReasons`, not
+ * here, because the dialog that collects it is a `'use client'` component and
+ * CLAUDE.md rule 1 forbids importing a repository into one. Re-exported so
+ * server code importing from this module keeps working, and so there is still
+ * only one list.
+ */
+export { STOP_REASONS, type StopReason } from '@/lib/business-os/cancellationReasons';
 
 /** How acceptance turns into money. */
 export type PaymentShape =
@@ -70,6 +89,12 @@ export interface Proposal {
   payment_shape: PaymentShape;
   decline_reason: string | null;
   decline_note: string | null;
+  /** Why an accepted job ended early. One of `STOP_REASONS`, or null if unknown. */
+  stop_reason: string | null;
+  /** The owner's own sentence about it. Never a substitute for `stop_reason`. */
+  stop_note: string | null;
+  /** When the remaining stages were called off. Not `updated_at`. */
+  stopped_at: string | null;
   supersedes_id: string | null;
   accepted_snapshot: Record<string, unknown> | null;
   created_invoice_id: string | null;

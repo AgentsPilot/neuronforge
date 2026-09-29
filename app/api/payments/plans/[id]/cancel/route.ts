@@ -17,6 +17,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { cancelPlan } from '@/lib/payments/cancelPlan';
+import { STOP_REASONS } from '@/lib/business-os/cancellationReasons';
 
 const logger = createLogger({ module: 'CancelPlanAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -37,6 +38,15 @@ const CancelSchema = z.object({
    * behind by a changed mind cannot move money on its own.
    */
   refund_amount: z.number().positive().optional(),
+  /*
+   * REQUIRED, from the shared list — mandatory on every cancellation surface.
+   *
+   * Plans were the last way of calling something off that recorded nothing
+   * countable: `reason` below was read only inside the refund branch, so
+   * stopping a plan without refunding threw it away entirely.
+   */
+  reason_code: z.enum(STOP_REASONS),
+  /** The sentence behind it, and the refund's reason where one is issued. */
   reason: z.string().max(500).optional(),
   client_request_id: z.string().min(8).max(200).optional(),
 });
@@ -81,6 +91,7 @@ export async function POST(
       refundCollected: parsed.data.refund_collected,
       refundAmount: parsed.data.refund_amount,
       reason: parsed.data.reason,
+      reasonCode: parsed.data.reason_code,
       clientRequestId: parsed.data.client_request_id,
     });
 

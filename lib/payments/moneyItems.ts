@@ -65,6 +65,13 @@ export interface MoneyInvoice {
   refunded_amount?: number | null;
   refund_status?: string | null;
   /**
+   * When the client was actually asked to pay — NULL means never.
+   *
+   * Carried for `cancelledMoneyOf`, which will not write off an invoice nobody
+   * ever sent. See that function for why.
+   */
+  sent_at?: string | null;
+  /**
    * Denormalised on the invoice itself. There is no crm_contacts join on this
    * path, and an invoice records who it was addressed to at the time — which is
    * the right answer even if the contact has since been renamed or deleted.
@@ -236,6 +243,13 @@ export interface MoneyEntry {
   stripeInvoiceId: string | null;
   /** Stripe's own hosted page, for "view in Stripe" and as a fast copy-link path. */
   stripeHostedUrl: string | null;
+  /**
+   * When the client was asked to pay, or null if they never were.
+   *
+   * Only invoices have one. A payment was by definition never "sent", and a
+   * plan period is not asked for until an invoice is raised for it.
+   */
+  sentAt?: string | null;
   /** The payment intent or charge, for support and reconciliation. */
   processorRef: string | null;
   /**
@@ -451,6 +465,7 @@ function buildEntries(
       dueDate: invoice.due_date ?? null,
       paidAt: invoice.paid_at ?? null,
       paymentMethod: settlement?.payment_method ?? null,
+      sentAt: invoice.sent_at ?? null,
       stripeInvoiceId: invoice.stripe_invoice_id ?? null,
       stripeHostedUrl: invoice.stripe_hosted_invoice_url ?? null,
       processorRef:
@@ -560,7 +575,28 @@ export function buildMoneyItems(input: BuildMoneyItemsInput): MoneyItem[] {
       title: booking.title,
       status: rollUpStatus(bookingEntries),
       method: plan ? 'plan' : methods.size > 1 ? 'mixed' : [...methods][0],
-      amount: bookingEntries.reduce((sum, e) => sum + e.amount, 0),
+      /*
+       * THE WHOLE JOB, NOT THE INVOICED PART OF IT.
+       *
+       * This summed entries alone. On a plan whose later phases have not been
+       * billed yet there is no entry for them, so a three-payment job agreed at
+       * 2,000 rendered as 1,400: the row said "3 payments" beside a figure that
+       * accounted for two, and the un-invoiced phase appeared nowhere.
+       *
+       * Plan periods are added for exactly the periods `unpaidPeriods` keeps —
+       * the ones with no entry representing them — so a phase is counted once,
+       * by whichever of the two knows about it. Adding every period instead
+       * would double the billed ones straight back up, which is the bug this
+       * file just fixed one function above.
+       */
+      amount:
+        bookingEntries.reduce((sum, e) => sum + e.amount, 0) +
+        (plan?.periods ?? [])
+          .filter(
+            period =>
+              !SETTLED_PERIOD_STATUSES.includes(period.status) && !billedAsAnEntry(period)
+          )
+          .reduce((sum, period) => sum + period.amount, 0),
       refunded: bookingEntries.reduce((sum, e) => sum + e.refunded, 0),
       currency: bookingEntries[0].currency,
       date: booking.startTime ?? bookingEntries[0].date,
@@ -588,6 +624,67 @@ export function buildMoneyItems(input: BuildMoneyItemsInput): MoneyItem[] {
       entries: bookingEntries,
       ...(plan ? { plan } : {}),
       // A booking is always a container, whatever it holds.
+      simple: false,
+    });
+  }
+
+  /*
+   * A PLAN WITH NO ENTRY IS STILL MONEY.
+   *
+   * ─────────────────────────────────────────────────────────────────────────────
+   * Rows above are built from ENTRIES — invoices and transactions grouped by
+   * booking. A booking carrying only plan periods never reaches that loop, so its
+   * money appeared nowhere: not in the list, not in the row figures, not in the
+   * card.
+   *
+   * It was tempting to call this unreachable. It is not, and Stripe is the reason
+   * the mistake is easy to make:
+   *
+   *   A QUOTE-derived plan bills stage 1 on acceptance, so it always has an
+   *   invoice. A STRIPE plan's first charge writes a transaction. Both give the
+   *   booking an entry, so both are safe.
+   *
+   *   `createInstallmentsForBooking` gives it NEITHER. It writes the schedule and
+   *   nothing else, and it is reached from the payments plugin and the
+   *   `apply_payment_plan` block — neither of which needs Stripe. A business
+   *   collecting by bank transfer, Bit or cash puts its whole plan down that path,
+   *   and the whole plan was invisible.
+   *
+   * So the rule is not "plans always have an entry"; it is "plans that go through
+   * a processor do". This covers the ones that do not.
+   * ─────────────────────────────────────────────────────────────────────────────
+   */
+  for (const [bookingId, plan] of Object.entries(plans)) {
+    if (grouped.has(bookingId)) continue;
+    const booking = bookingById.get(bookingId);
+    if (!booking) continue;
+
+    // The same test the figures above use, so a phase is counted once here too.
+    const owing = plan.periods.filter(
+      period => !SETTLED_PERIOD_STATUSES.includes(period.status) && !billedAsAnEntry(period)
+    );
+    if (owing.length === 0) continue;
+
+    items.push({
+      key: bookingId,
+      kind: 'booking',
+      title: booking.title,
+      // Every period here is unbilled by definition, so nothing has been asked
+      // for yet — which is what `awaiting_payment` means on this list.
+      status: 'awaiting_payment',
+      method: 'plan',
+      amount: owing.reduce((sum, period) => sum + period.amount, 0),
+      refunded: 0,
+      currency: owing[0].currency || plan.periods[0]?.currency || '',
+      date: booking.startTime ?? '',
+      bookingId,
+      contactId: booking.contactId ?? null,
+      contactName: null,
+      /* No entries, and that is the point: there is no paper for this money yet. */
+      entries: [],
+      plan,
+      // A plan always expands to show its schedule, which is the only place this
+      // row's detail lives.
       simple: false,
     });
   }
@@ -634,6 +731,28 @@ export interface MoneyCurrencyTotals {
   /** Asked for and not yet settled. */
   outstanding: number;
   refunded: number;
+  /**
+   * Billed and called off: money that will never arrive.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * NOT THE SAME AS REFUNDED, AND THE TWO MUST NEVER RESTATE EACH OTHER.
+   *
+   *   refunded   came in, went back
+   *   cancelled  was asked for, never came, never will
+   *
+   * They meet on one row and it is a row this product creates deliberately.
+   * Refunding through the dialog with "cancel booking" on VOIDS the unpaid
+   * invoices as it goes (`cancelBooking` → `voidInvoice`), so one booking can
+   * finish with a refunded payment beside a cancelled invoice. Counting the full
+   * face value in both would tell the owner the same money was returned AND
+   * written off.
+   *
+   * So cancelled is `amount - refunded`: the part nobody got back, because
+   * nobody ever paid it. A cancelled entry that was fully refunded contributes
+   * nothing here and everything to `refunded`, which is the truth about it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  cancelled: number;
 }
 
 export interface MoneyTotals extends MoneyCurrencyTotals {
@@ -691,37 +810,60 @@ const SETTLED_PERIOD_STATUSES = ['paid', 'cancelled'];
  */
 function unpaidPeriods(item: MoneyItem): MoneyPeriod[] {
   return (item.plan?.periods ?? []).filter(
-    period => !SETTLED_PERIOD_STATUSES.includes(period.status) && !agreedNotBilled(period)
+    period =>
+      !SETTLED_PERIOD_STATUSES.includes(period.status) && !billedAsAnEntry(period)
   );
 }
 
 /**
- * A phase of a quoted job that nobody has asked for yet.
+ * This period has already been counted, as the invoice that bills it.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * AGREED IS NOT OWED, AND THIS FILE ALREADY SAID SO.
+ * THE DOUBLE COUNT.
  *
- * `OUTSTANDING_STATUSES` above excludes a `draft` invoice on exactly this
- * reasoning: "nobody has been asked to pay them, so counting them as owed would
- * overstate what is coming." A `trigger: 'manual'` period with no invoice is the
- * plan equivalent of a draft — the money is agreed, the work may even be done,
- * and no bill has left the building. `SETTLED_PERIOD_STATUSES` had no equivalent
- * carve-out, so every unbilled phase was reported as a debt.
+ * A plan period and an invoice are not two debts. Billing a stage RAISES an
+ * invoice for the same money and writes its id back onto the stage — so from
+ * that moment the money exists in both rows, and this function counted both.
  *
- * The effect was not cosmetic. It put the whole remaining value of every quoted
- * job into the Outstanding card and into `plan_owed_amount`, which is the figure
- * an owner uses to judge who is late — and none of those clients were late,
- * because none of them had been invoiced. A phase is now counted the moment it IS
- * billed, through the invoice that bills it.
+ * Measured on a live account: one 800 stage with its own 800 invoice reported
+ * 1600 outstanding, and the Outstanding card was close to double the truth
+ * across every billed stage on the page.
  *
- * Deliberately narrow: only `manual` AND unbilled. A dated period is money the
- * client has agreed to pay on a date, and that is a genuine receivable whether or
- * not the invoice has been raised yet.
+ * The entry is the one to keep. It is what the client was actually sent, it
+ * carries the status that decides whether the money is late, and it is what the
+ * row beneath the card lists. The period is the schedule that produced it.
+ *
+ * `invoiceId` is the test rather than `status === 'billed'`, because the two can
+ * disagree: `settleInvoice` moves a stage to `paid` through a trigger, and a
+ * stage cancelled after billing keeps its invoice. Presence of the link is the
+ * fact that matters — something else is already counting this money.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-function agreedNotBilled(period: MoneyPeriod): boolean {
-  return period.trigger === 'manual' && !period.invoiceId;
+function billedAsAnEntry(period: MoneyPeriod): boolean {
+  return Boolean(period.invoiceId);
 }
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * AN UNBILLED PHASE IS COUNTED. THIS WAS ONCE THE OTHER WAY ROUND.
+ *
+ * A `trigger: 'manual'` phase with no invoice was excluded here, on the
+ * reasoning that `OUTSTANDING_STATUSES` excludes a DRAFT invoice for the same
+ * reason: "nobody has been asked to pay them, so counting them as owed would
+ * overstate what is coming."
+ *
+ * That reasoning is right about a CLIENT's debt and wrong about this page. This
+ * is the owner's book of business, and the question it answers is "what has been
+ * agreed and not yet collected" — not "what is the client late on". Hiding an
+ * agreed phase made a three-payment plan render as two, with a total that did
+ * not match the job, and the owner could not tell whether the money was missing
+ * from the page or from the plan.
+ *
+ * The draft-invoice carve-out above stays as it is: a draft was never sent and
+ * may never be, whereas an accepted phase is money the client has agreed to.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
 
 /**
  * What is still owed on one row.
@@ -752,14 +894,123 @@ export function outstandingOf(item: MoneyItem): number {
   return fromEntries + fromPlan;
 }
 
+/**
+ * Money that was going to arrive and then was called off — the ONE definition.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THIS IS THE SHARED RULE. Two callers use it and neither restates it:
+ *
+ *   `totalMoney` here               — the orders/CRM money engine
+ *   `app/api/business-os/stats`     — the reports page's Money Lost card
+ *
+ * They read from completely different queries, so the only thing keeping the
+ * two surfaces agreeing is that both call THIS. If a third surface needs the
+ * figure, call this too; do not re-derive it. A second copy would drift by
+ * exactly the refunded amount and NEITHER page would look wrong — which is the
+ * worst kind of bug to own.
+ *
+ * Takes loose primitives rather than a `MoneyItem` precisely so the stats route
+ * can pass a raw `payment_invoices` row without building the whole item graph.
+ *
+ * The insight dashboard is deliberately NOT a caller. Three detectors already
+ * report cancellations there — `OpsLastMinuteCancelsDetector`,
+ * `RetCancellationSpikeDetector`, `CashCancelledUnrefundedDetector` — and they
+ * price a cancellation from the BOOKING (its `payment_amount`, else the service
+ * price), windowed, and only once a threshold trips. This prices it from the
+ * INVOICE, all-time and unconditionally. Both are right about different
+ * questions, but side by side they would print two different "lost" totals for
+ * one event the moment a discount or an uninvoiced booking pulled them apart.
+ * Dashboard notices; reports totals. Keep it that way.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * TWO RULES, both of them about not contradicting a figure shown elsewhere.
+ *
+ * 1. NET OF REFUNDS — or this restates the refund card.
+ *
+ *    Refunding through the dialog with "cancel booking" on voids the unpaid
+ *    invoices as it goes (`cancelBooking` → `voidInvoice`), so one booking can
+ *    finish with a refunded payment beside a cancelled invoice. Counting face
+ *    value here as well would tell the owner the same money was handed back AND
+ *    written off. Refunded money went back; it is the refund card's to report.
+ *
+ *      refunded   came in, went back
+ *      cancelled  was asked for, never came, never will
+ *
+ * 2. NEVER SENT IS NEVER LOST — or this invents a loss.
+ *
+ *    Nobody lost potential money on an invoice they drafted and binned. The
+ *    client was never told a number, so no number was ever coming. This is the
+ *    file's own existing rule: `OUTSTANDING_STATUSES` excludes `draft` because
+ *    "nobody has been asked to pay them, so counting them as owed would
+ *    overstate what is coming" — and overstating a LOSS is the same error with
+ *    the sign flipped. `voidInvoice` voids drafts along with sent invoices, so
+ *    this case is reachable, not theoretical.
+ *
+ *    `sentAt` absent (rather than explicitly null) reads as sent. Callers that
+ *    predate this field pass nothing, and silently writing their money down to
+ *    zero would be a worse default than counting it.
+ *
+ *    KNOWN LIMIT, recorded because it is not obvious: `sent_at` is NULL on any
+ *    invoice that never went through `sendInvoice`, and that includes real ones
+ *    — a paid invoice on the live account carries NULL because the owner created
+ *    it and recorded the payment by hand. So an invoice DELIVERED outside this
+ *    app and then cancelled will not be counted here. That is the deliberate
+ *    direction to err: understating a loss disappoints, overstating one invents
+ *    a debt that never existed and teaches the owner to distrust the figure. If
+ *    this needs to get smarter, the signal to reach for is whether a booking or
+ *    an accepted quote sits behind the invoice, not a looser reading of sent_at.
+ */
+export function cancelledMoneyOf(row: {
+  status: string;
+  amount: number | string;
+  refunded?: number | string | null;
+  sentAt?: string | null;
+}): number {
+  if (row.status !== 'cancelled') return 0;
+  if (row.sentAt === null) return 0;
+
+  /*
+   * `Math.max` because a refund can exceed what this platform recorded as
+   * collected — refunded from the Stripe dashboard against a charge whose
+   * transaction was never fully written back — and a negative write-off is not
+   * a thing that can happen to a business.
+   */
+  return Math.max(0, Number(row.amount ?? 0) - Number(row.refunded ?? 0));
+}
+
+/**
+ * The same question for a payment plan's periods.
+ *
+ * A quote agreed at three phases and stopped after the first lost the owner
+ * phases two and three. Nobody was ever ASKED for them — no invoice was
+ * raised — but they were agreed, in writing, on a quote the client accepted.
+ * That is exactly the "potential money" this figure exists to name, so unlike a
+ * binned draft they count.
+ *
+ * `invoiceId` set means an invoice WAS raised for this phase, and that invoice
+ * is its own cancelled row — so the period must stay out or the phase is
+ * written off twice. Same rule as `billedAsAnEntry`, which keeps the owed
+ * figure from double counting the identical way.
+ */
+export function cancelledPlanMoneyOf(period: {
+  status: string;
+  amount: number | string;
+  invoiceId?: string | null;
+}): number {
+  if (period.status !== 'cancelled') return 0;
+  if (period.invoiceId) return 0;
+  return Math.max(0, Number(period.amount ?? 0));
+}
+
 export function totalMoney(items: MoneyItem[]): MoneyTotals {
   let collected = 0;
   let outstanding = 0;
   let refunded = 0;
+  let cancelled = 0;
   const byCurrency: Record<string, MoneyCurrencyTotals> = {};
 
   const bucketFor = (currency: string) =>
-    (byCurrency[currency] ??= { collected: 0, outstanding: 0, refunded: 0 });
+    (byCurrency[currency] ??= { collected: 0, outstanding: 0, refunded: 0, cancelled: 0 });
 
   for (const entry of items.flatMap(item => item.entries)) {
     const bucket = bucketFor(entry.currency);
@@ -773,6 +1024,11 @@ export function totalMoney(items: MoneyItem[]): MoneyTotals {
     } else if (OUTSTANDING_STATUSES.includes(entry.status)) {
       outstanding += entry.amount;
       bucket.outstanding += entry.amount;
+    } else {
+      // The shared rule decides, including whether this is cancelled at all.
+      const written = cancelledMoneyOf(entry);
+      cancelled += written;
+      bucket.cancelled += written;
     }
   }
 
@@ -796,7 +1052,22 @@ export function totalMoney(items: MoneyItem[]): MoneyTotals {
       outstanding += period.amount;
       bucketFor(currency).outstanding += period.amount;
     }
+
+    /*
+     * Phases of a plan that was stopped.
+     *
+     * A separate pass because `unpaidPeriods` deliberately excludes cancelled
+     * ones — they are not owed, and nothing should chase them. But a three-phase
+     * job stopped after phase one lost the owner phases two and three, and that
+     * is the figure this bucket is for. See `cancelledPlanMoneyOf`.
+     */
+    for (const period of item.plan?.periods ?? []) {
+      const written = cancelledPlanMoneyOf(period);
+      if (written === 0) continue;
+      cancelled += written;
+      bucketFor(period.currency || item.currency).cancelled += written;
+    }
   }
 
-  return { collected, outstanding, refunded, byCurrency };
+  return { collected, outstanding, refunded, cancelled, byCurrency };
 }

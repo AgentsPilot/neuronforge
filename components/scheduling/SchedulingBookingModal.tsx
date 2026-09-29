@@ -21,6 +21,7 @@ import 'react-phone-number-input/style.css';
 import { SearchableCountrySelect } from '@/components/crm/SearchableCountrySelect';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { NoShowConfirmDialog } from '@/components/scheduling/NoShowConfirmDialog';
+import { CancelReasonDialog } from '@/components/scheduling/CancelReasonDialog';
 import {
   useConfigurationDialogOptional,
   useConfigurationDialogOpen,
@@ -33,6 +34,7 @@ import {
 } from '@/lib/business-os/intakeReach';
 import { createLogger } from '@/lib/logger';
 import type { SchedulingBooking, SchedulingService } from '@/lib/repositories/SchedulingRepository';
+import { journeySteps } from '@/lib/business-os/clientJourney';
 import type { WeeklyAvailability } from './AvailabilityEditor';
 import type { Country } from 'react-phone-number-input';
 
@@ -789,6 +791,35 @@ export function SchedulingBookingModal({
      */
   }, [booking, services, availability, prefilledDateTime, prefilledContact, browserTimezone, zone, zoneReady]);
 
+  /*
+   * Does THIS service's client journey include picking a time?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Asked of `journeySteps`, the resolver the public booking dialog, the smart
+   * link and the wizard already answer with — not re-derived here. The answer
+   * is not `is_scheduled` alone: a quoted service that involves a consultation
+   * books a time, and a product does not, so four facts decide it and they are
+   * decided in one place.
+   *
+   * Why it matters on THIS dialog: an ADHD course is bought, not booked into an
+   * hour. Its client journey has no scheduling step and no client was ever
+   * shown a picker for it — yet the owner opening the same course from the CRM
+   * drawer was made to choose a date and time, and could not save without one.
+   *
+   * Defaults to TRUE while no service is chosen, or if the resolver cannot
+   * answer. Showing the time fields for something that turns out not to need
+   * them is a question too many; hiding them for something that does silently
+   * books an appointment at no particular time.
+   *
+   * `processorReady` is left at its default because only the PAYMENT step reads
+   * it, and the one question asked here is about the date.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const selectedService = services.find(s => s.id === formData.service_id);
+  const needsSchedule = selectedService
+    ? journeySteps(selectedService).includes('datetime')
+    : true;
+
   // Handle late-loading services: if service_id is empty but services just loaded, set the default
   useEffect(() => {
     if (!booking && !formData.service_id && services.length > 0) {
@@ -1123,7 +1154,14 @@ export function SchedulingBookingModal({
       errors.client_first_name = t('scheduling.booking.error_name_required') || 'Client name is required';
     }
 
-    if (!formData.start_time) {
+    /*
+     * Only when the journey has a date step. A course has no time to be
+     * missing, so demanding one is an error the owner cannot clear — the field
+     * they would fix is not on screen.
+     */
+    if (!needsSchedule) {
+      // Nothing to validate. The remaining checks all describe a slot.
+    } else if (!formData.start_time) {
       errors.start_time = t('scheduling.booking.error_start_required') || 'Start time is required';
     } else {
       const startTime = parseDateTimeLocal(formData.start_time, zone);
@@ -1133,7 +1171,9 @@ export function SchedulingBookingModal({
       }
     }
 
-    if (!formData.end_time) {
+    if (!needsSchedule) {
+      // Same reason as the start: there is no slot on this booking.
+    } else if (!formData.end_time) {
       errors.end_time = t('scheduling.booking.error_end_required') || 'End time is required';
     } else if (formData.start_time) {
       /*
@@ -1199,14 +1239,28 @@ export function SchedulingBookingModal({
         client_last_name: formData.client_last_name || undefined,
         client_email: formData.client_email,
         client_phone: formData.client_phone || undefined,
-        start_time: parseDateTimeLocal(formData.start_time, zone).toISOString(),
-        end_time: parseDateTimeLocal(formData.end_time, zone).toISOString(),
+        /*
+         * Omitted entirely when the journey has no date step.
+         *
+         * Sending a time for a course would write an hour nobody chose and
+         * nobody sees — and `parseDateTimeLocal('')` is an invalid date, so
+         * this previously produced `Invalid Date` and a 400 rather than a
+         * saved booking. The route and the service layer both treat absent as
+         * "not scheduled" and store null.
+         */
+        ...(needsSchedule
+          ? {
+              start_time: parseDateTimeLocal(formData.start_time, zone).toISOString(),
+              end_time: parseDateTimeLocal(formData.end_time, zone).toISOString(),
+            }
+          : {}),
         timezone: formData.timezone,
         notes: formData.notes || undefined
       };
 
       // If editing a no-show booking with new time, auto-confirm it (rescheduling)
-      if (booking && booking.status === 'no_show') {
+      // Only where there IS a time: a course has none to have changed.
+      if (needsSchedule && booking && booking.status === 'no_show') {
         const originalStart = new Date(booking.start_time).getTime();
         /* `booking.start_time` is a stored instant; `formData.start_time` is the
            business's wall clock. Reading the second one in the browser's zone
@@ -1256,9 +1310,29 @@ export function SchedulingBookingModal({
     }
   };
 
+  /*
+   * Waiting on a cancellation reason.
+   *
+   * Cancelling posted an empty body, which stopped working once the API began
+   * requiring a reason — and asking is right anyway: nobody but the owner knows
+   * why, and a default would put whichever reason it was at the top of the
+   * report forever.
+   */
+  const [cancelTarget, setCancelTarget] = useState(false);
+
   const handleQuickAction = async (
     action: 'cancel' | 'complete' | 'no-show',
-    options?: { notifyClient?: boolean }
+    /*
+     * `notifyClient` belongs to a no-show, the reason to a cancellation. One bag
+     * rather than two signatures: the body goes straight through and the route
+     * validates whichever fields its own action needs.
+     */
+    options?: {
+      notifyClient?: boolean;
+      reason_code?: string;
+      reason?: string;
+      share_note_with_client?: boolean;
+    }
   ) => {
     if (!booking) return;
     setLoading(true);
@@ -1883,6 +1957,21 @@ export function SchedulingBookingModal({
             )}
           </div>
 
+          {/*
+            The whole scheduling region, only when the journey has a date step.
+            ─────────────────────────────────────────────────────────────────
+            An ADHD course is bought, not booked into an hour: `journeySteps`
+            gives it no date step and no client was ever shown a picker for it.
+            This dialog asked the owner for one anyway, and refused to save
+            without it — a required field for a fact that does not exist.
+
+            Wrapped rather than hidden field by field, because the quick-pick
+            slots, the two inputs, the conflict warning and the timezone note
+            are one subject. Everything below — notes, intake, payment — is
+            unaffected: a course still has all of those.
+          */}
+          {needsSchedule && (
+          <>
           {/* Quick Pick Available Slots - Show for both new and editing bookings */}
           {availability && (
             (() => {
@@ -2074,6 +2163,8 @@ export function SchedulingBookingModal({
               </div>
             </div>
           </div>
+          </>
+          )}
 
           {/* Notes Section */}
           <div className="space-y-3 sm:space-y-4">
@@ -2277,7 +2368,7 @@ export function SchedulingBookingModal({
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleQuickAction('cancel')}
+                        onClick={() => setCancelTarget(true)}
                         disabled={loading}
                         className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-500/10 transition-all disabled:opacity-50"
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
@@ -2401,6 +2492,17 @@ export function SchedulingBookingModal({
         Inside the booking Dialog, so it stacks above it rather than replacing
         it: the owner confirms and returns to the booking they were looking at.
       */}
+      {/* Cancelling asks for a reason, mandatory on every cancellation surface. */}
+      <CancelReasonDialog
+        open={cancelTarget}
+        onOpenChange={setCancelTarget}
+        clientName={booking?.client_first_name ?? null}
+        onConfirm={async ({ reasonCode, note, shareNote }) => {
+          await handleQuickAction('cancel', { reason_code: reasonCode, reason: note || undefined, share_note_with_client: shareNote });
+          setCancelTarget(false);
+        }}
+      />
+
       <NoShowConfirmDialog
         open={showNoShowConfirm}
         onOpenChange={setShowNoShowConfirm}

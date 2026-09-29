@@ -114,7 +114,27 @@ async function operationalAutomations(
    * same defaults the migration writes.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  let reminderSettings = { hoursBefore: 24, notifyClient: true, notifyOwner: true };
+  let reminderSettings = {
+    hoursBefore: 24,
+    notifyClient: true,
+    notifyOwner: true,
+    /*
+     * The tightest change deadline across the business's bookable services.
+     *
+     * The card needs it to say what a lead time COSTS: the reminder invites the
+     * client to reschedule, and the reschedule route refuses anything inside the
+     * service's `min_notice_hours`. With the default 24 and the choices the card
+     * offers ([1, 2, 3, 24, 48]) four of the five produce a link the client
+     * cannot use — so the owner is choosing that blind.
+     *
+     * The SHORTEST, because the lead time is per business and the window is per
+     * service: a practice with a 24-hour and a 48-hour service cannot satisfy
+     * both with one number, and the warning should be the one that is true most
+     * often. The send-time check in `sendMeetingReminder` still decides per
+     * booking, correctly, whatever this says.
+     */
+    noticeHours: 24,
+  };
   try {
     const { data, error } = await supabaseServer
       .from('business_profiles')
@@ -124,10 +144,31 @@ async function operationalAutomations(
 
     if (error) throw error;
     const row = (data ?? {}) as Record<string, unknown>;
+
+    /*
+     * Its own read, like every other block here: one unknown column takes the
+     * whole select down, and a missing notice window must not be able to make
+     * the reminder settings report themselves as defaults.
+     */
+    let noticeHours = 24;
+    const { data: services } = await supabaseServer
+      .from('scheduling_services')
+      .select('min_notice_hours')
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .eq('status', 'active')
+      .eq('is_scheduled', true);
+
+    const windows = (services ?? [])
+      .map(svc => Number((svc as { min_notice_hours?: number | null }).min_notice_hours ?? 24))
+      .filter(n => Number.isFinite(n) && n >= 0);
+    if (windows.length > 0) noticeHours = Math.min(...windows);
+
     reminderSettings = {
       hoursBefore: Number(row.meeting_reminder_hours_before ?? 24),
       notifyClient: row.meeting_reminder_notify_client !== false,
       notifyOwner: row.meeting_reminder_notify_owner !== false,
+      noticeHours,
     };
   } catch (err) {
     log.warn({ err }, 'Meeting reminder settings unreadable; showing the defaults');

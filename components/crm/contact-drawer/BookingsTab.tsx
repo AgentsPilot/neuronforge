@@ -14,6 +14,13 @@ import { CollapsibleSection } from '../CollapsibleSection';
 import type { SessionCardData, BookingJourneyData, BookingJourneyStep } from './types';
 import type { IntakeQuestion } from '@/lib/business-os/intake/types';
 import { groupJourneyByDay } from '@/lib/business-os/journeyDays';
+import { cancelReasonKey } from '@/lib/business-os/cancellationReasons';
+/*
+ * Two constants and a split, no dependencies — safe in a client component. The
+ * prefix itself stays stored English because a gap and a detector match on it;
+ * only the reading of it is translated.
+ */
+import { splitClientCancellationReason } from '@/lib/services/bookingCancellationReason';
 import { useBusinessTimezone } from '@/lib/business-os/LanguageContext';
 import { PaymentPlanTotals } from '@/components/payments/PaymentPlanTotals';
 
@@ -57,6 +64,24 @@ interface BookingsTabProps {
     bookingId: string,
     context: { supersedesId: string | null; declineReason: string | null; declineNote: string | null }
   ) => void;
+  /**
+   * Stop an accepted job part-way through.
+   *
+   * Passed up rather than fetched here: this component delegates every write, and
+   * the parent owns the reload that has to follow one. The dialog it opens
+   * collects the reason, because the reason is the point.
+   */
+  onStopQuote?: (proposalId: string, proposalTitle: string | null) => void;
+  /**
+   * Hand money back on a job that has already been stopped.
+   *
+   * Its own callback rather than `onManagePayment`: that modal reads the
+   * BOOKING's payment, and a quoted job has none — the money sits on the stage
+   * invoices — so it opened on "₪0.00, free service" for a job the client had
+   * actually paid for. The refund dialog resolves the payment from the booking
+   * server-side and gets it right.
+   */
+  onRefundJob?: (bookingId: string, currency: string, amount: number) => void;
   /**
    * Read a quote that has already been sent.
    *
@@ -150,6 +175,9 @@ interface ProposalVersion {
   /** Why the client declined THIS version, in their own words and ours. */
   declineReason: string | null;
   declineNote: string | null;
+  /** Why an accepted job was stopped part-way. */
+  stopReason: string | null;
+  stopNote: string | null;
 }
 
 /**
@@ -166,6 +194,13 @@ const VERSION_TONES: Record<string, { dot: string; text: string }> = {
   expired: { dot: '#F79009', text: '#B54708' },
   withdrawn: { dot: '#9AA1B2', text: 'var(--v2-text-muted)' },
   superseded: { dot: '#9AA1B2', text: 'var(--v2-text-muted)' },
+  /*
+   * Amber-grey, not the red `declined` wears and not the flat grey of
+   * `withdrawn`. A stopped job was AGREED and part-delivered: money came in and
+   * work happened. Painting it like a lost quote would misread the history, and
+   * painting it like a replaced version would hide it.
+   */
+  stopped: { dot: '#B54708', text: '#B54708' },
   viewed: { dot: '#4F6EF7', text: '#3450C7' },
   sent: { dot: '#9AA1B2', text: 'var(--v2-text-muted)' },
 };
@@ -217,6 +252,8 @@ export function BookingsTab({
   onSendIntake,
   onCompleteStage,
   onOpenProposalBuilder,
+  onStopQuote,
+  onRefundJob,
   onViewProposal,
   onSendInvoice,
   onResendConfirmation,
@@ -400,6 +437,19 @@ export function BookingsTab({
     if (quoteState === 'declined' || quoteState === 'expired') {
       return { text: t('crm.booking.quoted.declined'), ...amber };
     }
+    /*
+     * Agreed, then stopped part-way.
+     *
+     * Its own badge, and NOT `lost`: that one is for a cancelled booking where
+     * nothing was agreed. Here the client signed, work happened and money very
+     * likely moved — calling it lost would misread the history.
+     *
+     * Amber rather than red for the same reason. It is a terminal state that
+     * needs nothing from the owner, not a failure.
+     */
+    if (quoteState === 'stopped') {
+      return { text: t('crm.booking.quoted.stopped'), ...amber };
+    }
     if (quoteState === 'sent' || quoteState === 'viewed') {
       return { text: t('crm.booking.quoted.sent'), ...blue };
     }
@@ -407,9 +457,15 @@ export function BookingsTab({
      * The catch-all is reached on `'none'` ONLY, and that is not an accident of
      * this switch — it is enforced upstream. `proposalsFor` in the drawer drops
      * drafts, and `pickProposal` then drops superseded, so `proposalStatus`
-     * arrives here as one of none/sent/viewed/accepted/declined/expired. There is
-     * no `draft` or `superseded` case to write; adding one would be dead code
-     * that reads as though it fired.
+     * arrives here as one of none/sent/viewed/accepted/declined/expired/stopped.
+     * There is no `draft` or `superseded` case to write; adding one would be dead
+     * code that reads as though it fired.
+     *
+     * `stopped` was the exception that proved the point. It was added to the
+     * status set without a branch here, fell through to this catch-all, and a job
+     * the owner had just stopped showed "awaiting a quote" — the badge telling
+     * them to do the one thing they had decided not to. A new proposal status
+     * needs a branch above, or it lands here and claims no quote exists.
      *
      * `'none'` therefore covers two situations, and they want the same badge: no
      * quote was ever written, or every version has been replaced with nothing
@@ -1026,6 +1082,41 @@ export function BookingsTab({
                       <span className={`text-xs font-medium px-2 py-0.5 rounded ${statusInfo.color} ${statusInfo.bgColor}`}>
                         {statusInfo.text}
                       </span>
+
+                      {/* WHY it was cancelled, on every cancelled booking type.
+                          The badge said "Cancelled" and stopped there, so the
+                          reason the client or the owner had just been made to
+                          choose was stored and never shown back — which is how a
+                          required field starts feeling like a toll.
+                          Code first, old free text as the fallback: rows
+                          cancelled before the code existed still say something,
+                          and dropping it would erase what they say. The note is
+                          left for the expanded view; this is a badge row. */}
+                      {booking.status === 'cancelled' &&
+                        (booking.cancel_reason || booking.cancellation_reason) && (
+                          <span
+                            className="text-[11px] text-[var(--v2-text-muted)] truncate max-w-[170px]"
+                            title={booking.cancel_note || booking.cancellation_reason || ''}
+                          >
+                            {(() => {
+                              // The code, once there is one.
+                              if (booking.cancel_reason) return t(cancelReasonKey(booking.cancel_reason));
+
+                              /*
+                               * Older rows hold prose, and a client cancellation
+                               * holds it behind a stored English prefix. Showing
+                               * it raw put "Cancelled by client" in front of a
+                               * Hebrew-speaking owner.
+                               */
+                              const { byClient, note } = splitClientCancellationReason(
+                                booking.cancellation_reason
+                              );
+                              if (!byClient) return note;
+                              const label = t('cancel.by_client') || 'Cancelled by the client';
+                              return note ? `${label}: ${note}` : label;
+                            })()}
+                          </span>
+                        )}
 
                       {isExpanded ? (
                         <ChevronUp className="h-4 w-4 text-[var(--v2-text-muted)]" />
@@ -1970,6 +2061,32 @@ export function BookingsTab({
                                                       "we only have 8k budget"
                                                       is worth more than "too
                                                       expensive". */}
+                                                  {/* Why it was stopped, read the same way
+                                                      a decline is. A row that says only
+                                                      "stopped part-way" leaves the owner to
+                                                      remember which of six reasons it was —
+                                                      and the reason is the whole point of
+                                                      having collected it. */}
+                                                  {version.status === 'stopped' &&
+                                                    (version.stopReason || version.stopNote) && (
+                                                      <p
+                                                        className="mt-1 ps-3.5 text-[11.5px] leading-[1.45]"
+                                                        style={{ color: 'var(--v2-text-muted)' }}
+                                                      >
+                                                        {version.stopReason
+                                                          ? t(cancelReasonKey(version.stopReason))
+                                                          : null}
+                                                        {version.stopNote ? (
+                                                          <span
+                                                            className="block italic"
+                                                            style={{ color: 'var(--v2-text-secondary)' }}
+                                                          >
+                                                            “{version.stopNote}”
+                                                          </span>
+                                                        ) : null}
+                                                      </p>
+                                                    )}
+
                                                   {version.status === 'declined' &&
                                                     (version.declineReason || version.declineNote) && (
                                                       <p
@@ -2409,6 +2526,101 @@ export function BookingsTab({
                                               {step.metadata?.proposalStatus === 'declined'
                                                 ? t('crm.proposal.send_revised') || 'Send a new quote'
                                                 : t('crm.proposal.send') || 'Send a quote'}
+                                            </button>
+                                          )}
+
+                                          {/* Stop an accepted job part-way through.
+                                              Only on an ACCEPTED quote: before
+                                              acceptance the offer is withdrawn,
+                                              not stopped, and those are different
+                                              facts that must stay countable
+                                              apart. One press stops the unbilled
+                                              phases AND marks the job ended, with
+                                              the reason recorded — they were
+                                              separable before and that left
+                                              cancelled stages under a quote still
+                                              reading "accepted". */}
+                                          {isProposalStep
+                                            && onStopQuote
+                                            && step.metadata?.proposalStatus === 'accepted'
+                                            /* `!!`, like `canResend` above: metadata values are
+                                               `unknown`, and `unknown && <jsx>` is not a ReactNode. */
+                                            && !!step.metadata?.proposalId && (
+                                            <button
+                                              type="button"
+                                              onClick={e => {
+                                                e.stopPropagation();
+                                                onStopQuote(
+                                                  step.metadata?.proposalId as string,
+                                                  (step.metadata?.title as string) ?? null
+                                                );
+                                              }}
+                                              className="px-3 py-1 rounded-full text-[12px] font-medium border border-[#F79009]/40 text-[#B54708] hover:border-[#B54708] transition-colors"
+                                            >
+                                              {t('crm.quote.stop.action') || 'Stop this job'}
+                                            </button>
+                                          )}
+
+                                          {/* Refund, on a job that has ALREADY been stopped.
+                                              The stop dialog offers a refund, but stopping is a
+                                              once-only action: the button above is gated on
+                                              `accepted`, so the moment it is pressed the refund
+                                              option goes with it. An owner who stops first and
+                                              decides to refund afterwards — the ordinary order,
+                                              since the client usually asks later — had nowhere to
+                                              go but the Payments tab, if they knew to look.
+                                              Opens the payment manager that already exists rather
+                                              than a second refund dialog: it carries the partial
+                                              amount, the over-refund guard and the notify flag. */}
+                                          {isProposalStep
+                                            && onRefundJob
+                                            && step.metadata?.proposalStatus === 'stopped'
+                                            /*
+                                             * ONLY when money actually came in.
+                                             *
+                                             * This showed on every stopped job, so a quote
+                                             * that was never paid offered a refund over
+                                             * nothing — and pressing it opened a dialog with
+                                             * nothing to return.
+                                             *
+                                             * `'paid'` and not `'refunded'`: a FULL refund
+                                             * moves the status to `refunded` and there is
+                                             * nothing left to give back, while a PARTIAL one
+                                             * deliberately leaves it at `paid` — so this
+                                             * still offers the rest of a half-refunded job.
+                                             */
+                                            && session.payment?.status === 'paid' && (
+                                            <button
+                                              type="button"
+                                              onClick={e => {
+                                                e.stopPropagation();
+                                                /*
+                                                 * The QUOTE's currency and total, not
+                                                 * the booking's — a quoted job's money
+                                                 * lives on the proposal. An empty
+                                                 * currency reaches `Intl.NumberFormat`
+                                                 * and throws `Invalid currency code`,
+                                                 * which is a crash rather than a blank.
+                                                 */
+                                                onRefundJob(
+                                                  booking.id,
+                                                  (step.metadata?.currency as string) || 'USD',
+                                                  Number(step.metadata?.total) || 0
+                                                );
+                                              }}
+                                              className="px-3 py-1 rounded-full text-[12px] font-medium border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:border-[var(--v2-text-muted)] transition-colors"
+                                            >
+                                              {/*
+                                                `payments.refund`, the label every other
+                                                refund control already uses. A key of its
+                                                own said 'החזר כספי' where the rest of the
+                                                app says 'החזר' — the same action reading
+                                                two ways depending on where you clicked.
+                                                Not `crm.payment.manage` either: that one
+                                                opens the payment manager, which is the
+                                                dialog that reported this job as free.
+                                              */}
+                                              {t('payments.refund') || 'Refund'}
                                             </button>
                                           )}
 

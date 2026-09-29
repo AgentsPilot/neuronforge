@@ -239,11 +239,26 @@ export function CRMContactList({
 
     setBulkLoading(true);
     try {
-      const promises = Array.from(selectedIds).map(id =>
-        fetch(`/api/crm/contacts/${id}`, { method: 'DELETE' })
+      const responses = await Promise.all(
+        Array.from(selectedIds).map(id =>
+          fetch(`/api/crm/contacts/${id}`, { method: 'DELETE' })
+        )
       );
 
-      await Promise.all(promises);
+      /*
+       * Say so when some of them did not go.
+       *
+       * This used to await the requests and then clear the selection whatever
+       * came back, so a client who could not be deleted — one the business has
+       * been paid by, which the route now refuses with a 409 — vanished from the
+       * list and was back on the next load, with nothing said. The drawer had
+       * the same silence; between them they hid a bug for weeks.
+       */
+      const refused = responses.filter(response => !response.ok).length;
+      if (refused > 0) {
+        alert(t('crm.bulk.delete_partial').replace('{count}', String(refused)));
+      }
+
       setSelectedIds(new Set());
       onContactsUpdated?.();
     } catch (error) {

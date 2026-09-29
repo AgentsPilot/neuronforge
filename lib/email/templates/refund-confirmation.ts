@@ -194,7 +194,15 @@ export function generateRefundConfirmationEmail(data: RefundConfirmationData): {
   `;
 
   return {
-    subject: t.subject[locale](data.branding.businessName),
+    /*
+     * The amount goes in the subject so a SECOND partial refund is visibly a
+     * second one. Without it two refunds on the same booking arrive under
+     * identical subjects and Gmail threads them into one.
+     */
+    subject: t.subject[locale](
+      data.branding.businessName,
+      formatCurrency(data.refundAmount, data.currency)
+    ),
     html: wrapInBrandedTemplate(content, brandingWithLocale)
   };
 }

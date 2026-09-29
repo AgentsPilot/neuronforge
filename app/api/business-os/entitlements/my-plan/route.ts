@@ -37,8 +37,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { resolveAccountId } from '@/lib/business-os/entitlements/account';
 import { buildCustomerPlanView } from '@/lib/business-os/entitlements/customerPlanView';
+import { defaultLocale, isValidLocale, type Locale } from '@/lib/i18n/config';
 import { getEntitlementService } from '@/lib/business-os/entitlements/EntitlementService';
 import { createLogger } from '@/lib/logger';
+import { supabaseServer } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -65,9 +67,39 @@ export async function GET(request: NextRequest) {
     // customer shown somebody else's plan.
     const accountId = resolveAccountId(user.id);
     const snapshot = await getEntitlementService().getSnapshot(accountId);
+    /*
+     * The reader's language, from THEIR OWN session — never from the request.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This started as `?lang=`, and the route's own guard test refused it: the
+     * property it protects is that there is NOTHING to read here, so no
+     * `?accountId=` can ever be honoured. Weakening "nothing to read" to
+     * "nothing dangerous to read" on a tenant-isolation route, for copy, is the
+     * wrong trade — so the language comes from the same verified session the
+     * account id does.
+     *
+     * Only the config's LABELS need it — plan names and feature names, which are
+     * data. The sentences travel as dictionary keys and are rendered by the
+     * component, so they follow the same translations as every other screen and
+     * change the instant the reader switches language.
+     *
+     * Unreadable means English. A plan section in the wrong language is a
+     * nuisance; one that fails is a broken screen.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const { data: prefs } = await supabaseServer
+      .from('user_preferences')
+      .select('preferred_language')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    const stored = prefs?.preferred_language;
+    const locale: Locale = stored && isValidLocale(stored) ? stored : defaultLocale;
+
     const view = buildCustomerPlanView({
       resolution: snapshot.resolution,
       unavailable: snapshot.unavailable,
+      locale,
     });
 
     requestLogger.info(

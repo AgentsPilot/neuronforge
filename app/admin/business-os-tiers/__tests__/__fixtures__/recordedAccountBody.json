@@ -148,18 +148,18 @@
         "display": "yes"
       },
       "payments.reminders": {
-        "value": false,
-        "decidedBy": "lifecycle_gate",
+        "value": true,
+        "decidedBy": "basis",
         "trace": [
           {
-            "layer": "lifecycle_gate",
+            "layer": "basis",
             "from": null,
-            "to": false,
-            "note": "not_built: the feature does not exist, so nothing can grant it (FR-13)"
+            "to": true,
+            "note": "tier basic"
           }
         ],
-        "granting": false,
-        "display": "no"
+        "granting": true,
+        "display": "yes"
       },
       "payments.multi_currency": {
         "value": true,

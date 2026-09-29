@@ -107,6 +107,14 @@ export interface RefundRequest {
   /** Major units. Omitted means everything still remaining. */
   amount?: number | null;
   reason?: string;
+  /**
+   * The owner's own sentence about why the money went back.
+   *
+   * Beside `reason`, never instead of it: that one holds the canned key the
+   * refund-pattern detector groups on and the drawer translates, and prose
+   * cannot be grouped. Both are required by the API.
+   */
+  reasonNote?: string;
   source: 'app' | 'webhook' | 'reconciler' | 'manual';
   initiatedBy?: string | null;
   /**
@@ -550,6 +558,14 @@ export async function refundGroup(request: {
   userId: string;
   transactionIds: string[];
   reason?: string;
+  /**
+   * The owner's own sentence about why the money went back.
+   *
+   * Beside `reason`, never instead of it: that one holds the canned key the
+   * refund-pattern detector groups on and the drawer translates, and prose
+   * cannot be grouped. Both are required by the API.
+   */
+  reasonNote?: string;
   source: RefundRequest['source'];
   initiatedBy?: string;
   stripeReason?: StripeRefundReason;
@@ -606,6 +622,7 @@ export async function refundGroup(request: {
       transactionId,
       amount: legAmount,
       reason: request.reason,
+      reasonNote: request.reasonNote,
       source: request.source,
       initiatedBy: request.initiatedBy,
       stripeReason: request.stripeReason,
@@ -676,7 +693,7 @@ function idempotencyKeyFor(userId: string, transactionId: string, clientRequestI
 }
 
 export async function refund(request: RefundRequest): Promise<RefundResult> {
-  const { userId, transactionId, reason, source, initiatedBy } = request;
+  const { userId, transactionId, reason, reasonNote, source, initiatedBy } = request;
   const clientRequestId = request.clientRequestId || randomUUID();
   const log = logger.child({ userId, transactionId });
 
@@ -849,6 +866,15 @@ export async function refund(request: RefundRequest): Promise<RefundResult> {
       status: settledByHand ? 'succeeded' : 'pending',
       succeeded_at: settledByHand ? new Date().toISOString() : null,
       reason: reason ?? null,
+      /*
+       * The sentence, beside the code.
+       *
+       * `reason` holds a canned key so the refund-pattern detector can group on
+       * it and the drawer can render it in the reader's language. The note is
+       * what that key cannot carry: a row reading `no_show` could not say the
+       * client rang ahead and was refunded anyway.
+       */
+      reason_note: reasonNote ?? null,
       /*
        * `manual` for both, because no processor issued either. Which of the two
        * it was is recorded in the metadata below, so the books never read as

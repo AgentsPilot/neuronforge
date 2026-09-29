@@ -14,6 +14,7 @@ import { CollapsibleSection } from '../CollapsibleSection';
 import type { CRMActivity } from './types';
 import type { ContactEmail } from './types';
 import { useBusinessTimezone } from '@/lib/business-os/LanguageContext';
+import { isUndeliverable } from '@/lib/business-os/emailSendStatus';
 
 interface ActivitySectionProps {
   activities: CRMActivity[];
@@ -124,6 +125,13 @@ const EMAIL_STATUS_COLORS: Record<string, string> = {
   opened: 'bg-purple-500/20 text-purple-600 dark:text-purple-400',
   clicked: 'bg-indigo-500/20 text-indigo-600 dark:text-indigo-400',
   bounced: 'bg-red-500/20 text-red-600 dark:text-red-400',
+  /*
+   * Orange, not red. A complaint is not a broken address: the mail arrived and
+   * the person did not want it. Painting it the same as a bounce would tell the
+   * owner to fix an email address that works fine, when the thing to change is
+   * whether they write to that person at all.
+   */
+  complained: 'bg-orange-500/20 text-orange-600 dark:text-orange-400',
   failed: 'bg-red-500/20 text-red-600 dark:text-red-400',
   pending: 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400'
 };
@@ -319,18 +327,51 @@ export function ActivitySection({
       // Not a fact row; fall through to the email lookup below.
     }
 
-    // An email: did it arrive, was it read.
+    /*
+     * An email: what we actually know about it.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This used to render an "Opened" row unconditionally — the time, or the
+     * words "not opened". Open tracking is off by deliberate decision (it needs
+     * a tracking CNAME, a 1x1 pixel and every link rewritten through Resend), so
+     * `opened_at` is structurally null on every row and "not opened" was a claim
+     * with no evidence behind it. Every email in the timeline read as ignored.
+     *
+     * Each row below now appears only when there is something to report.
+     *
+     * The OUTCOME row matters most, and is the only place a bounce becomes
+     * visible anywhere in the CRM: the `log_email_activity` trigger writes its
+     * "Email Sent" activity when the row is created and does NOT fire again on
+     * the `sent → bounced` transition. Without this, a bounced email shows a
+     * timeline entry saying it was sent and nothing at all saying it never
+     * arrived.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
     const email = emails?.find(e => e.id === activity.source_entity_id);
     if (email) {
       if (email.sent_at) {
         rows.push({ label: t('crm.activity.detail.sent'), value: formatActivityMoment(email.sent_at) });
       }
-      rows.push({
-        label: t('crm.activity.detail.opened'),
-        value: email.opened_at
-          ? formatActivityMoment(email.opened_at)
-          : t('crm.activity.detail.not_opened'),
-      });
+      if (email.delivered_at) {
+        rows.push({
+          label: t('crm.activity.detail.delivered'),
+          value: formatActivityMoment(email.delivered_at),
+        });
+      }
+      // Never fires while tracking is off. Kept so that enabling it needs no
+      // change here, and correct either way.
+      if (email.opened_at) {
+        rows.push({
+          label: t('crm.activity.detail.opened'),
+          value: formatActivityMoment(email.opened_at),
+        });
+      }
+      if (isUndeliverable(email.status)) {
+        rows.push({
+          label: t('crm.activity.detail.outcome'),
+          value: t(`crm.email.status.${email.status}`),
+        });
+      }
     }
 
     return rows;

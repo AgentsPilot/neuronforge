@@ -936,6 +936,7 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
           'expired',
           'withdrawn',
           'superseded',
+          'stopped',
         ],
         enumLabels: {
           draft: { en: 'draft', he: 'טיוטה', es: 'borrador' },
@@ -955,6 +956,18 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
           expired: { en: 'expired', he: 'פגה', es: 'caducado' },
           withdrawn: { en: 'withdrawn', he: 'בוטלה', es: 'retirado' },
           superseded: { en: 'replaced by a newer version', he: 'הוחלפה בגרסה חדשה', es: 'reemplazado' },
+          /*
+           * "agreed, then stopped part-way" rather than "stopped".
+           *
+           * The word alone reads as an offer that never started. What makes this
+           * status worth asking about is that the job WAS agreed and money moved
+           * before it ended, which is the whole distinction from `withdrawn`.
+           */
+          stopped: {
+            en: 'agreed, then stopped part-way',
+            he: 'אושרה ונעצרה באמצע',
+            es: 'aceptado y detenido a medio camino',
+          },
         },
         /*
          * KEPT, on evidence rather than instinct.
@@ -4264,22 +4277,29 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         format: 'datetime',
         labels: { en: 'sent', he: 'נשלח', es: 'enviado' },
       },
-      opened_at: {
-        column: 'opened_at',
+      delivered_at: {
+        column: 'delivered_at',
         type: 'datetime',
         format: 'datetime',
-        labels: { en: 'opened', he: 'נפתח', es: 'abierto' },
+        labels: { en: 'delivered', he: 'נמסר', es: 'entregado' },
       },
-      open_count: {
-        column: 'open_count',
-        type: 'number',
-        labels: { en: 'opens', he: 'פתיחות', es: 'aperturas' },
-      },
-      click_count: {
-        column: 'click_count',
-        type: 'number',
-        labels: { en: 'clicks', he: 'קליקים', es: 'clics' },
-      },
+      /*
+       * `opened_at`, `open_count` and `click_count` are NOT exposed, and that is
+       * deliberate.
+       *
+       * Open and click tracking are off: both require a CNAME for a tracking
+       * subdomain, a 1x1 pixel in every email and every link rewritten to
+       * redirect through the provider, and that was weighed and declined for
+       * mail sent on behalf of small businesses to their own clients. So those
+       * three columns are structurally null on every row.
+       *
+       * Exposing them let the chat answer "how many of my emails were opened?"
+       * with a confident, well-formatted 0 — which is worse than not answering,
+       * because a zero reads as a measurement. Absent from the catalogue, the
+       * planner cannot build that query and says so instead.
+       *
+       * Re-add all three in the same commit as any decision to enable tracking.
+       */
       // body_html is not exposed: it is large, and no question needs the markup.
     },
 

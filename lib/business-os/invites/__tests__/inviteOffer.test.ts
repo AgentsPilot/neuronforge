@@ -65,7 +65,7 @@ describe('describeInviteOffer', () => {
     const joined = offer.included.map((row) => row.summary).join(' | ');
     for (const label of hiddenLabels) expect(joined).not.toContain(label);
     for (const row of offer.included) {
-      expect(Object.keys(row).sort()).toEqual(['category', 'label', 'summary']);
+      expect(Object.keys(row).sort()).toEqual(['category', 'labelKey', 'summary']);
     }
   });
 

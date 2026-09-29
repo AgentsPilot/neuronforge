@@ -52,13 +52,43 @@ const logger = createLogger({ module: 'ResendWebhook' });
  */
 const MAX_AGE_SECONDS = 300;
 
-/** Resend event types this platform acts on. Anything else is acknowledged. */
+/**
+ * Resend event types this platform acts on. Anything else is acknowledged.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * DELIBERATELY NOT SUBSCRIBED, so nobody has to re-derive this:
+ *
+ *   `email.opened` / `email.clicked` — handled below, but never sent to us.
+ *     Both require open/click tracking, which needs a CNAME for a tracking
+ *     subdomain, a 1x1 pixel in every email and every link rewritten to
+ *     redirect through Resend. That was weighed and declined for mail sent on
+ *     behalf of small businesses to their own clients. The cases stay because
+ *     they are correct, and because re-enabling tracking should be a dashboard
+ *     change rather than a code change.
+ *
+ *   `email.sent` — the row is written `'sent'` at send time, so the event is
+ *     pure duplication.
+ *
+ *   `email.suppressed` — fires when Resend DECLINES to send, because the
+ *     address is already on the account suppression list. That is a consequence
+ *     of a bounce or complaint already recorded here, and mapping it to
+ *     `failed` would conflate "we tried and it broke" with "we did not try".
+ *     The useful response is a CRM-level flag on the address, not a per-send
+ *     status.
+ *
+ *   `email.received`, `email.scheduled`, `domain.*`, `contact.*`,
+ *   `suppression.*` — not about the delivery of mail this platform sent.
+ *
+ * An accidentally-ticked box is harmless: an unhandled type is acknowledged 200.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 type ResendEventType =
   | 'email.delivered'
   | 'email.opened'
   | 'email.clicked'
   | 'email.bounced'
   | 'email.complained'
+  | 'email.failed'
   | 'email.delivery_delayed';
 
 interface ResendEvent {
@@ -118,6 +148,16 @@ function toDeliveryEvent(type: ResendEventType, at: string) {
       return { status: 'bounced' as const, errorMessage: 'Bounced at the provider' };
     case 'email.complained':
       return { status: 'complained' as const, errorMessage: 'Marked as spam by the recipient' };
+    /*
+     * Accepted by Resend, then failed on the way out.
+     *
+     * The row already reads `'sent'` with a `provider_message_id` — the send
+     * was accepted, which is why this matches at all — and without this case it
+     * would read `'sent'` for ever. A send that never happened, recorded as one
+     * that did, is the worst of the available outcomes.
+     */
+    case 'email.failed':
+      return { status: 'failed' as const, errorMessage: 'The provider could not send it' };
     case 'email.delivery_delayed':
       // Not terminal and not yet a failure. Recorded as nothing on purpose.
       return null;

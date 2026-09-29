@@ -22,6 +22,7 @@ import { Metadata } from 'next';
 import type { PageTheme } from '@/components/website/blocks/types';
 import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 import { StandaloneBookingWidget } from '@/components/public/StandaloneBookingWidget';
+import { servicesForLink } from '@/lib/business-os/smartLinkServices';
 import type { CollectionMethod } from '@/lib/business-os/setup/setupGraph';
 import type { Locale } from '@/lib/i18n/config';
 import { BusinessInfoPanel } from '@/components/public/BusinessInfoPanel';
@@ -170,14 +171,22 @@ export interface PublicBookingPageProps {
   userCode: string;
   /** A single service to pre-select. */
   initialServiceId?: string;
-  /** Comma-separated service ids to narrow the list to. */
+  /** Comma-separated service ids to narrow the list to. Legacy links only. */
   servicesParam?: string;
+  /**
+   * Comma-separated service ids this link leaves OFF.
+   *
+   * How a link narrows itself now: everything the business sells except these,
+   * so a service added later is on the link without anyone editing it.
+   */
+  excludeParam?: string;
 }
 
 export async function PublicBookingPage({
   userCode,
   initialServiceId,
   servicesParam,
+  excludeParam,
 }: PublicBookingPageProps) {
 
   /*
@@ -246,12 +255,17 @@ export async function PublicBookingPage({
     return <PublicErrorScreen brand={brand} kind="not-found" />;
   }
 
-  // Filter services if `services` param is provided (comma-separated IDs)
-  let filteredServices = businessData.services;
-  if (servicesParam) {
-    const allowedServiceIds = servicesParam.split(',').map(id => id.trim());
-    filteredServices = businessData.services.filter(s => allowedServiceIds.includes(s.id));
-  }
+  /*
+   * What this link offers: the live catalogue, minus what it leaves off.
+   *
+   * The rule and the reasons live in `lib/business-os/smartLinkServices` — it
+   * is the one thing about a link that must never go stale, so it is written
+   * once and tested on its own.
+   */
+  const filteredServices = servicesForLink(businessData.services, {
+    excludeParam,
+    servicesParam,
+  });
 
   const language = brand.locale as Locale;
 

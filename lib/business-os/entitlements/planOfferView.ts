@@ -27,7 +27,15 @@ import type { CapabilityDef } from './types';
 /** One row of "what the plan includes": a category and its features, joined. */
 export interface PlanOfferCategory {
   category: string;
-  label: string;
+  /**
+   * The dictionary KEY for the category heading, not the heading itself.
+   *
+   * This module is inside `entitlements` and cannot reach the platform's
+   * translations, so it names the heading and lets the surface render it. The
+   * invite page carries its own dictionary (`invitePageCopy.ts`) because it
+   * renders in the INVITE's language rather than the viewer's.
+   */
+  labelKey: string;
   summary: string;
 }
 
@@ -67,7 +75,7 @@ export function describePlanOffer(config: EntitlementConfig, planId: string, now
     monthlyPriceUsd: planMonthlyPriceUsd(config, planId),
     included: groupByCategory(features, catalog).map((row) => ({
       category: row.category,
-      label: row.label,
+      labelKey: row.labelKey,
       summary: row.summary,
     })),
   };
