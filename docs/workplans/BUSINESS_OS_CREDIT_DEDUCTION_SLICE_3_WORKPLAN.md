@@ -7,7 +7,7 @@
 **Builds on:** [BUSINESS_OS_CREDIT_DEDUCTION_SLICE_2_WORKPLAN.md](/docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_2_WORKPLAN.md). Slice 2 shipped the pure, unwired `priceActionForCharge` (`chargePricing.ts`) and `classifyCallForCharge` / `reportUnpricedCalls` (`chargeClassification.ts`); slice 3 wires them. Its verified facts, its SA conditions (C-1 to C-3) and its code-review notes (N-1 to N-6) are reused and cited as "S2 C-3", "S2 N-4" and so on.
 **Branch:** `feature/business-os-credit-deduction-slice-3` (worktree `neuronforge-llm-deduction`), off `origin/main` at `7faca4f7` (after slice 1's PR #130 and slice 2's PR #132). The branch was created before this workplan, not by Dev.
 **Date:** 2026-09-28
-**Status:** 3a QA Passed (PR #137). **Code Complete (3b-i)** — on `feature/business-os-credit-deduction-slice-3b-i` (stacked on 3a), uncommitted, awaiting SA code review; the migration is **not applied** (the user applies it to PROD by hand, §6.4.1). 3b-ii not started. **2026-09-29: 3b-i updated for the user's decision that the ledger is not AI-specific** (§3.1, §5.2.1.2): objects renamed to `business_os_credit_*` and a `service` column added; still uncommitted and not applied.
+**Status:** 3a merged (PR #137); 3b-i merged (PR #140) and **applied to PROD 2026-09-29 08:13:51 UTC**, checker PASS and write probe PASS (§15). **Code Complete (3b-ii)** — on `feature/business-os-credit-deduction-slice-3b-ii` (off `origin/main` `5049bd7c`), uncommitted, awaiting SA code review: every Business OS AI action writes one charge, awaited with a 1.5 s budget, never throwing (§5.2.2.1). Charging starts at 3b-ii's production go-live (§6.4 step 6, §15).
 
 ## Overview
 
@@ -359,7 +359,11 @@ return outcome.value;
 | `lib/business-os/purge/__tests__/classification-baseline.json` | modify | Two `never` entries | — |
 | `lib/business-os/businessOwnedTables.ts` | modify | Two `USER_OWNED_TABLES` entries with reasons | 0 |
 | `lib/business-os/account/accountDeletionPolicy.ts` | modify | `business_os_credit_charges: minimise`; totals default `delete` (Q-8) | 0 |
-| Call-site suites from the T3b.0 census | modify, **only if** they break | `jest.mock` of the recorder where a suite asserts "no error log" or a stubbed `supabaseServer` lacks `.rpc` (Q-7) | counted at T3b.0 |
+| Call-site suites from the T3b.0 census | modify (**3b-ii: the 10 that reach the write**, per SA's Q-7 criterion "reaches the write", not "breaks") | One `jest.mock('@/lib/business-os/llm/aiChargeRecorder', …)` each: chat-v4 `route.audit`, insight-detect `route.audit`, onboarding build `route.audit`, onboarding chat `route.attribution`, website `aiAudit.routes`, media `route.attribution`, `BriefingStore.audit.attribution`, `lead-reply-attribution`, `modelFallback`, `website-llm-attribution` (§5.2.2.1) | 0 in each |
+| `lib/business-os/llm/chargeResolver.ts` + `__tests__/chargeResolver.test.ts` | modify (**3b-ii**, C-5) | `buildAiChargeRecord` takes the validated `identities` and `isCharged`; type-only imports from `aiActionAudit.ts`; N-8 comment | 0 |
+| `lib/repositories/__tests__/BusinessOsCreditChargeRepository.test.ts` | modify (**3b-ii**, D-13) | `ALLOWED` gains the recorder and the two suites that fake the repository | 0 |
+| `lib/repositories/BusinessOsCreditChargeRepository.ts` | modify (**3b-ii**, comment only) | The header names the recorder as the only caller | 0 |
+| `.claude/skills/bos-llm-call-standards/SKILL.md` | modify (**3b-ii**, SF-7) | Standard 6: the charge, a checklist line, an anti-pattern | — |
 | `scripts/lib/bos-llm-scope.ts` + its test | modify (**if SA authorises**, Q-6) | Inclusion for `aiChargeRecorder.ts` if it does not import the catalog | 1 (pre-existing) |
 | `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md` | modify | A short "Metering: the credit ledger" section: the two tables, not AI-specific (one pool, `service`), the credit value v0, the charging start, "nothing reads it yet" | 0 |
 
@@ -530,13 +534,98 @@ Worktree `neuronforge-llm-deduction`, branch `feature/business-os-credit-deducti
 
 #### 5.2.2 Slice 3b-ii — Start charging (≈ 2 days; starts after 3b-i is applied, checked and write-probed on PROD)
 
-- ⬜ **T3b.0 (b)/(c): Census and baselines.** Every suite that runs the real `runAiAction` with valid identities (mocks `AuditTrailService`, does not mock `aiActionAudit`), with its pass count before the change, and the suites among them that use `jest.useFakeTimers()` (SF-3). Per wrapped route: `maxDuration`, maximum action count per invocation, headroom at today's count and at 10× (SF-4). T3a.0's baselines re-taken for the 3b-ii files.
-- ⬜ **T3b.3: Recorder (§3.7)** with its tests (every outcome row, every log level and field, budget, abort, never rejects). It writes through `BusinessOsCreditChargeRepository` with `{ ...record, service: 'ai' }` — slice 3 records only the AI service — and is added to the repository test's `ALLOWED` list (D-13). The budget helper is written locally (Q-11). `LITERAL_SCOPE_INCLUSIONS` entry for `aiChargeRecorder.ts` if it does not import the catalog (Q-6).
-- ⬜ **T3b.4: Wiring** in `runAiAction`; NI-1 to NI-4; ordering (`audit` → `unpriced check` → `charge`); AC-8 and AC-12.
-- ⬜ **T3b.7: Blast radius.** Per-suite `jest.mock` of the recorder in every census suite that **reaches the write** (Q-7, SF-3), listed in §4.2. Evidence: the census run once with `NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:9` shows zero `bos_ai_charge_write_failed`. NI-5 = identical pass sets.
-- ⬜ **T3b.8: Docs.** The entitlements doc's "Metering" section and § The mode flag (SF-6: metering is not mode-gated); the `bos-llm-call-standards` skill Standard 6 (SF-7); the stale CLAUDE.md mode row flagged to TL.
-- ⬜ **T3b.9: Gates and evidence.** As T3a.5, plus `next build`, and the grep that no new file names `token_usage`, `user_subscriptions`, `credit_transactions` or `billing_events`.
-- ⬜ **T3b.10: Handover.** Status → Code Complete (3b-ii); uncommitted; notify TL. RM records **both** timestamps (SF-5): the 3b-i migration apply time and the 3b-ii production go-live (the charging start).
+- ✅ **T3b.0 (b)/(c): Census and baselines.** Measured, not grepped (§5.2.2.1): 11 suites run the real `runAiAction` with a call and valid identities. Baselines taken on the full Jest suite before any 3b-ii code.
+- ✅ **T3b.3: Recorder (§3.7)** with its tests (every outcome row, every log level and field, budget, abort, never rejects). It writes through `BusinessOsCreditChargeRepository` with `service` from `AI_CHARGE_SERVICE` (C-6), and is added to the repository test's `ALLOWED` list (D-13). The budget helper is written locally (Q-11). `LITERAL_SCOPE_INCLUSIONS` entry for `aiChargeRecorder.ts` (it does not import the catalog; Q-6).
+- ✅ **T3b.4: Wiring** in `runAiAction`; NI-1 to NI-4; ordering (`audit` → `unpriced check` → `charge`); AC-8 and AC-12; N-7 through `runAiAction`; C-5 (type-only imports, source guard).
+- ✅ **T3b.7: Blast radius.** Per-suite `jest.mock` of the recorder in the 10 census suites that reach the write (the 11th, `aiActionAudit.test.ts`, fakes the repository under the real recorder). Zero unmocked charge writes across the whole Jest run (§5.2.2.1). NI-5 = identical pass sets.
+- ✅ **T3b.8: Docs.** The entitlements doc's Metering section (status, how a charge is written, a charging-start placeholder); § The mode flag already says metering is not mode-gated (SF-6, done in 3b-i); the `bos-llm-call-standards` skill Standard 6 (SF-7); §6.4 steps 5–8 and the new §6.4.2 post-deploy checks. The stale CLAUDE.md mode row is flagged to TL again (§12, F-4).
+- ✅ **T3b.9: Gates and evidence** (§5.2.2.1).
+- ✅ **T3b.10: Handover.** Status → Code Complete (3b-ii); uncommitted; TL notified through the hand-back. RM records the charging start (§15) at go-live.
+
+#### 5.2.2.1 Dev evidence — 3b-ii (2026-09-29)
+
+Worktree `neuronforge-llm-deduction`, branch `feature/business-os-credit-deduction-slice-3b-ii` off `origin/main` `5049bd7c` (3a #137 and 3b-i #140 merged), nothing committed, **no database touched**. Every Jest run in this part had `NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:9` and a stub service key exported, and the shell holds no Supabase or OpenAI variable and the worktree no `.env*` (checked first), so no run could reach a real database (SF-3). **No migration** (none needed). The 3b-i PROD evidence that allowed 3b-ii to start is recorded in §15.
+
+**What changes at runtime.** Every `runAiAction` that made at least one AI call now awaits one charge write after the audit entry is queued and the unpriced check has run, and before the action's value is returned or its error rethrown. The write is bounded at 1,500 ms and never throws. Zero-call actions await nothing. No call site changed (`git diff` touches no `runAiAction(` line outside tests); `balance.ts`, `chat-v4`'s structure and every owner surface are untouched; charges are recorded in every entitlements mode.
+
+**How the conditions are met**
+
+| Condition | Where |
+|---|---|
+| **C-5** no value-level cycle | Option (a): `buildAiChargeRecord` now takes `identities` (already validated by `runAiAction` through `validateIdentities`, or `null`) and `isCharged` (the declaration's, read by `runAiAction`). `chargeResolver.ts` and `aiChargeRecorder.ts` import only `type`s from `aiActionAudit.ts`. Source guard in `aiChargeRecorder.test.ts`: every import statement from `./aiActionAudit` in either file starts `import type`, and neither has a `require()` / dynamic `import()` of it |
+| **C-6** `service` from one constant | `export const AI_CHARGE_SERVICE = 'ai' as const` in the recorder; the charge object is built field by field with `service: AI_CHARGE_SERVICE`; `AiChargeInput` has no `service` field. Tests: the value is `'ai'`; a spec carrying `service: 'sms'` still writes `'ai'`; a source guard finds exactly two `service:` assignments in the recorder, both `AI_CHARGE_SERVICE` (the row and the log fields); through `runAiAction` the written row has `service: 'ai'` |
+| **N-7** one failure for both records | `runAiAction` computes one `AiActionDecision` (`identities`, `failure` from `resolveActionFailure`) and passes it to both `emitAiAuditEntry` and the recorder. `aiActionAudit.test.ts` proves it through `runAiAction` for five shapes (all succeeded, repaired, unrepaired, signalled, thrown): the charge's `outcome` and `actionId` equal the entry's. Mutation check: passing the recorder `failure: undefined` turned 4 of these red; restored |
+| **N-4 (3b-i)** replayed id | `recorded = false` → `info` `bos_ai_charge_duplicate` `{ recorded: false, actionId, … }`, never an error (tested) |
+| **N-5 (3b-i)** abort = unknown | A time-out logs `bos_ai_charge_write_failed` `reason: 'timeout'`, `fate: 'unknown'`; a `db_error` without a database code (a network failure) is also `fate: 'unknown'`; one with a code (`PGRST202`, `23514`, …) is `not_written` (tested) |
+| **D-1** no repricing | The fallback `info` uses the builder's `fallbackCallCount`; a test spies `priceActionForCharge` and sees one call per charge |
+| **S2 N-4** no second unpriced error | The recorder logs one `info` per fallback-priced **charge**; `bos_llm_call_unpriced` stays one `error` per **call** (tested both in the recorder and through `runAiAction`) |
+| **D-13** `ALLOWED` | `aiChargeRecorder.ts`, `aiChargeRecorder.test.ts` and `aiActionAudit.test.ts` (the two suites that fake the repository) added; the describe is renamed "the AI charge recorder is the only production caller"; `aiActionAudit.ts` itself does not name the repository (static test) |
+| **Q-11** budget | 1,500 ms, local helper (`Promise.race` + `AbortController`, timer `unref()`ed and cleared in `finally`), the repository called in exactly one place (static test) |
+| **SF-3 / Q-7** | Census measured; per-suite mocks; zero unmocked writes (below) |
+| **SF-4** | Table below |
+| **SF-6** | Already in the entitlements doc § The mode flag (3b-i); the recorder and `runAiAction` read no mode; a test records a charge with `BOS_ENTITLEMENTS_MODE` = `off`, `shadow`, `enforce` and unset |
+| **SF-7** | `bos-llm-call-standards` Standard 6: a "second output: the credit charge" bullet (awaited, budgeted, never throws, the only sanctioned awaited write, one writer, same decision as the entry, test suites must mock it), a checklist line and an anti-pattern line |
+| **R-9 / S2 N-1** Groq cost 0 | Unchanged and unreachable: Business OS is OpenAI-only (`ALLOWED_PROVIDERS_LAYER2 = ['openai']`). Carried in §10 and §12 |
+
+**The census (T3b.0 (b), SF-3), measured rather than grepped.** A temporary line in `emitAiAuditEntry` (after the identity check, i.e. exactly where a charge would be built) appended `expect.getState().testPath` and whether fake timers were active to a scratch file; the **whole** Jest suite (660 suites) ran once; the line was removed and the file restored byte-identical (sha256 `f8d4e320…0573d`). Result: **11 suites** run the real `runAiAction` with ≥ 1 call and valid identities — far fewer than §1's static estimate of ~33, because most AuditTrail-mocking suites never make an attributed call. No hit happened under fake timers.
+
+| Suite | Hits | Pass count before | After | Fix |
+|---|---|---|---|---|
+| `lib/business-os/llm/__tests__/aiActionAudit.test.ts` | 34 | 48 | **85** (+37 new) | Repository faked (the recorder stays real: this suite is the NI proof) |
+| `app/api/cron/insight-detect/__tests__/route.audit.test.ts` | 12 | 6 | 6 | recorder mocked |
+| `app/api/website/__tests__/aiAudit.routes.test.ts` | 9 | 10 | 10 | recorder mocked |
+| `app/api/business-os/chat-v4/__tests__/route.audit.test.ts` | 8 | fails to run | fails to run (identical) | recorder mocked |
+| `lib/business-os/briefing/__tests__/BriefingStore.audit.attribution.test.ts` | 5 | 7 | 7 | recorder mocked |
+| `app/api/website/media/generate/__tests__/route.attribution.test.ts` | 3 | 10 | 10 | recorder mocked |
+| `app/api/onboarding/build/__tests__/route.audit.test.ts` | 2 | 3 | 3 | recorder mocked |
+| `app/api/onboarding/chat/__tests__/route.attribution.test.ts` | 2 | 8 | 8 | recorder mocked |
+| `lib/business-os/leads/__tests__/lead-reply-attribution.test.ts` | 2 | 5 | 5 | recorder mocked |
+| `lib/business-os/llm/__tests__/modelFallback.test.ts` | 1 | 18 | 18 | recorder mocked (**one of the four fake-timer suites**) |
+| `lib/services/__tests__/website-llm-attribution.test.ts` | 1 | 16 | 16 | recorder mocked |
+
+**Fake timers (SF-3).** Of the AuditTrail-mocking suites, four use `jest.useFakeTimers()`: `modelFallback.test.ts` (in the census, now mocked, so no budget timer exists there), and `app/api/admin/archiving/runs`, `…/business-os/invites`, `…/business-os/llm-usage` route tests (not in the census: they make no attributed AI call, so no charge is attempted). The recorder's own suites drive the budget timer explicitly with `jest.advanceTimersByTimeAsync` and assert `jest.getTimerCount() === 0` afterwards.
+
+**Zero unmocked writes (T3b.7 evidence).** With the mocks in place, a temporary line in `BusinessOsCreditChargeRepository.recordCharge` recorded every test that reached the real repository, and the whole Jest suite ran once more with `NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:9`. The only suite that reached it is the repository's own unit test (17 calls, every one through an injected fake client; `supabaseServer` is mocked to `{}` there). **No census suite reached the real repository**; the log holds **0** `bos_ai_charge_*` events. **Negative control:** with the recorder mock removed from `lead-reply-attribution.test.ts` only, that suite stayed green (5/5) **and** made 2 real repository calls — exactly the silent outbound write Q-7 describes, and the detection sees it. The line was removed and the repository restored byte-identical (sha256 `4888cbd9…81f4d5`); the test file too (`11e8e5a9…6fd37`).
+
+**NI-5.** Whole Jest suite, before (no 3b-ii code) vs after: 660 → 661 suites (the new recorder suite); **the failing-suite list is identical** (26 suites, 145 tests; all pre-existing: the V6 / agentkit / pilot / orchestration reds, `tokenUsageRepository.contract`, `featureFlags`, `website-builder`, `runRecord.adoption`, the admin entitlements routes test and chat-v4 `route.audit` (worker crash), plus the 8 skipped plugin integration suites). Passing tests 11,225 → 11,295 (+70: 37 in `aiActionAudit.test.ts`, 33 in `aiChargeRecorder.test.ts`). Every census suite has the same pass count. (One earlier baseline run also showed `app/admin/business-os-invites/__tests__/page.render.test.tsx` red; it is the known parallel-load flake, green in the other two runs.)
+
+**SF-4 — time headroom per wrapped route.** The worst case is the budget per charged action, **sequentially**: a Supabase slowdown makes every charge wait the full 1.5 s. "Today" is SA's live count of 2026-09-28: 6 `business_profiles`, 8 plan rows.
+
+| Wrapped site | `maxDuration` | AI actions per invocation | Worst added, today | Worst added, 10× | Flag |
+|---|---|---|---|---|---|
+| `cron/insight-detect` (`insight_run`, sequential per business) | 300 s, self-budget `RUN_BUDGET_MS` 240 s checked **between** businesses | one per business with an AI call | ≤ 6 × 1.5 = 9 s | ≤ 60 × 1.5 = 90 s | **Flag (throughput, not a kill).** The 240 s budget stops starting businesses and reports `usersRemaining`, so the function is not killed; at most one in-progress business overruns by ≤ 1.5 s, inside the 60 s margin. But at 10× a slowdown spends up to 90 s of the 240 s on charges, and businesses are deferred to the next night. Q-10's trigger (circuit breaker) |
+| `cron/daily-briefing` → `DailyBriefingDispatchService` → `getBriefing` (`briefing_narration`, scheduled; sequential) | **60 s**, lease 90 s | one per business in the batch; `BATCH = 25`; a cached briefing makes no call and waits nothing | ≤ 6 × 1.5 = 9 s | ≤ 25 × 1.5 = **37.5 s** (capped by the batch) | **Flag.** At a full batch the charges alone can take 37.5 s of 60 s, on top of 25 sequential narrations that already approach the limit without it. The lease reclaims a killed run's rows, so nothing is lost, but sends slip. Q-10's trigger |
+| `business-os/chat-v4` (`chat_turn`; plus a nested `chat_website_operation` per landing page `MutateExecutor` creates) | not set in code (platform default) | 1, occasionally 2 | 1.5–3 s | same (per request) | No |
+| `onboarding/build` (`onboarding_build`) | 60 s | 1 | 1.5 s | same | No |
+| `website/generate-from-profile`, `website/landing-pages/generate`, `intake/form/generate` | 60 s | 1 | 1.5 s | same | No |
+| `onboarding/chat`, `intake/form/infer-question`, `website/blocks/[blockId]/regenerate`, `website/enhance-testimonial`, `website/media/generate`, `business-os/my-day` (`getBriefing`, user) | not set (platform default) | 1 | 1.5 s | same | No |
+| Lead alert (`lead_reply_recommendation`, external) from `website/forms/contact`, `website/proposal-request`, `book/manage/[token]/cancel`, `…/reschedule` | not set | 1 | 1.5 s | same | **Note.** `notifyOwnerOfLead` is **not awaited** by those routes (by design, so a slow mail provider cannot fail a visitor's form). The charge therefore runs after the response, like the email and the audit entry; if the platform freezes the function first, the charge can be lost with them. Slice 4's leak check detects it (FR-16) |
+| Dormant: `WebsiteSectionService`, `WebsiteBlockEnrichmentService` | — | — | — | — | Not reachable in production |
+
+**Gates**
+
+| Gate | Baseline (T3b.0) | After (T3b.9) |
+|---|---|---|
+| `npx jest lib/business-os/llm lib/business-os/entitlements lib/repositories/__tests__/BusinessOsCreditChargeRepository.test.ts supabase/migrations/__tests__/business-os-credit-charges.migration.test.ts scripts/__tests__/check-bos-llm-literals.test.ts` + the 10 other census suites | 63 suites (62 pass; chat-v4 `route.audit` fails to run, pre-existing and red on `main`), 1,591 tests all pass | **64 suites (63 pass, the same chat-v4 crash), 1,661 tests, all pass**: `aiActionAudit` 85, `aiChargeRecorder` 33 (new), `chargeResolver` 41, repository 22, migration guard 90, literals 67 |
+| `npm run test:bos-entitlements` (the CI job) | — | **85 suites, 1,779 tests, all green** |
+| `npm run typecheck:bos-llm` | 299 files (3b-i), 28 errors, 0 new; baseline sha256 `d81772b0…29f2` | **307 files, 28 errors, 0 new, passed**; baseline sha256 **unchanged**; the same one "fixed" entry (`app/api/onboarding/build/route.ts` TS18047), `--update-baseline` not run. `--list`: `aiChargeRecorder.ts` and its test `core`, the repository test `caller` |
+| `npm run check:bos-llm-literals` | 49 files, 2 exempt, 0 violations | **50 files, 2 exempt, 0 violations**; `--list` shows `included lib/business-os/llm/aiChargeRecorder.ts` (4 included by name) |
+| Scoped type program (S2 C-3: scratch tsconfig outside the repo, `extends` the worktree's, `incremental: false`, `include: []`, `files` = `next-env.d.ts` + the 20 touched `.ts` files) | Same program with the tracked files at `HEAD` (`git stash push` of those paths only, the two new files left out; restored with `git stash pop`, `git diff` byte-identical to a saved copy) | **68 errors, (file, code, message) set identical to the baseline; 0 in any touched file** except the 3 pre-existing TS2769 at the fixture lines of `check-bos-llm-literals.test.ts` (also in the baseline). The rest are in files the census suites pull in (`WebsiteBlockEnrichmentService.ts` 16, `StripeInvoiceService.ts` 12, `website-block-translations.ts` 7, `aiAnalytics.ts` 6, …), all in the baseline |
+| `next build` (`NODE_OPTIONS=--max-old-space-size=6144`, CI placeholder env from `.github/workflows/build.yml`) | — | **Exit 0**: "Compiled successfully", 307/307 pages; 78 `DYNAMIC_SERVER_USAGE` lines, the usual static-generation probes (as in 3a and 3b-i) |
+| Pilot-Credit / token tables | — | `token_usage`, `user_subscriptions`, `credit_transactions`, `billing_events` appear in no new or changed production file (`aiChargeRecorder.ts` source guard; `chargeResolver.ts` guard unchanged) |
+| `console.*` | — | 0 in every touched `lib/` and `app/` file, before and after. `scripts/lib/bos-llm-scope.ts` keeps its 1 pre-existing CLI `console.error` (`:66`), left as SA ruled in Q-6 |
+| `git diff --stat` | — | 18 tracked code and test files **+609 / −54**, plus the skill and two docs; every file with deletions also has insertions (no deletion-without-insertion, `git diff --numstat` read before the diff); 2 new untracked files (`aiChargeRecorder.ts` 265 lines, its test 376) |
+
+**Deviations (for SA)**
+- **D-15** `bos_ai_charge_duplicate` is logged at **`info`**, not `warn` as §3.7's table planned: SA's 3b-i N-4 asked for `info` with the action id.
+- **D-16** `bos_ai_charge_write_failed` carries two fields beyond FR-16's list: `service` (as §5.2.1.2 suggested) and `fate` (`unknown` / `not_written`, for N-5). An exception is split: a throw **before** the write (the builder, a pricing-table defect) is `fate: 'not_written'`; a throw or rejection **from** the write is `unknown`.
+- **D-17** `bos_ai_charge_not_written` gains a third reason, **`undecided`**: if deciding the action's identities or failure itself throws inside `runAiAction` (only a hostile error object with a throwing `code` getter could), the entry is not written (as before) and the recorder logs one error rather than guessing an outcome, so N-7 cannot be broken by a fallback.
+- **D-18** `no_calls` / `not_charged` are logged at `debug` as `bos_ai_charge_skipped` (§3.7 said "debug", without an event name).
+- **D-19** The safety wrapper in `runAiAction` (`recordAiChargeSafely`) is one `try { await … } catch`, which catches a synchronous throw and a rejection alike; the separate `.catch` §3.7 mentioned would be redundant. Tested with the recorder itself throwing and rejecting.
+- **D-20** `decideAiAction` calls `resolveActionFailure` only when the identities are valid, as `emitAiAuditEntry` did; for invalid identities both records are skipped and the failure is never needed.
+- **D-21** The repository header's "there is NO caller in 3b-i" sentence now names the recorder as the only caller (comment only).
+- **D-22** SA's N-8 (the `roundTo` comment said "half away from zero") is fixed in passing, since `chargeResolver.ts` was touched: it now says half up, and why the two agree here.
+- **D-23** (SA 3b-ii S-1 fix) The "database answered" pattern is `^(?:[0-9FHPX][0-9A-Z]{4}|PGRST\d+)$`, one notch tighter than SA's `^[0-9A-Z]{5}$`: a bare 5-character class also matches 5-letter Node network codes (`EPIPE`, `EPERM`), which would put a network failure back at `not_written`. Every PostgreSQL SQLSTATE class starts with a digit or `F0` / `HV` / `P0` / `XX`, so no real SQLSTATE is lost; an unrecognised code falls to `unknown`, the safe direction. SA's optional `errCode: 'network'` for an empty code is taken. Tested: `23514` and `P0001` and `PGRST202` → `not_written`; the real postgrest-js fetch-error shape (`code: ''`), `ECONNRESET` and `EPIPE` → `unknown`.
 
 ---
 
@@ -663,10 +752,10 @@ The runbook follows SA's split (§13): steps 1–4 belong to **3b-i** (the ledge
 | 2 | 3b-i | User | Paste `supabase/migrations/20261015_business_os_credit_charges.sql` into the Supabase SQL editor on **PROD**; record the **apply time** (UTC) in §15 (SF-5) | `Success. No rows returned` |
 | 3 | 3b-i | User | Run `scripts/check-bos-credit-charges-migration.sql` | Row 0 `VERDICT PASS`; C7 `0 charge rows and 0 totals rows` |
 | 4 | 3b-i | User (**mandatory**, C-1) | Run `scripts/probe-bos-credit-charges-migration.sql` with your own user id pasted in, then the checker again; both outputs pasted into §15 | `PROBE PASS …` with P01–P22 and P08A–P08C each PASS; then the checker still `VERDICT PASS` and C7 still empty. 3b-i merges with nothing calling the repository |
-| 5 | 3b-ii | RM | Merge 3b-ii; Vercel deploys | — |
-| 6 | 3b-ii | RM | **Record the charging start** = the UTC time the 3b-ii production deployment went live, in §15 and in the entitlements doc. Rows between the step-2 apply time and this moment are developer or preview traffic on developers' own accounts (SF-5) | FR-34: "a stated moment" |
-| 7 | 3b-ii | User, +1 h | Run one chat turn and one image in `/test-business-os`; then `SELECT … FROM business_os_credit_charges WHERE user_id = <own id> ORDER BY created_at DESC LIMIT 5` and the matching `audit_trail` rows | One charge per action; `action_id` = the audit entry's `details.actionId`; `triggered_by = 'owner'`; credits ≈ cost × 1000; the totals row moved; no `bos_ai_charge_write_failed` in the logs |
-| 8 | 3b-ii | User, next morning | Compare, for the night: count of AI audit entries vs count of charge rows (per account); C7's rebuild query | Equal or explained (a lost audit entry, KI-10); rebuild = totals; the insight run rows carry `triggered_by = 'scheduled'` |
+| 5 | 3b-ii | RM | Merge 3b-ii (only after SA ✅, QA ✅ and the user's approval); Vercel deploys `main` to production | The deployment reaches **Ready** |
+| 6 | 3b-ii | RM | **Record the charging start** = the UTC time the 3b-ii production deployment went **Ready**, in §15 and in the entitlements doc's Metering section (it has a placeholder line). Rows between the 3b-i apply time (`2026-09-29 08:13:51.757133` UTC, §15) and this moment are developer or preview traffic on developers' own accounts (SF-5) | FR-34: "a stated moment" |
+| 7 | 3b-ii | User, within the first hour | §6.4.2 steps A–E: one AI action as yourself, then three read-only queries (B, C, D) and the checker (E) | One charge row per action, joined to its audit entry by the action id; the totals row moved; checker `VERDICT PASS` with C7's rebuild matching |
+| 8 | 3b-ii | User, next morning | §6.4.2 steps F–G: the night's audit entries vs charge rows per account, and the checker again | Counts equal or explained; C7 rebuild matches; the insight run's rows carry `triggered_by = 'scheduled'` |
 
 #### 6.4.1 3b-i on PROD: the exact steps (by the user, Supabase SQL editor)
 
@@ -695,6 +784,71 @@ Nothing here needs a terminal except step 1. Paste each file **whole**, as its o
 9. **Paste into §15:** the apply time (step 4), the checker grid (step 5), the probe's full error text (step 7) and the second C7 row (step 8). 3b-i then merges with nothing calling the repository, and 3b-ii may start.
 
 **Charging start (FR-34, FR-35):** charging starts at the 3b-ii production go-live, recorded by RM in **§6.4 step 6** (not a step of this list). Before it, nothing is counted and no history is converted; `min(created_at)` of the charge table is the measurable proof. Pilot-Credit balances are untouched (A-11). Because environments share the production database (SF-5), the AC-26 check is "no row before the apply time recorded in step 4 above, and every row before the 3b-ii go-live (§6.4 step 6) is identified" (developer or preview traffic) (QA-N1).
+
+#### 6.4.2 3b-ii on PROD: the exact post-deploy checks (by the user, Supabase SQL editor)
+
+Everything here is **read-only** (`SELECT` only) apart from step A, which is simply using the product. Paste each block as its own run. Replace `YOUR_USER_ID` with the id from §6.4.1 step 6, and `GO_LIVE_UTC` with the charging start RM recorded in §15 (for example `2026-09-30 10:00:00`). Both sit between single quotes in the SQL: replace only the placeholder word and keep the quotes, with no spaces inside them.
+
+**A. Make one AI action (within the first hour after go-live).** Signed in as yourself on production, ask the Business OS chat one short question **you have not asked before** (any new question that gets an answer). A repeated question may be answered from the plan cache; it should still be charged for its lookup (§2.3), but a fresh question removes any doubt before you report "no row" in step B. Wait about a minute: the audit entry is queued, the charge is not.
+
+**B. Your latest charges.**
+```sql
+SELECT created_at AT TIME ZONE 'UTC' AS created_utc, action_id, service, action_type, triggered_by, outcome,
+       credits, cost_usd, credit_value_version, is_fallback_priced, period_start AT TIME ZONE 'UTC' AS period_start_utc
+FROM public.business_os_credit_charges
+WHERE user_id = 'YOUR_USER_ID' AND kind = 'charge'
+ORDER BY created_at DESC
+LIMIT 5;
+```
+Expect a row created after `GO_LIVE_UTC` with `service = ai`, `action_type = chat_turn`, `triggered_by = owner`, `outcome = succeeded`, `credit_value_version = 0`, and `credits` equal to `cost_usd × 1000` to within 0.000001 (credits are rounded from the unrounded cost, so about 1 row in 20 differs in the last decimal place, QA-N9; a chat turn is typically well under 1 credit). **No row:** check the Vercel logs for `bos_ai_charge_write_failed` or `bos_ai_charge_not_written` and send them to Dev.
+
+**C. Each charge joined to its audit entry by the action id (AC-28's join).**
+```sql
+SELECT charge_row.action_id, audit_row.details ->> 'actionId' AS audit_action_id, audit_row.action AS audit_event,
+       charge_row.outcome AS charge_outcome, audit_row.details ->> 'outcome' AS audit_outcome,
+       charge_row.cost_usd AS charge_cost, audit_row.details ->> 'estimatedCostUsd' AS audit_cost
+FROM public.business_os_credit_charges charge_row
+LEFT JOIN public.audit_trail audit_row
+  ON audit_row.entity_type = 'ai_action' AND audit_row.details ->> 'actionId' = charge_row.action_id::text
+WHERE charge_row.user_id = 'YOUR_USER_ID' AND charge_row.kind = 'charge'
+ORDER BY charge_row.created_at DESC
+LIMIT 5;
+```
+Expect `audit_action_id` = `action_id` on every row and `charge_outcome` = `audit_outcome`. The two costs are equal in value (the charge shows trailing zeros, the audit JSON does not, QA-N10), except on a row with `is_fallback_priced = true` (the charge is priced conservatively on purpose, SQ-13). An empty `audit_action_id` is a delayed or lost audit entry (KI-B), not a charge defect: re-run after a few minutes.
+
+**D. Your totals row moved.**
+```sql
+SELECT period_start AT TIME ZONE 'UTC' AS period_start_utc, credits_total, credits_owner, credits_scheduled,
+       credits_external, credits_adjustment, cost_usd_total, charge_count, fallback_priced_count
+FROM public.business_os_credit_totals
+WHERE user_id = 'YOUR_USER_ID';
+```
+Expect one row for the current period with `charge_count` ≥ 1 and `credits_owner` ≥ step B's credits.
+
+**E. The checker.** Paste `scripts/check-bos-credit-charges-migration.sql`, Run. Expect row 0 `VERDICT PASS`; C7 `totals equal the rebuild from the ledger` PASS with `0 mismatched account periods`; the C7 size row now shows charge rows, and its `first row at` time (UTC) is **after** the 3b-i apply time.
+
+**F. Next morning: the night's audit entries vs charges, per account.**
+```sql
+WITH audit AS (
+  SELECT user_id, count(*) AS audit_entries
+  FROM public.audit_trail
+  WHERE entity_type = 'ai_action' AND created_at >= (TIMESTAMP 'GO_LIVE_UTC' AT TIME ZONE 'UTC')
+  GROUP BY user_id
+), charges AS (
+  SELECT user_id, count(*) AS charge_rows, count(*) FILTER (WHERE triggered_by = 'scheduled') AS scheduled_rows
+  FROM public.business_os_credit_charges
+  WHERE kind = 'charge' AND created_at >= (TIMESTAMP 'GO_LIVE_UTC' AT TIME ZONE 'UTC')
+  GROUP BY user_id
+)
+SELECT coalesce(audit.user_id, charges.user_id) AS account, audit.audit_entries, charges.charge_rows, charges.scheduled_rows
+FROM audit FULL JOIN charges ON audit.user_id = charges.user_id
+ORDER BY 1;
+```
+Expect `audit_entries` = `charge_rows` on every account, and `scheduled_rows` > 0 for businesses the nightly insight run (03:30 UTC) processed. On the first morning a small difference can also come from actions still running on the previous deployment at go-live (QA-N11). A difference is explained by a lost audit entry (KI-B: more charges than entries) or a failed charge write (fewer charges; the Vercel logs then show `bos_ai_charge_write_failed` with that account). Anything else goes to Dev.
+
+**G. The checker again.** As step E: `VERDICT PASS`, C7 rebuild `0 mismatched account periods`.
+
+Paste steps B–E into §15 the same day and F–G the next morning.
 
 ### 6.5 Data lifecycle registration (SA-S8)
 
@@ -829,8 +983,8 @@ All new suites are **local-only** (no CI job runs Jest); QA must run them.
 |---|---|---|
 | R-1 | A DB round trip is added to **every** Business OS AI action | Awaited only after the action's own work, one RPC (tens of ms typical), bounded at 1.5 s; zero-call actions add nothing (NI-4) |
 | R-2 | A Supabase slowdown makes every action wait the full budget | Bounded, logged, and the action is unchanged. A per-instance circuit breaker would save latency but is a new pattern (Q-10) |
-| R-3 | A route near its `maxDuration` gets pushed over by the worst case | +1.5 s worst case; T3b.0 lists each wrapped route's `maxDuration` (e.g. insight cron 300 s) and flags any within 2 s of it |
-| R-4 | ~33 suites run the real `runAiAction`; an unmocked write makes a real HTTP call to the stub URL and logs an `error` | Census at T3b.0, re-run at T3b.7; the fix shape is Q-7 |
+| R-3 | A route near its `maxDuration` gets pushed over by the worst case | The worst case is **cumulative** for sequential loops (SF-4): 1.5 s per action for a single-action route, but **businesses × 1.5 s** for the two loops. **Insight cron:** one charge per business, bounded by its 240 s `RUN_BUDGET_MS` checked between businesses (300 s `maxDuration`), so a slowdown defers businesses to the next night rather than killing the run (≤ 9 s today, ≤ 90 s at 10×). **Daily-briefing cron:** up to `BATCH = 25` × 1.5 s = 37.5 s inside a 60 s function with no run deadline; a killed run's rows are reclaimed by the 90 s lease, so sends slip and nothing is lost. Per-route table in §5.2.2.1; SA's SF-4 ruling (§13, 3b-ii code review): ship as is, no scheduled budget or breaker (Q-10 stands); the briefing run deadline is open item OI-1 (§12) |
+| R-4 | 11 suites (measured over the whole Jest suite, §5.2.2.1) run the real `runAiAction` with a call and valid identities; an unmocked write makes a real HTTP call to the stub URL and logs an `error` | Census at T3b.0, re-run at T3b.7; 10 mock the recorder and `aiActionAudit.test.ts` fakes the repository (Q-7); zero unmocked writes. The root risk (a developer's exported real Supabase URL) is SA's N-3 follow-up |
 | R-5 | `period_anchor` is assumed live from the migration file | T3b.0 runs `schema:check` first; if unverified, stop for SA |
 | R-6 | The 3b code deploys before the migration is applied | Every action logs `bos_ai_charge_write_failed` (PGRST202) and still succeeds. The runbook orders apply → verify → deploy |
 | R-7 | An admin `assign_tier` / `set_cohort` resets `period_anchor` to "now" (`adminOps.ts:338`, `:394`), splitting a period | Each row stores its own `period_start`, so history stays correct; the current-period read is slice 9's concern — recorded for it |
@@ -869,6 +1023,13 @@ All new suites are **local-only** (no CI job runs Jest); QA must run them.
 **Carried from slice 2's SA code review (N-1):** `lib/ai/providers/groqProvider.ts:157` hardcodes `cost = 0`. Under slice 3 a Business OS call on Groq would be charged the `*` text rate (the OpenAI maximum, $0.03 / $0.18 per 1k). Unreachable while `ALLOWED_PROVIDERS_LAYER2 = ['openai']`; **Business OS is OpenAI-only today.** Before any Layer 2 area is allowed onto Groq, Groq must record a real cost or the allow-list must refuse it (R-9).
 
 **Deprecated systems:** none touched or extended.
+
+**Open items carried out of slice 3 (from SA's 3b-ii code review, 2026-09-29).** Not built here; recorded so they are not lost.
+
+| # | Item | Owner / trigger |
+|---|---|---|
+| OI-1 | **Run deadline in the daily-briefing dispatch (SF-4 follow-up).** `DailyBriefingDispatchService.processDueBriefings` has no run deadline: it claims `BATCH = 25` and processes them sequentially inside a 60 s function. Add a deadline of about 45 s elapsed: stop taking the next row and leave the rest for the next hourly run, as `insight-detect`'s `RUN_BUDGET_MS` already does. It also protects against a slow provider, not only against the charge write | TL's tracker. **Trigger:** before more than ~10 briefing businesses can fall into one hourly window, or as soon as slice 4 reports charge-write p95 latency above ~250 ms, whichever comes first |
+| OI-2 | **Slice 4 input (SA N-4, lead alerts).** The lead-alert routes do not await `notifyOwnerOfLead`, so a charge on that path shares the fate of the email and the audit entry: a function frozen after the response can lose it silently. The leak check compares `token_usage` with the charges (FR-33), so it catches a lost lead-alert charge only if that action's `token_usage` row landed before the freeze. Slice 4's workplan must state which way that goes, and must not assume the audit entry is there to join to | Slice 4 workplan (Dev), reviewed by SA |
 
 ---
 
@@ -1216,6 +1377,114 @@ All three conditions to go to QA are met by Dev: ✅ (1) B-1 fixed with its guar
 
 ---
 
+### SA code review — 3b-ii (2026-09-29)
+
+**Reviewed by SA — 2026-09-29**, worktree `neuronforge-llm-deduction`, branch `feature/business-os-credit-deduction-slice-3b-ii`, uncommitted, against its merge base `5049bd7c`. (`git diff origin/main` also shows invite and audit-trail files: those are commits that landed on `main` after the base, not part of this change.) Skills applied: `bos-llm-call-standards`, `business-os-entitlements`, `tenant-isolation-guard`. No database was touched. Every Jest run used `NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:9` and stub keys; the shell held no Supabase or OpenAI variable and the worktree has no `.env*`. Jest does not load `.env*` (plain `ts-jest`, no `next/jest`, no dotenv), so the only path to a real database is a shell export, through `tests/plugins/jest-setup.ts`'s `||` (see N-3).
+
+**Status:** ✅ **Code Approved, with two small Should-fixes (S-1 code + test, S-2 text) to land before QA signs off.** Nothing is blocking. The non-interference design is correct and proven at the one place all 16 sites share.
+
+#### What was verified
+
+| Item | Result |
+|---|---|
+| **NI-1** never throws into `runAiAction` | ✅ Two layers. `recordAiCharge` wraps everything in `try`; the budget helper turns a synchronous throw in `work` into a rejection (async IIFE), and `Promise.race` subscribes to it, so a rejection after the timeout is handled. `recordAiChargeSafely` is a second `try { await } catch`, and the declaration read (`AI_ACTION_DECLARATIONS[…].isCharged`) sits inside it. Tests: six fault shapes (repository throws / rejects / returns an error, builder throws, recorder throws / rejects) each give the same value **reference** and the same error **object** (`toBe`), the entry queued once and exactly one error |
+| **NI-2** at most the budget | ✅ 1,500 ms; the timer is `unref()`ed and cleared in `finally`; the abort signal reaches `.abortSignal()` on the RPC builder; `jest.getTimerCount() === 0` afterwards; not settled at budget − 1 ms, settled at the budget |
+| **NI-3** value and error unchanged | ✅ Succeed, fail and hang give deep-equal results and deep-equal entries. The failed action's error is rethrown **after** the charge (FR-8) and unaltered: `if (!outcome.ok) throw outcome.error` follows the `await` |
+| **NI-4** zero calls | ✅ `if (calls.length > 0)` around the only `await`; no recorder call, no timer (tested, incl. a throw before any call) |
+| **NI-5** no regression | ✅ Accepted on Dev's whole-suite evidence (identical failing list). My targeted re-run below matches it exactly |
+| **No retry** | ✅ One `recordCharge` call site (static test) |
+| **D-17 `undecided`** | ✅ If `decideAiAction` throws, `decision` stays `undefined`, the entry is skipped as before, and the recorder logs one `bos_ai_charge_not_written` `reason: 'undecided'` rather than guessing. Only exercised at the recorder level (N-2) |
+| **N-7** one decision | ✅ `AiActionDecision` is computed once and passed to both `emitAiAuditEntry` and the recorder; `buildAiChargeRecord` has no fallback of its own. Proven through the real `runAiAction` for five outcome shapes, with Dev's mutation check |
+| **C-5** no value cycle | ✅ `chargeResolver.ts` and `aiChargeRecorder.ts` import only `type`s from `aiActionAudit`; `validateIdentities` and `isCharged` are now inputs. The source guard covers both files, `require()` and dynamic `import()` |
+| **C-6** `service` | ✅ `AI_CHARGE_SERVICE = 'ai'`, the only `service:` in the written object, not a field of `AiChargeInput`; a spec carrying `service: 'sms'` still writes `'ai'` |
+| **Tenant isolation** | ✅ The account comes from `decision.identities.accountId` (validated from the server-side spec / `setAccount`), never from a request. The charge is built field by field, and the repository builds the RPC arguments field by field. `action_id` is minted in-process; `group_id` is stored only. The recorder reads no request, header or body (source guard) |
+| **Repository-only access** | ✅ Only `BusinessOsCreditChargeRepository`; `aiActionAudit.ts` does not name it; the repository test's `ALLOWED` list names exactly the recorder and its two faking suites (D-13) |
+| **No Pilot-Credit / usage tables** | ✅ Source guard; none in any changed production file |
+| **`isCharged` honoured** | ✅ Read from the declaration by `runAiAction` and passed in; `not_charged` is checked before the identities |
+| **Every entitlements mode** | ✅ No mode read; a test records under `off`, `shadow`, `enforce` and unset. `balance.ts` untouched |
+| **Entitlements imports** | ✅ No new importer. The recorder does not import `lib/business-os/entitlements/`; `chargeResolver.ts` (already registered, `enforcementPoints.test.ts:327`) is unchanged in that respect |
+| **Literal gate / type gate** | ✅ `aiChargeRecorder.ts` is in `LITERAL_SCOPE_INCLUSIONS` with its equality pin (Q-6) |
+| **Logging** | ✅ Pino only; ids and codes, never an error message (`errCodeOf` takes `code` or class name, pattern-checked). `console.*`: 0 in every touched `lib/` / `app/` file |
+| **SF-3 / Q-7 census** | ✅ The method is sound: an instrumented line at the exact point a charge is built, over the **whole** suite, gives 11 suites; a second instrumented line in the repository, over the whole suite, gives 0 unmocked census writes; and the negative control (lead-reply unmocked → green **and** 2 real repository calls) proves the detection can see a silent write. Every census suite except `aiActionAudit.test.ts` mocks the recorder; that suite fakes the repository under the real recorder. chat-v4 `route.audit` crashes before any test runs (red on `main`), so its new mock is inert but harmless. No census suite runs under fake timers with a real write |
+| **SF-6** | ✅ Done in 3b-i; the recorder and wiring read no mode |
+| **SF-7** skill | ✅ Standard 6 now says what `runAiAction` does: the charge is the one sanctioned awaited write, budgeted, never throws, one writer, same decision as the entry, and a test running the real `runAiAction` must mock the recorder or the repository. Checklist and anti-pattern lines added. Accurate against the code |
+| **Entitlements doc** | ✅ Metering status updated (3b-i PROD apply time; charging start = 3b-ii go-live, placeholder for RM); "How an AI charge is written" matches the code; Change History row added |
+| **F-4** | ✅ **Closed.** `CLAUDE.md` on `origin/main` (the slimmed version, PR #119) contains neither `BOS_ENTITLEMENTS_MODE` nor "unset in production"; the stale row no longer exists |
+
+#### Gates re-run by SA
+
+| Gate | Result |
+|---|---|
+| `npx jest lib/business-os/llm lib/business-os/entitlements lib/repositories/__tests__/BusinessOsCreditChargeRepository.test.ts supabase/migrations/__tests__/business-os-credit-charges.migration.test.ts scripts/__tests__/check-bos-llm-literals.test.ts` + the 10 other census suites | **64 suites: 63 pass, 1 fails to run** (chat-v4 `route.audit`, the pre-existing worker crash, red on `main`); **1,661 / 1,661 tests pass**. Identical to Dev's numbers. No `bos_ai_charge_*` line in the output |
+| `npm run typecheck:bos-llm` | 307 files, 28 errors, **0 new**, passed (the one known "fixed" entry; baseline not updated) |
+| `npm run check:bos-llm-literals` | 50 files, 2 exempt, **0 violations**, passed |
+| `git diff 5049bd7c --numstat` | No file deletes more than it adds (the truncation hazard); `console.*` 0 |
+
+#### Findings
+
+**Blocking:** none.
+
+**Should-fix**
+
+| # | Where | Finding |
+|---|---|---|
+| **S-1** | `aiChargeRecorder.ts` (`write`, the `hasDbCode` line); `aiChargeRecorder.test.ts:267` | **A real network failure is logged `fate: 'not_written'`, not `unknown`, so N-5 is met only against a test double.** The recorder treats any **string** `code` as "the database answered". But `@supabase/postgrest-js` 2.75.1 (`dist/cjs/PostgrestBuilder.js`, the `res.catch((fetchError) => …)` branch) maps a fetch failure to a **plain object** `{ message, details, hint: '', code: \`${fetchError.code ?? ''}\` }`: `code` is always a string, usually `''`, sometimes a Node error code. The repository returns that object as `error`, so a mid-response network failure (the case where the transaction **may** have committed) is labelled `not_written`. The unit test passes only because it models the failure as `new TypeError('fetch failed')`, which the real client never returns. **Impact:** a log field only, since the charge itself, the action and idempotency are unaffected, but `fate` is exactly what an operator or slice 4 uses to decide whether a row may exist. **Fix:** count only a **database-shaped** code as "not written" (a 5-character SQLSTATE `^[0-9A-Z]{5}$`, or `^PGRST\d+$`); everything else, including `''`, is `unknown`. Change the test to the real shape `{ message: 'TypeError: fetch failed', details: '', hint: '', code: '' }`, add one case with a non-SQL code (e.g. `ECONNRESET`), and keep the `PGRST202` and `23514` cases as `not_written`. Optional: log `errCode: 'network'` when the code is empty, so the line is not just `null` |
+| **S-2** | §10 R-3 | **SF-4's text condition is half done.** The per-route table in §5.2.2.1 is right, but R-3 still says "+1.5 s worst case … flags any within 2 s of it", and SF-4 required R-3 to state the **cumulative** worst case for loops. Reword R-3 to "businesses × 1.5 s for sequential loops (insight cron, daily briefing); see §5.2.2.1 SF-4 table and SA's SF-4 ruling". Same for R-4's "~33 suites" → "11 measured (§5.2.2.1)". Text only |
+
+**Notes (no action required for 3b-ii)**
+
+- **N-1 (§6.4.2).** The post-deploy checks are read-only apart from step A, reference only columns that exist (checked against `20261015` and the `AuditTrailService` row shape: `entity_type = 'ai_action'`, `details.actionId`, `details.outcome` ∈ `succeeded` / `failed`, the same vocabulary as the charge, `details.estimatedCostUsd`), and fail loudly if a placeholder is left in (`22P02` on the uuid, an invalid timestamp on `GO_LIVE_UTC`). Correct and paste-safe. Three wording nits for Dev when S-2 is done: (a) §6.4 step 7 says "four read-only queries"; B, C, D are three (plus the checker). (b) Query C uses single-letter aliases `c` / `a`, which the house SQL-editor rules avoid; `charge_row` / `audit_row` would match the convention. (c) Step A: say "ask a question you have not asked before". A repeated question may be served from the plan cache. It should still be charged its lookup embedding (§2.3), but a fresh question removes any doubt before the user escalates "no row".
+- **N-2 (D-17 coverage).** `undecided` is tested at the recorder boundary only. A through-`runAiAction` case (an action that throws an error object whose `code` getter throws) would pin the whole path. Optional, not required.
+- **N-3 (jest-setup `||`).** The census makes today's suite safe, and the skill now tells the next author to mock. But the root risk remains: `tests/plugins/jest-setup.ts` keeps a developer's exported real `NEXT_PUBLIC_SUPABASE_URL` / service key, and the negative control shows an unmocked suite stays **green** while writing. Recommended follow-up (separate chore, not this slice, and it needs SA review as a shared-setup change): have the setup **force** a non-routable Supabase URL unless an explicit opt-in variable is set. This is different from the global recorder mock Q-7 rejected: it hides nothing from call-site suites, it only makes an accidental outbound write fail fast.
+- **N-4 (lead alerts).** Accepted as is (ruling below). For slice 4: the leak check compares `token_usage` with the charges (FR-33), so it catches a lost lead-alert charge only if that action's `token_usage` row landed before the freeze. Slice 4's workplan should state which way that goes, and not assume the audit entry is there to join to.
+
+#### Rulings on the deviations
+
+| # | Ruling |
+|---|---|
+| **D-15** | ✅ `info` for a replay is what 3b-i N-4 asked for |
+| **D-16** | ✅ `service` and `fate` accepted. The before-write / from-write split of `exception` is right. The `db_error` split needs S-1 |
+| **D-17** | ✅ `undecided` accepted. Refusing to guess an outcome keeps N-7 absolute; the cost is one lost charge in a case that needs a hostile error object, which is logged at `error` and found by slice 4 |
+| **D-18** | ✅ `bos_ai_charge_skipped` at `debug` |
+| **D-19** | ✅ One `try { await } catch` covers a synchronous throw and a rejection; tested both ways |
+| **D-20** | ✅ Same behaviour as before for the entry; nothing needs the failure when both records are skipped |
+| **D-21** | ✅ Comment only |
+| **D-22** | ✅ N-8 closed; the wording is now correct |
+
+#### SF-4 ruling: time headroom
+
+**3b-ii ships as is. No mitigation in slice 3. Q-10 stands.**
+
+- **Why it is safe today.** The worst case needs a Supabase slowdown during a run, and 6 businesses exist (≤ 9 s on either cron). In that slowdown the charge is the **only** database call on these paths that has a ceiling. The daily briefing's own reads and writes (`claimDue`, the facts build, the profile and branding reads, `markSent`) are unbudgeted and slow down just as much, so the charge is not what decides whether the run survives. When a briefing run is killed, the 90 s lease reclaims its rows: a send slips, nothing is lost. A cached briefing makes no call and waits nothing. The insight cron checks its 240 s self-budget between businesses, so it defers rather than dies.
+- **Why not a smaller scheduled budget or a breaker now.** A smaller budget for scheduled triggers loses **more** charges on exactly the slow days, and adds a second number to reason about. A breaker trades lost charges for latency before slice 4 has measured either. Both would be built blind.
+- **The owed follow-up, and its trigger (to TL's tracker, not slice 3).** The real gap is older than this slice: `DailyBriefingDispatchService.processDueBriefings` has **no run deadline**. It claims `BATCH = 25` and processes them sequentially inside a 60 s function. The fix belongs there: stop taking the next row at about 45 s elapsed and leave the rest for the next hourly run, as `insight-detect`'s `RUN_BUDGET_MS` already does. It also protects against a slow provider, not only against the charge. **Trigger:** before the number of businesses opted into the briefing that fall into one hourly window can exceed about 10, or as soon as slice 4 reports charge-write p95 latency above ~250 ms, whichever comes first. The insight cron is a throughput flag only; revisit it with slice 4's measured latency.
+- **Lead-alert routes not awaiting `notifyOwnerOfLead`: accepted.** The design choice is pre-existing and correct: a visitor's form must not fail on a slow mail provider. The charge now shares the fate of the email and the audit entry on that path. A freeze-lost charge is logged by nobody, but the leak check (FR-16, FR-33) is the designed backstop (N-4 for its precondition). If the platform later gains a supported "after response" hook (`waitUntil` / `after`), that path should use it for all three. That is a lead-alert follow-up, not a charging change.
+
+#### Checklists walked
+
+`bos-llm-call-standards` Standard 6 and the final checklist (one entry per action, never awaited; the charge is the one awaited, budgeted, never-throwing write; no `'use client'` importer; the literal and type gates): pass. `tenant-isolation-guard` (the service-role write; no caller-supplied id selects or mutates a row; field-by-field construction; the account server-derived): pass. `business-os-entitlements` (no new importer; no catalog or matrix change; metering not mode-gated): pass. `new-repository` (the one RPC method unchanged except its header; `ALLOWED` updated in a reviewable diff): pass.
+
+### Code Approved for QA: **Yes, once S-1 and S-2 are in.** Both are small: S-1 is one condition and one corrected test, S-2 is text. SA does not need a full re-review: QA confirms S-1 by the corrected test and one run of the recorder suite, and SA checks the S-1 diff at the hand-off. Merge still follows §6.4 step 5 (SA ✅, QA ✅, user approval), and RM records the charging start (§6.4 step 6). The briefing run-deadline follow-up goes to TL's tracker with the trigger above.
+
+### SA hand-off check — S-1 (2026-09-29)
+
+**Status:** ✅ **S-1 closed. D-23 accepted.** Review only; no code changed, no database touched.
+
+| Item | Result |
+|---|---|
+| **Pattern covers every SQLSTATE class** | ✅ `DB_ERROR_CODE = /^(?:[0-9FHPX][0-9A-Z]{4}\|PGRST\d+)$/` was run against all 43 PostgreSQL class codes (00, 01, 02, 03, 08, 09, 0A, 0B, 0F, 0L, 0P, 0Z, 20–28, 2B, 2D, 2F, 34, 38, 39, 3B, 3D, 3F, 40, 42, 44, 53, 54, 55, 57, 58, 72, F0, HV, P0, XX): no miss. Their leads are exactly `0 2 3 4 5 7 F H P X`, all inside `[0-9FHPX]` |
+| **No network code matches** | ✅ Run against ECONNRESET, ECONNREFUSED, ECONNABORTED, ETIMEDOUT, EPIPE, EPERM, EACCES, ENOTFOUND, EAI_AGAIN, EHOSTUNREACH, ENETUNREACH, ENETDOWN, EADDRINUSE, ENOENT, EMFILE, EPROTO, ABORT_ERR, ERR_STREAM_PREMATURE_CLOSE, the `UND_ERR_*` family, and `'20'` (a `DOMException` abort's numeric code, stringified by postgrest-js): none match. Node errno codes all lead with `E`, undici's with `U` |
+| **D-23** | ✅ Accepted. Strictly tighter than SA's `^[0-9A-Z]{5}$` with no SQLSTATE lost, and every mismatch falls to `unknown`, the safe direction |
+| **Real client shape** | ✅ Re-read `@supabase/postgrest-js` 2.75.1 `PostgrestBuilder.js`: a fetch failure is `{ message, details, hint: '', code: \`${fetchError.code ?? ''}\` }`, as the tests now model it. A non-JSON error body yields no `code`, so `unknown`. The repository's own `returned no row` / `unexpected row` throws carry no code either, so `unknown` (correct: the RPC may have committed) |
+| **Fate logic otherwise unchanged** | ✅ Only the `db_error` branch changed (`isDbCode`, and `''` logged as `errCode: 'network'`). Before-write `exception` stays `not_written`, from-write `exception` and `timeout` stay `unknown`; duplicate, no-plan-row and fallback paths untouched |
+| **Tests** | ✅ `npx jest lib/business-os/llm/__tests__/aiChargeRecorder.test.ts` with `NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:9` and stub keys: **37 / 37 pass**. Cases `code: ''` → `network` / `unknown`, ECONNRESET and EPIPE → `unknown`, 23514, P0001, PGRST202 → `not_written` |
+| **S-2** | ✅ §10 R-3 states the cumulative loop worst case (insight cron bounded by `RUN_BUDGET_MS`; briefing 25 × 1.5 s = 37.5 s in 60 s, OI-1) and R-4 says 11 measured suites |
+| **N-1** | ✅ §6.4 step 7 says three read-only queries (B, C, D) plus the checker; query C uses `charge_row` / `audit_row`; step A says "a question you have not asked before" with the plan-cache reason |
+
+**One note for slice 4 (non-blocking, no change asked):** two SQLSTATEs mean the fate is literally unknown, `40003` (`statement_completion_unknown`) and `08007` (`transaction_resolution_unknown`), and the pattern labels them `not_written`. PostgREST is very unlikely to surface either (a lost backend connection comes back as `PGRST000`–`PGRST003`), and slice 4's leak check reconciles whatever the label says. If slice 4 builds on `fate`, it should treat those two as `unknown`.
+
+---
+
 ## 14. QA Testing Report
 
 > **Names changed after these reports (2026-09-29, user decision: the ledger is not AI-specific).** The report text below is kept as written. Read: `business_os_ai_charges` → `business_os_credit_charges`, `business_os_ai_charge_totals` → `business_os_credit_totals`, `business_os_record_ai_charge` → `business_os_record_credit_charge`, `business_os_ai_period_start` → `business_os_credit_period_start`, `BusinessOsAiChargeRepository` → `BusinessOsCreditChargeRepository`, `BOS_RECORD_AI_CHARGE_RPC` → `BOS_RECORD_CREDIT_CHARGE_RPC`, and the files `20261014_business_os_ai_charges*.sql`, `check-`/`probe-bos-ai-charges-migration.sql`, `business-os-ai-charges.migration.test.ts` → their `credit` names. A `service` column was added (29 columns, 25 owner-readable, 13 CHECKs, 11 RPC parameters; probe P08A–P08C). See §5.2.1.2.
@@ -1531,11 +1800,133 @@ sha256 of all 13 changed or new non-doc paths, taken before the run and again af
 
 **Verdict: PASS WITH NOTES.** No bugs. QA-N6 and QA-N7 are one-line runbook wording, best folded in with S-3 before the PROD apply.
 
+### QA report — 3b-ii (2026-09-29)
+
+**QA — 2026-09-29**
+**Test mode:** full
+**Strategy used:** A (Jest: gates and the census suites) + a temporary behaviour suite driving the real `runAiAction`, recorder, resolver and pricing, with only the repository, `AuditTrail` and logger faked, on real timers (option B/C shape, no database) + a whole-suite outbound-request spy + runbook review of §6.4.2 against the migration and `AuditTrailService`. No database was touched.
+**Focus:** api, security, performance (the budget)
+**Skipped:** live PROD checks (§6.4.2 A–G are the user's, after go-live); browser check (no UI in this part)
+**Input source:** TL prompt keywords
+
+Worktree `neuronforge-llm-deduction`, branch `feature/business-os-credit-deduction-slice-3b-ii`, uncommitted, base `5049bd7c`. Checked first: the shell exports no Supabase or OpenAI variable and the worktree has no `.env*`. Every Jest run had `NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:9` and stub keys (`SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `OPENAI_API_KEY` = `stub`).
+
+#### Commands and numbers
+
+| Gate | Result |
+|---|---|
+| `npx jest lib/business-os/llm lib/business-os/entitlements lib/repositories/__tests__/BusinessOsCreditChargeRepository.test.ts supabase/migrations/__tests__/business-os-credit-charges.migration.test.ts scripts/__tests__/check-bos-llm-literals.test.ts` + the 10 other census suites of §5.2.2.1 | **64 suites: 63 pass, 1 fails to run** (chat-v4 `route.audit`); **1,665 / 1,665 tests pass** (Dev's 1,661 + the 4 S-1 cases). 0 `bos_ai_charge_*` lines in the output |
+| chat-v4 `route.audit.test.ts` on `origin/main` (`cd8dcb43`, temp detached worktree, `node_modules` junction) | **Crashes identically on main and on the branch**: the process dies on an unhandled `Error: profile read failed for OWNER-TEXT-MARKER-c1 cancel` (`route.audit.test.ts:118`); under workers it shows as "4 child process exceptions". Pre-existing, not 3b-ii. Junction removed first (`node_modules` of the main checkout intact, 841 entries), then the worktree |
+| `npm run test:bos-entitlements` | **85 suites, 1,779 tests, all green** |
+| `npm run typecheck:bos-llm` | 307 files, 28 errors, **0 new**, passed (the one known "fixed" baseline entry, `onboarding/build/route.ts` TS18047; baseline not updated) |
+| `npm run check:bos-llm-literals` | 50 files, 2 exempt, **0 violations**, passed |
+| `next build` (`NODE_OPTIONS=--max-old-space-size=6144`, the CI placeholder env from `.github/workflows/build.yml`) | **Exit 0**, "Compiled successfully", 307/307 pages, 78 `DYNAMIC_SERVER_USAGE` lines (the usual static probes). No charge code in `.next/static` (no `business_os_record_credit_charge` / `bos_ai_charge_*` string in any client chunk) |
+| `aiChargeRecorder.test.ts` alone (the S-1 confirmation SA asked for) | **37 / 37**. The S-1 cases are present: the real postgrest-js shape `{ message: 'TypeError: fetch failed', details: '', hint: '', code: '' }`, `ECONNRESET`, `EPIPE` → `unknown`; `23514`, `PGRST202` → `not_written` |
+
+#### Behaviour through the real `runAiAction` (item 2)
+
+Temporary suite `lib/business-os/llm/__tests__/qaTmp3bii.test.ts`, 32 tests, **32 / 32 pass**, then deleted. The call goes through the real `BaseAIProvider.callWithTracking` and usage scope (`gpt-4o-mini`, cost `0.00123456789`).
+
+| # | Case | Result |
+|---|---|---|
+| Q1 | One successful `chat_turn` | ✅ `recordCharge` called **once** with exactly 11 fields: `service: 'ai'`, `actionId` **==** the audit entry's `details.actionId`, `groupId`, `accountId` = owner, `trigger: 'owner'`, `outcome: 'succeeded'`, `credits: 1.234568` (= 0.00123456789 / 0.001 at 6 dp), `costUsd: 0.0012345679` (10 dp), `creditValueVersion: 0`, `isFallbackPriced: false`; an `AbortSignal` passed; the same value **reference** returned |
+| Q2 | Action throws after a call | ✅ Charged **before** the rethrow (the fake records the write; the `catch` sees it already happened); the **same error object** rethrown (`toBe`); charge and entry both `failed` |
+| Q3 | No calls | ✅ No write, no entry; returned in < 50 ms with a repository that would hang |
+| Q4 | Repository never resolves | ✅ Same value reference returned after **1,509 ms** (second run **1,517 ms**), asserted 1,450–1,800; the signal is `aborted`; one `error` `bos_ai_charge_write_failed` `reason: timeout`, `fate: unknown`, `service: ai`; entry queued once. Q4b: the same on a failed action, same error rethrown < 1.8 s. `--detectOpenHandles`: nothing reported |
+| Q5 | Repository fault shapes (12) | ✅ Every one: same value reference, entry queued once, exactly one `error` `bos_ai_charge_write_failed` carrying `service`, `accountId`, `area`, `actionType`, `groupId` and the entry's `actionId`, and no error-message text. Fates: sync throw → `exception`/`unknown`/`Error`; rejection → `exception`/`unknown`/`TypeError`; `{error}` `23514`, `PGRST202`, `P0001` → `db_error`/`not_written`; `{error}` `code: ''` → `db_error`/`unknown`/`errCode: network`; `ECONNRESET`, `EPIPE`, `EPERM`, `ETIMEDOUT` → `db_error`/`unknown`; a plain `Error` (the repository's "unexpected row") and `{ data: null, error: null }` → `db_error`/`unknown` |
+| Q6 | Replayed id (`recorded: false`) | ✅ One `info` `bos_ai_charge_duplicate` `recorded: false`; no `error` at all |
+| Q7 | No plan row (`calendar_month`) | ✅ One `warn` `bos_ai_charge_no_plan_row` |
+| Q8 | Triggers | ✅ `scheduled` (`insight_run`) → `scheduled`; `external` (`lead_reply_recommendation`) → `external`; `user` → `owner` |
+| Q9 | `isCharged` false (declaration flipped in-test, restored in `finally`) | ✅ No write; `debug` `bos_ai_charge_skipped` `reason: not_charged`; the audit entry still written |
+| Q10 | Platform account | ✅ Neither entry nor charge; `bos_ai_charge_not_written` `reason: invalid_identity` |
+| Q11 | Entry outcome vs charge outcome | ✅ Equal, with the same `actionId`, for all five: success → succeeded/succeeded; signalled `chat_error` → failed/failed; thrown → failed/failed; last attempt failed → failed/failed; failed then repaired → succeeded/succeeded |
+| Q12 | `AuditTrail.log` throws (AC-12) | ✅ Charge still written once; value unchanged |
+| Q13 | Two actions in a row | ✅ Two distinct action ids |
+| Q14 | SA N-2: the action throws an error whose `code` getter throws (D-17) | ✅ Through the real `runAiAction`: the **same** hostile error rethrown, 0 writes, 0 entries, one `bos_ai_charge_not_written` `reason: undecided`, 0 ms added |
+
+#### Isolation (item 3)
+
+- **Production importers of the repository:** only `lib/business-os/llm/aiChargeRecorder.ts` (plus the `lib/repositories/index.ts` barrel re-export). The RPC name appears only in the repository, its test and the migration test. `aiActionAudit.ts` imports the recorder, never the repository.
+- **The 11 census suites, each opened:** 10 declare `jest.mock('@/lib/business-os/llm/aiChargeRecorder', () => ({ AI_CHARGE_SERVICE: 'ai', recordAiCharge: jest.fn().mockResolvedValue(undefined) }))` (insight-detect, website aiAudit.routes, chat-v4, BriefingStore, media/generate, onboarding/build, onboarding/chat, lead-reply, modelFallback, website-llm-attribution); `aiActionAudit.test.ts` fakes `BusinessOsCreditChargeRepository` under the real recorder. ✅
+- **Independent zero-write check (my own, not Dev's instrumentation; no code touched).** A scratch `setupFilesAfterEnv` file outside the repo wrapped `globalThis.fetch` and appended the test path of any request to `/rest/v1/rpc/*`. **Whole Jest suite** (662 suites incl. my temp file): **0 RPC requests**. **Positive control:** a temporary suite calling the real repository singleton made exactly one logged request, `http://127.0.0.1:9/rest/v1/rpc/business_os_record_credit_charge`, so the spy does see a real write. That control also returned the live postgrest-js error `{ message: 'TypeError: fetch failed', …, code: '' }`: the exact shape S-1 now logs as `fate: unknown`, confirmed against the real client rather than a double.
+- **Whole-suite failing list:** 28 suites. 26 are Dev's pre-existing list (§5.2.2.1 NI-5). The other two are mine or noise: `BusinessOsCreditChargeRepository.test.ts` failed only because its D-13 guard **correctly flagged my temp file** as a new referrer (the guard works); `lib/cron/__tests__/qa-slice5-pr2.recorder.test.ts` ("Body is unusable") is a parallel-load flake: 33 / 33 alone, with and without the spy, and it touches no 3b-ii code.
+
+#### Post-deploy checks, read as the user will (item 4)
+
+- **Read-only:** B, C, D and F are single `SELECT`s; the checker (E, G) starts `SET default_transaction_read_only = on` and contains no write statement. Step A is the only action, and it is just using the chat. ✅
+- **Placeholders fail loudly:** `'YOUR_USER_ID'` against a `uuid` column → `22P02`; `TIMESTAMP 'GO_LIVE_UTC'` → invalid timestamp. Neither can return a quiet empty result. ✅
+- **Column names:** every column in B, C, D, F exists in `20261015` (`kind`, `action_id`, `service`, `action_type`, `triggered_by`, `outcome`, `credits`, `cost_usd`, `credit_value_version`, `is_fallback_priced`, `period_start`, `created_at`, `user_id`; totals `credits_total`, `credits_owner`, `credits_scheduled`, `credits_external`, `credits_adjustment`, `cost_usd_total`, `charge_count`, `fallback_priced_count`). The audit side matches `AuditTrailService.buildLogEntry`: `user_id` = the entry's `userId` = the **account** (for scheduled runs too, so F's per-account join is right), `entity_type = 'ai_action'`, `action`, `details.actionId` / `outcome` / `estimatedCostUsd`. The checker's C7 texts quoted in E and G (`totals equal the rebuild from the ledger`, `mismatched account periods`, `first row at … utc`) are the checker's literal strings. SA's N-1 nits (a)–(c) are in. ✅
+- **Two wording issues** (below, QA-N9 and QA-N10): each would show the user a "difference" that is not a defect.
+
+#### Test Coverage
+
+| Acceptance criterion / check | Tested? | Result | Notes |
+|---|---|---|---|
+| One charge per AI action, correct row (FR-13) | ✅ | Pass | Q1, Q8, Q13 |
+| Failed action charged before rethrow, error unchanged (FR-8) | ✅ | Pass | Q2, Q4b, Q11 |
+| No call → no write, no wait (FR-7, NI-4) | ✅ | Pass | Q3 |
+| Bounded by the 1,500 ms budget (SQ-3, NI-2) | ✅ | Pass | Q4: 1,509 / 1,517 ms wall clock, signal aborted, no open handle |
+| Never throws into or changes the action (NI-1, NI-3) | ✅ | Pass | Q5 (12 shapes), Q12, Q14 |
+| Failure logged with FR-16's fields and the right fate (N-5, S-1) | ✅ | Pass | Q5; live postgrest shape confirmed |
+| Replay is `info`, not error (3b-i N-4) | ✅ | Pass | Q6 |
+| `isCharged` honoured (FR-4) | ✅ | Pass | Q9 |
+| Entry and charge never disagree (N-7) | ✅ | Pass | Q11 (5 shapes), Q14 |
+| Audit failing does not stop the charge (AC-12) | ✅ | Pass | Q12 |
+| Only the recorder writes (rule 1, D-13) | ✅ | Pass | grep + guard |
+| No test writes outward (SF-3, Q-7) | ✅ | Pass | whole-suite spy, 0 requests; the control proves detection |
+| Gates (entitlements CI job, type gate, literal gate, build) | ✅ | Pass | above |
+| §6.4.2 usable, read-only, loud on placeholders | ✅ | Pass with notes | QA-N9, QA-N10 |
+| Live PROD behaviour | ⚠️ | Not testable here | §6.4.2 A–G, the user's, after go-live |
+
+#### Issues Found
+
+**Bugs:** none.
+
+**Performance:** none new. The accepted SF-4 worst cases (daily-briefing batch 25 × 1.5 s; insight cron) stand as SA ruled; Q4 measured the per-action ceiling at 1.5 s + ~15 ms.
+
+**Edge cases (runbook text, Low; best folded in before the user runs §6.4.2):**
+1. **QA-N9: step B's "`credits` equal to `cost_usd × 1000` (to 6 decimal places)" will be false on about 1 row in 20.** `credits` is rounded from the **unrounded** cost (by design, AC-5), while `cost_usd` is stored at 10 dp. When the unrounded cost × 1000 has a 7th decimal of 4 followed by ≥ 5, `cost_usd` rounds up to …5 and `round(cost_usd × 1000, 6)` lands 0.000001 **above** `credits`. Measured in exact decimal arithmetic over 200,000 random costs: **5.03 %** of rows (example: raw `0.00006667445351` → `cost_usd 0.0000666745`, `credits 0.066674`, `cost_usd × 1000` → `0.066675`). The code is right; the expectation is too strict. Fix: "equal to `cost_usd × 1000` to within 0.000001". File: §6.4.2 step B
+2. **QA-N10: query C's "the two costs are equal" compares different text renderings.** `cost_usd` is `numeric(16,10)` and prints trailing zeros (`0.0012345000`); `details ->> 'estimatedCostUsd'` is JSON text (`0.0012345`). Equal in value, different on screen. Fix: say "equal in value (the charge shows trailing zeros)", or select `(audit_row.details ->> 'estimatedCostUsd')::numeric AS audit_cost`. File: §6.4.2 step C
+3. **QA-N11 (note, no action required): step F on the first morning** can show a small difference not in its "explained" list: an action in flight on the previous deployment when the new one went Ready writes an entry after `GO_LIVE_UTC` but no charge. It can only happen in the minutes around go-live. Adding "or an action in flight at go-live" to F's explanations would save one escalation.
+4. **Carried:** SA N-3 (`tests/plugins/jest-setup.ts` keeps an exported real Supabase URL; my control shows an unmocked real write would stay green) remains the recommended separate chore.
+
+#### No code changed during QA
+
+sha1 of all 22 non-workplan changed or new paths, taken before the run and again after it: **identical** (e.g. `aiChargeRecorder.ts` `f2b92222…499c`, `chargeResolver.ts` `138047d2…21dc`, repository `24d3d00e…8b17`). The only file that changed during my run before this edit was this workplan (SA's parallel hand-off row); then this section and one Change History row. Temp files deleted (`qaTmp3bii.test.ts`, `qaTmp3biiSpyControl.test.ts`; the scratch spy lives outside the repo); the temp `origin/main` worktree removed; `git status --short` shows the same 23 entries as at the start. `.next/` was rebuilt by `next build` (gitignored).
+
+#### Final Status
+- [x] All acceptance criteria testable here pass: ready for the user's diff review. QA-N9 and QA-N10 are runbook text, best fixed before go-live; the user then runs the PROD checks (§6.4.2) after RM records the charging start
+- [ ] Issues found: Dev must address before commit
+
+**Verdict: PASS WITH NOTES.** No bugs. S-1 confirmed by the corrected tests, one recorder run (37 / 37) and the live postgrest-js error shape.
+
 ---
 
 ## 15. Commit Info
 
 *(RM to populate. Dev does not commit; changes stay uncommitted until the user has reviewed the diff. RM also records here the **charging start** — the UTC time the 3b production deployment went live — per §6.4 step 6.)*
+
+### 3b-i on PROD — evidence (reported by the user, recorded by Dev at the start of 3b-ii, 2026-09-29)
+
+The user applied `supabase/migrations/20261015_business_os_credit_charges.sql` to **PROD** by hand (§6.4.1). Recorded verbatim as reported:
+
+| Step (§6.4.1) | Result |
+|---|---|
+| 4. Apply time | `applied_at_utc` **`2026-09-29 08:13:51.757133`** |
+| 5. Checker (checked at `2026-09-29 08:14:15`) | **`VERDICT PASS 19 pass 0 fail`**; C2 `25 of 29`; C4 `13 of 13`; C6 `9/9` + `9/9` NZ; C7 empty |
+| 7. Write probe (mandatory, C-1) | **`PROBE PASS`**, with P00–P22 and P08A–P08C all PASS; P04 `period from plan starts 2026-09-23 19:55:01.28632 utc` |
+| 8. Checker again | C7 still `0 charge rows and 0 totals rows` |
+
+**The condition for 3b-ii to start (C-1, §13 Approval) is met.** Nothing wrote to the ledger between the apply and this record (step 8).
+
+### Charging start (3b-ii) — to be recorded by RM
+
+| Timestamp | Value |
+|---|---|
+| 3b-i migration apply time (SF-5) | `2026-09-29 08:13:51.757133` UTC (above) |
+| 3b-ii production go-live = **the charging start** (FR-34, §6.4 step 6) | *RM, at go-live* |
+| Post-deploy checks §6.4.2 A–E (same day) | *user* |
+| Post-deploy checks §6.4.2 F–G (next morning) | *user* |
 
 ---
 
@@ -1559,3 +1950,9 @@ sha256 of all 13 changed or new non-doc paths, taken before the run and again af
 | 2026-09-29 | QA re-test — neutral ledger | **PASS WITH NOTES, no bugs.** Jest 58 suites / 1,591 tests green (guard 90 + repository 22); `typecheck:bos-llm` 0 new; literals 0 violations; `next build` exit 0 (307 pages). My own in-memory PGlite (PostgreSQL 18.3) run, §6.4.1 in order with the pre-check, step 4 / step 6 queries and `RESET` line extracted from this workplan: **97 of 97**. Pre-check (11-arg) all NULL → apply → checker `VERDICT PASS 19 pass 0 fail` (C2 `25 of 29`) → read-only / placeholder / bad-id / unknown-account SKIPPED texts → `PROBE PASS` with P08A–C after P08 for both account shapes, nothing kept → checker still empty. Failure paths: second paste `42P07`, nothing changed; 28 bad RPC inputs refused (NULL service `22004`, 7 malformed services `service_format`) with ledger and totals byte-identical; adjustment carrying a service → `adjustment_shape`; 23 `42501` refusals across anon / authenticated / service_role; the owner reads `service` but no cost column; `ai` + `notification_email` land in one totals row; rollback refuses with rows (`P0001`), drops when empty, re-applies. Old-name grep: 78 hits, only the entitlements doc's Change History map and this workplan's historical / map text; 0 in code, SQL, tests, the requirement. Notes QA-N6 (step 3: show the 42P07 text), QA-N7 (step 6: replace the angle brackets too), QA-N8 (entitlements Change History order). Results predate SA's S-3 comment fix; re-run the guard test after it. Hashes of the 13 non-doc paths identical before and after; no code or SQL changed |
 | 2026-09-29 | S-3, N-14, QA-N6 to N8 fixed — 3b-i (Dev) | **S-3:** the `is_fallback_priced` text is service-neutral in the migration's column comment ("True when the cost was priced from a fallback rate rather than the measured one  AI sets it when a model is missing from the price table  another service sets it only if it defines its own documented fallback and otherwise records false  False on adjustment rows  Hidden from owners"; D-8 literal rules kept), the repository header and `isFallbackPriced` doc, and the entitlements doc's Metering table; the migration test's title and regexes now pin the neutral text and refuse `AI specific` / `every other service`. No schema, grant or behaviour change. **N-14:** §6.1's outline uses `business_os_credit_charges_owner_select` / `business_os_credit_totals_owner_select` and `(SELECT auth.uid()) = user_id`, as the file does. **QA-N6:** §6.4.1 step 3 names the second-paste error, `relation "business_os_credit_charges" already exists` (executed: `42P07`, table intact). **QA-N7:** step 6 says to replace `<your login email>` angle brackets included, keeping the quotes. **QA-N8:** the entitlements doc's 2026-09-28 "Importing the module" row now precedes the 2026-09-29 Metering row (only that pair moved; older rows in that table are also out of date order, pre-existing, left as they are to avoid conflicts with other branches). Migration guard + repository tests **112/112** green; `typecheck:bos-llm` 0 new; throwaway in-memory PGlite harness **28/28** (pre-check, apply, checker `VERDICT PASS`, probe with a valid id `PROBE PASS` P01–P22 and P08A–C, nothing kept, rollback refuse/drop, re-apply), and the stored column comment read back matches. Uncommitted; no real database touched |
 | 2026-09-29 | Migration date moved to 20261015 (TL) | RM's pre-commit guard found `20261014_business_os_invite_signup.sql` on `origin/main` (PR #139). Migration and rollback renamed to `20261015_business_os_credit_charges*`; references updated in the repository header, the migration test, the requirement, the entitlements doc and this workplan's live text (historical review text keeps the date it was written with). No SQL content changed |
+| 2026-09-29 | 3b-ii implemented (Dev) | 3b-i PROD evidence recorded in §15 (applied `2026-09-29 08:13:51.757133` UTC; checker `VERDICT PASS 19 pass 0 fail`; probe `PROBE PASS` P00–P22 + P08A–C; C7 still empty), so 3b-ii started. New `aiChargeRecorder.ts`: builds the record with `buildAiChargeRecord` and writes it through `BusinessOsCreditChargeRepository` with `service` from `AI_CHARGE_SERVICE` (C-6), awaited within 1,500 ms, no retry, never throws; one `error` per failure, a time-out's fate `unknown` (N-5), a replay at `info` (N-4), the fallback `info` from `fallbackCallCount` (D-1). `runAiAction` decides identities and failure once for the entry and the charge (N-7) and awaits the charge last, only when a call was made. C-5 by option (a): the charge modules import only types from `aiActionAudit.ts`, with a source guard. Census measured over the whole Jest suite: 11 suites reach the write; 10 mock the recorder, `aiActionAudit.test.ts` fakes the repository; zero unmocked writes (negative control shown). NI-1 to NI-5 proven. SF-4 table: the insight cron (throughput) and the daily-briefing cron (37.5 s of 60 s at a full batch) flagged for Q-10. Gates: 64 suites / 1,661 tests (chat-v4 crash pre-existing); `test:bos-entitlements` 85 / 1,779; typecheck 0 new; literals 0; scoped tsc identical; `next build` exit 0. Skill Standard 6 (SF-7), entitlements doc Metering, §6.4 steps 5–8 and §6.4.2 post-deploy checks. Deviations D-15 to D-22. Uncommitted; no database touched |
+| 2026-09-29 | SA code review — 3b-ii | **Code Approved; approved for QA once S-1 and S-2 are in. No blocking finding.** Verified against merge base `5049bd7c`: NI-1 to NI-4 (two catch layers, 1,500 ms budget with an unref'd and cleared timer, abort signal, no retry, the charge before the rethrow with the error object unchanged, zero calls await nothing); N-7 through `runAiAction`; C-5 (type-only imports, source guard); C-6 (`AI_CHARGE_SERVICE`); tenant isolation, repository-only access, no Pilot-Credit table, `isCharged`, every mode; SF-3 census method and negative control accepted; SF-7 skill and entitlements doc accurate; §6.4.2 read-only and paste-safe. **S-1:** postgrest-js returns a network failure as `{ code: '' }`, so the recorder logs it `fate: not_written` instead of `unknown`; count only SQLSTATE / PGRST codes as not written, and fix the test to the real shape. **S-2:** R-3 / R-4 text still states the pre-SF-4 worst case and the ~33 estimate. D-15 to D-22 accepted. **SF-4 ruled:** ship as is; no scheduled budget or breaker (Q-10 stands); follow-up to TL: a run deadline in `DailyBriefingDispatchService` (trigger: more than ~10 briefing businesses per hourly window, or charge p95 > ~250 ms in slice 4); lead-alert non-await accepted. **F-4 closed** (the slimmed CLAUDE.md has no such row). Re-run: 64 suites (63 + the known chat-v4 crash), 1,661 tests pass; `typecheck:bos-llm` 0 new; literals 0 violations |
+| 2026-09-29 | SA 3b-ii fixes (Dev) | **S-1:** `aiChargeRecorder.ts` counts a write error as `fate: not_written` only for a database-shaped code (SQLSTATE or `PGRSTnnn`, pattern tightened to exclude 5-letter Node codes, D-23); everything else, incl. postgrest-js's fetch-error `code: ''`, is `unknown`, and an empty code logs `errCode: 'network'`. The `TypeError` test replaced by the real shape `{ message, details: '', hint: '', code: '' }`; added `ECONNRESET`, `EPIPE`, `23514`, `P0001` cases; `PGRST202` kept. **S-2:** §10 R-3 states the cumulative loop worst case (insight cron businesses × 1.5 s under its 240 s budget; briefing cron up to 25 × 1.5 s in 60 s, lease reclaims); R-4 says 11 suites measured. **N-1:** §6.4 step 7 says three queries plus the checker; query C uses `charge_row` / `audit_row`; step A asks for a question not asked before. §12 gains OI-1 (briefing run deadline, SF-4 follow-up with its trigger) and OI-2 (N-4 as a slice-4 input). Uncommitted; no database touched |
+| 2026-09-29 | SA hand-off check — S-1 | **S-1 closed; D-23 accepted.** `DB_ERROR_CODE` covers all 43 PostgreSQL SQLSTATE classes (leads 0 2 3 4 5 7 F H P X) and matches no Node or undici network code (E…, UND_ERR_…, ABORT_ERR, DOMException '20'); the tests use the real postgrest-js 2.75.1 fetch-error shape; fate logic otherwise unchanged; recorder suite 37/37 with the stub URL. S-2 (R-3, R-4) and N-1 (§6.4 step 7, query C aliases, step A) text correct. Non-blocking slice-4 note: 40003 / 08007 mean unknown fate but are labelled not_written; unlikely via PostgREST, reconciled by the leak check |
+| 2026-09-29 | QA report — 3b-ii (QA) | **PASS WITH NOTES, no bugs.** Gates with stub env: 64 suites / 1,665 tests pass (the chat-v4 `route.audit` crash reproduced identically on `origin/main` `cd8dcb43`); `test:bos-entitlements` 85 / 1,779; `typecheck:bos-llm` 0 new; literals 0 violations; `next build` exit 0, 307/307, no charge code in client chunks. Temporary suite through the real `runAiAction` (32 / 32, deleted): one correct 11-field row per action with `actionId` = the entry's; charged before the rethrow; zero calls wait for nothing; a hung repository returns the same value at 1,509 / 1,517 ms with the signal aborted; 12 fault shapes give the right fate and never touch the action; replay `info`; triggers mapped; `isCharged` honoured; entry and charge agree in 5 outcome shapes; D-17 `undecided` through `runAiAction`. Isolation: only the recorder imports the repository; all 11 census suites mock the recorder or fake the repository; a whole-suite fetch spy saw 0 RPC requests, with a positive control proving it sees one (and confirming S-1's `code: ''` shape live). §6.4.2 read-only, loud on placeholders, columns match. Runbook notes QA-N9 (step B's credits = cost × 1000 fails on ~5 % of rows by rounding) and QA-N10 (query C cost text renderings differ); QA-N11 note. No code file changed (sha1) |
+| 2026-09-29 | QA-N9 to N11 applied (TL) | §6.4.2 wording only: step B credits vs cost × 1000 to within 0.000001; query C costs equal in value; step F first-morning go-live overlap. No code change |
