@@ -632,17 +632,20 @@ describe('C-4 — archived activity history is purged with the live history', ()
     }
   });
 
-  it('business_os_invites is classified never, globally scoped, and no option combination ever deletes it (invite signup C-10)', () => {
-    expect(byTable.get('business_os_invites')?.level).toBe('never');
-    for (const level of ['reset', 'purge'] as const) {
-      for (const combo of combos) {
-        for (const activityHistory of [true, false]) {
-          const run = descriptorsForRun(level, { ...combo, activityHistory });
-          expect(run.some((d) => d.table === 'business_os_invites')).toBe(false);
+  it.each(['business_os_invites', 'business_os_account_lineage'])(
+    '%s is classified never, and no option combination ever deletes it (invite signup C-10, L-6)',
+    (table) => {
+      expect(byTable.get(table)?.level).toBe('never');
+      for (const level of ['reset', 'purge'] as const) {
+        for (const combo of combos) {
+          for (const activityHistory of [true, false]) {
+            const run = descriptorsForRun(level, { ...combo, activityHistory });
+            expect(run.some((d) => d.table === table)).toBe(false);
+          }
         }
       }
     }
-  });
+  );
 
   it('archived_records mirrors audit_trail in level, scope and band', () => {
     const archived = byTable.get('archived_records');

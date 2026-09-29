@@ -182,6 +182,17 @@ export const AUDIT_EVENTS = {
   // `opened_by_existing_account_at` stamp decides). Nothing was burned or
   // changed, and no session was created.
   BOS_INVITE_OPENED_BY_EXISTING_ACCOUNT: 'BOS_INVITE_OPENED_BY_EXISTING_ACCOUNT',
+  // Slice 1b: a champion signed up from an invite. REDEEMED and PLAN_PROVISIONED
+  // are written together, after the finalise function succeeded (actor = the new
+  // account). REFUSED is a terminal refusal (an email that already has an
+  // account at account creation, or the code attempts used up). INCOMPLETE is a
+  // signup that stopped halfway with its claim kept (FR-12a, SA D-2): its details
+  // repeat the invite row's failure record, never an email, token, code or
+  // password.
+  BOS_INVITE_REDEEMED: 'BOS_INVITE_REDEEMED',
+  BOS_INVITE_PLAN_PROVISIONED: 'BOS_INVITE_PLAN_PROVISIONED',
+  BOS_INVITE_REDEMPTION_REFUSED: 'BOS_INVITE_REDEMPTION_REFUSED',
+  BOS_INVITE_REDEMPTION_INCOMPLETE: 'BOS_INVITE_REDEMPTION_INCOMPLETE',
 
   // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
@@ -621,6 +632,26 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'A Business OS invite was opened for an email that already has an account; the visitor was sent to sign in and nothing changed',
+  },
+  [AUDIT_EVENTS.BOS_INVITE_REDEEMED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS invite was redeemed: an account was created from it (invitation circle recorded)',
+  },
+  [AUDIT_EVENTS.BOS_INVITE_PLAN_PROVISIONED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A plan row was provisioned from a Business OS invite (champion cohort, origin invite)',
+  },
+  [AUDIT_EVENTS.BOS_INVITE_REDEMPTION_REFUSED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS invite signup was refused (reason class only)',
+  },
+  [AUDIT_EVENTS.BOS_INVITE_REDEMPTION_INCOMPLETE]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS invite signup stopped halfway; the claim was kept for recovery',
   },
   [AUDIT_EVENTS.BUSINESS_DATA_PURGE_BLOCKED]: {
     severity: 'warning',

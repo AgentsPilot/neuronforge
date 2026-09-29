@@ -112,6 +112,26 @@ export default function BusinessOsInvitesPage() {
         <>
           <EnforcementNote mode={payload.enforcementMode} />
 
+          {/* T-16 (SA): an indicator on this page, no email. Derived from data on the
+              server, so it also counts a signup killed by its timeout. */}
+          {payload.stoppedHalfway && payload.stoppedHalfway.count > 0 && (
+            <div
+              data-testid="stopped-halfway-banner"
+              role="status"
+              className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4"
+            >
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" aria-hidden="true" />
+              <p className="text-sm text-amber-100">
+                {payload.stoppedHalfway.count === 1
+                  ? '1 signup stopped halfway.'
+                  : `${payload.stoppedHalfway.count} signups stopped halfway.`}{' '}
+                The account may exist without its plan. See the marked rows and the recovery steps in{' '}
+                <code className="text-amber-200">docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_1_WORKPLAN.md</code>{' '}
+                §6.2.
+              </p>
+            </div>
+          )}
+
           {/* Keyed by invite so each new link mounts a fresh panel. Without the key,
               React reuses the previous panel and its "Copied" state carries over to a
               link that was never copied, and an admin pastes the old one. */}

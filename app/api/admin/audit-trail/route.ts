@@ -11,6 +11,7 @@ import { createClient } from '@supabase/supabase-js';
 import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import { createLogger } from '@/lib/logger';
 import { AdminAuditTrailQuerySchema, firstIssueMessage } from '@/lib/audit/requestSchemas';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 
 // Initialize service role client for admin operations
 const supabaseServiceRole = createClient(
@@ -188,13 +189,86 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Attach user information to filtered logs for display
+    // Business names, so a row says WHICH business it belongs to and not only
+    // which user (the two are the same id for Business OS rows — aiActionAudit
+    // sets `userId: summary.accountId`).
+    //
+    // ONE batched read for the whole page, through the repository layer
+    // (mandatory rule #1). `findAdminIdentitiesByUserIds` already existed and is
+    // already chunked; calling the single-user `findByUserId` per row would be
+    // N+1 on every page load. The precedent caller is
+    // app/api/admin/users/route.ts:151, and lib/repositories/__tests__/
+    // adminReadMethods.guard.test.ts restricts the method to app/api/admin/**,
+    // which this route is.
+    //
+    // Deliberately NOT extended to the `users` read above: that inline
+    // service-role query is pre-existing debt (see the file header, OI-9) and
+    // moving it is a separate change. This new read does not join it.
+    //
+    // A failure here is not fatal — the page is a compliance browser and the
+    // audit rows themselves are what it exists to show. We log and continue
+    // without names rather than 500 the whole page.
+    //
+    // But "we could not look it up" must not be served as "there is no
+    // business": a blanket `business: null` is byte-identical to a legitimate
+    // agent-platform row, which is the same honesty failure the resource-name
+    // fix in this PR exists to correct, one layer down. So a failed lookup
+    // yields `businessLookup: 'failed'` and `business: undefined` (the key is
+    // dropped from the JSON) — the same payload shape as the precedent caller,
+    // app/api/admin/users/route.ts. Nothing renders the flag today; it exists so
+    // a future consumer can say "unknown" instead of "none".
+    const companyNames = new Map<string, string | null>();
+    let businessLookup: 'ok' | 'failed' = 'ok';
+    if (userIds.length > 0) {
+      // try/catch as well as the { error } branch. The repository currently
+      // returns its failures rather than throwing, but that is a fact about
+      // another file's internals — a rejected promise here would reach the outer
+      // catch and 500 the whole page, losing the audit rows, which is exactly
+      // the outcome the comment above says must not happen. Make it hold
+      // unconditionally.
+      try {
+        const identities = await businessProfileRepository.findAdminIdentitiesByUserIds(userIds);
+        if (identities.error || !identities.data) {
+          businessLookup = 'failed';
+          requestLogger.error(
+            { err: identities.error },
+            'Business name lookup failed; audit logs served without business names'
+          );
+        } else {
+          for (const identity of identities.data) {
+            companyNames.set(identity.user_id, identity.company_name);
+          }
+        }
+      } catch (lookupError: unknown) {
+        businessLookup = 'failed';
+        requestLogger.error(
+          { err: lookupError },
+          'Business name lookup threw; audit logs served without business names'
+        );
+      }
+    }
+
+    // Attach user and business information to filtered logs for display.
+    // `business` is null for an account with no business profile (every
+    // agent-platform row) — the page shows nothing rather than a placeholder —
+    // and undefined when the lookup failed, so the two are not the same value.
     const logsWithUsers = filteredLogs.map((log: any) => ({
       ...log,
-      users: log.user_id ? usersMap[log.user_id] : null
+      users: log.user_id ? usersMap[log.user_id] : null,
+      business:
+        businessLookup === 'failed'
+          ? undefined
+          : log.user_id && companyNames.has(log.user_id)
+            ? { company_name: companyNames.get(log.user_id) ?? null }
+            : null,
     }));
 
-    requestLogger.debug({ count: logsWithUsers.length, page, searched: !!search }, 'Audit logs fetched');
+    // Counts and the lookup's outcome only — a business name is never logged
+    // (AC-B13), and route.businessName.test.ts asserts that across every path.
+    requestLogger.debug(
+      { count: logsWithUsers.length, page, searched: !!search, businessNamesResolved: companyNames.size, businessLookup },
+      'Audit logs fetched'
+    );
 
     // Calculate pagination metadata
     const totalCount = count || 0;
@@ -204,6 +278,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       logs: logsWithUsers,
+      // 'failed' means the rows' missing `business` is unknown, not absent.
+      businessLookup,
       pagination: {
         page,
         pageSize,

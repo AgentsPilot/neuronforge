@@ -30,6 +30,7 @@ import {
 } from '@/lib/business-os/entitlements/config/invites';
 import { planLabel } from '@/lib/business-os/entitlements/planPresentation';
 import type { EntitlementConfig } from '@/lib/business-os/entitlements/source';
+import type { BusinessOsAccountLineageRepository } from '@/lib/repositories/BusinessOsAccountLineageRepository';
 import type { BusinessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
 import type { UserProfileRepository } from '@/lib/repositories/UserProfileRepository';
 import type { BusinessOsInvite } from '@/lib/repositories/types';
@@ -38,6 +39,7 @@ import { deriveInviteState, type InviteState } from './inviteState';
 import { buildInviteLink, generateInviteToken, hashInviteToken } from './inviteToken';
 import { describeInviteAccess, isInviteGrantAvailable } from './inviteOffer';
 import type { CreateInviteBody, RevokeInviteBody } from './inviteSchemas';
+import { claimLeaseCutoff, isClaimLive } from './signupCodePolicy';
 
 /** The name shown when the inviting admin has none on record (BQ-9, C-9). */
 export const INVITER_NAME_FALLBACK = 'AgentPilot';
@@ -77,6 +79,28 @@ export interface InviteListView {
   redeemedAt: string | null;
   /** Slice 1a (FR-8a): the invite was opened by an email that already had an account. */
   openedByExistingAccountAt: string | null;
+  /** Slice 1b: the account created from this invite, once accepted. */
+  redeemedAccountId: string | null;
+  /** Slice 1b: the invitation circle of that account (1 for every admin invite), or `null`. */
+  level: number | null;
+  /**
+   * Slice 1b (FR-12a, SA D-3, T-16): a signup that stopped halfway, derived
+   * from data: not redeemed AND (a failure is recorded OR a claim is older than
+   * the lease). The second half catches a function killed by its timeout, which
+   * could record nothing.
+   */
+  redemptionStoppedHalfway: boolean;
+  /** Slice 1b (SA D-2): the last recorded failure. Never an email. */
+  redemptionFailure: InviteRedemptionFailureView | null;
+}
+
+/** The FR-12a record as the admin row shows it (SA D-2, T-16). */
+export interface InviteRedemptionFailureView {
+  at: string;
+  step: string;
+  errorCode: string | null;
+  errorMessage: string | null;
+  accountId: string | null;
 }
 
 /** The exact keys of `InviteListView`, for tests that pin the allow-list. */
@@ -97,10 +121,26 @@ export const INVITE_LIST_VIEW_KEYS: ReadonlyArray<keyof InviteListView> = [
   'revokeReason',
   'redeemedAt',
   'openedByExistingAccountAt',
+  'redeemedAccountId',
+  'level',
+  'redemptionStoppedHalfway',
+  'redemptionFailure',
 ];
 
+/** The D-3 derivation, in one place (the C-11 one-derivation rule). */
+export function isRedemptionStoppedHalfway(row: BusinessOsInvite, now: Date): boolean {
+  if (row.redeemed_at) return false;
+  if (row.redemption_failed_at) return true;
+  return row.claimed_at !== null && !isClaimLive(row.claimed_at, now);
+}
+
 /** The one row → view mapper (R-7). Built field by field; nothing is spread. */
-export function toInviteListView(row: BusinessOsInvite, config: EntitlementConfig, now: Date): InviteListView {
+export function toInviteListView(
+  row: BusinessOsInvite,
+  config: EntitlementConfig,
+  now: Date,
+  level: number | null = null
+): InviteListView {
   return {
     id: row.id,
     email: row.email,
@@ -118,6 +158,18 @@ export function toInviteListView(row: BusinessOsInvite, config: EntitlementConfi
     revokeReason: row.revoke_reason,
     redeemedAt: row.redeemed_at,
     openedByExistingAccountAt: row.opened_by_existing_account_at,
+    redeemedAccountId: row.redeemed_account_id,
+    level,
+    redemptionStoppedHalfway: isRedemptionStoppedHalfway(row, now),
+    redemptionFailure: row.redemption_failed_at
+      ? {
+          at: row.redemption_failed_at,
+          step: row.redemption_failed_step ?? 'unknown',
+          errorCode: row.redemption_error_code,
+          errorMessage: row.redemption_error_message,
+          accountId: row.redemption_failed_account_id,
+        }
+      : null,
   };
 }
 
@@ -286,24 +338,59 @@ export async function createInviteForAdmin(body: CreateInviteBody, deps: CreateI
 
 // ── List ────────────────────────────────────────────────────────────────────
 
-export type ListInvitesOutcome = { ok: true; invites: InviteListView[] } | { ok: false };
+/** The T-16 banner: counts and invite ids only. */
+export interface StoppedHalfwaySummary {
+  count: number;
+  inviteIds: string[];
+}
 
-/** The newest invites, each with its derived state (no filters in Slice 0, R-2). */
+export type ListInvitesOutcome =
+  | { ok: true; invites: InviteListView[]; stoppedHalfway: StoppedHalfwaySummary }
+  | { ok: false };
+
+/**
+ * The newest invites, each with its derived state (no filters in Slice 0, R-2),
+ * the lineage level of accepted ones (Slice 1b), and the T-16 banner summary.
+ *
+ * A failed lineage read does not fail the list: levels show as unknown.
+ */
 export async function listInvitesForAdmin(deps: {
   repository: Pick<AdminInviteRepository, 'listRecentForAdmin'>;
+  lineage?: Pick<BusinessOsAccountLineageRepository, 'findByInviteIdsForAdmin'>;
   config: EntitlementConfig;
   now: Date;
+  logger?: InviteOpsLogger;
 }): Promise<ListInvitesOutcome> {
   const { data, error } = await deps.repository.listRecentForAdmin();
   if (error || !data) return { ok: false };
-  return { ok: true, invites: data.map((row) => toInviteListView(row, deps.config, deps.now)) };
+
+  const levels = new Map<string, number>();
+  const redeemedIds = data.filter((row) => row.redeemed_at).map((row) => row.id);
+  if (deps.lineage && redeemedIds.length > 0) {
+    const lineage = await deps.lineage.findByInviteIdsForAdmin(redeemedIds);
+    if (lineage.error) {
+      // SA N-3: the list still answers (levels show as unknown), but it is said.
+      deps.logger?.warn({ err: lineage.error, invites: redeemedIds.length }, 'Could not read lineage levels for the invite list');
+    }
+    for (const entry of lineage.data ?? []) {
+      if (entry.invite_id) levels.set(entry.invite_id, entry.level);
+    }
+  }
+
+  const invites = data.map((row) => toInviteListView(row, deps.config, deps.now, levels.get(row.id) ?? null));
+  const stopped = invites.filter((invite) => invite.redemptionStoppedHalfway).map((invite) => invite.id);
+  return { ok: true, invites, stoppedHalfway: { count: stopped.length, inviteIds: stopped } };
 }
 
 // ── Revoke ──────────────────────────────────────────────────────────────────
 
 export type RevokeInviteOutcome =
   | { ok: true; invite: InviteListView; row: BusinessOsInvite }
-  | { ok: false; status: 404 | 409 | 500; error: 'invite_not_found' | 'invite_not_revocable' | 'could_not_revoke_invite' };
+  | {
+      ok: false;
+      status: 404 | 409 | 500;
+      error: 'invite_not_found' | 'invite_not_revocable' | 'signup_in_progress' | 'could_not_revoke_invite';
+    };
 
 /**
  * Revoke a pending or expired invite (FR-6). One conditional UPDATE; when it
@@ -325,6 +412,8 @@ export async function revokeInviteForAdmin(
     adminId: deps.adminId,
     reason: body.reason,
     now: deps.now,
+    // Slice 1b (I-2): a live signup claim blocks the revoke.
+    claimLeaseCutoff: claimLeaseCutoff(deps.now),
   });
 
   if (revoked.error) return { ok: false, status: 500, error: 'could_not_revoke_invite' };
@@ -335,5 +424,9 @@ export async function revokeInviteForAdmin(
   const existing = await deps.repository.findByIdForAdmin(inviteId);
   if (existing.error) return { ok: false, status: 500, error: 'could_not_revoke_invite' };
   if (!existing.data) return { ok: false, status: 404, error: 'invite_not_found' };
+  const row = existing.data;
+  if (!row.redeemed_at && !row.revoked_at && isClaimLive(row.claimed_at, deps.now)) {
+    return { ok: false, status: 409, error: 'signup_in_progress' };
+  }
   return { ok: false, status: 409, error: 'invite_not_revocable' };
 }

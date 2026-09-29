@@ -28,6 +28,7 @@ import {
   BUSINESS_OS_INVITE_ADMIN_COLUMNS,
   BUSINESS_OS_INVITE_LIST_LIMIT,
   BUSINESS_OS_INVITE_PUBLIC_COLUMNS,
+  BUSINESS_OS_INVITE_REDEMPTION_COLUMNS,
   BusinessOsInviteRepository,
   safeDbError,
 } from '../BusinessOsInviteRepository';
@@ -38,7 +39,7 @@ type Call = { method: string; args: unknown[] };
 function recordingClient(result: { data: unknown; error: unknown }) {
   const calls: Call[] = [];
   const builder: Record<string, unknown> = {};
-  for (const method of ['insert', 'update', 'select', 'eq', 'is', 'order', 'limit', 'single', 'maybeSingle']) {
+  for (const method of ['insert', 'update', 'select', 'eq', 'is', 'or', 'gt', 'order', 'limit', 'single', 'maybeSingle']) {
     builder[method] = (...args: unknown[]) => {
       calls.push({ method, args });
       return builder;
@@ -58,6 +59,9 @@ const ID = '11111111-1111-4111-8111-111111111111';
 const ADMIN = '22222222-2222-4222-8222-222222222222';
 const HASH = 'a'.repeat(64);
 const NOW = new Date('2026-10-01T12:00:00.000Z');
+const CUTOFF = new Date('2026-10-01T11:58:00.000Z');
+const ACCOUNT = '33333333-3333-4333-8333-333333333333';
+const CODE_HASH = 'c'.repeat(64);
 
 function input(): CreateBusinessOsInviteInput {
   return {
@@ -207,9 +211,12 @@ describe('revokeForAdmin', () => {
       adminId: ADMIN,
       reason: 'Wrong person',
       now: NOW,
+      claimLeaseCutoff: CUTOFF,
     });
 
     expect(result).toEqual({ data: { id: ID }, error: null });
+    // Slice 1b (I-2): a live signup claim blocks the revoke.
+    expect(calls).toContainEqual({ method: 'or', args: [`claimed_at.is.null,claimed_at.lt."${CUTOFF.toISOString()}"`] });
     expect(calls.find((call) => call.method === 'update')?.args[0]).toEqual({
       revoked_at: NOW.toISOString(),
       revoked_by_admin_id: ADMIN,
@@ -229,6 +236,7 @@ describe('revokeForAdmin', () => {
       adminId: ADMIN,
       reason: 'Wrong person',
       now: NOW,
+      claimLeaseCutoff: CUTOFF,
     });
     expect(result).toEqual({ data: null, error: null });
   });
@@ -240,6 +248,7 @@ describe('revokeForAdmin', () => {
       adminId: ADMIN,
       reason: 'Wrong person',
       now: NOW,
+      claimLeaseCutoff: CUTOFF,
     });
     expect(result.data).toBeNull();
     expect(result.error?.message).toBe('boom');
@@ -328,6 +337,167 @@ describe('markOpenedByExistingAccount (Slice 1a, FR-8a, D-13)', () => {
   });
 });
 
+describe('Slice 1b: the signup methods (token-scoped, compare-and-swap)', () => {
+  it('findByTokenHashForRedemption: token_hash equality, the redemption columns, never token_hash', async () => {
+    const { client, calls } = recordingClient({ data: { id: ID }, error: null });
+    const result = await new BusinessOsInviteRepository(client).findByTokenHashForRedemption(HASH);
+    expect(result).toEqual({ data: { id: ID }, error: null });
+    expect(calls).toContainEqual({ method: 'select', args: [BUSINESS_OS_INVITE_REDEMPTION_COLUMNS] });
+    expect(calls).toContainEqual({ method: 'eq', args: ['token_hash', HASH] });
+    expect(BUSINESS_OS_INVITE_REDEMPTION_COLUMNS).not.toContain('token_hash');
+    expect(BUSINESS_OS_INVITE_REDEMPTION_COLUMNS.split(', ')).toEqual(
+      expect.arrayContaining(['email', 'signup_code_hash', 'signup_code_attempts', 'claimed_at', 'claimed_account_id'])
+    );
+  });
+
+  it('issueSignupCode: CAS on the observed send count AND last-sent time, pending, unexpired, no live claim; resets attempts', async () => {
+    const { client, calls } = recordingClient({ data: [{ id: ID }], error: null });
+    const expiresAt = new Date('2026-10-01T12:10:00.000Z');
+    const result = await new BusinessOsInviteRepository(client).issueSignupCode({
+      id: ID,
+      observedSentCount: 2,
+      observedLastSentAt: '2026-10-01T11:00:00+00:00',
+      claimLeaseCutoff: CUTOFF,
+      codeHash: CODE_HASH,
+      expiresAt,
+      sentCount: 3,
+      windowStartedAt: NOW,
+      now: NOW,
+    });
+    expect(result).toEqual({ data: true, error: null });
+    expect(calls.find((call) => call.method === 'update')?.args[0]).toEqual({
+      signup_code_hash: CODE_HASH,
+      signup_code_expires_at: expiresAt.toISOString(),
+      signup_code_attempts: 0,
+      signup_code_sent_count: 3,
+      signup_code_window_started_at: NOW.toISOString(),
+      signup_code_last_sent_at: NOW.toISOString(),
+      updated_at: NOW.toISOString(),
+    });
+    expect(calls).toContainEqual({ method: 'eq', args: ['signup_code_sent_count', 2] });
+    expect(calls).toContainEqual({ method: 'eq', args: ['signup_code_last_sent_at', '2026-10-01T11:00:00+00:00'] });
+    expect(calls).toContainEqual({ method: 'is', args: ['redeemed_at', null] });
+    expect(calls).toContainEqual({ method: 'is', args: ['revoked_at', null] });
+    expect(calls).toContainEqual({ method: 'gt', args: ['link_expires_at', NOW.toISOString()] });
+    expect(calls).toContainEqual({ method: 'or', args: [`claimed_at.is.null,claimed_at.lt."${CUTOFF.toISOString()}"`] });
+
+    const lost = recordingClient({ data: [], error: null });
+    expect(
+      await new BusinessOsInviteRepository(lost.client).issueSignupCode({
+        id: ID, observedSentCount: 2, observedLastSentAt: null, claimLeaseCutoff: CUTOFF, codeHash: CODE_HASH, expiresAt, sentCount: 3, windowStartedAt: NOW, now: NOW,
+      })
+    ).toEqual({ data: false, error: null });
+  });
+
+  it('issueSignupCode (MF-2): the first code ever compares last-sent IS NULL (null-safe)', async () => {
+    const { client, calls } = recordingClient({ data: [{ id: ID }], error: null });
+    await new BusinessOsInviteRepository(client).issueSignupCode({
+      id: ID, observedSentCount: 0, observedLastSentAt: null, claimLeaseCutoff: CUTOFF, codeHash: CODE_HASH, expiresAt: NOW, sentCount: 1, windowStartedAt: NOW, now: NOW,
+    });
+    expect(calls).toContainEqual({ method: 'is', args: ['signup_code_last_sent_at', null] });
+    expect(calls).not.toContainEqual(expect.objectContaining({ method: 'eq', args: ['signup_code_last_sent_at', expect.anything()] }));
+  });
+
+  it('countSignupCodeAttempt: CAS on the observed attempts AND the live code hash', async () => {
+    const { client, calls } = recordingClient({ data: [{ id: ID }], error: null });
+    const result = await new BusinessOsInviteRepository(client).countSignupCodeAttempt({ id: ID, observedAttempts: 3, codeHash: CODE_HASH, now: NOW });
+    expect(result).toEqual({ data: true, error: null });
+    expect(calls.find((call) => call.method === 'update')?.args[0]).toEqual({ signup_code_attempts: 4, updated_at: NOW.toISOString() });
+    expect(calls).toContainEqual({ method: 'eq', args: ['signup_code_attempts', 3] });
+    expect(calls).toContainEqual({ method: 'eq', args: ['signup_code_hash', CODE_HASH] });
+  });
+
+  it('claimForSignup (R-1): clears the code and claims, pending, not expired, no live claim, first claim => claimant IS NULL', async () => {
+    const { client, calls } = recordingClient({ data: [{ id: ID }], error: null });
+    const result = await new BusinessOsInviteRepository(client).claimForSignup({
+      id: ID,
+      codeHash: CODE_HASH,
+      accountId: ACCOUNT,
+      observedClaimedAccountId: null,
+      now: NOW,
+      claimLeaseCutoff: CUTOFF,
+    });
+    expect(result).toEqual({ data: true, error: null });
+    expect(calls.find((call) => call.method === 'update')?.args[0]).toEqual({
+      signup_code_hash: null,
+      signup_code_expires_at: null,
+      claimed_at: NOW.toISOString(),
+      claimed_account_id: ACCOUNT,
+      updated_at: NOW.toISOString(),
+    });
+    expect(calls).toContainEqual({ method: 'eq', args: ['signup_code_hash', CODE_HASH] });
+    expect(calls).toContainEqual({ method: 'gt', args: ['link_expires_at', NOW.toISOString()] });
+    expect(calls).toContainEqual({ method: 'or', args: [`claimed_at.is.null,claimed_at.lt."${CUTOFF.toISOString()}"`] });
+    expect(calls).toContainEqual({ method: 'is', args: ['claimed_account_id', null] });
+  });
+
+  it('claimForSignup (D-dev-1, I-6): re-taking a lapsed claim compares the observed claimant', async () => {
+    const stale = '44444444-4444-4444-8444-444444444444';
+    const { client, calls } = recordingClient({ data: [], error: null });
+    const result = await new BusinessOsInviteRepository(client).claimForSignup({
+      id: ID,
+      codeHash: CODE_HASH,
+      accountId: stale,
+      observedClaimedAccountId: stale,
+      now: NOW,
+      claimLeaseCutoff: CUTOFF,
+    });
+    expect(result).toEqual({ data: false, error: null });
+    expect(calls).toContainEqual({ method: 'eq', args: ['claimed_account_id', stale] });
+    expect(calls).not.toContainEqual({ method: 'is', args: ['claimed_account_id', null] });
+  });
+
+  it('releaseSignupClaim: only this claimant, only unredeemed', async () => {
+    const { client, calls } = recordingClient({ data: [{ id: ID }], error: null });
+    expect(await new BusinessOsInviteRepository(client).releaseSignupClaim(ID, ACCOUNT, NOW)).toEqual({ data: true, error: null });
+    expect(calls.find((call) => call.method === 'update')?.args[0]).toEqual({
+      claimed_at: null,
+      claimed_account_id: null,
+      updated_at: NOW.toISOString(),
+    });
+    expect(calls).toContainEqual({ method: 'eq', args: ['claimed_account_id', ACCOUNT] });
+    expect(calls).toContainEqual({ method: 'is', args: ['redeemed_at', null] });
+  });
+
+  it('recordRedemptionFailure (SA D-2): writes exactly the five fields plus updated_at, keyed on id and claimant', async () => {
+    const { client, calls } = recordingClient({ data: [{ id: ID }], error: null });
+    const result = await new BusinessOsInviteRepository(client).recordRedemptionFailure({
+      id: ID,
+      claimedAccountId: ACCOUNT,
+      step: 'finalise',
+      errorCode: '23505',
+      errorMessage: 'duplicate key',
+      failedAccountId: ACCOUNT,
+      now: NOW,
+    });
+    expect(result).toEqual({ data: true, error: null });
+    expect(calls.find((call) => call.method === 'update')?.args[0]).toEqual({
+      redemption_failed_at: NOW.toISOString(),
+      redemption_failed_step: 'finalise',
+      redemption_error_code: '23505',
+      redemption_error_message: 'duplicate key',
+      redemption_failed_account_id: ACCOUNT,
+      updated_at: NOW.toISOString(),
+    });
+    expect(calls).toContainEqual({ method: 'eq', args: ['id', ID] });
+    expect(calls).toContainEqual({ method: 'eq', args: ['claimed_account_id', ACCOUNT] });
+  });
+
+  it('the admin columns carry the claim and the FR-12a record', () => {
+    for (const column of [
+      'claimed_at',
+      'claimed_account_id',
+      'redemption_failed_at',
+      'redemption_failed_step',
+      'redemption_error_code',
+      'redemption_error_message',
+      'redemption_failed_account_id',
+    ]) {
+      expect(BUSINESS_OS_INVITE_ADMIN_COLUMNS.split(', ')).toContain(column);
+    }
+  });
+});
+
 describe('markFirstViewed', () => {
   it('stamps first_viewed_at only while it is null, and sets updated_at', async () => {
     const { client, calls } = recordingClient({ data: null, error: null });
@@ -370,6 +540,13 @@ describe('C-13: the service-role reason is written down, and the admin methods a
         'markFirstViewed',
         'markOpenedByExistingAccount',
         'revokeForAdmin',
+        // Slice 1b: token-scoped signup methods, each a compare-and-swap.
+        'findByTokenHashForRedemption',
+        'issueSignupCode',
+        'countSignupCodeAttempt',
+        'claimForSignup',
+        'releaseSignupClaim',
+        'recordRedemptionFailure',
       ].sort()
     );
   });
@@ -411,7 +588,25 @@ describe('M-1 (C-3): a database error never carries row values into a log or a r
     ['createForAdmin', (repo) => repo.createForAdmin(input())],
     ['listRecentForAdmin', (repo) => repo.listRecentForAdmin()],
     ['findByIdForAdmin', (repo) => repo.findByIdForAdmin(ID)],
-    ['revokeForAdmin', (repo) => repo.revokeForAdmin({ id: ID, adminId: ADMIN, reason: 'Wrong person', now: NOW })],
+    ['revokeForAdmin', (repo) => repo.revokeForAdmin({ id: ID, adminId: ADMIN, reason: 'Wrong person', now: NOW, claimLeaseCutoff: CUTOFF })],
+    ['findByTokenHashForRedemption', (repo) => repo.findByTokenHashForRedemption(HASH)],
+    [
+      'issueSignupCode',
+      (repo) =>
+        repo.issueSignupCode({ id: ID, observedSentCount: 0, observedLastSentAt: null, claimLeaseCutoff: CUTOFF, codeHash: CODE_HASH, expiresAt: NOW, sentCount: 1, windowStartedAt: NOW, now: NOW }),
+    ],
+    ['countSignupCodeAttempt', (repo) => repo.countSignupCodeAttempt({ id: ID, observedAttempts: 0, codeHash: CODE_HASH, now: NOW })],
+    [
+      'claimForSignup',
+      (repo) =>
+        repo.claimForSignup({ id: ID, codeHash: CODE_HASH, accountId: ACCOUNT, observedClaimedAccountId: null, now: NOW, claimLeaseCutoff: CUTOFF }),
+    ],
+    ['releaseSignupClaim', (repo) => repo.releaseSignupClaim(ID, ACCOUNT, NOW)],
+    [
+      'recordRedemptionFailure',
+      (repo) =>
+        repo.recordRedemptionFailure({ id: ID, claimedAccountId: ACCOUNT, step: 'finalise', errorCode: null, errorMessage: null, failedAccountId: ACCOUNT, now: NOW }),
+    ],
     ['findByTokenHashForPublicView', (repo) => repo.findByTokenHashForPublicView(HASH)],
     ['markFirstViewed', (repo) => repo.markFirstViewed(ID, NOW)],
     ['findInviteeEmailForPublicCheck', (repo) => repo.findInviteeEmailForPublicCheck(ID)],

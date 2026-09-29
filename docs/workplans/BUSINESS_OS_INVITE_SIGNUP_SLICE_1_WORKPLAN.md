@@ -7,7 +7,7 @@
 **Previous slice:** [BUSINESS_OS_INVITE_SIGNUP_SLICE_0_WORKPLAN.md](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_0_WORKPLAN.md) (merged, PR #128; migration `20261012` applied to production)
 **Date:** 2026-09-28
 **Branch:** `feature/bos-invite-signup-slice-1`, cut from `origin/main` at fd710c26 (the PR #128 merge) on 2026-09-28, in its own worktree (`neuronforge-invite-s1`). Every file reference below was checked against that commit.
-**Status:** SA workplan review applied (R-1 to R-14, 2026-09-28). **1a: SA code-approved for QA (2026-09-28), CR-1 and CR-2 applied; uncommitted; QA next.** **1b: design cleared by SA's re-check (2026-09-28); D-1 to D-7, the D-dev rulings and T-16 are folded in below. 1b code not started.** 1c: approved as scoped, after 1a.
+**Status:** SA workplan review applied (R-1 to R-14, 2026-09-28). **1a: SA code-approved for QA (2026-09-28), CR-1 and CR-2 applied; uncommitted; QA next.** **1a: merged (PR #133); `20261013` applied to production with checker PASS.** **1b: Code Complete (2026-09-28), uncommitted on `feature/bos-invite-signup-slice-1b`, awaiting SA code review; FR-12a's admin indicator included.** 1c: approved as scoped, after 1a.
 
 ## Overview
 
@@ -576,18 +576,57 @@ New 409 `signup_in_progress` when the invite carries a live claim (I-2).
 
 ### Slice 1b — "A champion signs up" (starts only after SA's one-pass re-check of §2.4 and §4.2)
 
-- ⬜ **1b-0** — SA re-check of §2.4 and §4.2; apply any changes.
-- ⬜ **1b-1** — `grantRules.ts` and its test; `adminOps.ts` uses it; existing tests pass unchanged (optionally as a preparatory PR with 1b-2).
-- ⬜ **1b-2** — L-4: `hasPlanRow`, `isBusinessOsTenant` with a plan repository, all three callers and tests, imports guard (R-8).
-- ⬜ **1b-3** — Migration `20261014`, rollback, checker, text test; lineage purge registration.
-- ⬜ **1b-4** — `signupCodePolicy`, `signupCode`, the template, their tests; logger redaction (R-3).
-- ⬜ **1b-5** — Repositories: `createConfirmedUser`, `findUserExists`; invite CAS methods and `revokeForAdmin` live-claim refusal; `provisionFromInvite`; lineage repository; tests.
-- ⬜ **1b-6** — `inviteRedemption.ts` and its test (every I-1 to I-6 case in §12).
-- ⬜ **1b-7** — Both signup routes; revoke route 409; audit events; `enforcementPoints` entries.
-- ⬜ **1b-8** — `SignupForm.tsx`, `maskedEmail`, removal of the R-4 line; tests. **Includes SA N-1:** reword the signed-in notice's body in `en`/`he`/`es` (today "An invitation can only be accepted by someone who is signed out", which reads oddly on `existing_account`), for example "Sign out to continue with this invitation".
-- ⬜ **1b-9** — Admin list: accepted account, time, level; entitlements doc row.
-- ⬜ **1b-10** — FR-12a admin indicator (T-16): banner and per-row badge from the D-3 derivation; `InviteListView` gains the D-2 fields and `redemptionStoppedHalfway`; AC-5a leak tests on the row, audit details, logs and admin view. **Last task of 1b; may slip to a follow-up PR (SA D-7).** The D-2 columns and the record-writing in `completeSignup` are NOT optional: they ship with 1b-3 and 1b-6.
-- ⬜ **1b-11** — Local verification; SA code review. **No commit.**
+- ✅ **1b-0** — SA re-check of §2.4 and §4.2 done (2026-09-28); D-1 to D-7 folded in. Branch `feature/bos-invite-signup-slice-1b` cut from `origin/main` aa9d75e9 (after 1a merged as PR #133 and `20261013` was applied); `20261014` re-checked free on every `origin/*` branch.
+- ✅ **1b-1** — `grantRules.ts` and its test; `adminOps.ts` uses `championEndDecisionMissing` for its three RC-4 checks; existing `adminOps` tests unchanged and green.
+- ✅ **1b-2** — L-4: `isBusinessOsTenant` gains a `planRepository` input and reads the plan row last; all three callers pass it (the summary route per R-8); tests on the write path, the read route and the summary route; imports guard updated. (D-dev-9: reuses `findEntitlementInputs`; no `hasPlanRow` method.)
+- ✅ **1b-3** — Migration `20261014`, rollback, checker (S01–S12), migration text test; lineage registered `never` in purge descriptors (count 129 → 130).
+- ✅ **1b-4** — `signupCodePolicy.ts` (incl. the lease, D-4), `signupCode.ts` (incl. `maskEmail` R-6 and the D-2 scrub), the code email template; tests; logger redaction `signupCode`/`otp` with a test (R-3).
+- ✅ **1b-5** — `AuthAccountRepository.createConfirmedUser` / `findUserExists` (no delete, I-1); invite repository `findByTokenHashForRedemption`, `issueSignupCode`, `countSignupCodeAttempt`, `claimForSignup`, `releaseSignupClaim`, `recordRedemptionFailure` (all CAS); `revokeForAdmin` refuses a live claim (I-2); `BusinessOsAccountPlanRepository.provisionFromInvite`; `BusinessOsAccountLineageRepository`; tests including the M-1 scrub for every new method.
+- ✅ **1b-6** — `inviteRedemption.ts` and its test (every I-1 to I-6 case, D-1, D-dev-1/2/3, AC-5, AC-6, AC-8, AC-5a).
+- ✅ **1b-7** — Both signup routes (the complete route declares `maxDuration = 60`); `redemptionDeps.ts` (production wiring, system sender); revoke 409 `signup_in_progress`; four audit events; `enforcementPoints` entries; route and wiring tests.
+- ✅ **1b-8** — `SignupForm.tsx`, `maskedEmail`, the R-4 line removed; SA N-1 copy in `en`/`he`/`es`; tests.
+- ✅ **1b-9** — Admin list: accepted account id, time and L1 (lineage read only for accepted rows); entitlements doc row.
+- ✅ **1b-10** — FR-12a admin indicator (T-16): the "N signups stopped halfway" banner and the per-row badge (step, code, scrubbed message, account id, time; "timed out before it could record why" for the D-3 timeout case). **Made it into 1b** (not slipped).
+- ✅ **1b-11** — Local verification (below). SA code review next. **No commit.**
+
+### 1b implementation record
+
+**Files: 23 created, 42 modified (65, including this workplan and the entitlements doc), uncommitted on `feature/bos-invite-signup-slice-1b`.**
+
+| Created | |
+|---|---|
+| SQL | `supabase/migrations/20261014_business_os_invite_signup.sql`, `supabase/SQL Scripts/20261014_business_os_invite_signup_rollback.sql`, `scripts/check-bos-invite-signup-migration.sql` |
+| Code | `lib/business-os/invites/signupCodePolicy.ts`, `signupCode.ts`, `inviteRedemption.ts`, `redemptionDeps.ts`; `lib/business-os/entitlements/grantRules.ts`; `lib/email/templates/invite-signup-code.ts`; `lib/repositories/BusinessOsAccountLineageRepository.ts`; `app/api/public/invites/signup/code/route.ts`, `complete/route.ts`; `app/invite/SignupForm.tsx` |
+| Tests | `supabase/migrations/__tests__/business-os-invite-signup.migration.test.ts`; `lib/business-os/invites/__tests__/signupCode.test.ts`, `inviteRedemption.test.ts`, `redemptionDeps.test.ts`; `lib/business-os/entitlements/__tests__/grantRules.test.ts`; `lib/email/templates/__tests__/invite-signup-code.test.ts`; `lib/repositories/__tests__/BusinessOsAccountLineageRepository.test.ts`; `lib/logger/__tests__/redaction.signupCode.test.ts`; `app/api/public/invites/signup/__tests__/routes.test.ts`; `app/invite/__tests__/SignupForm.render.test.tsx` |
+
+Modified: `lib/business-os/entitlements/adminOps.ts` (+ test); the two other tenant-check callers (+ their tests); `BusinessOsAccountPlanRepository.ts` (+ test), `BusinessOsInviteRepository.ts` (+ test), `AuthAccountRepository.ts` (+ test), `lib/repositories/types.ts`, `index.ts`; `lib/business-os/invites/adminInviteOps.ts` (+ test), `publicInviteView.ts` (+ test), `inviteSchemas.ts`; the validate route test; the admin invites and revoke route tests; `app/invite/page.tsx`, `invitePageCopy.ts` (+ page test); the admin page, `types.ts`, `InviteList.tsx` (+ render test); `lib/audit/events.ts`, `eventAudience.ts` (+ test, 163/18 → 167/22); `lib/logger/config.ts`; purge `descriptors.ts`, baseline JSON, invariant test; the three guards (`enforcementPoints`, `businessOsEntitlements.imports`, the `AuthAccountRepository` callers guard); `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md`; this workplan.
+
+**Verification (2026-09-28):**
+
+| Check | Result |
+|---|---|
+| Invite, admin, entitlements, purge, repositories, audit, logger, templates, migrations suites plus every `*guard*`/`*forbidden*`/`*invariant*` suite (174 suites) | **3,520 pass, 2 fail, both pre-existing** (below); the UI suites that timed out once under a full-machine run pass in isolation; `SignupForm.render.test.tsx` now sets a 30 s timeout |
+| `npm run test:authz-guard` | 119 / 119, CAPS untouched |
+| `npm run test:bos-entitlements` | 82 suites, 1,651 pass, 1 fail: the pre-existing `enforcementPoints` failure (below) |
+| Pre-existing failure 1 | `enforcementPoints.test.ts` › `lib/business-os/llm/aiActionAudit.ts` unaccounted: introduced on main by the credit-deduction slice 2 and **fixed on `origin/main` by PR #134 (`0620c0f5`)**, verified by running the test on a clean `origin/main` checkout. Disappears on rebase. |
+| Pre-existing failure 2 | `app/api/admin/business-os/entitlements/__tests__/routes.test.ts` › "account on a tier" (`payments.reminders` decided by `basis`, not `lifecycle_gate`): **still fails on a clean `origin/main` (7c21d009)**, so SA N-3's note that PR #129 fixed it does not hold for this test. Untouched by this slice. |
+| `eslint` on the 59 touched `.ts`/`.tsx` files | 0 errors; 5 warnings, all on lines this slice did not write |
+| `npm run lint:hooks` | clean |
+| `tsc --noEmit` | 0 errors in any touched file |
+| `next build` (CI placeholder env from `.github/workflows/build.yml`) | **exit 0**, compiled successfully; `/api/public/invites/signup/code`, `/api/public/invites/signup/complete`, `/invite` (11.7 kB) and `/admin/business-os-invites` in the route table |
+
+**Deviations from the workplan (1b):**
+
+| # | What | Why |
+|---|---|---|
+| D-dev-9 | No `hasPlanRow` method: `isBusinessOsTenant` reuses the existing `findEntitlementInputs` read, only when a profile and an onboarding message both say no. | One fewer repository method and no new query shape; the read is already used by every caller's next step. |
+| D-dev-10 | `inviteRedemption.ts` takes the finalise call as an injected function; only `redemptionDeps.ts` names the plan repository, and the imports guard pins that it calls exactly one write method, `provisionFromInvite` (new category `invite_redemption`). | Keeps the flow testable and keeps the list of plan-state writers explicit (F-8). |
+| D-dev-11 | Code-route `existing_account` also stamps `opened_by_existing_account_at` and audits the first open, as the validate route does. | One behaviour for one fact, whichever route sees it first. |
+| D-dev-12 | The "other" `createUser` failure where `findUserExists` says "no user" releases the claim and answers 503 without a failure record. | The claim is not kept, so FR-12a (a record of a KEPT claim) does not apply; the release makes the invite usable again. |
+| D-dev-13 | The signup form counts UTF-8 bytes per code point instead of with `TextEncoder`. | The same number; the test environment has no `TextEncoder`, and the server check (the authority) uses it. |
+| D-dev-14 | The FR-12a banner points admins to the §6.2 recovery runbook in the workplan, naming the file path (`docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_1_WORKPLAN.md` §6.2) per SA's review. | There is no in-app recovery action by design (SA D-5: the operator runs the SQL). |
+| D-dev-16 | **QA 1b notes (2026-09-29).** QA-1b-1: the migration test pins checker S06's pass condition. QA-1b-2: the banner test asserts the runbook path. QA-1b-4: §15.2 now says a re-apply after rollback fails once any signup happened, and gives the back-fill. QA-1b-7: the password schema caps at 256 characters before the byte count (tested with 100,000 characters). **Known, not changed:** QA-1b-5 (the banner only sees the newest 200 invites), QA-1b-6 and QA-1b-8, as QA recorded them. QA-1b-3 is for the user. No SQL changed. | QA Report 1b. |
+| D-dev-15 | **SA code review 1b fixes (2026-09-28).** MF-1: `sendEmail` gains an opt-in `redactRecipientInLogs`; with it, `to` is logged masked and email-shaped text is stripped from logged and returned provider errors; `redemptionDeps.ts` sets it; other senders unchanged (tested both ways; `emailTransport.ts` has 0 `console.*`). MF-2: `issueSignupCode`'s CAS also compares the observed `signup_code_last_sent_at` (null-safe `IS NULL` / `eq`), requires `link_expires_at > now` and no live claim; a 24 h-rollover race test proves one winner. N-1 weak-password copy (send a new code) in `en`/`he`/`es`; N-2 warn log when the session check fails (both routes, tested); N-3 a failed lineage read is logged (tested); N-4 the double JSDoc merged. **No SQL changed:** `20261014` stays as SA approved it. | SA code review 1b, MF-1, MF-2 and nits. |
 
 ### Slice 1c — Admin list filters and search (after 1a)
 
@@ -836,6 +875,12 @@ COMMIT;
 
 Drops the finalise function, the lineage table, the seven CHECKs and the thirteen columns (including the FR-12a record, SA D-2), in reverse order. **Export lineage first** if any signup happened. Accounts already created stay complete (their plan rows and redeemed invites are not in this migration); a claimed-but-unfinalised invite must be finalised (§6.2) before rolling back, or its account is left without a plan row.
 
+**Re-applying `20261014` after its rollback (QA-1b-4).** Once any signup has happened, pasting `20261014` again **fails** (safely: the whole transaction rolls back). The rollback drops `claimed_account_id` but keeps `redeemed_account_id`, so the re-added `business_os_invites_redeemed_by_claimant` CHECK is violated by every redeemed row. The migration file itself stays unchanged. To re-apply:
+
+1. Run first, in one paste: `BEGIN;` then `ALTER TABLE public.business_os_invites ADD COLUMN claimed_at timestamptz;` then `ALTER TABLE public.business_os_invites ADD COLUMN claimed_account_id uuid;` then `UPDATE public.business_os_invites SET claimed_at = redeemed_at, claimed_account_id = redeemed_account_id WHERE redeemed_account_id IS NOT NULL;` then `COMMIT;`
+2. Paste `20261014` **without its two `ADD COLUMN claimed_at` / `ADD COLUMN claimed_account_id` lines** (they now exist). Everything else is unchanged.
+3. Run the checker; it must read `VERDICT PASS`. Then restore lineage from the export taken before the rollback.
+
 | Scenario | Action | Consequence |
 |---|---|---|
 | 1b code problem | Revert the 1b merge; the migration can stay. | Signup stops; the page falls back to 1a. |
@@ -1056,6 +1101,104 @@ No decision is needed. If a signup is ever interrupted halfway by a system fault
 
 ---
 
+### SA Code Review 1b — 2026-09-28
+
+**Code Review by SA — 2026-09-28 (Slice 1b)**
+**Status:** ✅ **Code Approved for QA, conditional on MF-1 to MF-3 below.** No blocker. The migration SQL is **approved as written** for the user to paste (none of the must-fixes touches SQL). MF-1 and MF-2 are small TypeScript changes; MF-3 is the rebase. QA verifies all three; no second SA pass is needed unless the fix for MF-1 grows beyond an opt-in flag on the transport.
+
+Reviewed: the uncommitted diff on `feature/bos-invite-signup-slice-1b` (42 tracked files +1650/−69, 23 new), read in full for the migration, rollback, checker, `inviteRedemption.ts`, `redemptionDeps.ts`, `signupCode.ts`, `signupCodePolicy.ts`, both signup routes, the new repository methods (invite, auth, plan, lineage), `grantRules.ts`, the tenant widening and its three callers, `adminInviteOps.ts`, the admin page and list, `SignupForm.tsx`, the schemas, the logger redaction and the guards; tests read by case list.
+
+#### Verification run by SA
+
+| Check | Result |
+|---|---|
+| Jest in this worktree: `app/invite`, `app/api/public/invites`, `app/api/admin/business-os`, `app/admin`, `lib/business-os/invites`, `…/entitlements`, `…/purge`, `lib/business-os/__tests__`, `lib/repositories/__tests__`, `lib/audit`, `lib/logger`, `lib/email/templates`, `supabase/migrations/__tests__`, `lib/admin` | **175 suites, 3,554 tests: 3,552 pass, 2 fail**, the two pre-existing failures below. |
+| **The 1b diff applied onto current `origin/main` (571f48cc)** in a scratch worktree (not this tree) | `git apply --3way`: **two trivial conflicts** (`app/admin/business-os-invites/page.tsx`: PR #136's `key` on `CreatedLinkPanel` next to the T-16 banner; `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md`: two Change History rows). Both keep-both. Same suite set: **175 suites, 3,557 tests: 3,556 pass, 1 fail** (`routes.test.ts` only). **`enforcementPoints.test.ts` passes after the rebase.** |
+| Pre-existing 1: `enforcementPoints` › `lib/business-os/llm/aiActionAudit.ts` unaccounted | **Confirmed fixed on `origin/main`** (PR #134): passes on a clean `origin/main` checkout, and passes with this diff applied on top. Disappears on rebase. |
+| Pre-existing 2: `app/api/admin/business-os/entitlements/__tests__/routes.test.ts` › "account on a tier" (`payments.reminders` decided by `basis`, not `lifecycle_gate`) | **Confirmed failing on a clean `origin/main` (571f48cc)**, independent of this branch. My 1a note (N-3) that PR #129 fixed it was wrong for this test; Dev's record is right. Needs its own ticket (not this slice). |
+| `npm run test:authz-guard` | **119 / 119 pass**, no CAPS change (no new admin handler; the list and revoke routes keep `requireAdmin` first). |
+| `npx next build`, full CI placeholder env from `.github/workflows/build.yml` | **Exit 0.** Compiled successfully, 307/307 pages; `/api/public/invites/signup/code`, `/api/public/invites/signup/complete`, `/invite` (11.7 kB), `/admin/business-os-invites` in the route table. |
+| `deleteUser` anywhere in `app/` or `lib/` outside tests | **None** (only the no-deletion guard and two tests that assert its absence). |
+
+#### Migration `20261014`, rollback and checker
+
+| Property | Verdict | Evidence |
+|---|---|---|
+| SQL-editor-safe | ✅ | No `--` or block comments; every literal is letters, digits, underscores or spaces (`'invite'`, `'admin'`, `'cohort'`, `'admin_invite'`, `''`); no single-letter alias; one `BEGIN`/`COMMIT`; one statement per change. |
+| Privileges | ✅ | Table and function: `REVOKE ALL` from `PUBLIC`, `anon`, `authenticated`, `service_role`, one statement each, then `GRANT SELECT, INSERT` (table) / `GRANT EXECUTE` (function) to `service_role` only. No enumerated `REVOKE`. This also cancels Supabase's default-privilege grants. |
+| RLS on lineage | ✅ | `ENABLE ROW LEVEL SECURITY`, no policy, no FK, no trigger; S03/S04/S08 prove it on production. |
+| Finalise function | ✅ | `SECURITY INVOKER`, `SET search_path = ''`, every name qualified, EXECUTE for `service_role` only. `UPDATE`-first takes the row lock before anything is read; a concurrent finaliser waits, re-evaluates `redeemed_at IS NULL`, matches nothing, and the following `SELECT` (a new statement under READ COMMITTED) returns the id. Re-run safe: a second call for the same account returns the invite id and writes nothing. The plan and lineage inserts are plain `INSERT`s, so a conflict aborts the invite update too. Under INVOKER, `service_role` has what it needs: `UPDATE` on invites (20261012), `INSERT` on plans (20261009), `INSERT` on lineage (here), and bypasses RLS. |
+| End date | ✅ | `CASE WHEN access_open_ended THEN NULL ELSE now() + make_interval(months => access_months) END` cannot silently become open-ended: Slice 0's `business_os_invites_access_shape` CHECK forces `access_months` NOT NULL and > 0 whenever `access_open_ended` is false for a cohort grant. |
+| CHECKs NULL-safe | ✅ | `hash_length` (`IS NULL OR …`), `signup_code_paired` and `claim_paired` (boolean equality of two `IS NULL`s, never NULL), `counters` (NOT NULL columns), `redeemed_by_claimant` (`claimed_account_id IS NOT NULL AND …`), `redemption_failure_paired` (both-or-neither written out), `redemption_failure_lengths` (each clause `IS NULL OR …`). Lineage `level_shape` and `invite_matches_source` are NULL-safe on their NOT NULL columns. If a redeemed row existed on production, `redeemed_by_claimant` would fail the `ADD` and the whole transaction would roll back; none can exist (Slice 0 has no redemption path). |
+| No new anon-callable SECURITY DEFINER | ✅ | The only function is INVOKER and not executable by `anon`/`authenticated` (S11). |
+| Onboarding/profile plan triggers | ✅ | The `auth.users` trigger (20261003) writes `profiles`, `user_preferences`, `notification_settings`, `security_settings` only; the plan-row triggers fire on `business_profiles` and `onboarding_conversations`, so `createUser` cannot pre-create a plan row that would make finalise's plain `INSERT` fail. (The §6.2 D-5c branch covers the case where the person onboards before a recovery.) |
+| Rollback | ✅ | Drops the function, the lineage table (with its indexes and constraints), the 7 CHECKs, then the 13 columns, inside one transaction; `redeemed_by_claimant` is dropped before `claimed_account_id`. Plan rows with `origin = 'invite'` and redeemed stamps stay, as §15.2 says. |
+| Checker S01–S12 | ✅ | Read-only session; `aclexplode` over `COALESCE(acl, acldefault(…))` for both objects; `search_path` compared through `chr(61)`/`chr(34)`; names match the migration (pinned by the migration text test). |
+
+**The migration SQL is approved for the user to paste, unchanged.** Order per CR-1: pre-check, paste `20261014`, checker `VERDICT PASS` (12 pass), Slice 0 checker PASS, **then** merge the 1b PR. The 1a checker's E02 fails by design afterwards (N-2).
+
+#### Claim-before-create, codes and tenant isolation
+
+| Property | Verdict | Where it holds |
+|---|---|---|
+| I-1 no deletion | ✅ | `AuthAccountRepository` has no delete method; no `deleteUser` in product code. |
+| I-2 revoke refuses a live claim | ✅ | `revokeForAdmin` adds `.or(noLiveClaim(cutoff))`; `revokeInviteForAdmin` re-reads and answers 409 `signup_in_progress`; the route passes the outcome's status through. Finalise has no expiry/revoke check. |
+| I-3 server-generated id | ✅ | `accountId = row.claimed_account_id ?? deps.newAccountId()` (`crypto.randomUUID`); recorded by the claim CAS before `createConfirmedUser`; a different returned id is never finalised. The body is `.strict()` `{ token, signupCode, password }`. |
+| I-4 / D-dev-2 never release on uncertainty | ✅ | Release only on `weak_password` or after `findUserExists(X) === false`; a failed lookup keeps the claim and records `find_user`. |
+| D-dev-3 `create_user_id_mismatch` recorded | ✅ | Step `create_user_id_mismatch`, `failedAccountId` = the returned id, keyed on the claimed id; audited `…_INCOMPLETE`. |
+| I-5 finalise retried once, then kept | ✅ | Two calls; on a second failure the record (step `finalise`) and the audit are written. |
+| I-6 re-claim reuses the id | ✅ | `.is('claimed_account_id', null)` / `.eq(…)` on the observed value (D-dev-1). |
+| D-1 live claim → 409 `signup_in_progress` before any code check | ✅ | `loadRedeemableInvite`, both routes. |
+| D-4 lease > `maxDuration` | ✅ | 120 s vs 60 s, pinned by `signupCode.test.ts` and the routes test. `claimed_at` is taken after the request starts, so the claim cannot lapse inside a live request. |
+| Plan row only through `provisionFromInvite`, `origin = 'invite'` | ✅ | `redemptionDeps.ts` is the only product file that names the plan repository outside admin code; the imports guard pins it to that one write. |
+| Lineage L1, issuer from the row | ✅ | Written only by the finalise function: `source 'admin_invite'`, no parent, root = self, level 1, and the `WHERE` requires `issuer_kind = 'admin'` on the row. Nothing from the request. |
+| Codes | ✅ except MF-2 | SHA-256 over `id:code`, timing-safe compare, 10-minute TTL, attempt counted by CAS before the compare, 5 attempts per code, attempts reset per new code, system sender (`kind: 'transactional'`, no `from`/`replyTo`/`ownerUserId`), no code in the subject. |
+| Redaction | ✅ | `signupCode`, `*.signupCode`, `otp`, `*.otp` (not `code`), with a test. |
+| F-6 | ✅ | `valid` carries `maskedEmail` only; the code route returns times only; the full email only in the complete 200. |
+| R-13 | ✅ | Server: `TextEncoder` byte length ≤ 72, ≥ 8 code points; the form mirrors it (D-dev-13). |
+| F-2 | ✅ | `signInWithPassword(email, password)` in the browser, fallback "Your account is ready. Sign in". |
+| FR-12a record | ✅ | `scrubFailureMessage` replaces email-shaped text, collapses whitespace, cuts to 300 code points (as SQL counts); code cut to 64; audit details are exactly the record fields plus correlation id; entity = invite id. |
+| D-3 banner and badge | ✅ | `isRedemptionStoppedHalfway` = not redeemed AND (failure recorded OR claim older than the lease), one derivation with the lease constant; the banner carries counts and ids only. |
+| Tenant widening, summary route (R-8) | ✅ | Plan row read last and only when profile and onboarding both say no; `toInputs` never returns null data, so "no plan row" is `false` (404), not `null` (500). Three callers pass the repository; the summary route is in `ALLOWED` as read-only. |
+| `business-os-entitlements` skill checklist | ✅ | `inviteRedemption.ts` and `redemptionDeps.ts` registered in `KNOWN_NON_GATE_IMPORTERS` with exact symbols; neither refuses a capability; no tier literal; no catalog change; the suite is green after the rebase. |
+
+#### Findings
+
+| # | File:line | Finding | Priority |
+|---|---|---|---|
+| **MF-1** | `lib/notifications/emailTransport.ts:484-485, 513, 527, 539` (reached from `lib/business-os/invites/redemptionDeps.ts:54`); the claim at `inviteRedemption.ts:37-40` and `lib/email/templates/invite-signup-code.ts:16` | **The invitee's email is logged.** `sendEmail` logs `to: p.to` at `info` ("Attempting to send email", then "Email sent") for every code sent, and the Resend error path logs the provider's error text, which can echo the address. That breaks the slice's own rule, stated in `inviteRedemption.ts`' header, that the email is "never logged", and the property you asked me to check. The template header even notes the transport logs the recipient. **Fix:** an opt-in field on the send params (for example `redactRecipientInLogs: true`), honoured on those log lines (log a masked address, `maskEmail`, or none) and on the Resend error text; `redemptionDeps.ts` sets it; one transport test and one assertion in `redemptionDeps.test.ts`. Do not change what other senders log in this slice. `emailTransport.ts` has 0 `console.*` (checked), so no conversion is owed. | **Must-fix** |
+| **MF-2** | `lib/repositories/BusinessOsInviteRepository.ts:346` (`issueSignupCode`) | **The send limit is not fully atomic.** The CAS compares only `signup_code_sent_count`. When the 24 h window has lapsed and the previous window sent exactly one code, the new count is again `1`, so parallel requests that all read `1` all match and all send: the 60 s gap and the per-window count are then enforced read-then-write. Bounded (only at a window rollover, only by request concurrency, and each still needs the real link), but you asked for the limits to be enforced in the database. **Fix:** also compare the observed `signup_code_last_sent_at` (`.is(null)` when none, `.eq(…)` otherwise), which every issue changes; while there, add `.or(noLiveClaim(cutoff))` and `.gt('link_expires_at', now)` so a code is never written onto a live-claimed or expired row. One repository test for the rollover race. | **Must-fix** (small) |
+| **MF-3** | Branch base | **Rebase onto `origin/main` before the PR** (now 571f48cc, PRs #134–#136). Two keep-both conflicts: `app/admin/business-os-invites/page.tsx` (PR #136's `key={created.invite.id}` and its comment must stay on `CreatedLinkPanel`, with the T-16 banner above it) and the `BUSINESS_OS_ENTITLEMENTS.md` Change History. After the rebase `enforcementPoints` passes (verified); record `routes.test.ts` as the one remaining pre-existing failure. | **Must-fix** (process) |
+| N-1 | `app/invite/invitePageCopy.ts:146` (+ `he`, `es`) | After `weak_password` the code is already spent (the claim CAS cleared it), so re-submitting with a new password answers `code_expired`. Recoverable (that message says "Send a new one"), but the `weak_password` copy should say so up front: "Choose another password, then send yourself a new code". | Nit |
+| N-2 | `app/api/public/invites/signup/code/route.ts:58`, `complete/route.ts:70` | `getUser().catch(() => null)` treats a failed session check as signed out. Harmless for security (nothing is granted to the session, and the email lock still binds the account), but log at `warn` in the catch so an auth outage is visible. | Nit |
+| N-3 | `lib/business-os/invites/adminInviteOps.ts:369` | A failed lineage read is ignored silently (levels show as unknown, as intended); log it at `warn` with the count of ids. | Nit |
+| N-4 | `lib/business-os/entitlements/adminOps.ts:258-270` | Two consecutive JSDoc blocks above `isBusinessOsTenant`; merge them so the L-4 text is part of the function's doc. | Nit |
+| N-5 | `app/admin/business-os-invites/page.tsx:129` | D-3 counts an invite that was revoked after its lease lapsed as "stopped halfway" for good (the record is never cleared, by design). That is correct (such an account may lack its plan), but the banner cannot be cleared. Acceptable at today's volume; note it for the automatic-recovery item (§14 of the requirement). | Nit |
+
+#### Rulings on D-dev-9 to D-dev-14
+
+| # | Ruling |
+|---|---|
+| **D-dev-9** | **Accepted.** Reusing `findEntitlementInputs` avoids a new query shape; it reads the embedded overrides too, which is a little heavier than a `hasPlanRow`, but it runs only for accounts with neither a profile nor an onboarding message. |
+| **D-dev-10** | **Accepted.** Injecting finalise keeps the flow testable, and the new `invite_redemption` category plus the one-write pin keeps every plan writer visible (F-8). |
+| **D-dev-11** | **Accepted.** One fact, one behaviour, whichever route sees it first; the stamp's `IS NULL` condition keeps the audit to one entry. |
+| **D-dev-12** | **Accepted.** FR-12a records a KEPT claim; after a positive "no such user" the claim is released and the invite is usable again. The `warn` log with the auth error code is enough. |
+| **D-dev-13** | **Accepted.** The per-code-point count equals the UTF-8 length; the server's `TextEncoder` check stays the authority. |
+| **D-dev-14** | **Accepted**, with one wording change: name the file in the banner (`docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_1_WORKPLAN.md` §6.2) so an admin who has never seen "the Slice 1 workplan" can find it. |
+
+#### Optimisation Suggestions
+
+- When the admin notification email arrives (T-16 option b), it can read the same D-2 fields; nothing here needs to change.
+- `routes.test.ts` "account on a tier" is red on `main`: raise it as its own small fix (it is a stale contract fixture after the `payments.reminders` catalog change), so 1b's CI is judged only on its own tests.
+
+#### For the user (business terms)
+
+The database change for signup is **approved to paste as written**. Apply it and run its checker **before** the code is merged, as with 1a. Before the pull request, Dev makes three small changes: the invitee's email address must not appear in our server logs when the code email is sent; the "one code per minute" limit must hold even when many requests arrive at the same instant; and the branch is brought up to date with the latest main. None changes what an invitee sees, and QA can check all three.
+
+**Code Approved for QA: Yes**, conditional on MF-1, MF-2 and MF-3.
+
+---
+
 ## QA Testing Report
 
 ### QA Report 1a — 2026-09-28
@@ -1176,11 +1319,173 @@ No decision is needed. If a signup is ever interrupted halfway by a system fault
 - [ ] Recommended before commit: QA-1 (two assertions). Optional: QA-2 and QA-3. QA-4 to QA-6 are notes.
 - [ ] Before merge: P1 to P5 (CR-1). After merge: P6 to P13.
 
+### QA Report 1b — 2026-09-29
+
+**QA — 2026-09-29 (Slice 1b: champion signup with email, password and an emailed 6-digit code; FR-12a indicator)**
+**Test mode:** full
+**Strategy used:** A + B (Jest unit and integration in the worktree), plus probes kept in the QA scratchpad (not in the tree), mutation testing, and the real `20261012`/`20261013`/`20261014` SQL, rollback and all three checkers run on an in-memory PGlite. Playwright is not set up (CLAUDE.md), so the browser path is the production checklist below.
+**Focus:** api, ui, schema, security
+**Skipped:** anything touching a real database, a deployed route, or an email provider (by instruction). `tsc`, `eslint` and `next build` were not re-run: SA ran them on this diff, and MF-1/MF-2 changed TypeScript only in files the Jest runs compile (ts-jest type-checks each of them).
+**Input source:** prompt keywords (TL brief), plus §2.4, §12.2, §14.2 and SA Code Review 1b.
+
+**Safety record:** before testing, all 67 modified or untracked files (43 tracked, 24 new) plus `git status --porcelain`, `git diff --stat` and `git diff` were snapshotted with SHA-256 hashes. No `checkout`, `stash`, `reset`, `clean`, `restore`, `rebase` or commit was run. Each mutant touched one file, which was then restored from the snapshot and proven by hash before the next. Before this section was written, `git status --porcelain`, the diffstat, the file list and all 67 hashes matched the snapshot, and HEAD was unchanged (`aa9d75e9`). This section is the only change.
+
+#### MF-1 and MF-2 (SA's conditions): verified
+
+| # | What SA asked | Verdict | Evidence |
+|---|---|---|---|
+| **MF-1** | The code email must not log the invitee's address, including when a provider error echoes it | ✅ **Verified** | `sendEmail` masks `to` on every log line (attempt, "Email sent" for Resend, SMTP and Gmail, and the final "not delivered" warn) and strips email-shaped text from the Resend error text (logged **and** thrown) and from every transport's caught message (logged **and** returned in `SendEmailResult.error`). Probe against the real `sendEmail` (fetch mocked, Resend configured): success logs `d•••@example.com` only. A Resend 422 whose body echoes the address twice (plain and `<…>`) leaves no address in the logs or the returned result (`[email]`). An SMTP `550 <addr>: Recipient address rejected` gives the same. **Other senders are unchanged**: without the flag, the address is still logged. `redemptionDeps.ts:61` sets the flag. Mutants M6, M7 and M12 all killed. |
+| **MF-2** | The send limit must be atomic at the 24 h rollover | ✅ **Verified** | `issueSignupCode` now compares the observed `signup_code_last_sent_at` (`.is(null)` / `.eq`), plus `link_expires_at > now` and no live claim. Race probe (real repository and flow over a PostgREST-shaped fake with random per-call latency): old window with 1 code sent, **12 parallel requests, 20 trials: exactly 1 code each time**, the rest `try_again` or `code_recently_sent`. The same for 12 parallel first-ever sends. **With the MF-2 predicate removed (mutant M3), the same probe sent 12 codes out of 12.** The repository also refuses to store a code on an expired link or a live-claimed row, and accepts one on a lapsed claim. M3 and M4 killed by the tree's own tests. |
+| MF-3 | Rebase onto `origin/main` | ⬜ RM, at commit time | Not a QA item. The branch is still at `aa9d75e9` (so `enforcementPoints` fails, as expected); see the Commit Info rebase note. |
+
+#### Tests run
+
+| Run | Result |
+|---|---|
+| `lib/business-os/invites`, `app/api/public/invites`, `app/api/admin/business-os`, `app/invite`, `app/admin/business-os-invites`, `lib/repositories/__tests__`, `lib/audit`, `lib/logger`, `lib/email/templates`, `lib/notifications`, `supabase/migrations/__tests__`, `lib/business-os/entitlements`, `lib/business-os/purge`, `lib/admin` | **130 suites, 2,817 tests: 2,815 pass, 2 fail**. Both failures are the known pre-existing ones: `enforcementPoints` (only `lib/business-os/llm/aiActionAudit.ts` unaccounted; fixed on main by #134, goes away on rebase) and `app/api/admin/business-os/entitlements/__tests__/routes.test.ts` "account on a tier" (fails on clean main). |
+| Every `*guard*`, `*forbidden*`, `*invariant*`, `enforcementPoints` suite in the repo | **41 suites, 1,070 tests: 1,069 pass, 1 fail** (the same pre-existing `enforcementPoints` failure) |
+| `lib/business-os/__tests__` | 18 suites, 204 tests, all pass |
+| `npm run test:authz-guard` | **119 / 119 pass** |
+| QA probes, SQL (PGlite: the real migrations, the rollback and the three checkers) | **57 / 57 pass** |
+| QA probes, flow (real invite and auth repositories with the real `requestSignupCode` / `completeSignup`, interleaving fake) | **61 / 61 pass** |
+| QA probes, MF-1 (real `sendEmail`) and both routes | **16 / 16 pass** |
+
+#### Adversarial checks
+
+| Check | Result | Evidence |
+|---|---|---|
+| **Code only for a valid, pending, unclaimed invite** | ✅ Pass | Revoked → 409 `revoked`; expired link → `expired`; redeemed → `used`; live claim → `signup_in_progress`; paid → `paid_invites_not_available`; account-issued → `unavailable`. In every case no code is sent. Existing account → 409 `existing_account`: 6 parallel requests stamp once and audit once, and send nothing. Unknown, malformed and one-character-off tokens get a byte-identical `not_recognised`. |
+| **Limits** | ✅ Pass | 60 s: a request at 59 s gets 429 `code_recently_sent` with `retryAfterSeconds: 1`, and 60 s later it goes through. 5 per 24 h: the sixth gets 429 `code_limit_reached` with a positive wait; after the window closes, it is allowed and the count resets to 1. 5 tries: the remaining count goes 4, 3, 2, 1, 0, then `code_locked` even for the right code. One `REDEMPTION_REFUSED` (`code_attempts_exhausted`) is audited. TTL: at 9:59 the code works; at 10:00 it is `code_expired`. A new code replaces the old one, and the old one fails. |
+| **Attempt counted before the compare** | ✅ Pass | The right code with a lost claim still consumed an attempt (`signup_code_attempts = 1`). 40 parallel wrong guesses: never more than 5 counted, and never more than 5 compared (the attempt CAS on the observed count plus the code hash). M5 killed. |
+| **Uniform errors** | ✅ Pass | Wrong → `{error:'code_invalid', attemptsRemaining}`; expired → exactly `{success:false, error:'code_expired'}`; used → exactly `{success:false, error:'used'}`. No email, hash or id in any error body. |
+| **Claim before create; one account** | ✅ Pass | Order spy: `claim` then `create`. `createConfirmedUser` receives the id already recorded on the row, and the row's own email. 8 parallel completes with the right code, 10 trials: exactly one account and one plan row each time, and the losers get `try_again` / `signup_in_progress` / `code_expired`. Two invites to one email completed in parallel: one account; the loser's claim is released and it answers `existing_account`. M1 killed. |
+| **409 `signup_in_progress`; revoke during a claim** | ✅ Pass | A live claim gets `signup_in_progress` from both routes before any code check. The real `revokeInviteForAdmin` over the real repository: at claim +60 s → 409 `signup_in_progress`, row not revoked; after the lease → revoked. |
+| **Release vs keep** | ✅ Pass | `createUser` failing with "other" plus a positive "no such user" → released, 503, no failure record (D-dev-12). `createUser` failing **and** `findUserExists` erroring → **claim kept**, 503, record step `find_user` with the auth code and a scrubbed message, and `…_INCOMPLETE` audited with exactly the five D-2 fields. M2 ("release when unsure") killed. `weak_password` → released, 400; the spent code then gives `code_expired` (N-1 copy covers it). |
+| **`create_user_id_mismatch`** | ✅ Pass | A different returned id → claim kept, record with step `create_user_id_mismatch` and the **returned** id, no finalise, 503. |
+| **Finalise: re-run safe, origin, end date, lineage** | ✅ Pass (real SQL) | In PGlite: finalise returns the invite id; the plan row is `cohort champion`, `origin 'invite'`, `tier` NULL, and `cohort_expires_at` = the row's own transaction time + 3 months (NULL for open-ended). Lineage: `admin_invite`, L1, no parent, root = self, the invite id from the row, and `redeemed_account_id = claimed_account_id`. A re-run returns the same id and writes nothing; a different account gets NULL. A wrong email, account or cohort, an `issuer_kind 'account'`, a `tier` grant or an unclaimed invite each get NULL and write nothing. Revoked after the lease → aborts on `not_revoked_and_redeemed`, and nothing is written. A pre-existing trial plan row → unique violation; the invite update rolls back and the trial row is untouched (the §6.2 D-5c branch). No auth user yet → plan FK aborts and nothing is redeemed. Finalise failing twice in the flow → record step `finalise`, code `42501`, message `insert failed for [email]: permission denied`. I-6: a lapsed claim is re-taken with the **same** id after a new code. M9 (origin changed) killed. |
+| **`.strict()` bodies, no request-supplied id** | ✅ Pass | Schema: injected `email`, `userId`, `accountId`, `cohort`, `tier`, `level`, `grantId` and `id` are each refused, and so is `email` on the code body. Route: each injected key gives 400 `invalid_request`, **before the session read and with no flow call**, with `no-store` and `no-referrer`. The flow receives exactly `{token, signupCode, password}`. M8 killed. |
+| **Leaks** | ✅ Pass, with QA-1b-3 | Full run (two sends, a wrong code, success, a re-use), with every repository and route log line captured: no email or its local part, no token or token hash, no code or code hash, no password in any log line, audit entry or refusal body. The code-route 200 carries only `codeExpiresAt` and `resendAvailableAt`. The full email appears only in the complete-route 200. `maskEmail`: `dana@…` → `d•••@example.com`; a 1-character local part shows only that character; a leading emoji shows as one code point. The scrub removes `<a@b>`, `mailto:`, quoted, upper-case and comma-joined addresses, and caps at 300 code points. |
+| **Passwords (R-13)** | ✅ Pass | Server: 36 × `é` (72 bytes) accepted, 37 × `é` (74) refused; 18 emoji (72) accepted, 19 (76) refused; 36 × `א` accepted, 37 refused; 72 ASCII accepted, 73 refused; 7 characters refused; 8 emoji accepted. The route answers 400 for a 74-byte password without echoing it. `weak_password` copy follows N-1 in all three languages ("send a new code, then choose another password"). |
+| **FR-12a indicator (D-3)** | ✅ Pass, with QA-1b-2 | `isRedemptionStoppedHalfway` is true for a failure record, true for a claim older than the lease with no record (the timeout case), and false for a live claim or a redeemed row. The record message is ≤300 characters with no `@`. The banner names `docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_1_WORKPLAN.md` §6.2, but no test pins it (M11 survived). |
+| **Lease > `maxDuration`** | ✅ Pass | Route exports `maxDuration = 60`; lease 120; the policy constant agrees. M10 (lease 60) killed. |
+| **Existing account; copy; RTL** | ✅ Pass, with QA-1b-8 | `existing_account` from both routes and from the page. The page shows "you already have an account" with Sign in, no offer and no form (the form is structurally inside the `valid` section only). en/he/es copy present for every signup string, including every error; Hebrew is `dir="rtl"` with the masked address isolated left to right; the code in the email is `dir="ltr"`. |
+| **Session** | ✅ Pass | Signed in → 409 `signed_in` from both routes before the flow runs. A failed session check → treated as signed out and logged at `warn` (N-2). |
+
+#### Mutation testing (one file at a time, each restored and proven by hash)
+
+| # | File | Mutation | Result |
+|---|---|---|---|
+| M1 | `inviteRedemption.ts` | Create the user before the claim | **Killed** (3) |
+| M2 | `inviteRedemption.ts` | Release the claim when `findUserExists` fails (release on uncertainty) | **Killed** (1) |
+| M5 | `inviteRedemption.ts` | Compare the code before counting the attempt | **Killed** (2) |
+| M3 | `BusinessOsInviteRepository.ts` | MF-2: drop the `signup_code_last_sent_at` compare-and-swap predicate | **Killed** (2); the QA race probe also kills it (12 of 12 sent) |
+| M4 | `BusinessOsInviteRepository.ts` | MF-2: drop `link_expires_at > now` and the no-live-claim filter from the issue CAS | **Killed** (1) |
+| M6 | `emailTransport.ts` | MF-1: log the recipient unmasked | **Killed** (2) |
+| M7 | `emailTransport.ts` | MF-1: stop scrubbing provider error text | **Killed** (1) |
+| M12 | `redemptionDeps.ts` | MF-1: the code email stops setting `redactRecipientInLogs` | **Killed** (1) |
+| M8 | `inviteSchemas.ts` | Remove `.strict()` from the complete body | **Killed** (6) |
+| M9 | `20261014_…sql` | Plan-row origin `'invite'` → `'admin'` | **Killed** (1) |
+| M10 | `signupCodePolicy.ts` | Lease 120 → 60 (= `maxDuration`) | **Killed** (3) |
+| M11 | `app/admin/business-os-invites/page.tsx` | Banner no longer names the runbook file | **SURVIVED** → QA-1b-2 |
+| M13 | `check-bos-invite-signup-migration.sql` | S06 passes for any `service_role` privilege set | **SURVIVED** → QA-1b-1 |
+
+#### Static SQL review (`20261014`, rollback, checker)
+
+| Item | Result |
+|---|---|
+| Migration text = §4.2 of this workplan, line for line | ✅ |
+| Editor-safe: no comments, literals only letters/digits/`_`/space, no single-letter alias, one `BEGIN`/`COMMIT`, no `IF NOT EXISTS`/`OR REPLACE` | ✅ (also pinned by the migration text test) |
+| `REVOKE ALL` from `PUBLIC`, `anon`, `authenticated`, `service_role` for the table and the function, then `GRANT SELECT, INSERT` / `GRANT EXECUTE` to `service_role` only | ✅. In PGlite with Supabase-style default privileges: anon and authenticated cannot execute finalise or read lineage; service_role cannot UPDATE or DELETE lineage. |
+| Finalise `SECURITY INVOKER`, `proconfig = {search_path=""}`, every name qualified | ✅ (read back from `pg_proc`) |
+| RLS on lineage, no policy, no FK, no trigger | ✅ |
+| NULL-safe CHECKs | ✅ All 13 violations tried were refused by the named constraint (claim pairing both ways, `redeemed_by_claimant` with no claim and with a different claimant, code pairing, hash length 63, negative counter, NULL attempts, failure pairing both ways, message 301 multi-byte characters, step 65, lineage level shape ×2, admin parentless, organic with invite id, unknown source, one lineage row per invite). 300 multi-byte characters and a 64-character code are accepted. |
+| Checker | ✅ `VERDICT PASS 12 pass 0 fail` after the verbatim migration. The Slice 0 checker still passes 11/11. **The 1a checker's E02 FAILS (`23 of 16`) as designed, and every other 1a row passes** (N-2). Drift probes: without the lineage `REVOKE … FROM service_role`, S06 FAILS and lists the extra privileges; without the function `REVOKE … FROM anon`, S11 FAILS (`anon EXECUTE`). |
+| Rollback | ✅ Applies cleanly with redeemed rows present; removes the 13 columns, the table and the function; 16 CHECKs remain; `origin 'invite'` plan rows stay (§15.2). See QA-1b-4 for re-applying afterwards. |
+
+#### Issues Found
+
+**Bugs (must fix before commit):** none.
+
+**Test gaps and edge cases:**
+
+1. **QA-1b-1: the checker's S06 pass condition is not pinned** (Low, test gap). `supabase/migrations/__tests__/business-os-invite-signup.migration.test.ts:225`, covering `scripts/check-bos-invite-signup-migration.sql:132`.
+   - M13 (S06 passes for any privilege set) survives all tests.
+   - The drift probe shows the condition matters: a missed lineage `REVOKE` is caught by the real S06 and would be a false PASS under M13.
+   - This is the same class as 1a's QA-1. S11 and S12 are already pinned.
+   - Fix, one assertion: `expect(checker).toContain('lineage_service.expected_total = 2 AND lineage_service.unexpected_total = 0')`.
+2. **QA-1b-2: the banner's runbook path is not pinned** (Low, test gap). The banner is at `app/admin/business-os-invites/page.tsx:129`; the test that should pin it is at `app/admin/business-os-invites/__tests__/page.render.test.tsx:135`.
+   - M11 (the path removed) survives. D-dev-14 and SA made the path a requirement.
+   - Fix: assert that the banner contains `docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_1_WORKPLAN.md` and `§6.2`.
+3. **QA-1b-3: audit rows for the new account carry its email in `user_email`** (Low, note; business acceptance wanted). `lib/business-os/invites/redemptionDeps.ts:71-72`.
+   - `details` are clean everywhere. But the route passes `userId = accountId`, and the dashboard-only `trigger_sync_audit_user_email` then fills `audit_trail.user_email` from `auth.users` on:
+     - `BOS_INVITE_REDEEMED` and `BOS_INVITE_PLAN_PROVISIONED`;
+     - `BOS_INVITE_REDEMPTION_INCOMPLETE`, whenever that account exists (step `finalise`; for `create_user_id_mismatch`, the returned account).
+   - The browser sign-in straight after signup also writes the platform's standard `USER_LOGIN` audit, with the email in `details` and `resource_name` (`lib/client/auth-actions.ts:115-120`; it predates this slice).
+   - None of this goes to an outside party, and it is how every user-attributed audit row works. It does, though, go further than AC-5a's "never carries the email" if the audit row counts as part of the FR-12a record.
+   - Options: accept it as platform attribution (recommended), or pass `userId: null` for `…_INCOMPLETE` and keep the account id in `details`.
+   - Checklist step C12 expects this, so it is not mistaken for a leak.
+4. **QA-1b-4: re-applying `20261014` after its rollback fails once any signup has happened** (Low, runbook gap). §15.2, `supabase/SQL Scripts/20261014_business_os_invite_signup_rollback.sql`.
+   - The rollback drops `claimed_account_id` but keeps `redeemed_account_id`. A later re-apply then fails its `ADD CONSTRAINT … redeemed_by_claimant` (`violated by some row`), and the whole transaction rolls back safely. Proven in PGlite.
+   - §15.2 should say so, and give the fix before a re-apply: back-fill `claimed_at` and `claimed_account_id` from the redeemed columns.
+5. **QA-1b-5: the banner only sees the newest 200 invites** (Low, edge case). `lib/business-os/invites/adminInviteOps.ts:364`: the count is derived from `listRecentForAdmin`, which is capped at 200.
+   - A stopped signup older than the newest 200 invites is neither counted nor marked. That is acceptable at today's volume.
+   - Worth recording with SA's N-5 for the automatic-recovery item.
+6. **QA-1b-6: step `create_user` is never written** (Nit). `lib/business-os/invites/signupCodePolicy.ts:57`: every `createUser` failure goes through `findUserExists`, so the recorded steps are `find_user`, `create_user_id_mismatch` and `finalise`. The fourth name is unused vocabulary, and §2.4 lists it. Harmless.
+7. **QA-1b-7: the password has no length cap before the byte count** (Nit). `lib/business-os/invites/inviteSchemas.ts:149`: a multi-megabyte `password` is fully encoded and split before it is refused. The platform's body limit bounds it. A `.max(512)` in front would make the refusal cheap.
+8. **QA-1b-8: the "no form" assertion on the existing-account page checks for textboxes only** (Nit). `app/invite/__tests__/page.render.test.tsx:223`: the signup form's first step has no textbox, so a form rendered there would pass. It cannot happen today (the form sits inside the `valid` section). Add `expect(screen.queryByTestId('invite-signup')).not.toBeInTheDocument()`.
+
+**Performance:** none. The code route adds one keyed read, one RPC and one CAS per request. Complete adds at most two CASs, one auth create, one optional `getUserById` and two finalise calls.
+
+**Pre-existing (not this slice):** `enforcementPoints` (goes away on the MF-3 rebase) and `entitlements/__tests__/routes.test.ts` "account on a tier" (red on clean main; needs its own ticket).
+
+#### Production checklist (the user runs this; order per CR-1)
+
+`<you+s1b>` is a fresh plus-address of your own Gmail (for example `yourname+s1b@gmail.com`) that has **never** had an AgentPilot account. Never use a real invitee's address. **The test account cannot be deleted afterwards** (I-1, F-15); a 1-month grant lapses on its own.
+
+| # | When | Do | Expect | Pass? |
+|---|---|---|---|---|
+| C1 | **Before merge** | Pre-check in the SQL editor: `SELECT count(*) AS lineage_tables FROM pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_namespace.nspname = 'public' AND pg_class.relname = 'business_os_account_lineage';` then `SELECT count(*) AS redeemed_invites FROM public.business_os_invites AS invite_row WHERE invite_row.redeemed_at IS NOT NULL;` | `0` and `0`. A `1` for the first means the migration is already applied (go to C3). A non-zero second count means the paste would fail on `redeemed_by_claimant`; stop and tell Dev. | ⬜ |
+| C2 | **Before merge** | Paste the whole of `supabase/migrations/20261014_business_os_invite_signup.sql`. | "Success. No rows returned." One transaction; any error rolls everything back. | ⬜ |
+| C3 | **Before merge** | Paste `scripts/check-bos-invite-signup-migration.sql`. | `VERDICT PASS`, **12 pass 0 fail**. S05 and S11 detail `none`; S06 detail `INSERT SELECT`. On S05/S06/S11/S12 FAIL, re-run the `REVOKE`/`GRANT` lines for that object, then C3 again. Any other FAIL: **do not merge**; §15.2. | ⬜ |
+| C4 | **Before merge** | Paste the Slice 0 checker `scripts/check-bos-invites-migration.sql`. | `VERDICT PASS`, 11 pass. | ⬜ |
+| C5 | **Before merge** (optional) | Paste the 1a checker `scripts/check-bos-invite-existing-account-migration.sql`. | **E02 FAILS (`23 of 16`) by design** (N-2); every other row PASS. | ⬜ |
+| C6 | **Before merge** | RM rebases onto `origin/main` (MF-3; two keep-both conflicts), and CI goes green. | CI green; `enforcementPoints` passes after the rebase; only the known `routes.test.ts` failure, if CI runs it. | ⬜ |
+| — | **Only now** | **Merge the 1b PR** (the merge is the deploy). Wait for the Vercel production deploy to finish. | — | ⬜ |
+| C7 | After deploy | Admin → Signup Invites: create a **champion** invite for **`<you+s1b>`**, **1 month**, 30 days, reason "QA slice 1b". Copy the link. | Link shown once; row **Pending**; no "stopped halfway" banner. | ⬜ |
+| C8 | After deploy | **Private window** (signed out), open the link. | The valid page with the offer and the signup section, showing only the **masked** address (`y•••@gmail.com`) and "Send me a code". No full address anywhere on the page. | ⬜ |
+| C9 | After deploy | Click "Send me a code". Click "Send a new code" again within a minute. | The email arrives at `<you+s1b>` **from the platform's system sender** (record the From name and address). The subject has no digits, and the code is in the body only. The second click says to wait about a minute. | ⬜ |
+| C10 | After deploy | Enter a **wrong** 6-digit code with a password (8+ characters) and its confirmation. | "That code is not right. 4 tries left." No account is created. | ⬜ |
+| C11 | After deploy | Enter the **right** code with the password. | You land on `/onboarding-chat`, **signed in** as `<you+s1b>`. (This also proves hosted auth kept the server-made account id, I-3.) If sign-in fails instead, the page says "Your account is ready. Sign in"; record it. | ⬜ |
+| C12 | After deploy | Admin → Signup Invites (reload). Then Tiers page: look up the account id shown on the row. | Row **Accepted**, with the account id, the time and **L1**; no "stopped halfway" banner. Tiers: found, **Founding Partner / champion**, end date about 1 month from today. | ⬜ |
+| C13 | After deploy | In the private window (now signed in), open the same link again; then sign out and open it once more. | Signed in: "you're signed in" notice, no form. Signed out: **"already used, sign in"**. | ⬜ |
+| C14 | After deploy | Read-only SQL (paste the invite id and the account id from C12): `SELECT invite_row.claimed_account_id, invite_row.redeemed_account_id, invite_row.redeemed_at, invite_row.signup_code_hash, invite_row.redemption_failed_at FROM public.business_os_invites AS invite_row WHERE invite_row.id = '<invite id>';` then `SELECT plan_row.cohort, plan_row.cohort_expires_at, plan_row.origin, plan_row.tier FROM public.business_os_account_plans AS plan_row WHERE plan_row.user_id = '<account id>';` then `SELECT lineage_row.invite_id, lineage_row.source, lineage_row.parent_account_id, lineage_row.root_account_id, lineage_row.level FROM public.business_os_account_lineage AS lineage_row WHERE lineage_row.account_id = '<account id>';` | Invite: `claimed_account_id = redeemed_account_id` = the account id; `redeemed_at` set; `signup_code_hash` NULL; `redemption_failed_at` NULL. Plan: `champion`, about now + 1 month, **`invite`**, `tier` NULL. Lineage: the invite id, `admin_invite`, parent NULL, root = the account id, **level 1**. | ⬜ |
+| C15 | After deploy | Read-only SQL: `SELECT audit_row.action, audit_row.user_email, audit_row.details FROM public.audit_trail AS audit_row WHERE audit_row.entity_id = '<invite id>' ORDER BY audit_row.created_at;` | `BOS_INVITE_REDEEMED` and `BOS_INVITE_PLAN_PROVISIONED`, with `details` holding a correlation id, level 1 / `admin_invite` and the grant, and **no email, token or code**. `user_email` **will** show `<you+s1b>` on those two rows: that is the platform's audit trigger (QA-1b-3), not a leak from this slice. | ⬜ |
+| C16 | After deploy | Vercel → production function logs, last hour: search for `<you+s1b>`, then for its local part (`yourname+s1b`), then for the 6-digit codes you received. | **No hits** on any line. You should find "Email sent" with **`to: ["y•••@gmail.com"]`** (masked), and "Signup code sent" / "Invite redeemed" with ids only. (Supabase Auth logs and the Resend dashboard do show the address; they are outside our logs. The `USER_LOGIN` audit row carries it by platform design, QA-1b-3.) | ⬜ |
+| C17 | After deploy | Clean-up: revoke any other pending test invites. | The test account stays (it cannot be deleted); its 1-month access lapses on its own. | ⬜ |
+
+#### Final Status
+
+**Verdict: PASS WITH NOTES.**
+
+- [x] MF-1 and MF-2 verified, with mutants proving the tests guard them.
+- [x] All 1b acceptance criteria pass in tests: FR-11 to FR-13, FR-12a/T-16, AC-4, AC-5, AC-5a (on the record, the log lines and the admin view; see QA-1b-3 for the audit column), AC-6, AC-7, AC-8, AC-9, I-1 to I-6, D-1 to D-7, D-dev-1/2/3/9 to 15, R-6, R-13, N-1, N-2.
+- [x] No High or Medium issue. Two pre-existing failures, both outside this slice.
+- [ ] Recommended before commit (cheap): QA-1b-1 and QA-1b-2 (one assertion each). Optional: QA-1b-7 and QA-1b-8. Record QA-1b-4 in §15.2. QA-1b-3 needs the user's acceptance (recommended: accept). QA-1b-5 and QA-1b-6 are notes.
+- [ ] Before merge: C1 to C6 (MF-3 rebase included). After merge: C7 to C17.
+
 ---
 
 ## Commit Info
 
 **Merge-order note for RM (SA CR-1), Slice 1a:** migration `20261013_business_os_invite_existing_account.sql` must be **applied to production and `scripts/check-bos-invite-existing-account-migration.sql` must read `VERDICT PASS` BEFORE the 1a PR is merged.** Merging to `main` deploys on Vercel; without the migration the admin Signup Invites page (list, create, revoke) and every valid invite link break. Also rebase onto `origin/main` first (PR #129 fixes the two pre-existing test failures). The same rule applies to `20261014` and the 1b PR.
+
+**Rebase note for RM (SA MF-3), Slice 1b:** do NOT rebase before commit time; RM rebases `feature/bos-invite-signup-slice-1b` onto `origin/main` then, as for 1a. Two conflicts are expected, both resolved by **keeping both sides**:
+1. `app/admin/business-os-invites/page.tsx`: PR #136 added a `key` on `<CreatedLinkPanel …>`; this slice added the T-16 banner above it. Keep the `key` and the banner.
+2. `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md`: both sides appended a Change History row at the same place. Keep both rows.
+
+Apply `20261014` and get `scripts/check-bos-invite-signup-migration.sql` to `VERDICT PASS` before the 1b PR merges (the CR-1 rule; the merge is the deploy).
+
+**User decisions at commit time (Slice 1b, 2026-09-29):** the user reviewed and approved the 1b diff, and **accepted QA-1b-3**: audit rows attributed to the new account carry its email in `audit_trail.user_email` (the platform audit trigger). Accepted as platform attribution; no code change.
 
 *[RM will populate the rest of this section]*
 
@@ -1196,3 +1501,8 @@ No decision is needed. If a signup is ever interrupted halfway by a system fault
 | 2026-09-28 | SA code review 1a + 1b design re-check | 1a: Code Approved for QA, conditional on CR-1 (apply `20261013` before merging; the merge is the deploy) and CR-2 (callers guard also scans the SQL function name); nits N-1 to N-3; D-dev-4 to D-dev-7 accepted. SA reran Jest (3,102/3,104; the 2 failures pre-exist on fd710c26 and are fixed on main by #129), `test:authz-guard` (119/119) and `next build` with the full CI env (exit 0). 1b: clear to implement with D-1 to D-7 (live-claim 409 on complete, FR-12a diagnostic columns on the invite row, data-derived "stopped halfway" condition, one lease constant, runbook fixes, I-6 described as race-only, FR-12a last); D-dev-1 approved, D-dev-2 and D-dev-3 approved with conditions. T-16 decided: admin-page indicator now, no email. |
 | 2026-09-28 | SA code review of 1a and 1b design re-check applied | CR-1: `20261013` must be applied with checker PASS before the 1a PR merges (§6.1 step 5, Commit Info). CR-2: the callers guard also scans for the SQL function name, including `.sql` files under `supabase/`. N-2 noted in §6.2; N-3 (second pre-existing failure, fixed on main by PR #129) recorded; N-1 added to task 1b-8. SA D-1 to D-7, the D-dev-1/2/3 rulings and T-16 (admin-page indicator, no email) folded into §2.4, §4.2, §5.2, §6.2, §8, §12.2 and §13.2. 1b code not started. |
 | 2026-09-28 | QA 1a notes fixed (uncommitted) | QA-1 (checker E06/E07 pinned), QA-2 (guard scans root files incl. `middleware.ts`), QA-3 (no Sign in while the session check is pending), QA-5 ("Business OS Signup Invites" in the page header comment and the audit filter label), QA-6 (Hebrew email isolated LTR). QA-4 note only. Recorded as D-dev-8. |
+| 2026-09-28 | Slice 1b implemented (uncommitted) | On `feature/bos-invite-signup-slice-1b` from `origin/main` aa9d75e9: migration `20261014` (code, claim and FR-12a columns; lineage; the INVOKER finalise function) with checker, rollback and text test; claim-before-create with I-1 to I-6, SA D-1 to D-7 and D-dev-1/2/3 as ruled; the code email from the system sender; the two signup routes; password sign-in in the browser; the tenant widening; the admin list account/L1; and the FR-12a banner and row badge (T-16). 23 files created, 42 modified. Tests green except two pre-existing failures (one fixed on main by PR #134); authz guard 119/119; eslint 0 errors; `next build` exit 0 with both signup routes in the route table. Deviations D-dev-9 to D-dev-14. Awaiting SA code review; the user applies `20261014` before the 1b PR merges. |
+| 2026-09-28 | SA code review 1b | Code Approved for QA, conditional on MF-1 (the code email must not log the invitee address: opt-in recipient redaction in `sendEmail`), MF-2 (`issueSignupCode` CAS also compares `signup_code_last_sent_at`, and refuses a live claim or an expired link) and MF-3 (rebase onto `origin/main` 571f48cc; two keep-both conflicts). Migration `20261014`, rollback and checker approved to paste unchanged. D-dev-9 to D-dev-14 accepted (D-dev-14 with the file named in the banner). Pre-existing: `enforcementPoints` passes after the rebase; `routes.test.ts` "account on a tier" fails on clean `origin/main` |
+| 2026-09-28 | SA code review 1b fixes applied (uncommitted) | MF-1 (opt-in recipient redaction in `sendEmail`, set by the signup code email), MF-2 (issue CAS also on last-sent time, unexpired, no live claim; rollover race test), MF-3 recorded as an RM rebase note with the two expected keep-both conflicts, N-1 to N-4 and the D-dev-14 banner path. No SQL changed. Recorded as D-dev-15. |
+| 2026-09-29 | QA 1b notes addressed (uncommitted) | QA-1b-1 (S06 pinned), QA-1b-2 (banner runbook path asserted), QA-1b-4 (§15.2 re-apply back-fill), QA-1b-7 (256-character password cap). QA-1b-5/6/8 known; QA-1b-3 for the user. No SQL changed. Recorded as D-dev-16. |
+| 2026-09-29 | User approval; QA-1b-3 accepted | The user reviewed and approved the 1b diff and accepted QA-1b-3 (the new account email in the audit `user_email` column is platform attribution, not a leak). Handed to RM for commit, rebase onto `origin/main` and PR. |

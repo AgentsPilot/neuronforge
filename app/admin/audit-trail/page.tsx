@@ -47,7 +47,15 @@ interface AuditLogEntry {
   action: string;
   entity_type: string;
   entity_id: string;
-  resource_name: string;
+  /**
+   * Nullable on purpose. `resource_name` is optional at write time
+   * (AuditTrailService stores `input.resourceName || null`) and roughly 44% of
+   * rows have none — some because the writer never set one, some DELIBERATELY:
+   * lib/business-os/llm/aiActionAudit.ts omits it because the field "could carry
+   * content or credentials" (a Layer 3 privacy decision). So a missing name is
+   * not an error, and the UI must not present the entity id in its place.
+   */
+  resource_name: string | null;
   details: any;
   changes: any;
   severity: string;
@@ -56,6 +64,21 @@ interface AuditLogEntry {
   users?: {
     email?: string;
     full_name?: string;
+  } | null;
+  /**
+   * The business this row belongs to, from `business_profiles.company_name`
+   * keyed by `user_id`. Null when the account has no business profile — every
+   * agent-platform row. `company_name` itself can be null for a business that
+   * has not named itself.
+   *
+   * ABSENT (undefined) is a third state and means something different: the
+   * route's name lookup failed, so this row's business is UNKNOWN rather than
+   * absent. The response's top-level `businessLookup: 'failed'` carries that.
+   * Nothing renders it today — both states currently show no business — but the
+   * payload keeps them distinguishable so a future consumer can say "unknown".
+   */
+  business?: {
+    company_name?: string | null;
   } | null;
 }
 
@@ -368,6 +391,14 @@ function AuditTrailPageContent() {
     });
   };
 
+  // Deliberately NOT updated by this PR: the export keeps the old columns and
+  // the old `resource_name` fallback semantics, so the page and the CSV now
+  // differ. Closing that divergence is blocked on a PRE-EXISTING defect here —
+  // the rows below are built with a bare `.join(',')`, with no quoting and no
+  // escaping. A value containing a comma shifts every later column, and a value
+  // starting with `=`, `+`, `-` or `@` is a spreadsheet formula-injection
+  // vector. Whoever adds the Business column must fix the quoting FIRST;
+  // widening an unescaped row builder widens the bug with it.
   const exportLogs = () => {
     const csv = [
       ['Timestamp', 'Action', 'Entity', 'Resource', 'Severity', 'User'].join(','),
@@ -760,14 +791,43 @@ function AuditTrailPageContent() {
                     <span className="text-slate-500">
                       Entity: <span className="text-slate-300">{log.entity_type}</span>
                     </span>
-                    <span className="text-slate-500">
-                      Resource: <span className="text-slate-300">{log.resource_name || log.entity_id}</span>
-                    </span>
+                    {/* A missing resource name must READ as missing. This used to
+                        be `log.resource_name || log.entity_id`, which printed the
+                        entity's GUID under the label "Resource:" — so an operator
+                        could not tell a named object from an unnamed one, and the
+                        rows that omit the name on purpose (aiActionAudit's Layer 3
+                        privacy decision) looked like rows with a name nobody could
+                        read.
+
+                        Two distinct renderings, no error styling: this is a normal
+                        state for ~44% of rows, not a defect. When there is no name
+                        the id is shown LABELLED AS AN ID and in mono, which is what
+                        it is. Fixing the writers is deliberately out of scope —
+                        making the gap visible first is the point. */}
+                    {log.resource_name ? (
+                      <span className="text-slate-500">
+                        Resource: <span className="text-slate-300">{log.resource_name}</span>
+                      </span>
+                    ) : (
+                      <span className="text-slate-500">
+                        Entity id:{' '}
+                        <span className="font-mono text-xs text-slate-400" title={log.entity_id}>
+                          {log.entity_id}
+                        </span>
+                      </span>
+                    )}
                     {log.user_id && (
                       <span className="text-slate-500">
                         User: <span className="text-slate-300">
                           {log.users?.email || log.users?.full_name || log.user_id}
                         </span>
+                      </span>
+                    )}
+                    {/* Blank is honest: an agent-platform row has no business
+                        profile, and a placeholder would only add noise. */}
+                    {log.business?.company_name && (
+                      <span className="text-slate-500">
+                        Business: <span className="text-slate-300">{log.business.company_name}</span>
                       </span>
                     )}
                   </div>
@@ -802,6 +862,26 @@ function AuditTrailPageContent() {
                           <div className="text-xs text-slate-400 mb-1">User</div>
                           <div className="text-sm font-semibold text-slate-200 truncate">
                             {log.users?.email || log.users?.full_name || log.user_id}
+                          </div>
+                        </div>
+                      )}
+                      {/* Omitted entirely when the account has no business profile. */}
+                      {log.business?.company_name && (
+                        <div className="bg-slate-800/30 rounded-lg p-3">
+                          <div className="text-xs text-slate-400 mb-1">Business</div>
+                          <div className="text-sm font-semibold text-slate-200 truncate">
+                            {log.business.company_name}
+                          </div>
+                        </div>
+                      )}
+                      {/* Shown only when there IS a name. The "Entity ID" card above
+                          already carries the id, so a nameless row is not padded with
+                          a duplicate of it. */}
+                      {log.resource_name && (
+                        <div className="bg-slate-800/30 rounded-lg p-3">
+                          <div className="text-xs text-slate-400 mb-1">Resource</div>
+                          <div className="text-sm font-semibold text-slate-200 truncate">
+                            {log.resource_name}
                           </div>
                         </div>
                       )}

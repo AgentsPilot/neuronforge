@@ -32,6 +32,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
+import { safeDbError } from './BusinessOsInviteRepository';
 import type { AgentRepositoryResult as RepositoryResult } from './types';
 
 /** A row of `business_os_account_plans`. */
@@ -733,6 +734,59 @@ export class BusinessOsAccountPlanRepository {
     } catch (error) {
       methodLogger.error({ err: error }, 'Failed to reset the plan state');
       return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Finish an invite redemption: the plan row, the lineage row and the
+   * invite's redeemed stamp, in ONE transaction (invite-only signup Slice 1b;
+   * T-4 as replaced by R-1, L-5, I-5, F-8).
+   *
+   * This is a plan-state WRITE, which is why it lives here and is listed in the
+   * entitlements imports guard's `WRITE_METHODS`: every writer of plan state is
+   * visible to that guard. It is reached only by the public complete-signup
+   * route, after mailbox proof, the invite claim and the account creation.
+   *
+   * The SQL function `business_os_finalise_invite_redemption` (SECURITY
+   * INVOKER, empty search_path, service_role EXECUTE only) reads the grant and
+   * the access length FROM THE INVITE ROW and computes the champion end date in
+   * SQL (F-5). `cohort` is an EXPECTED value (already validated with
+   * `grantRules`), compared with the row. `accountId` is the server-generated
+   * id the invite was claimed for (I-3); `email` is the row's own email.
+   *
+   * `data` is the invite id on success (also when this account had ALREADY
+   * finished it: the function is re-run safe), `null` when the row no longer
+   * matches. A database error is scrubbed to `{ code, message }` (M-1), and
+   * nothing here logs the email.
+   */
+  async provisionFromInvite(input: {
+    inviteId: string;
+    accountId: string;
+    email: string;
+    cohort: string;
+  }): Promise<RepositoryResult<string>> {
+    const methodLogger = this.logger.child({ method: 'provisionFromInvite', inviteId: input.inviteId, accountId: input.accountId });
+    try {
+      const { data, error } = await this.supabase.rpc('business_os_finalise_invite_redemption', {
+        p_invite_id: input.inviteId,
+        p_account_id: input.accountId,
+        p_email: input.email,
+        p_cohort: input.cohort,
+      });
+
+      if (error) throw error;
+      const inviteId = Array.isArray(data) ? data[0] : data;
+      if (typeof inviteId === 'string') {
+        methodLogger.info('Invite redemption finalised (plan row and lineage written)');
+        return { data: inviteId, error: null };
+      }
+      return { data: null, error: null };
+    } catch (error) {
+      const safe = safeDbError(error);
+      methodLogger.error({ dbError: safe }, 'Failed to finalise an invite redemption');
+      const out = new Error(safe.message) as Error & { code?: string };
+      if (safe.code) out.code = safe.code;
+      return { data: null, error: out };
     }
   }
 }

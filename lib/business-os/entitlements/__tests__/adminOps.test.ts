@@ -9,7 +9,7 @@
  */
 
 import { AUDIT_EVENTS } from '@/lib/audit/events';
-import { adminOpSchema, executeAdminOp } from '@/lib/business-os/entitlements/adminOps';
+import { adminOpSchema, executeAdminOp, isBusinessOsTenant } from '@/lib/business-os/entitlements/adminOps';
 import type { AdminOp, AdminOpContext } from '@/lib/business-os/entitlements/adminOps';
 import { fixtureConfig } from '@/lib/business-os/entitlements/__fixtures__/fixtureSource';
 import { readCodeConfig } from '@/lib/business-os/entitlements/source';
@@ -245,6 +245,52 @@ describe('RC-10 / Q-15 — the pre-checks before any write', () => {
 
     expect(result).toMatchObject({ ok: false, status: 404, error: 'not_a_business_os_account' });
     expect(calls.updatePlan).toEqual([]);
+  });
+
+  it('L-4 (invite-only signup, Slice 1b): a plan row alone makes a tenant, so an invited champion can be managed before onboarding', async () => {
+    const { ctx, calls } = context({ isTenant: false });
+    const result = await executeAdminOp({ op: 'set_cohort', cohort: 'trial', reason: 'support case' } as AdminOp, ctx);
+
+    expect(result).toMatchObject({ ok: true });
+    expect(calls.updatePlan).toHaveLength(1);
+  });
+
+  it('L-4: the plan row is read only when neither a profile nor an onboarding message answers', async () => {
+    const reads: string[] = [];
+    const planRepository = {
+      async findEntitlementInputs() {
+        reads.push('plan');
+        return { data: { plan: null, overrides: [] }, error: null };
+      },
+    };
+    const profile = { async findByUserId() { return { data: { id: 'p' } as never, error: null }; } };
+    const noProfile = { async findByUserId() { return { data: null, error: null }; } };
+    const onboarding = (latest: string | null) => ({
+      async getFirstMessageAt() { return { data: null, error: null }; },
+      async getLatestMessageAt() { return { data: latest, error: null }; },
+    });
+
+    await expect(
+      isBusinessOsTenant({ accountId: ACCOUNT, profileRepository: profile as never, onboardingRepository: onboarding(null) as never, planRepository: planRepository as never })
+    ).resolves.toBe(true);
+    await expect(
+      isBusinessOsTenant({ accountId: ACCOUNT, profileRepository: noProfile as never, onboardingRepository: onboarding('2026-03-01T00:00:00.000Z') as never, planRepository: planRepository as never })
+    ).resolves.toBe(true);
+    expect(reads).toEqual([]);
+
+    await expect(
+      isBusinessOsTenant({ accountId: ACCOUNT, profileRepository: noProfile as never, onboardingRepository: onboarding(null) as never, planRepository: planRepository as never })
+    ).resolves.toBe(false);
+    expect(reads).toEqual(['plan']);
+  });
+
+  it('L-4: a failed plan read is "could not answer" (null), never "not a tenant"', async () => {
+    const failing = { async findEntitlementInputs() { return { data: null, error: new Error('timeout') }; } };
+    const noProfile = { async findByUserId() { return { data: null, error: null }; } };
+    const noOnboarding = { async getLatestMessageAt() { return { data: null, error: null }; } };
+    await expect(
+      isBusinessOsTenant({ accountId: ACCOUNT, profileRepository: noProfile as never, onboardingRepository: noOnboarding as never, planRepository: failing as never })
+    ).resolves.toBeNull();
   });
 
   it('409s when the account has no plan row, rather than reporting success', async () => {

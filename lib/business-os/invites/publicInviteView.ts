@@ -44,6 +44,7 @@ import type { BusinessOsInviteRepository } from '@/lib/repositories/BusinessOsIn
 import { deriveInviteState } from './inviteState';
 import { hashInviteToken, isWellFormedInviteToken } from './inviteToken';
 import { describeInviteOffer, isInviteGrantAvailable, type InviteOffer } from './inviteOffer';
+import { maskEmail } from './signupCode';
 
 /** The states the page can show. `unavailable` is derived, never stored (D-8). */
 export type PublicInviteState =
@@ -67,6 +68,12 @@ export type PublicInviteResponse =
       personalNote: string | null;
       linkExpiresAt: string;
       offer: InviteOffer;
+      /**
+       * Slice 1b (R-6, F-6): the invited address as the signup form shows it
+       * before mailbox proof: the first character of the local part and the
+       * domain. The full email is returned only after a successful signup.
+       */
+      maskedEmail: string;
     }
   | {
       state: NarrowState;
@@ -189,6 +196,7 @@ export async function viewInviteByToken(
       personalNote: row.personal_note,
       linkExpiresAt: row.link_expires_at,
       offer,
+      maskedEmail: maskEmail(invitee.data),
     },
   };
 }

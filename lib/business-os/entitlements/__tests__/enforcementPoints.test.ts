@@ -328,6 +328,16 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['currentCreditValue', 'type CreditValueVersion'],
       why: 'Credit deduction slice 3a: the one cost-to-credits conversion reads the credit value (`config/creditValue.ts`, data only) to turn an action cost into credits for the charge record. It MEASURES what an action cost; it resolves no account plan and refuses nothing. If it ever imports a resolver or a decision function, it is being asked to gate and this suite says so.',
     },
+    {
+      file: 'lib/business-os/invites/inviteRedemption.ts',
+      symbols: ['CHAMPION_INVITE_TYPE', 'EntitlementConfig', 'INVITE_ISSUANCE_POLICY', 'isRedeemableCohortGrant', 'type InviteTypeId'],
+      why: 'Invite-only signup Slice 1b: the redemption flow re-checks the issuance policy (T-15) and that the invite row is a decided, still-configured cohort grant (GR-1, RC-4 via `grantRules`) before claiming it. An issuance and grant-shape rule on an INVITE, not a capability gate on what an account may do.',
+    },
+    {
+      file: 'lib/business-os/invites/redemptionDeps.ts',
+      symbols: ['getEntitlementConfig'],
+      why: 'Invite-only signup Slice 1b: the production wiring hands the config to the redemption flow so it can re-check the grant (GR-1). It resolves no account and refuses no capability.',
+    },
   ];
 
   /** Every symbol a file imports from the entitlements module. */

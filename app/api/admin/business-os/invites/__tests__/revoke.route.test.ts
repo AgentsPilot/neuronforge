@@ -62,6 +62,8 @@ jest.mock('@/lib/repositories/BusinessOsInviteRepository', () => ({
       if (state.revokeError) return { data: null, error: new Error('update failed') };
       const row = state.row;
       if (!row || row.id !== input.id || row.redeemed_at || row.revoked_at) return { data: null, error: null };
+      // Slice 1b (I-2): the CAS refuses a live claim.
+      if (row.claimed_at && Date.parse(row.claimed_at) >= input.claimLeaseCutoff.getTime()) return { data: null, error: null };
       state.row = {
         ...row,
         revoked_at: input.now.toISOString(),
@@ -104,6 +106,13 @@ function row(overrides: Partial<BusinessOsInvite> = {}): BusinessOsInvite {
     redeemed_at: null,
     redeemed_account_id: null,
     opened_by_existing_account_at: null,
+    claimed_at: null,
+    claimed_account_id: null,
+    redemption_failed_at: null,
+    redemption_failed_step: null,
+    redemption_error_code: null,
+    redemption_error_message: null,
+    redemption_failed_account_id: null,
     created_at: '2026-10-01T12:00:00.000Z',
     updated_at: '2026-10-01T12:00:00.000Z',
     ...overrides,
@@ -204,6 +213,20 @@ describe('outcomes', () => {
   it('409 for an accepted invite', async () => {
     state.row = row({ redeemed_at: '2026-10-02T00:00:00.000Z', redeemed_account_id: '33333333-3333-4333-8333-333333333333' });
     expect((await revoke(INVITE_ID, { reason: 'Too late' }).call()).status).toBe(409);
+  });
+
+  it('Slice 1b (I-2): 409 signup_in_progress while a signup holds a live claim; no audit', async () => {
+    state.row = row({ claimed_at: new Date(Date.now() - 10_000).toISOString(), claimed_account_id: '33333333-3333-4333-8333-333333333333' });
+    const response = await revoke(INVITE_ID, { reason: 'Wrong person' }).call();
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toBe('signup_in_progress');
+    expect(state.audit).toHaveLength(0);
+    expect(state.revokes[0].claimLeaseCutoff).toBeInstanceOf(Date);
+  });
+
+  it('Slice 1b: a lapsed claim does not block the revoke', async () => {
+    state.row = row({ claimed_at: '2020-01-01T00:00:00.000Z', claimed_account_id: '33333333-3333-4333-8333-333333333333' });
+    expect((await revoke(INVITE_ID, { reason: 'Wrong person' }).call()).status).toBe(200);
   });
 
   it('500 on a repository error', async () => {

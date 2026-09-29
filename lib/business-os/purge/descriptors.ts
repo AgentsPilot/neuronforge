@@ -411,6 +411,9 @@ const EXCLUDED: PurgeDescriptor[] = [
   // Invite-only signup, Slice 0 (condition C-10, SA ruling F-1).
   never('business_os_invites', G,
     'Platform record of who was invited, by which admin, on what grant, and whether it was used. No user_id: not tenant data, so a Reset or Purge must never touch it (a Reset that removed it would also let an owner re-enter as a fresh invitee). Deliberately NOT in USER_OWNED_TABLES: the account-deletion sweep deletes by user_id, which this table does not have. Erasure of the invitee email is requirement L-12, designed in the Slice 1 workplan.'),
+  // Invite-only signup, Slice 1b (L-6, C-10).
+  never('business_os_account_lineage', G,
+    'Platform record of who invited whom (the invitation circle, level, parent, root). Keyed on account_id, deliberately no user_id: not tenant data, and a Reset or Purge that removed it would let an owner re-enter as the referral of someone else. Not in USER_OWNED_TABLES for the same reason as business_os_invites; it holds no email, and keeps its pseudonymous ids after erasure (SA F-12).'),
 
   // §8.12 Account configuration and unowned tables
   never('notification_settings', U, 'Account configuration that survives the business.'),
