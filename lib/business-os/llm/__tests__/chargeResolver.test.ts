@@ -40,6 +40,7 @@ import {
   buildAiAuditEntry,
   resetPlatformActorForTests,
   resolveActionFailure,
+  validateIdentities,
   type AiActionSpec,
   type AiTrigger,
 } from '../aiActionAudit';
@@ -89,8 +90,27 @@ function spec(overrides: Partial<AiActionSpec> = {}): AiActionSpec {
   return { area: 'chat', actionType: 'chat_turn', groupId: GROUP, trigger: 'user', accountId: OWNER, ...overrides };
 }
 
-function input(overrides: Partial<AiChargeRecordInput> = {}): AiChargeRecordInput {
-  return { spec: spec(), actionId: ACTION, accountId: OWNER, calls: [rec()], failure: undefined, ...overrides };
+/**
+ * The builder takes identities `runAiAction` already validated (SA C-5); the
+ * tests validate them the same way, with the one rule, so rule 3's cases below
+ * still speak of accounts rather than of a pre-made `null`.
+ */
+function input(
+  overrides: Partial<AiChargeRecordInput> & { accountId?: string | undefined } = {}
+): AiChargeRecordInput {
+  const { accountId: _ignored, ...rest } = overrides;
+  // An explicit `accountId: undefined` means "no account", not "the default".
+  const accountId = 'accountId' in overrides ? overrides.accountId : OWNER;
+  const s = rest.spec ?? spec();
+  return {
+    spec: s,
+    actionId: ACTION,
+    identities: validateIdentities(s, accountId),
+    isCharged: AI_ACTION_DECLARATIONS[s.actionType].isCharged,
+    calls: [rec()],
+    failure: undefined,
+    ...rest,
+  };
 }
 
 /** The record, or a failure naming the skip reason. */
@@ -195,15 +215,9 @@ describe('buildAiChargeRecord: the rules, in order (§2.3)', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it('rule 2: an action type declared not charged → not_charged (FR-4)', () => {
-    const declaration = AI_ACTION_DECLARATIONS.chat_turn as { isCharged: boolean };
-    const original = declaration.isCharged;
-    declaration.isCharged = false;
-    try {
-      expect(buildAiChargeRecord(input())).toEqual({ skipped: 'not_charged' });
-    } finally {
-      declaration.isCharged = original;
-    }
+  it('rule 2: an action type declared not charged → not_charged (FR-4), before the identities are looked at', () => {
+    expect(buildAiChargeRecord(input({ isCharged: false }))).toEqual({ skipped: 'not_charged' });
+    expect(buildAiChargeRecord(input({ isCharged: false, identities: null }))).toEqual({ skipped: 'not_charged' });
   });
 
   it('every action type is charged today (all 16 isCharged: true)', () => {

@@ -15,6 +15,13 @@ jest.mock('@/lib/services/AuditTrailService', () => ({
   AuditTrail: { log: (...args: unknown[]) => mockLog(...args) },
 }));
 
+// Slice 3b-ii: the recorder is REAL here; only its repository is faked, so no
+// charge write can leave the process (SA Q-7 / SF-3).
+const mockRecordCharge = jest.fn();
+jest.mock('@/lib/repositories/BusinessOsCreditChargeRepository', () => ({
+  businessOsCreditChargeRepository: { recordCharge: (...args: unknown[]) => mockRecordCharge(...args) },
+}));
+
 const mockLogged: Array<{ level: string; fields: Record<string, unknown>; msg: string }> = [];
 jest.mock('@/lib/logger', () => {
   const make = (): Record<string, unknown> => {
@@ -42,11 +49,15 @@ import {
   resolveActionFailure,
   runAiAction,
   type AiActionDeclaration,
+  type AiActionHandle,
   type AiActionSpec,
   type AiActionType,
 } from '../aiActionAudit';
 import { BOS_LLM_AREAS, buildBosCallContext, type BosLlmArea } from '../callCatalog';
 import * as chargeClassification from '../chargeClassification';
+import * as chargePricing from '../chargePricing';
+import * as aiChargeRecorder from '../aiChargeRecorder';
+import { BOS_AI_CHARGE_WRITE_BUDGET_MS } from '../aiChargeRecorder';
 import { BaseAIProvider } from '@/lib/ai/providers/baseProvider';
 import type { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 import { AUDIT_EVENTS, getEventMetadata } from '@/lib/audit/events';
@@ -123,6 +134,8 @@ let savedPlatform: string | undefined;
 beforeEach(() => {
   mockLog.mockReset();
   mockLog.mockResolvedValue(undefined);
+  mockRecordCharge.mockReset();
+  mockRecordCharge.mockResolvedValue({ data: { recorded: true, periodStart: '2026-09-23T19:55:01.28632+00:00', anchorSource: 'plan' }, error: null });
   mockLogged.length = 0;
   savedPlatform = process.env.SYSTEM_ADMIN_USER_ID;
   process.env.SYSTEM_ADMIN_USER_ID = PLATFORM;
@@ -662,5 +675,343 @@ describe('resolveActionFailure decides the outcome once (slice 3a)', () => {
       await llmCall({ callName: 'analysis', fail: true }).catch(() => undefined);
     });
     expect(onlyEntry().details).toMatchObject({ outcome: 'failed', errorCode: 'rate_limit_exceeded' });
+  });
+});
+
+/**
+ * Deduction layer slice 3b-ii: the charge, written at the end of every action
+ * through the REAL recorder, with only the repository faked (workplan §3.7,
+ * §3.8; FR-8, FR-13, FR-15, FR-16; AC-8, AC-12; SA N-7, NI-1 to NI-4).
+ */
+describe('the charge (slice 3b-ii)', () => {
+  type Charge = Record<string, unknown> & { actionId: string; outcome: string };
+  const chargeOf = (n = 0) => mockRecordCharge.mock.calls[n][0] as Charge;
+  const detailsOf = (n = 0) => (mockLog.mock.calls[n][0] as { details: Record<string, unknown> }).details;
+  const chargeErrors = () =>
+    mockLogged.filter((l) => l.level === 'error' && String(l.fields.event ?? '').startsWith('bos_ai_charge_'));
+  const hang = () => new Promise(() => undefined);
+
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  describe('what is written', () => {
+    it('one charge per action, service "ai", joined to the audit entry by the action id (C-6)', async () => {
+      await runAiAction(spec(), async () => llmCall());
+      expect(mockRecordCharge).toHaveBeenCalledTimes(1);
+      expect(chargeOf()).toMatchObject({
+        actionId: detailsOf().actionId,
+        accountId: OWNER,
+        groupId: GROUP,
+        service: 'ai',
+        actionType: 'chat_turn',
+        trigger: 'owner',
+        outcome: 'succeeded',
+        credits: 1,
+        costUsd: 0.001,
+        creditValueVersion: 0,
+        isFallbackPriced: false,
+      });
+    });
+
+    const outcomes: Array<[string, (h: AiActionHandle) => Promise<unknown>]> = [
+      ['all succeeded', async () => llmCall()],
+      [
+        'a repaired call',
+        async () => {
+          await llmCall({ fail: true }).catch(() => undefined);
+          await llmCall();
+        },
+      ],
+      [
+        'an unrepaired call',
+        async () => {
+          await llmCall();
+          await llmCall({ callName: 'analysis', fail: true }).catch(() => undefined);
+        },
+      ],
+      [
+        'a signalled fallback',
+        async (h) => {
+          await llmCall();
+          h.markFailed('briefing_fallback');
+        },
+      ],
+      [
+        'a throw after a call',
+        async () => {
+          await llmCall();
+          throw Object.assign(new Error(MARKER_ERROR), { code: 'ECONNRESET' });
+        },
+      ],
+    ];
+
+    it.each(outcomes)('the charge and the entry never disagree on the outcome, through runAiAction (N-7): %s', async (_n, action) => {
+      await runAiAction(spec(), action).catch(() => undefined);
+      expect(chargeOf().outcome).toBe(detailsOf().outcome);
+      expect(chargeOf().actionId).toBe(detailsOf().actionId);
+    });
+
+    it('a failed action is charged the calls it made, written BEFORE its error is rethrown (FR-8)', async () => {
+      const boom = new Error('action failed');
+      let chargedBeforeRethrow = false;
+      await runAiAction(spec(), async () => {
+        await llmCall({ cost: 0.002 });
+        throw boom;
+      }).catch((err) => {
+        expect(err).toBe(boom);
+        chargedBeforeRethrow = mockRecordCharge.mock.calls.length === 1;
+      });
+      expect(chargedBeforeRethrow).toBe(true);
+      expect(chargeOf()).toMatchObject({ outcome: 'failed', costUsd: 0.002, credits: 2 });
+    });
+
+    it('a scheduled action is charged to the business with trigger "scheduled" (AC-9, FR-10)', async () => {
+      await runAiAction(spec({ area: 'insights', actionType: 'insight_run', trigger: 'scheduled' }), async () =>
+        llmCall({ area: 'insights', callName: 'detector_narrative' })
+      );
+      expect(chargeOf()).toMatchObject({ accountId: OWNER, trigger: 'scheduled', actionType: 'insight_run' });
+    });
+
+    it('two invocations with one group are two charges with two action ids (AC-8)', async () => {
+      await runAiAction(spec(), async () => llmCall());
+      await runAiAction(spec(), async () => llmCall());
+      expect(mockRecordCharge).toHaveBeenCalledTimes(2);
+      expect([chargeOf(0).groupId, chargeOf(1).groupId]).toEqual([GROUP, GROUP]);
+      expect(chargeOf(0).actionId).not.toBe(chargeOf(1).actionId);
+    });
+
+    it('a nested action is charged on its own; the parent is not charged for its calls', async () => {
+      await runAiAction(spec(), async () => {
+        await llmCall({ cost: 0.001 });
+        await runAiAction(spec({ area: 'website', actionType: 'chat_website_operation', groupId: NESTED }), async () => {
+          await llmCall({ area: 'website', callName: 'landing_page', groupId: NESTED, cost: 0.004 });
+        });
+      });
+      expect(mockRecordCharge).toHaveBeenCalledTimes(2);
+      const [nested, outer] = [chargeOf(0), chargeOf(1)];
+      expect(nested).toMatchObject({ groupId: NESTED, costUsd: 0.004, actionId: detailsOf(0).actionId });
+      expect(outer).toMatchObject({ groupId: GROUP, costUsd: 0.001, actionId: detailsOf(1).actionId });
+    });
+
+    it('invalid identities: no charge, one bos_ai_charge_not_written (FR-16, N-3)', async () => {
+      await runAiAction(spec({ accountId: PLATFORM }), async () => llmCall());
+      expect(mockRecordCharge).not.toHaveBeenCalled();
+      expect(chargeErrors()).toHaveLength(1);
+      expect(chargeErrors()[0].fields).toMatchObject({ event: 'bos_ai_charge_not_written', reason: 'invalid_identity' });
+    });
+
+    it('reads isCharged from the declaration (FR-4)', async () => {
+      const declaration = AI_ACTION_DECLARATIONS.chat_turn as { isCharged: boolean };
+      declaration.isCharged = false;
+      try {
+        await runAiAction(spec(), async () => llmCall());
+      } finally {
+        declaration.isCharged = true;
+      }
+      expect(mockRecordCharge).not.toHaveBeenCalled();
+      expect(mockLog).toHaveBeenCalledTimes(1); // the entry is unaffected
+    });
+
+    it.each(['off', 'shadow', 'enforce', undefined])(
+      'is recorded whatever the entitlements mode (%s): a charge measures, it decides nothing (Q-4)',
+      async (mode) => {
+        const saved = process.env.BOS_ENTITLEMENTS_MODE;
+        if (mode === undefined) delete process.env.BOS_ENTITLEMENTS_MODE;
+        else process.env.BOS_ENTITLEMENTS_MODE = mode;
+        try {
+          await runAiAction(spec(), async () => llmCall());
+        } finally {
+          if (saved === undefined) delete process.env.BOS_ENTITLEMENTS_MODE;
+          else process.env.BOS_ENTITLEMENTS_MODE = saved;
+        }
+        expect(mockRecordCharge).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it('a fallback-priced action: one info per charge, and still exactly one bos_llm_call_unpriced error per call (S2 N-4)', async () => {
+      await runAiAction(spec(), async () => llmCall({ model: 'gpt-imaginary', cost: 0 }));
+      expect(chargeOf().isFallbackPriced).toBe(true);
+      expect(mockLogged.filter((l) => l.fields.event === 'bos_llm_call_unpriced')).toHaveLength(1);
+      const info = mockLogged.filter((l) => l.fields.event === 'bos_ai_charge_fallback_priced');
+      expect(info).toHaveLength(1);
+      expect(info[0]).toMatchObject({ level: 'info', fields: { fallbackCallCount: 1, actionId: detailsOf().actionId } });
+    });
+  });
+
+  describe('ordering (AC-12, FR-15)', () => {
+    it('audit → unpriced check → charge', async () => {
+      const order: string[] = [];
+      mockLog.mockImplementation(async () => {
+        order.push('audit');
+      });
+      jest.spyOn(chargeClassification, 'reportUnpricedCalls').mockImplementation(() => {
+        order.push('check');
+      });
+      mockRecordCharge.mockImplementation(async () => {
+        order.push('charge');
+        return { data: { recorded: true, periodStart: 'p', anchorSource: 'plan' }, error: null };
+      });
+      await runAiAction(spec(), async () => llmCall());
+      expect(order).toEqual(['audit', 'check', 'charge']);
+    });
+
+    it('with the audit queue failing, the charge is still written (AC-12, first half)', async () => {
+      mockLog.mockRejectedValue(new Error('queue broken'));
+      await runAiAction(spec(), async () => llmCall());
+      expect(mockRecordCharge).toHaveBeenCalledTimes(1);
+    });
+
+    it('with the audit queue hanging, the charge is still written and the action still returns', async () => {
+      mockLog.mockReturnValue(hang());
+      await expect(runAiAction(spec(), async () => (await llmCall()).text)).resolves.toContain('answer');
+      expect(mockRecordCharge).toHaveBeenCalledTimes(1);
+    });
+
+    it('with the charge failing, the action succeeds, the entry is queued, and one error names the ids (AC-12, second half)', async () => {
+      mockRecordCharge.mockResolvedValue({ data: null, error: Object.assign(new Error('x'), { code: '42501' }) });
+      await expect(runAiAction(spec(), async () => (await llmCall()).text)).resolves.toContain('answer');
+      expect(mockLog).toHaveBeenCalledTimes(1);
+      expect(chargeErrors()).toHaveLength(1);
+      expect(chargeErrors()[0].fields).toMatchObject({
+        event: 'bos_ai_charge_write_failed',
+        reason: 'db_error',
+        accountId: OWNER,
+        area: 'chat',
+        actionType: 'chat_turn',
+        groupId: GROUP,
+        actionId: detailsOf().actionId,
+      });
+    });
+  });
+
+  describe('non-interference (SQ-11 condition 1, workplan §3.8)', () => {
+    const VALUE = { answer: 42 };
+
+    const faults: Array<[string, () => void]> = [
+      [
+        'the repository throws synchronously',
+        () =>
+          mockRecordCharge.mockImplementation(() => {
+            throw new Error('sync');
+          }),
+      ],
+      ['the repository rejects', () => mockRecordCharge.mockRejectedValue(new Error('rejected'))],
+      ['the repository returns an error', () => mockRecordCharge.mockResolvedValue({ data: null, error: new Error('db') })],
+      [
+        'the builder throws (a pricing-table defect)',
+        () => {
+          jest.spyOn(chargePricing, 'priceActionForCharge').mockImplementation(() => {
+            throw new Error('rates');
+          });
+        },
+      ],
+      [
+        'the recorder itself throws',
+        () => {
+          jest.spyOn(aiChargeRecorder, 'recordAiCharge').mockImplementation(() => {
+            throw new Error('recorder');
+          });
+        },
+      ],
+      [
+        'the recorder itself rejects',
+        () => {
+          jest.spyOn(aiChargeRecorder, 'recordAiCharge').mockRejectedValue(new Error('recorder'));
+        },
+      ],
+    ];
+
+    it.each(faults)('NI-1: %s → the same value reference, the entry queued once, one error', async (_n, arrange) => {
+      arrange();
+      const value = await runAiAction(spec(), async () => {
+        await llmCall();
+        return VALUE;
+      });
+      expect(value).toBe(VALUE);
+      expect(mockLog).toHaveBeenCalledTimes(1);
+      expect(chargeErrors()).toHaveLength(1);
+    });
+
+    it.each(faults)('NI-1: %s → the same error object rethrown', async (_n, arrange) => {
+      arrange();
+      const boom = new Error('the action failed');
+      await expect(
+        runAiAction(spec(), async () => {
+          await llmCall();
+          throw boom;
+        })
+      ).rejects.toBe(boom);
+      expect(mockLog).toHaveBeenCalledTimes(1);
+    });
+
+    it('NI-2: a write that never settles delays the action by the budget, no more; the call is aborted; no timer left', async () => {
+      jest.useFakeTimers();
+      let signal: AbortSignal | undefined;
+      mockRecordCharge.mockImplementation((_c: unknown, o: { signal: AbortSignal }) => {
+        signal = o.signal;
+        return hang();
+      });
+      let result: unknown;
+      const run = runAiAction(spec(), async () => {
+        await llmCall();
+        return VALUE;
+      }).then((v) => {
+        result = v;
+      });
+      await jest.advanceTimersByTimeAsync(BOS_AI_CHARGE_WRITE_BUDGET_MS - 1);
+      expect(result).toBeUndefined();
+      await jest.advanceTimersByTimeAsync(1);
+      await run;
+      expect(result).toBe(VALUE);
+      expect(signal?.aborted).toBe(true);
+      expect(chargeErrors()).toHaveLength(1);
+      expect(chargeErrors()[0].fields).toMatchObject({ reason: 'timeout', fate: 'unknown' });
+      expect(jest.getTimerCount()).toBe(0);
+    });
+
+    it('NI-3: succeed, fail and hang give deep-equal results and deep-equal entries (apart from the per-invocation id)', async () => {
+      const results: unknown[] = [];
+      const entries: unknown[] = [];
+      const arrangements: Array<() => void> = [
+        () => undefined,
+        () => mockRecordCharge.mockResolvedValue({ data: null, error: new Error('db') }),
+        () => mockRecordCharge.mockImplementation(() => hang()),
+      ];
+      jest.useFakeTimers();
+      for (const arrange of arrangements) {
+        mockLog.mockClear();
+        arrange();
+        const run = runAiAction(spec(), async () => ({ text: (await llmCall()).text, n: [1, 2] }));
+        await jest.advanceTimersByTimeAsync(BOS_AI_CHARGE_WRITE_BUDGET_MS);
+        results.push(await run);
+        const entry = mockLog.mock.calls[0][0] as { details: Record<string, unknown> };
+        entries.push({ ...entry, details: { ...entry.details, actionId: '<per invocation>' } });
+      }
+      expect(results[1]).toEqual(results[0]);
+      expect(results[2]).toEqual(results[0]);
+      expect(entries[1]).toEqual(entries[0]);
+      expect(entries[2]).toEqual(entries[0]);
+    });
+
+    it('NI-4: an action with no call writes nothing, calls no recorder and creates no timer', async () => {
+      jest.useFakeTimers();
+      const recorder = jest.spyOn(aiChargeRecorder, 'recordAiCharge');
+      await expect(runAiAction(spec(), async () => 'served from cache')).resolves.toBe('served from cache');
+      await runAiAction(spec(), async () => {
+        throw new Error('before any call');
+      }).catch(() => undefined);
+      expect(recorder).not.toHaveBeenCalled();
+      expect(mockRecordCharge).not.toHaveBeenCalled();
+      expect(jest.getTimerCount()).toBe(0);
+    });
+  });
+
+  it('the charge is the only awaited write, made in one place, never through the repository directly (static)', () => {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'aiActionAudit.ts'), 'utf8');
+    expect(source.match(/await recordAiChargeSafely\(/g)).toHaveLength(1);
+    expect(source.match(/await recordAiCharge\(/g)).toHaveLength(1);
+    expect(source).not.toMatch(/businessOsCreditChargeRepository|BusinessOsCreditChargeRepository/);
   });
 });

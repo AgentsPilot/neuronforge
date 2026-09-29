@@ -35,10 +35,12 @@
 // ── SERVICE ROLE (intentional RLS bypass, documented per CLAUDE.md) ─────────
 // Owners may only SELECT their own rows (and not the cost columns); no client
 // role can write either table or execute the RPC. The writer is the server-side
-// charge recorder at the end of `runAiAction` for AI (slice 3b-ii; there is NO caller
-// in 3b-i). The account id always comes from that server-side context, never
-// from request input (tenant-isolation-guard: `action_id` is minted in-process,
-// `group_id` is stored only and is never a key or an ownership target).
+// charge recorder at the end of `runAiAction` for AI
+// (`lib/business-os/llm/aiChargeRecorder.ts`, slice 3b-ii; the only caller,
+// pinned by the source guard in the test). The account id always comes from
+// that server-side context, never from request input (tenant-isolation-guard:
+// `action_id` is minted in-process, `group_id` is stored only and is never a
+// key or an ownership target).
 //
 // ── WHY THE TYPES LIVE HERE (SA N-5) ────────────────────────────────────────
 // As in the entitlement shadow-event repository, the row-shaped types sit with
