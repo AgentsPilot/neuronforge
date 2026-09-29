@@ -20,6 +20,11 @@
  * The create response's link lives only in this component's state. It is never
  * stored, so a reload loses it; the database keeps only its hash.
  *
+ * ── The invitation email (Slice 2a) ─────────────────────────────────────────
+ * The server emails the invite when the form asks it to, and the create
+ * response says what happened in one status word, which the panel shows next
+ * to the link. The list's Email column is derived on the server too.
+ *
  * ── Filters and search (Slice 1c, SA F-9) ───────────────────────────────────
  * Applied here, over the rows the GET already returned (the newest 500). What
  * the admin types stays in this component: it is never sent to the server and
@@ -87,8 +92,8 @@ export default function BusinessOsInvitesPage() {
           <div>
             <h1 className="mb-1 text-xl font-semibold text-white">Business OS Signup Invites</h1>
             <p className="max-w-3xl text-sm text-slate-400">
-              Business OS is invite-only. Create an invite for one email address, copy its link, and follow it here.
-              A link is shown once, when you create it.
+              Business OS is invite-only. Create an invite for one email address; it can be emailed to them, and
+              you can follow it here. Its link is shown once, when you create it, so you can also copy it.
             </p>
           </div>
           <div className="flex gap-2">
@@ -155,6 +160,7 @@ export default function BusinessOsInvitesPage() {
               key={created.invite.id}
               link={created.link}
               email={created.invite.email}
+              emailStatus={created.email?.status}
               onDismiss={() => setCreated(null)}
             />
           )}

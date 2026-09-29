@@ -11,6 +11,10 @@
  *
  * A disabled option is presentation only. The server refuses a Paid invite on
  * its own (C-6); this form just says so first, with the server's words.
+ *
+ * Slice 2a (FR-14): "Send the invitation email" is ticked by default. Unticked,
+ * nothing is sent and the admin copies the link from the panel, as before. The
+ * language arrives pre-selected to the admin's own saved language (D-8).
  */
 
 import { useMemo, useState, type FormEvent } from 'react';
@@ -47,6 +51,7 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
   const [language, setLanguage] = useState(options.defaultLanguage);
   const [note, setNote] = useState('');
   const [reason, setReason] = useState('');
+  const [sendEmail, setSendEmail] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -76,6 +81,7 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
       linkExpiryDays: expiryDays,
       language,
       reason: reason.trim(),
+      sendEmail,
       ...(note.trim() ? { personalNote: note.trim() } : {}),
       ...(selected.requiresAccess
         ? { access: accessKind === 'months' ? { kind: 'months' as const, months: monthsNumber } : { kind: 'open_ended' as const } }
@@ -259,6 +265,26 @@ export function CreateInviteForm({ options, onCreated, onCancel }: Props) {
           onChange={(event) => setReason(event.target.value)}
           className={field}
         />
+      </div>
+
+      <div>
+        <label className="flex items-start gap-2 text-sm text-slate-200">
+          <input
+            data-testid="invite-send-email"
+            type="checkbox"
+            checked={sendEmail}
+            onChange={(event) => setSendEmail(event.target.checked)}
+            className="mt-1"
+          />
+          <span>
+            Send the invitation email
+            <span className="block text-xs text-slate-400">
+              {sendEmail
+                ? 'The invitee gets an email with the link, in the language above. The link is also shown once, to copy.'
+                : 'No email is sent. Copy the link from the next screen and send it yourself.'}
+            </span>
+          </span>
+        </label>
       </div>
 
       {error && (

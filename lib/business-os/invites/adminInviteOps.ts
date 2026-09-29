@@ -17,9 +17,18 @@ import 'server-only';
  * `toInviteListView` is the one mapper from a row to what an admin sees, used by
  * both the list and the create response, so neither can ever carry
  * `token_hash`, `issuer_admin_id`, `internal_reason` or `redeemed_account_id`.
+ * Slice 2a adds the derived `emailStatus` and `emailStatusAt`, never the
+ * provider message id, the problem detail or the Reply-To snapshot.
+ *
+ * ── The invitation email (Slice 2a) ─────────────────────────────────────────
+ * Sent inline by `createInviteForAdmin`, AFTER the row exists, through
+ * `sendInvitationEmail` (which never throws). The plan's name is computed here
+ * with `planLabel` and passed in, so the email module imports nothing from the
+ * entitlements module (SA R-12). A failed send never fails the create: the
+ * admin still gets the link once (FR-16).
  */
 
-import { defaultLocale, locales } from '@/lib/i18n/config';
+import { defaultLocale, locales, type Locale } from '@/lib/i18n/config';
 import {
   CHAMPION_ACCESS_MONTHS_MAX,
   INVITE_ISSUANCE_POLICY,
@@ -35,6 +44,17 @@ import type { BusinessOsInviteRepository } from '@/lib/repositories/BusinessOsIn
 import type { UserProfileRepository } from '@/lib/repositories/UserProfileRepository';
 import type { BusinessOsInvite } from '@/lib/repositories/types';
 
+import type { UserPreferencesRepository } from '@/lib/repositories/UserPreferencesRepository';
+
+import {
+  deriveInviteEmailStatus,
+  sendInvitationEmail,
+  type InvitationEmailDeps,
+  type InvitationEmailOutcome,
+  type InviteEmailStatus,
+} from './inviteEmail';
+import { INVITE_EMAIL_NOT_SENT } from './inviteEmailPolicy';
+import { normaliseReplyToAddress } from './inviteSender';
 import { deriveInviteState, type InviteState } from './inviteState';
 import { buildInviteLink, generateInviteToken, hashInviteToken } from './inviteToken';
 import { describeInviteAccess, isInviteGrantAvailable } from './inviteOffer';
@@ -57,7 +77,7 @@ export interface InviteOpsLogger {
 /** The repository methods the admin operations use. */
 export type AdminInviteRepository = Pick<
   BusinessOsInviteRepository,
-  'createForAdmin' | 'listRecentForAdmin' | 'findByIdForAdmin' | 'revokeForAdmin'
+  'createForAdmin' | 'listRecentForAdmin' | 'findByIdForAdmin' | 'revokeForAdmin' | 'recordInviteEmailOutcome'
 >;
 
 /** One invite, as the admin list and the create response show it. */
@@ -92,6 +112,10 @@ export interface InviteListView {
   redemptionStoppedHalfway: boolean;
   /** Slice 1b (SA D-2): the last recorded failure. Never an email. */
   redemptionFailure: InviteRedemptionFailureView | null;
+  /** Slice 2a (D-7): the invitation email, derived by `deriveInviteEmailStatus`. */
+  emailStatus: InviteEmailStatus;
+  /** Slice 2a: when that status was reached, or `null` for "not emailed". */
+  emailStatusAt: string | null;
 }
 
 /** The FR-12a record as the admin row shows it (SA D-2, T-16). */
@@ -125,6 +149,8 @@ export const INVITE_LIST_VIEW_KEYS: ReadonlyArray<keyof InviteListView> = [
   'level',
   'redemptionStoppedHalfway',
   'redemptionFailure',
+  'emailStatus',
+  'emailStatusAt',
 ];
 
 /** The D-3 derivation, in one place (the C-11 one-derivation rule). */
@@ -141,6 +167,7 @@ export function toInviteListView(
   now: Date,
   level: number | null = null
 ): InviteListView {
+  const email = deriveInviteEmailStatus(row);
   return {
     id: row.id,
     email: row.email,
@@ -170,6 +197,8 @@ export function toInviteListView(
           accountId: row.redemption_failed_account_id,
         }
       : null,
+    emailStatus: email.status,
+    emailStatusAt: email.at,
   };
 }
 
@@ -207,15 +236,16 @@ function refusalFor(type: InviteTypeId): 'invite_type_not_allowed' | 'paid_invit
 
 /**
  * Everything the create form offers, decided here so the page decides nothing
- * (D-10). The language default is `en` for Slice 0 (C-8 as amended by SA): the
- * inviter's saved preference arrives with Slice 2.
+ * (D-10). The language default is the inviter's saved preference (Slice 2a,
+ * C-8 as amended, D-8), resolved by `resolveInviteFormLanguage`; `en` when
+ * none is given or it is not a language the product speaks.
  */
-export function buildInviteFormOptions(config: EntitlementConfig): InviteFormOptions {
+export function buildInviteFormOptions(config: EntitlementConfig, defaultLanguage: Locale = defaultLocale): InviteFormOptions {
   return {
     expiryDays: [...INVITE_LINK_EXPIRY.optionsDays],
     defaultExpiryDays: INVITE_LINK_EXPIRY.defaultDays,
     languages: [...locales],
-    defaultLanguage: defaultLocale,
+    defaultLanguage: (locales as readonly string[]).includes(defaultLanguage) ? defaultLanguage : defaultLocale,
     championAccessMonthsMax: CHAMPION_ACCESS_MONTHS_MAX,
     inviteTypes: INVITE_ISSUANCE_POLICY.admin.map((type) => {
       const definition = INVITE_TYPES[type];
@@ -240,10 +270,44 @@ export function buildInviteFormOptions(config: EntitlementConfig): InviteFormOpt
   };
 }
 
+const PREFERENCE_UNREADABLE = "Could not read the admin's language preference; the form defaults to English";
+
+/**
+ * The create form's language pre-select (Slice 2a, C-8 as amended, D-8, T-12):
+ * the issuing admin's `user_preferences.preferred_language` when it names a
+ * language the product speaks, otherwise `en`. A failed read is a warning and
+ * `en`: a wrong pre-select costs the admin one click (SA F-3), a failed page
+ * costs the whole screen.
+ */
+export async function resolveInviteFormLanguage(deps: {
+  adminId: string;
+  preferences: Pick<UserPreferencesRepository, 'findPreferredLanguage'>;
+  logger: InviteOpsLogger;
+}): Promise<Locale> {
+  try {
+    const { data, error } = await deps.preferences.findPreferredLanguage(deps.adminId);
+    if (error) {
+      deps.logger.warn({ adminId: deps.adminId }, PREFERENCE_UNREADABLE);
+      return defaultLocale;
+    }
+    return data && (locales as readonly string[]).includes(data) ? (data as Locale) : defaultLocale;
+  } catch {
+    deps.logger.warn({ adminId: deps.adminId }, PREFERENCE_UNREADABLE);
+    return defaultLocale;
+  }
+}
+
 // ── Create ──────────────────────────────────────────────────────────────────
 
+/**
+ * What happened to the invitation email of one create (Slice 2a). Carries no
+ * address, link, token, hash or error text: the route turns it into the
+ * response's `email` and the audit entry.
+ */
+export type CreateInviteEmailResult = { requested: false; status: 'not_emailed' } | ({ requested: true } & InvitationEmailOutcome);
+
 export type CreateInviteOutcome =
-  | { ok: true; invite: InviteListView; link: string; row: BusinessOsInvite }
+  | { ok: true; invite: InviteListView; link: string; row: BusinessOsInvite; email: CreateInviteEmailResult }
   | {
       ok: false;
       status: 409 | 500;
@@ -252,11 +316,19 @@ export type CreateInviteOutcome =
 
 export interface CreateInviteDeps {
   adminId: string;
-  repository: Pick<AdminInviteRepository, 'createForAdmin'>;
+  /**
+   * The issuing admin's auth email, from the gate (`requireAdmin`), never from
+   * the body. Snapshotted, normalised, as the invitation's Reply-To (D-2).
+   * Optional on the gate, so it may be missing: the email then has no Reply-To.
+   */
+  adminEmail?: string | null;
+  repository: Pick<AdminInviteRepository, 'createForAdmin' | 'recordInviteEmailOutcome'>;
   profileRepository: Pick<UserProfileRepository, 'findById'>;
   config: EntitlementConfig;
   now: Date;
   logger: InviteOpsLogger;
+  /** Slice 2a: how to send and record the invitation email. The repository comes from `repository`. */
+  email: Omit<InvitationEmailDeps, 'repository'>;
 }
 
 /**
@@ -308,6 +380,10 @@ export async function createInviteForAdmin(body: CreateInviteBody, deps: CreateI
   const inviterDisplayName = await inviterDisplayNameFor(deps);
   const token = generateInviteToken();
   const note = body.personalNote && body.personalNote.length > 0 ? body.personalNote : null;
+  const replyTo = normaliseReplyToAddress(deps.adminEmail);
+  if (deps.adminEmail && !replyTo) {
+    deps.logger.warn({ adminId: deps.adminId }, 'The admin email is not a usable Reply-To; the invitation will have none');
+  }
 
   const { data, error } = await deps.repository.createForAdmin({
     token_hash: hashInviteToken(token),
@@ -324,15 +400,45 @@ export async function createInviteForAdmin(body: CreateInviteBody, deps: CreateI
     internal_reason: body.reason,
     link_expiry_days: body.linkExpiryDays,
     link_expires_at: new Date(deps.now.getTime() + body.linkExpiryDays * DAY_MS).toISOString(),
+    inviter_reply_to: replyTo,
+    // D-5: stamped with the row, so a function killed mid-send still shows "Unknown".
+    email_attempted_at: body.sendEmail ? deps.now.toISOString() : null,
   });
 
   if (error || !data) return { ok: false, status: 500, error: 'could_not_create_invite' };
 
+  if (!body.sendEmail) {
+    return {
+      ok: true,
+      invite: toInviteListView(data, deps.config, deps.now),
+      link: buildInviteLink(token),
+      row: data,
+      email: { requested: false, status: 'not_emailed' },
+    };
+  }
+
+  const outcome = await sendInvitationEmail(
+    { row: data, token, planName: planLabel(deps.config, grantId), replyTo },
+    { ...deps.email, repository: deps.repository }
+  );
+
+  // The row as the list will read it next time: the outcome only when it was
+  // written (otherwise the list honestly says "Unknown").
+  // One clock for the whole create: the row the admin sees uses the create's `now`.
+  const recordedAt = deps.now.toISOString();
+  // A timeout (`unknown`) is never recorded, so it takes the first branch.
+  const shown: BusinessOsInvite = !outcome.recorded
+    ? data
+    : outcome.status === 'not_sent'
+      ? { ...data, email_problem: INVITE_EMAIL_NOT_SENT, email_problem_at: recordedAt }
+      : { ...data, email_sent_at: recordedAt, email_provider_message_id: outcome.providerMessageId };
+
   return {
     ok: true,
-    invite: toInviteListView(data, deps.config, deps.now),
+    invite: toInviteListView(shown, deps.config, deps.now),
     link: buildInviteLink(token),
     row: data,
+    email: { requested: true, ...outcome },
   };
 }
 

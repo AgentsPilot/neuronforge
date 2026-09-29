@@ -536,6 +536,17 @@ export interface BusinessOsInvite {
   redemption_error_code: string | null;
   redemption_error_message: string | null;
   redemption_failed_account_id: string | null;
+  /**
+   * Slice 2a (FR-14 to FR-16, workplan D-5 to D-7): the invitation email facts
+   * of the CURRENT link. Read to derive the list's email status, and never put
+   * in a view as-is: the list shows `emailStatus`, not these. `email_problem_detail`
+   * and `inviter_reply_to` are deliberately NOT read by the admin surface.
+   */
+  email_attempted_at: string | null;
+  email_sent_at: string | null;
+  email_provider_message_id: string | null;
+  email_problem: string | null;
+  email_problem_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -581,6 +592,28 @@ export interface CreateBusinessOsInviteInput {
   internal_reason: string;
   link_expiry_days: number;
   link_expires_at: string;
+  /**
+   * Slice 2a (D-2): the issuing admin's own auth email, lower-cased, taken from
+   * the gate and never from the request body. `null` when the gate has none;
+   * the invitation then goes out with no Reply-To.
+   */
+  inviter_reply_to: string | null;
+  /** Slice 2a (D-5): stamped at insert when an invitation email is requested. */
+  email_attempted_at: string | null;
+}
+
+/**
+ * Slice 2a (D-6): how one invitation send ended, recorded by a compare-and-swap
+ * on the invite id AND the hash of the link that was emailed, so an outcome
+ * for a link that has since been replaced (Slice 2b) changes nothing.
+ */
+export interface RecordInviteEmailOutcomeInput {
+  id: string;
+  tokenHash: string;
+  now: Date;
+  outcome:
+    | { kind: 'sent'; providerMessageId: string | null }
+    | { kind: 'problem'; problem: string; detail: string | null };
 }
 
 /** A revoke, as the conditional UPDATE needs it. */

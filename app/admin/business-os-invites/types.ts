@@ -12,6 +12,13 @@ export type InviteState = 'pending' | 'expired' | 'revoked' | 'accepted';
 
 export type EnforcementMode = 'off' | 'shadow' | 'enforce';
 
+/**
+ * Slice 2a: what happened to the invitation email, derived on the server
+ * (`deriveInviteEmailStatus`). `unknown` means an attempt with no recorded
+ * outcome (a send cut off, or a result that could not be written).
+ */
+export type InviteEmailStatus = 'not_emailed' | 'sent' | 'sent_untracked' | 'not_sent' | 'unknown';
+
 /** One invite, as the list and the create response carry it. */
 export interface InviteRow {
   id: string;
@@ -45,6 +52,9 @@ export interface InviteRow {
     errorMessage: string | null;
     accountId: string | null;
   } | null;
+  /** Slice 2a: the invitation email. Absent from an older server: nothing is shown. */
+  emailStatus?: InviteEmailStatus;
+  emailStatusAt?: string | null;
 }
 
 /** T-16: the banner summary (counts and invite ids only). */
@@ -86,6 +96,8 @@ export interface InvitesPayload {
 export interface CreatedInvite {
   invite: InviteRow;
   link: string;
+  /** Slice 2a: status words only (no address, message id or error). Absent from an older server. */
+  email?: { requested: boolean; status: InviteEmailStatus };
 }
 
 /** What the create form sends. Built from the options; never names a plan. */
@@ -98,4 +110,6 @@ export interface CreateInviteRequest {
   reason: string;
   access?: { kind: 'open_ended' } | { kind: 'months'; months: number };
   grantId?: string;
+  /** Slice 2a (FR-14): email the invitation now. Required by the server. */
+  sendEmail: boolean;
 }

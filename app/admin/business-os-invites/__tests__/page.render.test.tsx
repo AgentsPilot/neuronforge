@@ -427,6 +427,8 @@ describe('creating an invite', () => {
       personalNote: 'Welcome aboard',
       reason: 'QA slice 0 demo',
       access: { kind: 'open_ended' },
+      // Slice 2a: ticked by default.
+      sendEmail: true,
     });
 
     const writeText = jest.fn(() => Promise.resolve());
@@ -561,5 +563,95 @@ describe('revoking', () => {
     render(<BusinessOsInvitesPage />);
     const list = await screen.findByTestId('invite-list');
     expect(within(list).queryByRole('button', { name: 'Revoke' })).not.toBeInTheDocument();
+  });
+});
+
+// ── Slice 2a: the invitation email ──────────────────────────────────────────
+
+describe('Slice 2a: the invitation email', () => {
+  async function openFormWith(data: InvitesPayload = payload()) {
+    responder = () => ({ status: 200, body: { success: true, data } });
+    const user = userEvent.setup();
+    render(<BusinessOsInvitesPage />);
+    await screen.findByTestId('invite-list');
+    await user.click(screen.getByRole('button', { name: /new invite/i }));
+    return { user, form: screen.getByTestId('create-invite-form') };
+  }
+
+  async function createWith(email: { requested: boolean; status: string } | undefined, tick = true) {
+    const { user, form } = await openFormWith();
+    const createdRow = row({ id: 'invite-9', email: 'x@example.com' });
+    responder = (call) =>
+      call.init?.method === 'POST'
+        ? { status: 201, body: { success: true, data: { invite: createdRow, link: LINK, ...(email ? { email } : {}) } } }
+        : { status: 200, body: { success: true, data: payload() } };
+    fireEvent.change(within(form).getByLabelText('Email'), { target: { value: 'x@example.com' } });
+    await user.click(within(form).getByRole('radio', { name: 'No end date' }));
+    fireEvent.change(within(form).getByLabelText(/internal reason/i), { target: { value: 'QA slice 2a' } });
+    if (!tick) await user.click(within(form).getByTestId('invite-send-email'));
+    await user.click(within(form).getByRole('button', { name: 'Create' }));
+    return screen.findByTestId('created-link-panel');
+  }
+
+  it('the form offers "Send the invitation email", ticked by default', async () => {
+    const { form } = await openFormWith();
+    const box = within(form).getByRole('checkbox', { name: /send the invitation email/i });
+    expect(box).toBeChecked();
+  });
+
+  it('the language arrives pre-selected from the server (the admin preference, D-8)', async () => {
+    const { form } = await openFormWith(payload({ formOptions: { ...payload().formOptions, defaultLanguage: 'he' } }));
+    expect((within(form).getByLabelText('Invitee language') as HTMLSelectElement).value).toBe('he');
+  });
+
+  it('unticked: the request says sendEmail false, and the panel claims nothing about an email', async () => {
+    const panel = await createWith({ requested: false, status: 'not_emailed' }, false);
+    const post = calls.find((call) => call.init?.method === 'POST');
+    expect(JSON.parse(String(post?.init?.body)).sendEmail).toBe(false);
+    expect(within(panel).queryByTestId('created-email-status')).toBeNull();
+    expect(within(panel).getByTestId('created-link')).toHaveTextContent(LINK);
+  });
+
+  it('sent: the panel says it was emailed AND still shows the link once', async () => {
+    const panel = await createWith({ requested: true, status: 'sent' });
+    expect(within(panel).getByTestId('created-email-status')).toHaveTextContent('The invitation was emailed to x@example.com.');
+    expect(within(panel).getByTestId('created-link')).toHaveTextContent(LINK);
+    expect(panel).toHaveTextContent('This link is shown once');
+  });
+
+  it('not sent: the panel says so and points at the link to copy', async () => {
+    const panel = await createWith({ requested: true, status: 'not_sent' });
+    expect(within(panel).getByTestId('created-email-status')).toHaveTextContent('The email was not sent. Copy the link below');
+    expect(within(panel).getByTestId('created-link')).toHaveTextContent(LINK);
+  });
+
+  it('unknown: the panel says it could not confirm, and the link is there', async () => {
+    const panel = await createWith({ requested: true, status: 'unknown' });
+    expect(within(panel).getByTestId('created-email-status')).toHaveTextContent('could not confirm');
+  });
+
+  it('an older server with no email block: the panel reads as before', async () => {
+    const panel = await createWith(undefined);
+    expect(within(panel).queryByTestId('created-email-status')).toBeNull();
+  });
+
+  it.each([
+    ['not_emailed', 'Not emailed'],
+    ['sent', 'Sent'],
+    ['sent_untracked', 'Sent (not tracked)'],
+    ['not_sent', 'Not sent'],
+    ['unknown', 'Unknown'],
+  ] as const)('the list shows email status %s as "%s"', async (emailStatus, label) => {
+    responder = () => ({ status: 200, body: { success: true, data: payload({ invites: [row({ emailStatus, emailStatusAt: null })] }) } });
+    render(<BusinessOsInvitesPage />);
+    const list = await screen.findByTestId('invite-list');
+    expect(within(list).getByTestId('invite-email-status')).toHaveTextContent(new RegExp(`^${label.replace(/[()]/g, '\\$&')}$`));
+    cleanup();
+  });
+
+  it('a row without an email status (older server) shows a dash, not a badge', async () => {
+    render(<BusinessOsInvitesPage />);
+    const list = await screen.findByTestId('invite-list');
+    expect(within(list).queryByTestId('invite-email-status')).toBeNull();
   });
 });

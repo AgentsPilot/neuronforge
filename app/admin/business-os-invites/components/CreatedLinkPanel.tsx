@@ -6,21 +6,47 @@
  * The link exists only in this component's props, which come from the create
  * response held in page state. It is never written to storage or the URL, so a
  * reload loses it for good: the database holds only the hash (§8.1). A lost
- * link means a new invite (resend arrives in Slice 2).
+ * link means a new invite until resend arrives (Slice 2b).
  *
- * The panel claims nothing about delivery: the admin sends the link by hand.
+ * Slice 2a (FR-16): the panel says what happened to the invitation email, from
+ * the server's status word only. "Emailed" means the provider accepted it, not
+ * that it was delivered. When it was not sent, or the result is unknown, the
+ * panel says so plainly and the link is right here to copy. With no email
+ * requested it says nothing about delivery: the admin sends the link by hand.
  */
 
 import { useState } from 'react';
 import { Check, Copy, X } from 'lucide-react';
 
+import type { InviteEmailStatus } from '../types';
+
 interface Props {
   link: string;
   email: string;
+  /** Slice 2a: from the create response. Absent (older server) reads as "not emailed". */
+  emailStatus?: InviteEmailStatus;
   onDismiss: () => void;
 }
 
-export function CreatedLinkPanel({ link, email, onDismiss }: Props) {
+/** The line under the heading for each email status. */
+function emailLine(status: InviteEmailStatus | undefined, email: string): { text: string; className: string } | null {
+  switch (status) {
+    case 'sent':
+    case 'sent_untracked':
+      return { text: `The invitation was emailed to ${email}.`, className: 'text-emerald-100' };
+    case 'not_sent':
+      return { text: 'The email was not sent. Copy the link below and send it yourself.', className: 'text-rose-200' };
+    case 'unknown':
+      return {
+        text: 'We could not confirm the email went out. Copy the link below and send it yourself to be sure.',
+        className: 'text-amber-200',
+      };
+    default:
+      return null;
+  }
+}
+
+export function CreatedLinkPanel({ link, email, emailStatus, onDismiss }: Props) {
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
 
@@ -40,6 +66,14 @@ export function CreatedLinkPanel({ link, email, onDismiss }: Props) {
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 space-y-2">
           <h2 className="text-sm font-semibold text-emerald-100">Invite created for {email}</h2>
+          {(() => {
+            const line = emailLine(emailStatus, email);
+            return line ? (
+              <p data-testid="created-email-status" className={`text-sm ${line.className}`}>
+                {line.text}
+              </p>
+            ) : null;
+          })()}
           <p className="text-sm font-medium text-amber-200">
             This link is shown once. Copy it now: it cannot be shown again after you leave or reload this page.
           </p>

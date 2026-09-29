@@ -1,7 +1,10 @@
 /**
  * GET and POST /api/admin/business-os/invites — the gate, the shapes, the
  * token-leak rules (C-3), Paid refused (C-6), the one list-view mapper (R-7) and
- * the audit flushed before the response (R-1).
+ * the audit flushed before the response (R-1). Slice 2a: the invitation email
+ * on create (sent / not sent / sender not configured / unknown), the admin as
+ * the actor of both audit entries (SA R-8), `maxDuration`, and the form's
+ * language default from the admin's preference (D-8).
  *
  * Tier ids come from `TIER_ORDER`; this file names none.
  */
@@ -30,7 +33,31 @@ const state = {
   flushRejects: false,
   events: [] as string[],
   logs: [] as unknown[],
+  // Slice 2a
+  senderAddress: 'team@agentpilot.example' as string | undefined,
+  sendResult: { sent: true, provider: 'resend', providerMessageId: 'msg_1' } as Record<string, unknown>,
+  sendHangs: false,
+  sent: [] as Array<Record<string, unknown>>,
+  outcomes: [] as Array<Record<string, unknown>>,
+  outcomeRecorded: true,
+  preference: { data: null, error: null } as { data: string | null; error: Error | null },
 };
+
+jest.mock('@/lib/notifications/emailTransport', () => ({
+  platformSenderAddress: () => state.senderAddress,
+  sendEmail: async (params: Record<string, unknown>) => {
+    state.events.push('send');
+    state.sent.push(params);
+    if (state.sendHangs) return new Promise(() => undefined);
+    return state.sendResult;
+  },
+}));
+
+jest.mock('@/lib/repositories/UserPreferencesRepository', () => ({
+  userPreferencesRepository: {
+    findPreferredLanguage: async () => state.preference,
+  },
+}));
 
 jest.mock('@/lib/auth', () => ({ getUser: async () => state.user }));
 
@@ -121,11 +148,20 @@ jest.mock('@/lib/repositories/BusinessOsInviteRepository', () => ({
           redemption_error_code: null,
           redemption_error_message: null,
           redemption_failed_account_id: null,
+          email_sent_at: null,
+          email_provider_message_id: null,
+          email_problem: null,
+          email_problem_at: null,
           created_at: '2026-10-01T12:00:00.000Z',
           updated_at: '2026-10-01T12:00:00.000Z',
         },
         error: null,
       };
+    },
+    recordInviteEmailOutcome: async (input: Record<string, unknown>) => {
+      state.events.push('record');
+      state.outcomes.push(input);
+      return { data: state.outcomeRecorded, error: null };
     },
   },
 }));
@@ -133,9 +169,10 @@ jest.mock('@/lib/repositories/BusinessOsInviteRepository', () => ({
 import { CHAMPION_INVITE_TYPE, INVITE_TYPES, PAID_INVITE_TYPE } from '@/lib/business-os/entitlements/config/invites';
 import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
 import { INVITE_LIST_VIEW_KEYS } from '@/lib/business-os/invites/adminInviteOps';
+import { INVITE_EMAIL_POLICY } from '@/lib/business-os/invites/inviteEmailPolicy';
 import { platformUrl } from '@/lib/utils/origins';
 
-import { GET, POST } from '../route';
+import { GET, POST, maxDuration } from '../route';
 
 const URL_BASE = 'http://localhost:3000/api/admin/business-os/invites';
 
@@ -156,6 +193,7 @@ function championBody(overrides: Record<string, unknown> = {}): Record<string, u
     language: 'en',
     personalNote: 'Welcome aboard, would love your feedback',
     reason: 'QA slice 0 demo',
+    sendEmail: false,
     ...overrides,
   };
 }
@@ -193,6 +231,11 @@ function storedRow(overrides: Partial<BusinessOsInvite> = {}): BusinessOsInvite 
     redemption_error_code: null,
     redemption_error_message: null,
     redemption_failed_account_id: null,
+    email_attempted_at: null,
+    email_sent_at: null,
+    email_provider_message_id: null,
+    email_problem: null,
+    email_problem_at: null,
     created_at: '2026-10-01T12:00:00.000Z',
     updated_at: '2026-10-01T12:00:00.000Z',
     ...overrides,
@@ -214,6 +257,13 @@ beforeEach(() => {
   state.flushRejects = false;
   state.events = [];
   state.logs = [];
+  state.senderAddress = 'team@agentpilot.example';
+  state.sendResult = { sent: true, provider: 'resend', providerMessageId: 'msg_1' };
+  state.sent = [];
+  state.outcomes = [];
+  state.outcomeRecorded = true;
+  state.sendHangs = false;
+  state.preference = { data: null, error: null };
 });
 
 describe('the gate (both handlers)', () => {
@@ -359,6 +409,8 @@ describe('POST: invalid input is 400, and nothing is written', () => {
     ['champion without access', championBody({ access: undefined })],
     ['linkExpiryDays 45', championBody({ linkExpiryDays: 45 })],
     ['an unknown language', championBody({ language: 'fr' })],
+    ['a missing sendEmail (Slice 2a)', championBody({ sendEmail: undefined })],
+    ['a string sendEmail (Slice 2a)', championBody({ sendEmail: 'true' })],
   ])('%s', async (_label, body) => {
     const response = await POST(post(body));
     expect(response.status).toBe(400);
@@ -366,7 +418,7 @@ describe('POST: invalid input is 400, and nothing is written', () => {
     expect(state.inserted).toHaveLength(0);
   });
 
-  it.each(['grant_id', 'grantKind', 'issuerAdminId', 'issuer', 'userId', 'tokenHash', 'cohort', 'level'])(
+  it.each(['grant_id', 'grantKind', 'issuerAdminId', 'issuer', 'userId', 'tokenHash', 'cohort', 'level', 'from', 'replyTo', 'inviterReplyTo'])(
     'an injected %s is refused by .strict()',
     async (key) => {
       const response = await POST(post(championBody({ [key]: 'x' })));
@@ -386,12 +438,14 @@ describe('POST: Paid is refused on the server (C-6)', () => {
         linkExpiryDays: 30,
         language: 'en',
         reason: 'Referred',
+        sendEmail: true,
       })
     );
     expect(response.status).toBe(409);
     expect((await response.json()).error).toBe('paid_invites_not_available');
     expect(state.inserted).toHaveLength(0);
     expect(state.audit).toHaveLength(0);
+    expect(state.sent).toHaveLength(0);
   });
 });
 
@@ -463,5 +517,169 @@ describe('POST: the happy path', () => {
     expect(response.status).toBe(500);
     expect((await response.json()).error).toBe('could_not_create_invite');
     expect(state.audit).toHaveLength(0);
+  });
+});
+
+describe('Slice 2a: the invitation email on create', () => {
+  const INVITEE = 'x@example.com';
+
+  function tokenOf(link: string): string {
+    return link.slice(`${platformUrl('/invite')}#t=`.length);
+  }
+
+  it('maxDuration is 30 (D-5: the send is inline)', () => {
+    expect(maxDuration).toBe(30);
+  });
+
+  it('QA2a-1: the send limit sits well below maxDuration (at least 5 s left to answer)', () => {
+    expect(INVITE_EMAIL_POLICY.sendTimeoutMs).toBeLessThanOrEqual(maxDuration * 1000 - 5000);
+  });
+
+  it('QA2a-1: a provider that never answers → 201 with the link, email unknown, NOT_SENT send_timeout, nothing recorded', async () => {
+    state.sendHangs = true;
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'] });
+    try {
+      const pending = POST(post(championBody({ sendEmail: true })));
+      await jest.advanceTimersByTimeAsync(INVITE_EMAIL_POLICY.sendTimeoutMs);
+      const response = await pending;
+      expect(response.status).toBe(201);
+      const body = await response.json();
+      expect(body.data.link).toMatch(/#t=/);
+      expect(body.data.email).toEqual({ requested: true, status: 'unknown' });
+      expect(body.data.invite.emailStatus).toBe('unknown');
+      expect(state.outcomes).toHaveLength(0);
+      expect(state.audit.map((entry) => entry.action)).toEqual(['BOS_INVITE_CREATED', 'BOS_INVITE_EMAIL_NOT_SENT']);
+      expect(state.audit[1]).toMatchObject({ userId: ADMIN, actorId: ADMIN, details: { correlationId: 'corr-1', reason: 'send_timeout' } });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('sendEmail true, sent: 201 with the link AND email sent; insert, send, record, then the two audits, then flush', async () => {
+    const response = await POST(post(championBody({ sendEmail: true })));
+    expect(response.status).toBe(201);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    const body = await response.json();
+
+    expect(body.data.email).toEqual({ requested: true, status: 'sent' });
+    expect(body.data.link).toMatch(/#t=/);
+    expect(body.data.invite.emailStatus).toBe('sent');
+    expect(state.events).toEqual(['insert', 'send', 'record', 'log', 'log', 'flush']);
+    expect(state.sent[0].html).toEqual(expect.stringContaining(body.data.link));
+    expect(state.sent[0].replyTo).toBe('admin@example.com');
+    expect(state.sent[0]).not.toHaveProperty('ownerUserId');
+    expect(state.inserted[0].inviter_reply_to).toBe('admin@example.com');
+    expect(state.inserted[0].email_attempted_at).toEqual(expect.any(String));
+  });
+
+  it('R-8: CREATED then EMAIL_SENT, both with the admin as userId and actorId; details carry provider and message id only', async () => {
+    await POST(post(championBody({ sendEmail: true })));
+    expect(state.audit.map((entry) => entry.action)).toEqual(['BOS_INVITE_CREATED', 'BOS_INVITE_EMAIL_SENT']);
+    for (const entry of state.audit) {
+      expect(entry.userId).toBe(ADMIN);
+      expect(entry.actorId).toBe(ADMIN);
+      expect(entry.entityId).toBe(INVITE_ID);
+    }
+    expect(state.audit[1].details).toEqual({ correlationId: 'corr-1', provider: 'resend', providerMessageId: 'msg_1' });
+    expect((state.audit[0].details as Record<string, unknown>).emailRequested).toBe(true);
+  });
+
+  it('sender not configured (R-2): 201, link shown, not_sent, nothing sent, EMAIL_NOT_SENT with the reason', async () => {
+    state.senderAddress = undefined;
+    const response = await POST(post(championBody({ sendEmail: true })));
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.data.email).toEqual({ requested: true, status: 'not_sent' });
+    expect(body.data.link).toMatch(/#t=/);
+    expect(state.sent).toHaveLength(0);
+    expect(state.audit.map((entry) => entry.action)).toEqual(['BOS_INVITE_CREATED', 'BOS_INVITE_EMAIL_NOT_SENT']);
+    expect(state.audit[1]).toMatchObject({ userId: ADMIN, actorId: ADMIN, details: { correlationId: 'corr-1', reason: 'sender_not_configured' } });
+  });
+
+  it('transport failure (FR-16): 201 with the link, not_sent, EMAIL_NOT_SENT transport_failed, no error text anywhere in the response', async () => {
+    state.sendResult = { sent: false, provider: 'none', error: `resend: rejected ${INVITEE}` };
+    const response = await POST(post(championBody({ sendEmail: true })));
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.data.email).toEqual({ requested: true, status: 'not_sent' });
+    expect(state.audit[1]).toMatchObject({ action: 'BOS_INVITE_EMAIL_NOT_SENT', details: { correlationId: 'corr-1', reason: 'transport_failed' } });
+    expect(JSON.stringify(body)).not.toContain('rejected');
+  });
+
+  it('the outcome could not be recorded: 201, the email still reports sent, the row shows unknown', async () => {
+    state.outcomeRecorded = false;
+    const body = await (await POST(post(championBody({ sendEmail: true })))).json();
+    expect(body.data.email).toEqual({ requested: true, status: 'sent' });
+    expect(body.data.invite.emailStatus).toBe('unknown');
+  });
+
+  it('SMTP / Gmail: sent_untracked, and the audit has no message id', async () => {
+    state.sendResult = { sent: true, provider: 'gmail' };
+    const body = await (await POST(post(championBody({ sendEmail: true })))).json();
+    expect(body.data.email).toEqual({ requested: true, status: 'sent_untracked' });
+    expect(state.audit[1].details).toEqual({ correlationId: 'corr-1', provider: 'gmail' });
+  });
+
+  it('sendEmail false: nothing sent, one audit, email not_emailed', async () => {
+    const body = await (await POST(post(championBody({ sendEmail: false })))).json();
+    expect(body.data.email).toEqual({ requested: false, status: 'not_emailed' });
+    expect(state.sent).toHaveLength(0);
+    expect(state.audit.map((entry) => entry.action)).toEqual(['BOS_INVITE_CREATED']);
+    expect(state.inserted[0].email_attempted_at).toBeNull();
+  });
+
+  it('a rejected flush still answers 201 with the link and the email status', async () => {
+    state.flushRejects = true;
+    const response = await POST(post(championBody({ sendEmail: true })));
+    expect(response.status).toBe(201);
+    expect((await response.json()).data.email.status).toBe('sent');
+  });
+
+  it('the gate has no email: the invite has no Reply-To snapshot, and the send has no replyTo', async () => {
+    state.user = { id: ADMIN };
+    await POST(post(championBody({ sendEmail: true })));
+    expect(state.inserted[0].inviter_reply_to).toBeNull();
+    expect(state.sent[0]).not.toHaveProperty('replyTo');
+  });
+
+  it.each([
+    ['sent', { sent: true, provider: 'resend', providerMessageId: 'msg_1' }],
+    ['not sent', { sent: false, provider: 'none', error: 'resend: 422' }],
+  ])('LEAK (%s): no audit entry and no log line holds the token, the link, the hash or the invitee email', async (_label, result) => {
+    state.sendResult = result;
+    const body = await (await POST(post(championBody({ sendEmail: true })))).json();
+    const token = tokenOf(body.data.link);
+    const hash = createHash('sha256').update(token).digest('hex');
+    const text = JSON.stringify(state.audit) + JSON.stringify(state.logs);
+    for (const secret of [token, body.data.link, hash, INVITEE, 'admin@example.com']) {
+      expect(text).not.toContain(secret);
+    }
+    // The response's email block carries status words only.
+    expect(Object.keys(body.data.email).sort()).toEqual(['requested', 'status']);
+  });
+});
+
+describe('Slice 2a: GET pre-selects the admin language (D-8)', () => {
+  it('the saved preference', async () => {
+    state.preference = { data: 'he', error: null };
+    const body = await (await GET(new NextRequest(URL_BASE))).json();
+    expect(body.data.formOptions.defaultLanguage).toBe('he');
+  });
+
+  it('en when there is none, or on a read error (with a warning, still 200)', async () => {
+    const none = await (await GET(new NextRequest(URL_BASE))).json();
+    expect(none.data.formOptions.defaultLanguage).toBe('en');
+
+    state.preference = { data: null, error: new Error('db') };
+    const response = await GET(new NextRequest(URL_BASE));
+    expect(response.status).toBe(200);
+    expect((await response.json()).data.formOptions.defaultLanguage).toBe('en');
+  });
+
+  it('rows carry emailStatus and never the message id, the problem detail or the Reply-To', async () => {
+    state.rows = [storedRow({ email_attempted_at: '2026-10-01T12:00:00.000Z', email_sent_at: '2026-10-01T12:00:02.000Z', email_provider_message_id: 'msg_hidden' })];
+    const body = await (await GET(new NextRequest(URL_BASE))).json();
+    expect(body.data.invites[0]).toMatchObject({ emailStatus: 'sent', emailStatusAt: '2026-10-01T12:00:02.000Z' });
+    expect(JSON.stringify(body)).not.toContain('msg_hidden');
   });
 });

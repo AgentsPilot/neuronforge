@@ -124,9 +124,12 @@ export type {
   BusinessOsInvitePublicView,
   BusinessOsInviteRedemptionView,
   CreateBusinessOsInviteInput,
+  RecordInviteEmailOutcomeInput,
   RevokeBusinessOsInviteInput,
   BusinessOsAccountLineageLevel,
 } from './types';
+// User preferences (invite signup Slice 2a, C-8): read-only, scoped by user_id.
+export { UserPreferencesRepository, userPreferencesRepository } from './UserPreferencesRepository';
 // Lineage (Slice 1b). Written only by the finalise function; read by the admin list.
 export { BusinessOsAccountLineageRepository, businessOsAccountLineageRepository } from './BusinessOsAccountLineageRepository';
 

@@ -130,6 +130,26 @@ export interface SendEmailBase {
    * The mail itself is unchanged.
    */
   redactRecipientInLogs?: boolean;
+  /**
+   * Strings that must never appear in this send's log lines or returned error
+   * (opt-in; invite signup Slice 2a, SA F-4 / R-9).
+   *
+   * The invitation email carries a one-time link whose token is a credential
+   * until it is used. A provider that rejects a send may echo part of the body
+   * in its error text, and that text is logged and returned. Every string listed
+   * here is replaced with `[redacted]` in exactly that text, alongside the
+   * `redactRecipientInLogs` masking. Pass the RAW token as well as the link: an
+   * HTML-escaped or URL-encoded copy of the link no longer contains the link,
+   * but it still contains the token verbatim.
+   *
+   * The body is never logged by this transport. The subject IS logged (its
+   * first 50 characters on the attempt and refusal lines, all of it on the
+   * final "no transport delivered" warning), so a caller must never put a
+   * secret in the subject; the invitation's subject carries no link. That
+   * leaves the error text as the only place such a string could surface. The
+   * mail is unchanged.
+   */
+  redactInLogs?: string[];
   /** Optional file attachments */
   attachments?: EmailAttachment[];
 }
@@ -228,9 +248,50 @@ function recipientsForLog(p: SendEmailBase): string[] {
   return p.redactRecipientInLogs ? p.to.map(maskAddress) : p.to;
 }
 
-/** A provider's error text as this send may log or return it. */
+/**
+ * A provider's error text as this send may log or return it.
+ *
+ * `redactInLogs` first, longest string first, so a link is replaced whole
+ * before the token inside it; then email-shaped text for `redactRecipientInLogs`.
+ * Empty strings are ignored: `split('')` would redact between every character.
+ */
 function errorTextForLog(p: SendEmailBase, text: string): string {
-  return p.redactRecipientInLogs ? text.replace(EMAIL_SHAPED, '[email]') : text;
+  let out = text;
+  const secrets = (p.redactInLogs ?? []).filter((value) => typeof value === 'string' && value.length > 0);
+  for (const secret of [...secrets].sort((a, b) => b.length - a.length)) {
+    out = out.split(secret).join('[redacted]');
+  }
+  return p.redactRecipientInLogs ? out.replace(EMAIL_SHAPED, '[email]') : out;
+}
+
+/** `user@domain.tld`, one `@`, no spaces or brackets: the shape of a sending address. */
+const SENDER_ADDRESS_SHAPE = /^[^\s@<>()"',;:]+@[^\s@<>()"',;:]+\.[^\s@<>()"',;:]+$/;
+
+/**
+ * The platform's configured sending ADDRESS, from `RESEND_FROM_EMAIL` only, or
+ * `undefined` (invite signup Slice 2a, SA R-2).
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * FAILS CLOSED, ON PURPOSE. Unlike `sendEmail`'s own default, this never falls
+ * back to `RESEND_DEFAULT_FROM` (a NeuronForge address). The invitation email
+ * is the first mail an invitee ever gets from us, and a brand they have never
+ * heard of on it is exactly what the requirement rules out; a caller that gets
+ * `undefined` records "not sent" and the admin copies the link instead.
+ *
+ * Accepts `Name <address>` and a bare `address`; returns the address part,
+ * trimmed, only when it has the shape of one. The display name in the variable
+ * is ignored: the caller sets its own.
+ *
+ * Other senders are unaffected: this is read by nobody else.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function platformSenderAddress(): string | undefined {
+  const configured = process.env.RESEND_FROM_EMAIL?.trim();
+  if (!configured) return undefined;
+  const bracketed = configured.match(/<([^<>]*)>\s*$/);
+  const address = (bracketed ? bracketed[1] : configured).trim();
+  if (!bracketed && /[<>]/.test(configured)) return undefined;
+  return SENDER_ADDRESS_SHAPE.test(address) ? address : undefined;
 }
 
 /** Returns the provider's message id, or undefined when it cannot be read. */
