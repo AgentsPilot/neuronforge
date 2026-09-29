@@ -50,8 +50,10 @@ describe('the screen holds no server module and no rule of its own', () => {
         `${ROOT}/components/CreateInviteForm.tsx`,
         `${ROOT}/components/CreatedLinkPanel.tsx`,
         `${ROOT}/components/EnforcementNote.tsx`,
+        `${ROOT}/components/InviteFilters.tsx`,
         `${ROOT}/components/InviteList.tsx`,
         `${ROOT}/components/RevokeDialog.tsx`,
+        `${ROOT}/inviteFilter.ts`,
         `${ROOT}/page.tsx`,
         `${ROOT}/types.ts`,
       ].sort()
@@ -92,6 +94,19 @@ describe('the screen holds no server module and no rule of its own', () => {
 
   it.each(allFiles)('%s never stores the link anywhere it would survive a reload', (relative) => {
     expect(codeOf(read(relative))).not.toMatch(/localStorage|sessionStorage|document\.cookie|history\.(push|replace)State/);
+  });
+});
+
+describe('Slice 1c: the filter decides no state of its own (C-11)', () => {
+  const filterCode = codeOf(read(`${ROOT}/inviteFilter.ts`));
+
+  it('compares no date and parses no timestamp', () => {
+    expect(filterCode).not.toMatch(/linkExpiresAt|Date\.|new Date|getTime/);
+  });
+
+  it('sends nothing anywhere: no fetch in the filter or its controls', () => {
+    expect(filterCode).not.toMatch(/fetch\(/);
+    expect(codeOf(read(`${ROOT}/components/InviteFilters.tsx`))).not.toMatch(/fetch\(/);
   });
 });
 

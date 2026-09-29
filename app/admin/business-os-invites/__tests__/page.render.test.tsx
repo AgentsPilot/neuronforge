@@ -202,8 +202,8 @@ describe('the list', () => {
     expect(within(list).getByTestId('invite-state')).toHaveTextContent('Pending');
     expect(screen.getByTestId('enforcement-note')).toHaveTextContent('Nothing is enforced yet');
     expect(screen.getByTestId('enforcement-note')).toHaveTextContent('internal demos only');
-    // No filter or search controls in Slice 0 (R-2).
-    expect(screen.queryByRole('searchbox')).not.toBeInTheDocument();
+    // Slice 1c: the filter and search controls are present over a non-empty list.
+    expect(screen.getByRole('searchbox')).toBeInTheDocument();
   });
 
   it('says so when there are no invites, and shows an error when the read fails', async () => {
@@ -215,6 +215,152 @@ describe('the list', () => {
     responder = () => ({ status: 500, body: { success: false, error: 'could_not_read_invites' } });
     render(<BusinessOsInvitesPage />);
     expect(await screen.findByTestId('page-error')).toBeInTheDocument();
+  });
+});
+
+describe('Slice 1c: filters and email search', () => {
+  // One invite per state and condition. Every flag is the server's decision;
+  // the screen only matches it.
+  const invites = [
+    row({ id: 'p', email: 'Pending.Person@Example.com', state: 'pending' }),
+    row({ id: 'a', email: 'accepted@example.com', state: 'accepted', inviteType: 'fixture-paid', redeemedAt: '2026-10-03T09:00:00.000Z' }),
+    row({ id: 'e', email: 'expired@other.org', state: 'expired' }),
+    row({ id: 'r', email: 'revoked@example.com', state: 'revoked', revokedAt: '2026-10-02T09:00:00.000Z', revokeReason: 'typo' }),
+    row({ id: 'o', email: 'existing@example.com', state: 'pending', openedByExistingAccountAt: '2026-10-02T09:00:00.000Z' }),
+    row({ id: 's', email: 'halfway@other.org', state: 'expired', redemptionStoppedHalfway: true }),
+    row({ id: 'pct', email: 'a%b_c@example.com', state: 'pending' }),
+  ];
+
+  const shownIds = () =>
+    screen
+      .queryAllByTestId(/^invite-row-/)
+      .map((element) => element.getAttribute('data-testid')?.replace('invite-row-', ''));
+
+  async function renderWith(overrides: Partial<InvitesPayload> = {}) {
+    responder = () => ({ status: 200, body: { success: true, data: payload({ invites, ...overrides }) } });
+    render(<BusinessOsInvitesPage />);
+    await screen.findByTestId('invite-list');
+  }
+
+  it.each([
+    ['pending', ['p', 'o', 'pct']],
+    ['accepted', ['a']],
+    ['expired', ['e', 's']],
+    ['revoked', ['r']],
+    ['opened_by_existing_account', ['o']],
+    ['stopped_halfway', ['s']],
+    ['all', ['p', 'a', 'e', 'r', 'o', 's', 'pct']],
+  ])('state "%s" shows exactly %j', async (state, expected) => {
+    await renderWith();
+    fireEvent.change(screen.getByTestId('invite-state-filter'), { target: { value: state } });
+    expect(shownIds()).toEqual(expected);
+  });
+
+  it('offers every state and condition in the state filter', async () => {
+    await renderWith();
+    const options = within(screen.getByTestId('invite-state-filter'))
+      .getAllByRole('option')
+      .map((option) => option.textContent);
+    expect(options).toEqual([
+      'All states',
+      'Pending',
+      'Accepted',
+      'Expired',
+      'Revoked',
+      'Opened by an existing account',
+      'Signup stopped halfway',
+    ]);
+  });
+
+  it('filters by invite type, with the types the payload offers', async () => {
+    await renderWith();
+    const typeSelect = screen.getByTestId('invite-type-filter');
+    expect(within(typeSelect).getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'All types',
+      'Fixture Free (Fixture Free Plan)',
+      'Fixture Paid',
+    ]);
+    fireEvent.change(typeSelect, { target: { value: 'fixture-paid' } });
+    expect(shownIds()).toEqual(['a']);
+  });
+
+  it('search is a case-insensitive substring of the email', async () => {
+    await renderWith();
+    await userEvent.type(screen.getByTestId('invite-search'), 'PENDING.person');
+    expect(shownIds()).toEqual(['p']);
+    await userEvent.clear(screen.getByTestId('invite-search'));
+    await userEvent.type(screen.getByTestId('invite-search'), 'other.org');
+    expect(shownIds()).toEqual(['e', 's']);
+  });
+
+  it('search takes % and _ literally, not as wildcards', async () => {
+    await renderWith();
+    fireEvent.change(screen.getByTestId('invite-search'), { target: { value: '%' } });
+    expect(shownIds()).toEqual(['pct']);
+    fireEvent.change(screen.getByTestId('invite-search'), { target: { value: 'a_b' } });
+    expect(shownIds()).toEqual([]);
+    fireEvent.change(screen.getByTestId('invite-search'), { target: { value: 'b_c' } });
+    expect(shownIds()).toEqual(['pct']);
+  });
+
+  it('a search that matches nothing says so, with the count, and Clear brings every row back', async () => {
+    await renderWith();
+    fireEvent.change(screen.getByTestId('invite-search'), { target: { value: 'nobody-here' } });
+    expect(shownIds()).toEqual([]);
+    expect(screen.getByTestId('invite-list-empty')).toHaveTextContent('No invites match these filters.');
+    expect(screen.getByTestId('invite-filter-count')).toHaveTextContent('0 of 7 shown');
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(shownIds()).toHaveLength(7);
+    expect(screen.getByTestId('invite-filter-count')).toHaveTextContent('7 invites');
+  });
+
+  it('state, type and search combine (AND)', async () => {
+    await renderWith();
+    fireEvent.change(screen.getByTestId('invite-state-filter'), { target: { value: 'pending' } });
+    fireEvent.change(screen.getByTestId('invite-type-filter'), { target: { value: 'fixture-free' } });
+    fireEvent.change(screen.getByTestId('invite-search'), { target: { value: 'EXAMPLE.com' } });
+    expect(shownIds()).toEqual(['p', 'o', 'pct']);
+    fireEvent.change(screen.getByTestId('invite-search'), { target: { value: 'existing' } });
+    expect(shownIds()).toEqual(['o']);
+    fireEvent.change(screen.getByTestId('invite-state-filter'), { target: { value: 'revoked' } });
+    expect(shownIds()).toEqual([]);
+    expect(screen.getByTestId('invite-filter-count')).toHaveTextContent('0 of 7 shown');
+  });
+
+  it('never sends the search or the filters to the server', async () => {
+    await renderWith();
+    const before = calls.length;
+    fireEvent.change(screen.getByTestId('invite-search'), { target: { value: 'secret-needle' } });
+    fireEvent.change(screen.getByTestId('invite-state-filter'), { target: { value: 'revoked' } });
+    expect(calls.length).toBe(before);
+    expect(calls.every((call) => !call.url.includes('secret-needle'))).toBe(true);
+  });
+
+  it('the stopped-halfway banner and badges stay as they were, whatever the filter', async () => {
+    await renderWith({ stoppedHalfway: { count: 1, inviteIds: ['s'] } });
+    fireEvent.change(screen.getByTestId('invite-state-filter'), { target: { value: 'revoked' } });
+    expect(screen.getByTestId('stopped-halfway-banner')).toHaveTextContent('1 signup stopped halfway.');
+    fireEvent.change(screen.getByTestId('invite-state-filter'), { target: { value: 'stopped_halfway' } });
+    expect(screen.getAllByTestId('invite-stopped-halfway')).toHaveLength(1);
+  });
+
+  it('says when the 500 ceiling was reached, and not otherwise', async () => {
+    await renderWith({ truncated: true });
+    expect(screen.getByTestId('invite-list-truncated')).toHaveTextContent('Showing the newest 7 invites');
+    cleanup();
+    await renderWith({ truncated: false });
+    expect(screen.queryByTestId('invite-list-truncated')).not.toBeInTheDocument();
+    cleanup();
+    // An older server sends no flag: no note.
+    await renderWith();
+    expect(screen.queryByTestId('invite-list-truncated')).not.toBeInTheDocument();
+  });
+
+  it('shows no filter controls over an empty list', async () => {
+    responder = () => ({ status: 200, body: { success: true, data: payload({ invites: [] }) } });
+    render(<BusinessOsInvitesPage />);
+    expect(await screen.findByTestId('invite-list-empty')).toHaveTextContent('No invites yet.');
+    expect(screen.queryByTestId('invite-filters')).not.toBeInTheDocument();
   });
 });
 

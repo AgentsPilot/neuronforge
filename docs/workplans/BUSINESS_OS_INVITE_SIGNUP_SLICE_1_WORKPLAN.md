@@ -630,8 +630,13 @@ Modified: `lib/business-os/entitlements/adminOps.ts` (+ test); the two other ten
 
 ### Slice 1c — Admin list filters and search (after 1a)
 
-- ⬜ **1c-1** — List query schema, `searchRecentForAdmin`, state filter via `deriveInviteState`, `truncated`, UI controls, tests.
-- ⬜ **1c-2** — Local verification; SA code review. **No commit.**
+- ✅ **1c-1** — Filters (state, type), email search, 500-row ceiling, `truncated`, UI controls, tests. Branch `feature/bos-invite-signup-slice-1c` (off `origin/main` 8cdff1cb), uncommitted.
+  - **Deviation from D-9 / §3.3 / §7.5 (as directed at hand-off, 2026-09-29):** filters and search run **on the screen** over the rows the GET already returns, not in SQL. So there is no `searchRecentForAdmin`, no list query schema and no new query parameter: the route takes none and ignores any (tested: a query string changes nothing and is never logged). `listRecentForAdmin` keeps its name. Search input never leaves the component. The state filter matches the server-decided `state` (from `deriveInviteState`), `openedByExistingAccountAt` and `redemptionStoppedHalfway` (D-3); the screen compares no date (C-11, source-guard test). "Opened by an existing account" and "stopped halfway" are conditions, not states. Search is a plain case-insensitive `includes`, so `%`, `_`, `*` are literal.
+  - **Ceiling:** `INVITE_LIST_CEILING = 500` in `adminInviteOps.ts`, passed to `listRecentForAdmin({ limit })`; the repository clamp `BUSINESS_OS_INVITE_LIST_LIMIT` is raised 200 → 500 (pinned equal by test). `truncated = rows ≥ 500` ("may be older ones"; exactly 500 rows also reads as truncated). This also widens QA-1b-5 (the T-16 banner now sees the newest 500).
+  - **Lineage batching:** `findByInviteIdsForAdmin` refuses > 200 ids, so with a 500 ceiling the accepted rows are read in batches of 200 (`INVITE_LINEAGE_BATCH`, pinned ≤ `LINEAGE_LOOKUP_LIMIT`).
+  - **Files (9 modified, 2 new):** `lib/business-os/invites/adminInviteOps.ts` (+ test), `lib/repositories/BusinessOsInviteRepository.ts` (+ test), `app/api/admin/business-os/invites/route.ts` (+ test), `app/admin/business-os-invites/page.tsx`, `types.ts`, `components/InviteList.tsx`, `__tests__/page.render.test.tsx`, `__tests__/source.guard.test.ts`; new `app/admin/business-os-invites/inviteFilter.ts`, `components/InviteFilters.tsx`.
+  - **Verification:** invites suites 17/17, 458 tests pass; `npm run test:authz-guard` 119/119; `adminReadMethods.guard` + `enforcementPoints` 76/76; eslint clean on touched files; `tsc` reports nothing in touched files. No route added, so no `next build`.
+- ✅ **1c-2** — SA code review APPROVED with no findings (2026-09-29; invites suites 475 tests pass, `npm run test:authz-guard` 119/119). User reviewed the diff and approved the commit on 2026-09-29. No separate QA A7 report was recorded for this slice. Committed on `feature/bos-invite-signup-slice-1c` and opened as a PR; no DB change, merge once CI is green.
 
 ### 1a implementation record
 

@@ -344,13 +344,34 @@ export interface StoppedHalfwaySummary {
   inviteIds: string[];
 }
 
+/**
+ * Slice 1c (SA F-9, D-9): the admin list reads at most this many invites,
+ * newest first, and the screen filters and searches within them. Raised from
+ * 200. The repository clamps to the same number (`BUSINESS_OS_INVITE_LIST_LIMIT`);
+ * the repository test pins the two together.
+ */
+export const INVITE_LIST_CEILING = 500;
+
+/**
+ * The lineage lookup refuses more than 200 ids at once (a long `in (...)` list
+ * is a long URL), so the accepted rows are read in batches of this size. The
+ * ops test pins it to `LINEAGE_LOOKUP_LIMIT`.
+ */
+export const INVITE_LINEAGE_BATCH = 200;
+
 export type ListInvitesOutcome =
-  | { ok: true; invites: InviteListView[]; stoppedHalfway: StoppedHalfwaySummary }
+  | { ok: true; invites: InviteListView[]; stoppedHalfway: StoppedHalfwaySummary; truncated: boolean }
   | { ok: false };
 
 /**
- * The newest invites, each with its derived state (no filters in Slice 0, R-2),
- * the lineage level of accepted ones (Slice 1b), and the T-16 banner summary.
+ * The newest invites (up to `INVITE_LIST_CEILING`), each with its derived
+ * state, the lineage level of accepted ones (Slice 1b), the T-16 banner summary,
+ * and `truncated` (Slice 1c): the ceiling was reached, so older invites may
+ * exist that the list, and therefore its filters and search, cannot see.
+ *
+ * Filtering and search happen on the screen over these rows, against the
+ * server-derived `state`, `openedByExistingAccountAt` and
+ * `redemptionStoppedHalfway` (C-11: one derivation of state, here).
  *
  * A failed lineage read does not fail the list: levels show as unknown.
  */
@@ -361,25 +382,33 @@ export async function listInvitesForAdmin(deps: {
   now: Date;
   logger?: InviteOpsLogger;
 }): Promise<ListInvitesOutcome> {
-  const { data, error } = await deps.repository.listRecentForAdmin();
+  const { data, error } = await deps.repository.listRecentForAdmin({ limit: INVITE_LIST_CEILING });
   if (error || !data) return { ok: false };
 
   const levels = new Map<string, number>();
   const redeemedIds = data.filter((row) => row.redeemed_at).map((row) => row.id);
-  if (deps.lineage && redeemedIds.length > 0) {
-    const lineage = await deps.lineage.findByInviteIdsForAdmin(redeemedIds);
-    if (lineage.error) {
-      // SA N-3: the list still answers (levels show as unknown), but it is said.
-      deps.logger?.warn({ err: lineage.error, invites: redeemedIds.length }, 'Could not read lineage levels for the invite list');
-    }
-    for (const entry of lineage.data ?? []) {
-      if (entry.invite_id) levels.set(entry.invite_id, entry.level);
+  if (deps.lineage) {
+    for (let start = 0; start < redeemedIds.length; start += INVITE_LINEAGE_BATCH) {
+      const batch = redeemedIds.slice(start, start + INVITE_LINEAGE_BATCH);
+      const lineage = await deps.lineage.findByInviteIdsForAdmin(batch);
+      if (lineage.error) {
+        // SA N-3: the list still answers (levels show as unknown), but it is said.
+        deps.logger?.warn({ err: lineage.error, invites: batch.length }, 'Could not read lineage levels for the invite list');
+      }
+      for (const entry of lineage.data ?? []) {
+        if (entry.invite_id) levels.set(entry.invite_id, entry.level);
+      }
     }
   }
 
   const invites = data.map((row) => toInviteListView(row, deps.config, deps.now, levels.get(row.id) ?? null));
   const stopped = invites.filter((invite) => invite.redemptionStoppedHalfway).map((invite) => invite.id);
-  return { ok: true, invites, stoppedHalfway: { count: stopped.length, inviteIds: stopped } };
+  return {
+    ok: true,
+    invites,
+    stoppedHalfway: { count: stopped.length, inviteIds: stopped },
+    truncated: data.length >= INVITE_LIST_CEILING,
+  };
 }
 
 // ── Revoke ──────────────────────────────────────────────────────────────────

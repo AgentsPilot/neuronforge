@@ -312,6 +312,36 @@ describe('GET', () => {
     expect(body.data.stoppedHalfway).toEqual({ count: 1, inviteIds: ['bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'] });
   });
 
+  it('Slice 1c: reports `truncated` (false below the ceiling)', async () => {
+    state.rows = [storedRow()];
+    const body = await (await GET(new NextRequest(URL_BASE))).json();
+    expect(body.data.truncated).toBe(false);
+  });
+
+  it('Slice 1c: reports `truncated` when the 500 ceiling is reached', async () => {
+    state.rows = Array.from({ length: 500 }, () => storedRow());
+    const body = await (await GET(new NextRequest(URL_BASE))).json();
+    expect(body.data.invites).toHaveLength(500);
+    expect(body.data.truncated).toBe(true);
+  });
+
+  it('Slice 1c: filters run on the screen, so a query string changes nothing and is never logged', async () => {
+    state.rows = [storedRow()];
+    const plain = await (await GET(new NextRequest(URL_BASE))).json();
+    const withQuery = await (await GET(new NextRequest(`${URL_BASE}?q=secret-needle&state=revoked`))).json();
+    expect(withQuery).toEqual(plain);
+    expect(JSON.stringify(state.logs)).not.toContain('secret-needle');
+  });
+
+  it('Slice 1c: a query string does not get past the gate', async () => {
+    state.isAdmin = false;
+    expect((await GET(new NextRequest(`${URL_BASE}?q=x&state=pending`))).status).toBe(403);
+    state.isAdmin = true;
+    state.user = null;
+    expect((await GET(new NextRequest(`${URL_BASE}?q=x`))).status).toBe(401);
+    expect(state.listCalls).toBe(0);
+  });
+
   it('500 on a repository error', async () => {
     state.listError = true;
     const response = await GET(new NextRequest(URL_BASE));

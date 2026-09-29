@@ -160,12 +160,14 @@ describe('listRecentForAdmin', () => {
     expect(calls).toContainEqual({ method: 'select', args: [BUSINESS_OS_INVITE_ADMIN_COLUMNS] });
     expect(calls).toContainEqual({ method: 'order', args: ['created_at', { ascending: false }] });
     expect(calls).toContainEqual({ method: 'limit', args: [BUSINESS_OS_INVITE_LIST_LIMIT] });
-    expect(BUSINESS_OS_INVITE_LIST_LIMIT).toBe(200);
+    expect(BUSINESS_OS_INVITE_LIST_LIMIT).toBe(500);
   });
 
-  it('clamps a requested limit into 1..200', async () => {
+  it('clamps a requested limit into 1..500 (Slice 1c ceiling)', async () => {
     for (const [requested, applied] of [
-      [5000, 200],
+      [5000, 500],
+      [501, 500],
+      [500, 500],
       [0, 1],
       [-3, 1],
       [10, 10],

@@ -20,16 +20,24 @@
  * The create response's link lives only in this component's state. It is never
  * stored, so a reload loses it; the database keeps only its hash.
  *
+ * ── Filters and search (Slice 1c, SA F-9) ───────────────────────────────────
+ * Applied here, over the rows the GET already returned (the newest 500). What
+ * the admin types stays in this component: it is never sent to the server and
+ * never logged. `truncated` says when older invites exist beyond that ceiling.
+ *
  * @see docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_0_WORKPLAN.md
+ * @see docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_1_WORKPLAN.md §3.3
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Plus, RefreshCw } from 'lucide-react';
 
 import { CreateInviteForm } from './components/CreateInviteForm';
 import { CreatedLinkPanel } from './components/CreatedLinkPanel';
 import { EnforcementNote } from './components/EnforcementNote';
+import { InviteFilters } from './components/InviteFilters';
 import { InviteList } from './components/InviteList';
+import { EMPTY_INVITE_FILTER, filterInvites, isFilterActive, type InviteListFilter } from './inviteFilter';
 import type { CreatedInvite, InviteRow, InvitesPayload } from './types';
 
 export default function BusinessOsInvitesPage() {
@@ -38,6 +46,13 @@ export default function BusinessOsInvitesPage() {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<CreatedInvite | null>(null);
+  const [filter, setFilter] = useState<InviteListFilter>(EMPTY_INVITE_FILTER);
+
+  const filterActive = isFilterActive(filter);
+  const visibleInvites = useMemo(
+    () => (payload ? filterInvites(payload.invites, filter) : []),
+    [payload, filter]
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -158,7 +173,28 @@ export default function BusinessOsInvitesPage() {
 
           <section>
             <h2 className="mb-3 text-sm font-semibold text-white">Invites (newest first)</h2>
-            <InviteList invites={payload.invites} onRevoked={replaceRow} />
+            {payload.invites.length > 0 && (
+              <InviteFilters
+                filter={filter}
+                inviteTypes={payload.formOptions.inviteTypes}
+                shown={visibleInvites.length}
+                total={payload.invites.length}
+                isActive={filterActive}
+                onChange={setFilter}
+                onClear={() => setFilter(EMPTY_INVITE_FILTER)}
+              />
+            )}
+            {payload.truncated && (
+              <p data-testid="invite-list-truncated" className="mb-3 text-xs text-slate-400">
+                Showing the newest {payload.invites.length} invites. Older invites are not listed, so filters and
+                search do not reach them.
+              </p>
+            )}
+            <InviteList
+              invites={visibleInvites}
+              onRevoked={replaceRow}
+              emptyMessage={filterActive ? 'No invites match these filters.' : 'No invites yet.'}
+            />
           </section>
         </>
       )}

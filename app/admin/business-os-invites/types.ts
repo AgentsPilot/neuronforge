@@ -76,6 +76,8 @@ export interface InvitesPayload {
   invites: InviteRow[];
   /** Slice 1b (T-16). Absent from an older server: treated as none. */
   stoppedHalfway?: StoppedHalfwaySummary;
+  /** Slice 1c: the server's list ceiling was reached; older invites exist. Absent from an older server. */
+  truncated?: boolean;
   formOptions: InviteFormOptions;
   enforcementMode: EnforcementMode;
 }

@@ -7,6 +7,10 @@
 
 import { createHash } from 'crypto';
 
+// Slice 1c: the ceiling and batch pins below import the repositories' limits;
+// their modules must load without a real service-role client.
+jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: {} }));
+
 import {
   CHAMPION_ACCESS_MONTHS_MAX,
   CHAMPION_INVITE_TYPE,
@@ -22,8 +26,13 @@ import { locales } from '@/lib/i18n/config';
 import { platformUrl } from '@/lib/utils/origins';
 import type { BusinessOsInvite, CreateBusinessOsInviteInput } from '@/lib/repositories/types';
 
+import { LINEAGE_LOOKUP_LIMIT } from '@/lib/repositories/BusinessOsAccountLineageRepository';
+import { BUSINESS_OS_INVITE_LIST_LIMIT } from '@/lib/repositories/BusinessOsInviteRepository';
+
 import {
   INVITER_NAME_FALLBACK,
+  INVITE_LINEAGE_BATCH,
+  INVITE_LIST_CEILING,
   INVITE_LIST_VIEW_KEYS,
   buildInviteFormOptions,
   createInviteForAdmin,
@@ -368,6 +377,7 @@ describe('listInvitesForAdmin', () => {
       ok: true,
       invites: [toInviteListView(row, config, NOW)],
       stoppedHalfway: { count: 0, inviteIds: [] },
+      truncated: false,
     });
   });
 
@@ -402,6 +412,81 @@ describe('listInvitesForAdmin', () => {
     expect(outcome.ok).toBe(true);
     if (outcome.ok) expect(outcome.invites[0].level).toBeNull();
     expect(warnings).toHaveLength(1);
+  });
+
+  describe('Slice 1c: the 500 ceiling and `truncated` (SA F-9)', () => {
+    const base = rowFrom({
+      token_hash: 'a'.repeat(64),
+      email: 'x@example.com',
+      invite_type: CHAMPION_INVITE_TYPE,
+      grant_kind: 'cohort',
+      grant_id: championGrant,
+      access_open_ended: true,
+      access_months: null,
+      issuer_admin_id: ADMIN,
+      inviter_display_name: 'Dana',
+      language: 'en',
+      personal_note: null,
+      internal_reason: 'Reason',
+      link_expiry_days: 30,
+      link_expires_at: '2026-10-31T12:00:00.000Z',
+    });
+    const rows = (count: number, overrides: Partial<BusinessOsInvite> = {}) =>
+      Array.from({ length: count }, (_value, index) => ({
+        ...base,
+        id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+        ...overrides,
+      }));
+
+    it('the ceiling is 500, and the repository clamps to the same number', () => {
+      expect(INVITE_LIST_CEILING).toBe(500);
+      expect(BUSINESS_OS_INVITE_LIST_LIMIT).toBe(INVITE_LIST_CEILING);
+    });
+
+    it('asks the repository for exactly the ceiling', async () => {
+      const listRecentForAdmin = jest.fn(async () => ({ data: [], error: null }));
+      await listInvitesForAdmin({ repository: { listRecentForAdmin }, config, now: NOW });
+      expect(listRecentForAdmin).toHaveBeenCalledWith({ limit: 500 });
+    });
+
+    it.each([
+      [0, false],
+      [499, false],
+      [500, true],
+    ])('%i rows: truncated is %s, and every row is returned', async (count, truncated) => {
+      const outcome = await listInvitesForAdmin({
+        repository: { listRecentForAdmin: async () => ({ data: rows(count), error: null }) },
+        config,
+        now: NOW,
+      });
+      expect(outcome.ok).toBe(true);
+      if (outcome.ok) {
+        expect(outcome.invites).toHaveLength(count);
+        expect(outcome.truncated).toBe(truncated);
+      }
+    });
+
+    it('reads lineage for more than 200 accepted rows in batches the lookup accepts', async () => {
+      expect(INVITE_LINEAGE_BATCH).toBeLessThanOrEqual(LINEAGE_LOOKUP_LIMIT);
+      const accepted = rows(450, { redeemed_at: NOW.toISOString(), redeemed_account_id: 'acct-1' });
+      const batches: number[] = [];
+      const outcome = await listInvitesForAdmin({
+        repository: { listRecentForAdmin: async () => ({ data: accepted, error: null }) },
+        lineage: {
+          // Refuses an oversized batch, as the real lookup does.
+          findByInviteIdsForAdmin: async (ids: string[]) => {
+            batches.push(ids.length);
+            if (ids.length > LINEAGE_LOOKUP_LIMIT) return { data: null, error: new Error('too many ids') };
+            return { data: ids.map((id) => ({ account_id: 'acct-1', invite_id: id, level: 1 })), error: null };
+          },
+        },
+        config,
+        now: NOW,
+      });
+      expect(batches).toEqual([200, 200, 50]);
+      expect(outcome.ok).toBe(true);
+      if (outcome.ok) expect(outcome.invites.every((invite) => invite.level === 1)).toBe(true);
+    });
   });
 
   it('a repository error is { ok: false }', async () => {
