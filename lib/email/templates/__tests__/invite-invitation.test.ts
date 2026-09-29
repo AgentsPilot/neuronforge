@@ -127,3 +127,64 @@ describe('the invitation email', () => {
     expect(email.html).not.toMatch(/neuronforge/i);
   });
 });
+
+/*
+ * Slice 3a (T-3a-2, T-3a-3, T-3a-6; SA R-3): no developer comments in the sent
+ * HTML except the Outlook conditional, and the AgentPilot wordmark only when
+ * NEXT_PUBLIC_APP_URL is an https origin, with the text wordmark otherwise.
+ */
+describe('the invitation email: comments and the wordmark (Slice 3a)', () => {
+  const ORIGINAL = process.env.NEXT_PUBLIC_APP_URL;
+  const PROD = 'https://neuronforge-kohl.vercel.app';
+  const MSO_BLOCK = /<!--\[if mso\]>[\s\S]*?<!\[endif\]-->/g;
+
+  afterEach(() => {
+    if (ORIGINAL === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+    else process.env.NEXT_PUBLIC_APP_URL = ORIGINAL;
+  });
+
+  it.each(['en', 'he', 'es'] as const)('%s: the only "<!--" is the MSO conditional', (locale) => {
+    for (const url of [PROD, undefined]) {
+      if (url === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+      else process.env.NEXT_PUBLIC_APP_URL = url;
+      const { html } = generateInviteInvitationEmail(data({ locale }));
+      expect(html.match(MSO_BLOCK)).toHaveLength(1);
+      expect(html.replace(MSO_BLOCK, '')).not.toContain('<!--');
+      expect(html).not.toContain('THE WORDMARK, QUIET');
+    }
+  });
+
+  it.each(['en', 'he', 'es'] as const)('%s, https: the wordmark with alt, width and height, styled alt text', (locale) => {
+    process.env.NEXT_PUBLIC_APP_URL = PROD;
+    const { html } = generateInviteInvitationEmail(data({ locale }));
+    expect(html).toContain(
+      `<img src="${PROD}/images/brand/wordmark.png" alt="AgentPilot" width="154" height="28" style="display: inline-block; width: 154px; height: 28px;`
+    );
+    // What a client that blocks images shows in its place: the name, set like the text wordmark.
+    expect(html).toMatch(/<img [^>]*alt="AgentPilot"[^>]*font-size: 16px; font-weight: 600;/);
+    expect(html.match(/<img /g)).toHaveLength(1);
+  });
+
+  it.each([
+    ['deleted', undefined],
+    ['http://localhost:3000', 'http://localhost:3000'],
+  ])('NEXT_PUBLIC_APP_URL %s: no image, the text wordmark instead, and no fallback host', (_label, url) => {
+    if (url === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+    else process.env.NEXT_PUBLIC_APP_URL = url;
+    const { html } = generateInviteInvitationEmail(data());
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('wordmark.png');
+    expect(html).not.toContain('agentspilot.ai');
+    expect(html).toMatch(/<span style="font-family:[^"]*font-size: 16px; font-weight: 600;[^"]*">\s*AgentPilot\s*<\/span>/);
+  });
+
+  it('the plain-text part is the same with or without the logo (T-3a-6)', () => {
+    process.env.NEXT_PUBLIC_APP_URL = PROD;
+    const withLogo = generateInviteInvitationEmail(data());
+    delete process.env.NEXT_PUBLIC_APP_URL;
+    const withoutLogo = generateInviteInvitationEmail(data());
+    expect(withLogo.text).toBe(withoutLogo.text);
+    expect(withLogo.text).not.toContain('<!--');
+    expect(withLogo.subject).toBe(withoutLogo.subject);
+  });
+});

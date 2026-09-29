@@ -27,6 +27,8 @@ export interface Plan {
   /** Public? Sellable? Two questions, two answers (2026-09-27). */
   shownToCustomers: boolean;
   availableToBuy: boolean;
+  /** FYI only (2026-09-29): an operator's marker. It changes nothing. */
+  active: boolean;
   inheritsFrom: string | null;
   aiActions: string;
   endsWhen: string;

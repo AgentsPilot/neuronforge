@@ -37,6 +37,7 @@ import { describeCapabilityValue } from './capabilityDisplay';
 import {
   describePlanCapabilities,
   describePlanEnding,
+  planActive,
   planCommercialFlags,
   planInheritsFrom,
   planLabel,
@@ -90,6 +91,12 @@ export interface AdminPlanView {
    */
   shownToCustomers: boolean;
   availableToBuy: boolean;
+  /**
+   * Is the plan active? **FYI only** (2026-09-29) — a marker for an operator,
+   * read through `planActive`, and read by nothing that decides anything. Unlike
+   * the two flags above it exists for cohorts too.
+   */
+  active: boolean;
   /** What the resolver calls an account on this plan today. */
   state: string;
   /** Which layer the resolution stands on: a tier, a cohort, or nothing. */
@@ -171,6 +178,7 @@ export function buildAdminPlansView(now: Date = new Date()): AdminPlansPayload {
       aiActions: aiActions ? describeCapabilityValue(aiActions.value, catalog['ai.actions']) : 'not configured',
       endsWhen: describePlanEnding(config, planId, aiActions?.value as CapabilityValue),
       ...planCommercialFlags(config, planId),
+      active: planActive(config, planId),
       state: resolution.state,
       basis: resolution.basis.kind,
       includes: capabilities.filter((entry) => entry.granting),

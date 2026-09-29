@@ -159,18 +159,21 @@ export const FIXTURE_TIER_MATRIX: TierMatrixShape<FixtureTierId, TierRow> = {
       monthlyPriceUsd: 10,
       shownToCustomers: true,
       availableToBuy: true,
+      active: true,
     },
     growth: {
       labels: { en: 'Fixture Growth', he: 'Fixture Growth', es: 'Fixture Growth' },
       monthlyPriceUsd: 20,
       shownToCustomers: true,
       availableToBuy: false,
+      active: true,
     },
     pro: {
       labels: { en: 'Fixture Pro', he: 'Fixture Pro', es: 'Fixture Pro' },
       monthlyPriceUsd: 30,
       shownToCustomers: false,
       availableToBuy: false,
+      active: true,
     },
   },
 };

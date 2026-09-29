@@ -229,12 +229,22 @@ export const TIER_MATRIX = {
       // is what turns it on — no component changes with it, which is the whole
       // point of the flag living here.
       availableToBuy: false,
+      // FYI ONLY — NOT A SWITCH (user decision, 2026-09-29). Shown on the admin
+      // Tiers card and read by nothing else. Open question before it does
+      // anything: what should inactive DO — stop new assignments? hide the plan
+      // from customers? affect accounts already on it?
+      active: true,
     },
     pro: {
       labels: { en: 'Autopilot', he: 'Autopilot', es: 'Autopilot' },
       monthlyPriceUsd: 129,
       shownToCustomers: true,
       availableToBuy: false,
+      // FYI ONLY — NOT A SWITCH (user decision, 2026-09-29). Shown on the admin
+      // Tiers card and read by nothing else. Open question before it does
+      // anything: what should inactive DO — stop new assignments? hide the plan
+      // from customers? affect accounts already on it?
+      active: true,
     },
   },
 } as const satisfies TierMatrix;

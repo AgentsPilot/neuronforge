@@ -19,6 +19,7 @@ import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { OPERATOR_AUDIENCES } from '@/lib/audit/eventAudience';
 import { createLogger } from '@/lib/logger';
 import { ArchivedBeforeNotice } from '@/app/admin/components/ArchivedBeforeNotice';
+import { BusinessAccountPicker } from './BusinessAccountPicker';
 
 // Structured logging works in a client component: lib/logger.ts configures
 // Pino's `browser: { asObject: true }` transport, and the sibling admin page
@@ -493,17 +494,22 @@ function AuditTrailPageContent() {
         {/* Older entries may be archived (FR-12, archiving slice 3). */}
         <ArchivedBeforeNotice />
 
-        {/* Filters */}
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
-          <div className="flex flex-wrap items-center gap-3 mb-4">
-            <Filter className="w-5 h-5 text-blue-400" />
-            <h2 className="text-xl font-bold text-white">Filters</h2>
+        {/* Filters
+            Deliberately dense: this card sits above every audit row, in the
+            same place, on every visit — so every pixel it spends is a pixel of
+            RESULTS an operator does not see. Hence the small heading, the
+            4-across grid from `xl`, and `Clear All Filters` occupying the grid
+            slot the seven fields leave empty rather than a row of its own. */}
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <Filter className="w-4 h-4 text-blue-400" />
+            <h2 className="text-sm font-semibold text-white">Filters</h2>
             {/* One-click view (slice 2c): every failed Business OS AI action. */}
             <button
               type="button"
               data-testid="preset-bos-ai-failures"
               onClick={() => setFilters({ ...filters, action: BOS_AI_FAILED_ACTION })}
-              className={`ml-auto px-3 py-1.5 text-sm rounded-lg border transition-colors ${
+              className={`ml-auto px-2.5 py-1 text-xs rounded-lg border transition-colors ${
                 filters.action === BOS_AI_FAILED_ACTION
                   ? 'bg-rose-500/20 border-rose-500/50 text-rose-200'
                   : 'border-slate-600 text-slate-300 hover:bg-slate-700'
@@ -514,7 +520,7 @@ function AuditTrailPageContent() {
             {filters.userId && (
               <span
                 data-testid="account-filter-chip"
-                className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-blue-500/20 text-blue-200"
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg bg-blue-500/20 text-blue-200"
               >
                 {/* The full id stays reachable on hover: the visible text either
                     replaces it with a name or truncates it, so a title is the
@@ -524,11 +530,13 @@ function AuditTrailPageContent() {
                 <span className="truncate max-w-[18rem]" title={filters.userId}>
                   Account {accountFilterLabel(logs, filters.userId)}
                 </span>
+                {/* `px-1 text-sm` keeps the dismiss target ~20px wide inside a
+                    chip that is now text-xs — smaller chip, same clickability. */}
                 <button
                   type="button"
                   aria-label="Show every account"
                   onClick={() => setFilters({ ...filters, userId: '' })}
-                  className="text-blue-300 hover:text-white"
+                  className="px-1 text-sm leading-none text-blue-300 hover:text-white"
                 >
                   ×
                 </button>
@@ -536,29 +544,48 @@ function AuditTrailPageContent() {
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {/* Four across from `xl`, not from `lg`, and that is a measurement not
+              a preference: the two `datetime-local` inputs are drawn by the
+              browser and need ~190px of inner width for "09/29/2026, 11:59 PM"
+              plus the calendar button. At the `lg` breakpoint itself (1024px,
+              minus the 256px admin sidebar) a quarter column is ~163px and the
+              date would clip; at `xl` (1280px) it is ~201px, and ~360px on the
+              1920px screen this was asked for. So `lg` keeps three. */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+            {/* Account — the only filter here applied at the DATABASE level to a
+                single account (route.ts `.eq('user_id', accountId)`), so it is
+                first: everything below narrows within it. Before this the filter
+                could only be cleared, never set, unless the operator already knew
+                the account's UUID. */}
+            <BusinessAccountPicker
+              selectedAccountId={filters.userId}
+              onSelect={(userId) => setFilters({ ...filters, userId })}
+            />
+
             {/* Search */}
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">Search</label>
+              <label htmlFor="audit-search" className="block text-xs font-medium text-slate-300 mb-1">Search</label>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
                 <input
+                  id="audit-search"
                   type="text"
                   placeholder="Search by agent, user email, or name..."
                   value={filters.searchTerm}
                   onChange={(e) => setFilters({ ...filters, searchTerm: e.target.value })}
-                  className="w-full pl-10 pr-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full pl-8 pr-3 py-1.5 text-sm bg-slate-900/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
             </div>
 
             {/* Action Filter */}
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">Action Type</label>
+              <label htmlFor="audit-action" className="block text-xs font-medium text-slate-300 mb-1">Action Type</label>
               <select
+                id="audit-action"
                 value={filters.action}
                 onChange={(e) => setFilters({ ...filters, action: e.target.value })}
-                className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-1.5 text-sm bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 {/* "all" is a UI sentinel, not a catalogue value — every other
                     option comes from AUDIT_EVENTS via buildActionFilterGroups() */}
@@ -584,11 +611,12 @@ function AuditTrailPageContent() {
 
             {/* Severity Filter */}
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">Severity</label>
+              <label htmlFor="audit-severity" className="block text-xs font-medium text-slate-300 mb-1">Severity</label>
               <select
+                id="audit-severity"
                 value={filters.severity}
                 onChange={(e) => setFilters({ ...filters, severity: e.target.value })}
-                className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-1.5 text-sm bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="all">All Severities</option>
                 <option value="info">Info</option>
@@ -597,35 +625,40 @@ function AuditTrailPageContent() {
               </select>
             </div>
 
-            {/* Date From */}
+            {/* Date From — `px-2` rather than the `px-3` the other controls use:
+                the browser-drawn date is the widest thing in this grid, so the
+                two date cells get those 8px of inner width back. */}
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">From Date</label>
+              <label htmlFor="audit-date-from" className="block text-xs font-medium text-slate-300 mb-1">From Date</label>
               <input
+                id="audit-date-from"
                 type="datetime-local"
                 value={filters.dateFrom}
                 onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })}
-                className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-2 py-1.5 text-sm bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
 
             {/* Date To */}
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">To Date</label>
+              <label htmlFor="audit-date-to" className="block text-xs font-medium text-slate-300 mb-1">To Date</label>
               <input
+                id="audit-date-to"
                 type="datetime-local"
                 value={filters.dateTo}
                 onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })}
-                className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-2 py-1.5 text-sm bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
 
             {/* Entity Type */}
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">Entity Type</label>
+              <label htmlFor="audit-entity-type" className="block text-xs font-medium text-slate-300 mb-1">Entity Type</label>
               <select
+                id="audit-entity-type"
                 value={filters.entityType}
                 onChange={(e) => setFilters({ ...filters, entityType: e.target.value })}
-                className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-1.5 text-sm bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 {/* As above: only the sentinel is hardcoded; the rest is AUDIT_ENTITY_TYPES */}
                 <option value="all">All Entities</option>
@@ -636,15 +669,23 @@ function AuditTrailPageContent() {
                 ))}
               </select>
             </div>
-          </div>
 
-          {/* Clear Filters */}
-          <button
-            onClick={() => setFilters(EMPTY_FILTERS)}
-            className="mt-4 px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors"
-          >
-            Clear All Filters
-          </button>
+            {/* Clear Filters — INSIDE the grid, as its eighth cell.
+                Seven fields never fill a row of four (or of two), so this takes
+                a slot that was already blank: at `xl` and at `md` it costs zero
+                extra height, where a row of its own cost ~52px. It stays the
+                last focusable control in the card, exactly as before — the DOM
+                order is unchanged, only the box it lands in. `items-end` sits it
+                on the controls' baseline rather than the labels'. */}
+            <div className="flex items-end">
+              <button
+                onClick={() => setFilters(EMPTY_FILTERS)}
+                className="w-full px-3 py-1.5 text-sm rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+              >
+                Clear All Filters
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Error Display */}
