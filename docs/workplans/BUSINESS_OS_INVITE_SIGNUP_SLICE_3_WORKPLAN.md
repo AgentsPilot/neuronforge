@@ -8,7 +8,7 @@
 **Date:** 2026-09-29
 **Branch:** `feature/bos-invite-signup-slice-3`, cut from `origin/main` at bd763222 (the #146 merge) on 2026-09-29, in the `neuronforge-invite-s0` worktree. Upstream tracking is unset, so a plain `git push` cannot reach `main`. Every file reference below was checked against bd763222.
 **3a branch:** `feature/bos-invite-signup-slice-3a`, switched from `feature/bos-invite-signup-slice-3` on 2026-09-29 carrying these docs uncommitted; no upstream. 3b is built separately in the `neuronforge-invite-s1` worktree.
-**Status:** SA approved with conditions. **3a SA code-approved; QA waived by the user for 3a (2026-09-29); user approved the commit and PR (2026-09-29); RM committing on `feature/bos-invite-signup-slice-3a` and opening the PR (hashes and PR number in Commit Info once they exist).** 3b in progress elsewhere.
+**Status:** SA approved with conditions. **3a SA code-approved; QA waived by the user for 3a (2026-09-29); user approved the commit and PR (2026-09-29); committed by RM on `feature/bos-invite-signup-slice-3a` (`646bf549`, `97339856`), PR #149 open, not merged.** 3b in progress elsewhere.
 
 ## Overview
 
@@ -241,7 +241,7 @@ None of these gates the **merge** (D-9). All of them gate **switching it on**.
 - ✅ 3a-3: `platformEmailBranding` + `platformEmailLogoUrl` + tests (a3, a4), per R-3 and R-9. Tests delete the variable for the unset case, and cover `''`, whitespace, `http://localhost:3000`, `http://…`, a bare host and `https://` alone; a trailing slash is trimmed. Guard: `public/images/brand/wordmark.png` exists and has a PNG signature. Guard: only `invite-invitation.ts` and `invite-signup-code.ts` import `platformBranding` (scans `lib`, `app`, `components`).
 - ✅ 3a-4: Both invite templates use it; the invitation's button reuses the same branding object; the stale "logs the first 50 characters" header line in `invite-signup-code.ts` corrected (D-dev-2a-13, comment only). Template tests (a8): en/he/es, only the MSO `<!--`, with the variable https and deleted; the `<img>` with alt, width, height and alt-text styling; no image and the text wordmark when deleted or `http://localhost:3000`; the plain-text part identical with and without the logo (T-3a-6: the invite templates build `text` themselves, so it cannot carry comments or the logo).
 - ✅ 3a-5: `npx jest lib/email lib/business-os/invites app/api/public/invites lib/brand lib/branding` 32 suites / 532 tests green; `lib/business-os/bizql` 48 / 652 green; every `*guard*` test 35 / 691 green; `npm run test:bos-entitlements` 88 / 1,825 green; `tsc --noEmit -p .` has no error in `lib/email/`; `eslint --max-warnings 0` clean on every touched file except three `no-unused-vars` warnings in `base-template.ts` (`primaryColor`, `onBrand`, `mutedSurface`) that are **identical on bd763222** and left alone (out of scope). No `console.*` and no entitlements import in any touched file. Mutation check: returning the unstripped HTML turns 7 of the new tests red. Preview rendered (en, he, code, and env-unset) and checked: the only `<!--` is the `[if mso]` block. **`npm run build` not run** (not requested for this hand-off; SA/QA may ask for it).
-- ✅ 3a-6: SA code review approved (2026-09-29); QA waived by the user for 3a ("skip QA for 3a", 2026-09-29: proportionate effort, email template change, SA code-approved); the user saw the diff and approved the commit and PR (2026-09-29): "I waive QA for 3a and approve committing it and opening the PR"; RM commits and opens the PR (see Commit Info).
+- ✅ 3a-6: SA code review approved (2026-09-29); QA waived by the user for 3a ("skip QA for 3a", 2026-09-29: proportionate effort, email template change, SA code-approved); the user saw the diff and approved the commit and PR (2026-09-29): "I waive QA for 3a and approve committing it and opening the PR"; RM committed and opened PR #149 (see Commit Info).
 
 **3a Dev notes (for SA code review):**
 - **D-dev-3a-1:** `display: inline-block`, not `display: block` as §3.5(3) first said. A block image ignores the cell's `text-align`, so it would sit on the left of a Hebrew email while the text wordmark sits on the right. `vertical-align: middle` avoids the inline gap.
@@ -514,7 +514,10 @@ No new event names (D-11) is correct. `BOS_INVITE_REDEEMED.details.method`, and 
 ### Slice 3a
 - **Branch:** `feature/bos-invite-signup-slice-3a`
 - **Approvals:** SA code review ✅ (2026-09-29) · QA waived by user for 3a (2026-09-29) · user approved commit + PR (2026-09-29): "I waive QA for 3a and approve committing it and opening the PR"
-- **Commits and PR:** pending (this docs commit precedes the `feat(email)` commit on the same branch; hashes and PR number are added in a follow-up `docs:` commit).
+- **Commits:** `646bf549` docs(invites): slice 3 workplan, reprioritisation and 3a review records · `97339856` feat(email): AgentPilot logo on platform emails, strip HTML comments from all emails · plus this follow-up `docs:` commit recording them
+- **PR:** [#149](https://github.com/AgentsPilot/neuronforge/pull/149) to `main`, opened 2026-09-29, not merged (no DB change; merge once CI is green, on the user's instruction)
+- **Tests at commit:** `npx jest lib/email lib/business-os/invites lib/business-os/bizql` 71 suites / 1,053 tests pass
+- **Post-deploy check owed:** one test invite to a Gmail +alias, confirm the logo, then revoke the invite
 
 ---
 
@@ -527,3 +530,4 @@ No new event names (D-11) is correct. `BOS_INVITE_REDEEMED.details.method`, and 
 | 2026-09-29 | Slice 3a implemented (Dev), uncommitted | On `feature/bos-invite-signup-slice-3a`. `stripHtmlComments` at the wrapper's return (every wrapped email; conditionals kept); `platformEmailBranding` reading `NEXT_PUBLIC_APP_URL` directly (https only, R-3) with flat `logoUrl`/`logoWidth`/`logoHeight` (R-9); both invite templates switched; guards for the wordmark file and the importers; business-path pins over 22 renders. §3.5, a4 and T-3a-3 reworded per R-3/R-9; tasks S-3, S-4, 3a-1 to 3a-5 done; Dev notes D-dev-3a-1 to 3. |
 | 2026-09-29 | SA code review 3a: approved | `stripHtmlComments` correct (MSO and downlevel conditionals kept, escaped note cannot produce `<!--`); logo URL per R-3/R-9; business path unchanged apart from comments; D-dev-3a-1 (`inline-block`) accepted; D-dev-3a-3 (unescaped business name in `alt`, pre-existing) to a Low backlog note. Jest 71 suites / 1,053 tests pass; `next build` with the CI env exit 0. Status: awaiting QA. |
 | 2026-09-29 | QA waived by user for 3a; user approved 3a (RM) | QA waived by user for 3a (proportionate effort; email template change, SA code-approved). User approved the commit and PR. Status, 3a-6, QA Testing Report and Commit Info updated; RM commits and opens the 3a PR. |
+| 2026-09-29 | 3a committed, PR #149 opened (RM) | Commits `646bf549` (docs) and `97339856` (feat); pushed and PR #149 opened to `main`, not merged. Status and Commit Info updated. |
