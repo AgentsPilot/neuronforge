@@ -39,6 +39,7 @@ import {
   buildAiAuditEntry,
   platformActorId,
   resetPlatformActorForTests,
+  resolveActionFailure,
   runAiAction,
   type AiActionDeclaration,
   type AiActionSpec,
@@ -270,7 +271,7 @@ describe('the fields (T-E4, AC-4) and privacy (T-E5, AC-5)', () => {
     await runAiAction(spec({ correlationId: '7d2f0c1e-1111-4111-8111-222222222222' }), async () => llmCall());
     expect(Object.keys(onlyEntry().details).sort()).toEqual(
       [
-        'schema', 'area', 'areas', 'actionType', 'groupId', 'trigger', 'callCount', 'failedCallCount',
+        'schema', 'actionId', 'area', 'areas', 'actionType', 'groupId', 'trigger', 'callCount', 'failedCallCount',
         'inputTokens', 'outputTokens', 'totalTokens', 'estimatedCostUsd', 'callNames', 'models', 'outcome',
         'correlationId',
       ].sort()
@@ -283,7 +284,8 @@ describe('the fields (T-E4, AC-4) and privacy (T-E5, AC-5)', () => {
     });
     const details = onlyEntry().details;
     expect(details.errorCode).toBe('rate_limit_exceeded');
-    expect(Object.keys(details)).toHaveLength(16);
+    // 17 since deduction slice 3a (`actionId`, SA-B1).
+    expect(Object.keys(details)).toHaveLength(17);
   });
 
   it('no prompt, owner text, model output or error text reaches the entry or any log line', async () => {
@@ -399,6 +401,7 @@ describe('buildAiAuditEntry is pure', () => {
   it('builds the same entry for the same summary', () => {
     const summary = {
       spec: spec(),
+      actionId: '55555555-5555-4555-8555-555555555555',
       accountId: OWNER,
       actorId: OWNER,
       calls: [
@@ -475,7 +478,7 @@ describe('AI_ACTION_DECLARATIONS', () => {
 
 /**
  * Deduction layer slice 2 (SQ-14, AC-29): the stored cost keeps small costs.
- * Still `schema: 1`; old entries are not backfilled.
+ * `schema: 2` since slice 3a (the action id); old entries are not backfilled.
  */
 describe('the stored cost keeps sub-micro-dollar costs (slice 2, AC-29)', () => {
   it('a lone ~2e-7 USD embedding call stores a non-zero cost', async () => {
@@ -485,7 +488,7 @@ describe('the stored cost keeps sub-micro-dollar costs (slice 2, AC-29)', () => 
     const details = onlyEntry().details as { estimatedCostUsd: number; schema: number };
     expect(details.estimatedCostUsd).toBe(0.0000002);
     expect(details.estimatedCostUsd).toBeGreaterThan(0);
-    expect(details.schema).toBe(1);
+    expect(details.schema).toBe(2);
   });
 
   it('a sub-micro-dollar action total is non-zero (a micro-dollar rounding stored 0)', async () => {
@@ -534,7 +537,7 @@ describe('unpriced calls fail loudly (slice 2, AC-3)', () => {
       reason: 'unpriced_on_recheck',
     });
     // The records disagree VISIBLY: the entry still stores the measured $0 (SQ-13).
-    expect(onlyEntry().details).toMatchObject({ estimatedCostUsd: 0.001, schema: 1 });
+    expect(onlyEntry().details).toMatchObject({ estimatedCostUsd: 0.001, schema: 2 });
   });
 
   it('is silent for an action whose calls are all priced or failed', async () => {
@@ -578,5 +581,86 @@ describe('unpriced calls fail loudly (slice 2, AC-3)', () => {
     });
     await runAiAction(spec(), async () => llmCall());
     expect(order).toEqual(['audit', 'check']);
+  });
+});
+
+/**
+ * Deduction layer slice 3a (SA-B1, FR-9): one action id per invocation, carried
+ * by the entry as `details.actionId` with `schema: 2`. `entityId` stays the
+ * grouping id. The outcome is decided once, by `resolveActionFailure`.
+ */
+describe('one action id per invocation (slice 3a, SA-B1)', () => {
+  const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  const detailsOf = (n: number) => (mockLog.mock.calls[n][0] as { details: { actionId: string; schema: number } }).details;
+
+  it('the entry carries schema 2 and a UUID action id, and entityId stays the grouping id', async () => {
+    await runAiAction(spec(), async () => llmCall());
+    const entry = onlyEntry();
+    expect(entry.details.schema).toBe(2);
+    expect(entry.details.actionId).toMatch(UUID_V4);
+    expect(entry.details.actionId).not.toBe(GROUP);
+    expect(entry.entityId).toBe(GROUP);
+    expect(entry.details.groupId).toBe(GROUP);
+  });
+
+  it('two invocations with the same group write two entries with two different action ids (AC-8, FR-9)', async () => {
+    await runAiAction(spec(), async () => llmCall());
+    await runAiAction(spec(), async () => llmCall());
+    expect(mockLog).toHaveBeenCalledTimes(2);
+    const [first, second] = [detailsOf(0), detailsOf(1)];
+    expect(first.actionId).toMatch(UUID_V4);
+    expect(second.actionId).toMatch(UUID_V4);
+    expect(first.actionId).not.toBe(second.actionId);
+    expect(mockLog.mock.calls.map((c) => c[0].entityId)).toEqual([GROUP, GROUP]);
+  });
+
+  it('a nested action mints its own id', async () => {
+    await runAiAction(spec(), async () => {
+      await llmCall();
+      await runAiAction(spec({ area: 'website', actionType: 'chat_website_operation', groupId: NESTED }), async () => {
+        await llmCall({ area: 'website', callName: 'landing_page', groupId: NESTED });
+      });
+    });
+    expect(mockLog).toHaveBeenCalledTimes(2);
+    const [nested, outer] = [detailsOf(0), detailsOf(1)];
+    expect(nested.actionId).not.toBe(outer.actionId);
+  });
+
+  it('the id is not exposed on the handle: no call site needs it', async () => {
+    await runAiAction(spec(), async (h) => {
+      expect(Object.keys(h).sort()).toEqual(['markFailed', 'setAccount']);
+      await llmCall();
+    });
+  });
+});
+
+describe('resolveActionFailure decides the outcome once (slice 3a)', () => {
+  const call = (component: string, success: boolean, errorCode?: string) => ({
+    feature: 'business-os-chat', component, provider: 'openai', model: 'm', sessionId: GROUP,
+    inputTokens: 1, outputTokens: 1, costUsd: 0.001, success, ...(errorCode ? { errorCode } : {}),
+  });
+
+  it('a signalled code wins over a throw and over the calls', () => {
+    expect(resolveActionFailure([call('planner', false, 'rate_limit_exceeded')], 'briefing_fallback', { error: { code: 'ECONNRESET' } }))
+      .toEqual({ code: 'briefing_fallback' });
+  });
+
+  it('a throw wins over the calls, and records a code, never the message', () => {
+    expect(resolveActionFailure([call('planner', true)], undefined, { error: Object.assign(new Error(MARKER_ERROR), { code: 'ECONNRESET' }) }))
+      .toEqual({ code: 'ECONNRESET' });
+  });
+
+  it('otherwise the last-attempt rule: a repaired call succeeds, an unrepaired one fails', () => {
+    expect(resolveActionFailure([call('planner', false, 'x'), call('planner', true)], undefined, undefined)).toBeUndefined();
+    expect(resolveActionFailure([call('planner', true), call('analysis', false, 'rate_limit_exceeded')], undefined, undefined))
+      .toEqual({ code: 'rate_limit_exceeded' });
+  });
+
+  it('agrees with the entry runAiAction writes', async () => {
+    await runAiAction(spec(), async () => {
+      await llmCall({ callName: 'planner' });
+      await llmCall({ callName: 'analysis', fail: true }).catch(() => undefined);
+    });
+    expect(onlyEntry().details).toMatchObject({ outcome: 'failed', errorCode: 'rate_limit_exceeded' });
   });
 });

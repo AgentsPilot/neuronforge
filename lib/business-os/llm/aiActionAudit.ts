@@ -23,6 +23,7 @@
 // and no session cookie). Severity and compliance flags come only from
 // EVENT_METADATA (RC-5).
 
+import { randomUUID } from 'node:crypto';
 import { AuditTrail } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { AI_ACTION_ENTITY_TYPE } from '@/lib/audit/requestSchemas';
@@ -222,9 +223,21 @@ export interface AiActionHandle {
   markFailed(code: AiFailureCode): void;
 }
 
-/** The complete, closed set of `details` keys an AI audit entry carries. */
+/**
+ * The complete, closed set of `details` keys an AI audit entry carries.
+ *
+ * `schema: 2` (deduction layer slice 3a, SA-B1) adds `actionId`: one id per
+ * `runAiAction` invocation, the join key to the charge row. Entries written
+ * before it stay `schema: 1` and are not backfilled; no reader parses `schema`.
+ */
 export interface AiAuditDetails {
-  schema: 1;
+  schema: 2;
+  /**
+   * One per invocation, minted by `runAiAction` (SA-B1). Distinct from
+   * `groupId`: one grouping id can now map to several entries (two onboarding
+   * turns in one conversation, a retry). `entityId` stays the grouping id.
+   */
+  actionId: string;
   area: BosLlmArea;
   areas: BosLlmArea[];
   actionType: AiActionType;
@@ -245,6 +258,8 @@ export interface AiAuditDetails {
 
 export interface AiActionSummary {
   spec: AiActionSpec;
+  /** The invocation's own id (SA-B1), minted by `runAiAction`. */
+  actionId: string;
   accountId: string;
   actorId: string;
   calls: UsageCallRecord[];
@@ -298,6 +313,22 @@ function lastAttemptFailure(calls: UsageCallRecord[]): { code: string } | undefi
   return undefined;
 }
 
+/**
+ * The action's failure, decided once (deduction layer slice 3a): the code the
+ * action signalled, else the thrown error's code, else the last-attempt rule.
+ * The audit entry and (from slice 3b-ii) the charge record both take this
+ * result, so they can never disagree on succeeded / failed.
+ */
+export function resolveActionFailure(
+  calls: UsageCallRecord[],
+  signalled: string | undefined,
+  thrown: { error: unknown } | undefined
+): { code: string } | undefined {
+  if (signalled) return { code: signalled };
+  if (thrown) return { code: errorCodeOf(thrown.error) };
+  return lastAttemptFailure(calls);
+}
+
 /** Build the audit entry. Pure: no I/O. Exactly the D-2 fields and nothing else. */
 export function buildAiAuditEntry(summary: AiActionSummary): AuditLogInput {
   const { spec, calls } = summary;
@@ -307,7 +338,8 @@ export function buildAiAuditEntry(summary: AiActionSummary): AuditLogInput {
   const cost = calls.reduce((n, c) => n + c.costUsd, 0);
 
   const details: AiAuditDetails = {
-    schema: 1,
+    schema: 2,
+    actionId: summary.actionId,
     area: spec.area,
     areas: areasOf(calls),
     actionType: spec.actionType,
@@ -393,6 +425,10 @@ export function validateIdentities(
  * An action that made no LLM call writes no entry (FR-7).
  */
 export async function runAiAction<T>(spec: AiActionSpec, fn: (handle: AiActionHandle) => Promise<T>): Promise<T> {
+  // One id per invocation (SA-B1), minted before the scope opens: a nested
+  // runAiAction mints its own, and a caller's retry is a new invocation, so a
+  // new id (FR-9). Not on the handle: no call site needs it.
+  const actionId = randomUUID();
   let accountId = spec.accountId;
   let signalled: AiFailureCode | undefined;
   const handle: AiActionHandle = {
@@ -408,7 +444,7 @@ export async function runAiAction<T>(spec: AiActionSpec, fn: (handle: AiActionHa
 
   try {
     const thrown = outcome.ok ? undefined : { error: outcome.error };
-    emitAiAuditEntry(spec, accountId, outcome.usage.calls, signalled, thrown);
+    emitAiAuditEntry(spec, actionId, accountId, outcome.usage.calls, signalled, thrown);
   } catch (err) {
     logger.error(
       { err, area: spec.area, actionType: spec.actionType, groupId: spec.groupId, accountId: accountId ?? null },
@@ -440,6 +476,7 @@ export async function runAiAction<T>(spec: AiActionSpec, fn: (handle: AiActionHa
 
 function emitAiAuditEntry(
   spec: AiActionSpec,
+  actionId: string,
   accountId: string | undefined,
   calls: UsageCallRecord[],
   signalled: AiFailureCode | undefined,
@@ -455,8 +492,8 @@ function emitAiAuditEntry(
     return;
   }
 
-  const failure = signalled ? { code: signalled } : thrown ? { code: errorCodeOf(thrown.error) } : undefined;
-  const entry = buildAiAuditEntry({ spec, ...identities, calls, failure });
+  const failure = resolveActionFailure(calls, signalled, thrown);
+  const entry = buildAiAuditEntry({ spec, actionId, ...identities, calls, failure });
 
   // Never awaited (RC-4): log() awaits a 100-row insert when its entry fills the batch.
   void AuditTrail.log(entry).catch((err: unknown) => logger.error({ err, ...ids }, 'AI audit entry could not be queued'));

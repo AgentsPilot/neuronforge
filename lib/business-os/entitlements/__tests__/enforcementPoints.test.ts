@@ -318,6 +318,11 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['EntitlementConfig'],
       why: 'The public invite view. A type import only: it hands the config to `inviteOffer`. It refuses no capability.',
     },
+    {
+      file: 'lib/business-os/llm/chargeResolver.ts',
+      symbols: ['currentCreditValue', 'type CreditValueVersion'],
+      why: 'Credit deduction slice 3a: the one cost-to-credits conversion reads the credit value (`config/creditValue.ts`, data only) to turn an action cost into credits for the charge record. It MEASURES what an action cost; it resolves no account plan and refuses nothing. If it ever imports a resolver or a decision function, it is being asked to gate and this suite says so.',
+    },
   ];
 
   /** Every symbol a file imports from the entitlements module. */
