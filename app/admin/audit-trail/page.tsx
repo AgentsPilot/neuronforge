@@ -19,6 +19,7 @@ import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { OPERATOR_AUDIENCES } from '@/lib/audit/eventAudience';
 import { createLogger } from '@/lib/logger';
 import { ArchivedBeforeNotice } from '@/app/admin/components/ArchivedBeforeNotice';
+import { BusinessAccountPicker } from './BusinessAccountPicker';
 
 // Structured logging works in a client component: lib/logger.ts configures
 // Pino's `browser: { asObject: true }` transport, and the sibling admin page
@@ -537,6 +538,16 @@ function AuditTrailPageContent() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {/* Account — the only filter here applied at the DATABASE level to a
+                single account (route.ts `.eq('user_id', accountId)`), so it is
+                first: everything below narrows within it. Before this the filter
+                could only be cleared, never set, unless the operator already knew
+                the account's UUID. */}
+            <BusinessAccountPicker
+              selectedAccountId={filters.userId}
+              onSelect={(userId) => setFilters({ ...filters, userId })}
+            />
+
             {/* Search */}
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-2">Search</label>
