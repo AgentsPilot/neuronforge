@@ -214,11 +214,16 @@ export function BusinessAccountPicker({ selectedAccountId, onSelect }: BusinessA
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
       }}
     >
-      <label htmlFor="audit-business-picker" className="block text-sm font-medium text-slate-300 mb-2">
+      <label htmlFor="audit-business-picker" className="block text-xs font-medium text-slate-300 mb-1">
         Account
       </label>
+      {/* The dropdown is anchored to THIS box, not to the field as a whole.
+          It used to hang off the outer container at a hand-measured
+          `top-[4.6rem]`, which silently assumed a `text-sm` label, `mb-2` and a
+          `py-2` input — change any one of them (as the density pass just did)
+          and the list lands on top of the input. `top-full` cannot drift. */}
       <div className="relative">
-        <Building2 className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
+        <Building2 className="absolute left-2.5 top-1/2 transform -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
         <input
           id="audit-business-picker"
           ref={inputRef}
@@ -238,94 +243,100 @@ export function BusinessAccountPicker({ selectedAccountId, onSelect }: BusinessA
             setOpen(true);
           }}
           onKeyDown={onKeyDown}
-          className="w-full pl-10 pr-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full pl-8 pr-3 py-1.5 text-sm bg-slate-900/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
+
+        {open && (
+          <div
+            id="audit-business-options"
+            role="listbox"
+            aria-label="Businesses"
+            data-testid="business-picker-options"
+            className="absolute z-20 left-0 right-0 top-full mt-1 max-h-64 overflow-auto bg-slate-900 border border-slate-600 rounded-lg shadow-xl"
+          >
+            {error && (
+              <p role="alert" className="px-3 py-2 text-sm text-red-300">
+                {error}
+              </p>
+            )}
+
+            {!error && loading && options.length === 0 && (
+              <p className="px-3 py-2 text-sm text-slate-400">Loading…</p>
+            )}
+
+            {!error && !loading && options.length === 0 && (
+              <p className="px-3 py-2 text-sm text-slate-400" data-testid="business-picker-empty">
+                No business matches that name.
+              </p>
+            )}
+
+            {options.map((option, index) => {
+              const selected = option.userId === selectedAccountId;
+              const highlighted = index === highlight;
+              return (
+                <button
+                  key={`${option.kind}-${option.userId}`}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  data-testid={option.kind === 'pasted' ? 'business-picker-pasted' : 'business-picker-option'}
+                  // preventDefault keeps focus in the input, so the container's
+                  // onBlur cannot close the list before the click lands.
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setHighlight(index)}
+                  onClick={() => choose(option.userId)}
+                  className={`w-full text-left px-3 py-2 text-sm transition-colors ${
+                    highlighted ? 'bg-slate-700 text-white' : 'text-slate-200 hover:bg-slate-800'
+                  } ${selected ? 'font-semibold' : ''}`}
+                >
+                  {option.kind === 'pasted' ? (
+                    <span className="flex items-center gap-2">
+                      <Search className="w-3.5 h-3.5 text-slate-400" />
+                      Use this account id
+                      <span className="text-slate-400 font-mono text-xs">{shortId(option.userId)}</span>
+                    </span>
+                  ) : (
+                    <span className="flex items-center justify-between gap-2">
+                      {/* A business that has not named itself is shown as unnamed
+                          and stays selectable: `company_name` is nullable, and
+                          printing the id in the name's place would be the same
+                          mistake the account chip was just fixed for. */}
+                      <span className={`truncate ${option.companyName ? '' : 'italic text-slate-400'}`}>
+                        {option.companyName ?? 'Unnamed business'}
+                      </span>
+                      <span className="text-slate-500 font-mono text-xs shrink-0" title={option.userId}>
+                        {shortId(option.userId)}
+                      </span>
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+
+            {truncated && (
+              <p className="px-3 py-2 text-xs text-slate-500 border-t border-slate-700" data-testid="business-picker-truncated">
+                First {limit} matches only — type more of the name to narrow it.
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Said out loud rather than left to be discovered: the list is
           `business_profiles`, so an account with no profile row — every
           agent-platform account — cannot be found by name here, however long the
           operator types. Pasting its id is the way in, and the deep link the
-          Businesses panel uses still works unchanged. */}
-      <p className="mt-2 text-xs text-slate-500" data-testid="business-picker-hint">
+          Businesses panel uses still works unchanged.
+
+          Still permanent, and still the tallest thing in the filter grid: at a
+          quarter of the card it wraps to two lines on a 1920px screen. Hiding it
+          until the field is focused would buy another ~32px, but that turns a
+          standing caveat into one an operator has to go looking for, so it is
+          raised as a proposal rather than taken here. */}
+      <p className="mt-1 text-xs leading-4 text-slate-500" data-testid="business-picker-hint">
         Only accounts with a business profile can be found by name. Paste a full account id to filter by any other
         account.
       </p>
-
-      {open && (
-        <div
-          id="audit-business-options"
-          role="listbox"
-          aria-label="Businesses"
-          data-testid="business-picker-options"
-          className="absolute z-20 left-0 right-0 top-[4.6rem] max-h-64 overflow-auto bg-slate-900 border border-slate-600 rounded-lg shadow-xl"
-        >
-          {error && (
-            <p role="alert" className="px-3 py-2 text-sm text-red-300">
-              {error}
-            </p>
-          )}
-
-          {!error && loading && options.length === 0 && (
-            <p className="px-3 py-2 text-sm text-slate-400">Loading…</p>
-          )}
-
-          {!error && !loading && options.length === 0 && (
-            <p className="px-3 py-2 text-sm text-slate-400" data-testid="business-picker-empty">
-              No business matches that name.
-            </p>
-          )}
-
-          {options.map((option, index) => {
-            const selected = option.userId === selectedAccountId;
-            const highlighted = index === highlight;
-            return (
-              <button
-                key={`${option.kind}-${option.userId}`}
-                type="button"
-                role="option"
-                aria-selected={selected}
-                data-testid={option.kind === 'pasted' ? 'business-picker-pasted' : 'business-picker-option'}
-                // preventDefault keeps focus in the input, so the container's
-                // onBlur cannot close the list before the click lands.
-                onMouseDown={(event) => event.preventDefault()}
-                onMouseEnter={() => setHighlight(index)}
-                onClick={() => choose(option.userId)}
-                className={`w-full text-left px-3 py-2 text-sm transition-colors ${
-                  highlighted ? 'bg-slate-700 text-white' : 'text-slate-200 hover:bg-slate-800'
-                } ${selected ? 'font-semibold' : ''}`}
-              >
-                {option.kind === 'pasted' ? (
-                  <span className="flex items-center gap-2">
-                    <Search className="w-3.5 h-3.5 text-slate-400" />
-                    Use this account id
-                    <span className="text-slate-400 font-mono text-xs">{shortId(option.userId)}</span>
-                  </span>
-                ) : (
-                  <span className="flex items-center justify-between gap-2">
-                    {/* A business that has not named itself is shown as unnamed
-                        and stays selectable: `company_name` is nullable, and
-                        printing the id in the name's place would be the same
-                        mistake the account chip was just fixed for. */}
-                    <span className={`truncate ${option.companyName ? '' : 'italic text-slate-400'}`}>
-                      {option.companyName ?? 'Unnamed business'}
-                    </span>
-                    <span className="text-slate-500 font-mono text-xs shrink-0" title={option.userId}>
-                      {shortId(option.userId)}
-                    </span>
-                  </span>
-                )}
-              </button>
-            );
-          })}
-
-          {truncated && (
-            <p className="px-3 py-2 text-xs text-slate-500 border-t border-slate-700" data-testid="business-picker-truncated">
-              First {limit} matches only — type more of the name to narrow it.
-            </p>
-          )}
-        </div>
-      )}
     </div>
   );
 }
