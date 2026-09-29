@@ -122,6 +122,34 @@ function filtersFromUrl(params: URLSearchParams | null): FilterState {
 }
 
 /**
+ * What the active account chip is labelled with.
+ *
+ * The chip used to print `filters.userId.slice(0, 8)` — a truncated GUID, which
+ * names nothing to the operator reading it. The readable identity is already in
+ * memory: the route filters on `user_id`, so every loaded row belongs to the
+ * filtered account and already carries `business.company_name` and `users`
+ * (audit-trail slice: resource + business name). So this is a read of state,
+ * never a fetch.
+ *
+ * Business name first because that is what an operator calls the account, then
+ * the same `email → full_name` chain the rows use, and finally the truncated id
+ * when there is nothing to fall back on — no rows loaded yet, or a filter that
+ * matched none. Saying the id then is honest; a placeholder would not be.
+ *
+ * The `user_id === userId` test is load-bearing, not defensive tidiness: `logs`
+ * still holds the PREVIOUS filter's rows while the next request is in flight, so
+ * without it the chip would briefly label this account with another one's name.
+ */
+function accountFilterLabel(logs: AuditLogEntry[], userId: string): string {
+  const own = logs.filter((log) => log.user_id === userId);
+  const name =
+    own.find((log) => log.business?.company_name)?.business?.company_name ||
+    own.find((log) => log.users?.email)?.users?.email ||
+    own.find((log) => log.users?.full_name)?.users?.full_name;
+  return name || `${userId.slice(0, 8)}…`;
+}
+
+/**
  * The closed set of `AiAuditDetails` fields this screen renders (FR-A5 / AC-A5):
  * exactly what lib/business-os/llm/aiActionAudit.ts records, minus nothing this
  * criterion names and plus nothing it does not.
@@ -488,7 +516,14 @@ function AuditTrailPageContent() {
                 data-testid="account-filter-chip"
                 className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-blue-500/20 text-blue-200"
               >
-                Account {filters.userId.slice(0, 8)}…
+                {/* The full id stays reachable on hover: the visible text either
+                    replaces it with a name or truncates it, so a title is the
+                    only place an operator can still read the id they filtered by
+                    (the row's own "User:" line shows the id only when there is no
+                    email or name to show instead). */}
+                <span className="truncate max-w-[18rem]" title={filters.userId}>
+                  Account {accountFilterLabel(logs, filters.userId)}
+                </span>
                 <button
                   type="button"
                   aria-label="Show every account"
