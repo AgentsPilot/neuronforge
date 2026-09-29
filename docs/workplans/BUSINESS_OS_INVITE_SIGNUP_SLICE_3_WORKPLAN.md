@@ -261,6 +261,43 @@ None of these gates the **merge** (D-9). All of them gate **switching it on**.
 - ⬜ 3b-10: Local end-to-end on `localhost:3000` against the real Supabase project once G-1/G-2 allow it (a throwaway Gmail; §10.2 steps 1–4), before the PR is marked ready.
 - ⬜ 3b-11: SA code review + QA in parallel; the user sees the diff; RM commits and opens the PR. Switch on after merge: G-1 to G-4, then §10.2 on production.
 
+#### Slice 3b: Dev progress and deviations (2026-09-29)
+
+Merged by RM from Dev's 3b notes. The ⬜ boxes above are the plan as written; this record is the as-built state.
+
+**Branch:** `feature/bos-invite-signup-slice-3b`, cut from `origin/main` bd763222 on 2026-09-29 in the `neuronforge-invite-s1` worktree; upstream unset. Nothing committed, pushed or written to the DB.
+**Workplan read from:** `neuronforge-invite-s0/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_3_WORKPLAN.md` (not copied).
+
+##### Task progress (3b)
+
+- ✅ 3b-1: SA answered Q-1..Q-7. `google-auth-library` `^10.4.1` added as a direct dependency (package.json + lockfile root entry; see DEV-3b-1).
+- ✅ 3b-2: `googleIdToken.ts` (server-only, one module-level `OAuth2Client`, never throws, logs nothing, fixed reason codes) + `googleSignInConfig.ts` (the one accessor) + 40 tests (R-1, R-2, R-5, R-6, Q-2).
+- ✅ 3b-3: repository: shared module-level claim builder `signupClaimUpdate` with an exhaustive `switch (proof.kind)` + `never` default (R-7); `claimForSignup` now delegates to it; new `claimForGoogleSignup`. Count-only, no `.select`. Unit tests incl. "Google filters == code filters minus the hash filter".
+  **Live PostgREST no-match check (R-7, §9.3), 2026-09-29T19:13:11Z, id `00000000-0000-0000-0000-000000000000`, real project via the service-role client:**
+  - `claimForSignup(no-match)` → `{"data":false,"error":null}`
+  - `claimForGoogleSignup(no-match)` → `{"data":false,"error":null}`
+  Count 0, no 42703, no row written. The script lived at `scripts/tmp-3b-live-claim-nomatch.ts` for the run only and was deleted.
+- ✅ 3b-4: `AuthAccountRepository.createConfirmedUserWithoutPassword` (`{ id, email, email_confirm: true }`, no password, no metadata; outcome type has no `weak_password`, per SA's optimisation). Both creators share one module-level `createConfirmedAuthUser`. Tests.
+- ✅ 3b-5: `createAndFinish` extracted FIRST; the unchanged 1b suite was green (42/42) before any Google code. Then `completeGoogleSignup` + `refuseGoogleProof` (exhaustive). `BOS_INVITE_REDEEMED.details.method` = `password` | `google`. Tests T-3b-2..T-3b-11, R-1 (real verifier, payload-bearing library error), R-2, R-10, Q-4.
+- ✅ 3b-6: `completeGoogleSignupSchema` (`.strict()`, token ≤ 512, idToken JWS ≤ 4096, nonce = 43 base64url); wiring (`verifyGoogleIdToken` in `buildRedemptionDeps`); route `app/api/public/invites/signup/google/route.ts` (404 gate first, then Zod, then session, then flow); route tests; lease pin covers both claiming routes.
+- ✅ 3b-7: logger redaction of `idToken`, `credential`, `nonce` (+ `*.`) + test.
+- ✅ 3b-8: `signInWithGoogleIdToken` (audited `login_method: 'google_id_token'`, no token/nonce logged) + test; `useGoogleIdentity` hook; `GoogleSignupButton`; page wiring (above the code form; code form hidden once a Google signup created the account); copy en/he/es; layout Q-1 comment; render tests.
+- ✅ 3b-9: guards, `test:bos-entitlements`, `test:authz-guard`, `lint:hooks`, eslint on touched files, tsc (touched files), `next build` — see the hand-off report for numbers.
+- ⬜ 3b-10: local end-to-end on localhost:3000 with a real Google client (needs G-1/G-2). **R-4 is decided here**; note that `no-referrer` is set in TWO places for `/invite`: `app/invite/layout.tsx` metadata AND `middleware.ts` (line ~111). If `strict-origin` is needed, change both.
+- ⬜ 3b-11: SA code review + QA; user sees the diff; RM commits.
+
+##### Deviations (DEV-3b-1 to DEV-3b-8)
+
+- **DEV-3b-1 (dependency edit).** `npm install --package-lock-only google-auth-library@^10.4.1` resolved to 10.9.1, wrote `^10.9.1` into package.json and reshuffled ~100 lockfile lines (gaxios, gcp-metadata, gtoken removed, tailwind wasm entries). Reverted. Instead: `"google-auth-library": "^10.4.1"` added to `package.json` dependencies and to `package-lock.json` `packages[""].dependencies` (one line each). The locked `node_modules/google-auth-library` stays 10.4.1, which satisfies the range, so `npm ci` installs exactly what is tested today.
+- **DEV-3b-2 (accessor file).** `googleSignInClientId()` lives in its own client-safe `lib/business-os/invites/googleSignInConfig.ts`, not in `googleIdToken.ts` (b1). Reason: the page is a client component and must call the same accessor (R-6), but `googleIdToken.ts` is `server-only` (Q-2). `googleIdToken.ts` imports it for `aud`. Still exactly one reader of the variable.
+- **DEV-3b-3 (builder as a module function).** The shared claim builder (D-3) and the shared `createUser` call (D-4) are module-level functions, not private methods, because both repositories' tests pin `Object.getOwnPropertyNames(prototype)`; a private method would appear there as an unscoped-looking public name.
+- **DEV-3b-4 (refusal audits carry `method: 'google'`).** `BOS_INVITE_REDEMPTION_REFUSED` for `google_email_mismatch`, `google_email_unverified` and `google_account_not_authoritative` carries `{ reason, method: 'google' }`. No address, no `sub`, no token.
+- **DEV-3b-5 (not-configured inside the flow).** The route answers 404 before any work; the flow ALSO maps a verifier `not_configured` to 404 `google_signin_not_configured` (belt and braces; `RedemptionRefusal.status` gains 404).
+- **DEV-3b-6 (cert fetch inside verifyIdToken).** Besides the explicit `getFederatedSignonCertsAsync` first call (R-5), a certificate refresh that fails INSIDE `verifyIdToken` is also mapped to `unavailable`, by reading only the library's fixed "Failed to retrieve verification certificates" message prefix. The message is never kept or logged.
+- **DEV-3b-7 (no button label in copy).** Google draws "Continue with Google" itself, localised by GIS's `locale` option, so b19's "button label" string is not in `invitePageCopy.ts`. Copy added: divider, busy line, ready heading/body, four Google error messages (all ending with a pointer to the emailed code, R-8; R-2's English text exactly as ruled).
+- **DEV-3b-8 (not taken): SA's optional `.eq('email', …)` on the Google claim** was not added (defence in depth only, and it would put the address in a PostgREST query string).
+- **Found, not changed:** `signInWithPassword` in `lib/client/auth-actions.ts` logs `{ email }` on a rejected sign-in (pre-existing, 1b-era). Out of scope; flag for a follow-up.
+
 ---
 
 ## 8. Traceability
@@ -501,11 +538,193 @@ No new event names (D-11) is correct. `BOS_INVITE_REDEEMED.details.method`, and 
 
 #### Code Approved for QA: Yes
 
+### SA Code Review 3b — 2026-09-29
+
+**Code Review by SA — 2026-09-29**
+**Status:** ✅ Code Approved. This covers the uncommitted diff on `feature/bos-invite-signup-slice-3b` in `neuronforge-invite-s1`, from origin/main bd763222: 23 modified and 7 new files. There are no blockers and no must-fix items. Three Low notes follow, plus one backlog item. R-4 is still open and belongs to 3b-10 (manual), not to code review.
+
+#### What SA verified
+
+| Item | Result |
+|---|---|
+| **R-1**: the verifier never throws and never logs | ✅ `googleIdToken.ts:164-195`. An outer `try` sits around everything. Each library call has its own `try`, and a caught error is reduced to a fixed code on the spot. The module has no logger, no `throw` and no `.message` read, except the fixed-prefix `startsWith`, and a source test pins this. The flow logs only `googleTokenRefusal: <code>`. The test uses the **real** `createGoogleIdTokenVerifier` behind a client whose error carries a JSON payload with email, `sub` and name (`inviteRedemption.test.ts`, "Slice 3b, SA R-1"). It asserts that none of them, and not "Token used too late" either, is in the logs, audits, failure records or the HTTP body. The route's catch-all cannot receive a Google-derived value. |
+| R-11: no Zod logging | ✅ The route returns `invalid_request` and logs nothing. A route test asserts `state.logs` is empty for 4 bad bodies. The flow never reads `sub`. The only Google value it gets is the email, which is compared and then dropped. |
+| Logger redaction | ✅ `idToken`, `credential`, `nonce` and their `*.` forms. The test covers the top level and one level down. No existing log call uses these keys, so nothing that was visible is lost. |
+| **R-2** | ✅ `googleIdToken.ts:147-153`. The order is: `email_verified === true` (strict), then Gmail or `hd` equal to the domain (case-insensitive), both inside the verifier and so before the caller's address match (`inviteRedemption.ts`, `completeGoogleSignup`). A refusal returns 409 `google_use_code` and is audited as `google_account_not_authoritative` with no address. Tests cover a Workspace account with a matching `hd`, a consumer account on a company domain, a mismatched `hd`, a subdomain, `googlemail.com` and a look-alike domain. The match is `proof.email !== row.email.trim().toLowerCase()`, with no folding. Tests cover `+tag`, a dot variant and the `x+tag@gmail.com` invite. |
+| **R-5** | ✅ Nonce: SHA-256 lowercase hex compared in constant time. Raw, upper-case and missing values are refused. `audience` is the single configured id. Both issuer forms are accepted and checked again after the library. `exp` is checked by the library. `iat`: a missing, string or >600 s old value, or one >300 s in the future, is refused, and the bounds are inclusive. `email_verified`, a missing or non-string email and an email without a domain are covered. A certificate fetch failure returns `unavailable`, which maps to 503. SA confirmed in `node_modules/google-auth-library` 10.4.1 (`oauth2client.js:609`) that the prefix is the library's own. |
+| **R-6** | ✅ There is one reader. `googleSignInConfig.ts` makes a literal `process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` access, and a test pins that it is the only `process.env` access. The plugin variable does not switch the feature on, and this is tested at the accessor, the route and the page. The route answers 404 before `request.json()` and `getUser`, and the test asserts that no event runs. The page hides the button when the variable is unset. `docs/FEATURE_FLAGS.md` has a table row and a section (the tracked file is upper-case). In the built client chunk, the accessor compiles to `s.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID`, which is null when unset and inlined when set at build. |
+| **R-7** | ✅ `signupClaimUpdate` uses an exhaustive `switch` with a `never` default. `claimForSignup` sends exactly the filters it did before, in the same order: id, hash, redeemed, revoked, expiry, `.or(noLiveClaim)`, then the claimant. The update is count-only, with no `.select()` and therefore no `.or()`+`.select()`. SA accepts Dev's live no-match record (`{data:false,error:null}` × 2, 2026-09-29T19:13:11Z) and did not re-run it against the DB. `mutationOrSelect.guard` is green with no new exemption. |
+| Reuse: claim → create → finalise | ✅ `createAndFinish` is the one shared tail. The 1b suite passed **42/42** (SA counted: 75 tests, 33 Slice 3b + 42 others, 0 failed). Its only edits are the import line and the `accounts` key pin. The create call is `admin.createUser({ id, email: row.email, email_confirm: true })`: no password and no metadata, and the test pins the exact arguments. The id comes from the server or from a lapsed claim (I-3, I-6). There is no `deleteUser`, and the no-deletion guard is green. Finalise receives server-derived values only, so lineage and plan run through the existing function. FR-12a covers `find_user`, `finalise` and `create_user_id_mismatch`. Q-4 (code-locked invite) and R-10 (a lapsed password claim finished by Google, `method: 'google'`) are both tested. |
+| Browser `signInWithIdToken` | ✅ The nonce is correct. GIS gets `SHA-256(raw)` hex (the test asserts 64 lowercase hex characters). Our route and Supabase get the raw value, and Supabase hashes it and compares it with the token's claim, which is its documented contract. Linking relies on Supabase's automatic identity linking to the confirmed user with that email (Q-5: signups-disabled behaviour is carried to Slice 4 AC-12). If the sign-in fails, the page shows "Your account is ready" with a sign-in link and hides the code form, and this is tested. Nothing goes to storage, and this is tested. |
+| Dependency | ✅ `google-auth-library` is imported only by `googleIdToken.ts`, behind `import 'server-only'` (a repo-walk test checks this), with one module-level `OAuth2Client`. The built `.next/static` contains no `google-auth-library` code. Lockfile: the lock entry is `node_modules/google-auth-library` 10.4.1, hoisted and **not** `dev`-flagged, and it satisfies `^10.4.1`. **`npm ci --dry-run --ignore-scripts` on a copy of package.json + package-lock.json (npm 11.18.0) exited 0.** Caveat: a control run without the root-section line also passed, so npm ci does not check that line. The file is valid for CI either way. |
+| Tenant isolation | ✅ The `.strict()` body is `{ token, idToken, nonce }`, and injected `email`/`userId`/`accountId`/`cohort`/`password` fields return 400 with no call made. The account is created for the **row's** email. The claim is a CAS on the observed claimant. No session is minted by the server. |
+| Entitlements | ✅ There is no new importer of `lib/business-os/entitlements/`. The type-only import of `googleIdToken` into `inviteRedemption.ts` is not an entitlements import. `test:bos-entitlements` is green. |
+| Logging standard | ✅ The touched and new files contain no `console.*`. |
+
+#### Rulings on Dev's deviations
+
+| # | Ruling |
+|---|---|
+| DEV-3b-1 (one-line lockfile edit) | **Accepted.** CI's `npm ci` accepts the lockfile (dry-run above). Reverting the `--package-lock-only` rewrite to 10.9.1 was right: the tested version is what installs. |
+| DEV-3b-2 (accessor in a client-safe file) | **Accepted.** This is what R-6's "one accessor" requires when one caller runs in the browser and `googleIdToken.ts` is `server-only`. There is still exactly one reader, pinned by a test. |
+| DEV-3b-3 (module functions, not private methods) | **Accepted.** They keep the pinned public surface of both repositories, stay inside `lib/repositories/`, and receive the injected client. |
+| DEV-3b-4 (`method: "google"` on refusal audits) | **Accepted.** It is a fixed literal and carries no PII. It makes the audit view filterable by method. |
+| DEV-3b-5 (404 mapping inside the flow as well) | **Accepted** as a second check. It cannot be reached in production, because the gate and the verifier read the same build-time value. |
+| DEV-3b-6 (certificate refresh failing inside `verifyIdToken` gives 503) | **Accepted.** Only the library's fixed prefix is read. No token-failure message starts with it, and even if one did, the result would be a 503 (the check fails closed), never an accepted token. |
+| DEV-3b-7 (Google draws the button label) | **Accepted.** |
+| DEV-3b-8 (no `.eq("email")` on the Google claim) | **Accepted.** It was optional defence in depth, and the reason given is sound: it would put the address into the PostgREST request URL, which infrastructure logs record. The account is created for the row's email in any case. |
+
+#### Code Review Comments
+
+1. `lib/client/auth-actions.ts:190-197`: the `USER_LOGIN` audit from `signInWithGoogleIdToken` carries `resourceName` and `details.email` = the account's email. This is the platform's existing login-audit convention (lines 118-121, password and OAuth), and the value is the Supabase account's email, not something our route took from the token. **Not a change request.** It is a scoping note for QA and for R-12 / G8: the "no email in audit details" check applies to the `BOS_INVITE_*` rows (REDEEMED, REFUSED, PLAN_PROVISIONED) and the server logs. It does not apply to the platform `USER_LOGIN` row. — Priority: Low
+2. `app/invite/GoogleSignupButton.tsx:120-122`: suppose the POST succeeds on the server but the response is lost in transit (network drop). The page then shows the generic error, and a retry answers `used` ("no longer available") although the account exists. The 1b `SignupForm` behaves the same way. Optional: map `used` to a line that includes the sign-in link. Do not block. — Priority: Low
+3. `app/invite/useGoogleIdentity.ts:138`: the nonce is made once per GIS `initialize` (per page load and language), not per click. This is acceptable: the raw value never leaves page memory except in our POST and in Supabase's call, `iat` is bounded to 10 minutes, and a replay ends at `used`. It is recorded so that nobody "fixes" it later by re-initialising GIS on every click, which GIS warns against. — Priority: Low (info)
+4. **Backlog (pre-existing, not 3b):** `lib/client/auth-actions.ts:113`: `signInWithPassword` logs `{ email }` on a rejected sign-in. This violates the no-PII-in-logs norm. Fix it in a small follow-up: log `authStatus` only, as the new function does. The audit's `resourceName` / `details.email` follow the login-audit convention and are out of scope for that fix. — Priority: Low, backlog
+
+#### Still open (not code review)
+- **R-4 / 3b-10:** GIS under `no-referrer` on localhost. If it fails, change **both** `app/invite/layout.tsx` metadata and `middleware.ts:111` to `strict-origin` (pre-approved).
+- G-1 to G-4 are needed before switching it on. The merge is inert and does not wait for them.
+
+#### Verification run by SA (2026-09-29)
+- `npx jest lib/business-os/invites app/invite app/api/public/invites lib/client lib/logger lib/repositories/__tests__/{AuthAccount,BusinessOsInvite}Repository.test.ts`: **23 suites / 654 tests passed**. `inviteRedemption.test.ts`: 75/75, of which 42 are the 1b tests.
+- All `*.guard.test.ts` and `*invariant.test.ts` (37 suites): **1,011 tests passed**.
+- `npm run test:authz-guard`: 1 suite / 119 passed. `npm run test:bos-entitlements`: 88 suites / 1,840 passed. `npm run lint:hooks`: clean. `eslint` on the 10 touched source files: clean.
+- `npx tsc --noEmit`: 2,087 errors across the repo, all pre-existing. **None** is in a touched or new file.
+- `npx next build` with the CI placeholder env from `build.yml`: **exit 0**. `/api/public/invites/signup/google` is ƒ, and `/invite` is 13.9 kB / 153 kB.
+- `npm ci --dry-run --ignore-scripts` on a copy of the manifest and lockfile: exit 0.
+
+#### Code Approved for QA: Yes
+
 ---
 
 ## QA Testing Report
 
 **QA waived by user for 3a (2026-09-29)** — the user's exact words: **"I waive QA for 3a and approve committing it and opening the PR"** (earlier: "skip QA for 3a" and "3a approved, have RM open the PR") (proportionate effort; email template change, SA code-approved with 1,053 tests and `next build` OK). No QA run for 3a. Post-deploy check owed: send one test invite to a Gmail +alias and confirm the AgentPilot logo shows. 3b still requires QA.
+
+### QA Report 3b — 2026-09-29
+
+**QA — 2026-09-29**
+**Test mode:** full
+**Strategy used:** A + B + C. A = Jest unit (the verifier, schemas, logger, client action, UI render). B = Jest integration with in-memory repositories (route → real flow → real production verifier). C = QA probes in the scratchpad (`qa-3b-probes/`), with a Jest config whose rootDir is the worktree. D = manual browser check: **not run**, because it needs G-1/G-2 and a registered origin. It is covered by the production checklist below.
+**Focus:** api, security, schema, ui (Jest level)
+**Skipped:** a live browser run with GIS (blocked on G-2). No DB, no network: Google's certificate fetch was stubbed with a locally generated RSA key, and the **real** `google-auth-library` 10.4.1 `OAuth2Client` did the signature, `exp`, `iss` and `aud` checks.
+**Input source:** prompt keywords (TL brief) + workplan §9.2 / §10.2 / SA R-items
+
+**Verdict: PASS WITH NOTES.** No bugs. Three Low notes, none blocking. Ten of ten mutants killed.
+
+#### Safety
+- Before any test, a snapshot of all 32 modified and untracked files (paths kept), SHA-256 hashes, `git status --porcelain`, `git diff --stat` and the full diff was saved to `scratchpad/invite-s3b-backup/`.
+- Mutations were made one file at a time. Each file was restored from the backup by `cp` and hash-checked; every restore matched.
+- At the end, status, diff stat, full diff and all 32 hashes were **identical** to the snapshot, and HEAD is still bd763222. No git write command was run.
+
+#### 1. Suites
+| Run | Result |
+|---|---|
+| `jest lib/business-os/invites app/invite app/api/public/invites lib/client lib/logger` + `AuthAccountRepository` + `BusinessOsInviteRepository` tests | 23 suites / **654 passed** |
+| All `*.guard.test.ts` + `*invariant*.test.ts` (37 suites) | **1,011 passed** |
+| `npm run test:authz-guard` | 1 / **119 passed** |
+| `npm run test:bos-entitlements` (the diff adds no entitlements importer; run anyway) | 88 / **1,840 passed** |
+
+#### 2. Adversarial probes (74 QA tests, all pass)
+
+**Probe A: `verifier.probe.test.ts`, 41 tests.** It runs the production `verifyGoogleIdToken` export on the real `OAuth2Client`, with only `getFederatedSignonCertsAsync` stubbed. Tokens are RS256, signed locally. The clock is frozen for both the library and the verifier.
+| Case | Result |
+|---|---|
+| Genuine Gmail token, mixed case | ok, lower-cased |
+| Forged signature (another key, same kid) | invalid |
+| Expired (the library throws "Token used too late" with the payload) | invalid `verification_failed`, nothing returned from the message |
+| Wrong `aud` / **plugin client id as `aud`** / `aud` as an array containing our id | invalid |
+| `iss` = `https://evil.example`, `accounts.google.com.evil`, `http://accounts.google.com` | invalid. Both real forms ok |
+| `iat` 600 s old / 601 s old / 300 s ahead / 301 s ahead | ok / invalid / ok / invalid (**both bounds inclusive**) |
+| `iat` missing, `iat` as a numeric string | invalid |
+| Nonce missing / raw / upper-case hex / hash of another nonce | invalid `nonce` |
+| `email_verified` false, `"true"`, missing, `1` | unverified |
+| Email missing, `''`, no `@`, `@gmail.com`, `x@`, a number | invalid `email_missing` |
+| Non-Gmail, no `hd`; `hd` for another domain; `hd` a subdomain; `googlemail.com`; `gmail.com.evil.io` | not_authoritative |
+| `hd` matching (case-insensitive) | ok |
+| Unverified and non-authoritative | unverified (checked first) |
+| Certificate fetch fails | unavailable |
+| Sign-in id unset **with the plugin id set** / whitespace-only | not_configured, **0 cert fetches** |
+| Garbage tokens (`a.b.c`, `x`, `..`) | invalid, never throws |
+
+**Probe B: `route.probe.test.ts`, 33 tests.** It runs the real route → real `completeGoogleSignup` → real production verifier. The repositories, finalise and audit are in-memory CAS fakes. The logger captures raw objects, which is stricter than Pino's redaction.
+| Area | Result |
+|---|---|
+| Happy path | 200 `{redirectTo:'/onboarding-chat'}`. One account for the **row's** email. Invite redeemed. `REDEEMED.details.method='google'`. `no-store` + `no-referrer` |
+| Case difference (`QA.Invitee@GMAIL.com`) | accepted |
+| Dot variant / `+tag` / another Gmail | 409 `google_email_mismatch`, no claim, no account |
+| `+alias` invite + base Gmail | 409 `google_email_mismatch` (D-7, as designed) |
+| Non-Gmail without `hd` | 409 `google_use_code`, audited `google_account_not_authoritative` with no address. The domain is absent too |
+| `hd` ≠ domain → `google_use_code`; Workspace with matching `hd` | 200 |
+| Revoked / used / expired | 409 each, no account |
+| Live claim | 409 `signup_in_progress` |
+| Existing account | 409 `existing_account`. **The invite is not redeemed and not claimed** |
+| Q-4: code-locked (5 attempts) | 200. The outstanding code hash is cleared |
+| R-10: a lapsed **password** claim whose account exists | 200 with the **same** lapsed id. No new account. `REDEEMED` has `method: 'google'` |
+| **Race:** 2 parallel completes | exactly one 200, one 409, **one account**, one `REDEEMED` |
+| **Race:** 5 parallel completes | exactly one 200, one account |
+| Replay of the same token after success | 409 `used`, still one account |
+| **Leaks:** forged, expired (payload in the library message), stale `iat`, wrong `aud`, plugin `aud`, wrong `iss`, raw nonce, missing email | 400 `google_token_invalid`, not audited. The logs, audits, failure records and body contain **no email, `sub`, name, picture, ID token, raw or hashed nonce, or invite token**, and none of the library's message texts |
+| `email_verified` false / `"true"` | 409 `google_email_unverified`, the same leak check clean |
+| **Inert:** sign-in id unset, plugin id set | 404 `google_signin_not_configured`. `request.bodyUsed === false`, no `getUser` call, no log line |
+| Injected `email` / `accountId`, bad nonce shape | 400 `invalid_request`, **nothing logged**, no account |
+
+**Browser behaviour (Jest level; the live check is in the checklist):** `GoogleSignupButton.render.test.tsx` and `page.render.test.tsx` were read and ran green. A failed `signInWithIdToken` shows "Your account is ready" with the sign-in link, and the code form is hidden. A cancelled popup (no credential) sends no request and shows no busy or error state. The copy is present for en/he/es, with LTR isolation for the masked address in Hebrew and R-2's English text exactly as ruled. The page has no button when the variable is unset or when only the plugin variable is set.
+
+#### 3. Mutation testing (10 mutants, 10 killed by the project's own suites)
+| # | Guarantee | Mutation | Killed by (project) | QA probes |
+|---|---|---|---|---|
+| M1 | R-2 authoritative address | `if (false && domain !== GMAIL …)` (`googleIdToken.ts:153`) | `googleIdToken.test.ts` (3 failed) | 7 failed |
+| M2 | Nonce hash compare | `payload.nonce.toLowerCase()` before compare (accepts upper-case) (`:129`) | `googleIdToken.test.ts` (1) | 1 |
+| M3 | `iat` window, inclusive | `>` → `>=` on the age bound (`:137`) | `googleIdToken.test.ts` (1) | 1 |
+| M4 | Exact email match, no folding | strip `+tag` on both sides (`inviteRedemption.ts:406`) | `inviteRedemption.test.ts` (2) | 2 |
+| M5 | Verifier never passes a library error on | put `error.message` into the returned reason (it would be logged) (`googleIdToken.ts:183`) | `inviteRedemption.test.ts` + `googleIdToken.test.ts` (5) | 6 |
+| M6 | Inert gate before any work | `if (false && !googleSignInClientId())` (`route.ts:313`) | `routes.test.ts` (2) | 1 |
+| M7 | Claim before create | drop the Google path's `if (!claimed.data) return try_again` (`inviteRedemption.ts:429`) | `inviteRedemption.test.ts` (1) | 1 |
+| M8 | Audience = the dedicated id only | fall back to `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (`googleSignInConfig.ts:237`) | `routes.test.ts`, `googleIdToken.test.ts`, `page.render.test.tsx` (4) | 2 |
+| M9 | Our own `aud` re-check | line removed (`googleIdToken.ts:127`) | `googleIdToken.test.ts` (1) | survives, as expected: the real library already rejects a wrong `aud`, so ours is defence in depth |
+| M10 | The Google claim builder does not leak into the code claim | drop `.eq('signup_code_hash', …)` in the `code` case (`BusinessOsInviteRepository.ts` `signupClaimUpdate`) | `BusinessOsInviteRepository.test.ts` (3) | n/a (repository) |
+
+#### Issues Found
+
+##### Bugs (must fix before commit)
+None.
+
+##### Performance Issues
+None found. There is one module-level `OAuth2Client`, and the certificate cache honours Google's `Cache-Control`.
+
+##### Edge Cases / Notes (Low, non-blocking)
+1. **QA-3b-1 (Low): `USER_LOGIN_FAILED` stores the raw Supabase error message.** `lib/client/auth-actions.ts:184` puts `details.error = error.message`. For the id-token grant, GoTrue's messages are fixed strings, and some include the token's `aud` (a public client id), not an address. This follows the existing convention (`:110` does the same for password, plus the email). Record it with SA's backlog item 4. It is not a 3b regression.
+2. **QA-3b-2 (Low): a variant of SA note 2.** In `app/invite/GoogleSignupButton.tsx:120-121`, if `signInWithGoogleIdToken` **throws** (rather than returning `{error}`) after the server has redeemed, the page shows the generic error instead of "Your account is ready", and a retry then says "no longer available". supabase-js normally returns network failures as `{error}`, so this should be rare. The same optional fix as SA note 2 applies.
+3. **QA-3b-3 (Info):** the code form stays usable while a Google request is in flight. The server serialises through the claim CAS (proven by the race probes), so the worst case is a `try_again` / `signup_in_progress` on the other path.
+
+#### Final Status
+- [x] All testable acceptance criteria pass. **Ready for commit** once the user has seen the diff. The live browser run (R-4) and the switch-on checks remain for the production checklist below.
+- [ ] Issues found. Dev must address them before commit.
+
+---
+
+#### Production checklist for switch-on (user, after G-1, G-2 (Offir), G-4 client-id setting + redeploy)
+
+**Before you start**
+- You need a **real second Gmail account** that has no AgentPilot account (`<fresh>@gmail.com`). A `+alias` cannot pass Google: Google always reports the base address, so an alias invite is always refused (step 4).
+- G-1: confirm the Google consent screen is **Published**, or add `<fresh>` as a test user.
+- Confirm on Vercel that `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` equals the client id in Supabase → Auth → Providers → Google, and that a deploy happened **after** it was set.
+- **R-4 first, on localhost:3000 if you can:** open a valid invite. If the Google button does not draw, or the popup returns nothing, the likely cause is `no-referrer`. Change **both** `app/invite/layout.tsx:28` (`referrer`) **and** `middleware.ts:111` (`Referrer-Policy` for `/invite`) to `strict-origin` (SA pre-approved), then retest.
+
+| # | Step | Expected |
+|---|---|---|
+| 1 | Admin: create a champion invite to `<fresh>@gmail.com`, copy the link, and open it in a private window | "Continue with Google" is shown **above** the code form, with an "or" divider |
+| 2 | Click it, then close the popup without choosing | Nothing happens: no spinner, no error. Both options still work |
+| 3 | **Happy path:** click it and choose `<fresh>@gmail.com` | Lands on `/onboarding-chat`, signed in. Admin → Invites: Accepted, with the account. Tiers: Founding Partner / champion at **L1** |
+| 4 | Sign out. On the marketing sign-in page, "Continue with Google" as `<fresh>` | The **same** user id (admin list and Tiers). Supabase → Users → that user has both an `email` and a `google` identity |
+| 5 | **Mismatch:** admin creates a champion invite to a Gmail address with no AgentPilot account (for example a third throwaway Gmail, or `<fresh2>`). Open it, "Continue with Google", and choose a **different** Google account (for example `<fresh>` from step 3, now signed out) | Refused with a clear message: "This invitation is for y•••@gmail.com, and the Google account you chose uses a different address … or use the emailed code below". No account is created, and the invite stays **Pending** |
+| 6 | **+alias:** admin creates an invite to `<you>+s3g@gmail.com`, opens it, and continues with Google as `<you>@gmail.com` | Refused (the mismatch message, which points to the emailed code). "Send me a code" then works and completes signup, if you want to finish it |
+| 7 | Open the step-3 link again | "Already used", with sign in |
+| 8 | **Logs (Vercel, the time of steps 3, 5 and 6)**, filtered on `PublicInviteSignupGoogleAPI` / `InviteRedemption` | No ID token (`eyJ…`), no nonce, no invited or Google email, no `sub`. Only the correlation id, outcome, invite id, account id, and `googleTokenRefusal` codes |
+| 9 | **Audit (admin audit view)**, **only** the `BOS_INVITE_*` rows for those invites: `BOS_INVITE_REDEEMED` (`method: google`), `BOS_INVITE_PLAN_PROVISIONED`, `BOS_INVITE_REDEMPTION_REFUSED` (`reason: google_email_mismatch`) | `details` holds **no** email, `sub`, token or nonce. The platform `USER_LOGIN` row **does** carry the email by design (the existing login-audit convention). Do not count it as a failure |
+
+**Clean-up:** the feature never deletes accounts. Keep `<fresh>`, or remove it by hand in Supabase → Users. Its lineage/plan row stays by design. Revoke any still-Pending test invites (steps 5 and 6) in the admin list. To switch the feature off, unset `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` and redeploy: the button disappears and the route answers 404.
 
 ---
 
@@ -519,6 +738,13 @@ No new event names (D-11) is correct. `BOS_INVITE_REDEEMED.details.method`, and 
 - **Tests at commit:** `npx jest lib/email lib/business-os/invites lib/business-os/bizql` 71 suites / 1,053 tests pass
 - **Post-deploy check owed:** one test invite to a Gmail +alias, confirm the logo, then revoke the invite
 
+### Slice 3b
+- **Branch:** `feature/bos-invite-signup-slice-3b` (worktree `neuronforge-invite-s1`), cut from bd763222 and rebased onto `origin/main` c1ff4d42 (after #149) on 2026-09-29
+- **Approvals:** SA code review ✅ (2026-09-29, no blockers) · QA PASS WITH NOTES ✅ (2026-09-29, 10/10 mutants killed, no bugs) · user approved commit + PR (2026-09-29): **"I approve committing 3b and opening the PR."**
+- **Commits:** `ffea1e63` feat(business-os): invite signup slice 3b — continue with Google (merges inert) · `b781cafe` test(business-os): pin the Google invite signup verifier, button, sign-in and redaction · plus this `docs:` commit recording the 3b implementation, SA and QA records
+- **PR:** to `main`, opened by RM 2026-09-29, not merged. No DB change; merges inert (button hidden, route 404) until `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` is set; merge once CI is green, on the user's instruction
+- **Switch-on owed:** G-1 (record Supabase's Google client id and the consent-screen status), G-2 (Offir adds the authorized JavaScript origins), set the client id and redeploy (SA pre-approved committing the public id as the accessor default if Vercel access stalls), R-4 check, then the production checklist in QA Report 3b (needs a real second Gmail account)
+
 ---
 
 ## Change History
@@ -531,3 +757,4 @@ No new event names (D-11) is correct. `BOS_INVITE_REDEEMED.details.method`, and 
 | 2026-09-29 | SA code review 3a: approved | `stripHtmlComments` correct (MSO and downlevel conditionals kept, escaped note cannot produce `<!--`); logo URL per R-3/R-9; business path unchanged apart from comments; D-dev-3a-1 (`inline-block`) accepted; D-dev-3a-3 (unescaped business name in `alt`, pre-existing) to a Low backlog note. Jest 71 suites / 1,053 tests pass; `next build` with the CI env exit 0. Status: awaiting QA. |
 | 2026-09-29 | QA waived by user for 3a; user approved 3a (RM) | QA waived by user for 3a (proportionate effort; email template change, SA code-approved). User approved the commit and PR. Status, 3a-6, QA Testing Report and Commit Info updated; RM commits and opens the 3a PR. |
 | 2026-09-29 | 3a committed, PR #149 opened (RM) | Commits `646bf549` (docs) and `97339856` (feat); pushed and PR #149 opened to `main`, not merged. Status and Commit Info updated. |
+| 2026-09-29 | 3b implemented, SA code-approved, QA PASS WITH NOTES; committed, PR opened (RM) | Dev task progress 3b-1..3b-9 and deviations DEV-3b-1..8 merged from Dev's notes; SA Code Review 3b (approved, no blockers, 3 Low notes + backlog: `signInWithPassword` logs `{ email }`); QA Report 3b (PASS WITH NOTES, 74 probes, 10/10 mutants killed, QA-3b-1..3, production switch-on checklist). User approved: "I approve committing 3b and opening the PR." Commits `ffea1e63` (feat), `b781cafe` (test); PR to `main` opened, not merged. 3b-10 (R-4, live GIS) and switch-on G-1/G-2/client id remain. |
