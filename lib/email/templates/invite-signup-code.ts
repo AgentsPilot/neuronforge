@@ -13,8 +13,9 @@
  *
  * THE CODE IS IN THE BODY ONLY
  *
- * `sendEmail` logs the first 50 characters of the subject, so the subject
- * names the purpose and never the code. The recipient is logged MASKED for
+ * `sendEmail` logs the subject (50 characters on the attempt line, all of it
+ * on the final "no transport delivered" warning), so the subject names the
+ * purpose and never the code. The recipient is logged MASKED for
  * this email: the sender passes `redactRecipientInLogs: true` (SA MF-1), which
  * also strips any address a provider's error message echoes.
  *
@@ -28,7 +29,8 @@
  */
 
 import type { Locale } from '@/lib/i18n/config';
-import { wrapInBrandedTemplate, type BrandingData } from './base-template';
+import { platformEmailBranding } from '@/lib/email/platformBranding';
+import { wrapInBrandedTemplate } from './base-template';
 
 export interface InviteSignupCodeEmailData {
   /** Exactly the digits; validated by the caller. */
@@ -70,13 +72,6 @@ const COPY: Record<Locale, Copy> = {
   },
 };
 
-/** The platform's own look: no business branding (this is not a business-to-client email). */
-const PLATFORM_BRANDING: Omit<BrandingData, 'locale'> = {
-  businessName: 'AgentPilot',
-  primaryColor: '#0f172a',
-  secondaryColor: '#334155',
-};
-
 export function generateInviteSignupCodeEmail(data: InviteSignupCodeEmailData): {
   subject: string;
   html: string;
@@ -104,7 +99,9 @@ export function generateInviteSignupCodeEmail(data: InviteSignupCodeEmailData): 
 
   return {
     subject: t.subject,
-    html: wrapInBrandedTemplate(content, { ...PLATFORM_BRANDING, locale: data.locale }),
+    // The platform's own look, with the AgentPilot wordmark: this is not a
+    // business-to-client email (Slice 3a, E-2).
+    html: wrapInBrandedTemplate(content, platformEmailBranding(data.locale)),
     text,
   };
 }

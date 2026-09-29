@@ -4,10 +4,24 @@
 import type { Locale } from '@/lib/i18n/config';
 import { isRTL } from '@/lib/i18n/config';
 import { isDarkColor, mix } from '@/lib/branding/color';
+import { stripHtmlComments } from '@/lib/email/htmlComments';
 
 export interface BrandingData {
   businessName: string;
   logoUrl?: string;
+  /**
+   * The logo's display size in CSS pixels, for a logo whose real dimensions
+   * are known (the platform wordmark, `lib/email/platformBranding.ts`).
+   *
+   * Optional, and only used when BOTH are set and `logoUrl` is too. A business
+   * logo is an upload of unknown shape, so it has neither and keeps the
+   * max-height/max-width markup it always had. With both, the image carries
+   * `width`/`height` attributes (Outlook ignores CSS sizes) and alt-text
+   * styling, so a client that blocks images shows the name as a styled text
+   * wordmark in the same place.
+   */
+  logoWidth?: number;
+  logoHeight?: number;
   primaryColor: string;
   secondaryColor: string;
   websiteUrl?: string;
@@ -186,6 +200,11 @@ export function emailTone(
 /**
  * Wrap email content in a branded HTML template
  * Uses inline styles for maximum email client compatibility
+ *
+ * Every email this returns has had its HTML comments removed
+ * (`stripHtmlComments`): the layout's and those of the content it wraps. Only
+ * the Outlook conditional comments survive. That is why the design notes on
+ * the layout live in TypeScript comments below and not in the markup.
  */
 export function wrapInBrandedTemplate(
   content: string,
@@ -214,7 +233,53 @@ export function wrapInBrandedTemplate(
   const inkMuted = branding.mutedTextColor || '#666666';
   const radius = branding.radius || '12px';
 
-  return `<!DOCTYPE html>
+  /*
+   * The header logo.
+   *
+   * With known dimensions (the platform wordmark), sized by attributes as well
+   * as inline CSS, and with the alt text styled like the text wordmark below, so
+   * a reader whose client blocks images still sees the name, set in the heading
+   * face, where the logo would be. `inline-block`, not `block`, so the cell's
+   * `text-align` still places it on the right in a right-to-left email.
+   *
+   * Without them (every business logo), exactly the markup it always had.
+   */
+  const { logoWidth, logoHeight } = branding;
+  const logoImg =
+    logoWidth && logoHeight
+      ? `<img src="${logoUrl}" alt="${businessName}" width="${logoWidth}" height="${logoHeight}" style="display: inline-block; width: ${logoWidth}px; height: ${logoHeight}px; max-width: 100%; border: 0; outline: none; text-decoration: none; vertical-align: middle; font-family: ${headingStack}; font-size: 16px; font-weight: 600; color: ${ink}; letter-spacing: -0.02em;" />`
+      : `<img src="${logoUrl}" alt="${businessName}" style="max-height: 34px; max-width: 180px; display: inline-block;" />`;
+
+  /*
+   * Design notes on the layout below.
+   *
+   * THE WORDMARK, QUIET, ON THE PAGE GROUND. This was a full-bleed block filled
+   * with the brand colour and the business name reversed out of it — the
+   * standard transactional-SaaS header, and the one thing none of the six
+   * templates does. Every one of them opens with a small wordmark on the page's
+   * own ground and keeps the brand colour for the single thing the reader is
+   * meant to do. Stone has no accent colour at all, so an indigo or flame
+   * banner above its receipt contradicted the design outright. The logo where
+   * there is one, the name set in the heading face where there is not, and a
+   * hairline under it instead of a fill.
+   *
+   * THE MESSAGE ITSELF, on one panel with a hairline round it. The colour is
+   * set on that cell, not only on the body element: Gmail rewrites <body> into
+   * a <div> and several clients drop its styles outright, so content that sets
+   * no colour of its own — a plain paragraph composed in the chat, say — fell
+   * back to the client's default black on whatever ground this card paints. On
+   * a dark theme that is black on near-black. Declaring it on the cell the
+   * content actually sits in survives that rewrite.
+   *
+   * THE FOOTER, outside the panel rather than welded to it. A second filled
+   * block under the first made the whole message read as three stacked bars.
+   * Every template ends the same way: one rule, the name, the address, nothing
+   * else.
+   *
+   * The `[if mso]` block in the head stays: it fixes Outlook for Windows at
+   * 96 DPI, which otherwise rescales the whole layout.
+   */
+  const html = `<!DOCTYPE html>
 <html lang="${locale}" dir="${dir}">
 <head>
   <meta charset="UTF-8">
@@ -237,24 +302,10 @@ export function wrapInBrandedTemplate(
       <td style="padding: 24px 16px;">
         <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width: 600px; margin: 0 auto;">
 
-          <!--
-            THE WORDMARK, QUIET, ON THE PAGE GROUND.
-
-            This was a full-bleed block filled with the brand colour and the
-            business name reversed out of it — the standard transactional-SaaS
-            header, and the one thing none of the six templates does. Every one
-            of them opens with a small wordmark on the page's own ground and
-            keeps the brand colour for the single thing the reader is meant to
-            do. Stone has no accent colour at all, so an indigo or flame banner
-            above its receipt contradicted the design outright.
-
-            The logo where there is one, the name set in the heading face where
-            there is not, and a hairline under it instead of a fill.
-          -->
           <tr>
             <td style="padding: 4px 4px 18px; text-align: ${textAlign}; direction: ${dir};">
               ${logoUrl ? `
-              <img src="${logoUrl}" alt="${businessName}" style="max-height: 34px; max-width: 180px; display: inline-block;" />
+              ${logoImg}
               ` : `
               <span style="font-family: ${headingStack}; font-size: 16px; font-weight: 600; color: ${ink}; letter-spacing: -0.02em;">
                 ${businessName}
@@ -263,30 +314,12 @@ export function wrapInBrandedTemplate(
             </td>
           </tr>
 
-          <!-- The message itself, on one panel with a hairline round it. -->
           <tr>
-            <!--
-              The colour here, not only on the body element.
-
-              Gmail rewrites <body> into a <div> and several clients drop its
-              styles outright, so content that sets no colour of its own — a
-              plain paragraph composed in the chat, say — fell back to the
-              client's default black on whatever ground this card paints. On a
-              dark theme that is black on near-black. Declaring it on the cell
-              the content actually sits in survives that rewrite.
-            -->
             <td style="padding: 34px 32px; background-color: ${surface}; border: 1px solid ${line}; border-radius: ${radius}; color: ${ink}; text-align: ${textAlign}; direction: ${dir};">
               ${content}
             </td>
           </tr>
 
-          <!--
-            The footer, outside the panel rather than welded to it.
-
-            A second filled block under the first made the whole message read as
-            three stacked bars. Every template ends the same way: one rule, the
-            name, the address, nothing else.
-          -->
           <tr>
             <td style="padding: 18px 4px 4px; text-align: ${textAlign}; direction: ${dir};">
               <p style="margin: 0 0 4px; font-size: 13px; color: ${inkMuted};">
@@ -306,6 +339,8 @@ export function wrapInBrandedTemplate(
   </table>
 </body>
 </html>`;
+
+  return stripHtmlComments(html);
 }
 
 /**
