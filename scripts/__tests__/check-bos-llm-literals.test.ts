@@ -378,13 +378,14 @@ describe('the scope inclusions', () => {
 
   const ADMIN_ROUTE = 'app/api/admin/business-os/llm-settings/route.ts';
   const CHARGE_PRICING = 'lib/business-os/llm/chargePricing.ts';
+  const CHARGE_RESOLVER = 'lib/business-os/llm/chargeResolver.ts';
 
   it('names exactly these files, each with a reason', () => {
     // Mirrors the EXEMPTIONS cap: the list's contents are pinned by equality,
     // so a further entry fails this assertion and arrives with a review rather
     // than as a config line. Scope only ever grows here, on purpose, and
     // growth must be visible.
-    expect(LITERAL_SCOPE_INCLUSIONS.map((entry) => entry.file)).toEqual([ADMIN_ROUTE, CHARGE_PRICING]);
+    expect(LITERAL_SCOPE_INCLUSIONS.map((entry) => entry.file)).toEqual([ADMIN_ROUTE, CHARGE_PRICING, CHARGE_RESOLVER]);
     for (const entry of LITERAL_SCOPE_INCLUSIONS) {
       expect(entry.reason.length).toBeGreaterThan(20);
     }
@@ -395,6 +396,7 @@ describe('the scope inclusions', () => {
     // adds the entry: the named path matches a file the walk really finds.
     expect(scopedFiles()).toContain(ADMIN_ROUTE);
     expect(scopedFiles()).toContain(CHARGE_PRICING);
+    expect(scopedFiles()).toContain(CHARGE_RESOLVER);
     expect(staleInclusions(scopedFiles())).toEqual([]);
   });
 

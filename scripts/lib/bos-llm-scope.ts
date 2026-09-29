@@ -218,6 +218,11 @@ export const LITERAL_SCOPE_INCLUSIONS: ReadonlyArray<LiteralScopeInclusion> = [
     reason:
       'Business OS credit deduction charge policy: reaches the catalog through chargeClassification, so the direct-import rule misses it, but it prices an action for a charge and must never write a model id or a price.',
   },
+  {
+    file: 'lib/business-os/llm/chargeResolver.ts',
+    reason:
+      'Business OS credit deduction slice 3: the one cost-to-credits conversion and the charge record builder. It reaches the catalog through aiActionAudit and chargePricing, so the direct-import rule misses it, but it decides what an action is charged and must never write a model id or a price.',
+  },
 ];
 
 export function literalScope(
