@@ -26,7 +26,9 @@
 //      then change it only through compare-and-swap methods keyed by that
 //      row's id and a value observed on it: the send count, the attempt count,
 //      the live code hash, the claimant. A lost race changes nothing and the
-//      route answers "try again" (workplan D-4, R-1, D-dev-1).
+//      route answers "try again" (workplan D-4, R-1, D-dev-1). Slice 3b adds
+//      `claimForGoogleSignup`, the same claim for a mailbox proven by a
+//      verified Google ID token; both claims share one builder.
 //
 // FUTURE: champion-issued invites (requirement §14) must get their OWN methods,
 // scoped by `issuer_account_id` (for example `listForIssuerAccount`,
@@ -55,6 +57,7 @@ import type {
   BusinessOsInvite,
   BusinessOsInvitePublicView,
   BusinessOsInviteRedemptionView,
+  ClaimInviteForGoogleSignupInput,
   ClaimInviteForSignupInput,
   CountSignupCodeAttemptInput,
   CreateBusinessOsInviteInput,
@@ -114,6 +117,71 @@ function casWon(count: number | null): boolean {
   throw Object.assign(new Error(`Compare-and-swap matched an unexpected row count: ${String(count)}`), {
     code: 'CAS_ROW_COUNT',
   });
+}
+
+/**
+ * How the mailbox was proven before a signup claim (Slice 3b, D-3, SA R-7).
+ * `code`: the emailed code, whose hash must still be the live one. `google`: a
+ * verified Google ID token for the invite's own address, checked by the caller.
+ */
+type SignupClaimProof = { kind: 'code'; codeHash: string } | { kind: 'google' };
+
+/**
+ * The ONE signup-claim compare-and-swap, shared by `claimForSignup` and
+ * `claimForGoogleSignup` so their conditions cannot drift apart (D-3).
+ *
+ * A module function rather than a private method, so the repository's public
+ * surface (pinned by its test) gains no unscoped-looking name.
+ *
+ * The proof `switch` is exhaustive with a `never` default (SA R-7): a third
+ * kind added to `SignupClaimProof` without a case here fails to compile rather
+ * than silently skipping the code-hash filter. Count-only, no `.select`
+ * (see `casWon`).
+ */
+function signupClaimUpdate(
+  supabase: SupabaseClient,
+  input: ClaimInviteForGoogleSignupInput,
+  proof: SignupClaimProof
+) {
+  const at = input.now.toISOString();
+  let query = supabase
+    .from(INVITES)
+    .update(
+      {
+        signup_code_hash: null,
+        signup_code_expires_at: null,
+        claimed_at: at,
+        claimed_account_id: input.accountId,
+        updated_at: at,
+      },
+      // A count, not the rows: see `casWon` for why `.select` is not used here.
+      { count: 'exact' }
+    )
+    .eq('id', input.id);
+
+  switch (proof.kind) {
+    case 'code':
+      query = query.eq('signup_code_hash', proof.codeHash);
+      break;
+    case 'google':
+      // No code condition: Google's verified token is the mailbox proof, and
+      // the update above clears any outstanding code together with its expiry.
+      break;
+    default: {
+      const unhandled: never = proof;
+      throw new Error(`Unknown signup claim proof: ${String((unhandled as { kind?: unknown }).kind)}`);
+    }
+  }
+
+  query = query
+    .is('redeemed_at', null)
+    .is('revoked_at', null)
+    .gt('link_expires_at', at)
+    .or(noLiveClaim(input.claimLeaseCutoff));
+
+  return input.observedClaimedAccountId === null
+    ? query.is('claimed_account_id', null)
+    : query.eq('claimed_account_id', input.observedClaimedAccountId);
 }
 
 /** What the public page's lookup reads (C-4): no email, no issuer, no reasons, no hash. */
@@ -500,39 +568,35 @@ export class BusinessOsInviteRepository {
    */
   async claimForSignup(input: ClaimInviteForSignupInput): Promise<RepositoryResult<boolean>> {
     const methodLogger = this.logger.child({ method: 'claimForSignup', inviteId: input.id });
-    const at = input.now.toISOString();
     try {
-      let query = this.supabase
-        .from(INVITES)
-        .update(
-          {
-            signup_code_hash: null,
-            signup_code_expires_at: null,
-            claimed_at: at,
-            claimed_account_id: input.accountId,
-            updated_at: at,
-          },
-          // A count, not the rows: see `casWon` for why `.select` is not used here.
-          { count: 'exact' }
-        )
-        .eq('id', input.id)
-        .eq('signup_code_hash', input.codeHash)
-        .is('redeemed_at', null)
-        .is('revoked_at', null)
-        .gt('link_expires_at', at)
-        .or(noLiveClaim(input.claimLeaseCutoff));
-
-      query =
-        input.observedClaimedAccountId === null
-          ? query.is('claimed_account_id', null)
-          : query.eq('claimed_account_id', input.observedClaimedAccountId);
-
-      const { count, error } = await query;
+      const { count, error } = await signupClaimUpdate(this.supabase, input, { kind: 'code', codeHash: input.codeHash });
 
       if (error) throw error;
       return { data: casWon(count), error: null };
     } catch (error) {
       methodLogger.error({ dbError: safeDbError(error) }, 'Failed to claim an invite for signup');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  /**
+   * SIGNUP (Slice 3b, D-3): the same claim as `claimForSignup`, for a signup
+   * whose mailbox was proven by a verified Google ID token instead of the
+   * emailed code. Every condition of the code claim holds (still pending, no
+   * live claim, the observed claimant) EXCEPT the code-hash equality, and any
+   * outstanding code is cleared with the claim, so it dies here (CHECK
+   * `signup_code_paired`). The caller verifies the token and the email lock
+   * BEFORE calling this; nothing Google-derived is passed in.
+   */
+  async claimForGoogleSignup(input: ClaimInviteForGoogleSignupInput): Promise<RepositoryResult<boolean>> {
+    const methodLogger = this.logger.child({ method: 'claimForGoogleSignup', inviteId: input.id });
+    try {
+      const { count, error } = await signupClaimUpdate(this.supabase, input, { kind: 'google' });
+
+      if (error) throw error;
+      return { data: casWon(count), error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to claim an invite for Google signup');
       return { data: null, error: toError(error) };
     }
   }

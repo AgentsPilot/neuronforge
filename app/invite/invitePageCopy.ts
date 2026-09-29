@@ -80,6 +80,8 @@ export interface SignupCopy {
   resend: string;
   readyHeading: string;
   readyBody: string;
+  /** Slice 3b: "Continue with Google" (FR-11). Shown only when it is configured. */
+  google: GoogleSignupCopy;
   errors: {
     code_format: string;
     password_short: string;
@@ -97,6 +99,26 @@ export interface SignupCopy {
     weak_password: string;
     no_longer_available: string;
     generic: string;
+  };
+}
+
+/**
+ * The Google button's words (Slice 3b). The button's own label ("Continue with
+ * Google") is drawn by Google in the invite's language, so it is not here.
+ * Every refusal points to the path that works: the emailed code (SA R-8).
+ */
+export interface GoogleSignupCopy {
+  /** Between the Google button and the code form. */
+  divider: string;
+  creating: string;
+  readyHeading: string;
+  readyBody: string;
+  errors: {
+    google_email_mismatch: (maskedEmail: string) => string;
+    google_email_unverified: string;
+    /** SA R-2: Google is not authoritative for this address. */
+    google_use_code: string;
+    google_token_invalid: string;
   };
 }
 
@@ -129,6 +151,19 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
       resend: 'Send a new code',
       readyHeading: 'Your account is ready',
       readyBody: 'Sign in with your email and the password you just chose.',
+      google: {
+        divider: 'or',
+        creating: 'Creating your account…',
+        readyHeading: 'Your account is ready',
+        readyBody: 'Sign in with Google to continue.',
+        errors: {
+          google_email_mismatch: (masked) =>
+            `This invitation is for ${masked}, and the Google account you chose uses a different address. Choose the Google account for ${masked}, or use the emailed code below.`,
+          google_email_unverified: 'Google has not confirmed the address on that account. Please use the emailed code below.',
+          google_use_code: 'For this address, please use the emailed code below.',
+          google_token_invalid: 'Google sign-in did not complete. Please try again, or use the emailed code below.',
+        },
+      },
       errors: {
         code_format: 'Enter the 6 digits from the email.',
         password_short: 'The password needs at least 8 characters.',
@@ -197,6 +232,19 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
       resend: 'שליחת קוד חדש',
       readyHeading: 'החשבון מוכן',
       readyBody: 'אפשר להתחבר עם כתובת המייל והסיסמה שנבחרה עכשיו.',
+      google: {
+        divider: 'או',
+        creating: 'יוצרים את החשבון…',
+        readyHeading: 'החשבון מוכן',
+        readyBody: 'אפשר להתחבר עם Google כדי להמשיך.',
+        errors: {
+          google_email_mismatch: (masked) =>
+            `ההזמנה הזו מיועדת ל־${LTR_ISOLATE}${masked}${POP_ISOLATE}, וחשבון Google שנבחר משתמש בכתובת אחרת. אפשר לבחור את חשבון Google של ${LTR_ISOLATE}${masked}${POP_ISOLATE}, או להשתמש בקוד שנשלח במייל, למטה.`,
+          google_email_unverified: 'Google לא אישרה את הכתובת בחשבון הזה. אפשר להשתמש בקוד שנשלח במייל, למטה.',
+          google_use_code: 'לכתובת הזו יש להשתמש בקוד שנשלח במייל, למטה.',
+          google_token_invalid: 'ההתחברות עם Google לא הושלמה. אפשר לנסות שוב, או להשתמש בקוד שנשלח במייל, למטה.',
+        },
+      },
       errors: {
         code_format: 'יש להזין את 6 הספרות מהמייל.',
         password_short: 'הסיסמה צריכה להכיל 8 תווים לפחות.',
@@ -266,6 +314,19 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
       resend: 'Enviar un código nuevo',
       readyHeading: 'Tu cuenta está lista',
       readyBody: 'Inicia sesión con tu correo y la contraseña que acabas de elegir.',
+      google: {
+        divider: 'o',
+        creating: 'Creando tu cuenta…',
+        readyHeading: 'Tu cuenta está lista',
+        readyBody: 'Inicia sesión con Google para continuar.',
+        errors: {
+          google_email_mismatch: (masked) =>
+            `Esta invitación es para ${masked} y la cuenta de Google que elegiste usa otra dirección. Elige la cuenta de Google de ${masked} o usa el código por correo que aparece más abajo.`,
+          google_email_unverified: 'Google no ha confirmado la dirección de esa cuenta. Usa el código por correo que aparece más abajo.',
+          google_use_code: 'Para esta dirección, usa el código por correo que aparece más abajo.',
+          google_token_invalid: 'No se completó el inicio de sesión con Google. Inténtalo de nuevo o usa el código por correo que aparece más abajo.',
+        },
+      },
       errors: {
         code_format: 'Introduce los 6 dígitos del correo.',
         password_short: 'La contraseña necesita al menos 8 caracteres.',

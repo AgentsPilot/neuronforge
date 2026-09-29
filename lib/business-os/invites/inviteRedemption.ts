@@ -1,13 +1,16 @@
 import 'server-only';
 
 /**
- * A champion signs up from an invite (invite-only signup, Slice 1b).
+ * A champion signs up from an invite (invite-only signup, Slices 1b and 3b).
  *
- * Two operations, both reached only by the public signup routes:
+ * Three operations, all reached only by the public signup routes:
  *
- *   requestSignupCode   token → a 6-digit code emailed to the invited address
- *   completeSignup      token + code + password → the account, the plan row,
- *                       the lineage row and the burned invite
+ *   requestSignupCode     token → a 6-digit code emailed to the invited address
+ *   completeSignup        token + code + password → the account, the plan row,
+ *                         the lineage row and the burned invite
+ *   completeGoogleSignup  token + a verified Google ID token for the invited
+ *                         address → the same, through the same claim → create
+ *                         → finalise path (Slice 3b; only the proof differs)
  *
  * ── The one rule that shapes everything: claim before create (SA R-1) ──────
  * The invite is CLAIMED in the database, for an account id this server
@@ -31,11 +34,13 @@ import 'server-only';
  * Service role, caller-supplied token. The ownership oracle is the token hash
  * plus the email lock; every write is keyed on the matched row's id and a
  * value observed on it (compare-and-swap). The request supplies ONLY the token,
- * the code and the password (the route's `.strict()` schema): the email, the
- * grant, the account id and the level all come from the row or from here.
+ * the code and the password (the route's `.strict()` schema; for Google, the
+ * token, the ID token and the nonce): the email, the grant, the account id and
+ * the level all come from the row or from here.
  *
  * ── What is never written anywhere ──────────────────────────────────────────
- * The token, its hash, the code, the password. The email is used to create the
+ * The token, its hash, the code, the password, the Google ID token, its nonce,
+ * and anything read from it (the Google email and `sub`). The email is used to create the
  * account and is returned to the browser only after a successful signup (F-6);
  * it is never logged, never audited, never stored in the failure record.
  *
@@ -50,10 +55,17 @@ import {
 import { isRedeemableCohortGrant } from '@/lib/business-os/entitlements/grantRules';
 import type { EntitlementConfig } from '@/lib/business-os/entitlements/source';
 import { defaultLocale, isValidLocale } from '@/lib/i18n/config';
-import type { AuthAccountRepository } from '@/lib/repositories/AuthAccountRepository';
+import type {
+  AuthAccountRepository,
+  CreateConfirmedUserOutcome,
+  CreatePasswordlessUserOutcome,
+} from '@/lib/repositories/AuthAccountRepository';
 import type { BusinessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
 import type { AgentRepositoryResult as RepositoryResult, BusinessOsInviteRedemptionView } from '@/lib/repositories/types';
 
+// Type-only: the verifier (and `google-auth-library` behind it) is injected
+// through `RedemptionDeps`, never loaded by this module (SA Q-2).
+import type { GoogleIdTokenVerification, VerifyGoogleIdToken } from './googleIdToken';
 import { isInviteGrantAvailable } from './inviteOffer';
 import { deriveInviteState } from './inviteState';
 import { hashInviteToken, isWellFormedInviteToken } from './inviteToken';
@@ -75,12 +87,16 @@ export type RedemptionInviteRepository = Pick<
   | 'issueSignupCode'
   | 'countSignupCodeAttempt'
   | 'claimForSignup'
+  | 'claimForGoogleSignup'
   | 'releaseSignupClaim'
   | 'recordRedemptionFailure'
   | 'markOpenedByExistingAccount'
 >;
 
-export type RedemptionAccounts = Pick<AuthAccountRepository, 'emailHasAccount' | 'createConfirmedUser' | 'findUserExists'>;
+export type RedemptionAccounts = Pick<
+  AuthAccountRepository,
+  'emailHasAccount' | 'createConfirmedUser' | 'createConfirmedUserWithoutPassword' | 'findUserExists'
+>;
 
 /** The finalise call (the plan repository's `provisionFromInvite`, bound by the route). */
 export type FinaliseRedemption = (input: {
@@ -121,6 +137,11 @@ export interface RedemptionDeps {
   now: () => Date;
   /** The server-side account id generator (I-3). `crypto.randomUUID` in production. */
   newAccountId: () => string;
+  /**
+   * Slice 3b: the Google ID-token verifier (`googleIdToken.ts`). Never throws
+   * (SA R-1); returns the verified address or a fixed reason code only.
+   */
+  verifyGoogleIdToken: VerifyGoogleIdToken;
   logger: RedemptionLogger;
 }
 
@@ -132,7 +153,7 @@ export type RedemptionRefusal =
   | { kind: 'unavailable_try_again' }
   | {
       kind: 'refused';
-      status: 400 | 409 | 429 | 503;
+      status: 400 | 404 | 409 | 429 | 503;
       error:
         | 'existing_account'
         | 'used'
@@ -148,7 +169,13 @@ export type RedemptionRefusal =
         | 'code_expired'
         | 'code_locked'
         | 'code_invalid'
-        | 'weak_password';
+        | 'weak_password'
+        // Slice 3b (Google): none of these carries an address.
+        | 'google_signin_not_configured'
+        | 'google_token_invalid'
+        | 'google_email_unverified'
+        | 'google_use_code'
+        | 'google_email_mismatch';
       attemptsRemaining?: number;
       retryAfterSeconds?: number;
     };
@@ -161,18 +188,23 @@ export type CompleteSignupOutcome =
   | { ok: true; email: string; accountId: string; inviteId: string }
   | ({ ok: false } & RedemptionRefusal);
 
+/** Slice 3b: no email on success. The browser signs in with Google's token, not an address. */
+export type CompleteGoogleSignupOutcome =
+  | { ok: true; accountId: string; inviteId: string }
+  | ({ ok: false } & RedemptionRefusal);
+
 type Refusal = { ok: false } & RedemptionRefusal;
 
-const NOT_RECOGNISED: Refusal = { ok: false, kind: 'not_recognised' };
-const TRY_AGAIN_LATER: Refusal = { ok: false, kind: 'unavailable_try_again' };
-
 function refuse(
-  status: 400 | 409 | 429 | 503,
+  status: 400 | 404 | 409 | 429 | 503,
   error: Extract<RedemptionRefusal, { kind: 'refused' }>['error'],
   extra: { attemptsRemaining?: number; retryAfterSeconds?: number } = {}
 ): Refusal {
   return { ok: false, kind: 'refused', status, error, ...extra };
 }
+
+const NOT_RECOGNISED: Refusal = { ok: false, kind: 'not_recognised' };
+const TRY_AGAIN_LATER: Refusal = { ok: false, kind: 'unavailable_try_again' };
 
 // ── The shared checks ───────────────────────────────────────────────────────
 
@@ -327,7 +359,152 @@ export async function completeSignup(
   if (claimed.error) return TRY_AGAIN_LATER;
   if (!claimed.data) return refuse(409, 'try_again');
 
-  const created = await deps.accounts.createConfirmedUser({ id: accountId, email: row.email, password: input.password });
+  return createAndFinish(
+    row,
+    accountId,
+    () => deps.accounts.createConfirmedUser({ id: accountId, email: row.email, password: input.password }),
+    'password',
+    deps,
+    now
+  );
+}
+
+// ── Complete the signup with Google (Slice 3b) ──────────────────────────────
+
+/**
+ * Token + a Google ID token + the raw nonce → the same account, plan row,
+ * lineage row and burned invite as `completeSignup` (FR-11, FR-12, D-2).
+ *
+ * Only the mailbox proof changes: a verified Google ID token for the invite's
+ * OWN address replaces the emailed code. Everything else is shared:
+ * `loadRedeemableInvite` (state, live claim, grant, existing account) runs
+ * first, unchanged, and everything after the claim is `createAndFinish`.
+ *
+ * What the code limits do NOT apply here (D-8, SA Q-4): no code is issued or
+ * compared, so neither counter is touched, and an invite locked after five
+ * wrong codes may still be redeemed this way. The lock stops code guessing; a
+ * verified Google proof is independent of the code.
+ *
+ * Order (SA R-2): verify (signature, nonce, iat, `email_verified`, the
+ * authoritative-address rule) and only then compare addresses, so a refusal
+ * for authority never reveals whether the addresses matched. Neither address
+ * is ever logged, audited or returned; the only Google value kept is the
+ * verified email, compared and then dropped (R-11). The account is created for
+ * the ROW's email, never the token's (§3.4).
+ */
+export async function completeGoogleSignup(
+  input: { token: string; idToken: string; nonce: string },
+  deps: RedemptionDeps
+): Promise<CompleteGoogleSignupOutcome> {
+  const now = deps.now();
+  const loaded = await loadRedeemableInvite(input.token, deps, now, { allowStaleClaimWithAccount: true });
+  if (!loaded.ok) return loaded;
+  const { row } = loaded;
+
+  const proof = await deps.verifyGoogleIdToken({ idToken: input.idToken, rawNonce: input.nonce });
+  if (proof.kind !== 'ok') return refuseGoogleProof(proof, row, deps);
+
+  // D-7 / BQ-2: exact and case-insensitive; no dot or +tag folding.
+  if (proof.email !== row.email.trim().toLowerCase()) {
+    await deps.audit({
+      action: 'BOS_INVITE_REDEMPTION_REFUSED',
+      inviteId: row.id,
+      accountId: null,
+      details: { reason: 'google_email_mismatch', method: 'google' },
+    });
+    deps.logger.info({ inviteId: row.id }, 'Google signup refused: the verified address is not the invited one');
+    return refuse(409, 'google_email_mismatch');
+  }
+
+  // R-1 / I-3 / I-6: the account id is generated HERE, or reused from a lapsed claim.
+  const accountId = row.claimed_account_id ?? deps.newAccountId();
+  const claimed = await deps.invites.claimForGoogleSignup({
+    id: row.id,
+    accountId,
+    observedClaimedAccountId: row.claimed_account_id,
+    now,
+    claimLeaseCutoff: claimLeaseCutoff(now),
+  });
+  if (claimed.error) return TRY_AGAIN_LATER;
+  if (!claimed.data) return refuse(409, 'try_again');
+
+  const finished = await createAndFinish(
+    row,
+    accountId,
+    () => deps.accounts.createConfirmedUserWithoutPassword({ id: accountId, email: row.email }),
+    'google',
+    deps,
+    now
+  );
+  return finished.ok ? { ok: true, accountId: finished.accountId, inviteId: finished.inviteId } : finished;
+}
+
+/**
+ * A Google proof that did not pass, as a refusal. Exhaustive: a new verifier
+ * outcome fails to compile here. `invalid` is logged with its fixed reason code
+ * and not audited (noise, not an invite event); the two refusals that say
+ * something about the invitee's Google account are audited, with no address.
+ */
+async function refuseGoogleProof(
+  proof: Exclude<GoogleIdTokenVerification, { kind: 'ok' }>,
+  row: BusinessOsInviteRedemptionView,
+  deps: RedemptionDeps
+): Promise<Refusal> {
+  switch (proof.kind) {
+    case 'not_configured':
+      return refuse(404, 'google_signin_not_configured');
+    case 'unavailable':
+      deps.logger.warn({ inviteId: row.id }, 'Google certificates unavailable; signup not attempted');
+      return TRY_AGAIN_LATER;
+    case 'invalid':
+      deps.logger.info({ inviteId: row.id, googleTokenRefusal: proof.reason }, 'Google ID token refused');
+      return refuse(400, 'google_token_invalid');
+    case 'unverified':
+      await deps.audit({
+        action: 'BOS_INVITE_REDEMPTION_REFUSED',
+        inviteId: row.id,
+        accountId: null,
+        details: { reason: 'google_email_unverified', method: 'google' },
+      });
+      return refuse(409, 'google_email_unverified');
+    case 'not_authoritative':
+      await deps.audit({
+        action: 'BOS_INVITE_REDEMPTION_REFUSED',
+        inviteId: row.id,
+        accountId: null,
+        details: { reason: 'google_account_not_authoritative', method: 'google' },
+      });
+      return refuse(409, 'google_use_code');
+    default: {
+      const unhandled: never = proof;
+      deps.logger.error({ inviteId: row.id, googleProof: String((unhandled as { kind?: unknown }).kind) }, 'Unknown Google proof outcome');
+      return TRY_AGAIN_LATER;
+    }
+  }
+}
+
+/** How the mailbox was proven (D-11): recorded as `details.method` on `BOS_INVITE_REDEEMED`. */
+export type RedemptionMethod = 'password' | 'google';
+
+/**
+ * Everything after a WON claim, shared by the code and the Google paths (D-2),
+ * so I-1 to I-6 and FR-12a hold for both by construction: create the account
+ * at the claimed id, then finish (finalise, retried once), or keep the claim
+ * and record why, or release it only after a positive "no such user".
+ *
+ * `create` is the only thing that differs: with the chosen password, or with
+ * none. Its outcome classes are the same, except that the password-less one
+ * has no `weak_password` (that branch is reachable only from the code path).
+ */
+async function createAndFinish(
+  row: BusinessOsInviteRedemptionView,
+  accountId: string,
+  create: () => Promise<CreateConfirmedUserOutcome | CreatePasswordlessUserOutcome>,
+  method: RedemptionMethod,
+  deps: RedemptionDeps,
+  now: Date
+): Promise<CompleteSignupOutcome> {
+  const created = await create();
 
   if (created.ok) {
     if (created.id !== accountId) {
@@ -342,7 +519,7 @@ export async function completeSignup(
       });
       return TRY_AGAIN_LATER;
     }
-    return finish(row, accountId, deps, now);
+    return finish(row, accountId, method, deps, now);
   }
 
   if (created.kind === 'weak_password') {
@@ -367,7 +544,7 @@ export async function completeSignup(
 
   if (exists.data) {
     // Our own account from an interrupted attempt (race-only, SA D-6): finish it.
-    return finish(row, accountId, deps, now);
+    return finish(row, accountId, method, deps, now);
   }
 
   await deps.invites.releaseSignupClaim(row.id, accountId, now);
@@ -388,6 +565,7 @@ export async function completeSignup(
 async function finish(
   row: BusinessOsInviteRedemptionView,
   accountId: string,
+  method: RedemptionMethod,
   deps: RedemptionDeps,
   now: Date
 ): Promise<CompleteSignupOutcome> {
@@ -411,7 +589,7 @@ async function finish(
     action: 'BOS_INVITE_REDEEMED',
     inviteId: row.id,
     accountId,
-    details: { inviteType: row.invite_type, level: 1, source: 'admin_invite' },
+    details: { inviteType: row.invite_type, level: 1, source: 'admin_invite', method },
   });
   await deps.audit({
     action: 'BOS_INVITE_PLAN_PROVISIONED',

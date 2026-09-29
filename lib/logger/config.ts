@@ -48,6 +48,16 @@ export const loggerConfig: pino.LoggerOptions = {
       '*.signupCode',
       'otp',
       '*.otp',
+      // Invite-only signup, Slice 3b: the Google ID token (a bearer assertion
+      // carrying the email and `sub`), the Google Identity Services `credential`
+      // that carries it, and the sign-in nonce. None is logged on purpose; this
+      // is the backstop.
+      'idToken',
+      '*.idToken',
+      'credential',
+      '*.credential',
+      'nonce',
+      '*.nonce',
       '*.apiKey',
       'req.headers.authorization',
       'req.headers.cookie',

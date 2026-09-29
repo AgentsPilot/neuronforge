@@ -1,5 +1,5 @@
 /**
- * The two public signup routes (Slice 1b): body shape (`.strict()`, L-1, AC-6),
+ * The public signup routes (Slice 1b; Slice 3b adds /google): body shape (`.strict()`, L-1, AC-6),
  * the signed-in refusal before any read (L-8), the identical not-recognised
  * answer (AC-2), the status mapping, the headers, the audit flush (WC-7), the
  * route declarations, and no secret in any log line.
@@ -19,6 +19,9 @@ const state = {
   completeOutcome: { ok: true, email: 'invitee@example.com', accountId: 'acct', inviteId: 'inv' } as Record<string, unknown>,
   requestCalls: [] as unknown[],
   completeCalls: [] as unknown[],
+  googleOutcome: { ok: true, accountId: 'acct', inviteId: 'inv' } as Record<string, unknown>,
+  googleCalls: [] as unknown[],
+  googleThrows: false,
   events: [] as string[],
   logs: [] as unknown[],
 };
@@ -52,6 +55,12 @@ jest.mock('@/lib/business-os/invites/inviteRedemption', () => ({
     state.completeCalls.push(input);
     return state.completeOutcome;
   },
+  completeGoogleSignup: async (input: unknown) => {
+    state.events.push('completeGoogleSignup');
+    state.googleCalls.push(input);
+    if (state.googleThrows) throw new Error('boom');
+    return state.googleOutcome;
+  },
 }));
 
 jest.mock('@/lib/business-os/invites/redemptionDeps', () => {
@@ -69,6 +78,7 @@ jest.mock('server-only', () => ({}));
 
 import * as codeRoute from '../code/route';
 import * as completeRoute from '../complete/route';
+import * as googleRoute from '../google/route';
 
 const TOKEN = 'Abcdefghijklmnopqrstuvwxyz0123456789_-ABCDE';
 const PASSWORD = 'correct horse battery';
@@ -93,6 +103,9 @@ beforeEach(() => {
   state.completeOutcome = { ok: true, email: 'invitee@example.com', accountId: 'acct', inviteId: 'inv' };
   state.requestCalls = [];
   state.completeCalls = [];
+  state.googleOutcome = { ok: true, accountId: 'acct', inviteId: 'inv' };
+  state.googleCalls = [];
+  state.googleThrows = false;
   state.events = [];
   state.logs = [];
 });
@@ -108,10 +121,13 @@ describe('route declarations', () => {
     expect(completeRoute.runtime).toBe('nodejs');
     expect(completeRoute.dynamic).toBe('force-dynamic');
     expect(completeRoute.maxDuration).toBe(60);
+    expect(googleRoute.runtime).toBe('nodejs');
+    expect(googleRoute.dynamic).toBe('force-dynamic');
+    expect(googleRoute.maxDuration).toBe(60);
   });
 
   it('neither route names a repository, the plan repository or a service-role client', () => {
-    for (const file of ['code', 'complete']) {
+    for (const file of ['code', 'complete', 'google']) {
       const source = readFileSync(join(process.cwd(), 'app', 'api', 'public', 'invites', 'signup', file, 'route.ts'), 'utf8');
       expect(source).not.toMatch(/Repository|supabaseServer|deleteUser/);
     }
@@ -244,6 +260,130 @@ describe('POST /signup/complete', () => {
     expect(text).not.toContain(TOKEN);
     expect(text).not.toContain('482913');
     expect(text).not.toContain(PASSWORD);
+    expect(text).not.toContain('invitee@example.com');
+  });
+});
+
+describe('POST /signup/google (Slice 3b; T-3b-12, D-9, R-6, R-11)', () => {
+  const CLIENT_ID = '1234567890-abc.apps.googleusercontent.com';
+  const ID_TOKEN = 'eyJhbGciOiJSUzI1NiJ9.eyJlbWFpbCI6Imludml0ZWVAZXhhbXBsZS5jb20ifQ.c2lnbmF0dXJl';
+  const NONCE = 'N'.repeat(43);
+  const googleBody = { token: TOKEN, idToken: ID_TOKEN, nonce: NONCE };
+  const google = (body: unknown) => post(googleRoute.POST, '/api/public/invites/signup/google', body);
+
+  const saved = { signin: process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID, plugin: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID };
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID = CLIENT_ID;
+  });
+  afterEach(() => {
+    for (const [name, value] of [
+      ['NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID', saved.signin],
+      ['NEXT_PUBLIC_GOOGLE_CLIENT_ID', saved.plugin],
+    ] as const) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+
+  it('200 with only the landing page (no email), no-store and no-referrer, audit flushed', async () => {
+    const response = await google(googleBody);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ success: true, data: { redirectTo: '/onboarding-chat' } });
+    expect(headersOf(response)).toEqual({ cache: 'no-store', referrer: 'no-referrer' });
+    expect(state.googleCalls).toEqual([googleBody]);
+    expect(state.events).toEqual(['getUser', 'completeGoogleSignup', 'flush']);
+  });
+
+  it('D-9 / R-6: unconfigured → 404 before the body or the session is read', async () => {
+    delete process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID;
+    const response = await google(googleBody);
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ success: false, error: 'google_signin_not_configured' });
+    expect(headersOf(response)).toEqual({ cache: 'no-store', referrer: 'no-referrer' });
+    expect(state.events).toEqual([]);
+  });
+
+  it('R-6: the plugin client id alone does NOT switch the route on', async () => {
+    delete process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID;
+    process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID = 'plugin-client.apps.googleusercontent.com';
+    expect((await google(googleBody)).status).toBe(404);
+    expect(state.events).toEqual([]);
+  });
+
+  it.each([
+    ['email', { email: 'attacker@example.com' }],
+    ['userId', { userId: 'x' }],
+    ['accountId', { accountId: 'x' }],
+    ['cohort', { cohort: 'x' }],
+    ['password', { password: 'correct horse battery' }],
+  ])('L-1 / AC-6: an injected %s is a 400 and reaches nothing', async (_label, extra) => {
+    const response = await google({ ...googleBody, ...extra });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ success: false, error: 'invalid_request' });
+    expect(state.events).toEqual([]);
+  });
+
+  it.each([
+    ['not JSON', '{nope'],
+    ['a missing idToken', { token: TOKEN, nonce: NONCE }],
+    ['a malformed idToken', { ...googleBody, idToken: 'not-a-jwt' }],
+    ['a short nonce', { ...googleBody, nonce: 'abc' }],
+  ])('400 invalid_request for %s, with nothing about the body logged (R-11)', async (_label, body) => {
+    const response = await google(body);
+    expect(response.status).toBe(400);
+    expect(state.events).toEqual([]);
+    expect(state.logs).toEqual([]);
+  });
+
+  it('L-8: signed in → 409 signed_in before the flow runs', async () => {
+    state.user = { id: 'someone' };
+    const response = await google(googleBody);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ success: false, error: 'signed_in' });
+    expect(state.events).toEqual(['getUser']);
+  });
+
+  it('AC-2: a token that did not match gets the byte-identical validate answer', async () => {
+    state.googleOutcome = { ok: false, kind: 'not_recognised' };
+    const response = await google(googleBody);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(JSON.stringify({ success: true, data: { state: 'not_recognised' } }));
+  });
+
+  it.each([
+    [{ ok: false, kind: 'refused', status: 400, error: 'google_token_invalid' }, 400, { success: false, error: 'google_token_invalid' }],
+    [{ ok: false, kind: 'refused', status: 404, error: 'google_signin_not_configured' }, 404, { success: false, error: 'google_signin_not_configured' }],
+    [{ ok: false, kind: 'refused', status: 409, error: 'google_email_mismatch' }, 409, { success: false, error: 'google_email_mismatch' }],
+    [{ ok: false, kind: 'refused', status: 409, error: 'google_email_unverified' }, 409, { success: false, error: 'google_email_unverified' }],
+    [{ ok: false, kind: 'refused', status: 409, error: 'google_use_code' }, 409, { success: false, error: 'google_use_code' }],
+    [{ ok: false, kind: 'refused', status: 409, error: 'existing_account' }, 409, { success: false, error: 'existing_account' }],
+    [{ ok: false, kind: 'refused', status: 409, error: 'try_again' }, 409, { success: false, error: 'try_again' }],
+    [{ ok: false, kind: 'unavailable_try_again' }, 503, { success: false, error: 'unavailable_try_again' }],
+  ])('maps %j to %i, with the headers', async (outcome, status, body) => {
+    state.googleOutcome = outcome;
+    const response = await google(googleBody);
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual(body);
+    expect(headersOf(response)).toEqual({ cache: 'no-store', referrer: 'no-referrer' });
+  });
+
+  it('a throw in the flow is 503 unavailable_try_again', async () => {
+    state.googleThrows = true;
+    const response = await google(googleBody);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ success: false, error: 'unavailable_try_again' });
+  });
+
+  it('no invite token, ID token or nonce in any log line or response body', async () => {
+    const bodies: string[] = [];
+    bodies.push(await (await google(googleBody)).text());
+    state.googleOutcome = { ok: false, kind: 'refused', status: 409, error: 'google_email_mismatch' };
+    bodies.push(await (await google(googleBody)).text());
+    bodies.push(await (await google({ ...googleBody, email: 'x@y.z' })).text());
+    const text = JSON.stringify({ logs: state.logs, bodies });
+    expect(text).not.toContain(TOKEN);
+    expect(text).not.toContain(ID_TOKEN);
+    expect(text).not.toContain(NONCE);
     expect(text).not.toContain('invitee@example.com');
   });
 });
