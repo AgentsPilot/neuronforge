@@ -103,6 +103,11 @@ const SCOPED_DIRS = [
   'lib/business-os/llm/',
   'lib/business-os/usage/',
   'lib/business-os/entitlements/',
+  // Credit deduction slice 4a: the credit ledger's readers. The operator cost
+  // report's payload is re-declared by the admin page (whose source guard
+  // forbids `@/lib/` imports), and `credits/__tests__/creditReport.wireTypes.test.ts`
+  // pins the two together. Jest cannot check that; this gate can.
+  'lib/business-os/credits/',
 ];
 
 const ATTRIBUTION_TEST = /attribution[^/]*\.test\.tsx?$/;

@@ -39,7 +39,9 @@ describe('the screen is reachable from the admin sidebar', () => {
     expect(oursAt).toBeGreaterThan(-1);
     // The entry runs from its href to the start of the next one.
     const entry = sidebar.slice(oursAt, sidebar.indexOf("href: '", oursAt + 10));
-    expect(entry).toContain("description: 'Models & temperatures'");
+    // Credit deduction slice 4a: the page gained a "Costs & credits" tab.
+    expect(entry).toContain("description: 'Models, temperatures & costs'");
+    expect(sidebar).not.toContain("description: 'Models & temperatures'");
     // And the superseded string is gone from the file entirely.
     expect(sidebar).not.toContain('Models & Switches');
   });

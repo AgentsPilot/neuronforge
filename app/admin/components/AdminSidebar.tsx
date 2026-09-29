@@ -161,7 +161,8 @@ const navigationSections: NavSection[] = [
         // the switch's door), so the previous description named a surface that
         // is not there. Pinned by `business-os-llm/__tests__/nav.test.ts`,
         // scoped to THIS entry, so it cannot drift back unnoticed.
-        description: 'Models & temperatures'
+        // Credit deduction slice 4a: the page gained a "Costs & credits" tab.
+        description: 'Models, temperatures & costs'
       },
       {
         name: 'Model pricing & billing',
