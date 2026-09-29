@@ -389,6 +389,15 @@ const EXCLUDED: PurgeDescriptor[] = [
   never('business_os_entitlement_shadow_events', U,
     'Aggregated "what would have been gated" counters. Platform observability about the product, not the owner\'s business data.'),
 
+  // Credit deduction slice 3b-i (SA-S8, workplan §6.5): the credit ledger (any service, one pool).
+  // `never` for the same reason as the plan rows above, and more so: this is
+  // the bill. Keyed to auth.users, not business_profiles, so no Reset or Purge
+  // can reach it through the business cascade either.
+  never('business_os_credit_charges', U,
+    'The bill: one row per charged Business OS action, AI or any other service. Never purged and never archived — a Reset that removed it would erase what the account was charged. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
+  never('business_os_credit_totals', U,
+    'The running total of business_os_credit_charges per billing period. Derived from the bill and rebuilt from it; never purged. Keyed to auth.users (ON DELETE CASCADE), not business_profiles.'),
+
   // Admin Archiving (Slice 2, condition C-4)
   never('archive_runs', G,
     'The platform run log of archiving: who ran it, when, which cutoff, how many rows. No user_id and no business content, counts only. Never archived and never purged.'),

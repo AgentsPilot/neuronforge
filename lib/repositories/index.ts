@@ -47,6 +47,20 @@ export type {
   BusinessOsShadowEvent,
   BusinessOsShadowEventInput,
 } from './BusinessOsEntitlementShadowRepository';
+// Business OS credit ledger, any service (credit deduction slice 3b-i). Server-only,
+// service role, write-only through one RPC; no caller until slice 3b-ii — a
+// source guard in its test enforces that, barrel included.
+export {
+  BusinessOsCreditChargeRepository,
+  businessOsCreditChargeRepository,
+  BOS_RECORD_CREDIT_CHARGE_RPC,
+} from './BusinessOsCreditChargeRepository';
+export type {
+  BusinessOsCreditChargeInput,
+  BusinessOsCreditChargeWriteResult,
+  BusinessOsCreditChargeTrigger,
+  BusinessOsCreditChargeAnchorSource,
+} from './BusinessOsCreditChargeRepository';
 export {
   OrganizationRepository,
   organizationRepository,
