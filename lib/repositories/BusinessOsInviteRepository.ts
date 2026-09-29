@@ -82,6 +82,31 @@ function noLiveClaim(cutoff: Date): string {
   return `claimed_at.is.null,claimed_at.lt."${cutoff.toISOString()}"`;
 }
 
+/**
+ * The outcome of a single-row compare-and-swap UPDATE that asked for
+ * `{ count: 'exact' }` instead of the changed rows.
+ *
+ * WHY NOT `.select('id')`: on production PostgREST, an UPDATE that combines an
+ * `.or(...)` filter with `return=representation` fails with 42703 "column
+ * <table>.<col> does not exist" whenever the `.or` column is not also in the
+ * select list (proven live 2026-09-29; `revokeForAdmin` only works because its
+ * select happens to list `claimed_at`). The count comes back in the
+ * `Content-Range` header and needs no representation, so it is immune.
+ * `mutationOrSelect.guard.test.ts` keeps `.or` and `.select` off every mutation
+ * chain in `lib/` and `app/`.
+ *
+ * The id filter makes 0 or 1 the only honest answers. Anything else (a missing
+ * count, or more than one row) means the filter did not do what the CAS relies
+ * on, so it is an error rather than a win.
+ */
+function casWon(count: number | null): boolean {
+  if (count === 0) return false;
+  if (count === 1) return true;
+  throw Object.assign(new Error(`Compare-and-swap matched an unexpected row count: ${String(count)}`), {
+    code: 'CAS_ROW_COUNT',
+  });
+}
+
 /** What the public page's lookup reads (C-4): no email, no issuer, no reasons, no hash. */
 export const BUSINESS_OS_INVITE_PUBLIC_COLUMNS =
   'id, grant_kind, grant_id, access_open_ended, access_months, inviter_display_name, language, ' +
@@ -197,6 +222,13 @@ export class BusinessOsInviteRepository {
    * blocks the revoke. Once a signup has claimed the invite, the claim is the
    * decision point; a revoke in the milliseconds before the account is created
    * would otherwise leave an account its invite no longer points at.
+   *
+   * The one mutation here that still pairs `.or` with `.select` (see `casWon`
+   * for the PostgREST 42703 trap), because the admin screen needs the revoked
+   * row back. It works ONLY because `BUSINESS_OS_INVITE_ADMIN_COLUMNS` lists
+   * `claimed_at`, the column the `.or` names; `mutationOrSelect.guard.test.ts`
+   * holds this as its single exemption and fails if that column ever leaves
+   * the list.
    */
   async revokeForAdmin(input: RevokeBusinessOsInviteInput): Promise<RepositoryResult<BusinessOsInvite>> {
     const methodLogger = this.logger.child({ method: 'revokeForAdmin', inviteId: input.id, adminId: input.adminId });
@@ -342,15 +374,19 @@ export class BusinessOsInviteRepository {
     try {
       const query = this.supabase
         .from(INVITES)
-        .update({
-          signup_code_hash: input.codeHash,
-          signup_code_expires_at: input.expiresAt.toISOString(),
-          signup_code_attempts: 0,
-          signup_code_sent_count: input.sentCount,
-          signup_code_window_started_at: input.windowStartedAt.toISOString(),
-          signup_code_last_sent_at: at,
-          updated_at: at,
-        })
+        .update(
+          {
+            signup_code_hash: input.codeHash,
+            signup_code_expires_at: input.expiresAt.toISOString(),
+            signup_code_attempts: 0,
+            signup_code_sent_count: input.sentCount,
+            signup_code_window_started_at: input.windowStartedAt.toISOString(),
+            signup_code_last_sent_at: at,
+            updated_at: at,
+          },
+          // A count, not the rows: see `casWon` for why `.select` is not used here.
+          { count: 'exact' }
+        )
         .eq('id', input.id)
         .eq('signup_code_sent_count', input.observedSentCount)
         .is('redeemed_at', null)
@@ -358,13 +394,12 @@ export class BusinessOsInviteRepository {
         .gt('link_expires_at', at)
         .or(noLiveClaim(input.claimLeaseCutoff));
 
-      const { data, error } = await (input.observedLastSentAt === null
+      const { count, error } = await (input.observedLastSentAt === null
         ? query.is('signup_code_last_sent_at', null)
-        : query.eq('signup_code_last_sent_at', input.observedLastSentAt)
-      ).select('id');
+        : query.eq('signup_code_last_sent_at', input.observedLastSentAt));
 
       if (error) throw error;
-      return { data: Array.isArray(data) && data.length > 0, error: null };
+      return { data: casWon(count), error: null };
     } catch (error) {
       methodLogger.error({ dbError: safeDbError(error) }, 'Failed to store a signup code');
       return { data: null, error: toError(error) };
@@ -409,13 +444,17 @@ export class BusinessOsInviteRepository {
     try {
       let query = this.supabase
         .from(INVITES)
-        .update({
-          signup_code_hash: null,
-          signup_code_expires_at: null,
-          claimed_at: at,
-          claimed_account_id: input.accountId,
-          updated_at: at,
-        })
+        .update(
+          {
+            signup_code_hash: null,
+            signup_code_expires_at: null,
+            claimed_at: at,
+            claimed_account_id: input.accountId,
+            updated_at: at,
+          },
+          // A count, not the rows: see `casWon` for why `.select` is not used here.
+          { count: 'exact' }
+        )
         .eq('id', input.id)
         .eq('signup_code_hash', input.codeHash)
         .is('redeemed_at', null)
@@ -428,10 +467,10 @@ export class BusinessOsInviteRepository {
           ? query.is('claimed_account_id', null)
           : query.eq('claimed_account_id', input.observedClaimedAccountId);
 
-      const { data, error } = await query.select('id');
+      const { count, error } = await query;
 
       if (error) throw error;
-      return { data: Array.isArray(data) && data.length > 0, error: null };
+      return { data: casWon(count), error: null };
     } catch (error) {
       methodLogger.error({ dbError: safeDbError(error) }, 'Failed to claim an invite for signup');
       return { data: null, error: toError(error) };
