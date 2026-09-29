@@ -7,6 +7,14 @@
  * under test is mocked; no network, no DB, no email.
  */
 
+// Credit deduction slice 3b-ii (SA Q-7 / SF-3): this suite runs the real
+// runAiAction, whose credit charge write would otherwise leave the process
+// (and reach a real database if the shell exported real credentials).
+jest.mock('@/lib/business-os/llm/aiChargeRecorder', () => ({
+  AI_CHARGE_SERVICE: 'ai',
+  recordAiCharge: jest.fn().mockResolvedValue(undefined),
+}));
+
 jest.mock('@/lib/logger', () => {
   const logger = { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn(), child: () => logger };
   return { createLogger: () => logger };

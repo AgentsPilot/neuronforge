@@ -4,9 +4,13 @@
 // (requirement FR-2, FR-6, SQ-8), and the pure builder of the exact charge
 // record slice 3b-ii will write (FR-13).
 //
-// UNWIRED in 3a: nothing outside tests imports this module. Slice 3b-ii calls
-// `buildAiChargeRecord` from `runAiAction`, after the audit entry is queued, as
-// slice 2 shipped `chargePricing.ts` ahead of this file.
+// WIRED in 3b-ii: `aiChargeRecorder.ts` calls `buildAiChargeRecord` at the end
+// of `runAiAction`, after the audit entry is queued.
+//
+// Import graph (SA C-5): only TYPES come from `aiActionAudit.ts`. The caller
+// passes the identities it already validated and the declaration's `isCharged`,
+// so this module needs no value from there and forms no runtime cycle with it
+// (a source guard in `aiChargeRecorder.test.ts` pins it).
 //
 // Built only from the action's in-memory call list (FR-11, AC-30): never from
 // the usage ledger, never from the audit entry's rounded cost. Pricing is slice
@@ -15,9 +19,9 @@
 // unpriced call: `bos_llm_call_unpriced` stays the one loud event (S2 N-4).
 //
 // Pure apart from one `info` per process, on first use, naming the active
-// credit value version (SA-S6: serverless has no start-up hook). Checking the
-// identities reuses `validateIdentities`, which may emit its own once-per-
-// process warning about a misconfigured platform id.
+// credit value version (SA-S6: serverless has no start-up hook). The identities
+// are checked by `runAiAction` (`validateIdentities`, one definition of the
+// rule), which hands the result in.
 //
 // Server-only: `chargePricing.ts` reaches `SystemConfigRepository`, which loads
 // `supabaseServer` at import.
@@ -25,13 +29,7 @@
 import type { UsageCallRecord } from '@/lib/ai/usageScope';
 import { createLogger } from '@/lib/logger';
 import { currentCreditValue, type CreditValueVersion } from '@/lib/business-os/entitlements/config/creditValue';
-import {
-  AI_ACTION_DECLARATIONS,
-  validateIdentities,
-  type AiActionSpec,
-  type AiActionType,
-  type AiTrigger,
-} from './aiActionAudit';
+import type { AiActionSpec, AiActionType, AiTrigger } from './aiActionAudit';
 import { priceActionForCharge } from './chargePricing';
 
 const logger = createLogger({ module: 'BosChargeResolver' });
@@ -77,16 +75,24 @@ export interface AiChargeRecordInput {
   spec: AiActionSpec;
   /** The invocation's id, minted by `runAiAction` (SA-B1). */
   actionId: string;
-  /** The server-side account, as `runAiAction` holds it at the end of the action. */
-  accountId: string | undefined;
+  /**
+   * The server-side account, ALREADY validated by `runAiAction`
+   * (`validateIdentities`: the group and the account are UUIDs, the account is
+   * not the platform account), or `null` when it is invalid (SA C-5).
+   */
+  identities: { accountId: string } | null;
+  /** `AI_ACTION_DECLARATIONS[spec.actionType].isCharged`, read by the caller (FR-4, SA C-5). */
+  isCharged: boolean;
   calls: readonly UsageCallRecord[];
   /** The action's failure, from `resolveActionFailure`: the same result the audit entry takes. */
   failure: { code: string } | undefined;
 }
 
 /**
- * Round half away from zero at `dp` places. Exact while value × 10^dp is a
- * safe integer (for 10 dp, below ~$900,000 per action, as the audit entry).
+ * Round half up (towards +∞, SA N-8) at `dp` places. Only non-negative values
+ * reach it (rule 4), where that equals half away from zero. Exact while
+ * value × 10^dp is a safe integer (for 10 dp, below ~$900,000 per action, as
+ * the audit entry).
  */
 function roundTo(value: number, factor: number): number {
   return Math.round(value * factor) / factor;
@@ -160,15 +166,13 @@ export function toChargeTrigger(trigger: AiTrigger): ChargeTrigger {
  *
  * A failed action is charged the calls it made (FR-8); several calls are one
  * record (FR-5). Never throws on a record; a defect in the pricing tables
- * themselves can throw, and the 3b-ii caller catches it (SA N-4).
+ * themselves can throw, and the recorder catches it (SA N-4).
  */
 export function buildAiChargeRecord(input: AiChargeRecordInput): AiChargeRecordResult {
-  const { spec, actionId, accountId, calls, failure } = input;
+  const { spec, actionId, identities, isCharged, calls, failure } = input;
 
   if (calls.length === 0) return { skipped: 'no_calls' };
-  if (!AI_ACTION_DECLARATIONS[spec.actionType].isCharged) return { skipped: 'not_charged' };
-
-  const identities = validateIdentities(spec, accountId);
+  if (!isCharged) return { skipped: 'not_charged' };
   if (!identities) return { skipped: 'invalid_identity' };
 
   const { charge, rawCostUsd } = price(calls);

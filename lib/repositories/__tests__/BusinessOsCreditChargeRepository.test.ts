@@ -5,8 +5,9 @@
  * the eleven typed arguments, built field by field (tenant-isolation-guard Step 3);
  * the abort signal reaches the request; the RPC's row is mapped strictly, so a
  * wrong shape is an error rather than a guessed `recorded`; and a failure is
- * returned, never thrown. Plus the 3b-i guardrail: nothing outside the
- * repository layer names it yet (no production caller until 3b-ii).
+ * returned, never thrown. Plus the guardrail: nothing outside the repository
+ * layer names it except the ONE production writer, the AI charge recorder
+ * (slice 3b-ii, SA D-13), and the tests that fake it.
  */
 
 import { readdirSync, readFileSync, statSync } from 'fs';
@@ -298,20 +299,25 @@ describe('the input is the record chargeResolver builds plus service (3a → 3b-
   });
 });
 
-describe('3b-i guardrail: no production caller yet', () => {
+describe('guardrail: the AI charge recorder is the only production caller (3b-ii, D-13)', () => {
   const ROOT = process.cwd();
   const SCANNED_DIRS = ['app', 'lib', 'components', 'hooks', 'scripts', 'pages', 'middleware.ts'];
   const SYMBOLS = ['BusinessOsCreditChargeRepository', 'businessOsCreditChargeRepository', 'business_os_record_credit_charge'];
   /**
-   * The repository, the barrel and the tests. Slice 3b-ii adds the recorder
-   * here — that edit is where someone states, in a reviewable diff, what starts
-   * writing the ledger.
+   * The repository, the barrel and the tests, plus — since slice 3b-ii — the
+   * one production writer, `aiChargeRecorder.ts`, and the two suites that fake
+   * the repository under it. Adding a file here is where someone states, in a
+   * reviewable diff, what else starts writing the ledger.
    */
   const ALLOWED = new Set(
     [
       'lib/repositories/BusinessOsCreditChargeRepository.ts',
       'lib/repositories/index.ts',
       'lib/repositories/__tests__/BusinessOsCreditChargeRepository.test.ts',
+      // Slice 3b-ii (D-13): the only production writer, and its tests.
+      'lib/business-os/llm/aiChargeRecorder.ts',
+      'lib/business-os/llm/__tests__/aiChargeRecorder.test.ts',
+      'lib/business-os/llm/__tests__/aiActionAudit.test.ts',
     ].map((p) => p.split('/').join(sep))
   );
 

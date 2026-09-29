@@ -9,6 +9,14 @@
 // audit entry and queues it with AuditTrailService.log(): never awaited, never
 // flushed, the service unchanged (requirement D-4, FR-16, FR-17).
 //
+// CHARGE (deduction layer slice 3b-ii): after the entry is queued, the action's
+// credit charge is written by `recordAiCharge` (aiChargeRecorder.ts). It is the
+// ONE awaited write here, time-boxed at `BOS_AI_CHARGE_WRITE_BUDGET_MS`, and it
+// never throws, so it cannot change the action's value or error. The entry and
+// the charge take the SAME decision (identities and failure, SA N-7). Charges
+// are recorded in every entitlements mode: a charge measures, it decides
+// nothing (SA Q-4).
+//
 // WIRED: `runAiAction` is called at 16 sites, one per `AiActionType`. 14 run in
 // production; the two dormant types (see the union) have call sites but no
 // production trigger yet. What each type is (its area, who it faces, whether it
@@ -35,6 +43,9 @@ import { BOS_LLM_AREAS, bosFeature, isPlatformAccount, isUuid, type BosLlmArea }
 // Imports only the shared pricing reader and types (SA Q-1 (b)): the rate
 // derivation and SystemConfigRepository stay out of this module's graph.
 import { reportUnpricedCalls } from './chargeClassification';
+// Slice 3b-ii (SA Q-5): a static import. The recorder and the resolver import
+// only TYPES back from this module, so there is no runtime cycle (SA C-5).
+import { AI_CHARGE_SERVICE, recordAiCharge } from './aiChargeRecorder';
 // Type-only, from a file with no imports: erased at compile time, adds nothing
 // to this server-only module's graph.
 import type { Labels } from '@/lib/business-os/entitlements/types';
@@ -417,12 +428,25 @@ export function validateIdentities(
 }
 
 /**
- * Run one AI action and queue its audit entry.
+ * What `runAiAction` decides once, at the end of an action, for BOTH records:
+ * the validated identities (`null` = the entry and the charge must not be
+ * written) and the failure. Taking one decision is what keeps the audit entry
+ * and the charge from ever disagreeing (SA N-7).
+ */
+interface AiActionDecision {
+  identities: { accountId: string; actorId: string } | null;
+  failure: { code: string } | undefined;
+}
+
+/**
+ * Run one AI action, queue its audit entry and record its charge.
  *
  * The action's result (or error) is returned (or rethrown) exactly as if it were
  * not wrapped. Writing the entry can never fail, change or delay the action: it
  * is queued without waiting, and any fault in building it is logged and dropped.
- * An action that made no LLM call writes no entry (FR-7).
+ * The charge (slice 3b-ii) is awaited, but can never fail or change the action,
+ * and delays it by at most `BOS_AI_CHARGE_WRITE_BUDGET_MS`. An action that made
+ * no LLM call writes no entry and no charge, and awaits nothing (FR-7).
  */
 export async function runAiAction<T>(spec: AiActionSpec, fn: (handle: AiActionHandle) => Promise<T>): Promise<T> {
   // One id per invocation (SA-B1), minted before the scope opens: a nested
@@ -441,10 +465,14 @@ export async function runAiAction<T>(spec: AiActionSpec, fn: (handle: AiActionHa
   };
 
   const outcome = await withUsageScope(spec.groupId, () => fn(handle));
+  const calls = outcome.usage.calls;
 
+  // Decided once (slice 3b-ii, SA N-7); `undefined` if deciding itself threw.
+  let decision: AiActionDecision | undefined;
   try {
     const thrown = outcome.ok ? undefined : { error: outcome.error };
-    emitAiAuditEntry(spec, actionId, accountId, outcome.usage.calls, signalled, thrown);
+    decision = decideAiAction(spec, accountId, calls, signalled, thrown);
+    emitAiAuditEntry(spec, actionId, accountId, calls, decision);
   } catch (err) {
     logger.error(
       { err, area: spec.area, actionType: spec.actionType, groupId: spec.groupId, accountId: accountId ?? null },
@@ -457,7 +485,7 @@ export async function runAiAction<T>(spec: AiActionSpec, fn: (handle: AiActionHa
   // AFTER the entry is queued, so a fault here can never skip the audit entry
   // or change the action's result (SA Q-1 (a), S-1).
   try {
-    reportUnpricedCalls(outcome.usage.calls, {
+    reportUnpricedCalls(calls, {
       area: spec.area,
       actionType: spec.actionType,
       groupId: spec.groupId,
@@ -470,8 +498,68 @@ export async function runAiAction<T>(spec: AiActionSpec, fn: (handle: AiActionHa
     );
   }
 
+  // Deduction layer slice 3b-ii (FR-13, FR-15, SQ-3): the charge, LAST, after
+  // the entry is queued (so the entry never waits on it) and BEFORE the rethrow
+  // (so a failed action is charged what it spent, FR-8). Zero calls: nothing is
+  // awaited at all (NI-4).
+  if (calls.length > 0) {
+    await recordAiChargeSafely(spec, actionId, accountId, calls, decision);
+  }
+
   if (!outcome.ok) throw outcome.error;
   return outcome.value;
+}
+
+/** The decision both records take, or `undefined` when the action made no call. */
+function decideAiAction(
+  spec: AiActionSpec,
+  accountId: string | undefined,
+  calls: UsageCallRecord[],
+  signalled: AiFailureCode | undefined,
+  thrown: { error: unknown } | undefined
+): AiActionDecision | undefined {
+  if (calls.length === 0) return undefined; // FR-7: nothing to record.
+  const identities = validateIdentities(spec, accountId);
+  return { identities, failure: identities ? resolveActionFailure(calls, signalled, thrown) : undefined };
+}
+
+/**
+ * `recordAiCharge` never throws and never rejects. This wrapper is defence in
+ * depth: even a defect in it (or in reading the declaration) is logged here and
+ * can never reach the action.
+ */
+async function recordAiChargeSafely(
+  spec: AiActionSpec,
+  actionId: string,
+  accountId: string | undefined,
+  calls: UsageCallRecord[],
+  decision: AiActionDecision | undefined
+): Promise<void> {
+  try {
+    await recordAiCharge({
+      spec,
+      actionId,
+      accountId,
+      decision,
+      isCharged: AI_ACTION_DECLARATIONS[spec.actionType].isCharged,
+      calls,
+    });
+  } catch (err) {
+    logger.error(
+      {
+        err,
+        event: 'bos_ai_charge_write_failed',
+        reason: 'exception',
+        service: AI_CHARGE_SERVICE,
+        area: spec.area,
+        actionType: spec.actionType,
+        groupId: spec.groupId,
+        actionId,
+        accountId: accountId ?? null,
+      },
+      'AI charge write failed'
+    );
+  }
 }
 
 function emitAiAuditEntry(
@@ -479,20 +567,18 @@ function emitAiAuditEntry(
   actionId: string,
   accountId: string | undefined,
   calls: UsageCallRecord[],
-  signalled: AiFailureCode | undefined,
-  thrown: { error: unknown } | undefined
+  decision: AiActionDecision | undefined
 ): void {
   const ids = { area: spec.area, actionType: spec.actionType, groupId: spec.groupId, accountId: accountId ?? null };
 
-  if (calls.length === 0) return; // FR-7: no LLM call, no entry.
+  if (!decision) return; // FR-7: no LLM call, no entry.
 
-  const identities = validateIdentities(spec, accountId);
+  const { identities, failure } = decision;
   if (!identities) {
     logger.error(ids, 'AI audit entry not written: invalid grouping id or account, or the platform account');
     return;
   }
 
-  const failure = resolveActionFailure(calls, signalled, thrown);
   const entry = buildAiAuditEntry({ spec, actionId, ...identities, calls, failure });
 
   // Never awaited (RC-4): log() awaits a 100-row insert when its entry fills the batch.
