@@ -1,13 +1,13 @@
 # Workplan: Business OS Credit Deduction — Slice 3 (Record every charge, silently)
 
-> **Last Updated**: 2026-09-28
+> **Last Updated**: 2026-09-29
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_LLM_DEDUCTION_LAYER_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_DEDUCTION_LAYER_REQUIREMENT.md): §3 "Reusing what exists", §4 "The three records", §5 "How the balance works", §12 **Slice 3 — Record every charge, silently** (scope, guardrails, FRs / ACs), FR-1 to FR-16, FR-18, FR-34, FR-35, FR-38, the NFRs, and the SA rulings SQ-1, SQ-2, SQ-3, SQ-5, SQ-7, SQ-8, SQ-11, SQ-15, SA-B1, SA-S1, SA-S8 plus the SA follow-up (2026-09-28).
 **Builds on:** [BUSINESS_OS_CREDIT_DEDUCTION_SLICE_2_WORKPLAN.md](/docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_2_WORKPLAN.md). Slice 2 shipped the pure, unwired `priceActionForCharge` (`chargePricing.ts`) and `classifyCallForCharge` / `reportUnpricedCalls` (`chargeClassification.ts`); slice 3 wires them. Its verified facts, its SA conditions (C-1 to C-3) and its code-review notes (N-1 to N-6) are reused and cited as "S2 C-3", "S2 N-4" and so on.
 **Branch:** `feature/business-os-credit-deduction-slice-3` (worktree `neuronforge-llm-deduction`), off `origin/main` at `7faca4f7` (after slice 1's PR #130 and slice 2's PR #132). The branch was created before this workplan, not by Dev.
 **Date:** 2026-09-28
-**Status:** Code Complete (3a) — uncommitted, awaiting SA code review. 3b-i and 3b-ii not started.
+**Status:** 3a QA Passed (PR #137). **Code Complete (3b-i)** — on `feature/business-os-credit-deduction-slice-3b-i` (stacked on 3a), uncommitted, awaiting SA code review; the migration is **not applied** (the user applies it to PROD by hand, §6.4.1). 3b-ii not started. **2026-09-29: 3b-i updated for the user's decision that the ledger is not AI-specific** (§3.1, §5.2.1.2): objects renamed to `business_os_credit_*` and a `service` column added; still uncommitted and not applied.
 
 ## Overview
 
@@ -19,6 +19,8 @@ Slice 3 is the moment Business OS starts **counting** in credits. After it ships
 |---|---|---|---|
 | **3a — Action id, credit value v0, pure resolver** | Every `runAiAction` invocation mints its own **action id**, and the audit entry carries it (`schema: 2`). The **provisional credit value, version 0** (≈ $0.001) lives in the entitlements config, versioned and append-only. **One pure resolver** turns an action's calls into `{ cost, credits, version, fallback flag }` using slice 2's pricing, and a pure builder produces the exact charge record 3b will write. | **No** | ≈ 2 days |
 | **3b — The tables, the RPC, the repository and the wiring** | A migration with the thin **charge table** and the **per-period totals table**, one RPC that writes both in one transaction, a repository, the purge / deletion registration, and a direct, awaited, time-boxed, never-throwing write at the end of `runAiAction`. Charging starts at the stated moment (§6.4). | **Yes** (applied to PROD by hand) | ≈ 4.5 days |
+
+**The ledger is not AI-specific (user decision 2026-09-29).** Eventually every chargeable action — AI or not, for example a notification email to a client — has a measured cost converted to credits, all from **one credit pool** per account, following the same procedure as AI with few exceptions. Nothing non-AI is built now; the ledger only must not block it. So the objects are named `business_os_credit_*`, each charge row names its `service` (slice 3 records only `'ai'`), and the totals stay one row per account and period.
 
 3a is **self-contained**: it ships alone, changes one audit field and adds nothing that runs in production beyond minting a UUID. 3b depends on 3a.
 
@@ -192,13 +194,15 @@ Only this: each `runAiAction` mints one UUID, and each AI audit entry carries it
 
 ### 3.1 Names (SA names the tables; Dev proposes)
 
+> **Renamed 2026-09-29 (user decision: the ledger is not AI-specific).** SA approved `business_os_ai_charges`, `business_os_ai_charge_totals`, `business_os_record_ai_charge`, `business_os_ai_period_start` and `BusinessOsAiChargeRepository` (Q-12). The migration was applied nowhere, so they were renamed freely to the names below. The recorder keeps its AI name: it is the AI service's recorder, and a later service adds its own.
+
 | Object | Proposed name | Why |
 |---|---|---|
-| Charge table | `business_os_ai_charges` | Business OS-namespaced (SA-S8), matches `business_os_account_plans` / `business_os_entitlement_*`; the requirement's working name `business_ai_charges` lacks the `_os_` namespace every entitlements table carries |
-| Totals table | `business_os_ai_charge_totals` | One row per `(user_id, period_start)` (SQ-1) |
-| Write RPC | `business_os_record_ai_charge(...)` | Verb-first, matches `business_os_record_shadow_events` |
-| Period function | `business_os_ai_period_start(anchor, at)` | The one definition of an anniversary period (T-6) |
-| Repository | `lib/repositories/BusinessOsAiChargeRepository.ts` | `new-repository` skill |
+| Charge table | `business_os_credit_charges` | The one credit ledger for every chargeable service, not only AI (user decision 2026-09-29). Business OS-namespaced (SA-S8), matches `business_os_account_plans` / `business_os_entitlement_*`; the requirement's working name `business_ai_charges` lacks the `_os_` namespace every entitlements table carries |
+| Totals table | `business_os_credit_totals` | One row per `(user_id, period_start)` (SQ-1): **one credit pool** across every service, never split by service |
+| Write RPC | `business_os_record_credit_charge(...)` | Verb-first, matches `business_os_record_shadow_events` |
+| Period function | `business_os_credit_period_start(anchor, at)` | The one definition of an anniversary period (T-6) |
+| Repository | `lib/repositories/BusinessOsCreditChargeRepository.ts` | `new-repository` skill |
 | Recorder | `lib/business-os/llm/aiChargeRecorder.ts` | The budgeted, never-throwing write |
 
 ### 3.2 The charge row (FR-13, SQ-15) and the adjustment shape decided now
@@ -210,43 +214,44 @@ Only this: each `runAiAction` mints one UUID, and each AI audit entry carries it
 | `id uuid PK default gen_random_uuid()` | its own id | its own id |
 | `kind text` | `'charge'` | `'adjustment'` |
 | `action_id uuid UNIQUE` | **required**, from `runAiAction` — the idempotency key (SA-B1, SQ-2) | **NULL** — never reuses an action id (SQ-15) |
-| `adjusts_action_id uuid → business_os_ai_charges(action_id)` | NULL | **required** |
+| `adjusts_action_id uuid → business_os_credit_charges(action_id)` | NULL | **required** |
 | `user_id uuid → auth.users(id)` | the account (server-derived) | the adjusted row's account |
 | `created_at timestamptz default now()` | write time | write time |
 | `period_start timestamptz NOT NULL` | written at charge time (SQ-15 (1)) | slice 4 decides (the original's, or the period it is made in) |
-| `group_id uuid` | **required**, indexed, **not** unique (SQ-15 (2)) | NULL allowed |
+| `group_id uuid` | **required** for every charge of every service, indexed, **not** unique (SQ-15 (2)). User decision 2026-09-29: every chargeable action belongs to a group, even a group of one (a bulk send is one group with one action id per email) | NULL allowed |
 | `credits numeric(18,6)` | ≥ 0 | signed |
 | `cost_usd numeric(16,10)` | ≥ 0 | signed |
 | `credit_value_version integer ≥ 0` | from 3a | the version the correction is priced at |
-| `is_fallback_priced boolean` | slice 2's flag | false |
+| `is_fallback_priced boolean` | slice 2's flag. **AI-specific**: every other service records `false` (a `COMMENT ON COLUMN` says so) | false |
+| `service text` | **required**, format-checked like `action_type` (lowercase letters, digits, underscore, 1–64, starting with a letter) — an identifier, **not** an enumerated list, so a new chargeable service needs no migration. Slice 3 records only `'ai'` (the 3b-ii recorder passes it). Owners may SELECT it | **NULL** — inherits the service of the charge it adjusts |
 | `action_type text` | **required**, format-checked `^[a-z][a-z0-9_]{0,63}$` (not an enumerated CHECK, so a new `AiActionType` needs no migration) | NULL |
 | `triggered_by text` | **required**, `owner` / `scheduled` / `external` (SQ-15 (3)); named `triggered_by` because `trigger` is an SQL keyword | NULL |
 | `outcome text` | **required**, `succeeded` / `failed` | NULL |
 | `reason_code text` | NULL | **required**, format-checked |
 
-Two `CHECK` constraints make each kind's shape impossible to violate (charge: `action_id`, `group_id`, `action_type`, `triggered_by`, `outcome` present, `adjusts_action_id` and `reason_code` absent, credits and cost ≥ 0; adjustment: `action_id` absent, `adjusts_action_id` and `reason_code` present). **No** tokens, models, call names, areas or error codes (FR-13, AC-11).
+Two `CHECK` constraints make each kind's shape impossible to violate (charge: `action_id`, `group_id`, `service`, `action_type`, `triggered_by`, `outcome` present, `adjusts_action_id` and `reason_code` absent, credits and cost ≥ 0; adjustment: `action_id` and `service` absent, `adjusts_action_id` and `reason_code` present). **No** tokens, models, call names, areas or error codes (FR-13, AC-11).
 
 **Rows are never updated in place, by privilege, not by care:** `service_role` gets `SELECT, INSERT` on the charge table and nothing else (§6.1). `user_id` becomes NULL only through the foreign key's `ON DELETE SET NULL`, which runs as the table owner (the `minimise` verdict, Q-8).
 
 ### 3.3 The totals row (SQ-1, FR-18, SQ-5)
 
-`business_os_ai_charge_totals`, PK `(user_id, period_start)`, FK `user_id → auth.users(id) ON DELETE CASCADE`: `credits_total`, `credits_owner`, `credits_scheduled`, `credits_external`, `credits_adjustment` (0 until slice 4), `cost_usd_total`, `charge_count`, `fallback_priced_count`, `updated_at`. The per-trigger split is there now so slice 6's "you vs automatic" (FR-25) and slice 12's `external` count need no migration. It is **derived data**: it can always be rebuilt as `SUM(...) GROUP BY user_id, period_start` over the charge rows, using each row's stored `period_start` (NFR Correctness). §6.3 includes the rebuild query as a verify step.
+`business_os_credit_totals`, PK `(user_id, period_start)`, FK `user_id → auth.users(id) ON DELETE CASCADE`: `credits_total`, `credits_owner`, `credits_scheduled`, `credits_external`, `credits_adjustment` (0 until slice 4), `cost_usd_total`, `charge_count`, `fallback_priced_count`, `updated_at`. **One credit pool:** there is no per-service column or key; a charge of any service moves the same row (user decision 2026-09-29). The per-trigger split is there now so slice 6's "you vs automatic" (FR-25) and slice 12's `external` count need no migration. It is **derived data**: it can always be rebuilt as `SUM(...) GROUP BY user_id, period_start` over the charge rows, using each row's stored `period_start` (NFR Correctness). §6.3 includes the rebuild query as a verify step.
 
 ### 3.4 The period (T-6), resolved inside the RPC
 
 The requirement says the period runs from the account's own anchor (T-6), written at charge time. **Proposal (Q-1): compute it in SQL, inside the write RPC, in the same transaction.**
 
-- `business_os_ai_period_start(p_anchor, p_at)`: the latest `anchor + n months ≤ at`, **computed in UTC** (`AT TIME ZONE 'UTC'`, so the session time zone cannot move it), with `n` counted from the anchor rather than chained month to month, so a 31st anchor gives Jan 31 → Feb 28 → Mar 31 (Postgres month arithmetic clamps, as Stripe's billing cycle does). `n` may be negative, so a future anchor still yields a period.
+- `business_os_credit_period_start(p_anchor, p_at)`: the latest `anchor + n months ≤ at`, **computed in UTC** (`AT TIME ZONE 'UTC'`, so the session time zone cannot move it), with `n` counted from the anchor rather than chained month to month, so a 31st anchor gives Jan 31 → Feb 28 → Mar 31 (Postgres month arithmetic clamps, as Stripe's billing cycle does). `n` may be negative, so a future anchor still yields a period.
 - **Why SQL, not TypeScript:** one round trip instead of two; the anchor and the charge are read and written atomically, so an admin changing the anchor mid-write cannot split a charge; there is no second failure mode ("anchor unreadable → no charge"); and slice 9 reads the current period through the same function. The cost is that Jest cannot execute it — so the checker (§6.3) asserts fixed cases **on production, read-only** (the function is side-effect free), and the migration test pins the UTC wording.
 - **Missing plan row (Q-3):** fall back to the calendar month in UTC (`date_trunc('month', now() AT TIME ZONE 'UTC')`), and return `anchor_source = 'calendar_month'` so the recorder logs `warn` `{ event: 'bos_ai_charge_no_plan_row', accountId, actionId }`. The charge is still written; nothing is lost.
 - The charge time is the **write** time (`now()` in the database), i.e. the end of the action. An action that straddles a period boundary is charged to the period it finished in.
 
 ### 3.5 The write RPC (SQ-1, SQ-2, SA-S8)
 
-`business_os_record_ai_charge(p_action_id uuid, p_user_id uuid, p_group_id uuid, p_action_type text, p_triggered_by text, p_outcome text, p_credits numeric, p_cost_usd numeric, p_credit_value_version integer, p_is_fallback_priced boolean) RETURNS TABLE (recorded boolean, period_start timestamptz, anchor_source text)` — `LANGUAGE plpgsql SECURITY INVOKER SET search_path = ''`:
+`business_os_record_credit_charge(p_action_id uuid, p_user_id uuid, p_group_id uuid, p_service text, p_action_type text, p_triggered_by text, p_outcome text, p_credits numeric, p_cost_usd numeric, p_credit_value_version integer, p_is_fallback_priced boolean) RETURNS TABLE (out_recorded boolean, out_period_start timestamptz, out_anchor_source text)` (OUT names per C-2; the sketch originally used the bare names, which clash with the columns) — `LANGUAGE plpgsql SECURITY INVOKER SET search_path = ''`:
 
-1. Refuse NULL `p_action_id` / `p_user_id` / `p_group_id` (`RAISE`); read `period_anchor` for `p_user_id`; compute `v_period` (§3.4).
-2. `INSERT INTO public.business_os_ai_charges (kind, action_id, user_id, period_start, group_id, …) VALUES ('charge', …) ON CONFLICT (action_id) DO NOTHING` — `kind` is **hard-coded** `'charge'`: slice 3's RPC cannot write an adjustment.
+1. Refuse NULL `p_action_id` / `p_user_id` / `p_group_id` / `p_service` (`RAISE`, `22004`); read `period_anchor` for `p_user_id`; compute `v_period` (§3.4).
+2. `INSERT INTO public.business_os_credit_charges (kind, action_id, user_id, period_start, group_id, …) VALUES ('charge', …) ON CONFLICT (action_id) DO NOTHING` — `kind` is **hard-coded** `'charge'`: slice 3's RPC cannot write an adjustment.
 3. **Only if a row was inserted**, upsert the totals row: `ON CONFLICT (user_id, period_start) DO UPDATE SET credits_total = t.credits_total + EXCLUDED.credits_total, …` (row-locked, so two concurrent actions of one account never lose an update).
 4. Return `recorded = FOUND`, the period and the anchor source.
 
@@ -254,7 +259,7 @@ Idempotent on the action id (SQ-2): a repeat write of the same invocation insert
 
 ### 3.6 The repository
 
-`BusinessOsAiChargeRepository` (per `new-repository`, adapted to an insert-only ledger — no `update`, no soft delete): one method, `recordCharge(record, { signal })` → `RepositoryResult<{ recorded: boolean; periodStart: string; anchorSource: 'plan' | 'calendar_month' }>`. It builds the RPC arguments **field by field** from the typed record (tenant-isolation-guard Step 3 — never a spread), passes the abort signal, and returns `{ data, error }`, never throwing. Header documents the intentional service-role use (the table has no client write privilege at all). No read methods in slice 3: nothing reads the ledger until slice 4 / 6 / 9, and each adds its own `.eq('user_id', …)`-scoped read then. Exported from `lib/repositories/index.ts`.
+`BusinessOsCreditChargeRepository` (per `new-repository`, adapted to an insert-only ledger — no `update`, no soft delete): one method, `recordCharge(record, { signal })` — the record is 3a's `AiChargeRecord` **plus `service`** (the 3b-ii recorder passes `{ ...record, service: 'ai' }`; `chargeResolver` stays AI-only) — → `RepositoryResult<{ recorded: boolean; periodStart: string; anchorSource: 'plan' | 'calendar_month' }>`. It builds the RPC arguments **field by field** from the typed record (tenant-isolation-guard Step 3 — never a spread), passes the abort signal, and returns `{ data, error }`, never throwing. Header documents the intentional service-role use (the table has no client write privilege at all). No read methods in slice 3: nothing reads the ledger until slice 4 / 6 / 9, and each adds its own `.eq('user_id', …)`-scoped read then. Exported from `lib/repositories/index.ts`.
 
 ### 3.7 The recorder and the wiring (SQ-3, SQ-11 condition 1, WC-21)
 
@@ -337,12 +342,14 @@ return outcome.value;
 
 | File | Action | Reason | `console.*` |
 |---|---|---|---|
-| `supabase/migrations/20261014_business_os_ai_charges.sql` | create | Tables, function, RPC, grants, RLS (§6.1). `20261014` is the first free date after `main`'s `20261013_business_os_invite_existing_account.sql` (SF-2; checked at `origin/main` `7c21d009`). Re-checked against `main` at T3b.1 | — |
-| `supabase/SQL Scripts/20261014_business_os_ai_charges_rollback.sql` | create | §6.2 | — |
-| `scripts/check-bos-ai-charges-migration.sql` | create | Read-only verifier (§6.3) | — |
-| `supabase/migrations/__tests__/business-os-ai-charges.migration.test.ts` | create | SQL-text guard, invites-migration pattern | — |
-| `lib/repositories/BusinessOsAiChargeRepository.ts` | create | §3.6 | — |
-| `lib/repositories/__tests__/BusinessOsAiChargeRepository.test.ts` | create | Exact RPC arguments, error path, abort signal passed | — |
+| `supabase/migrations/20261015_business_os_credit_charges.sql` | create | Tables, function, RPC, grants, RLS (§6.1). `20261015`: `20261014` was free at `7c21d009` (SF-2) but was taken on `main` by `20261014_business_os_invite_signup.sql` (PR #139) before this slice was committed, so the file moved to `20261015` at commit time (RM guard, 2026-09-29) | — |
+| `supabase/SQL Scripts/20261015_business_os_credit_charges_rollback.sql` | create | §6.2 | — |
+| `scripts/check-bos-credit-charges-migration.sql` | create | Read-only verifier (§6.3) | — |
+| `scripts/probe-bos-credit-charges-migration.sql` | create (**added at 3b-i**, C-1) | The mandatory write probe: one `DO` block that always raises (§6.3) | — |
+| `supabase/migrations/__tests__/business-os-credit-charges.migration.test.ts` | create | SQL-text guard over all four SQL files, invites-migration pattern | — |
+| `lib/repositories/BusinessOsCreditChargeRepository.ts` | create | §3.6 | — |
+| `lib/repositories/__tests__/BusinessOsCreditChargeRepository.test.ts` | create | Exact RPC arguments (eleven, incl. `p_service`), error path, abort signal passed; the `AiChargeRecord` + `service` hand-off type; a non-AI service passed through; a "no production caller" source guard | — |
+| `lib/business-os/account/__tests__/accountDeletionPolicy.test.ts` | modify (**added at 3b-i**) | Pins the Q-8 verdicts | 0 |
 | `lib/repositories/index.ts` | modify | Export class, singleton, types | 0 |
 | `lib/business-os/llm/aiChargeRecorder.ts` | create | §3.7 | — |
 | `lib/business-os/llm/__tests__/aiChargeRecorder.test.ts` | create | Outcomes, logs, budget, abort | — |
@@ -351,10 +358,10 @@ return outcome.value;
 | `lib/business-os/purge/descriptors.ts` | modify | Two `never(…)` descriptors beside the entitlements tables (§6.5) | 0 |
 | `lib/business-os/purge/__tests__/classification-baseline.json` | modify | Two `never` entries | — |
 | `lib/business-os/businessOwnedTables.ts` | modify | Two `USER_OWNED_TABLES` entries with reasons | 0 |
-| `lib/business-os/account/accountDeletionPolicy.ts` | modify | `business_os_ai_charges: minimise`; totals default `delete` (Q-8) | 0 |
+| `lib/business-os/account/accountDeletionPolicy.ts` | modify | `business_os_credit_charges: minimise`; totals default `delete` (Q-8) | 0 |
 | Call-site suites from the T3b.0 census | modify, **only if** they break | `jest.mock` of the recorder where a suite asserts "no error log" or a stubbed `supabaseServer` lacks `.rpc` (Q-7) | counted at T3b.0 |
 | `scripts/lib/bos-llm-scope.ts` + its test | modify (**if SA authorises**, Q-6) | Inclusion for `aiChargeRecorder.ts` if it does not import the catalog | 1 (pre-existing) |
-| `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md` | modify | A short "Metering (slice 3)" section: the two tables, the credit value v0, the charging start, "nothing reads it yet" | 0 |
+| `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md` | modify | A short "Metering: the credit ledger" section: the two tables, not AI-specific (one pool, `service`), the credit value v0, the charging start, "nothing reads it yet" | 0 |
 
 **Deliberately not touched (either part):** `lib/business-os/entitlements/balance.ts`, `EntitlementService.ts`, `enforcementPoints.ts`, `config/catalog.ts` (`ai.actions`), `config/tierMatrix.ts`, `config/cohorts.ts`; every `runAiAction` call site; `lib/ai/**` (pricing, providers, `usageScope.ts`); `chargePricing.ts` and `chargeClassification.ts` (consumed, not changed); `lib/services/CreditService.ts`, `lib/utils/pricingConfig.ts`, `app/api/run-agent/**`; `user_subscriptions`, `credit_transactions`, `billing_events`, `token_usage`; `app/admin/**` and every owner surface; the requirement doc.
 
@@ -416,19 +423,115 @@ SA ruled the split **now**, not as a tripwire. 3b-i ships the ledger applied to 
 
 #### 5.2.1 Slice 3b-i — The ledger, applied and inert (≈ 2–2.5 days)
 
-- ⬜ **T3b-i.0: Baselines.** T3a.0's baselines re-taken for the 3b-i files in §4.2.
-- ⬜ **T3b.1: Migration, rollback, checker, SQL guard (§6).** Confirm the next free migration date on `main` (≥ `20261014`, SF-2). Write the three SQL files and the migration test, meeting C-2 (no OUT-name / column clash), C-3 (the totals CHECK), C-4 (column-level owner SELECT, checker C2), SF-1 (kind CHECKs without `user_id`, the self-FK) and the Q-1 (a)–(d), Q-8 and Q-9 conditions. No DB is touched by Dev.
-- ⬜ **T3b.2: Repository (§3.6)** with its unit test (exact argument object, `error` → `{ data: null, error }`, signal passed, no throw). **No production caller** in 3b-i. Types placement per N-5.
-- ⬜ **T3b.5: Data lifecycle (§6.5).** Descriptors, baseline JSON, `USER_OWNED_TABLES`, deletion policy; their existing guard tests pass (`businessOwnedTables.test.ts` parses the new migration and must find both tables classified).
-- ⬜ **T3b.6: Tenant-isolation checks (§7.3)** — the checks that apply to the DB and the repository.
-- ⬜ **T3b-i.8: Docs.** The entitlements doc's schema paragraph (the two tables, "nothing writes yet"); §6.3 and §6.4 finalised with the real migration date, and the write probe marked **mandatory** (C-1).
-- ⬜ **T3b-i.9: Gates and evidence.** As T3a.5, plus the migration test, the repository in the scoped type program (it is outside `typecheck:bos-llm`), `next build`, a grep that no non-test file imports the repository, and a grep that no new file names `token_usage`, `user_subscriptions`, `credit_transactions` or `billing_events`.
-- ⬜ **T3b-i.10: Handover.** Status → Code Complete (3b-i); uncommitted; notify TL. The migration is **not** applied by Dev: the user applies it by hand per §6.4 steps 1–4, runs the checker and the **mandatory** write probe, and pastes the probe output into §14 or §15.
+- ✅ **T3b-i.0: Baselines.** T3a.0's baselines re-taken for the 3b-i files in §4.2 (§5.2.1.1).
+- ✅ **T3b.1: Migration, rollback, checker, SQL guard (§6).** `20261014` re-checked free on `origin/main` (latest `20261013`, SF-2). Migration, rollback, checker **and the write probe** written, with the migration test; C-2, C-3, C-4, SF-1 and Q-1 (a)–(d), Q-8, Q-9 met (§5.2.1.1). No DB touched by Dev.
+- ✅ **T3b.2: Repository (§3.6)** with its unit test. **No production caller** (a source guard in the test enforces it, barrel included). Types in the repository file, as the shadow repository does (N-5), and re-exported from the barrel.
+- ✅ **T3b.5: Data lifecycle (§6.5).** Two `never` descriptors, baseline 129 → 131, two `USER_OWNED_TABLES` entries, `business_os_credit_charges: minimise` (totals default `delete`), pinned by a new deletion-policy test. `businessOwnedTables.test.ts` finds both tables in the migration and fails without the registration (negative control run).
+- ✅ **T3b.6: Tenant-isolation checks (§7.3)** — DB and repository half (§5.2.1.1).
+- ✅ **T3b-i.8: Docs.** Entitlements doc: a "Metering: the credit ledger" section (renamed from "the AI credit ledger" 2026-09-29) and the Q-4 note in § The mode flag (SF-6, brought forward from 3b-ii at TL's request); §6.3 rewritten for the checker as built and the mandatory probe; §6.4 steps 2–4 and the exact PROD steps in §6.4.1.
+- ✅ **T3b-i.9: Gates and evidence** (§5.2.1.1).
+- ✅ **T3b-i.10: Handover.** Status → Code Complete (3b-i); uncommitted; TL notified through the hand-back. The migration is **not** applied: the user runs §6.4.1 and pastes the probe output into §15.
+- ✅ **T3b-i.11: Not AI-specific (user decision 2026-09-29).** Renames to `business_os_credit_*` across all four SQL files, the repository, its test, the barrel, the lifecycle registries, the entitlements doc and this workplan; a `service` column (charge NOT NULL, adjustment NULL, format CHECK, owner-readable), `p_service` on the RPC and `service` on the repository input; guard tests updated; re-run on PGlite in §6.4.1 order (§5.2.1.2).
+
+#### 5.2.1.1 Dev evidence — 3b-i (2026-09-29)
+
+Worktree `neuronforge-llm-deduction`, branch `feature/business-os-credit-deduction-slice-3b-i` (stacked on 3a's `feature/business-os-credit-deduction-slice-3`, PR #137, which includes a merge of `origin/main`) at `ef3da3bf`, nothing committed, **no database touched** (no local Postgres either: the brief said "any database"). `period_anchor` is taken as live from SA's measurement of 2026-09-28 (§13); `npm run schema:check` was not re-run (no `.env.local` in this worktree).
+
+**What 3b-i adds at runtime: nothing.** The repository is exported from the barrel and imported by nothing else (source guard); the migration is a file.
+
+| Gate | Baseline (T3b-i.0) | After (T3b-i.9) |
+|---|---|---|
+| `npx jest supabase/migrations/__tests__ lib/business-os/purge lib/business-os/__tests__/businessOwnedTables.test.ts lib/business-os/account lib/repositories/__tests__ scripts/__tests__/entitlementSqlScripts.guard.test.ts lib/business-os/llm lib/business-os/entitlements scripts/__tests__/check-bos-llm-literals.test.ts` | 107 suites, 2,282 tests, all green | **109 suites, 2,377 tests, all green** (+73 migration guard, +21 repository, +1 deletion policy) |
+| `business-os-credit-charges.migration.test.ts` (new) | — | 73 tests. **Mutation check** (file restored byte-identical, sha256 `41247de1…c7ba`): renaming the OUT column back to `period_start` (C-2), adding a table-level `GRANT SELECT … TO authenticated` (C-4), dropping the return-direction `AT TIME ZONE 'UTC'` (Q-1 (d)) and weakening the C-3 CHECK each turn the suite red |
+| `BusinessOsCreditChargeRepository.test.ts` (new) | — | 21 tests |
+| `businessOwnedTables.test.ts` negative control | — | With `businessOwnedTables.ts` at `HEAD`: red, naming exactly `business_os_credit_totals` and `business_os_credit_charges`; restored |
+| `npm run typecheck:bos-llm` | 298 files, 28 errors, 0 new | 299 files (the repository test enters as `caller`: it imports `type AiChargeRecord`), 28 errors, **0 new**; the same one "fixed" baseline entry as 3a (`app/api/onboarding/build/route.ts`), `--update-baseline` not run |
+| `npm run check:bos-llm-literals` | 49 files, 2 exempt, 0 violations | **Unchanged**: 49, 2, 0 (no new file imports the catalog) |
+| Scoped type program (S2 C-3: scratch tsconfig outside the repo, `extends` the worktree's, `incremental: false`, `include: []`, `files` = `next-env.d.ts` + the 8 touched `.ts` files) | Same program with the 6 tracked files at `HEAD` (`git stash` of those paths only, restored, `git diff --stat` identical before and after) plus `chargeResolver.ts` in place of the repository test's type import | **0 errors in the touched files.** 9 errors outside, and the (file, code, message) set is **identical** to the baseline: 6 in `lib/analytics/aiAnalytics.ts` (as in 3a), 2 in `lib/pilot/insight/MemoryManager.ts`, 1 in `lib/repositories/CalibrationSessionRepository.ts` |
+| `next build` (`NODE_OPTIONS=--max-old-space-size=6144`, the CI placeholder env from `.github/workflows/build.yml`) | — | **Exit 0**: "Compiled successfully", 307/307 pages; 78 `DYNAMIC_SERVER_USAGE` lines, the usual static-generation probes |
+| No production caller | — | Source guard in the repository test: `BusinessOsCreditChargeRepository`, `businessOsCreditChargeRepository` and `business_os_record_credit_charge` appear in no `.ts/.tsx/.js/.jsx` under `app lib components hooks scripts pages middleware.ts` except the repository, the barrel and the test |
+| Pilot-Credit / token tables | — | `grep` over the 7 new files: `token_usage`, `user_subscriptions`, `credit_transactions`, `billing_events` appear only in the migration test, as its **forbidden** list |
+| `console.*` | — | 0 in every touched or new `.ts` file (`index.ts`, `descriptors.ts`, `businessOwnedTables.ts`, `accountDeletionPolicy.ts` and its test were 0 before) |
+
+**How the conditions are met**
+
+| Condition | Where |
+|---|---|
+| **C-1** probe mandatory, real roles | `scripts/probe-bos-credit-charges-migration.sql`, P00–P22 (§6.3); `SET LOCAL ROLE service_role` before any write, then `authenticated`; (a) P01, P02, P05; (b) P09–P13; (c) P14–P19 (+ P20 INSERT, P21–P22 RLS both ways); (d) the block always raises, then checker C7. §6.4 step 4 and §6.4.1 say "mandatory" |
+| **C-2** OUT-name clash | OUT columns are `out_recorded`, `out_period_start`, `out_anchor_source`; parameters `p_*`, variables `v_*`; no `#variable_conflict`. The test pins that no OUT name, parameter or variable equals a column of either table |
+| **C-3** totals semantics | `COMMENT ON COLUMN` on every summed column states what it sums and whether adjustments are in (charge rows by trigger; adjustments in `credits_adjustment`; `credits_total` and `cost_usd_total` over all rows; `charge_count` charge rows only); `CHECK (credits_total = credits_owner + credits_scheduled + credits_external + credits_adjustment)`; C7 rebuilds every summed column |
+| **C-4** checker C2 | Two C2 rows: no table-level entry for PUBLIC / `anon` / `authenticated`, and per-column `has_column_privilege` exactly 24 of 28 readable (**25 of 29** since the `service` column, §5.2.1.2), the four hidden columns false; the test pins the column lists (derived from the `CREATE TABLE`s) and forbids `GRANT SELECT ON TABLE … TO authenticated` |
+| **SF-1** | Neither kind CHECK (nor any CHECK) names `user_id` — test and checker C4; `UNIQUE (action_id)` is a plain constraint, and the self-FK targets it |
+| **SF-2** | `20261014` (latest on `origin/main`: `20261013`) |
+| **Q-1 (a)–(d)** | `timestamp` variables, `AT TIME ZONE 'UTC'` both ways; `v_anchor_utc + make_interval(months => v_months)`, never chained; C6 has leap-year, exactly-at-anchor and a moved session time zone with a case that discriminates; the test pins both directions |
+| **Q-3** | No plan row → `date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`, `out_anchor_source = 'calendar_month'` |
+| **Q-8** | `user_id` nullable with `ON DELETE SET NULL` (charges), `ON DELETE CASCADE` (totals); RPC refuses a NULL `p_user_id`; C7 filters `user_id IS NOT NULL` |
+| **Q-9** | Column-level `GRANT SELECT (…)` only; the first in `supabase/migrations/`, authorised by SA |
+| **SA-S8** | `REVOKE ALL` from PUBLIC, `anon`, `authenticated`, `service_role` on all four objects (never enumerated), positive grants after; both functions `SECURITY INVOKER`, `SET search_path = ''`, every name schema-qualified (test); EXECUTE for `service_role` only; no trigger |
+
+**T3b.6 — tenant isolation (DB and repository half).** The guard applies (service role) but no caller-supplied id selects or mutates a row. The repository builds the ten (**eleven** since `p_service`, §5.2.1.2) RPC arguments field by field (test: an input carrying `user_id`, `p_user_id`, `kind`, `id` reaches the RPC with none of them); the RPC takes typed scalars, no `jsonb`; `kind` is hard-coded `'charge'`; the totals conflict target is `(user_id, period_start)` keyed on the server-derived account; no trigger on either table (test + checker C4). The owner half is RLS plus the column grant, proven live by P14–P22.
+
+**Deviations (for SA)**
+- **D-7** The write probe is **one `DO` block that always raises**, not a `BEGIN; … ROLLBACK;` script. The editor shows only the last statement's result, so a `SELECT` before a `ROLLBACK` would never be seen; and a raise inside the block cannot be separated from its writes by a paste that loses its framing. This is the `20261010` / `20261011` dry-run precedent, applied and verified on PROD. The role switches are `SET LOCAL ROLE`, as C-1 asks.
+- **D-8** All four SQL files follow the invites-migration paste rules (no comments, string literals of letters, digits, underscores and spaces only, no single-letter alias), pinned by the test. Consequences: C6's second zone is `NZ` rather than `Asia/Jerusalem` (the `/`); the totals semantics are `COMMENT ON COLUMN` text rather than SQL comments; the `action_type` / `reason_code` format checks use `translate()` and `position()` rather than a regex literal; timestamps in C6 are `make_timestamptz(…, 'UTC')`.
+- **D-9** CHECKs beyond §3.2: `amounts_are_numbers` (`numeric` accepts `NaN`, and `NaN >= 0` is true in Postgres), `version_not_negative`, a `reason_code` format check, and on totals non-negative trigger buckets and `fallback_priced_count ≤ charge_count`. The adjustment shape also requires `is_fallback_priced IS FALSE` (§3.2's table). 12 CHECKs in all (**13** since the `service` format check, §5.2.1.2); the checker lists them by name.
+- **D-10** The RPC rounds `p_credits` to 6 dp and `p_cost_usd` to 10 dp **once**, and writes the same rounded values to both tables, so the totals always equal the rebuild exactly.
+- **D-11** The repository logs a failed write at `warn`, not `error`: 3b-ii's recorder owns the one `error` event (`bos_ai_charge_write_failed`, FR-16), and two `error`s per failure would double-count. The RPC's row is mapped strictly: a missing row, a non-boolean `out_recorded`, a missing period or an unknown anchor source is returned as an error, never a guessed result.
+- **D-12** No read method, as §3.6 and N-5 planned. The brief's "read methods scoped by user_id" is met vacuously: there is no read to scope until slices 4, 6 and 9.
+- **D-13** The repository test carries a "no production caller" source guard. **3b-ii must add `aiChargeRecorder.ts` (and its test, if it names the repository) to that guard's `ALLOWED` list.**
+- **D-14** The checker has a C8 clock row and a C7 INFO row (counts and `min(created_at)`); §6.4.1 step 4 records the apply time with `SELECT now() AT TIME ZONE 'UTC'` (SF-5).
+
+**Flags (not fixed here)**
+- **F-1** `service_role` holds INSERT and UPDATE on the totals table: a `SECURITY INVOKER` RPC can only write what its caller may write, so "totals written only via the RPC" is held by the repository surface (the only writer), not by privilege. As §6.1 planned; the alternative is `SECURITY DEFINER`, which SA-S8 forbids.
+- **F-2** No deletion executor runs `accountDeletionPolicy` in production. When one is built, it must **not** try to minimise `business_os_credit_charges` with an UPDATE (service_role has none): deleting the auth user detaches the rows through the FK. The policy's reason now says so.
+- **F-3** Nothing has executed the PL/pgSQL. The probe (step 7) is its first execution, as SA's C-1 anticipated. If SA wants it earlier, SA can run the migration and the probe (with a fabricated `auth.users` row) on a throwaway Postgres, as in the admin reorganisation slice 5 review.
+- **F-4** CLAUDE.md's Key Documentation row still says `BOS_ENTITLEMENTS_MODE` is unset in production (stale; already flagged to TL in §12).
+
+#### 5.2.1.2 Dev evidence — 3b-i made service-generic (2026-09-29)
+
+**User decision (2026-09-29):** the ledger must not be AI-specific. Every chargeable action, AI or not, will have a measured cost converted to credits from **one** credit pool; non-AI charges follow the same procedure with few exceptions. Nothing non-AI is built; the ledger just must not block it. The migration was applied nowhere, so this is a rename plus one column, not a second migration. Worktree and branch as §5.2.1.1; nothing committed; **no real database touched**. The numbers here supersede §5.2.1.1's for the files they name.
+
+**Old → new names.** `business_os_ai_charges` → `business_os_credit_charges`; `business_os_ai_charge_totals` → `business_os_credit_totals`; `business_os_record_ai_charge` → `business_os_record_credit_charge`; `business_os_ai_period_start` → `business_os_credit_period_start`; every constraint, index and policy name follows its table; `20261014_business_os_ai_charges.sql` (+ `_rollback`) → `20261015_business_os_credit_charges.sql`; `scripts/check-bos-ai-charges-migration.sql` / `probe-…` → `check-bos-credit-charges-migration.sql` / `probe-…`; `business-os-ai-charges.migration.test.ts` → `business-os-credit-charges.migration.test.ts`; `BusinessOsAiChargeRepository` (+ singleton, types, `BOS_RECORD_AI_CHARGE_RPC`) → `BusinessOsCreditChargeRepository` (…, `BOS_RECORD_CREDIT_CHARGE_RPC`). Unchanged on purpose: 3a's `AiChargeRecord` / `buildAiChargeRecord` and the 3b-ii recorder's `aiChargeRecorder.ts` and `bos_ai_charge_*` events (the AI service's own code).
+
+**What changed in the schema.**
+- `service text` on the charge row, between `is_fallback_priced` and `action_type`: required on `kind = 'charge'`, NULL on `kind = 'adjustment'` (both in the existing shape CHECKs); new `business_os_credit_charges_service_format` CHECK, character for character the `action_type` rule (the test pins that), naming no service. Owners may SELECT it (added to the column grant).
+- The RPC takes `p_service text` after `p_group_id` (11 parameters) and refuses a NULL one with `22004`; it stores it and adds it to no total.
+- Totals unchanged: one row per `(user_id, period_start)`, one pool.
+- `COMMENT ON COLUMN`: `service` (identifier, not a closed list; adjustments inherit), `group_id` (every service; even a group of one), `is_fallback_priced` ("AI specific … recorded false by every other service"); both table comments no longer say AI.
+- Checker: 29 columns / 25 owner-readable, 13 CHECKs. Probe: every AI call passes `'ai'`; P03 checks `service = 'ai'`; new **P08A** (a `notification_email` charge lands in the same single totals row), **P08B** (`'Notification Email'` refused by the CHECK, nothing written), **P08C** (NULL service refused, `22004`). D-8 paste rules, C-1 to C-4, SF-1, B-1, S-1, S-2 and QA-N1 to N5 all kept (guard tests unchanged and green).
+
+**Throwaway PGlite run, §6.4.1 order** (PGlite 0.5.8 = PostgreSQL 18.3, in memory, harness in the Dev scratchpad outside the repo, same Supabase role / `auth` / plan-table stubs as SA's; session `TimeZone = Asia/Jerusalem`): **28 pass, 0 fail.**
+
+| Step | Result |
+|---|---|
+| Pre-check (§6.4.1 step 2, new signature) | all four `NULL` |
+| Migration | applies; all four objects exist |
+| Checker | `VERDICT PASS 19 pass 0 fail`; C2 `25 of 29 columns readable and mismatches none`; C4 `13 of 13` |
+| Probe, placeholder left in | `PROBE SKIPPED  replace PASTE_YOUR_OWN_USER_ID_HERE …` |
+| Probe, id **with** a plan anchor | `PROBE PASS`; P01–P22 and P08A–P08C all PASS (25/25); P03 `stored with service ai`; P04 `period from plan starts 2026-08-31 10:00:00 utc`; nothing left behind |
+| Probe, id **without** a plan row | `PROBE PASS`; 25/25; P04 `period from calendar_month starts 2026-09-01 00:00:00 utc`; nothing left behind |
+| Checker again | `VERDICT PASS`; C7 `0 charge rows and 0 totals rows and 0 detached rows and first row at none` |
+| Direct, as `service_role` | an `ai` charge and a `notification_email` charge both `out_recorded = true`, **one** totals row, `charge_count 2`, `credits_total 1.750000`; malformed services (`Notification Email`, `1email`, `notification-email`, empty, 65 chars) each `23514 … service_format`; NULL service `22004`; nothing written by any refusal; an adjustment carrying a service refused by `adjustment_shape`; the owner (as `authenticated`) reads `service` on both rows; checker `VERDICT PASS` with the two rows (C7 rebuild) |
+| Rollback with a row | `P0001 ROLLBACK REFUSED  the ledger holds charge rows so nothing was dropped`; all objects and rows remain |
+| Rollback, emptied | drops all four objects |
+| Re-apply | migration applies again; checker `VERDICT PASS 19 pass 0 fail` |
+
+| Gate | Result |
+|---|---|
+| `npx jest` migration guard + repository + `lib/business-os/purge` + `lib/business-os/account` + `businessOwnedTables.test.ts` (SA's set) | **7 suites, 194 tests, all green** (was 184): migration guard **90** (was 81: + service column/CHECK, one pool, comments, `p_service` stored, probe `'ai'` calls, P08A–C, owner grant), repository **22** (was 21: + non-AI service passed through) |
+| The above + `lib/business-os/llm lib/business-os/entitlements scripts/__tests__/entitlementSqlScripts.guard.test.ts` | **58 suites, 1,591 tests, all green** |
+| `npm run typecheck:bos-llm` | 299 files, 28 errors, **0 new**, passed (the same one "fixed" baseline entry) |
+| `npm run check:bos-llm-literals` | 49 files, 2 exempt, **0 violations** |
+| Scoped type program (S2 C-3, the 8 touched `.ts` files, renamed) | **0 errors in the touched files**; the same 9 outside (6 `aiAnalytics.ts`, 2 `MemoryManager.ts`, 1 `CalibrationSessionRepository.ts`) |
+| `next build` (6 GB heap, CI placeholder env) | **Exit 0**: "Compiled successfully", 307/307 pages, 78 `DYNAMIC_SERVER_USAGE` lines (as before) |
+| Leftover old names | `grep` over the worktree (excluding `node_modules`, `.next`, `.git`) for `business_os_ai_charge`, `BusinessOsAiCharge`, `record_ai_charge`, `ai_period_start`: only this workplan's historical text (§11 Q-12 as asked, §13 and §14 review text, §16 older rows, and the old → new maps) and the requirement doc (being edited by BA in parallel; not touched here) |
+
+**For 3b-ii.** The recorder passes `{ ...record, service: 'ai' }`; `aiChargeRecorder.ts` joins the repository test's `ALLOWED` list (D-13); `bos_ai_charge_write_failed` may add `service` to its fields (the repository's `warn` already carries it).
 
 #### 5.2.2 Slice 3b-ii — Start charging (≈ 2 days; starts after 3b-i is applied, checked and write-probed on PROD)
 
 - ⬜ **T3b.0 (b)/(c): Census and baselines.** Every suite that runs the real `runAiAction` with valid identities (mocks `AuditTrailService`, does not mock `aiActionAudit`), with its pass count before the change, and the suites among them that use `jest.useFakeTimers()` (SF-3). Per wrapped route: `maxDuration`, maximum action count per invocation, headroom at today's count and at 10× (SF-4). T3a.0's baselines re-taken for the 3b-ii files.
-- ⬜ **T3b.3: Recorder (§3.7)** with its tests (every outcome row, every log level and field, budget, abort, never rejects). The budget helper is written locally (Q-11). `LITERAL_SCOPE_INCLUSIONS` entry for `aiChargeRecorder.ts` if it does not import the catalog (Q-6).
+- ⬜ **T3b.3: Recorder (§3.7)** with its tests (every outcome row, every log level and field, budget, abort, never rejects). It writes through `BusinessOsCreditChargeRepository` with `{ ...record, service: 'ai' }` — slice 3 records only the AI service — and is added to the repository test's `ALLOWED` list (D-13). The budget helper is written locally (Q-11). `LITERAL_SCOPE_INCLUSIONS` entry for `aiChargeRecorder.ts` if it does not import the catalog (Q-6).
 - ⬜ **T3b.4: Wiring** in `runAiAction`; NI-1 to NI-4; ordering (`audit` → `unpriced check` → `charge`); AC-8 and AC-12.
 - ⬜ **T3b.7: Blast radius.** Per-suite `jest.mock` of the recorder in every census suite that **reaches the write** (Q-7, SF-3), listed in §4.2. Evidence: the census run once with `NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:9` shows zero `bos_ai_charge_write_failed`. NI-5 = identical pass sets.
 - ⬜ **T3b.8: Docs.** The entitlements doc's "Metering" section and § The mode flag (SF-6: metering is not mode-gated); the `bos-llm-call-standards` skill Standard 6 (SF-7); the stale CLAUDE.md mode row flagged to TL.
@@ -441,7 +544,7 @@ SA ruled the split **now**, not as a tripwire. 3b-i ships the ledger applied to 
 
 ### 6.1 The migration SQL plan
 
-**File:** `supabase/migrations/20261014_business_os_ai_charges.sql` (proposed outline; the SQL is written at T3b.1)
+**File:** `supabase/migrations/20261015_business_os_credit_charges.sql` (proposed outline; the SQL is written at T3b.1)
 
 ```sql
 BEGIN;
@@ -449,32 +552,32 @@ SET LOCAL lock_timeout = '5s';
 
 -- 1. Tables (§3.2, §3.3). FK to auth.users, NOT business_profiles: a business
 --    Reset must never cascade a bill away (same reasoning as 20261005).
-CREATE TABLE public.business_os_ai_charges (…);            -- kind CHECKs, UNIQUE (action_id)
-CREATE INDEX business_os_ai_charges_user_period_idx
-  ON public.business_os_ai_charges (user_id, period_start, created_at DESC);
-CREATE INDEX business_os_ai_charges_group_idx
-  ON public.business_os_ai_charges (group_id);
-CREATE TABLE public.business_os_ai_charge_totals (…);      -- PK (user_id, period_start)
+CREATE TABLE public.business_os_credit_charges (…);        -- kind CHECKs, service format CHECK, UNIQUE (action_id)
+CREATE INDEX business_os_credit_charges_user_period_idx
+  ON public.business_os_credit_charges (user_id, period_start, created_at DESC);
+CREATE INDEX business_os_credit_charges_group_idx
+  ON public.business_os_credit_charges (group_id);
+CREATE TABLE public.business_os_credit_totals (…);         -- PK (user_id, period_start): one pool, no service
 
 -- 2. RLS: owner SELECT only (SA-S8). No INSERT/UPDATE/DELETE policy exists.
 ALTER TABLE … ENABLE ROW LEVEL SECURITY;                    -- both tables
-CREATE POLICY "Owners read their own AI charges" ON public.business_os_ai_charges
-  FOR SELECT TO authenticated USING (auth.uid() = user_id);
-CREATE POLICY "Owners read their own AI charge totals" ON public.business_os_ai_charge_totals
-  FOR SELECT TO authenticated USING (auth.uid() = user_id);
+CREATE POLICY business_os_credit_charges_owner_select ON public.business_os_credit_charges
+  FOR SELECT TO authenticated USING ((SELECT auth.uid()) = user_id);
+CREATE POLICY business_os_credit_totals_owner_select ON public.business_os_credit_totals
+  FOR SELECT TO authenticated USING ((SELECT auth.uid()) = user_id);
 
 -- 3. Privileges: REVOKE ALL (never an enumerated list — the MAINTAIN defect),
 --    then state the positive side.
 REVOKE ALL ON TABLE <both> FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT ON TABLE <both> TO authenticated;              -- behind the owner policy (Q-9: column list?)
-GRANT SELECT, INSERT ON TABLE public.business_os_ai_charges TO service_role;          -- no UPDATE, no DELETE: rows are never changed
-GRANT SELECT, INSERT, UPDATE ON TABLE public.business_os_ai_charge_totals TO service_role;
+GRANT SELECT, INSERT ON TABLE public.business_os_credit_charges TO service_role;          -- no UPDATE, no DELETE: rows are never changed
+GRANT SELECT, INSERT, UPDATE ON TABLE public.business_os_credit_totals TO service_role;
 
 -- 4. Functions: SECURITY INVOKER, search_path = '', callable by service_role only.
-CREATE FUNCTION public.business_os_ai_period_start(p_anchor timestamptz, p_at timestamptz)
+CREATE FUNCTION public.business_os_credit_period_start(p_anchor timestamptz, p_at timestamptz)
   RETURNS timestamptz LANGUAGE plpgsql STABLE SET search_path = '' AS $$ … UTC … $$;
-CREATE FUNCTION public.business_os_record_ai_charge(…)
-  RETURNS TABLE (recorded boolean, period_start timestamptz, anchor_source text)
+CREATE FUNCTION public.business_os_record_credit_charge(…)
+  RETURNS TABLE (out_recorded boolean, out_period_start timestamptz, out_anchor_source text)   -- C-2
   LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$ … $$;
 REVOKE ALL ON FUNCTION <both> FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION <both> TO service_role;
@@ -488,37 +591,66 @@ COMMIT;
 
 ### 6.2 Rollback
 
-**File:** `supabase/SQL Scripts/20261014_business_os_ai_charges_rollback.sql`
+**File:** `supabase/SQL Scripts/20261015_business_os_credit_charges_rollback.sql`
 
 ```sql
 BEGIN;
-DROP FUNCTION public.business_os_record_ai_charge(uuid, uuid, uuid, text, text, text, numeric, numeric, integer, boolean);
-DROP FUNCTION public.business_os_ai_period_start(timestamptz, timestamptz);
-DROP TABLE public.business_os_ai_charge_totals;
-DROP TABLE public.business_os_ai_charges;
+SET LOCAL lock_timeout = '5s';
+LOCK TABLE public.business_os_credit_charges IN ACCESS EXCLUSIVE MODE;
+DO $refuse$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.business_os_credit_charges AS charge_row) THEN
+    RAISE EXCEPTION USING MESSAGE = 'ROLLBACK REFUSED  the ledger holds charge rows so nothing was dropped';
+  END IF;
+END
+$refuse$;
+DROP FUNCTION public.business_os_record_credit_charge(uuid, uuid, uuid, text, text, text, text, numeric, numeric, integer, boolean);
+DROP FUNCTION public.business_os_credit_period_start(timestamptz, timestamptz);
+DROP TABLE public.business_os_credit_totals;
+DROP TABLE public.business_os_credit_charges;
 COMMIT;
 ```
 
+**It refuses while the ledger holds a charge (S-2).** The script first locks the charge table, so no charge can land between the check and the drop, and then raises `ROLLBACK REFUSED  the ledger holds charge rows so nothing was dropped` if the table has any row. The error aborts the whole transaction: nothing is dropped and the bill is untouched. So the paste is only ever destructive to an **empty** ledger, and it can never silently drop a bill once charging has started.
+
 **Order and cost:**
 1. **Preferred rollback is code-only:** revert the 3b wiring and redeploy. The tables stay; nothing writes; nothing reads. No data is lost.
-2. The DB rollback is for a **wrong migration**, ideally before charging starts. It **discards every recorded charge**; if charging has started, export both tables first (`COPY … TO STDOUT` from the SQL editor or a CSV download).
+2. The DB rollback is for a **wrong migration, before charging starts** (the ledger is empty). If it answers `ROLLBACK REFUSED`, charging has started: stop, do not try to get around it, and send the message to Dev. Removing a ledger that holds charges is a separate, deliberate decision (export both tables first, then SA rules on how to empty them); this script will never do it.
 3. Never run the DB rollback while the 3b code is deployed: every AI action would then log `bos_ai_charge_write_failed` (the actions themselves still succeed — NI-1).
 
-### 6.3 The read-only checker
+### 6.3 The read-only checker and the mandatory write probe
 
-**File:** `scripts/check-bos-ai-charges-migration.sql` (`SET default_transaction_read_only = on;`, one PASS / FAIL row per check, the `check-bos-entitlements-migration.sql` style)
+**File:** `scripts/check-bos-credit-charges-migration.sql` — `SET default_transaction_read_only = on;` plus **one** `SELECT` (the SQL editor shows only the last result), one PASS / FAIL / INFO row per check, row 0 the verdict. Written to the invites-checker conventions: no `--` or `/*` comments, string literals of letters, digits, underscores and spaces only, no single-letter alias. The migration test pins all of that, and that the checker has not drifted from the migration.
 
-| Check | Pass when |
-|---|---|
-| C1 | Both tables exist, RLS on |
-| C2 | ACLs: no `anon` / PUBLIC entry; `authenticated` = `r` only; `service_role` = `ar` (charges) and `arw` (totals) — no `d`, `D` or `m` |
-| C3 | Exactly one policy per table, `FOR SELECT`, `TO authenticated`, `auth.uid() = user_id` |
-| C4 | `UNIQUE (action_id)`, both kind `CHECK`s, the FK targets (`auth.users`, `ON DELETE SET NULL` / `CASCADE`), the two indexes |
-| C5 | Both functions `prosecdef = false`, `proconfig` has `search_path=`, `has_function_privilege('anon' \| 'authenticated', …, 'EXECUTE') = false` |
-| C6 | Period cases, read-only: anchor Jan 31 10:00Z → Feb 28 10:00Z at Feb 28 11:00Z; Mar 31 at Apr 1; at exactly the anchor; a future anchor → the previous month; a 15th anchor mid-month; the same answer under `SET LOCAL TimeZone = 'Asia/Jerusalem'` |
-| C7 | Before charging: both tables empty. After: the totals rebuild query (`SUM … GROUP BY user_id, period_start` over charge rows) equals the totals table exactly |
+| Row | Check | Pass when |
+|---|---|---|
+| C1 | tables, RLS | Both tables exist; RLS on both |
+| C2 | table ACLs (`aclexplode`) | PUBLIC, `anon`, `authenticated` hold **no table-level** privilege on either table (C-4); `service_role` holds exactly SELECT, INSERT on charges and SELECT, INSERT, UPDATE on totals — no DELETE, TRUNCATE, MAINTAIN, REFERENCES or TRIGGER |
+| C2 | column grants (C-4) | `has_column_privilege('authenticated', …, 'SELECT')` is true for exactly the 25 granted columns of the 29 (`service` included) and false for `cost_usd`, `is_fallback_priced`, `cost_usd_total`, `fallback_priced_count`; `authenticated` can write no column; `anon` holds nothing on any column |
+| C3 | policies | Exactly one per table, permissive, `FOR SELECT`, `TO authenticated`, a `USING` naming `auth.uid()` and `user_id`, no `WITH CHECK` |
+| C4 | constraints | `UNIQUE (action_id)`; all 13 CHECKs by name (the kind domain, both kind shapes, the trigger and outcome lists, the three format checks — `service`, `action_type`, `reason_code` — NaN, version ≥ 0, and on totals the C-3 sum, non-negative trigger buckets and consistent counts); **no CHECK names `user_id`** (SF-1, Q-8); exactly three FKs — charges `user_id → auth.users` `SET NULL`, totals `user_id → auth.users` `CASCADE`, and the self-FK `adjusts_action_id → action_id`; both indexes by name; no trigger |
+| C5 | functions | Both `prosecdef = false`, `proconfig = {search_path=""}`, an explicit ACL, EXECUTE for `service_role`, **not** for `anon`, `authenticated` or PUBLIC |
+| C6 | period cases (read-only; the function has no side effects) | Nine fixed cases, in the session time zone **and again with the session `TimeZone` moved to `NZ`** (UTC+13 in January; `Asia/Jerusalem` cannot be written under the literal rule, and NZ moves the day further): Jan 31 10:00Z anchor → Feb 28 10:00Z at Feb 28 11:00Z, → Jan 31 at Feb 28 09:00Z, → Mar 31 at Apr 1 (counted from the anchor, not chained); **exactly at the anchor**; **leap year** (Jan 31 2028 → Feb 29 2028 10:00Z at Feb 29 12:00Z); a future anchor → an earlier period; a 15th anchor mid-month; a 31st anchor in a 30-day month; and a **zone-sensitive case** (Jan 30 12:00Z anchor at Feb 28 00:00Z → Jan 30) that a naive `timestamptz + interval` gets wrong in NZ, so C6's second row can actually fail |
+| C7 | rebuild | The rebuild (`SUM` of every summed column, `GROUP BY user_id, period_start`, **`WHERE user_id IS NOT NULL`**, Q-8) equals the totals table exactly, compared both ways (FULL OUTER JOIN). An INFO row prints the charge-row, totals-row and detached-row counts and `min(created_at)`; "empty" means `0 charge rows and 0 totals rows` |
+| C8 | clock | INFO: the UTC time the checker ran |
 
-**Optional write probe** (by the user, on their own account, inside `BEGIN; … ROLLBACK;`): call the RPC twice with one action id → `recorded` = true, then false; the totals row carries one charge; two different action ids in one period → the totals sum both. `ROLLBACK` leaves nothing behind.
+**The write probe is mandatory (C-1).** **File:** `scripts/probe-bos-credit-charges-migration.sql`. It is the **only** execution of `business_os_record_credit_charge` before production traffic reaches it (no branch DB; Jest cannot run PL/pgSQL). It is **one `DO` block that always ends by raising**, following the applied-and-verified `20261010` / `20261011` dry-run precedent: the editor shows only the last result, so the report *is* the error text, and because the block always raises, nothing it wrote can survive even if a paste loses its framing. That is stronger than a `BEGIN; … ROLLBACK;` around it (D-7 in §5.2.1.1). It runs on the user's own account, through a placeholder that fails loudly if left in; it never creates an auth user.
+
+| Id | As | Proves |
+|---|---|---|
+| P00 | `postgres` | INFO: row counts before, and the account's plan anchor (in UTC, ` utc` suffix, QA-N5). Before it, three guards raise `PROBE SKIPPED` and run nothing: the placeholder left in, a value that is not a valid user id (QA-N4), and a read-only session (QA-N3) |
+| P01–P02 | `service_role` | The same action id twice → `recorded` true, then false, same period; the totals moved by exactly one charge (C-1 (a)). A raise here (for example a 42702 from C-2) stops the probe with `PROBE FAIL  P01` and the error text |
+| P03 | `service_role` | One thin row stored, `service = 'ai'`, credits at 6 dp and cost at 10 dp, `kind = 'charge'`, no adjustment fields |
+| P04 | `service_role` | The period came from the plan anchor (or the UTC calendar month with no plan row) and equals `business_os_credit_period_start(anchor, now())` |
+| P05 | `service_role` | A second id in the same period → the totals sum both and split them by trigger (owner vs scheduled), fallback count +1 (C-1 (a)) |
+| P06 | `service_role` | The account's totals equal the rebuild from its ledger rows |
+| P07–P08 | `service_role` | A NULL action id is refused (`22004`); an unknown trigger is refused by the CHECK and moves no total |
+| P08A–P08C | `service_role` | Not AI-specific (2026-09-29): a `notification_email` charge is recorded into the **same** single totals row (one pool); a malformed service (`Notification Email`) is refused by the CHECK and writes nothing; a NULL service is refused (`22004`) |
+| P09–P13 | `service_role` | UPDATE, DELETE and TRUNCATE of the charges, and DELETE and TRUNCATE of the totals, each fail 42501 (C-1 (b)) |
+| P14–P20 | `authenticated` | EXECUTE on both functions fails 42501; SELECT of each hidden column fails 42501; INSERT fails 42501 (C-1 (c)) |
+| P21–P22 | `authenticated` | With the JWT claims set to the owner, RLS returns their two charge rows and their totals row; set to another account, none |
+
+Expected output: an error whose text starts `PROBE PASS  this error is expected and rolls everything back`, followed by one line per id (P00, P01–P08, P08A–P08C, P09–P22). Then **(C-1 (d))** the checker again: C7 still `0 charge rows and 0 totals rows`.
 
 ### 6.4 Apply / verify runbook, and the charging start
 
@@ -528,19 +660,45 @@ The runbook follows SA's split (§13): steps 1–4 belong to **3b-i** (the ledge
 |---|---|---|---|---|
 | 0 | 3a | TL / RM | 3a merged and deployed | A new AI entry in `audit_trail` has `details.schema = 2` and a `details.actionId` |
 | 1 | 3b-i | User (credentials) | `npm run schema:check` on `main` | `business_os_account_plans` selects cleanly, incl. `period_anchor`; ref recorded (SA already confirmed it live read-only on 2026-09-28) |
-| 2 | 3b-i | User | Paste the migration into the Supabase SQL editor on **PROD**. RM records the **apply time** (UTC) in §15 (SF-5) | `COMMIT` |
-| 3 | 3b-i | User | Run `scripts/check-bos-ai-charges-migration.sql` | Every row PASS; C7 "empty" |
-| 4 | 3b-i | User (**mandatory**, C-1) | The rollback-wrapped write probe (§6.3), under `SET LOCAL ROLE service_role` and then `authenticated`; output pasted into §14 or §15 | As stated in C-1; after `ROLLBACK`, C7 still "empty". 3b-i merges with nothing calling the repository |
+| 2 | 3b-i | User | Paste `supabase/migrations/20261015_business_os_credit_charges.sql` into the Supabase SQL editor on **PROD**; record the **apply time** (UTC) in §15 (SF-5) | `Success. No rows returned` |
+| 3 | 3b-i | User | Run `scripts/check-bos-credit-charges-migration.sql` | Row 0 `VERDICT PASS`; C7 `0 charge rows and 0 totals rows` |
+| 4 | 3b-i | User (**mandatory**, C-1) | Run `scripts/probe-bos-credit-charges-migration.sql` with your own user id pasted in, then the checker again; both outputs pasted into §15 | `PROBE PASS …` with P01–P22 and P08A–P08C each PASS; then the checker still `VERDICT PASS` and C7 still empty. 3b-i merges with nothing calling the repository |
 | 5 | 3b-ii | RM | Merge 3b-ii; Vercel deploys | — |
 | 6 | 3b-ii | RM | **Record the charging start** = the UTC time the 3b-ii production deployment went live, in §15 and in the entitlements doc. Rows between the step-2 apply time and this moment are developer or preview traffic on developers' own accounts (SF-5) | FR-34: "a stated moment" |
-| 7 | 3b-ii | User, +1 h | Run one chat turn and one image in `/test-business-os`; then `SELECT … FROM business_os_ai_charges WHERE user_id = <own id> ORDER BY created_at DESC LIMIT 5` and the matching `audit_trail` rows | One charge per action; `action_id` = the audit entry's `details.actionId`; `triggered_by = 'owner'`; credits ≈ cost × 1000; the totals row moved; no `bos_ai_charge_write_failed` in the logs |
+| 7 | 3b-ii | User, +1 h | Run one chat turn and one image in `/test-business-os`; then `SELECT … FROM business_os_credit_charges WHERE user_id = <own id> ORDER BY created_at DESC LIMIT 5` and the matching `audit_trail` rows | One charge per action; `action_id` = the audit entry's `details.actionId`; `triggered_by = 'owner'`; credits ≈ cost × 1000; the totals row moved; no `bos_ai_charge_write_failed` in the logs |
 | 8 | 3b-ii | User, next morning | Compare, for the night: count of AI audit entries vs count of charge rows (per account); C7's rebuild query | Equal or explained (a lost audit entry, KI-10); rebuild = totals; the insight run rows carry `triggered_by = 'scheduled'` |
 
-**Charging start (FR-34, FR-35):** charging starts at the step-6 moment. Before it, nothing is counted and no history is converted; `min(created_at)` of the charge table is the measurable proof. Pilot-Credit balances are untouched (A-11). Because environments share the production database (SF-5), the AC-26 check is "no row before the step-2 apply time, and every row before the step-6 go-live is identified" (developer or preview traffic).
+#### 6.4.1 3b-i on PROD: the exact steps (by the user, Supabase SQL editor)
+
+Nothing here needs a terminal except step 1. Paste each file **whole**, as its own run. Nothing is applied by Dev.
+
+1. **Schema reference (optional; SA already measured it live on 2026-09-28).** In the main checkout, on `main`: `npm run schema:check`. Expect `business_os_account_plans` to select cleanly, `period_anchor` included.
+2. **Pre-check: the names are free.** Run:
+   ```sql
+   SELECT to_regclass('public.business_os_credit_charges') AS charges,
+          to_regclass('public.business_os_credit_totals') AS totals,
+          to_regprocedure('public.business_os_record_credit_charge(uuid,uuid,uuid,text,text,text,text,numeric,numeric,integer,boolean)') AS record_fn,
+          to_regprocedure('public.business_os_credit_period_start(timestamptz,timestamptz)') AS period_fn;
+   ```
+   Expect all four `NULL`. Anything else: stop, it is already (partly) applied.
+3. **Apply.** Open `supabase/migrations/20261015_business_os_credit_charges.sql`, copy all of it, paste, Run. Expect `Success. No rows returned`. It is one transaction: on any error nothing is kept, and a second paste fails at the first `CREATE TABLE` with `relation "business_os_credit_charges" already exists` and changes nothing: if you see exactly that, it was already applied, do not escalate (QA-N6).
+4. **Record the apply time (SF-5).** Immediately run `SELECT now() AT TIME ZONE 'UTC' AS applied_at_utc;` and paste the value into §15. From this moment until 3b-ii's production go-live, any ledger row is developer or preview traffic (a local `npm run dev` or a Vercel preview of the 3b-ii branch uses this database).
+5. **Checker.** Paste `scripts/check-bos-credit-charges-migration.sql`, Run. Expect row 0 `VERDICT PASS` and every row PASS or INFO; the C7 INFO row reads `0 charge rows and 0 totals rows and 0 detached rows and first row at none`. Once rows exist, that time is printed in UTC with a ` utc` suffix, so it compares directly with the step-4 apply time (S-1). Any FAIL: stop and send the grid to Dev. If the migration itself is wrong, the rollback is `supabase/SQL Scripts/20261015_business_os_credit_charges_rollback.sql`. It works only while the ledger is empty, as it is now, since nothing writes yet. If it ever answers `ROLLBACK REFUSED  the ledger holds charge rows so nothing was dropped`, nothing was changed: stop and send the message to Dev (§6.2). The rollback contains `DROP`, so the editor will likely warn that the query is destructive. Confirm that warning **only when Dev has told you to run the rollback**; otherwise cancel (QA-N2).
+6. **Your user id.** Run `SELECT id FROM auth.users WHERE email = '<your login email>';`, replacing `<your login email>` with your email, angle brackets included, keeping the quotes (so `'name@example.com'`; left-in brackets return zero rows), and copy the id (QA-N7).
+7. **Write probe (mandatory, C-1).** Open a **new SQL editor tab** for it (the checker leaves its own tab read-only). Open `scripts/probe-bos-credit-charges-migration.sql`, replace `PASTE_YOUR_OWN_USER_ID_HERE` (third line) with your id, keeping the quotes and with no spaces inside them, paste the whole file, Run. The editor may warn that the query contains destructive operations (`TRUNCATE`, `DELETE`): that is expected here, **confirm it**. Those statements are there to prove the database refuses them, and the whole block always rolls back, so nothing it does is kept (QA-N2). **It always ends in an error on purpose.** Expect the error text to start `PROBE PASS  this error is expected and rolls everything back`, with lines P00 to P22 plus P08A, P08B and P08C after P08 (P00 INFO, the rest PASS). Three `PROBE SKIPPED` answers mean nothing ran and you can simply fix and re-run:
+   - `PROBE SKIPPED  replace PASTE_YOUR_OWN_USER_ID_HERE …`: the placeholder is still there; paste your id over it (QA-N4).
+   - `PROBE SKIPPED  the pasted value is not a valid user id …`: the id was pasted wrongly (spaces, missing quotes, part of it cut off); paste only the id from step 6, between the quotes, with no spaces (QA-N4).
+   - `PROBE SKIPPED  this session is read only …`: the probe ran in the checker's tab. Open a new SQL editor tab and run it there, or run `RESET default_transaction_read_only;` on its own first and then the probe again (QA-N3).
+
+   `PROBE FAIL …`, any other `PROBE SKIPPED …` (for example `that user id is not an account on this database`) or any other error: stop and send the full text to Dev; 3b-ii does not start.
+8. **Nothing kept (C-1 (d)).** Run the checker again. Expect the same `VERDICT PASS`, and C7 still `0 charge rows and 0 totals rows`.
+9. **Paste into §15:** the apply time (step 4), the checker grid (step 5), the probe's full error text (step 7) and the second C7 row (step 8). 3b-i then merges with nothing calling the repository, and 3b-ii may start.
+
+**Charging start (FR-34, FR-35):** charging starts at the 3b-ii production go-live, recorded by RM in **§6.4 step 6** (not a step of this list). Before it, nothing is counted and no history is converted; `min(created_at)` of the charge table is the measurable proof. Pilot-Credit balances are untouched (A-11). Because environments share the production database (SF-5), the AC-26 check is "no row before the apply time recorded in step 4 above, and every row before the 3b-ii go-live (§6.4 step 6) is identified" (developer or preview traffic) (QA-N1).
 
 ### 6.5 Data lifecycle registration (SA-S8)
 
-| Registry | `business_os_ai_charges` | `business_os_ai_charge_totals` |
+| Registry | `business_os_credit_charges` | `business_os_credit_totals` |
 |---|---|---|
 | `purge/descriptors.ts` | `never` — "The bill. Never purged, never archived: a Reset that removed it would erase what the account was charged" | `never` — "Derived from the bill; rebuilt from it, never purged" |
 | `classification-baseline.json` | `never` | `never` |
@@ -560,7 +718,7 @@ Not added to `BUSINESS_OWNED_TABLES` (it would cascade from `business_profiles`)
 | `aiActionAudit.test.ts` (3a) | `details.schema = 2`; `details.actionId` is a UUID; two invocations → two ids; a nested action → a different id; closed key list incl. `actionId` |
 | `creditValue.test.ts` | History equals the snapshot; versions `0..n`; `usdPerCredit` finite > 0; `currentCreditValue()` is the last; the active-version log fires once per process |
 | `chargeResolver.test.ts` | 2e-7 USD embedding → `0.0002` credits, non-zero (AC-5); plan-cache hit → its embedding only (AC-6); five calls → one record, their sum (AC-10); a failed action → the two paid calls, `outcome: 'failed'` (AC-7); a fallback-flagged call → `isFallbackPriced: true` and the conservative figure (FR-12b); `user` → `owner`, `scheduled`, `external` (FR-10); the outcome equals the audit entry's for the same inputs |
-| `BusinessOsAiChargeRepository.test.ts` | `rpc('business_os_record_ai_charge', { exact 10 args })`; `abortSignal` applied; `{ recorded, periodStart, anchorSource }` mapped |
+| `BusinessOsCreditChargeRepository.test.ts` | `rpc('business_os_record_credit_charge', { exact 11 args, incl. p_service })`; `abortSignal` applied; `{ recorded, periodStart, anchorSource }` mapped |
 | `aiChargeRecorder.test.ts` | Recorded → `debug`; fallback → one `info`; duplicate → `warn`; no plan row → `warn` |
 | `aiActionAudit.test.ts` (3b) | One repository call per action with `action_id` = the audit entry's `details.actionId` (AC-28's join); the order audit → check → charge; a scheduled insight action → `triggered_by: 'scheduled'` (AC-9 second half) |
 | Checker C6 / C7 (on PROD, read-only) | Period arithmetic; totals rebuild |
@@ -598,9 +756,9 @@ Not added to `BUSINESS_OWNED_TABLES` (it would cascade from `business_profiles`)
 
 **Commands**
 ```bash
-npx jest lib/business-os/llm lib/business-os/entitlements lib/repositories/__tests__/BusinessOsAiChargeRepository.test.ts \
+npx jest lib/business-os/llm lib/business-os/entitlements lib/repositories/__tests__/BusinessOsCreditChargeRepository.test.ts \
   lib/business-os/purge lib/business-os/__tests__/businessOwnedTables.test.ts lib/business-os/account \
-  supabase/migrations/__tests__/business-os-ai-charges.migration.test.ts app/admin/audit-trail \
+  supabase/migrations/__tests__/business-os-credit-charges.migration.test.ts app/admin/audit-trail \
   scripts/__tests__/check-bos-llm-literals.test.ts   # + the T3b.0 census suites
 npm run typecheck:bos-llm
 npm run check:bos-llm-literals
@@ -698,7 +856,7 @@ All new suites are **local-only** (no CI job runs Jest); QA must run them.
 | Q-9 | Owner SELECT (SA-S8): grant `authenticated` a **column list** that omits `cost_usd` (and `is_fallback_priced`), so no owner can read our dollar cost through the API? | Yes; nothing reads with an owner session before slice 6/7, and it keeps FR-28's spirit at the data layer |
 | Q-10 | A per-instance circuit breaker (skip the write for N seconds after M consecutive failures) to cap outage latency? | Not in slice 3: it trades lost charges for latency, and slice 4 should measure first |
 | Q-11 | Budget 1,500 ms (SA ceiling ≤ 2 s)? No retry inside the budget? | Yes and yes; the write is idempotent, so a retry could be added later without a schema change |
-| Q-12 | Table names `business_os_ai_charges` / `business_os_ai_charge_totals` (SA names them, §3.1)? And one table with a `kind` column for adjustments rather than a sibling table (§3.2)? | Yes and yes |
+| Q-12 | Table names `business_os_ai_charges` / `business_os_ai_charge_totals` (SA names them, §3.1)? And one table with a `kind` column for adjustments rather than a sibling table (§3.2)? | Yes and yes | *(Renamed 2026-09-29 to `business_os_credit_charges` / `business_os_credit_totals`, §3.1.)*
 
 ---
 
@@ -715,6 +873,8 @@ All new suites are **local-only** (no CI job runs Jest); QA must run them.
 ---
 
 ## 13. SA Workplan Review
+
+> **Names changed after this review (2026-09-29, user decision: the ledger is not AI-specific).** The review text below is kept as written. Read: `business_os_ai_charges` → `business_os_credit_charges`, `business_os_ai_charge_totals` → `business_os_credit_totals`, `business_os_record_ai_charge` → `business_os_record_credit_charge`, `business_os_ai_period_start` → `business_os_credit_period_start`, `BusinessOsAiChargeRepository` → `BusinessOsCreditChargeRepository`, `BOS_RECORD_AI_CHARGE_RPC` → `BOS_RECORD_CREDIT_CHARGE_RPC`, and the files `20261014_business_os_ai_charges*.sql`, `check-`/`probe-bos-ai-charges-migration.sql`, `business-os-ai-charges.migration.test.ts` → their `credit` names. A `service` column was added (29 columns, 25 owner-readable, 13 CHECKs, 11 RPC parameters; probe P08A–P08C). See §5.2.1.2.
 
 **Reviewed by SA — 2026-09-28**, against worktree `neuronforge-llm-deduction`, branch `feature/business-os-credit-deduction-slice-3` @ `7faca4f7` (this workplan uncommitted). `origin/main` has since moved to `aa9d75e9` (PR #133); see SF-2.
 **Status:** ✅ **Approved with conditions.** **3a may start now.** **3b is split now into 3b-i and 3b-ii** (ruling below). The conditions are implementation conditions: they are verified at each part's SA code review, and the workplan needs no second review, apart from Dev folding the split into §5 / §8 / §6.4 (a text edit) before 3b-i starts.
@@ -891,9 +1051,174 @@ Skills applied: `bos-llm-call-standards`, `tenant-isolation-guard` (the resolver
 
 QA's scope for 3a: the new suites (`chargeResolver.test.ts`, `creditValue.test.ts`, and the eight new `aiActionAudit.test.ts` cases), the related audit-shape suites Dev listed in §5.1.1, and the two pre-existing failures turning green once the branch takes `main`. After deploy (§6.4 step 0): a new AI entry in `audit_trail` carries `details.schema = 2` and a `details.actionId` distinct from `entity_id`. Commit only after the user has reviewed the diff.
 
+### SA code review — 3b-i (2026-09-29)
+
+**Status:** 🔄 Fix Required. **One Blocking finding (B-1)**: a one-token defect in the write probe that stops it compiling. The migration, the checker, the rollback, the repository and the lifecycle registrations are approved as written.
+
+**Verdict in one paragraph.** For the first time, the SQL was **executed** (F-3), on a disposable PostgreSQL 18.3 (PGlite 0.5.8, in memory, installed in a scratch folder outside the repo, with stubs for `auth.users`, `auth.uid()`, the three Supabase roles with Supabase-like default privileges, and `business_os_account_plans(user_id PK, period_anchor timestamptz)`). The migration applies. The checker returns `VERDICT PASS 19 pass 0 fail`. The RPC has no 42702, is idempotent, rounds once, and keeps the totals equal to the rebuild. The period function is correct in every edge case tried, under three session time zones. Every CHECK and privilege boundary behaves as designed. The rollback removes all four objects, and the migration re-applies cleanly afterwards. **The probe does not compile**: line 126 puts `CASE WHEN … THEN` directly inside a PL/pgSQL `IF … THEN`. With that single expression parenthesised (in a scratch copy only), the probe returns `PROBE PASS` with P01–P22 all PASS, both for an account that has a plan anchor and for one that has none. It leaves nothing behind, and the checker stays green. Nothing touched PROD or the repo; the instance was discarded.
+
+#### SQL execution evidence (throwaway PGlite; no PROD, no repo change)
+
+| Run | Result |
+|---|---|
+| Checker before the migration | Errors `42883` (the period function does not exist yet). Expected, and not a step in the runbook (N-8) |
+| Migration `20261014` | Applies in one transaction |
+| Migration pasted a second time | `42P07 relation "business_os_ai_charges" already exists`; nothing changed (as §6.4.1 step 3 says) |
+| Checker, empty ledger | `VERDICT PASS 19 pass 0 fail`: C2 `24 of 28 columns readable`, hidden 0, `authenticated` writes 0, `anon` 0; C4 12 of 12 CHECKs, 3 FKs, 2 indexes, 0 triggers; C5 2 invoker, 2 pinned, client EXECUTE none; C6 `9 of 9` in the session zone and `9 of 9 in NZ`; C7 `0 charge rows and 0 totals rows and 0 detached rows and first row at none` |
+| Probe **as committed** (placeholder; U1; U2; unknown id) | **All four: `42601 syntax error at end of input`**, before any statement runs. Minimal repro: `IF a = CASE WHEN b IS NOT NULL THEN 'p' ELSE 'q' END THEN` → 42601. Parenthesised → compiles (B-1) |
+| Probe with only B-1 patched: placeholder left in | `PROBE SKIPPED  replace PASTE_YOUR_OWN_USER_ID_HERE …` |
+| Same, account **with** a plan anchor (45 days ago) | `PROBE PASS`; P01–P22 all PASS; P04 `period from plan starts 2026-09-15 03:39:34.534 utc` |
+| Same, account **without** a plan row | `PROBE PASS`; P01–P22 all PASS; P04 `period from calendar_month starts 2026-09-01 00:00:00 utc` |
+| Same, id not in `auth.users` | `PROBE SKIPPED  that user id is not an account on this database` |
+| After the probes | 0 charge rows, 0 totals rows, `current_user = postgres`, JWT claims empty. The checker still gives `VERDICT PASS`, and C7 is still empty (C-1 (d)) |
+| Committed RPC calls as `service_role` | Same action id twice → `true` then `false`, with one row and one totals increment. `1.0000004` was stored as `1.000000` in both tables. Replaying the same id under another account → `false`, nothing written (N-4). A zero-credit external fallback charge → `charge_count 1`, `fallback_priced_count 1` |
+| Bad inputs through the RPC | NaN → `23514 amounts_are_numbers`; Infinity and `1e13` → `22003 numeric field overflow` at the rounding assignment; −1 → `23514 charge_shape`; `Chat-Turn` → `23514 action_type_format`; unknown outcome → `23514 outcome_known`; NULL credits or NULL fallback flag → `23502`. Totals unchanged after all of them |
+| `authenticated` | `select *` → `42501` (the column grant works as C-4 intends). Granted columns under its own claims → only its own charge and totals rows. `anon` → `42501` |
+| `service_role` writing the tables directly, bypassing the RPC (F-1) | Both a direct totals UPDATE and a direct charge INSERT are **accepted**. The checker then gives **`VERDICT FAIL`, C7 `1 mismatched account periods`**, so the drift is caught (N-1) |
+| Adjustment row (inserted as `postgres`) | Accepted with a valid `adjusts_action_id`; an unknown `adjusts_action_id` → `23503` on the self-FK |
+| Deleting a user from `auth.users` | Charges `user_id` → NULL (1 detached row); totals row cascaded away; checker `VERDICT PASS` with `1 detached rows` (Q-8 as designed) |
+| Period edge cases, session zone `America/Los_Angeles` (UTC wall clock) | Jan 31 23:30 anchor at Mar 1 00:00 → **Feb 28 23:30**; Feb 29 2024 anchor at Feb 28 2025 11:00 → **Feb 28 2025 10:00**; same anchor at Mar 29 2025 09:00 (before the anchor hour) → **Feb 28 2025 10:00**; one microsecond before the anchor → **the previous month**; NULL anchor → NULL. C6 covers exactly-at-anchor and leap Feb 29 2028, and passes in the session zone and in NZ |
+| Rollback script | Drops all four objects (0 tables, 0 functions left); the checker then errors `42883`, as expected; the migration **re-applies** cleanly afterwards |
+
+**Line-by-line points confirmed alongside the run.** C-2: no parameter, variable or OUT name equals a column. The conflict targets `(action_id)` and `(user_id, period_start)` are unambiguous; the successful execution proves it. `SET search_path = ''` is set, and every relation and function is schema-qualified (`public.`, `auth.` only through the FK). EXECUTE is revoked from PUBLIC, `anon` and `authenticated` on both functions; the explicit `authenticated` and `anon` revokes are needed because of Supabase's default function privileges, and the harness reproduced those. The C-3 CHECK holds under every write. **Concurrency** (N-6) is reasoned, not run, because PGlite has one connection. A second `INSERT … ON CONFLICT (action_id) DO NOTHING` for an id that is still in flight waits for the first transaction. If the first commits, the second does nothing: `RETURNING … INTO` assigns NULL and the totals are not touched (the sequential form of this was executed). If the first aborts, the second inserts. The totals upsert takes a row lock and adds, so no update is lost. There is one RPC per PostgREST transaction, so no lock-ordering deadlock can arise.
+
+#### Findings
+
+**Blocking**
+
+1. **B-1 `scripts/probe-bos-ai-charges-migration.sql:126`: the probe cannot compile.** `IF v_first_result.out_anchor_source = CASE WHEN v_anchor IS NOT NULL THEN 'plan' ELSE 'calendar_month' END AND …` fails. PL/pgSQL ends an `IF` condition at the first `THEN` that is not inside parentheses, so the condition becomes `… = CASE WHEN v_anchor IS NOT NULL` and the whole `DO` block is rejected with `42601 syntax error at end of input`, whatever id is pasted. On PROD it fails safe (nothing executes, and step 7 says to stop), but C-1 could never be met, so 3b-ii could never start. **Fix:** wrap the `CASE … END` in parentheses, or compute the expected source into a `v_expected_source` variable first. **Guard:** add a test to `business-os-ai-charges.migration.test.ts` that flags any `CASE` between an `IF`/`ELSIF` and its `THEN` unless parenthesised, applied to the probe and both function bodies. The 73 text tests could not catch this, because they do not parse PL/pgSQL. Priority: High, effort minutes.
+   - ✅ **Fixed by Dev (2026-09-29):** parenthesised, `= (CASE WHEN v_anchor IS NOT NULL THEN 'plan' ELSE 'calendar_month' END)`. Every other `IF` / `ELSIF` in the probe, the checker, the rollback and both migration function bodies was scanned: this was the only one. Guard `bareCaseInIfConditions` added to the migration test and applied to all four files and to both function bodies; it went **red on the old line** (reported exactly `IF v_first_result.out_anchor_source = CASE WHEN …`) and green after the fix. A negative control pins that it flags the defect in `IF` and `ELSIF`, and accepts the parenthesised form, a `CASE` in an assignment after `THEN`, and DDL `IF EXISTS`. The fixed probe was executed (see "Dev fixes — evidence" below).
+
+**Should-fix**
+
+2. **S-1 `scripts/check-bos-ai-charges-migration.sql:331` (C7 INFO): `first row at` prints in NZ time.** `min(created_at)::text` is rendered after the checker's `zone_switch` has set the statement's `TimeZone` to `NZ`; the run printed `2026-09-29 16:38:25.61+13`. This row is the SF-5 / AC-26 evidence ("no row before the step-4 apply time"), and the step-4 apply time is recorded in UTC. A non-DBA comparing the two can be 13 hours off. **Fix:** `(ledger_counts.first_created_at AT TIME ZONE 'UTC')::text || ' utc'`. Pin it in the checker test. Priority: Medium.
+   - ✅ **Fixed by Dev (2026-09-29):** exactly as proposed; `'none'` is kept for an empty ledger. Pinned by a new checker test, which also forbids a bare `first_created_at::text`. Executed with the session in `America/New_York`: the row printed `first row at 2026-09-29 03:52:43.071 utc`, equal to `min(created_at) AT TIME ZONE 'UTC'`.
+3. **S-2 `supabase/SQL Scripts/20261014_business_os_ai_charges_rollback.sql`: nothing stops it dropping a live bill.** §6.4.1 step 5 calls it "safe now: the tables are empty". After 3b-ii starts, the same paste silently drops every charge. **Fix:** open the rollback's transaction with a `DO` block that raises (for example `ROLLBACK REFUSED  the ledger holds charge rows`) when `public.business_os_ai_charges` has any row, and say so in §6.2 and §6.4.1. It fits the paste rules: literals of letters and spaces, no comments. Priority: Medium.
+   - ✅ **Fixed by Dev (2026-09-29):** the rollback now opens with `SET LOCAL lock_timeout = '5s'`, then `LOCK TABLE public.business_os_ai_charges IN ACCESS EXCLUSIVE MODE` (so no charge can land between the check and the drop), then a `DO $refuse$` block that raises `ROLLBACK REFUSED  the ledger holds charge rows so nothing was dropped` if any row exists, then the four unchanged DROPs. The paste rules hold (no comments, literals `5s` and letters and spaces, alias `charge_row`). §6.2 and §6.4.1 step 5 are reworded: the DB rollback is for an empty ledger only, and a refusal means stop and send it to Dev. The rollback test now pins the exact text and that the lock and the refusal come before any DROP. Executed: refused with a row present (`P0001`, all four objects and the row still there), and dropped all four on an empty ledger, after which the migration re-applied.
+
+**Notes**
+
+4. **N-1 (F-1 ruling): `SECURITY INVOKER`, with `service_role` holding INSERT on charges and INSERT/UPDATE on totals, is accepted. Keep it.** This is the repo's convention for server-only RPCs: the `20261005` shadow counter and the `20261010` archive run both use `SECURITY INVOKER` with REVOKE and a `service_role`-only grant. It avoids adding to the queued DEFINER backlog. A `SECURITY DEFINER` switch would guard only against a second code path that already holds the service key. The drift it would prevent is **detected**: in the run above, a direct write turned C7 red. **Revisit** when a gate *reads* the totals to refuse work (enforcement, slice 4 onwards), or when a second writer is proposed. At that point SA will rule on DEFINER plus dropping `service_role`'s direct INSERT/UPDATE grants.
+5. **N-2 (F-2): accepted.** The deletion policy's reason text now states the FK route. Any future executor must not UPDATE this table.
+6. **N-3 (F-3): closed by this review's execution**, for the migration, checker, rollback and the B-1-patched probe. The PROD probe (§6.4.1 step 7) **stays mandatory**, because only it sees the real Supabase roles, the real `auth.uid()`, and PROD's default privileges and grants on `business_os_account_plans`. `SET LOCAL ROLE service_role` inside a `DO` block has already worked on PROD (`20261010` / `20261011`).
+7. **N-4 (for 3b-ii):** replaying an action id under **another** account returns `recorded = false` and writes nothing. Action ids are minted in-process (3a), so this is harmless, but the recorder should log `recorded = false` at `info` with the `actionId`, so that a duplicate stays visible rather than silent.
+8. **N-5 (for 3b-ii):** the abort signal cancels the HTTP request, not the database transaction, so an aborted or timed-out write **may still have committed**. The recorder must treat it as *unknown*, not *not charged*. A retry with the same action id is safe, since idempotency was executed above.
+9. **N-6:** the concurrency reasoning is above. Nothing to change.
+10. **N-7:** C6's two passes rely on MATERIALIZED CTE evaluation order to run the default-zone pass before the zone switch. If the order flipped, both passes would run in NZ. The check would then lose its power to discriminate, but it could never fail falsely. Acceptable.
+11. **N-8:** run before the migration, the checker errors with `42883` rather than returning a FAIL grid. The runbook never runs it then. Acceptable.
+
+#### Rulings on the deviations
+
+| Id | Ruling |
+|---|---|
+| D-7 | **Accepted.** An always-raising `DO` block has proven PROD precedent, and B-1 shows its one cost: a compile error surfaces as a bare `42601`. The runbook's "any other error: stop" covers that |
+| D-8 | **Accepted.** `NZ` is a stronger zone than `Asia/Jerusalem` for C6 |
+| D-9 | **Accepted.** The NaN CHECK is necessary (NaN was executed and refused); Infinity is already refused by the typmod |
+| D-10 | **Accepted.** Executed: rounding happens once and the same value goes to both tables, so C7 is exact |
+| D-11 | **Accepted.** `warn` in the repository, the one `error` in the recorder (FR-16). The strict row mapping is right |
+| D-12 | **Accepted.** No read method until a slice has a reader; each such read gets `.eq('user_id', userId)` |
+| D-13 | **Accepted.** 3b-ii adds `aiChargeRecorder.ts` (and its test) to `ALLOWED` |
+| D-14 | **Accepted, subject to S-1** (the INFO time must be printed in UTC) |
+
+#### Checklists walked
+
+- **`new-repository`:** the file location, the optional client, `{ data, error }` with nothing ever thrown (including a synchronous throw from `rpc()`, which is tested), the Pino `service` logger, the singleton, and the barrel exports are all met. Types sit in the repository file, not `types.ts`, as approved under N-5. There is no `.eq('user_id')` because there is no query: the only call is an RPC scoped by `p_user_id`, and the header documents that. Server-only; no `'use client'` importer (the source guard).
+- **`tenant-isolation-guard`:** a service-role path with no caller-supplied id. The arguments are built field by field (tested); `kind` is hard-coded; there is no `jsonb`; the totals key is the server-derived account; there are no triggers. The owner half (RLS plus the column grant) was executed above.
+- **`business-os-schema-check`:** `business_os_account_plans.period_anchor timestamptz NOT NULL` matches `20261005` and SA's live measurement of 2026-09-28. `service_role` holds SELECT on it (`20261009`), which the `INVOKER` RPC needs.
+- **`durable-queue-drain`:** not applicable. There is no cron, no queue and no claim, and the RPC writes synchronously.
+- **Lifecycle:** two `never` descriptors, baseline 131, two `USER_OWNED_TABLES` entries, charges `minimise` / totals default `delete`, pinned by a test. Correct.
+- **`console.*`:** 0 in every touched file.
+
+#### Gates re-run by SA
+
+| Gate | Result |
+|---|---|
+| `npx jest supabase/migrations/__tests__/business-os-ai-charges.migration.test.ts lib/repositories/__tests__/BusinessOsAiChargeRepository.test.ts lib/business-os/purge lib/business-os/account lib/business-os/__tests__/businessOwnedTables.test.ts` | **7 suites, 176 tests, all green** |
+| `npm run typecheck:bos-llm` | 299 files, 28 errors, **0 new**, passed (the same one "fixed" baseline entry as 3a) |
+| Worktree after the review | Unchanged: the same 8 modified and 7 untracked paths; only this section was added to the workplan |
+
+#### Optimisation suggestions (3b-i, non-blocking)
+
+- F-3 will come back in every migration cycle. An in-process PostgreSQL (PGlite, a single devDependency with no Docker) could run each migration, checker and probe in Jest against the stubs used here. That would be a **new pattern** (CLAUDE.md rule 7), so it should be proposed as its own small item for SA, not added to this slice.
+
+#### Dev fixes — evidence (2026-09-29)
+
+All three conditions to go to QA are met by Dev: ✅ (1) B-1 fixed with its guard test, ✅ (2) the fixed probe executed on a throwaway Postgres, ✅ (3) S-1 and S-2 fixed in the same pass. Nothing touched PROD or any real database; nothing committed.
+
+| Item | Evidence |
+|---|---|
+| ✅ B-1 guard red → green | Before the fix: `probe never puts a bare CASE inside an IF or ELSIF condition` **failed**, reporting the one line `IF v_first_result.out_anchor_source = CASE WHEN v_anchor IS NOT NULL THEN 'plan' ELSE 'calendar_month' END`; migration, rollback, checker and both function bodies clean. After: green |
+| ✅ Throwaway Postgres run | PGlite 0.5.8 (PostgreSQL 18.3, in memory), harness in the Dev session's scratchpad outside the repo, same stubs as SA's (three Supabase roles with Supabase-like default privileges, `auth.users`, `auth.uid()` from `request.jwt.claims`, `business_os_account_plans(user_id PK, period_anchor)`). Reads the worktree files read-only. **20 pass, 0 fail** |
+| ✅ B-1 reproduced and fixed | The old line (restored in memory only) → `42601 syntax error at end of input`. Fixed probe with the placeholder left in → `PROBE SKIPPED`. With a plan anchor → `PROBE PASS`, P01–P22 all PASS, P04 `period from plan starts 2026-08-31 10:00:00 utc`. With no plan row → `PROBE PASS`, P01–P22 all PASS, P04 `period from calendar_month starts 2026-09-01 00:00:00 utc`. Both left 0 rows in either table; checker `VERDICT PASS 19 pass 0 fail` after them |
+| ✅ S-1 | Empty ledger: `first row at none`. One committed row, session `America/New_York`: `1 charge rows and 1 totals rows and 0 detached rows and first row at 2026-09-29 03:52:43.071 utc`, equal to `min(created_at) AT TIME ZONE 'UTC'`; verdict still PASS |
+| ✅ S-2 | With that row present: rollback → `P0001 ROLLBACK REFUSED  the ledger holds charge rows so nothing was dropped`; all four objects and the row remain. Emptied: rollback drops all four objects; the migration re-applies; checker `VERDICT PASS 19 pass 0 fail` |
+| Jest | `business-os-ai-charges.migration.test.ts` **81 tests** (73 + 4 per-file B-1 guards + B-1 negative control + B-1 on both function bodies + S-1 pin + S-2 pin). SA's gate set (7 suites): **184 tests, all green** |
+| `npm run typecheck:bos-llm` | 299 files, 28 errors, **0 new**, passed (the same one "fixed" baseline entry) |
+
+### Code Approved for QA: **No, pending B-1 (conditional).**
+
+**Conditions to go to QA:** (1) B-1 fixed, with its guard test. (2) The fixed probe **executed** once on a throwaway Postgres, for example the scratch-folder PGlite method above, outside the repo, and returning `PROBE PASS` with P01–P22 for both account shapes; SA can re-run the harness on request (≈ 1 minute). (3) S-1 and S-2 fixed in the same pass (preferred) or recorded as accepted by TL. Once (1) and (2) are met, no further SA review round is needed. QA's scope: the new suites, the lifecycle suites, the negative control, and a read of §6.4.1 as a non-DBA would follow it. The PROD steps (§6.4.1) run **after** QA, by the user, and 3b-ii does not start until the step 7 output is recorded in §15.
+
+### SA re-check — neutral ledger (2026-09-29)
+
+**Status:** ✅ Code Approved (re-check), **with one condition before the PROD apply (S-3, text only)**. No further SA round is needed once S-3 is done.
+
+**Verdict in one paragraph.** The user's decisions BD-12 to BD-15 were applied as a rename plus one column, and nothing else moved. SA took Dev's pre-rename migration (`mig.bak` in the session scratchpad), put it through Dev's own rename script (`ren.sed`), and diffed it against the current `20261015_business_os_credit_charges.sql`. The **only** differences are the `service` column, the `service` term in both shape CHECKs, the new `service_format` CHECK, three `COMMENT`s plus two reworded table comments, `service` in the owner column grant, `p_service` in the RPC (its NULL refusal, the insert list, and the 11-argument signature in five REVOKE/GRANT lines). Every structural line of the approved version is byte-identical after the rename. The probe, checker and rollback still carry the B-1, S-1, S-2 and QA-N1 to N5 fixes, and the D-8 paste rules hold (the guard suite checks every literal and is green). The one-pool totals are unchanged. The one real inconsistency is text: the migration, the repository and the entitlements doc say `is_fallback_priced` is "AI specific, recorded false by every other service", but the requirement says a later service writes `false` **unless it defines its own documented fallback** (S-3). SQ-18 is ruled below.
+
+#### What SA executed (throwaway PGlite 0.5.8 = PostgreSQL 18.3, in memory, outside the repo; no real database)
+
+| Run | Result |
+|---|---|
+| Dev's harness (`credit-charges-harness.mjs`), re-run by SA | **28 pass, 0 fail**: pre-check NULLs → migration → checker `VERDICT PASS 19 pass 0 fail` (C2 `25 of 29`, C4 `13 of 13`) → probe SKIPPED with the placeholder → `PROBE PASS` P01–P22 + P08A–C for an account with a plan anchor and for one without → checker still PASS → rollback refuses with a row → rollback drops all four objects on an empty ledger → re-apply PASS |
+| SA's own run (`sa-extra.mjs`) — RPC called with **named** arguments in a scrambled order, as PostgREST calls it | Recorded; the right values in the right columns |
+| `service` format edges | `a` (1 character) and 64 characters are accepted. 65 characters, `_ai`, `ai ` (trailing space), `AI`, `aï` (non-ASCII), `a-b` and the empty string are each refused `23514 … service_format` |
+| `is_fallback_priced = true` on an `sms` charge | **Accepted** and counted in `fallback_priced_count`. Not enforced, as Dev declared; ruled acceptable below |
+| Slice 4 shape: an adjustment with no `service`, pointing at an `sms` charge | Accepted. The same adjustment carrying `service = 'sms'` → `23514 adjustment_shape`. `COALESCE(row.service, target.service)` over the self-FK join yields `sms` for it. A plain `WHERE service = 'ai'` skips every adjustment row (see N-10) |
+| Totals | One row for the account across `ai`, `sms` and the test services: one pool |
+
+#### Findings
+
+**Should-fix (a condition before the §6.4.1 PROD apply; it does not block QA)**
+
+1. **S-3: the `is_fallback_priced` text contradicts the requirement.** The text sits in three places: `supabase/migrations/20261015_business_os_credit_charges.sql:86` (`COMMENT ON COLUMN … 'AI specific … Recorded false by every other service …'`), `lib/repositories/BusinessOsCreditChargeRepository.ts` (the header and the `isFallbackPriced` doc: "AI-specific … Other services pass `false`"), and the entitlements doc's Metering table ("AI-specific; `false` for every other service"). The requirement's "Adding a future chargeable service" paragraph ("What differs from AI") says a per-message service writes `false` **unless it defines its own documented fallback**. That is the right meaning for a neutral ledger: an SMS provider price that is missing for one country is the same event as a model missing from the pricing table. **Fix:** make the text neutral. For the column: "True when the cost was priced from a fallback rate rather than the measured one. AI sets it when a model is missing from the pricing table; another service sets it only if it defines its own documented fallback, otherwise false. False on adjustment rows. Hidden from owners." Keep D-8's literal rules (no punctuation beyond what the guard allows). Update the repository comments, the doc line, and the test at `business-os-credit-charges.migration.test.ts:331-344` (its title and the `false by every other service` regex). Do it **now**, while the migration is unapplied: once it is applied, the comment can only change through a new migration. Priority: Medium, effort minutes. No schema, grant or behaviour change, so QA's run is unaffected apart from that one test.
+
+**Notes**
+
+2. **N-9 (`is_fallback_priced` left unenforced for non-AI): accepted, and keep it that way.** A CHECK that enforced it would have to name `'ai'`. That would put a closed list back into the schema, which BD-13 and SQ-18 rule out, and it would forbid the documented per-service fallback that the requirement allows (S-3). The flag is hidden from owners, so a wrong value from a future service can distort only the operator report's fallback count (FR-12c / FR-33), never a balance.
+3. **N-10 (for slice 4, and a BA wording fix): adjustments inherit `service`. That is coherent, but every per-service read must resolve it.** Inheritance is deterministic: the self-FK targets `UNIQUE (action_id)`, so each adjustment points at exactly one charge, and storing a copy of `service` would only invite drift, since no CHECK can compare two rows. The consequence was executed above: `WHERE service = 'ai'` silently drops the adjustment rows. So slice 4's leak check, the report "grouped by `service`", and slice 7's diary heading must use the **effective service**, `COALESCE(row.service, adjusted.service)`, through the self-FK (one view or one repository read, not ad-hoc joins). **BA:** FR-33's 2026-09-29 note and slice 4's scope ("compares … with the `service = 'ai'` rows only") should say "the rows whose effective service is `ai`: the `ai` charges and the adjustments that point at them". Priority: Low; before slice 4's workplan.
+4. **N-11 (future services): `action_type` is scoped by `service`.** Both use the same format, and nothing stops two services from choosing the same action type (`reminder`). Any lookup of an action type's area, audience or diary label (FR-4, rule 5 of "Adding a future chargeable service") must key on **`(service, action_type)`**. Alternatively, rule 5 must require action types that are unique across services. **BA:** add one line to rule 3 or rule 5. Priority: Low; no schema change is needed either way.
+5. **N-12: `p_service` refusing NULL with `22004` (Dev's addition) is accepted.** It matches the other required ids. The shape CHECK would otherwise refuse the NULL too, but with a less readable `23514`. `p_service` and `p_action_type` are adjacent `text` parameters with the same format, so a **positional** swap would pass both CHECKs. The repository calls by name (built field by field, and executed above with scrambled named arguments); the probe's positional calls are pinned. For 3b-ii: the recorder goes only through the repository, never a positional SQL call.
+6. **N-13: no AI term is left in a neutral object name.** No `business_os_ai_*` ledger name survives in any SQL file, the repository, the registrations or the docs (apart from historical and mapping text). The remaining "AI" words are correct in context: the example `such as ai` in the `service` comment, the probe's P03 text `service ai`, the repository's statement that slice 3 writes `'ai'`, and `AiChargeRecord` / `aiChargeRecorder.ts` / `bos_ai_charge_*`, which belong to the AI service's own code. The only exception is the fallback text (S-3). The table comment's "No tokens or models or call names" is a list of what the ledger must not hold, not an AI claim. Acceptable.
+7. **N-14: repository and registrations are correct.** `service: string` is passed field by field and logged at `warn`, and the barrel exports and the source guard were renamed. The purge descriptors (`never` ×2, baseline 131), `USER_OWNED_TABLES` (×2) and the deletion policy (`minimise`, with the FK route and no-UPDATE wording) are reworded service-neutrally, and their suites are green. The runbook §6.4.1 is correct with the new names: the step 2 pre-check uses the 11-argument signature, the rollback path and signature match, and step 7 lists P08A–C. §6.1's outline still shows quoted policy names ("Owners read their own credit charges"), while the file uses `business_os_credit_charges_owner_select`. It is an outline, marked as one, and the checker tests the policies by shape; this is cosmetic.
+
+#### SQ-18 ruling — the format of `service` (ruled 2026-09-29)
+
+**Ruled: Dev's shape stands, exactly as built.**
+- **Required on every charge row** (in `business_os_credit_charges_charge_shape`) and **NULL on every adjustment row** (in `…_adjustment_shape`; it is inherited, N-10). The column is nullable only because adjustments share the table.
+- **Format:** lowercase ASCII letters, digits and underscores, starting with a letter, **1 to 64 characters**. That is character for character the `action_type` / `reason_code` rule, written with `position` / `translate` (D-8 paste rules), and executed above at both edges. SA prefers **64 to the BA's suggested 40**: one rule for every identifier column in the ledger costs nothing and removes a second rule to remember.
+- **Not an enum, not a lookup table, not a registry table.** A new service needs no migration (BD-13, AC-34). The database validates the **format only**; which services exist is a code fact, declared with each service's wrapper (rule 2).
+- **The RPC checks NULL only** (`22004`), and the table CHECK is the **single** source of the format. Do not duplicate the format in PL/pgSQL.
+- **Naming convention for future services:** a stable, singular, snake_case product noun (`ai`, `notification_email`, `sms`). Rows are never updated, so **a service id is permanent once one row carries it**: renaming it later is a ledger migration, and an id is never reused for a different meaning.
+- **Condition C-6 for 3b-ii:** the recorder writes `service` from **one exported constant** (for example `AI_CHARGE_SERVICE = 'ai'`), never from a request, a parameter or the record builder's input. A test pins that the value is `'ai'` and that the recorder passes that constant. The repository type stays `string`; a TypeScript union is optional and non-blocking.
+
+**SQ-17 (allowance id `ai.actions` vs a general credit allowance): noted, not ruled, for the start of slice 5**, as the requirement records. The inputs SA will weigh then: the admin override rows that reference `ai.actions` in the database, every cohort and admin-screen reader of the id, and the entitlements registration guard. The BA's conditional resolution (rename only with a same-change migration of the overrides and a no-leftover check; otherwise neutralise the unit and labels and record the debt) is a reasonable starting point. SA-S11 stands until then.
+
+#### Gates re-run by SA
+
+| Gate | Result |
+|---|---|
+| `npx jest supabase/migrations/__tests__/business-os-credit-charges.migration.test.ts lib/repositories/__tests__/BusinessOsCreditChargeRepository.test.ts lib/business-os/purge lib/business-os/account` | **6 suites, 188 tests, all green**; with `lib/business-os/__tests__/businessOwnedTables.test.ts` (6) added, **7 suites / 194**, which matches Dev |
+| `npm run typecheck:bos-llm` | 299 files, 28 errors, **0 new**, passed (the same one "fixed" baseline entry, `app/api/onboarding/build/route.ts`) |
+| PGlite | Dev's harness 28/28, plus SA's extra run above |
+| Worktree | Nothing changed by SA except this subsection and one §16 row; the harness scripts sit in the session scratchpad |
+
+### Code Approved for QA (neutral ledger re-check): **Yes.** Condition before the PROD apply: **S-3** (text only; the migration test's one regex updated with it). Condition for 3b-ii: **C-6**. Notes N-10 and N-11 go to BA before slice 4's workplan.
+
 ---
 
 ## 14. QA Testing Report
+
+> **Names changed after these reports (2026-09-29, user decision: the ledger is not AI-specific).** The report text below is kept as written. Read: `business_os_ai_charges` → `business_os_credit_charges`, `business_os_ai_charge_totals` → `business_os_credit_totals`, `business_os_record_ai_charge` → `business_os_record_credit_charge`, `business_os_ai_period_start` → `business_os_credit_period_start`, `BusinessOsAiChargeRepository` → `BusinessOsCreditChargeRepository`, `BOS_RECORD_AI_CHARGE_RPC` → `BOS_RECORD_CREDIT_CHARGE_RPC`, and the files `20261014_business_os_ai_charges*.sql`, `check-`/`probe-bos-ai-charges-migration.sql`, `business-os-ai-charges.migration.test.ts` → their `credit` names. A `service` column was added (29 columns, 25 owner-readable, 13 CHECKs, 11 RPC parameters; probe P08A–P08C). See §5.2.1.2.
 
 ### QA report — 3a (2026-09-28)
 
@@ -995,6 +1320,217 @@ Worktree `neuronforge-llm-deduction`, branch `feature/business-os-credit-deducti
 
 **Verdict: PASS WITH NOTES** (no bugs; the notes are pre-existing reds that `main` already fixes or that are red on `main` itself, plus SA's N-8 wording).
 
+### QA report — 3b-i (2026-09-29)
+
+**Test mode:** full · **Strategy used:** A (Jest: SQL text guards, repository, lifecycle registries) + C (my own script running the real SQL files on a throwaway in-memory PostgreSQL, following §6.4.1 in order) + a non-DBA read of §6.4.1 · **Focus:** schema, security, api (repository) · **Skipped:** D (there is no UI in 3b-i) · **Input source:** TL's QA brief.
+
+**Scope.** The 3b-i working tree on `feature/business-os-credit-deduction-slice-3b-i` at `ef3da3bf` (8 modified and 7 untracked paths, all uncommitted): migration `20261014`, rollback, checker, write probe, `BusinessOsAiChargeRepository` and the barrel, and the purge, ownership and deletion registrations. Everything runs after Dev's B-1, S-1 and S-2 fixes. **No real database was touched.** The only database was a PGlite instance in memory, driven from the session scratchpad outside the repo and thrown away at the end. No code or SQL file was changed; the hashes below show it.
+
+#### Commands and numbers
+
+| Gate | Result |
+|---|---|
+| `npx jest supabase/migrations/__tests__/business-os-ai-charges.migration.test.ts lib/repositories/__tests__/BusinessOsAiChargeRepository.test.ts lib/business-os/purge lib/business-os/account lib/business-os/__tests__/businessOwnedTables.test.ts lib/business-os/llm lib/business-os/entitlements` | **57 suites, 1,511 tests, all green** (16.8 s) |
+| SA's gate set alone (the first five paths) | **7 suites, 184 tests, all green**, which matches Dev's 184. Migration guard **81**, repository **21** |
+| `npm run typecheck:bos-llm` | 299 files, 28 errors, **0 new**, passed. It shows the same one "fixed" baseline entry as Dev and SA (`app/api/onboarding/build/route.ts`) |
+| `npm run check:bos-llm-literals` | 49 files, 2 exempt, **0 violations**, passed |
+| `next build` (`NODE_OPTIONS=--max-old-space-size=6144` and the placeholder env from `.github/workflows/build.yml`) | **Exit 0**, "Compiled successfully", **307/307** pages, 78 `DYNAMIC_SERVER_USAGE` lines (the same as Dev's). The log never mentions the new module |
+
+#### SQL execution: my own run, in the order of §6.4.1
+
+**Engine:** PGlite 0.5.8, which is PostgreSQL 18.3 in memory. It ran from an existing scratch install outside the repo. **Stubs**, the same shape as SA's and Dev's: the `anon`, `authenticated` and `service_role` roles (`service_role` has `BYPASSRLS`); Supabase-like default privileges (ALL on new tables and functions to all three roles); `auth.users`; `auth.uid()` read from `request.jwt.claims`; and `business_os_account_plans(user_id PK, period_anchor)` with `service_role` SELECT. The four repo files were read, not copied, and each was run **whole, in one go**, as the SQL editor sends it. **71 checks, 71 pass, 0 fail.**
+
+| # | Step (§6.4.1) | Exact output |
+|---|---|---|
+| 2 | Pre-check (the query as written) | `charges null, totals null, record_fn null, period_fn null` |
+| 3 | Migration | No error. The pre-check then returns all four names |
+| 4 | Apply time | `SELECT now() AT TIME ZONE 'UTC'` returns one value |
+| 5 | Checker | `VERDICT PASS 19 pass 0 fail`. All 21 check rows are PASS or INFO. C2 `24 of 28 columns readable and mismatches none`, `0 hidden columns readable`, `0 writable by authenticated and 0 reachable by anon`. C4 `12 of 12`, `0 checks name user_id`, 3 FKs, `2 of 2` indexes, `0 triggers`. C5 `2 invoker 2 pinned`, `client entries none`. C6 `9 of 9` and `9 of 9 in NZ`. C7 INFO reads **exactly** the runbook text: `0 charge rows and 0 totals rows and 0 detached rows and first row at none` |
+| 6 | User id lookup by email | Returns the stub id |
+| 7a | Probe, placeholder left in | `P0001 PROBE SKIPPED  replace PASTE_YOUR_OWN_USER_ID_HERE with your own user id and run it again` |
+| 7b | Probe, real id **with** a plan anchor (45 days ago) | `PROBE PASS  this error is expected and rolls everything back`, then P00 INFO and **P01–P22 all PASS** (22/22). P04: `period from plan starts 2026-09-15 04:03:37.415 utc`. Afterwards 0 charge rows and 0 totals rows |
+| 7c | Probe, real id **without** a plan row | `PROBE PASS`; P01–P22 all PASS (22/22). P04: `period from calendar_month starts 2026-09-01 00:00:00 utc`. Afterwards 0 and 0 |
+| 7d | Probe, an id that is not in `auth.users` | `PROBE SKIPPED  that user id is not an account on this database` |
+| 8 | Checker again | `VERDICT PASS 19 pass 0 fail`; C7 still `0 charge rows and 0 totals rows …`. The session is back to `current_user = postgres` with empty JWT claims |
+| — | Rollback on the empty ledger | No error. The step-2 pre-check then returns all four NULL again |
+| — | Re-apply, then the checker | No error; `VERDICT PASS 19 pass 0 fail` |
+
+**Failure paths**
+
+| Case | Exact result |
+|---|---|
+| Migration pasted a second time | `42P07 relation "business_os_ai_charges" already exists`. The table ACLs are byte-identical before and after, and the checker still passes |
+| Rollback with 2 charge rows present | `P0001 ROLLBACK REFUSED  the ledger holds charge rows so nothing was dropped`. All four objects remain, and 2 charges and 2 totals rows are intact |
+| RPC as `service_role`, 22 bad inputs | NaN credits and NaN cost: `23514 …amounts_are_numbers`. Infinity: `22003 numeric field overflow`. Negative credits, negative cost, and `-0.0000006` (which rounds to `-0.000001`): `23514 …charge_shape`. Negative version: `23514 …version_not_negative`. `robot` trigger: `…triggered_by_known`. `maybe` outcome: `…outcome_known`. `Chat-Turn` and an empty action type: `…action_type_format`. NULL action, user or group id: `22004 business_os_record_ai_charge needs an action id a user id and a group id`. NULL action type, trigger or outcome: `…charge_shape`. NULL credits, cost, version or fallback flag: `23502 not-null`. A user id missing from `auth.users`: `23503 …user_id_fkey`. **The totals snapshot is byte-identical and the charge count unchanged after all 22.** The checker still passes, and C7 prints `first row at … utc` |
+| Owner (`authenticated`, own claims) `select *` | `42501 permission denied` on both tables |
+| Owner, column-list select, with 2 accounts holding charges | Charges: 1 row, their own. Totals: 1 row, their own. An account with no charges sees 0. Empty `sub`: 0 rows |
+| Owner UPDATE of own totals, DELETE of own charges | Both `42501` |
+| `anon`: SELECT on both tables, EXECUTE on both functions | All four `42501` |
+| `authenticated`: EXECUTE on the record and period functions | Both `42501 permission denied for function …` |
+| `service_role` direct UPDATE, DELETE and TRUNCATE on charges, and DELETE and TRUNCATE on totals | All five `42501`; the ledger is unchanged |
+| **Session hygiene** (QA-added): the checker's `SET default_transaction_read_only = on` is left on the session, then the probe runs on the same session | `PROBE FAIL  P01 the record function raised 25006 cannot execute INSERT in a read-only transaction`. This fails safe, but see QA-N3 |
+| **Paste mistakes** (QA-added): the id pasted with surrounding spaces, or pasted without its quotes | Both return `PROBE SKIPPED  replace PASTE_YOUR_OWN_USER_ID_HERE …` (see QA-N4) |
+
+The scratch instance and my script were deleted afterwards. Nothing was written into the repo.
+
+#### Repository (item 3)
+
+- **Never throws; returns `{ data, error }`.** Reading the code confirms it: a synchronous `rpc()` throw, a rejected promise and a PostgREST error all land in the one `catch` and come back as `{ data: null, error }`. There is a unit test for each case. The failure is logged at `warn` with ids only, as D-11 intends.
+- **Strict row mapping.** Anything other than one object with a boolean `out_recorded`, a string `out_period_start` and an `out_anchor_source` of `plan` or `calendar_month` becomes an error, never a guess. An array of one and a bare object are both accepted. The SQL run confirms the real OUT names match: the probe reads `out_recorded`, `out_period_start` and `out_anchor_source`.
+- **Arguments are built field by field.** The ten `p_*` arguments are built one at a time, with no spread (a test covers an input that carries extra properties). `kind` is hard-coded in SQL.
+- **Abort signal.** `abortSignal(signal)` is chained only when a signal is given; both cases are tested.
+- **No production caller.** I grepped `app lib components hooks scripts pages middleware.ts types config` (`.ts/.tsx/.js/.jsx/.mjs/.cjs`) for `BusinessOsAiChargeRepository`, `businessOsAiChargeRepository`, `business_os_record_ai_charge`, `BOS_RECORD_AI_CHARGE_RPC` and `business_os_ai_charge`. The hits are the repository, the barrel and its test, plus three registry files that name the tables only as **string keys** (`descriptors.ts`, `businessOwnedTables.ts`, `accountDeletionPolicy.ts`) and the deletion-policy test. Nothing calls the repository. The build log never mentions it.
+- `console.*`: 0 in the repository and in the three touched registry files.
+
+#### Lifecycle registrations (item 4)
+
+| Registry | Found |
+|---|---|
+| `purge/descriptors.ts` | `never('business_os_ai_charges', U, …)` and `never('business_os_ai_charge_totals', U, …)`, both in `EXCLUDED` |
+| `classification-baseline.json` | `count` 129 → **131**, and `levels` has 131 keys (checked by loading the file), both `never` |
+| `businessOwnedTables.ts` | Both tables are in `USER_OWNED_TABLES`, **not** `BUSINESS_OWNED_TABLES` (§6.5). The suite that ties the migration to the registry is green |
+| `accountDeletionPolicy.ts` | `business_os_ai_charges`: `minimise`, with a reason that names `ON DELETE SET NULL` and "no UPDATE". The totals table has no exception, so it takes the default `delete`. The new test pins all of this and passes |
+
+Dev's negative control for `businessOwnedTables.test.ts` (red without the registration) was not repeated, because it would mean editing a production file. The suite being green, and its reading of the migration, were checked.
+
+#### Runbook usability: §6.4.1 read as a non-DBA would (item 5)
+
+On the whole the runbook is usable. Every step says what to paste and what to expect. The expected texts I could run (step 2 all NULL, the step 5 C7 INFO line, `PROBE PASS  this error is expected…`, `PROBE SKIPPED`, `ROLLBACK REFUSED…`, and the step 3 "second paste fails and changes nothing") match the real output **character for character**. The stop rules are explicit at steps 2, 5 and 7. What could still confuse a first-time reader:
+
+1. **QA-N1: step numbers collide between §6.4 and §6.4.1** (Low; wording). The closing "Charging start" paragraph of §6.4.1 says "charging starts at the **step-6** moment" and "no row before the **step-2** apply time". Those are §6.4's table numbers. Inside §6.4.1, step 6 is "Your user id", step 2 is the pre-check, and the apply time is recorded at step **4**. §6.4.1 step 5 itself says "the step-4 apply time", which is correct locally. A reader following §6.4.1 will look at the wrong step. **Suggested fix:** in that paragraph write "§6.4 step 6 (the 3b-ii go-live)" and "the apply time recorded in step 4 above".
+2. **QA-N2: Supabase's destructive-query warning is not mentioned** (Low; expectation). The probe contains `TRUNCATE` and `DELETE` statements (P10–P13, which are *expected* to be refused), and the rollback contains `DROP`. The Supabase SQL editor usually shows a "destructive operation" confirmation before running such a query. A non-DBA seeing that on the probe, a step described as safe, may abort or worry. **Suggested fix:** one sentence at step 7 (and at the rollback mention in step 5): "The editor may warn that the query contains destructive operations. That is expected here: confirm. The block raises at the end, so nothing it does is kept." *Not verified against the live editor; the harness cannot show UI dialogs.*
+3. **QA-N3: the checker's read-only setting could carry over to the probe** (Low; fails safe). The checker begins with a session-level `SET default_transaction_read_only = on`. On a reused connection, that makes the step 7 probe fail with `PROBE FAIL  P01 the record function raised 25006 cannot execute INSERT in a read-only transaction` (reproduced above on one session). Whether the Supabase SQL editor reuses a session between runs is **not verified**. The same `SET` sits in the four earlier checkers under `scripts/`. It is safe: nothing is written, and step 7's rule sends the text to Dev. But it would stall C-1 for a non-DBA. **Suggested fix (either):** in step 7 add "If the text says `25006 … read-only transaction`, run `SET default_transaction_read_only = off;` and run the probe again". Or, in a later cycle, have the checkers use a transaction-scoped form (`BEGIN READ ONLY; … COMMIT;` or `SET LOCAL`). That would be a checker-convention change for SA.
+4. **QA-N4: a malformed id gets a misleading message** (Low). An id pasted with surrounding spaces, or without the quotes, answers "replace PASTE_YOUR_OWN_USER_ID_HERE…" even though the user *did* replace it. The effect is safe (SKIPPED). **Suggested wording** for the SKIPPED text or step 7: "…paste only the id, between the quotes, with no spaces".
+5. **QA-N5: P00 prints the plan anchor in the session time zone** (Low; cosmetic). The run printed `plan anchor 2026-08-15 06:03:37.415+02`, while P04 and C7 print UTC with a ` utc` suffix (S-1). It is INFO only, and no comparison depends on it. It is the same class as S-1: `(v_anchor AT TIME ZONE 'UTC')::text || ' utc'` would make it consistent.
+6. **Minor wording.** "Paste into §15" assumes the reader knows §15 is this workplan's "Commit Info" section; naming it once would help. Step 5 also mixes the rollback instructions into the checker step. That is clear once read, but the step is long. Neither blocks anything.
+
+#### Test Coverage
+
+| Acceptance criterion (3b-i: §5.2.1, SA conditions) | Tested? | Result | Notes |
+|---|---|---|---|
+| The migration applies in one transaction; the names are free first | ✅ | Pass | Steps 2–3 executed |
+| Checker `VERDICT PASS`, C7 empty (§6.3) | ✅ | Pass | 19/0; the exact C7 text |
+| C-1: the probe is mandatory and passes P01–P22 for both account shapes, and keeps nothing | ✅ | Pass | Both shapes 22/22; 0 rows after; checker still passes (C-1 (d)) |
+| C-2: no OUT-name clash (42702) | ✅ | Pass | Executed with no 42702; the repository maps `out_*` |
+| C-3: totals invariant and rebuild | ✅ | Pass | P02, P05, P06; C7 after real rows and after 22 refusals |
+| C-4: column grants; cost and fallback columns hidden | ✅ | Pass | Owner `select *` gets 42501; column list returns own rows only; P16–P19 |
+| SA-S8: owner SELECT only, service_role EXECUTE only, no client write | ✅ | Pass | The anon, authenticated and owner write paths all get 42501 |
+| No direct UPDATE, DELETE or TRUNCATE of the ledger, even by service_role | ✅ | Pass | 5/5 get 42501 |
+| Bad input refused with no total moved | ✅ | Pass | 22 cases |
+| S-1: C7 time printed in UTC | ✅ | Pass | `first row at … utc` |
+| S-2: rollback refuses a live bill; drops an empty ledger; re-apply works | ✅ | Pass | Executed both ways |
+| B-1: the probe compiles | ✅ | Pass | Every probe run compiled and executed |
+| Repository: never throws, `{data, error}`, strict mapping, signal, no caller | ✅ | Pass | 21 tests plus code read plus grep |
+| Lifecycle: `never` ×2 (131), USER_OWNED ×2, charges `minimise` / totals `delete` | ✅ | Pass | Registry suites green |
+| Nothing new at runtime (unwired) | ✅ | Pass | grep plus build log |
+| §6.4.1 usable by a non-DBA | ✅ | Partial | Usable; notes QA-N1 to QA-N5 |
+| Concurrency (N-6) | ⚠️ | Not run | PGlite has one connection; SA's reasoning stands |
+| Real Supabase roles, grants and editor behaviour | ⚠️ | Not run | By design this is the PROD probe (§6.4.1 step 7), after QA |
+
+#### Issues Found
+
+**Bugs (must fix before commit):** none.
+
+**Performance issues:** none. The RPC is one insert plus one upsert on a primary key; no index is missing for the write path.
+
+**Edge cases (nice to fix; none blocks):** QA-N1 to QA-N5 above. N1–N4 are wording in §6.4.1 or in a message and can be folded in before the user runs the PROD steps. N3 concerns every checker in `scripts/`, so a code-side change there is SA's call. N5 is cosmetic.
+
+#### No code or SQL file changed during QA
+
+sha256 of all 14 changed paths other than this workplan was taken before the run and again after it: **identical**. Examples: migration `41247de1…c7ba`, probe `bc747a1a…bea4`, checker `5a9f134a…d546ae052`, rollback `d084681a…10cea`, repository `e016b9eb…1c1e4`. `git status --short` shows the same 8 modified and 7 untracked paths as at the start. Only this workplan grew.
+
+#### Final Status
+- [x] All 3b-i acceptance criteria pass: ready for the user's diff review. The PROD steps (§6.4.1) then run by the user, and 3b-ii waits for the step 7 output in §15
+- [ ] Issues found: Dev must address before commit
+
+**Verdict: PASS WITH NOTES.** There are no bugs. The five notes are runbook wording and one cosmetic INFO format, and none of them blocks the user's diff review. QA-N1 to QA-N4 are best folded into §6.4.1 before the user runs it on PROD.
+
+### QA re-test — neutral ledger (2026-09-29)
+
+**QA — 2026-09-29** · **Test mode:** focused re-test (full on the changed surface) · **Strategy used:** A (Jest guards, repository, lifecycle registries) + C (my own script running the real SQL files on a throwaway in-memory PGlite, §6.4.1 in order, then failure paths) + a non-DBA read of §6.4.1 · **Focus:** schema, security, api (repository) · **Skipped:** D (no UI in 3b-i) · **Input source:** TL's QA brief. Worktree `neuronforge-llm-deduction`, branch `feature/business-os-credit-deduction-slice-3b-i` @ `ef3da3bf` + the uncommitted changes. **No real database touched.** Run against the files as they stand **before** SA's S-3 text fix (§13 re-check); S-3 is comment text only.
+
+#### Commands and numbers
+
+| Gate | Result |
+|---|---|
+| `npx jest` migration guard + repository + `lib/business-os/purge` + `lib/business-os/account` + `lib/business-os/llm` + `lib/business-os/entitlements` + `businessOwnedTables.test.ts` + `entitlementSqlScripts.guard.test.ts` | **58 suites, 1,591 tests, all green** (migration guard + repository alone: 112 = 90 + 22) |
+| `npm run typecheck:bos-llm` | 299 files, 28 errors, **0 new**, passed (same one "fixed" baseline entry) |
+| `npm run check:bos-llm-literals` | 49 files, 2 exempt, **0 violations** |
+| `next build` (6 GB heap, the CI placeholder env from `build.yml`) | **Exit 0**, "Compiled successfully", 307/307 pages, 78 `DYNAMIC_SERVER_USAGE` lines (as before) |
+
+#### SQL execution: my own run (PGlite 0.5.8 = PostgreSQL 18.3, in memory, outside the repo; session `TimeZone = Asia/Jerusalem`)
+
+Supabase stubs: roles `anon` / `authenticated` / `service_role` (BYPASSRLS), `auth.users`, `auth.uid()` from `request.jwt.claims`, `business_os_account_plans`, and permissive default privileges (so a missing REVOKE would show). The pre-check, the step 4 and step 6 queries and the `RESET` line were **extracted from this workplan's §6.4.1 text** by the script, not retyped. **97 of 97 checks pass.**
+
+| # | Step / path | Exact output |
+|---|---|---|
+| R2 | Pre-check as written (11-arg signature) | `{"charges":null,"totals":null,"record_fn":null,"period_fn":null}`; after apply all four resolve, `record_fn` = `business_os_record_credit_charge(uuid,uuid,uuid,text,text,text,text,numeric,numeric,integer,boolean)` |
+| R3–R4 | Migration; apply-time query | No error; `applied_at_utc` returned |
+| R5 | Checker | `VERDICT PASS 19 pass 0 fail`, every row PASS or INFO; C2 `25 of 29 columns readable and mismatches none`; C4 `13 of 13`; C6 `9 of 9` and `9 of 9 in NZ`; C7 INFO exactly `0 charge rows and 0 totals rows and 0 detached rows and first row at none` |
+| R6 | `SELECT id FROM auth.users WHERE email = …` | the owner's id |
+| R7 | Probe in the checker's tab | `PROBE SKIPPED  this session is read only …`; the runbook's `RESET default_transaction_read_only;` runs on its own |
+| R7 | Placeholder left in (line 3 holds `'PASTE_YOUR_OWN_USER_ID_HERE'`) / id with a leading space / unknown account | `PROBE SKIPPED  replace PASTE_YOUR_OWN_USER_ID_HERE …` / `PROBE SKIPPED  the pasted value is not a valid user id …` / `PROBE SKIPPED  that user id is not an account on this database` |
+| R7 | Probe, account **with** a plan anchor | `PROBE PASS  this error is expected and rolls everything back`; P00 INFO `plan anchor 2025-01-31 10:00:00 utc`; 25 PASS, 0 FAIL, order `…P07,P08,P08A,P08B,P08C,P09…` as step 7 says; P03 `stored with service ai`; P04 `period from plan starts 2026-08-31 10:00:00 utc`; nothing kept |
+| R7 | Probe, account **without** a plan row | `PROBE PASS`; 25 PASS; P04 `period from calendar_month starts 2026-09-01 00:00:00 utc`; nothing kept |
+| R8 | Checker again | `VERDICT PASS`; C7 still `0 charge rows and 0 totals rows …` |
+| F1 | Migration pasted a second time | `42P07 relation "business_os_credit_charges" already exists`; constraint / function / policy / index counts identical before and after (39 / 2 / 2 / 5) |
+| F2 | As `service_role`: an `ai` charge (owner, 1.25) + a `notification_email` charge (scheduled, 0.5) + a 64-character service (boundary) | All `out_recorded = true`, same period; repeat of the `notification_email` id → `false`; **one** totals row: `charge_count 3`, `credits_total 1.750000`, `credits_owner 1.250000`, `credits_scheduled 0.500000`; each row stores its own `service` |
+| F3 | **28 bad RPC inputs** | NULL action / user / group / **service** → `22004`; service `Notification Email`, `1email`, `notification-email`, empty, 65 chars, `_ai`, `aïb` → `23514 … service_format`; action_type `ChatTurn` → `action_type_format`; NULL action_type / triggered_by / outcome, negative credits / cost → `charge_shape`; unknown trigger / outcome → `…_known`; NaN credits / cost → `amounts_are_numbers`; negative version → `version_not_negative`; NULL credits / cost / version / `is_fallback_priced` → `23502`; unknown user → `23503`; credits `1e13` → `22003`. Ledger **and** totals byte-identical (JSON snapshot) after all 28 |
+| F4 | Direct INSERTs as the table owner | Adjustment carrying `service = 'ai'` → `23514 adjustment_shape`; the same adjustment without a service is accepted (control, then removed); a charge row without a service → `23514 charge_shape` |
+| F5 | **23 permission refusals, all `42501`** | `anon`: SELECT charges (incl. `service`) and totals, EXECUTE both functions. `authenticated` (owner JWT): EXECUTE both functions, INSERT / UPDATE / DELETE charges, UPDATE totals, `SELECT *` on both tables, `cost_usd`, `is_fallback_priced`, `cost_usd_total`, `fallback_priced_count`. `service_role`: UPDATE charges (`credits`, `service`), DELETE / TRUNCATE both tables. Ledger unchanged |
+| F6 | Owner reads | The owner reads `service`, `action_type`, `credits`, `credit_value_version`, `triggered_by`, `group_id` on their 3 rows, and their one totals row (`credits_total`, `charge_count`); another account sees 0 charge and 0 totals rows; `authenticated` with no `sub` sees 0; `service_role` SELECT works |
+| F7 | Checker with rows of three services | `VERDICT PASS 19 pass 0 fail`; C7 `3 charge rows and 1 totals rows and 0 detached rows and first row at … utc` (rebuild = totals) |
+| F8 | Rollback with rows | `P0001 ROLLBACK REFUSED  the ledger holds charge rows so nothing was dropped`; all four objects and every row byte-identical |
+| F9 | Rollback on an emptied ledger; re-apply | Drops all four (pre-check all NULL again); migration re-applies; checker `VERDICT PASS` |
+
+Harness note (not a product finding): my first `auth.uid()` stub cast an empty claims string straight to `jsonb` and raised `22P02`; Supabase's own `auth.uid()` wraps it in `nullif(…, '')`. Aligned the stub; the case then returned 0 rows.
+
+#### Old names (item 3)
+
+`grep -rnI` over the worktree (excluding `node_modules`, `.next`, `.git`) for `business_os_ai_charge`, `BusinessOsAiCharge`, `record_ai_charge`, `ai_period_start`, `bos-ai-charges`, `business-os-ai-charges`: **78 hits in 2 files, none in code, SQL, tests or scripts, no old-named file.**
+- `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md`: 4 hits, all on line 250, the 2026-09-29 Change History row's old → new map.
+- This workplan: 74 occurrences (before this subsection, which adds 6 by naming the search terms), all historical or map text: §3.1 rename note (5), §5.2.1.2 old → new map and leftover-names row (12), §11 Q-12 with its "Renamed" note (2), §13 (29: the old → new banner, the 2026-09-28 review, the 3b-i code review and Dev fixes), §14 (19: the first 3b-i QA report), §16 older rows and old → new maps (7). None in §2, §4, §6 to §10.
+- `docs/requirements/BUSINESS_OS_LLM_DEDUCTION_LAYER_REQUIREMENT.md`: **0** hits now.
+
+#### Runbook §6.4.1 read as a non-DBA (item 4)
+
+Usable as written with the new names. Every file path exists; the pre-check uses the 11-argument signature and runs as pasted (extracted and executed above); the §6.2 SQL block equals the rollback file line for line (blank lines aside); step 7's "third line", the three SKIPPED answers and the P08A–C placement all match what the probe prints; step 5's C7 text is exact. Three notes, none blocking:
+1. **QA-N6** (Low, wording): step 3 says a second paste "fails at the first `CREATE TABLE` and changes nothing" but not what the user will see. Suggest adding the literal text `relation "business_os_credit_charges" already exists` so a double paste is recognised rather than escalated.
+2. **QA-N7** (Low, wording): step 6's `'<your login email>'`: say "replace `<your login email>`, angle brackets included, keeping the quotes"; a non-DBA may leave the brackets and get zero rows.
+3. **QA-N8** (cosmetic): `BUSINESS_OS_ENTITLEMENTS.md` Change History has the 2026-09-29 row above a 2026-09-28 row (lines 250–251), out of date order.
+
+#### Test Coverage
+
+| Acceptance criterion (neutral-ledger change) | Tested? | Result | Notes |
+|---|---|---|---|
+| Objects renamed to `business_os_credit_*`, no old name in code / SQL | ✅ | Pass | Grep: docs history and maps only |
+| `service` required on charges, NULL on adjustments, format CHECK (no enum) | ✅ | Pass | F3, F4; 1 and 64 chars accepted, 65 refused |
+| RPC `p_service`, NULL refused `22004` | ✅ | Pass | F3; repository sends the same 11 named `p_*` args as the SQL signature |
+| One credit pool: `ai` + `notification_email` in one totals row | ✅ | Pass | F2; probe P08A |
+| Owner reads `service`, never the cost columns | ✅ | Pass | F5, F6; checker C2 `25 of 29` |
+| Permissions: anon / authenticated / service_role | ✅ | Pass | F5 (23 × `42501`) |
+| Bad inputs leave totals unchanged | ✅ | Pass | F3 (28 cases, byte-identical) |
+| Idempotent on action id | ✅ | Pass | F2 repeat, P01–P02 |
+| Second migration paste harmless | ✅ | Pass | F1 |
+| Rollback refuses with rows; drops when empty; re-apply | ✅ | Pass | F8, F9 |
+| Runbook §6.4.1 in order, pre-check as written | ✅ | Pass | R2–R8; notes QA-N6 to N8 |
+| Lifecycle registrations / repository | ✅ | Pass | Jest purge, account, `businessOwnedTables`, repository 22 |
+| Real Supabase roles, grants, editor | ⚠️ | Not run | By design: the PROD probe, §6.4.1 step 7, after QA |
+
+#### Issues Found
+
+**Bugs:** none. **Performance:** none. **Edge cases:** QA-N6 to QA-N8 (wording / cosmetic). **Pending from SA (not QA's):** S-3 changes the `is_fallback_priced` comment in the migration, the repository comments, the doc and one test regex. It changes no schema, grant or behaviour, so these results stand; after it, re-run the migration guard test and confirm the migration still applies (one harness run, about a minute).
+
+#### No code or SQL file changed during QA
+
+sha256 of all 13 changed or new non-doc paths, taken before the run and again after it: **identical**. Examples: migration `61d0ac96…1127765`, probe `c36ebf42…ab92`, checker `9afe2196…0af0a2`, rollback `d69d8cb9…f130af0a2`, repository `02239b9d…fe6`. `git status --short` unchanged. Only this subsection and one §16 row were written; the harness lives in the session scratchpad.
+
+#### Final Status
+- [x] All acceptance criteria of the neutral-ledger change pass: ready for the user's diff review once SA's S-3 text fix is in. The PROD steps (§6.4.1) then run by the user
+- [ ] Issues found: Dev must address before commit
+
+**Verdict: PASS WITH NOTES.** No bugs. QA-N6 and QA-N7 are one-line runbook wording, best folded in with S-3 before the PROD apply.
+
 ---
 
 ## 15. Commit Info
@@ -1013,3 +1549,13 @@ Worktree `neuronforge-llm-deduction`, branch `feature/business-os-credit-deducti
 | 2026-09-28 | 3a implemented (Dev) | `runAiAction` mints one action id per invocation; the audit entry carries `details.actionId` with `schema: 2`; `entityId` unchanged; `resolveActionFailure` exported; no call-site change. Credit value v0 (provisional, $0.001 per credit, paired to matrix v1) as an append-only history in `config/creditValue.ts` with the committed snapshot `creditValue.history.json` and its guard. The pure, unwired `chargeResolver.ts` (`resolveActionCharge`, `toChargeTrigger`, `buildAiChargeRecord`) on slice 2's pricing. `LITERAL_SCOPE_INCLUSIONS` entry for `chargeResolver.ts` with its pin; a `KNOWN_NON_GATE_IMPORTERS` entry in `enforcementPoints.test.ts`. Gates and deviations D-1 to D-6 in §5.1.1. Uncommitted |
 | 2026-09-28 | SA code review — 3a | **Code Approved; approved for QA.** No blocking or should-fix findings. Verified: one action id per invocation, not on the handle; `schema: 2` + `details.actionId`, with `entityId` still the grouping id; the `resolveActionFailure` refactor changes no outcome; no call-site change; credit value v0 data-only with the Q-2 header; `chargeResolver.ts` pure on slice 2 pricing, with correct rounding, and unwired. D-1 to D-6 accepted. D-3 merges cleanly with `main` (proven with `git merge-tree`); on the merge with `origin/main` `7c21d009` the llm, entitlements and literal-gate suites are 51/51 green. chat-v4 `route.audit` and the tokenUsage contract pin are red on `main` without 3a. New condition **C-5** for 3b-ii: break the `aiActionAudit` ↔ `chargeResolver` value-import cycle (preferred: pass the validated identities and `isCharged` in, and keep type-only imports), with a source guard. Notes N-7 to N-9 |
 | 2026-09-28 | QA report — 3a | **PASS WITH NOTES.** Branch Jest set 1,419/1,421 (the 2 known pre-existing reds); merged onto `origin/main` `571f48cc`: clean apply, 55/55 suites, 1,423/1,423 green. `typecheck:bos-llm` 0 new; literal list shows `chargeResolver.ts` included; `next build` exit 0 (307 pages). A temporary differential test ran the real `runAiAction` against the pre-3a module: 15/15 scenarios gave identical results, errors and audit entries; ids are distinct v4 UUIDs (sequential, concurrent, nested) and not on the handle. Resolver checked on representative inputs (gpt-4o 7.5 credits, embedding 0.0002, fallback flagged with no second error log, invalid identities refused, failed action charged, rounding from the unrounded cost). The credit value guard caught three mutations, and the files were restored byte-identical. Unwired, shown by grep and by the build output. Regression 66 suites: the 2 reds (chat-v4 `route.audit`, tokenUsage contract) are identical on `main` without 3a. No bugs. No code file changed by QA (hashes) |
+| 2026-09-29 | 3b-i implemented (Dev) | Migration `20261014_business_os_ai_charges.sql` (charge table with a `kind`, totals table with the C-3 CHECK and column semantics, owner-only column-level SELECT, `SECURITY INVOKER` period function and write RPC with `out_*` OUT columns), rollback, read-only checker C1–C8, the **mandatory** write probe P00–P22 (one `DO` block that always raises), a 73-test SQL guard, `BusinessOsAiChargeRepository` (one RPC method, no caller, a source guard) with 21 tests, purge / ownership / deletion registration (charges `minimise`, totals `delete`), the entitlements doc metering section and the Q-4 mode note. §6.3 rewritten, §6.4.1 exact PROD steps. Gates and deviations D-7 to D-14, flags F-1 to F-4 in §5.2.1.1. Uncommitted; nothing applied to any database |
+| 2026-09-29 | SA code review — 3b-i | **Fix Required: one Blocking, conditional QA.** The SQL was executed for the first time, on a throwaway PGlite (PostgreSQL 18.3, in memory, outside the repo, with Supabase role, auth and plan-table stubs). The migration applies. The checker gives `VERDICT PASS 19/0`. The RPC is idempotent with no 42702, rounds once, and keeps the totals equal to the rebuild. The period function is correct at month end, in a leap year, exactly at the anchor and in three time zones. Every CHECK and grant boundary holds. The rollback is clean and the migration re-applies. **B-1:** the probe does not compile (`42601`, `CASE WHEN … THEN` inside an `IF … THEN` at line 126). Parenthesised in a scratch copy, it passes P01–P22 for an account with a plan anchor and for one without, and leaves nothing behind. Should-fix: S-1 (the C7 `first row at` time prints in NZ, not UTC) and S-2 (the rollback should refuse when the ledger holds rows). F-1 ruled: `SECURITY INVOKER` stays (drift is caught by C7; revisit at enforcement). F-2 and F-3 accepted or closed; D-7 to D-14 accepted. Gates: 7 suites and 176 tests green; `typecheck:bos-llm` 0 new. QA may start once B-1 is fixed with a guard test and the fixed probe has executed once on a throwaway Postgres |
+| 2026-09-29 | SA fixes — 3b-i (Dev) | **B-1:** the probe's `CASE` in the P04 `IF` condition is parenthesised; the only such case across the probe, checker, rollback and both function bodies. New guard `bareCaseInIfConditions` in the migration test, red on the old line and then green, with a negative control. **S-1:** the checker's C7 `first row at` is printed `AT TIME ZONE 'UTC'` with a ` utc` suffix, pinned by a test. **S-2:** the rollback locks the charge table and refuses (`ROLLBACK REFUSED  the ledger holds charge rows so nothing was dropped`) when it holds any row, pinned by a test; §6.2 and §6.4.1 step 5 are reworded. All three were executed on a throwaway in-memory PGlite: 20 of 20 harness checks pass, and the probe gives `PROBE PASS` with P01–P22 for both account shapes. Migration test at 81 tests; the SA gate set is 7 suites and 184 tests, all green; `typecheck:bos-llm` 0 new. SA's conditions to go to QA (1)–(3) are met. Uncommitted; no real database touched |
+| 2026-09-29 | QA report — 3b-i | **PASS WITH NOTES.** Jest: 57 suites, 1,511 tests green (SA set 7/184; migration guard 81, repository 21). `typecheck:bos-llm` 0 new; literals 0 violations; `next build` exit 0 (307 pages). My own run of the real SQL files on a throwaway in-memory PGlite (PostgreSQL 18.3), in §6.4.1 order: 71 of 71 checks pass. Pre-check all NULL → migration → checker `VERDICT PASS 19 pass 0 fail` with the exact C7 text → probe SKIPPED with the placeholder, `PROBE PASS` P01–P22 for an account with a plan anchor and one without, nothing kept → checker still passes → rollback drops all four → re-apply passes. Failure paths: a second paste fails 42P07 and changes nothing; the rollback refuses with rows present; 22 bad RPC inputs are refused with the totals byte-identical; owner `select *` gets 42501 and a column list returns own rows only; anon, authenticated EXECUTE and service_role UPDATE, DELETE and TRUNCATE all get 42501. Repository and lifecycle registrations verified; no caller. No bugs. Notes QA-N1 to QA-N5: §6.4 vs §6.4.1 step-number collision; the Supabase destructive-query warning is not mentioned; the checker's session read-only setting could make the probe report 25006 (fails safe); a misleading SKIPPED text for a malformed id; P00 prints the anchor in the session zone, not UTC. No code or SQL file changed by QA (hashes) |
+| 2026-09-29 | QA notes fixed — 3b-i (Dev) | **QA-N1:** §6.4.1's "Charging start" paragraph now names the apply time "recorded in step 4 above" and the go-live as "§6.4 step 6", not §6.4's bare step numbers. **QA-N2:** step 7 says the editor may warn about destructive operations (`TRUNCATE`, `DELETE`) and to confirm, because the block always rolls back; step 5's rollback mention says to confirm the `DROP` warning only when Dev has said to run it. **QA-N3:** a transaction-local override inside the `DO` block is not possible (executed: `SET LOCAL transaction_read_only = off` gives `25001 transaction read-write mode must be set before any query`; `SET LOCAL default_transaction_read_only = off` leaves the running transaction read-only, `25006`). So the probe now checks `current_setting('transaction_read_only')` before any role switch or write and raises `PROBE SKIPPED  this session is read only  open a new SQL editor tab or run RESET default_transaction_read_only on its own and run the probe again`; step 7 says to run the probe in a new tab and what to do on that message. The checkers are unchanged (a checker-convention change stays SA's call). **QA-N4:** the placeholder is detected first by `position('YOUR_OWN_USER_ID' IN v_owner_text)` (so a find-and-replace-all of the placeholder still works); a failed uuid cast now says `PROBE SKIPPED  the pasted value is not a valid user id  paste only the id between the quotes with no spaces and run it again`; step 7 lists the three SKIPPED answers and their fix. **QA-N5:** P00 prints the anchor `AT TIME ZONE 'UTC'` with a ` utc` suffix; §6.3 P00 row updated. D-8 paste rules kept (the guard suite checks every literal). Three new guard tests (N3, N4, N5): migration guard **84** tests, all green. Throwaway in-memory PGlite (PostgreSQL 18.3), Asia/Jerusalem session zone: **22 of 22** checks pass: checker then probe on the same session gives the read-only SKIPPED and writes nothing, `RESET` clears it; placeholder gives the replace message; spaces, not a uuid, truncated, empty and unquoted ids give the not-a-valid-user-id message; an unknown account still gives its own message; a replace-all run passes; `PROBE PASS` P01–P22 for an account with a plan anchor and one without, nothing kept; P00 `plan anchor 2025-01-31 10:00:00 utc`; checker still `VERDICT PASS`. `typecheck:bos-llm` 0 new. Uncommitted; no real database touched |
+| 2026-09-29 | 3b-i made service-generic (Dev) | **User decision: the ledger is not AI-specific** — one credit pool for every chargeable action, AI or not. Renamed `business_os_ai_charges` → `business_os_credit_charges`, `business_os_ai_charge_totals` → `business_os_credit_totals`, `business_os_record_ai_charge` → `business_os_record_credit_charge`, `business_os_ai_period_start` → `business_os_credit_period_start`, the four SQL files, the migration test and `BusinessOsAiChargeRepository` → `BusinessOsCreditChargeRepository` (+ barrel, lifecycle registries, entitlements doc). Added `service` (charge NOT NULL, adjustment NULL, format CHECK not an enum, owner-readable), `p_service` on the RPC, `service` on the repository input; `is_fallback_priced` commented as AI-specific; `group_id` stays required for every charge. Totals unchanged (one row per account and period). Probe P08A–P08C. PGlite in §6.4.1 order 28/28; SA's Jest set 7/194 (guard 90, repository 22); 58 suites / 1,591 tests; typecheck 0 new; literals 0; `next build` exit 0 (307 pages). §13 and §14 keep their text with an old → new note (§5.2.1.2) |
+| 2026-09-29 | SA re-check — neutral ledger | **Code Approved (re-check); S-3 must be fixed before the PROD apply.** SA diffed the pre-rename migration, after the same rename, against the current one: the only change is `service` (the column, both shape CHECKs, the format CHECK, comments, the owner grant, and `p_service` with its 11-argument signature). C-1 to C-4, SF-1, B-1, S-1, S-2, QA-N1 to N5 and D-8 are intact. SA re-ran Dev's PGlite harness (28/28) and an own run: named-argument RPC calls; the service format at 1 and 64 characters accepted and 65 refused, along with `_ai`, `AI`, a trailing space, non-ASCII, a hyphen and the empty string; an adjustment inherits its service through the self-FK; one totals row across services. **S-3:** the `is_fallback_priced` text ("AI specific, false for every other service") in the migration comment, the repository and the entitlements doc contradicts the requirement, which lets a service define its own documented fallback. Make it neutral before the apply, and update the test regex with it. Notes: N-9 (leaving the flag unenforced for non-AI is accepted: enforcing it would name `'ai'`), N-10 (slice 4 must read the effective service `COALESCE(row, adjusted)`, and BA should reword FR-33 and slice 4), N-11 (an action type is scoped by its service; BA should add a line to the future-service rules), N-12 (the `22004` for `p_service` accepted), N-13 (no AI term in a neutral name), N-14 (registrations and §6.4.1 correct). **SQ-18 ruled:** Dev's shape as built (charge-required, adjustment-NULL, `^[a-z][a-z0-9_]{0,63}$`, 1–64; no enum, lookup or registry; the RPC checks NULL only; ids are permanent). New condition **C-6** for 3b-ii: `'ai'` comes from one exported constant. SQ-17 noted for slice 5. Jest 7/194 green; `typecheck:bos-llm` 0 new |
+| 2026-09-29 | QA re-test — neutral ledger | **PASS WITH NOTES, no bugs.** Jest 58 suites / 1,591 tests green (guard 90 + repository 22); `typecheck:bos-llm` 0 new; literals 0 violations; `next build` exit 0 (307 pages). My own in-memory PGlite (PostgreSQL 18.3) run, §6.4.1 in order with the pre-check, step 4 / step 6 queries and `RESET` line extracted from this workplan: **97 of 97**. Pre-check (11-arg) all NULL → apply → checker `VERDICT PASS 19 pass 0 fail` (C2 `25 of 29`) → read-only / placeholder / bad-id / unknown-account SKIPPED texts → `PROBE PASS` with P08A–C after P08 for both account shapes, nothing kept → checker still empty. Failure paths: second paste `42P07`, nothing changed; 28 bad RPC inputs refused (NULL service `22004`, 7 malformed services `service_format`) with ledger and totals byte-identical; adjustment carrying a service → `adjustment_shape`; 23 `42501` refusals across anon / authenticated / service_role; the owner reads `service` but no cost column; `ai` + `notification_email` land in one totals row; rollback refuses with rows (`P0001`), drops when empty, re-applies. Old-name grep: 78 hits, only the entitlements doc's Change History map and this workplan's historical / map text; 0 in code, SQL, tests, the requirement. Notes QA-N6 (step 3: show the 42P07 text), QA-N7 (step 6: replace the angle brackets too), QA-N8 (entitlements Change History order). Results predate SA's S-3 comment fix; re-run the guard test after it. Hashes of the 13 non-doc paths identical before and after; no code or SQL changed |
+| 2026-09-29 | S-3, N-14, QA-N6 to N8 fixed — 3b-i (Dev) | **S-3:** the `is_fallback_priced` text is service-neutral in the migration's column comment ("True when the cost was priced from a fallback rate rather than the measured one  AI sets it when a model is missing from the price table  another service sets it only if it defines its own documented fallback and otherwise records false  False on adjustment rows  Hidden from owners"; D-8 literal rules kept), the repository header and `isFallbackPriced` doc, and the entitlements doc's Metering table; the migration test's title and regexes now pin the neutral text and refuse `AI specific` / `every other service`. No schema, grant or behaviour change. **N-14:** §6.1's outline uses `business_os_credit_charges_owner_select` / `business_os_credit_totals_owner_select` and `(SELECT auth.uid()) = user_id`, as the file does. **QA-N6:** §6.4.1 step 3 names the second-paste error, `relation "business_os_credit_charges" already exists` (executed: `42P07`, table intact). **QA-N7:** step 6 says to replace `<your login email>` angle brackets included, keeping the quotes. **QA-N8:** the entitlements doc's 2026-09-28 "Importing the module" row now precedes the 2026-09-29 Metering row (only that pair moved; older rows in that table are also out of date order, pre-existing, left as they are to avoid conflicts with other branches). Migration guard + repository tests **112/112** green; `typecheck:bos-llm` 0 new; throwaway in-memory PGlite harness **28/28** (pre-check, apply, checker `VERDICT PASS`, probe with a valid id `PROBE PASS` P01–P22 and P08A–C, nothing kept, rollback refuse/drop, re-apply), and the stored column comment read back matches. Uncommitted; no real database touched |
+| 2026-09-29 | Migration date moved to 20261015 (TL) | RM's pre-commit guard found `20261014_business_os_invite_signup.sql` on `origin/main` (PR #139). Migration and rollback renamed to `20261015_business_os_credit_charges*`; references updated in the repository header, the migration test, the requirement, the entitlements doc and this workplan's live text (historical review text keeps the date it was written with). No SQL content changed |
