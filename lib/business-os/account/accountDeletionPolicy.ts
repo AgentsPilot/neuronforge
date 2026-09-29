@@ -112,6 +112,18 @@ export const ACCOUNT_POLICY_EXCEPTIONS: Record<string, AccountTablePolicy> = {
       'Security history, retained on legitimate-interest grounds. Its own column is already ' +
       'declared ON DELETE SET NULL, so detaching here simply makes that explicit and ordered.',
   },
+
+  // Credit deduction slice 3b-i (SA Q-8). Its totals table is deliberately NOT
+  // listed: it takes the default `delete` — derived data with no value once
+  // detached, removed by its own ON DELETE CASCADE from auth.users.
+  business_os_credit_charges: {
+    verdict: 'minimise',
+    reason:
+      'Financial record: the Business OS credit charges the account incurred, for AI or any other ' +
+      'chargeable service. Retained for accounting, ' +
+      'detached from the person. Its user_id is declared ON DELETE SET NULL, and service_role holds ' +
+      'no UPDATE on it, so the detach happens when the auth user is deleted, not through an update.',
+  },
 };
 
 /**

@@ -102,4 +102,20 @@ describe('[smoke] account deletion policy', () => {
       }
     }
   });
+
+  it('Q-8: keeps the credit ledger detached, and deletes its derived totals', () => {
+    /*
+     * The ledger is a financial record, like credit_transactions: minimise.
+     * Its totals are derived and worthless once detached: the default delete.
+     * Both are carried out by the foreign keys to auth.users (SET NULL and
+     * CASCADE), which is why the minimise reason says so.
+     */
+    expect(accountTablesToProcess()).toEqual(
+      expect.arrayContaining(['business_os_credit_charges', 'business_os_credit_totals'])
+    );
+    expect(policyFor('business_os_credit_charges').verdict).toBe('minimise');
+    expect(policyFor('business_os_credit_charges').reason).toMatch(/ON DELETE SET NULL/);
+    expect(policyFor('business_os_credit_totals').verdict).toBe('delete');
+    expect(ACCOUNT_POLICY_EXCEPTIONS).not.toHaveProperty('business_os_credit_totals');
+  });
 });
