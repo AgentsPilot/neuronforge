@@ -51,7 +51,7 @@ interface InviteOffer {
   free: boolean;
   monthlyPriceUsd: number;
   access: InviteAccess;
-  included: Array<{ category: string; label: string; summary: string }>;
+  included: Array<{ category: string; labelKey: string; summary: string }>;
 }
 
 type InviteResponse =
@@ -250,7 +250,16 @@ export default function InvitePage() {
                 <ul className="space-y-1 text-sm text-slate-700">
                   {data.offer.included.map((row) => (
                     <li key={row.category}>
-                      <span className="font-medium">{row.label}:</span> {row.summary}
+                      {/*
+                        `describePlanOffer` names the heading, it does not word
+                        it. Falls back to the raw key rather than hiding the
+                        row: a missing heading should be visible and fixable,
+                        not silently drop something the invite is offering.
+                      */}
+                      <span className="font-medium">
+                        {copy.planCategory[row.labelKey] ?? row.labelKey}:
+                      </span>{' '}
+                      {row.summary}
                     </li>
                   ))}
                 </ul>

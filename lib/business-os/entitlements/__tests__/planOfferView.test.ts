@@ -47,7 +47,11 @@ describe('describePlanOffer', () => {
       const customer = buildCustomerPlanView({ resolution, unavailable: false, now: NOW, config });
       const offer = describePlanOffer(config, planId, NOW);
       expect(offer.included).toEqual(
-        customer.included.map((row) => ({ category: row.category, label: row.label, summary: row.summary }))
+        customer.included.map((row) => ({
+          category: row.category,
+          labelKey: row.labelKey,
+          summary: row.summary,
+        }))
       );
       expect(offer.included.length).toBeGreaterThan(0);
     }
@@ -66,7 +70,7 @@ describe('describePlanOffer', () => {
   it('returns exactly the four offer keys, and each row three', () => {
     const offer = describePlanOffer(config, TIER_ORDER[0], NOW);
     expect(Object.keys(offer).sort()).toEqual(['free', 'included', 'monthlyPriceUsd', 'planName']);
-    for (const row of offer.included) expect(Object.keys(row).sort()).toEqual(['category', 'label', 'summary']);
+    for (const row of offer.included) expect(Object.keys(row).sort()).toEqual(['category', 'labelKey', 'summary']);
   });
 
   it('is server-only and reads nothing but config (no repository, no account id)', () => {

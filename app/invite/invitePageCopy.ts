@@ -37,6 +37,18 @@ export interface InvitePageCopy {
   accessMonths: (months: number) => string;
   accessWhilePaid: string;
   includedHeading: string;
+  /**
+   * Headings for the rows under `includedHeading`, keyed by the `labelKey` that
+   * `describePlanOffer` returns.
+   *
+   * The entitlements module names these rather than wording them, because it
+   * cannot reach translations. They are repeated here rather than read from
+   * `LanguageContext` for the reason at the top of this file: this page renders
+   * in the INVITE's language and ignores the viewer's entirely, so it cannot use
+   * a viewer-scoped dictionary. Keep the wording in step with the
+   * `plan.category.*` entries there.
+   */
+  planCategory: Record<string, string>;
   linkExpires: (date: string) => string;
   /** Slice 1b: the signup form (FR-11). */
   signup: SignupCopy;
@@ -113,6 +125,17 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     accessMonths: (months) => (months === 1 ? '1 month from signup' : `${months} months from signup`),
     accessWhilePaid: 'While the plan is paid for',
     includedHeading: 'What it includes',
+    planCategory: {
+      'plan.category.crm': 'Clients (CRM)',
+      'plan.category.website_intake': 'Website and enquiries',
+      'plan.category.payments': 'Payments',
+      'plan.category.ai_chat': 'AI assistant',
+      'plan.category.marketing': 'Marketing',
+      'plan.category.insights': 'Insights',
+      'plan.category.support': 'Support',
+      'plan.category.platform': 'Platform',
+      'plan.category.addon': 'Add-ons',
+    },
     linkExpires: (date) => `You can accept this invitation until ${date}.`,
     signup: {
       heading: 'Create your account',
@@ -181,6 +204,17 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     accessMonths: (months) => (months === 1 ? 'חודש אחד מההרשמה' : `${months} חודשים מההרשמה`),
     accessWhilePaid: 'כל עוד התוכנית בתשלום',
     includedHeading: 'מה כלול',
+    planCategory: {
+      'plan.category.crm': 'לקוחות (CRM)',
+      'plan.category.website_intake': 'אתר ופניות',
+      'plan.category.payments': 'תשלומים',
+      'plan.category.ai_chat': 'עוזר AI',
+      'plan.category.marketing': 'שיווק',
+      'plan.category.insights': 'תובנות',
+      'plan.category.support': 'תמיכה',
+      'plan.category.platform': 'פלטפורמה',
+      'plan.category.addon': 'תוספות',
+    },
     linkExpires: (date) => `אפשר לקבל את ההזמנה עד ${date}.`,
     signup: {
       heading: 'יצירת החשבון',
@@ -250,6 +284,17 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     accessMonths: (months) => (months === 1 ? '1 mes desde el registro' : `${months} meses desde el registro`),
     accessWhilePaid: 'Mientras el plan esté pagado',
     includedHeading: 'Qué incluye',
+    planCategory: {
+      'plan.category.crm': 'Clientes (CRM)',
+      'plan.category.website_intake': 'Web y consultas',
+      'plan.category.payments': 'Pagos',
+      'plan.category.ai_chat': 'Asistente de IA',
+      'plan.category.marketing': 'Marketing',
+      'plan.category.insights': 'Análisis',
+      'plan.category.support': 'Soporte',
+      'plan.category.platform': 'Plataforma',
+      'plan.category.addon': 'Complementos',
+    },
     linkExpires: (date) => `Puedes aceptar esta invitación hasta el ${date}.`,
     signup: {
       heading: 'Crea tu cuenta',
