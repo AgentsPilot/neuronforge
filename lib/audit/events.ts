@@ -1032,9 +1032,24 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
 
   // Money leaving the business. Registered because an unregistered event falls
   // through getEventMetadata to severity 'info' and the description
-  // "Unknown event" — which is how refunds were being recorded until now.
+  // "Unknown event" — which is how refunds were being recorded until then.
+  //
+  // 'warning', not 'critical'. A refund is a business owner doing normal
+  // business with their own client: it belongs in the record, and the SOC2 flag
+  // says so, but nothing about it needs a platform admin. At 'critical' it was
+  // counted by the admin health tile, which counts severity and ignores the
+  // action (app/api/admin/health-summary/route.ts), and by the owner's own
+  // /monitoring page, so one refund read as "critical security event, immediate
+  // review recommended". Not 'info' either: money left the business and will not
+  // come back, which is more than a routine read. This matches the money events
+  // either side of it — PAYMENT_BLOCK_EXECUTED and INVOICE_MARKED_PAID.
+  //
+  // The refund route deliberately passes NO severity (buildLogEntry prefers the
+  // caller's value over this one, which is how the two came to disagree), so
+  // this entry is the only place the classification lives. A guard test pins
+  // both halves: lib/audit/__tests__/paymentRefundSeverity.guard.test.ts.
   [AUDIT_EVENTS.PAYMENT_REFUNDED]: {
-    severity: 'critical',
+    severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'A payment was refunded to a client',
   },

@@ -683,8 +683,9 @@ function criticalMeasurement(facts: CriticalFacts, w: HealthWindows): TileMeasur
       },
     ],
     footnote:
-      'All products. "Critical" is the severity an event is recorded with; it includes routine events ' +
-      'such as password changes and refunds.',
+      'All products. "Critical" is the severity an event is recorded with, whatever the event was — ' +
+      'security events, destructive operations and platform malfunctions. Normal business operations ' +
+      'such as refunds and password changes are recorded at a lower severity and are not counted here.',
     completeness: 'complete',
   };
 }
