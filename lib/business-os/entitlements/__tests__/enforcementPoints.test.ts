@@ -320,8 +320,8 @@ describe('backward: a gate cannot ship unregistered', () => {
     },
     {
       file: 'lib/business-os/invites/publicInviteView.ts',
-      symbols: ['EntitlementConfig'],
-      why: 'The public invite view. A type import only: it hands the config to `inviteOffer`. It refuses no capability.',
+      symbols: ['EntitlementConfig', 'INVITE_ISSUANCE_POLICY'],
+      why: 'The public invite view. It hands the config to `inviteOffer`, and (Slice 5a, F5a-10) reads the friend-invite switch `accountInvitesAvailable` to show an account-issued invite as "sign-up opens soon" or "unavailable". An issuance rule on an INVITE, keyed on who issued it; it resolves no account and refuses no capability.',
     },
     {
       file: 'lib/business-os/llm/chargeResolver.ts',
@@ -332,6 +332,32 @@ describe('backward: a gate cannot ship unregistered', () => {
       file: 'lib/business-os/invites/inviteRedemption.ts',
       symbols: ['CHAMPION_INVITE_TYPE', 'EntitlementConfig', 'INVITE_ISSUANCE_POLICY', 'isRedeemableCohortGrant', 'type InviteTypeId'],
       why: 'Invite-only signup Slice 1b: the redemption flow re-checks the issuance policy (T-15) and that the invite row is a decided, still-configured cohort grant (GR-1, RC-4 via `grantRules`) before claiming it. An issuance and grant-shape rule on an INVITE, not a capability gate on what an account may do.',
+    },
+    // ── Friend invites from a champion account (invite-only signup, Slice 5a) ──
+    // An issuance rule on WHO MAY INVITE, keyed on the cohort, with no
+    // capability: the `adminInviteOps.ts` precedent (SA T-17, F5a-4). The
+    // lifetime allowance lives in `config/invites.ts`, not in the catalog. If it
+    // ever moves to a capability, these files become gates and move to
+    // ENFORCEMENT_POINTS.
+    {
+      file: 'lib/business-os/invites/friendInviteOps.ts',
+      symbols: ['EntitlementConfig', 'FRIEND_INVITE_LIMITS', 'INVITE_ISSUANCE_POLICY', 'INVITE_LINK_EXPIRY', 'planLabel'],
+      why: 'Invite-only signup Slice 5a: the champion friend-invite operations. They read the issuance policy (the champion cohort, the switch, the Essentials grant), the allowance and daily limit, and the default link expiry, and name the plan for the email with `planLabel`. The champion check reads the plan row directly, never `check()` or `getSnapshot()`: it is an issuance rule on who may invite, keyed on the cohort, with no capability, and the SQL send function is what decides. It refuses no capability.',
+    },
+    {
+      file: 'lib/business-os/invites/friendInviteDeps.ts',
+      symbols: ['EntitlementConfig', 'getEntitlementConfig'],
+      why: 'Invite-only signup Slice 5a: the production wiring for the friend-invite routes. It hands the config to the operations only so the invitation email can name the plan. It resolves no account and refuses no capability.',
+    },
+    {
+      file: 'app/api/business-os/friend-invites/route.ts',
+      symbols: ['resolveAccountId'],
+      why: 'Invite-only signup Slice 5a: the CUSTOMER route for a champion\'s friend invites (GET summary, POST send). It resolves the session account through the account seam (SA P-1) and nothing else from the module; who may invite is decided by `friendInviteOps` and the SQL function, keyed on the cohort, with no capability. It refuses no capability.',
+    },
+    {
+      file: 'app/api/business-os/friend-invites/[inviteId]/revoke/route.ts',
+      symbols: ['resolveAccountId'],
+      why: 'Invite-only signup Slice 5a: the CUSTOMER route by which a champion revokes their own friend invite. It resolves the session account through the account seam (SA P-1) to scope the UPDATE; it reads no plan and refuses no capability.',
     },
     {
       file: 'lib/business-os/invites/redemptionDeps.ts',

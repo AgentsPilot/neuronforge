@@ -211,3 +211,29 @@ export const completeGoogleSignupSchema = z
   .strict();
 
 export type CompleteGoogleSignupBody = z.infer<typeof completeGoogleSignupSchema>;
+
+// ── Slice 5a: friend invites from a champion account ────────────────────────
+
+/**
+ * A champion's send body (FR-30, §8.1 "a champion widening their own invite"):
+ * the friend's email, an optional note and a language, and NOTHING else. The
+ * plan, type, expiry, issuer, level and cap are decided on the server, so a body
+ * naming `grantId`, `inviteType`, `linkExpiryDays`, `issuerAccountId`, `level`
+ * or `accountId` is a 400 and nothing is written (AC-16). A whitespace-only note
+ * trims to empty and is stored as NULL (SA R-7).
+ */
+export const sendFriendInviteSchema = z
+  .object({
+    email: emailSchema,
+    personalNote: personalNoteSchema,
+    language: z.enum(locales),
+  })
+  .strict();
+
+export type SendFriendInviteBody = z.infer<typeof sendFriendInviteSchema>;
+
+/** The invite id in the champion's revoke path. */
+export const friendInviteIdSchema = z.string().uuid();
+
+/** The champion's revoke body: empty. Any key is a 400 (the reason is a fixed server string). */
+export const revokeFriendInviteSchema = z.object({}).strict();

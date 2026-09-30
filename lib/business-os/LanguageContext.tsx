@@ -3,6 +3,9 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { safeTimezone } from '@/lib/scheduling/businessTime';
+import { clientLogger } from '@/lib/logger/client';
+
+const logger = clientLogger.child({ module: 'LanguageContext' });
 
 type Language = 'en' | 'es' | 'he';
 export type CurrencyCode = 'USD' | 'EUR' | 'ILS' | 'GBP';
@@ -11222,7 +11225,7 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
         }
       } catch (err) {
         // Silently fail - localStorage will be used as fallback
-        console.debug('Failed to load language from database:', err);
+        logger.debug({ err }, 'Failed to load language from database');
       }
     };
 
@@ -11239,11 +11242,11 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   // Sync language to database when it changes
   const syncLanguageToDatabase = useCallback(async (lang: Language) => {
     if (!userId) {
-      console.debug('syncLanguageToDatabase: No userId, skipping');
+      logger.debug('syncLanguageToDatabase: no userId, skipping');
       return;
     }
 
-    console.debug('syncLanguageToDatabase: Syncing language', { userId, lang });
+    logger.debug({ userId, lang }, 'syncLanguageToDatabase: syncing language');
 
     try {
       // Update user_preferences (for emails and insights)
@@ -11256,9 +11259,9 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
         }, { onConflict: 'user_id' });
 
       if (prefError) {
-        console.error('Failed to update user_preferences:', prefError);
+        logger.error({ err: prefError }, 'Failed to update user_preferences');
       } else {
-        console.debug('user_preferences updated successfully');
+        logger.debug('user_preferences updated successfully');
       }
 
       // Also update business_profiles.language for consistency
@@ -11268,12 +11271,12 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
         .eq('user_id', userId);
 
       if (profileError) {
-        console.error('Failed to update business_profiles:', profileError);
+        logger.error({ err: profileError }, 'Failed to update business_profiles');
       } else {
-        console.debug('business_profiles updated successfully');
+        logger.debug('business_profiles updated successfully');
       }
     } catch (err) {
-      console.error('Failed to sync language to database:', err);
+      logger.error({ err }, 'Failed to sync language to database');
     }
   }, [userId]);
 
@@ -11358,7 +11361,7 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
         setBusinessCurrency(previous);
         localStorage.setItem('business-os-currency', previous);
 
-        console.error('Failed to save the business currency:', error);
+        logger.error({ err: error }, 'Failed to save the business currency');
         return { ok: false, error: error.message };
       }
 

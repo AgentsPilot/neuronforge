@@ -102,6 +102,8 @@ const GROUP_RULES: readonly GroupRule[] = [
   { prefix: 'BOS_ENTITLEMENT_', label: 'Business OS Entitlements' },
   // Same reason, for the two invite events (invite-only signup, Slice 0).
   { prefix: 'BOS_INVITE_', label: 'Business OS Signup Invites' },
+  // Slice 5a: a champion's friend invites belong with the other invite events.
+  { prefix: 'BOS_FRIEND_INVITE_', label: 'Business OS Signup Invites' },
   { prefix: 'AGENTKIT_', label: 'AgentKit' },
   { prefix: 'AIS_', label: 'Agent Intelligence Score' },
   { prefix: 'AI_PRICING_', label: 'AI Pricing' },

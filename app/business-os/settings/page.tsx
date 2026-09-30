@@ -37,6 +37,7 @@ import {
   CreditCard,
 } from 'lucide-react';
 import { PlanSection } from '@/components/business-os/settings/PlanSection';
+import { InviteFriendsSection } from '@/components/business-os/settings/InviteFriendsSection';
 import { MarketingConsentPanel } from '@/components/business-os/settings/MarketingConsentPanel';
 import { ErasureRequestContent } from '@/components/business-os/purge/DangerZonePanel';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -1018,6 +1019,9 @@ function BusinessOSSettingsContent() {
               </div>
             )}
           </div>
+
+          {/* Slice 5a: renders nothing unless the server says this account may invite friends. */}
+          <InviteFriendsSection />
 
           {/*
             The enquiry notification section used to be here.

@@ -16,6 +16,7 @@ import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
 import {
   CHAMPION_ACCESS_MONTHS_MAX,
   CHAMPION_INVITE_TYPE,
+  FRIEND_INVITE_LIMITS,
   INVITE_ISSUANCE_POLICY,
   INVITE_LINK_EXPIRY,
   INVITE_TYPE_IDS,
@@ -91,6 +92,25 @@ describe('issuance policy (GR-3, T-15, C-6)', () => {
     // Until then the server refuses every Paid invite (C-6).
     expect(INVITE_ISSUANCE_POLICY.paidInvitesAvailable).toBe(false);
     expect(INVITE_ISSUANCE_POLICY.paidUnavailableReason).toBe('available when payments are live');
+  });
+});
+
+describe('friend invites from champion accounts (Slice 5a, T-17, T-18, T-21)', () => {
+  it('a champion account may issue Paid to the first tier, and nothing else (BQ-14, FR-30)', () => {
+    expect(INVITE_ISSUANCE_POLICY.account.issuerCohort).toBe('champion');
+    expect(COHORT_IDS).toContain(INVITE_ISSUANCE_POLICY.account.issuerCohort);
+    expect(INVITE_ISSUANCE_POLICY.account.inviteType).toBe(PAID_INVITE_TYPE);
+    expect(INVITE_ISSUANCE_POLICY.account.grantId).toBe(TIER_ORDER[0]);
+    expect(INVITE_ISSUANCE_POLICY.account.grantId).toBe('basic');
+    expect(INVITE_TYPES[INVITE_ISSUANCE_POLICY.account.inviteType].grantKind).toBe('tier');
+  });
+
+  it('friend invites are switched OFF until the user chooses (BQ-13, T-18)', () => {
+    expect(INVITE_ISSUANCE_POLICY.accountInvitesAvailable).toBe(false);
+  });
+
+  it('the lifetime allowance is 5, the rate limit 10 per rolling 24 hours (BQ-10, T-21)', () => {
+    expect(FRIEND_INVITE_LIMITS).toEqual({ lifetimeAllowance: 5, dailySendLimit: 10, dailyWindowHours: 24 });
   });
 });
 

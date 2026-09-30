@@ -55,7 +55,19 @@ export interface InviteRow {
   /** Slice 2a: the invitation email. Absent from an older server: nothing is shown. */
   emailStatus?: InviteEmailStatus;
   emailStatusAt?: string | null;
+  /**
+   * Slice 5a (F5a-11): who issued it. `account` is a champion's friend invite;
+   * `issuerAccountId` is then that champion's account id. Absent from an older
+   * server: the row reads as an admin invite.
+   */
+  issuerKind?: InviteIssuerKind;
+  issuerAccountId?: string | null;
+  /** Slice 5a (F5a-8): revoked by the champion who sent it, not by an admin. */
+  revokedByInviter?: boolean;
 }
+
+/** Slice 5a: who issued an invite. */
+export type InviteIssuerKind = 'admin' | 'account';
 
 /** T-16: the banner summary (counts and invite ids only). */
 export interface StoppedHalfwaySummary {

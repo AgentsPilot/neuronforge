@@ -553,11 +553,14 @@ export interface BusinessOsInvite {
 
 /**
  * One invite as the PUBLIC page's lookup reads it: only what the page may show
- * or needs to decide the state. No email, no issuer, no reasons, no hash.
+ * or needs to decide the state. No email, no issuer id, no reasons, no hash.
  * `id` is read so `markFirstViewed` can target the row; it is never returned.
+ * `issuer_kind` (Slice 5a, F5a-10) is read only to branch an account-issued
+ * invite away from the existing-account check; it is never returned either.
  */
 export interface BusinessOsInvitePublicView {
   id: string;
+  issuer_kind: 'admin' | 'account';
   grant_kind: BusinessOsInviteGrantKind;
   grant_id: string;
   access_open_ended: boolean | null;
@@ -614,6 +617,60 @@ export interface RecordInviteEmailOutcomeInput {
   outcome:
     | { kind: 'sent'; providerMessageId: string | null }
     | { kind: 'problem'; problem: string; detail: string | null };
+}
+
+/**
+ * Slice 5a (F5a-6, F5a-7): what `business_os_create_friend_invite` is called
+ * with. The explicit allow-list: the issuer comes from the session, and the
+ * cohort, type, grant, allowance, limits, expiry and reason from config. Only
+ * the email, note and language come from the champion's (validated) request.
+ */
+export interface CreateFriendInviteInput {
+  issuerAccountId: string;
+  issuerCohort: string;
+  inviteType: string;
+  grantId: string;
+  allowance: number;
+  dailyLimit: number;
+  dailyWindowHours: number;
+  tokenHash: string;
+  email: string;
+  inviterDisplayName: string;
+  inviterReplyTo: string | null;
+  language: string;
+  personalNote: string | null;
+  internalReason: string;
+  linkExpiryDays: number;
+}
+
+/** How the send function answered (T-17). `created` carries the new id and the stamped expiry. */
+export type CreateFriendInviteResult =
+  | { outcome: 'created'; inviteId: string; linkExpiresAt: string }
+  | { outcome: 'not_eligible' | 'allowance_reached' | 'daily_limit' | 'already_invited' };
+
+/**
+ * Slice 5a (F5a-9): one invite as the CHAMPION's list reads it. The last three
+ * columns are read only to derive the status and the allowance; the route never
+ * returns them.
+ */
+export interface BusinessOsFriendInviteListRow {
+  id: string;
+  email: string;
+  created_at: string;
+  link_expires_at: string;
+  revoked_at: string | null;
+  redeemed_at: string | null;
+  claimed_account_id: string | null;
+}
+
+/** Slice 5a (F5a-8): a champion's revoke of their own invite. */
+export interface RevokeFriendInviteInput {
+  id: string;
+  issuerAccountId: string;
+  reason: string;
+  now: Date;
+  /** A claim made at or after this instant is LIVE, and blocks the revoke (I-2). */
+  claimLeaseCutoff: Date;
 }
 
 /** A revoke, as the conditional UPDATE needs it. */

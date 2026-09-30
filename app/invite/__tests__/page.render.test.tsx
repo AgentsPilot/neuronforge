@@ -535,3 +535,48 @@ describe('Slice 3b: "Continue with Google" on the page (D-9, R-6, L-8, T-3b-16)'
     await waitFor(() => expect(screen.queryByTestId('invite-signup')).not.toBeInTheDocument());
   });
 });
+
+describe('Slice 5a (FR-33, F5a-10): a champion friend invite, before friend signup exists', () => {
+  const opensSoon = {
+    state: 'signup_opens_soon',
+    language: 'en',
+    inviterDisplayName: 'Dana Champion',
+    personalNote: 'You will love this',
+    linkExpiresAt: '2026-10-31T12:00:00.000Z',
+    offer: {
+      planName: 'Fixture Paid Plan',
+      free: false,
+      monthlyPriceUsd: 49,
+      access: { kind: 'while_paid', months: null },
+      included: [{ category: 'crm', label: 'Clients (CRM)', summary: 'Contacts, Pipelines' }],
+    },
+  };
+
+  it('shows who invited, the note, the plan with its price and "payment required", and "opens soon" — with NO form and NO Google button', async () => {
+    process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID = 'client.apps.googleusercontent.com';
+    respond = () => ({ status: 200, body: { success: true, data: opensSoon } });
+    render(<InvitePage />);
+
+    const section = await screen.findByTestId('invite-state-signup_opens_soon');
+    const copy = INVITE_PAGE_COPY.en;
+    expect(section).toHaveTextContent(copy.validHeading('Dana Champion'));
+    expect(screen.getByTestId('invite-note')).toHaveTextContent('You will love this');
+    expect(screen.getByTestId('invite-plan')).toHaveTextContent('Fixture Paid Plan');
+    expect(section).toHaveTextContent(copy.perMonth(49));
+    expect(section).toHaveTextContent(copy.paymentRequired);
+    expect(screen.getByTestId('invite-signup-opens-soon')).toHaveTextContent(copy.signupOpensSoon);
+
+    expect(screen.queryByTestId('invite-signup')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('invite-signup-form')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('invite-google-stub')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('invite-state-valid')).not.toBeInTheDocument();
+    // Only the validate call was made: nothing is requested or created from here.
+    expect(calls).toHaveLength(1);
+  });
+
+  it('every locale has the "opens soon" sentence', () => {
+    for (const locale of ['en', 'he', 'es'] as const) {
+      expect(INVITE_PAGE_COPY[locale].signupOpensSoon.length).toBeGreaterThan(10);
+    }
+  });
+});

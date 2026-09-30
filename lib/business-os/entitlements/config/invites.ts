@@ -14,8 +14,12 @@
  *   the create route accepts. The chosen day count is stamped on each invite at
  *   creation, so a change affects NEW invites only (T-14, AC-3).
  * - `INVITE_ISSUANCE_POLICY.paidInvitesAvailable`: the server-side switch for
- *   Paid invites (C-6). It stays `false` until Slice 5, when the Business OS
+ *   Paid invites (C-6). It stays `false` until Slice 5c, when the Business OS
  *   checkout (reuse-plan S-4a) exists. Flipping it is a config edit, not code.
+ * - `INVITE_ISSUANCE_POLICY.accountInvitesAvailable` (Slice 5a, T-18): the
+ *   switch for champion-issued friend invites. `false` until the user chooses.
+ * - `FRIEND_INVITE_LIMITS` (Slice 5a, T-17, T-21): the lifetime allowance and
+ *   the daily send limit, passed to the SQL send function as parameters.
  *
  * Pure data: no I/O, safe to import anywhere, including client bundles (the
  * admin page still receives these values through its GET payload rather than
@@ -82,14 +86,54 @@ export const INVITE_TYPE_IDS = Object.keys(INVITE_TYPES) as InviteTypeId[];
 /**
  * Who may issue which invite type (GR-3, T-15).
  *
- * Checked at creation and, from Slice 1, re-checked at redemption. The future
- * champion-to-friend invites add one entry here (an `account` issuer that may
- * issue Paid only); nothing else changes.
+ * Checked at creation and, from Slice 1, re-checked at redemption.
+ *
+ * `account` (Slice 5a, T-18): a champion account may issue ONE kind of invite,
+ * Paid to the first tier, and nothing else (BQ-14, FR-30). It is an issuance
+ * rule on WHO MAY INVITE, keyed on the cohort, not a capability: the allowance
+ * lives in `FRIEND_INVITE_LIMITS` below, not in the catalog (SA T-17).
+ *
+ * The two switches are separate on purpose (T-18):
+ * - `paidInvitesAvailable` means "payment is live" (C-6). It also gates admin
+ *   Paid invites (F5c-3).
+ * - `accountInvitesAvailable` means "champions may send friend invites". Code
+ *   config, not an environment variable: turning it on is a one-line change
+ *   released through the normal review. SA advises waiting for 5b before doing
+ *   so in production.
  */
 export const INVITE_ISSUANCE_POLICY = {
   admin: [CHAMPION_INVITE_TYPE, PAID_INVITE_TYPE] as readonly InviteTypeId[],
-  /** The C-6 switch. `false` until Slice 5: the server refuses every Paid invite. */
+  account: {
+    /** The cohort an issuing account must hold, in force. */
+    issuerCohort: CHAMPION_COHORT as string,
+    /** The only type a champion may issue. */
+    inviteType: PAID_INVITE_TYPE as InviteTypeId,
+    /** Essentials, derived rather than written (C-7, FR-30). */
+    grantId: TIER_ORDER[0] as string,
+  },
+  /** The C-6 switch. `false` until Slice 5c: the server refuses every Paid invite at redemption. */
   paidInvitesAvailable: false as boolean,
+  /** The T-18 switch: friend invites from champion accounts. Off until the user chooses (BQ-13). */
+  accountInvitesAvailable: false as boolean,
   /** What the form says beside the disabled Paid option (FR-1). */
   paidUnavailableReason: 'available when payments are live',
+} as const;
+
+/**
+ * The friend-invite allowance and the anti-abuse limit (BQ-10, BQ-15, T-17, T-21).
+ *
+ * - `lifetimeAllowance`: a business allowance. Counted = not revoked AND
+ *   (accepted OR claimed OR not yet expired), so revoked and expired invites
+ *   give their slot back. Shown to the champion as "N of <allowance> left".
+ * - `dailySendLimit` per `dailyWindowHours` (rolling): a RATE LIMIT on attempts,
+ *   whatever their state. Never shown as a number.
+ *
+ * All three are passed to `business_os_create_friend_invite` as parameters, so
+ * the SQL holds no number and moving the allowance to a capability later is a
+ * TypeScript change with no migration.
+ */
+export const FRIEND_INVITE_LIMITS = {
+  lifetimeAllowance: 5,
+  dailySendLimit: 10,
+  dailyWindowHours: 24,
 } as const;
