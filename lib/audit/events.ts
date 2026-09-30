@@ -300,6 +300,7 @@ export const AUDIT_EVENTS = {
   PAYMENT_REFUNDED: 'PAYMENT_REFUNDED',
   PAYMENT_BLOCK_EXECUTED: 'PAYMENT_BLOCK_EXECUTED',
   INVOICE_MARKED_PAID: 'INVOICE_MARKED_PAID',
+  PAYMENT_PLAN_CANCELLED: 'PAYMENT_PLAN_CANCELLED',
 
   // Per-Step Intelligent Routing events
   PILOT_ROUTING_DECISION: 'PILOT_ROUTING_DECISION', // Model selected for step
@@ -1063,6 +1064,37 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'An invoice was marked paid manually',
+  },
+  // Future charges to a client stopped, and possibly collected money returned.
+  //
+  // Registered here for the first time: it was written only by its call site, so
+  // every row it has ever produced fell through getEventMetadata to the
+  // description "Unknown event: PAYMENT_PLAN_CANCELLED" and to no compliance
+  // flags at all. Registering it fixes the record quality as well as the label.
+  //
+  // 'warning', for the same reason as PAYMENT_REFUNDED directly above. The call
+  // site used to say 'critical' and its comment said why — "audited at the same
+  // level as money moving", i.e. deliberately matched to the refund. The refund
+  // is now 'warning', so keeping this at 'critical' would break that stated
+  // intent and leave the two contradicting each other. A business owner stopping
+  // a plan they sold to their own client is normal business: it belongs in the
+  // record, but it is not something a platform admin needs to review, and at
+  // 'critical' it was counted by the admin health tile (which counts severity
+  // and ignores the action) and shown on the owner's own /monitoring page as a
+  // security event needing immediate review. Not 'info' either: it changes what
+  // a client will be charged and can return money already collected.
+  //
+  // SOC2 and not FINANCIAL, matching all three money events above. FINANCIAL is
+  // carried only by AgentsPilot's own platform-billing events, and there to keep
+  // their pre-existing stored rows unchanged (Layer 3 step 0, WC-12).
+  //
+  // The cancel route deliberately passes NO severity (buildLogEntry prefers the
+  // caller's value over this one), so this entry is the only place the
+  // classification lives. Guard: paymentPlanCancelledSeverity.guard.test.ts.
+  [AUDIT_EVENTS.PAYMENT_PLAN_CANCELLED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: "A client's payment plan was cancelled",
   },
 
   // Subscription billing. Registered for Layer 3 step 0 (WC-12) with exactly the
