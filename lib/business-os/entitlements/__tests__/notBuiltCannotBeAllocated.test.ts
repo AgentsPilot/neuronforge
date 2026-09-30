@@ -74,7 +74,7 @@ describe('a tier may not grant a capability that does not exist', () => {
     // The negative control on the rule itself: if it rejected everything, every
     // test above would pass for the wrong reason.
     expect(() => validateEntitlementConfig(withTierValue('basic', 'chat.search', true))).not.toThrow();
-    expect(() => validateEntitlementConfig(withTierValue('basic', 'ai.actions', { perMonth: 999 }))).not.toThrow();
+    expect(() => validateEntitlementConfig(withTierValue('basic', 'credits.allowance', { perMonth: 999 }))).not.toThrow();
     expect(() => validateEntitlementConfig(withTierValue('basic', 'website.branding', 'unbranded'))).not.toThrow();
   });
 });

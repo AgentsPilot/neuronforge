@@ -51,7 +51,7 @@ const COPY: Record<string, string> = {
   'plan.price.free': 'Free',
   'plan.price.per_month': '{amount} a month',
   'plan.ends_on': 'Your free access ends on {date}.',
-  'plan.ends_on_or_actions': 'Ends on {date}, or when the AI actions run out, whichever comes first.',
+  'plan.ends_on_or_credits': 'Ends on {date}, or when the credits run out, whichever comes first.',
   'plan.ends.while_paid': 'While the plan is paid for. An admin can set an end date on one account.',
   'plan.changes.no_end_date':
     'Your access has no end date. Business OS is normally a paid monthly plan, so if that ever changes for your account we will tell you first and you will be able to choose a plan.',
@@ -105,6 +105,32 @@ function serve(body: unknown) {
 
 async function renderFor(planId: string) {
   serve({ success: true, data: payloadFor(planId) });
+  render(<PlanSection />);
+  await waitFor(() => expect(screen.queryByText(/Loading your plan/i)).not.toBeInTheDocument());
+}
+
+/**
+ * The trial's real payload plus one cross-unit CHANGE line.
+ *
+ * ⚠️ TEMPORARY (credit deduction slice 5, R-7 option C): the credit allowance
+ * was the only real cross-unit difference (trial total vs Essentials' monthly
+ * rate), and customers are not shown its number until slice 6, so the real
+ * payload has no `changes` entry. The component's handling of one is still
+ * tested here with a neutral line in the shape the server sends. Slice 6 goes
+ * back to `renderFor('trial')`.
+ */
+async function renderTrialWithCrossUnitChange() {
+  const payload = payloadFor('trial');
+  serve({
+    success: true,
+    data: {
+      ...payload,
+      nextPlanUp: {
+        ...payload.nextPlanUp!,
+        changes: [{ capability: 'example.allowance', label: 'Example allowance', from: '250 in total', to: '500 per month' }],
+      },
+    },
+  });
   render(<PlanSection />);
   await waitFor(() => expect(screen.queryByText(/Loading your plan/i)).not.toBeInTheDocument());
 }
@@ -215,7 +241,10 @@ describe('a paying customer on Essentials', () => {
     // accessible name — since R2-1 gave the lists visible headings. Asserted on
     // the heading, which is the element a sighted reader actually sees.
     expect(screen.getByRole('heading', { name: /What Autopilot would add/i })).toBeInTheDocument();
-    expect(screen.getByText(/500 per month becomes 2,000 per month/)).toBeInTheDocument();
+    // ⚠️ TEMPORARY (R-7 option C): the larger credit allowance is not shown to
+    // customers until slice 6, which restores the "… per month becomes … per
+    // month" assertion here. No credit number may appear meanwhile.
+    expect(document.body.textContent ?? '').not.toMatch(/19,750|32,250/);
   });
 
   it('has nothing to click, and the unavailability is VISIBLE — not a dead button', async () => {
@@ -243,11 +272,26 @@ describe('a paying customer on Essentials', () => {
     // (`getAllByRole('list')[0]`) passed when the included list was empty,
     // because it then found the next-plan list, which carries the same number.
     //
-    // The number now sits inside the AI assistant row's summary, as
-    // "AI actions (500 per month)" — grouping put the value in brackets beside
-    // its own name rather than on a line of its own.
+    // A value sits inside its row's summary, in brackets beside its own name,
+    // as "Email volume 10,000 per month (alerts, never blocks)".
     const included = within(screen.getByRole('list', { name: /What your plan includes/i }));
-    expect(included.getByText(/AI actions \(500 per month\)/)).toBeInTheDocument();
+    expect(included.getByText(/Email volume 10,000 per month/)).toBeInTheDocument();
+  });
+});
+
+describe('the credit allowance is named without its number (R-7 option C, TEMPORARY until slice 6)', () => {
+  it.each(['champion', 'trial', 'basic', 'pro'])('%s sees "Credits (included)" and no credit figure', async (planId) => {
+    await renderFor(planId);
+
+    const included = within(screen.getByRole('list', { name: /What your plan includes/i }));
+    expect(included.getByText(/Credits \(included\)/)).toBeInTheDocument();
+    expect(document.body.textContent ?? '').not.toMatch(/19,750|32,250|2,000 in total/);
+  });
+
+  it('the trial still reads that it ends when the credits run out', async () => {
+    await renderFor('trial');
+
+    expect(screen.getByText(/or when the credits run out/i)).toBeInTheDocument();
   });
 });
 
@@ -296,10 +340,10 @@ describe('a cross-unit difference is shown as a CHANGE, not a gain (SA R2-1, QA-
     // item the server explicitly refused to call a gain. The distinction existed
     // only in a muted arrow versus a muted tick — the one channel assistive
     // technology does not receive.
-    await renderFor('trial');
+    await renderTrialWithCrossUnitChange();
 
     const changes = within(screen.getByRole('list', { name: /What changes on Essentials/i }));
-    expect(changes.getByText(/AI actions/)).toBeInTheDocument();
+    expect(changes.getByText(/Example allowance/)).toBeInTheDocument();
 
     // And it is a DIFFERENT list from the additions one, not the same node found
     // twice.
@@ -312,7 +356,7 @@ describe('a cross-unit difference is shown as a CHANGE, not a gain (SA R2-1, QA-
     // is the improvements sentence; a change says outright that the number is
     // different rather than larger, which is exactly what `comparableAmount`
     // declined to decide.
-    await renderFor('trial');
+    await renderTrialWithCrossUnitChange();
 
     expect(
       screen.getByText(/from 250 in total to 500 per month, which is different rather than larger/)
@@ -322,15 +366,16 @@ describe('a cross-unit difference is shown as a CHANGE, not a gain (SA R2-1, QA-
   it('the improvements list still says "becomes", so the two read differently', async () => {
     // Non-vacuity for the assertion above: both sentences exist on the same
     // screen, and they are not the same sentence.
-    await renderFor('trial');
+    await renderTrialWithCrossUnitChange();
 
     const improvements = within(screen.getByRole('list', { name: /What Essentials would add/i }));
     expect(improvements.getByText(/becomes/)).toBeInTheDocument();
   });
 
   it('a plan with no cross-unit difference renders no changes list at all', async () => {
-    // Essentials → Autopilot differs only in chat (an addition) and the allowance
-    // (a same-unit improvement), so there is nothing to report as a change.
+    // Essentials → Autopilot differs only in chat (an addition) and the credit
+    // allowance (a same-unit improvement, not shown to customers until slice 6),
+    // so there is nothing to report as a change.
     await renderFor('basic');
 
     expect(screen.queryByRole('list', { name: /What changes on/i })).not.toBeInTheDocument();

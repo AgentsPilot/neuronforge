@@ -529,17 +529,34 @@ describe('add_override (C3-2)', () => {
   it('validates the value against the capability\'s own shape', async () => {
     const { ctx } = context();
     const result = await executeAdminOp(
-      { op: 'add_override', capability: 'ai.actions', overrideOp: 'set', value: true, reason: 'support case' } as AdminOp,
+      { op: 'add_override', capability: 'credits.allowance', overrideOp: 'set', value: true, reason: 'support case' } as AdminOp,
       ctx
     );
 
     expect(result).toMatchObject({ ok: false, status: 400, error: 'value_shape_invalid' });
   });
 
+  it('refuses an override on the retired id `ai.actions` at the boundary (slice 5, SQ-17)', () => {
+    // Renamed to `credits.allowance`, with no alias: the old id is no longer a
+    // catalog key, so the schema's capability enum refuses it before anything
+    // is written — an action-count override cannot be set on the credit pool.
+    const production = adminOpSchema(readCodeConfig());
+    const body = (capability: string) => ({
+      op: 'add_override',
+      capability,
+      overrideOp: 'set',
+      value: { perMonth: 5000 },
+      reason: 'support case',
+    });
+
+    expect(production.safeParse(body('ai.actions')).success).toBe(false);
+    expect(production.safeParse(body('credits.allowance')).success).toBe(true);
+  });
+
   it('accepts the right shape for the same capability', async () => {
     const { ctx } = context();
     const result = await executeAdminOp(
-      { op: 'add_override', capability: 'ai.actions', overrideOp: 'set', value: { perMonth: 5000 }, reason: 'support case' } as AdminOp,
+      { op: 'add_override', capability: 'credits.allowance', overrideOp: 'set', value: { perMonth: 5000 }, reason: 'support case' } as AdminOp,
       ctx
     );
 

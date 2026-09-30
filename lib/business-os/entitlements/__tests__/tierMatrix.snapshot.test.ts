@@ -138,11 +138,11 @@ describe('the comparison itself can fail — proven on the fixture', () => {
     const findings = findDrift(
       fixtureSnapshot,
       fixtureCurrent((matrix) => {
-        (matrix.tiers.pro as Record<string, unknown>)['ai.actions'] = { perMonth: 500 };
+        (matrix.tiers.pro as Record<string, unknown>)['credits.allowance'] = { perMonth: 500 };
       })
     );
 
-    expect(findings[0]).toMatchObject({ kind: 'lowered', where: 'pro.ai.actions' });
+    expect(findings[0]).toMatchObject({ kind: 'lowered', where: 'pro.credits.allowance' });
   });
 
   it('ACCEPTS the same cut once it is recorded and the version is bumped (B-10)', () => {
@@ -259,7 +259,7 @@ describe('ranking, which is what makes "lowered" meaningful', () => {
   });
 
   it('reads a metered value whether it is a rate or a total', () => {
-    const allowance = CAPABILITIES['ai.actions'];
+    const allowance = CAPABILITIES['credits.allowance'];
 
     expect(rankValue({ perMonth: 500 }, allowance)).toBe(500);
     expect(rankValue({ total: 150 }, allowance)).toBe(150);

@@ -39,6 +39,7 @@ import type { UsageCallRecord } from '@/lib/ai/usageScope';
 import type { AiActionSpec } from '../aiActionAudit';
 import * as chargePricing from '../chargePricing';
 import { resetCreditValueLogForTests } from '../chargeResolver';
+import { currentCreditValue } from '@/lib/business-os/entitlements/config/creditValue';
 import {
   AI_CHARGE_SERVICE,
   BOS_AI_CHARGE_WRITE_BUDGET_MS,
@@ -131,7 +132,7 @@ describe('recorded (FR-13, FR-15)', () => {
       outcome: 'succeeded',
       credits: 1,
       costUsd: 0.001,
-      creditValueVersion: 0,
+      creditValueVersion: currentCreditValue().version,
       isFallbackPriced: false,
     });
     expect(options.signal).toBeInstanceOf(AbortSignal);

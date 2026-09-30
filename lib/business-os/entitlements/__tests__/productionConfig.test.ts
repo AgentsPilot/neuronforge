@@ -37,7 +37,9 @@ describe('the shipped configuration', () => {
     expect(Object.keys(config.matrix.tiers).sort()).toEqual(['basic', 'pro']);
     // Nothing has been taken away from anyone yet.
     expect(config.matrix.removals).toEqual([]);
-    expect(config.matrix.version).toBe(1);
+    // Version 2 (slice 5, SA SQ-19): the first matrix whose allowance is in
+    // credits. A raise and a rename, no removal.
+    expect(config.matrix.version).toBe(2);
   });
 
   it('gives every tier a customer-facing name and a price', () => {
@@ -102,7 +104,6 @@ describe('the shipped configuration', () => {
       .sort();
 
     expect(different).toEqual([
-      'ai.actions',
       'chat.access',
       'chat.bulk',
       'chat.email',
@@ -112,6 +113,7 @@ describe('the shipped configuration', () => {
       'chat.reporting',
       'chat.scheduling',
       'chat.search',
+      'credits.allowance',
     ]);
   });
 
@@ -133,15 +135,16 @@ describe('the shipped configuration', () => {
   it('carries the credit allowances the user set', () => {
     const config = getEntitlementConfig(new CodeTierMatrixSource());
 
-    expect((config.matrix.tiers.basic as Record<string, unknown>)['ai.actions']).toEqual({ perMonth: 500 });
-    expect((config.matrix.tiers.pro as Record<string, unknown>)['ai.actions']).toEqual({ perMonth: 2000 });
-    // PARITY since 2026-09-27 (the user's decision). It read `{ perMonth: 1000 }`
-    // — twice Essentials, from when champions inherited Essentials — and pinning
-    // it made "Founding Partners get the top plan free" untrue by one number.
-    expect(config.cohorts.champion.values['ai.actions']).toEqual({ perMonth: 2000 });
-    // A one-off TOTAL, not a rate: using it up is one of the two ways a trial
-    // ends (D-2, FR-27).
-    expect(config.cohorts.trial.values['ai.actions']).toEqual({ total: 250 });
+    // D1–D3 (2026-09-30): (fee × 50% ÷ 2) ÷ $0.001. Numbers and reasons:
+    // docs/architecture/BUSINESS_OS_CREDIT_PRICING.md §3.
+    expect((config.matrix.tiers.basic as Record<string, unknown>)['credits.allowance']).toEqual({ perMonth: 19750 });
+    expect((config.matrix.tiers.pro as Record<string, unknown>)['credits.allowance']).toEqual({ perMonth: 32250 });
+    // PARITY since 2026-09-27 (the user's decision): champions read Autopilot's
+    // row, so they get 32,250 with no number of their own.
+    expect(config.cohorts.champion.values['credits.allowance']).toEqual({ perMonth: 32250 });
+    // BD-16 (user, 2026-09-30): a one-off TOTAL, not a rate — using it up is one
+    // of the two ways a trial ends (D-2, FR-27).
+    expect(config.cohorts.trial.values['credits.allowance']).toEqual({ total: 2000 });
   });
 
   it('a champion gets the INHERITED allowance, not a copy of it', () => {
@@ -152,8 +155,8 @@ describe('the shipped configuration', () => {
     const config = getEntitlementConfig(new CodeTierMatrixSource());
     const inheritedTier = (config.cohorts.champion.base as { tier?: string }).tier!;
 
-    expect(config.cohorts.champion.values['ai.actions']).toEqual(
-      (config.matrix.tiers[inheritedTier as 'pro'] as Record<string, unknown>)['ai.actions']
+    expect(config.cohorts.champion.values['credits.allowance']).toEqual(
+      (config.matrix.tiers[inheritedTier as 'pro'] as Record<string, unknown>)['credits.allowance']
     );
   });
 
@@ -202,7 +205,7 @@ describe('the shipped configuration', () => {
 
     // D-2 / FR-27: a trial ends at its length OR when its allowance runs out,
     // so the allowance is a total, not a monthly rate.
-    expect(cohorts.trial.values['ai.actions']).toEqual({ total: expect.any(Number) });
+    expect(cohorts.trial.values['credits.allowance']).toEqual({ total: expect.any(Number) });
     expect(cohorts.trial.durationHistory?.[0]?.days).toBe(14);
     expect(cohorts.trial.graceHistory[0]?.days).toBe(7);
     // B-12: setup AI counts against the trial, so the clock starts when setup
@@ -213,7 +216,7 @@ describe('the shipped configuration', () => {
   it('gives champions a monthly allowance and NO default end date', () => {
     const { cohorts } = getEntitlementConfig(new CodeTierMatrixSource());
 
-    expect(cohorts.champion.values['ai.actions']).toEqual({ perMonth: expect.any(Number) });
+    expect(cohorts.champion.values['credits.allowance']).toEqual({ perMonth: expect.any(Number) });
     expect(cohorts.champion.graceHistory[0]?.days).toBe(30);
     // RC-4 / UD-4: a default length would expire every migrated account on the
     // same day. An end date is set per account by an admin, or never.

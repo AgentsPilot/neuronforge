@@ -40,20 +40,22 @@ The separation is the point: `catalog.ts` says what `marketing.posts` *is*, `tie
 
 ### What production ships (user decision, 2026-09-23)
 
-| Internal id | Customer-facing | Chat | AI actions | Ends | Price |
+| Internal id | Customer-facing | Chat | Credits (`credits.allowance`) | Ends | Price |
 |---|---|---|---|---|---|
-| `trial` | Test Flight | no | 250 (one-off total) | 14 days, or when the credits run out | $0 |
-| `champion` | Founding Partner | no | 1,000 / month | never, unless an admin sets a date | $0 |
-| `basic` | Essentials | no | 500 / month | while paid | $79 |
-| `pro` | Autopilot | **yes** | 2,000 / month | while paid | $129 |
+| `trial` | Test Flight | no | 2,000 (one-off total) | 14 days, or when the credits run out | $0 |
+| `champion` | Founding Partner | **yes** (reads `pro`) | 32,250 / month (reads `pro`) | never, unless an admin sets a date | $0 |
+| `basic` | Essentials | no | 19,750 / month | while paid | $79 |
+| `pro` | Autopilot | **yes** | 32,250 / month | while paid | $129 |
 
-**Only two of those are tiers.** `basic` and `pro` are in `TIER_ORDER`; `trial` and `champion` are cohorts that point at the `basic` row (`base: { tier: 'basic' }`), so they inherit every change to Essentials instead of drifting from it.
+**Only two of those are tiers.** `basic` and `pro` are in `TIER_ORDER`; `trial` and `champion` are cohorts that each point at a tier row — the trial at `basic` (a trial previews what you would buy), Founding Partner at `pro` (since 2026-09-27) — so they inherit every change to that tier instead of drifting from it.
 
 The paid tiers differ in exactly **two** ways: chat (the eight `chat.*` capabilities) and the credit allowance. Everything that exists is in both; nothing that is `not_built` is in either. A third difference is either a decision nobody recorded or a mistake, and `productionConfig.test.ts` fails until someone says which.
 
-**Champions become Autopilot in one line.** When chat is ready for design partners, `champion.base` becomes `{ tier: 'pro' }` in `config/cohorts.ts` — no code, no migration, no per-account admin operation, and every champion has chat on the next resolve.
+**Champions are Autopilot, in one line.** `champion.base` is `{ tier: 'pro' }` in `config/cohorts.ts` (2026-09-27), and `CHAMPION_VALUES` reads the credit allowance from that row, so champions have chat and Autopilot's allowance with no number of their own. Reversing it is the same one line.
 
-> **The credit numbers are a first pass.** 250 / 500 / 1,000 / 2,000 are decisions, not measurements. Slice 3 resets them from the shadow report — the setup-AI measurement (S1-T15) sizes the trial total, observed usage sizes the rest. Treat them as "chosen to start with", not as policy.
+> **The credit numbers are decided** (user, 2026-09-30: D1–D3 for the tiers, BD-16 for the trial). The formula, the benchmark they were checked against, and the revision log live in [BUSINESS_OS_CREDIT_PRICING.md](/docs/architecture/BUSINESS_OS_CREDIT_PRICING.md) — change them there first, then here and in config.
+>
+> ⚠️ **Temporary (until credit deduction slice 6):** owners (Settings → Plan) and invitees (the public `/invite` page) see the allowance as "Credits (included)" without the number (user decision R-7, option C). Admin screens show the figures. The rule is `withCustomerDisplay` in `customerPlanView.ts`; slice 6 removes it.
 
 > ### ⚠️ "Essentials has no chat" is configured, and not yet enforced
 >
@@ -133,7 +135,7 @@ durationHistory: [{ effectiveFrom: '2026-09-22T00:00:00.000Z', days: 14 }]
 
 A trial uses the entry in force **when it started**. Shortening the trial from 14 days to 7 therefore changes the deal for new signups and cannot end a trial someone is three days into. **Append an entry; never edit one** — the snapshot test blocks an edit, for exactly that reason.
 
-⚠️ Every **quantity** in `cohorts.ts` is a `PLACEHOLDER` nobody has chosen (champion AI actions, the trial total, the email ceilings). They are harmless today because nothing meters anything, and Slice 3 sets them from the shadow report's setup-AI measurement. The 14/7/30-day durations *are* decisions.
+The credit allowance in `cohorts.ts` is decided — champions read Autopilot's row, the trial total is the user's BD-16 figure (see [BUSINESS_OS_CREDIT_PRICING.md](/docs/architecture/BUSINESS_OS_CREDIT_PRICING.md)) — and so are the 14/7/30-day durations. ⚠️ The **`email.volume` ceilings** are still a named FIRST PASS nobody has chosen; they only ever alert the platform team.
 
 ## Staleness: how fresh an answer is
 
@@ -195,7 +197,8 @@ Two rules worth knowing before using them:
 | Are the fact triggers working? | `check-…` row 61 (plan rows with a trigger origin) plus the Postgres log searched for `business_os_plan_fact_` |
 | Who has free access with no end date? | The shadow report's `static.noEndDate`, with `noEndDateAccountsWithoutProfile` as the trim list |
 | What would tier X cost? | `shadow-report?from=…&to=…&asTier=X` |
-| What does setup cost in AI actions? | `shadow-report?…&includeSetupAi=true` — sized against p90 with headroom (B-12) |
+| What does setup cost in AI actions? | `shadow-report?…&includeSetupAi=true` — sized against p90 with headroom (B-12). It counts **actions**, not credits |
+| What does setup cost in credits? | The **Costs & credits** tab of `/admin/business-os-llm`, by action type; the method and the last measurement are in [BUSINESS_OS_CREDIT_PRICING.md](/docs/architecture/BUSINESS_OS_CREDIT_PRICING.md) §4.6 |
 | Applying it all | [BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md](/docs/BUSINESS_OS_ENTITLEMENTS_APPLY_RUNBOOK.md) |
 | Did the credit ledger land? | `scripts/check-bos-credit-charges-migration.sql` (read-only, one grid, row 0 the verdict), then the write probe `scripts/probe-bos-credit-charges-migration.sql` — see [Metering](#metering-the-credit-ledger) |
 
@@ -228,7 +231,7 @@ Credit deduction layer, slice 3 ([workplan](/docs/workplans/BUSINESS_OS_CREDIT_D
 
 **Lifecycle.** Both tables are `never` in the purge registry and keyed to `auth.users`, not `business_profiles`, so a business Reset cannot reach them. On account deletion the ledger is **minimised** (`user_id` set to NULL by the foreign key) and the totals are **deleted** (cascade).
 
-**The credit value** is `lib/business-os/entitlements/config/creditValue.ts` — version 0, provisional, about $0.001 of provider cost per credit — recorded on every row as `credit_value_version`.
+**The credit value** is `lib/business-os/entitlements/config/creditValue.ts` — append-only; the current entry is **version 1, `derived`**, $0.001 of provider cost per credit (version 0 was the same figure, `provisional`) — recorded on every row as `credit_value_version`. The numbers and why: [BUSINESS_OS_CREDIT_PRICING.md](/docs/architecture/BUSINESS_OS_CREDIT_PRICING.md).
 
 **How an AI charge is written (3b-ii).** At the end of every `runAiAction` (`lib/business-os/llm/aiActionAudit.ts`), after the audit entry is queued, `recordAiCharge` (`lib/business-os/llm/aiChargeRecorder.ts`) builds the row from the action's in-memory calls and writes it through the repository with `service = 'ai'` (one exported constant, `AI_CHARGE_SERVICE`). The write is **awaited with a 1,500 ms budget** (`BOS_AI_CHARGE_WRITE_BUDGET_MS`), is never retried, and **never throws**: a failed, refused or timed-out write is one `error` log (`bos_ai_charge_write_failed`, or `bos_ai_charge_not_written` when no row could be built) and the action's own result is unchanged. A timed-out write's fate is *unknown* (it may still have committed); the action id makes any repeat harmless. An action with no AI call writes nothing and waits for nothing. The recorder is the ledger's only writer (a source guard in the repository test pins it).
 
@@ -262,3 +265,4 @@ Credit deduction layer, slice 3 ([workplan](/docs/workplans/BUSINESS_OS_CREDIT_D
 | 2026-09-29 | FYI-only `active` flag on every plan | Required on all four plans (tiers in `presentation`, cohorts beside their labels), read only through `planActive()`, shown as a badge on the admin Tiers card. **It changes no behaviour** — `planActive.noEffect.test.ts` holds resolution, the customer view, the Founding Partner pill, the shadow report, invites and the offer identical with every plan inactive; only the admin view differs. An inactive plan stays invitable by design. What inactive should *do* (stop new assignments? hide from customers? affect existing accounts?) is an open business question |
 | 2026-09-29 | Metering: the operator cost report (4a) | Credit deduction slice 4a: where operators read the ledger (the Costs & credits tab of `/admin/business-os-llm`), what it shows, and that it is read-only through a separate read repository. Nothing in this module is imported by it |
 | 2026-09-30 | Metering: the leak check (4b) | Credit deduction slice 4b: the on-demand and nightly leak check, where its findings show (the Costs & credits tab, the Scheduled jobs page, `error` logs), and that it is read-only. Nothing in this module is imported by it |
+| 2026-09-30 | Credit allowance: renamed, decided, matrix v2 (credit deduction slice 5) | The capability `ai.actions` is now **`credits.allowance`** (unit `credit`, working label "Credits"; SA SQ-17 — no alias, no `removals` entry, since a rename is not a removal). **Tier matrix version 2** (SQ-19). Allowances decided by the user (D1–D3): **Essentials 19,750**, **Autopilot 32,250** credits a month; Founding Partner reads Autopilot's row (32,250); the **trial's one-off total is 2,000** (BD-16). **Credit value version 1** appended (`derived`, $0.001, `matrixVersion: 2`); version 0 unchanged. Plan table, the cohort paragraph, the numbers callout, the PLACEHOLDER paragraph (now only `email.volume` is FIRST PASS), the credit-value line and a new ops row (setup cost in credits) updated. **Temporary until slice 6:** owners and invitees see "Credits (included)" without the number (R-7 option C); admins see the figures. Numbers and reasons: [BUSINESS_OS_CREDIT_PRICING.md](/docs/architecture/BUSINESS_OS_CREDIT_PRICING.md). Earlier rows are history and are not edited |

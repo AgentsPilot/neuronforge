@@ -55,7 +55,7 @@ export interface EntitlementRequest {
   surfaceKind: SurfaceKind;
   /** The level or amount being asked for. Omit for "is it on at all?". */
   requested?: CapabilityValue;
-  /** How many AI actions this call would spend. Default 1. */
+  /** How much of the allowance this call would spend. Default 1. */
   cost?: number;
   /** When the surface is an automated send, its registry id (S-1). */
   sendId?: string;

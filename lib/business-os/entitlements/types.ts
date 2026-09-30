@@ -36,7 +36,7 @@ export type CapabilityShape =
    */
   | { kind: 'variant'; variants: readonly [string, ...string[]] }
   /** A quantity per period that resets. Topped up by boosts (Slice 3). */
-  | { kind: 'metered'; unit: 'ai_action' | 'sms'; period: 'month' }
+  | { kind: 'metered'; unit: 'credit' | 'sms'; period: 'month' }
   /** A fixed count, raised by add-ons. */
   | { kind: 'quantity'; unit: 'seat' | 'location' }
   /** A limit that alerts the platform team and never blocks the customer (B-7). */
@@ -52,7 +52,7 @@ export type CapabilityShape =
  *
  * `client_render` is the odd one (SA S-1): branding is visible to clients but is
  * not a *send*, so it must not be forced to declare a message class.
- * `mixed` is `ai.actions` alone, where the audience is decided per call site.
+ * `mixed` is `credits.allowance` alone, where the audience is decided per call site.
  */
 export type Audience = 'owner' | 'client' | 'client_render' | 'mixed';
 

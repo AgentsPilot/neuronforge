@@ -523,7 +523,7 @@ export function catalogSchema(): z.ZodTypeAny {
         variants: z.array(z.string().min(1)).min(2, 'a variant capability needs at least two options'),
       })
       .strict(),
-    z.object({ kind: z.literal('metered'), unit: z.enum(['ai_action', 'sms']), period: z.literal('month') }).strict(),
+    z.object({ kind: z.literal('metered'), unit: z.enum(['credit', 'sms']), period: z.literal('month') }).strict(),
     z.object({ kind: z.literal('quantity'), unit: z.enum(['seat', 'location']) }).strict(),
     z.object({ kind: z.literal('fair_use'), unit: z.literal('email'), period: z.literal('month') }).strict(),
     z.object({ kind: z.literal('group') }).strict(),

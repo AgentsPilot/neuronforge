@@ -7,20 +7,23 @@
 //
 // ── THE FOUR PLANS (user decision, 2026-09-23) ──────────────────────────────
 //
-//   internal   marketing          chat   AI actions/mo   ends           price
+//   internal   marketing          chat   credits          ends           price
 //   ────────────────────────────────────────────────────────────────────────
-//   trial      Test Flight        no     250             14 days or     $0
-//                                                        credits gone
-//   champion   Founding Partner   no     1,000           never          $0
-//   basic      Essentials         no     500             while paid     $79
-//   pro        Autopilot          yes    2,000           while paid     $129
+//   trial      Test Flight        no     2,000 in total   14 days or     $0
+//                                                         credits gone
+//   champion   Founding Partner   yes    32,250/mo        never          $0
+//                                        (reads `pro`)
+//   basic      Essentials         no     19,750/mo        while paid     $79
+//   pro        Autopilot          yes    32,250/mo        while paid     $129
+//
+// The credit numbers, and why: docs/architecture/BUSINESS_OS_CREDIT_PRICING.md.
 //
 // "Chat" above means the `chat.access` capability (FR-46) plus the eight
 // per-operation `chat.*` groups. Autopilot has all nine; nobody else has any.
 //
-// **Only TWO of those are tiers.** `trial` and `champion` are cohorts, and they
-// point at the `basic` tier (see `cohorts.ts`) so they inherit every change made
-// here instead of drifting away from it over time.
+// **Only TWO of those are tiers.** `trial` and `champion` are cohorts: `trial`
+// points at the `basic` tier and `champion` at the `pro` tier (see `cohorts.ts`),
+// so they inherit every change made here instead of drifting away from it.
 //
 // ── THE ONE RULE THAT SHAPES THIS FILE ──────────────────────────────────────
 // The paid tiers differ in exactly TWO ways: **chat** and the **credit
@@ -28,7 +31,7 @@
 // does not exist is in any of them.
 //
 // That is a deliberate commercial choice, and it makes the file easy to check:
-// take `BASE`, change the nine `chat.*` values and `ai.actions`, and there is
+// take `BASE`, change the nine `chat.*` values and `credits.allowance`, and there is
 // no third thing to get wrong.
 //
 // ── ADDING A TIER (the whole procedure) ─────────────────────────────────────
@@ -141,10 +144,8 @@ const BASE: TierRow = {
   'chat.bulk': true,
 
   // ── Numbers ──────────────────────────────────────────────────────────────
-  // FIRST PASS, to be reset from shadow data (same status as the cohort
-  // numbers in cohorts.ts). `ai.actions` is the only one the user has decided:
-  // 500 for basic, 2,000 for pro. The rest are engineering estimates.
-  'ai.actions': { perMonth: 500 },
+  // Decided (D1–D3, 2026-09-30): docs/architecture/BUSINESS_OS_CREDIT_PRICING.md §3.
+  'credits.allowance': { perMonth: 19750 },
   // FIRST PASS. A fair-use ceiling alerts the platform team and never blocks a
   // customer (B-7), so it is an abuse threshold rather than a product promise —
   // and it is the same on both tiers, because email volume is not one of the
@@ -207,17 +208,20 @@ const withoutChat = (): TierRow => {
  */
 const basic: TierRow = withoutChat();
 
-/** Autopilot — Essentials plus chat, and four times the credits. */
+/** Autopilot — Essentials plus chat, and more credits. */
 const pro: TierRow = {
   ...BASE,
-  'ai.actions': { perMonth: 2000 },
+  // Decided (D1–D3, 2026-09-30): docs/architecture/BUSINESS_OS_CREDIT_PRICING.md §3.
+  'credits.allowance': { perMonth: 32250 },
 };
 
 export const TIER_MATRIX = {
-  // Version 1 is the FIRST REAL MATRIX. It was version 1 while empty too: no
-  // account was ever sold at the empty one, so nothing is grandfathered against
-  // it and there is nothing to bump away from.
-  version: 1,
+  // Version 1 was the FIRST REAL MATRIX. Version 2 (credit deduction slice 5)
+  // is the first whose allowance is in credits: `ai.actions` was renamed to
+  // `credits.allowance` (SA SQ-17) and both values were raised (SQ-19). Nothing
+  // was lowered, so `removals` stays empty: a rename is not a removal, and an
+  // entry naming an id that is no longer in the catalog would describe nothing.
+  version: 2,
   tiers: { basic, pro },
   removals: [] as readonly MatrixRemoval<TierId>[],
   /**

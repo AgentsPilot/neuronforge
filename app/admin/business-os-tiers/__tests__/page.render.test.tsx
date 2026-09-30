@@ -32,7 +32,7 @@ function plan(overrides: Partial<Plan> = {}): Plan {
     availableToBuy: false,
     active: true,
     inheritsFrom: null,
-    aiActions: '500 per month',
+    credits: '19,750 per month',
     endsWhen: 'While the plan is paid for.',
     state: 'active',
     basis: 'tier',
@@ -46,10 +46,10 @@ function plan(overrides: Partial<Plan> = {}): Plan {
         gateBuilt: false,
       },
       {
-        capability: 'ai.actions',
-        label: 'AI actions',
+        capability: 'credits.allowance',
+        label: 'Credits',
         category: 'ai_chat',
-        display: '500 per month',
+        display: '19,750 per month',
         granting: true,
         gateBuilt: false,
       },
@@ -190,7 +190,7 @@ describe('the plan cards', () => {
     // needs the mapping in front of them.
     expect(card).toHaveTextContent('paid-plan');
     expect(card).toHaveTextContent('$42');
-    expect(within(card).getByTestId('plan-paid-plan-ai')).toHaveTextContent('500 per month');
+    expect(within(card).getByTestId('plan-paid-plan-credits')).toHaveTextContent('19,750 per month');
     expect(within(card).getByTestId('plan-paid-plan-ends')).toHaveTextContent(/paid for/i);
   });
 

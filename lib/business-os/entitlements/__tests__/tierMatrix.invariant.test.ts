@@ -150,7 +150,7 @@ describe('FR-3 / FR-7 — the other ways a matrix can be wrong', () => {
 
   it('rejects a negative allowance', () => {
     const config = withMatrix((matrix) => {
-      (matrix.tiers as Record<string, Record<string, unknown>>).basic['ai.actions'] = { perMonth: -5 };
+      (matrix.tiers as Record<string, Record<string, unknown>>).basic['credits.allowance'] = { perMonth: -5 };
     });
 
     expect(() => validateEntitlementConfig(config)).toThrow(/tier matrix/);

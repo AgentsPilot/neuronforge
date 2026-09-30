@@ -139,12 +139,16 @@ afterEach(() => {
 describe('resolveActionCharge: the one conversion (FR-2, SQ-8)', () => {
   const USD_PER_CREDIT = currentCreditValue().usdPerCredit;
 
-  it('uses the current credit value, version 0 today', () => {
+  it('uses the current credit value (C-4: read, never pinned)', () => {
     expect(resolveActionCharge([rec()])).toMatchObject({ creditValueVersion: CREDIT_VALUE_HISTORY.length - 1 });
-    expect(resolveActionCharge([rec()]).creditValueVersion).toBe(0);
+    expect(resolveActionCharge([rec()]).creditValueVersion).toBe(currentCreditValue().version);
   });
 
-  it('a lone ~2e-7 USD embedding is 0.0002 credits at v0: non-zero, and not rounded up to 1 (AC-5 storage)', () => {
+  it('records version 1, the derived value, since slice 5 (AC-25 (a))', () => {
+    expect(resolveActionCharge([rec()]).creditValueVersion).toBe(1);
+  });
+
+  it('a lone ~2e-7 USD embedding is 0.0002 credits at $0.001 per credit: non-zero, and not rounded up to 1 (AC-5 storage)', () => {
     const charge = resolveActionCharge([EMBEDDING]);
     expect(charge.costUsd).toBe(0.0000002);
     expect(charge.credits).toBe(0.0002);
@@ -194,7 +198,12 @@ describe('resolveActionCharge: the one conversion (FR-2, SQ-8)', () => {
     const active = mockLogged.filter((l) => l.fields.event === 'bos_credit_value_active');
     expect(active).toHaveLength(1);
     expect(active[0].level).toBe('info');
-    expect(active[0].fields).toEqual({ event: 'bos_credit_value_active', version: 0, usdPerCredit: 0.001, status: 'provisional' });
+    expect(active[0].fields).toEqual({
+      event: 'bos_credit_value_active',
+      version: currentCreditValue().version,
+      usdPerCredit: currentCreditValue().usdPerCredit,
+      status: currentCreditValue().status,
+    });
   });
 });
 
@@ -264,7 +273,7 @@ describe('buildAiChargeRecord: the rules, in order (§2.3)', () => {
         outcome: 'succeeded',
         credits: 1,
         costUsd: 0.001,
-        creditValueVersion: 0,
+        creditValueVersion: currentCreditValue().version,
         isFallbackPriced: false,
       },
       fallbackCallCount: 0,

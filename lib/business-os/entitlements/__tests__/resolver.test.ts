@@ -28,7 +28,7 @@ describe('layer 1 — the basis', () => {
     expect(result.basis).toEqual({ kind: 'tier', tier: 'growth' });
     expect(result.values['chat.marketing'].value).toBe(true); // growth has it
     expect(result.values['chat.search'].value).toBe(false); // pro only
-    expect(result.values['ai.actions'].value).toEqual({ perMonth: 500 });
+    expect(result.values['credits.allowance'].value).toEqual({ perMonth: 500 });
     expect(result.values['chat.search'].trace[0].note).toContain('tier growth');
   });
 
@@ -54,7 +54,7 @@ describe('layer 1 — the basis', () => {
     expect(result.values['website.branding'].value).toBe('unbranded');
     expect(result.values['intake.forms'].value).toBe('ai');
     // The cohort still states its own numbers, which override the tier row.
-    expect(result.values['ai.actions'].value).toEqual(readCodeConfig().cohorts.champion.values['ai.actions']);
+    expect(result.values['credits.allowance'].value).toEqual(readCodeConfig().cohorts.champion.values['credits.allowance']);
   });
 
   it('a `{ all: true }` cohort still gets the catalog-derived maximum (RC-2)', () => {
@@ -83,7 +83,7 @@ describe('layer 1 — the basis', () => {
     // is — no chat included.
     expect(result.values['chat.search'].value).toBe(false);
     expect(result.values['crm.core'].value).toBe(true);
-    expect(result.values['ai.actions'].value).toEqual(readCodeConfig().cohorts.trial.values['ai.actions']);
+    expect(result.values['credits.allowance'].value).toEqual(readCodeConfig().cohorts.trial.values['credits.allowance']);
   });
 
   it('an anomaly grants nothing at all', () => {
@@ -231,8 +231,8 @@ describe('layer 4 — overrides (FR-11)', () => {
   });
 
   it('add increases a quantity', () => {
-    const result = resolve(tierAccount('basic'), [override({ capability: 'ai.actions', op: 'add', value: 250 })]);
-    expect(result.values['ai.actions'].value).toEqual({ perMonth: 350 }); // basic has 100
+    const result = resolve(tierAccount('basic'), [override({ capability: 'credits.allowance', op: 'add', value: 250 })]);
+    expect(result.values['credits.allowance'].value).toEqual({ perMonth: 350 }); // basic has 100
   });
 
   it('revoke drops to the floor', () => {
@@ -242,13 +242,13 @@ describe('layer 4 — overrides (FR-11)', () => {
 
   it('several on one capability apply in created_at order', () => {
     const result = resolve(tierAccount('basic'), [
-      override({ id: 'b', capability: 'ai.actions', op: 'set', value: { perMonth: 1000 }, createdAt: '2026-02-01T00:00:00.000Z' }),
-      override({ id: 'a', capability: 'ai.actions', op: 'add', value: 50, createdAt: '2026-01-01T00:00:00.000Z' }),
+      override({ id: 'b', capability: 'credits.allowance', op: 'set', value: { perMonth: 1000 }, createdAt: '2026-02-01T00:00:00.000Z' }),
+      override({ id: 'a', capability: 'credits.allowance', op: 'add', value: 50, createdAt: '2026-01-01T00:00:00.000Z' }),
     ]);
 
     // add(50) over basic's 100, then set(1000) — the later one wins.
-    expect(result.values['ai.actions'].value).toEqual({ perMonth: 1000 });
-    expect(result.values['ai.actions'].trace.map((t) => t.note)).toEqual([
+    expect(result.values['credits.allowance'].value).toEqual({ perMonth: 1000 });
+    expect(result.values['credits.allowance'].trace.map((t) => t.note)).toEqual([
       'tier basic',
       'override a (add)',
       'override b (set)',
@@ -289,9 +289,9 @@ describe('lowestTierFor (RC-1)', () => {
   });
 
   it('compares quantities, not just presence', () => {
-    expect(lowestTierFor(config, 'ai.actions', { perMonth: 100 })).toBe('basic');
-    expect(lowestTierFor(config, 'ai.actions', { perMonth: 750 })).toBe('pro');
-    expect(lowestTierFor(config, 'ai.actions', { perMonth: 99999 })).toBeNull();
+    expect(lowestTierFor(config, 'credits.allowance', { perMonth: 100 })).toBe('basic');
+    expect(lowestTierFor(config, 'credits.allowance', { perMonth: 750 })).toBe('pro');
+    expect(lowestTierFor(config, 'credits.allowance', { perMonth: 99999 })).toBeNull();
   });
 
   it('is null for a not_built capability, whatever a tier says', () => {
@@ -317,7 +317,7 @@ describe('lowestTierFor (RC-1)', () => {
 });
 
 describe('satisfies', () => {
-  const def = CAPABILITIES['ai.actions'] as CapabilityDef;
+  const def = CAPABILITIES['credits.allowance'] as CapabilityDef;
 
   it('covers an equal or larger ask', () => {
     expect(satisfies(def, { perMonth: 500 }, { perMonth: 100 })).toBe(true);

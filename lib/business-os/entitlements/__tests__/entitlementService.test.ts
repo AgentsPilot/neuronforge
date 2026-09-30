@@ -236,7 +236,7 @@ describe('the balance seam (A-2 step c)', () => {
 
   it('is consulted for a metered capability', async () => {
     const service = new EntitlementService({ repository: fakeRepository(), configSource, now: fakeClock().now, balanceSource: short });
-    const decision = await service.check('acct-1', 'ai.actions', { surfaceKind: 'owner_ai' });
+    const decision = await service.check('acct-1', 'credits.allowance', { surfaceKind: 'owner_ai' });
 
     expect(decision).toMatchObject({ outcome: 'limit_reached', remaining: 0 });
   });
@@ -253,7 +253,7 @@ describe('the balance seam (A-2 step c)', () => {
     const repo = fakeRepository({ plan: planRow({ tier: 'basic' }), overrides: [] });
     const service = new EntitlementService({ repository: repo, configSource, now: fakeClock().now, balanceSource: counting });
 
-    const decision = await service.check('acct-1', 'ai.actions', { surfaceKind: 'owner_ai', requested: { perMonth: 5000 } });
+    const decision = await service.check('acct-1', 'credits.allowance', { surfaceKind: 'owner_ai', requested: { perMonth: 5000 } });
 
     expect(decision.outcome).toBe('not_entitled');
     expect(calls).toBe(0);
@@ -281,11 +281,11 @@ describe('the balance seam (A-2 step c)', () => {
     };
     const service = new EntitlementService({ repository: fakeRepository(), configSource, now: fakeClock().now, balanceSource: broken });
 
-    expect((await service.check('acct-1', 'ai.actions', { surfaceKind: 'owner_ai' })).outcome).toBe('allowed');
+    expect((await service.check('acct-1', 'credits.allowance', { surfaceKind: 'owner_ai' })).outcome).toBe('allowed');
   });
 
   it('the shipped default never refuses', async () => {
     const service = new EntitlementService({ repository: fakeRepository(), configSource, now: fakeClock().now });
-    expect((await service.check('acct-1', 'ai.actions', { surfaceKind: 'owner_ai' })).outcome).toBe('allowed');
+    expect((await service.check('acct-1', 'credits.allowance', { surfaceKind: 'owner_ai' })).outcome).toBe('allowed');
   });
 });

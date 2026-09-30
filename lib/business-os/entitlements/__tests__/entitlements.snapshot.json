@@ -1,6 +1,6 @@
 {
-  "generated": "2026-09-29",
-  "matrixVersion": 1,
+  "generated": "2026-09-30",
+  "matrixVersion": 2,
   "tiers": {
     "basic": {
       "crm.core": true,
@@ -28,8 +28,8 @@
       "chat.quotes": false,
       "chat.reporting": false,
       "chat.bulk": false,
-      "ai.actions": {
-        "perMonth": 500
+      "credits.allowance": {
+        "perMonth": 19750
       },
       "email.volume": {
         "ceilingPerMonth": 10000
@@ -80,8 +80,8 @@
       "chat.quotes": true,
       "chat.reporting": true,
       "chat.bulk": true,
-      "ai.actions": {
-        "perMonth": 2000
+      "credits.allowance": {
+        "perMonth": 32250
       },
       "email.volume": {
         "ceilingPerMonth": 10000
