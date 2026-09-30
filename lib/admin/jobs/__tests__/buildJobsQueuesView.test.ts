@@ -11,6 +11,7 @@ import {
   DID_NOT_FINISH_WORDS,
   NOT_INSTALLED_MESSAGE,
   buildJobsQueuesView,
+  jobBaseline,
   jobStatus,
   jobsTileFacts,
   queueStatus,
@@ -117,7 +118,7 @@ describe('job status rules, first match wins', () => {
 });
 
 describe('the view', () => {
-  it('lists all 12 jobs and all 5 queues, healthy and clear on a quiet platform', () => {
+  it('lists all 13 jobs and all 5 queues, healthy and clear on a quiet platform', () => {
     const view = buildJobsQueuesView(quietInputs(), NOW);
     expect(view.jobs.map((j) => j.id)).toEqual(BOS_CRON_JOBS.map((j) => j.id));
     expect(view.queues.map((q) => q.id)).toEqual(BOS_QUEUES.map((q) => q.id));
@@ -203,7 +204,7 @@ describe('A-8: the Health tiles show the page\'s own numbers', () => {
     expect(t6.status).toBe('red');
     expect(t6.headline).toBe('A job has stopped');
     expect(t6.figures.find((f) => f.label === 'Jobs stopped')?.value).toBe(String(jobs.stopped));
-    expect(t6.figures.find((f) => f.label === 'Jobs healthy')?.value).toBe(`${jobs.healthy} of 12`);
+    expect(t6.figures.find((f) => f.label === 'Jobs healthy')?.value).toBe(`${jobs.healthy} of 13`); // 13 jobs since credit deduction slice 4b
     expect(t7.status).toBe('red'); // a dead-letter in 24 h is red (OQ-7)
     expect(t7.headline).toBe('A message was dead-lettered in the last 24 hours');
     expect(t7.figures.find((f) => f.label === 'Items due now, all queues')?.value).toBe('4');
@@ -227,7 +228,7 @@ describe('C-10R on tiles 6 and 7', () => {
   };
   const byId = (tiles: ReturnType<typeof evaluateHealth>, id: string) => tiles.find((t) => t.id === id)!;
 
-  it('green only when all 12 jobs have a recorded run and all 5 queues were read', () => {
+  it('green only when all 13 jobs have a recorded run and all 5 queues were read', () => {
     const tiles = tilesFor(quietInputs());
     expect(byId(tiles, 'scheduled_jobs').status).toBe('green');
     expect(byId(tiles, 'queues').status).toBe('green');
@@ -275,6 +276,83 @@ describe('C-10R on tiles 6 and 7', () => {
         : r
     );
     expect(byId(tilesFor(inputs), 'scheduled_jobs').status).toBe('green');
+  });
+});
+
+describe('QA4b-B1: a job added after run recording began is timed from its own "added on" day', () => {
+  // Run recording began 2026-09-28 (the other jobs' first run); credit-leak-check
+  // was deployed 2026-09-30 and has no run yet. Its first run is 04:45 UTC the next day.
+  const FIRST_RUN_ANY_JOB = '2026-09-28T10:00:00.000Z';
+  const leak = findBosCronJob('credit-leak-check')!;
+
+  function inputsAt(now: Date, noRun: readonly string[] = ['credit-leak-check']): JobsQueuesInputs {
+    const inputs = quietInputs(now);
+    if (inputs.runs.state !== 'ok') throw new Error('fixture');
+    inputs.runs.rows = inputs.runs.rows.map((r) =>
+      noRun.includes(r.job)
+        ? { ...r, last_cron_started_at: null, recent: [], recent_bad: [], runs_24h: 0, runs_7d: 0, first_run_at: FIRST_RUN_ANY_JOB }
+        : { ...r, first_run_at: FIRST_RUN_ANY_JOB }
+    );
+    return inputs;
+  }
+  const leakView = (now: Date, noRun?: readonly string[]) =>
+    buildJobsQueuesView(inputsAt(now, noRun), now).jobs.find((j) => j.id === 'credit-leak-check')!;
+  const tileAt = (now: Date) => {
+    const view = buildJobsQueuesView(inputsAt(now), now);
+    const facts = jobsTileFacts(view);
+    const tile = evaluateHealth({
+      windows: computeHealthWindows(now),
+      settings: { ok: false },
+      failures: { ok: false },
+      spend: { ok: false },
+      critical: { ok: false },
+      entitlements: { ok: false },
+      jobs: { ok: true, value: facts },
+      queues: { ok: true, value: queuesTileFacts(view, now) },
+    }).find((t) => t.id === 'scheduled_jobs')!;
+    return { facts, tile };
+  };
+
+  it('the registry dates the new job; the jobs that predate recording carry no date (global baseline, unchanged)', () => {
+    expect(leak.addedOn).toBe('2026-09-30');
+    expect(BOS_CRON_JOBS.filter((j) => j.addedOn !== undefined).map((j) => j.id)).toEqual(['credit-leak-check']);
+  });
+
+  it('is measured from the END of its added day, or the global baseline if that is later', () => {
+    expect(jobBaseline(leak, FIRST_RUN_ANY_JOB)).toBe('2026-10-01T00:00:00.000Z');
+    expect(jobBaseline(leak, '2026-10-05T00:00:00.000Z')).toBe('2026-10-05T00:00:00.000Z');
+    expect(jobBaseline(leak, null)).toBe('2026-10-01T00:00:00.000Z');
+    expect(jobBaseline({}, FIRST_RUN_ANY_JOB)).toBe(FIRST_RUN_ANY_JOB);
+    expect(jobBaseline({ addedOn: 'not-a-date' }, FIRST_RUN_ANY_JOB)).toBe(FIRST_RUN_ANY_JOB);
+  });
+
+  it('the first night after deploy (and until its first period + grace has passed) reads "No run recorded yet", not "Stopped"', () => {
+    for (const now of ['2026-09-30T15:00:00.000Z', '2026-10-01T03:00:00.000Z', '2026-10-02T00:59:00.000Z']) {
+      const job = leakView(new Date(now));
+      expect({ now, status: job.status }).toEqual({ now, status: 'no_run_yet' });
+    }
+    expect(leakView(new Date('2026-10-01T03:00:00.000Z')).expectedBy).toBe('2026-10-02T00:00:00.000Z');
+  });
+
+  it('once overdue it follows the usual rules: late after interval + grace, then stopped', () => {
+    const late = new Date(Date.parse('2026-10-01T00:00:00.000Z') + (lateAfterMinutes(leak) + 1) * MIN);
+    const stopped = new Date(Date.parse('2026-10-01T00:00:00.000Z') + (stoppedAfterMinutes(leak) + 1) * MIN);
+    expect(leakView(late).status).toBe('late');
+    expect(leakView(stopped).status).toBe('stopped');
+    expect(leakView(new Date('2026-10-03T02:00:00.000Z')).status).toBe('stopped');
+  });
+
+  it('a job without a date keeps the global baseline: no run since 2026-09-28 is still "Stopped" on 2026-10-02', () => {
+    const view = buildJobsQueuesView(inputsAt(new Date('2026-10-02T00:30:00.000Z'), ['insight-detect']), new Date('2026-10-02T00:30:00.000Z'));
+    expect(view.jobs.find((j) => j.id === 'insight-detect')!.status).toBe('stopped');
+  });
+
+  it('the Health "Scheduled jobs" tile stays grey "Not measured yet" (never red) while the new job is within its grace', () => {
+    const { facts, tile } = tileAt(new Date('2026-10-02T00:30:00.000Z'));
+    expect(facts).toMatchObject({ healthy: 12, stopped: 0, noRunYet: 1, worstJob: 'Credit leak check' });
+    expect(tile.status).toBe('not_measured');
+    expect(tile.status).not.toBe('red');
+    expect(tile.headline).not.toBe('A job has stopped');
   });
 });
 

@@ -39,6 +39,7 @@ export type BosCronJobId =
   | 'channel-metrics-sync'
   | 'insight-metrics'
   | 'insight-detect'
+  | 'credit-leak-check'
   | 'payment-reminders';
 
 export type BosQueueId =
@@ -90,6 +91,19 @@ export interface BosCronJob {
   drainsQueue: BosQueueId | null;
   counts: readonly CronCountSpec[];
   partlyDoneWhen: readonly PartlyDoneCondition[];
+  /**
+   * The UTC day (`YYYY-MM-DD`) this job was deployed, for jobs added AFTER run
+   * recording began (QA4b-B1). A job with no Vercel cron run is otherwise timed
+   * from the first run of ANY job (F-6), so a job added days later would read
+   * "Stopped" on its first page load. With this set, a job with no run is timed
+   * from the END of that day (the deploy can land at any hour, and a daily
+   * job's first run is the next morning) or the global baseline, whichever is
+   * later: "No run yet" through its first expected period, then late and
+   * stopped by the usual rules. Omitted = the global baseline (unchanged).
+   * Must be the real deploy day: a date earlier than the deploy brings the
+   * false "Stopped" back.
+   */
+  addedOn?: string;
 }
 
 export interface BosQueue {
@@ -332,6 +346,46 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
     partlyDoneWhen: [
       { kind: 'atLeast', key: 'errors', value: 1 },
       { kind: 'atLeast', key: 'usersRemaining', value: 1 },
+    ],
+  },
+  {
+    /*
+     * Credit deduction slice 4b (workplan §5.4). Read-only: compares
+     * yesterday's Business OS AI calls in token_usage with the credit ledger.
+     * Drains nothing. Counts only, never money (SC-11). A leak is a FINDING,
+     * not a job fault, so it is shown as a number and does not colour the job
+     * (the Q-U2 precedent); the `bos_credit_leak_found` error log is the
+     * alert. The job is "partly done" only when it could not look everywhere.
+     */
+    id: 'credit-leak-check',
+    path: '/api/cron/credit-leak-check',
+    schedule: '45 4 * * *',
+    ...DAILY,
+    ...MAX_60,
+    label: 'Credit leak check',
+    description: "Checks that yesterday's Business OS AI spend was all charged",
+    scheduleWords: 'Daily at 04:45 UTC',
+    // QA4b-B1: added after run recording began (2026-09-27/28); the deploy day.
+    addedOn: '2026-09-30',
+    drainsQueue: null,
+    counts: [
+      { key: 'accountsChecked', path: ['data', 'accountsChecked'], label: 'businesses checked' },
+      { key: 'accountsWithLeak', path: ['data', 'accountsWithLeak'], label: 'businesses with uncharged AI spend' },
+      { key: 'unchargedGroups', path: ['data', 'unchargedGroups'], label: 'AI actions with no charge' },
+      { key: 'ungroupedCalls', path: ['data', 'ungroupedCalls'], label: 'AI calls with no grouping id' },
+      { key: 'underchargedGroups', path: ['data', 'underchargedGroups'], label: 'AI actions charged less than they cost' },
+      { key: 'pendingReconciliation', path: ['data', 'pendingReconciliation'], label: 'fallback-priced, pending reconciliation' },
+      { key: 'knownPathCalls', path: ['data', 'knownPathCalls'], label: 'calls on known uncharged paths' },
+      { key: 'accountsIncomplete', path: ['data', 'accountsIncomplete'], label: 'businesses only partly read' },
+      { key: 'accountsNotChecked', path: ['data', 'accountsNotChecked'], label: 'businesses that could not be read' },
+      { key: 'accountsRemaining', path: ['data', 'accountsRemaining'], label: 'businesses left when time ran out' },
+      { key: 'listingFailed', path: ['data', 'listingFailed'], label: 'business list could not be read (1 = yes)' },
+    ],
+    partlyDoneWhen: [
+      { kind: 'atLeast', key: 'accountsRemaining', value: 1 },
+      { kind: 'atLeast', key: 'accountsIncomplete', value: 1 },
+      { kind: 'atLeast', key: 'accountsNotChecked', value: 1 },
+      { kind: 'atLeast', key: 'listingFailed', value: 1 },
     ],
   },
   {

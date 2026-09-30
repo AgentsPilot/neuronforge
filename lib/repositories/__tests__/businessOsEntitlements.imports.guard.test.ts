@@ -115,6 +115,13 @@ const ALLOWED = new Set(
     // that it calls no other write method (F-8).
     'lib/business-os/invites/redemptionDeps.ts',
     'lib/business-os/invites/__tests__/redemptionDeps.test.ts',
+    // ── Credit deduction slice 4b, 2026-09-29 — the leak check ─────────────
+    // The leak check walks every Business OS account (plan rows, SA S-1) and
+    // needs each one's `period_anchor` to name the billing period of a leak
+    // (SA S-4). READ ONLY: `pagePlans` and `findEntitlementInputs`, nothing
+    // else; listed in NO_STATE_WRITE_REFERRERS below, which pins it. Its callers
+    // are an admin route (`requireAdmin` first) and a fail-closed cron.
+    'lib/business-os/credits/creditLeakCheckDeps.ts',
   ].map((p) => p.split('/').join(sep))
 );
 
@@ -152,6 +159,8 @@ const NO_STATE_WRITE_REFERRERS = [
   'lib/business-os/entitlements/account.ts',
   'lib/business-os/entitlements/shadow.ts',
   'lib/business-os/entitlements/report.ts',
+  // Credit deduction slice 4b: the leak check's wiring reads plan rows only.
+  'lib/business-os/credits/creditLeakCheckDeps.ts',
 ].map((p) => p.split('/').join(sep));
 
 function walk(dir: string, out: string[] = []): string[] {

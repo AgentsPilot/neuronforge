@@ -1,5 +1,5 @@
 /**
- * Every one of the 12 Business OS jobs records every authorised run, including
+ * Every one of the Business OS jobs records every authorised run, including
  * a run with nothing to do; an unauthorised call records nothing (admin
  * reorganisation slice 5; requirement §S5.13 part B, tested per job).
  *

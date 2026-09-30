@@ -117,11 +117,11 @@ describe('strict Zod', () => {
 });
 
 describe('happy path', () => {
-  it('12 jobs healthy and 5 queues clear, read with the admin context', async () => {
+  it('13 jobs healthy and 5 queues clear, read with the admin context', async () => {
     const res = await GET(req());
     expect(res.status).toBe(200);
     const body = await json(res);
-    expect(body.data!.jobs).toHaveLength(12);
+    expect(body.data!.jobs).toHaveLength(13); // 13 since credit deduction slice 4b
     expect(body.data!.queues).toHaveLength(5);
     expect(body.data!.jobs.every((j) => j.status === 'healthy')).toBe(true);
     expect(body.data!.queues.every((q) => q.status === 'clear')).toBe(true);

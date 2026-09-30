@@ -282,6 +282,84 @@ describe('listRowsForAccountPeriods', () => {
   });
 });
 
+describe('listRowsForAccountCreatedInRange (slice 4b, the leak check)', () => {
+  const WRITTEN = { from: new Date('2026-09-27T23:00:00.000Z'), to: new Date('2026-09-29T01:05:00.000Z') };
+
+  it("reads ONE account's charges AND adjustments by created_at, half-open, newest first", async () => {
+    const { client, queries } = recordingClient(() => ({ data: [ledgerRow('1')], error: null }));
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listRowsForAccountCreatedInRange(A, WRITTEN, PAGING);
+
+    expect(result.error).toBeNull();
+    expect(result.data).toEqual({ rows: [ledgerRow('1')], reachedCeiling: false });
+    const [q] = queries;
+    expect(q[0].args).toEqual(['business_os_credit_charges']);
+    expect(argsOf(q, 'select')).toEqual([[CREDIT_LEDGER_ROW_COLUMNS]]);
+    // Scoped to the one account (CLAUDE.md rule 4); no filter on kind or service.
+    expect(argsOf(q, 'eq')).toEqual([['user_id', A]]);
+    expect(argsOf(q, 'in')).toEqual([]);
+    expect(argsOf(q, 'gte')).toEqual([['created_at', WRITTEN.from.toISOString()]]);
+    expect(argsOf(q, 'lt')).toEqual([['created_at', WRITTEN.to.toISOString()]]);
+    expect(argsOf(q, 'lte')).toEqual([]);
+    expect(argsOf(q, 'order')).toEqual([
+      ['created_at', { ascending: false }],
+      ['id', { ascending: false }],
+    ]);
+    expect(argsOf(q, 'range')).toEqual([[0, 1]]);
+  });
+
+  it('pages, de-duplicates by id, and reports the ceiling', async () => {
+    let n = 0;
+    const { client } = recordingClient(() => {
+      const page = [ledgerRow(String(n)), ledgerRow(String(n + 1))];
+      n += 1;
+      return { data: page, error: null };
+    });
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listRowsForAccountCreatedInRange(A, WRITTEN, {
+      pageSize: 2,
+      ceiling: 3,
+    });
+    expect(result.data?.rows.map((r) => r.id)).toEqual(['0', '1', '2']);
+    expect(result.data?.reachedCeiling).toBe(true);
+  });
+
+  it('a short page ends the read below the ceiling', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [ledgerRow('1')], error: null }));
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listRowsForAccountCreatedInRange(A, WRITTEN, PAGING);
+    expect(result.data?.reachedCeiling).toBe(false);
+    expect(queries).toHaveLength(1);
+  });
+
+  it.each([
+    ['a missing account', '' as string, WRITTEN, PAGING],
+    ['a malformed account', 'not-a-uuid', WRITTEN, PAGING],
+    ['an empty half-open range', A, { from: WRITTEN.to, to: WRITTEN.to }, PAGING],
+    ['a reversed range', A, { from: WRITTEN.to, to: WRITTEN.from }, PAGING],
+    ['a page larger than PostgREST returns', A, WRITTEN, { pageSize: 1001, ceiling: 10 }],
+  ])('refuses %s before querying', async (_name, account, range, paging) => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listRowsForAccountCreatedInRange(account, range, paging);
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+    expect(queries).toHaveLength(0);
+  });
+
+  it('returns a failed page as an error, never a partial result, and never throws', async () => {
+    const { client } = recordingClient((_c, i) =>
+      i === 0 ? { data: [ledgerRow('1'), ledgerRow('2')], error: null } : { data: null, error: new Error('page 2') }
+    );
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listRowsForAccountCreatedInRange(A, WRITTEN, PAGING);
+    expect(result).toEqual({ data: null, error: expect.objectContaining({ message: 'page 2' }) });
+
+    const exploding = {
+      from: () => {
+        throw new Error('client exploded');
+      },
+    } as unknown as SupabaseClient;
+    const thrown = await new BusinessOsCreditLedgerReadRepository(exploding).listRowsForAccountCreatedInRange(A, WRITTEN, PAGING);
+    expect(thrown.error?.message).toBe('client exploded');
+  });
+});
+
 describe('findChargesByActionIds', () => {
   const ID = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001';
 
@@ -351,7 +429,12 @@ describe('source guards', () => {
     expect(code).toMatch(/\.lt\(\s*['"]period_start['"]/);
   });
 
-  it('is imported only by the report builder, the barrel and tests', () => {
+  it('bounds created_at the same way (slice 4b: also a microsecond column)', () => {
+    expect(code).not.toMatch(/\.lte\(\s*['"]created_at['"]/);
+    expect(code).toMatch(/\.lt\(\s*['"]created_at['"]/);
+  });
+
+  it('is imported only by the report builder, the leak check (slice 4b), the barrel and tests', () => {
     const roots = ['app', 'lib', 'components', 'hooks', 'scripts'];
     const found: string[] = [];
     const walk = (dir: string) => {
@@ -369,6 +452,10 @@ describe('source guards', () => {
     expect(found.sort()).toEqual(
       [
         'lib/business-os/credits/creditReport.ts',
+        // Slice 4b: types only (the runner takes its reads injected) ...
+        'lib/business-os/credits/creditLeakCheck.ts',
+        // ... and the production wiring, which calls two read methods.
+        'lib/business-os/credits/creditLeakCheckDeps.ts',
         'lib/repositories/BusinessOsCreditLedgerReadRepository.ts',
         'lib/repositories/index.ts',
       ].sort()

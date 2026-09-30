@@ -73,11 +73,12 @@ describe('the Scheduled jobs & queues page', () => {
     expect(fetchMock.mock.calls[0]).toEqual(['/api/admin/jobs-queues', { cache: 'no-store' }]);
   });
 
-  it('lists all 12 jobs and all 5 queues, with a text status label each', async () => {
+  it('lists all 13 jobs and all 5 queues, with a text status label each', async () => {
     mockRoute();
     render(<AdminJobsQueuesPage />);
     await screen.findByTestId('job-calendar-sync');
-    expect(document.querySelectorAll('[data-testid^="job-"]')).toHaveLength(12);
+    // 13 since credit deduction slice 4b added the nightly credit leak check.
+    expect(document.querySelectorAll('[data-testid^="job-"]')).toHaveLength(13);
     expect(document.querySelectorAll('[data-testid^="queue-"]')).toHaveLength(5);
     expect(within(screen.getByTestId('job-lead-response')).getByTestId('status-badge').textContent).toBe('Last run failed');
     expect(within(screen.getByTestId('job-calendar-sync')).getByTestId('status-badge').textContent).toBe('Healthy');
