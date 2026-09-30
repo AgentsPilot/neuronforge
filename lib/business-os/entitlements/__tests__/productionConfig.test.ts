@@ -77,7 +77,7 @@ describe('the shipped configuration', () => {
     }
   });
 
-  it('ships all four plans ACTIVE (2026-09-29)', () => {
+  it('ships every plan ACTIVE except trial (inactive since 2026-09-30)', () => {
     // FYI only today — `planActive.noEffect.test.ts` holds that it changes
     // nothing. Pinned here anyway, so marking a plan inactive shows up in a diff
     // as the decision it is.
@@ -86,9 +86,8 @@ describe('the shipped configuration', () => {
     for (const tier of ['basic', 'pro'] as const) {
       expect(config.matrix.presentation[tier].active).toBe(true);
     }
-    for (const cohort of ['trial', 'champion'] as const) {
-      expect(config.cohorts[cohort].active).toBe(true);
-    }
+    expect(config.cohorts.champion.active).toBe(true);
+    expect(config.cohorts.trial.active).toBe(false);
   });
 
   it('differs between the paid tiers ONLY by chat and credits', () => {
