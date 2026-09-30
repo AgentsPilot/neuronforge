@@ -199,6 +199,15 @@ export const AUDIT_EVENTS = {
   // invitee email, the link, the token, its hash or a provider's error text.
   BOS_INVITE_EMAIL_SENT: 'BOS_INVITE_EMAIL_SENT',
   BOS_INVITE_EMAIL_NOT_SENT: 'BOS_INVITE_EMAIL_NOT_SENT',
+  // Slice 5a (F5a-13): a champion's friend invites. Actor = the champion
+  // account. CREATED carries the language; REVOKED nothing beyond the invite
+  // id; REFUSED the reason class only (`not_eligible`, `own_email`,
+  // `allowance_reached`, `daily_limit`, `already_invited`). Never the friend's
+  // email, the note, the link, the token or its hash. The email outcome reuses
+  // BOS_INVITE_EMAIL_SENT / BOS_INVITE_EMAIL_NOT_SENT with the champion as actor.
+  BOS_FRIEND_INVITE_CREATED: 'BOS_FRIEND_INVITE_CREATED',
+  BOS_FRIEND_INVITE_REVOKED: 'BOS_FRIEND_INVITE_REVOKED',
+  BOS_FRIEND_INVITE_REFUSED: 'BOS_FRIEND_INVITE_REFUSED',
 
   // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
@@ -668,6 +677,22 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'A Business OS invitation email was not sent, or not confirmed in time; the admin was shown the link to copy (reason class only)',
+  },
+  // Slice 5a: a champion's friend invites (FR-28 to FR-32, F5a-13).
+  [AUDIT_EVENTS.BOS_FRIEND_INVITE_CREATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A champion sent a Business OS friend invite to Essentials (language recorded)',
+  },
+  [AUDIT_EVENTS.BOS_FRIEND_INVITE_REVOKED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A champion revoked one of their own Business OS friend invites; its slot returned to their allowance',
+  },
+  [AUDIT_EVENTS.BOS_FRIEND_INVITE_REFUSED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS friend invite send was refused (reason class only)',
   },
   [AUDIT_EVENTS.BUSINESS_DATA_PURGE_BLOCKED]: {
     severity: 'warning',

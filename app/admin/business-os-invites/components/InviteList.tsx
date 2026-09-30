@@ -91,7 +91,14 @@ export function InviteList({ invites, onRevoked, emptyMessage = 'No invites yet.
                 <td className="px-3 py-2 font-mono text-xs">{invite.email}</td>
                 <td className="px-3 py-2">{invite.grantLabel}</td>
                 <td className="px-3 py-2 text-slate-400">{invite.accessSummary}</td>
-                <td className="px-3 py-2 text-slate-400">{invite.inviterDisplayName}</td>
+                <td className="px-3 py-2 text-slate-400">
+                  {invite.inviterDisplayName}
+                  {invite.issuerKind === 'account' && (
+                    <p data-testid="invite-issuer-account" className="mt-1 text-xs text-slate-500">
+                      Champion · <span className="font-mono">{invite.issuerAccountId}</span>
+                    </p>
+                  )}
+                </td>
                 <td className="px-3 py-2 text-slate-400">{day(invite.createdAt)}</td>
                 <td className="px-3 py-2 text-slate-400">
                   {day(invite.linkExpiresAt)} <span className="text-xs text-slate-500">({invite.linkExpiryDays} days)</span>
@@ -103,6 +110,11 @@ export function InviteList({ invites, onRevoked, emptyMessage = 'No invites yet.
                   {invite.state === 'revoked' && invite.revokeReason && (
                     <p className="mt-1 text-xs text-slate-500">
                       {day(invite.revokedAt)}: {invite.revokeReason}
+                    </p>
+                  )}
+                  {invite.state === 'revoked' && invite.revokedByInviter && (
+                    <p data-testid="invite-revoked-by-inviter" className="mt-1 text-xs text-slate-500">
+                      Revoked by the inviter
                     </p>
                   )}
                   {invite.state === 'accepted' && invite.redeemedAccountId && (

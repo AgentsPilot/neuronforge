@@ -122,6 +122,13 @@ const ALLOWED = new Set(
     // else; listed in NO_STATE_WRITE_REFERRERS below, which pins it. Its callers
     // are an admin route (`requireAdmin` first) and a fail-closed cron.
     'lib/business-os/credits/creditLeakCheckDeps.ts',
+    // ── Invite-only signup Slice 5a, 2026-09-30 — friend invites ───────────
+    // The friend-invite routes' production wiring. READ ONLY: the operations
+    // call `findEntitlementInputs` to ask whether the signed-in account is an
+    // in-force champion (T-17 mode: the plan row, never the resolver), and
+    // nothing else; listed in NO_STATE_WRITE_REFERRERS below, which pins it.
+    // The operations themselves name no plan repository (a structural type).
+    'lib/business-os/invites/friendInviteDeps.ts',
   ].map((p) => p.split('/').join(sep))
 );
 
@@ -161,6 +168,8 @@ const NO_STATE_WRITE_REFERRERS = [
   'lib/business-os/entitlements/report.ts',
   // Credit deduction slice 4b: the leak check's wiring reads plan rows only.
   'lib/business-os/credits/creditLeakCheckDeps.ts',
+  // Invite-only signup Slice 5a: the friend-invite wiring reads plan rows only.
+  'lib/business-os/invites/friendInviteDeps.ts',
 ].map((p) => p.split('/').join(sep));
 
 function walk(dir: string, out: string[] = []): string[] {

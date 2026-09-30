@@ -33,6 +33,8 @@ export interface InvitePageCopy {
   free: string;
   perMonth: (priceUsd: number) => string;
   paymentRequired: string;
+  /** Slice 5a (FR-33): a champion's friend invite, before friend signup exists. */
+  signupOpensSoon: string;
   accessOpenEnded: string;
   accessMonths: (months: number) => string;
   accessWhilePaid: string;
@@ -143,6 +145,7 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     free: 'Free',
     perMonth: (price) => `$${price} per month`,
     paymentRequired: 'Payment is required at signup.',
+    signupOpensSoon: 'Sign-up for this invitation opens soon. Keep this email: the link will work then.',
     accessOpenEnded: 'No end date',
     accessMonths: (months) => (months === 1 ? '1 month from signup' : `${months} months from signup`),
     accessWhilePaid: 'While the plan is paid for',
@@ -235,6 +238,7 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     free: 'חינם',
     perMonth: (price) => `$${price} לחודש`,
     paymentRequired: 'נדרש תשלום בעת ההרשמה.',
+    signupOpensSoon: 'ההרשמה להזמנה הזו תיפתח בקרוב. כדאי לשמור את המייל: הקישור יעבוד אז.',
     accessOpenEnded: 'ללא תאריך סיום',
     accessMonths: (months) => (months === 1 ? 'חודש אחד מההרשמה' : `${months} חודשים מההרשמה`),
     accessWhilePaid: 'כל עוד התוכנית בתשלום',
@@ -328,6 +332,7 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     free: 'Gratis',
     perMonth: (price) => `$${price} al mes`,
     paymentRequired: 'Se requiere el pago al registrarte.',
+    signupOpensSoon: 'El registro para esta invitación se abrirá pronto. Guarda este correo: el enlace funcionará entonces.',
     accessOpenEnded: 'Sin fecha de fin',
     accessMonths: (months) => (months === 1 ? '1 mes desde el registro' : `${months} meses desde el registro`),
     accessWhilePaid: 'Mientras el plan esté pagado',

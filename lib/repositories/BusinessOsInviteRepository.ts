@@ -30,13 +30,19 @@
 //      `claimForGoogleSignup`, the same claim for a mailbox proven by a
 //      verified Google ID token; both claims share one builder.
 //
-// FUTURE: champion-issued invites (requirement §14) must get their OWN methods,
-// scoped by `issuer_account_id` (for example `listForIssuerAccount`,
-// `revokeForIssuerAccount`). They must never reuse the `ForAdmin` methods,
-// which would hand one champion every invite on the platform.
+//   4. A CHAMPION account (Slice 5a, SA C-13, T-20), through
+//      `app/api/business-os/friend-invites/**`, signed in with `getUser()`. Its
+//      three methods end in `ForIssuerAccount` and are scoped by the
+//      `issuer_account_id` the ROUTE resolved from the session, never by a
+//      value from the request: `createForIssuerAccount` (the atomic SQL send
+//      function, T-17), `listForIssuerAccount` (a narrow column list, F5a-9)
+//      and `revokeForIssuerAccount` (ownership INSIDE the UPDATE, F5a-8). They
+//      never reuse a `ForAdmin` method, which would hand one champion every
+//      invite on the platform.
 //
-// `token_hash` is written once, by `createForAdmin`, and never selected by any
-// method. `recordInviteEmailOutcome` (Slice 2a) FILTERS on it, so an outcome
+// `token_hash` is written once per invite, by `createForAdmin` or (Slice 5a)
+// by the SQL send function behind `createForIssuerAccount`, and never selected
+// by any method. `recordInviteEmailOutcome` (Slice 2a) FILTERS on it, so an outcome
 // lands only on the link that was emailed. No method logs a token, a hash or an
 // email.
 //
@@ -54,6 +60,7 @@ import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, type Logger } from '@/lib/logger';
 import type {
   AgentRepositoryResult as RepositoryResult,
+  BusinessOsFriendInviteListRow,
   BusinessOsInvite,
   BusinessOsInvitePublicView,
   BusinessOsInviteRedemptionView,
@@ -61,10 +68,13 @@ import type {
   ClaimInviteForSignupInput,
   CountSignupCodeAttemptInput,
   CreateBusinessOsInviteInput,
+  CreateFriendInviteInput,
+  CreateFriendInviteResult,
   IssueSignupCodeInput,
   RecordInviteEmailOutcomeInput,
   RecordRedemptionFailureInput,
   RevokeBusinessOsInviteInput,
+  RevokeFriendInviteInput,
 } from './types';
 
 const INVITES = 'business_os_invites';
@@ -184,10 +194,31 @@ function signupClaimUpdate(
     : query.eq('claimed_account_id', input.observedClaimedAccountId);
 }
 
-/** What the public page's lookup reads (C-4): no email, no issuer, no reasons, no hash. */
+/** What the public page's lookup reads (C-4): no email, no issuer id, no reasons, no hash.
+ *
+ * `issuer_kind` (Slice 5a, F5a-10, SA R-5) is read only so an account-issued
+ * invite never reaches the existing-account check; the view never returns it.
+ */
 export const BUSINESS_OS_INVITE_PUBLIC_COLUMNS =
-  'id, grant_kind, grant_id, access_open_ended, access_months, inviter_display_name, language, ' +
+  'id, issuer_kind, grant_kind, grant_id, access_open_ended, access_months, inviter_display_name, language, ' +
   'personal_note, link_expires_at, first_viewed_at, revoked_at, redeemed_at';
+
+/**
+ * What a champion's own list reads (Slice 5a, F5a-9). Never `token_hash`, the
+ * redeemed account id, `first_viewed_at`, `opened_by_existing_account_at`,
+ * `inviter_reply_to`, `internal_reason`, `signup_code_*`, `redemption_*` or
+ * `email_problem_detail`: the two timestamps would tell a champion whether the
+ * friend looked, and whether the typed address has an account. The last three
+ * columns only derive the status and the allowance; the route never returns them.
+ */
+export const BUSINESS_OS_FRIEND_INVITE_LIST_COLUMNS =
+  'id, email, created_at, link_expires_at, revoked_at, redeemed_at, claimed_account_id';
+
+/** The most invites a champion's list reads, newest first (workplan D-7, SA Q-7). */
+export const BUSINESS_OS_FRIEND_INVITE_LIST_LIMIT = 200;
+
+/** The refusal classes the send function returns (T-17). */
+const FRIEND_INVITE_REFUSALS: ReadonlySet<string> = new Set(['not_eligible', 'allowance_reached', 'daily_limit', 'already_invited']);
 
 /**
  * The admin list shows at most this many invites, newest first. Slice 1c
@@ -382,6 +413,142 @@ export class BusinessOsInviteRepository {
       return { data: count === 1, error: null };
     } catch (error) {
       methodLogger.error({ dbError: safeDbError(error) }, 'Failed to record the invitation email outcome');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  // ============ Champion (behind getUser; scoped by the issuing account) ============
+
+  /**
+   * CHAMPION: issue one friend invite through `business_os_create_friend_invite`
+   * (migration 20261023, T-17, T-21). The function takes a per-issuer advisory
+   * lock, re-checks the in-force cohort, counts against the allowance and the
+   * daily limit, refuses a duplicate live invite, and inserts, in ONE
+   * transaction. Nothing here counts or inserts on its own.
+   *
+   * The arguments are mapped field by field from the allow-list type; nothing
+   * is spread. They are never logged (the email and note are in them), and a
+   * database error is reduced by `safeDbError` (SA R-6): a CHECK failure inside
+   * the function carries "Failing row contains ..." in `details`.
+   */
+  async createForIssuerAccount(input: CreateFriendInviteInput): Promise<RepositoryResult<CreateFriendInviteResult>> {
+    const methodLogger = this.logger.child({ method: 'createForIssuerAccount', accountId: input.issuerAccountId });
+    try {
+      const { data, error } = await this.supabase.rpc('business_os_create_friend_invite', {
+        p_issuer_account_id: input.issuerAccountId,
+        p_issuer_cohort: input.issuerCohort,
+        p_invite_type: input.inviteType,
+        p_grant_id: input.grantId,
+        p_allowance: input.allowance,
+        p_daily_limit: input.dailyLimit,
+        p_daily_window_hours: input.dailyWindowHours,
+        p_token_hash: input.tokenHash,
+        p_email: input.email,
+        p_inviter_display_name: input.inviterDisplayName,
+        p_inviter_reply_to: input.inviterReplyTo,
+        p_language: input.language,
+        p_personal_note: input.personalNote,
+        p_internal_reason: input.internalReason,
+        p_link_expiry_days: input.linkExpiryDays,
+      });
+
+      if (error) throw error;
+      const row = (Array.isArray(data) ? data[0] : data) as
+        | { result_outcome?: unknown; result_invite_id?: unknown; result_link_expires_at?: unknown }
+        | null
+        | undefined;
+      const outcome = row?.result_outcome;
+      if (outcome === 'created' && typeof row?.result_invite_id === 'string' && typeof row.result_link_expires_at === 'string') {
+        methodLogger.info({ inviteId: row.result_invite_id }, 'Friend invite created');
+        return {
+          data: { outcome: 'created', inviteId: row.result_invite_id, linkExpiresAt: row.result_link_expires_at },
+          error: null,
+        };
+      }
+      if (typeof outcome === 'string' && FRIEND_INVITE_REFUSALS.has(outcome)) {
+        return { data: { outcome: outcome as Exclude<CreateFriendInviteResult['outcome'], 'created'> }, error: null };
+      }
+      throw Object.assign(new Error('The friend invite function returned an unexpected shape'), { code: 'FRIEND_INVITE_SHAPE' });
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to create friend invite');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  /**
+   * CHAMPION: the invites THIS account issued, newest first, capped at
+   * `BUSINESS_OS_FRIEND_INVITE_LIST_LIMIT` (F5a-9). Both issuer filters are
+   * here, so no argument can widen it.
+   */
+  async listForIssuerAccount(
+    issuerAccountId: string,
+    options: { limit?: number } = {}
+  ): Promise<RepositoryResult<BusinessOsFriendInviteListRow[]>> {
+    const methodLogger = this.logger.child({ method: 'listForIssuerAccount', accountId: issuerAccountId });
+    const requested = Math.trunc(options.limit ?? BUSINESS_OS_FRIEND_INVITE_LIST_LIMIT) || 1;
+    const limit = Math.min(Math.max(requested, 1), BUSINESS_OS_FRIEND_INVITE_LIST_LIMIT);
+    try {
+      const { data, error } = await this.supabase
+        .from(INVITES)
+        .select(BUSINESS_OS_FRIEND_INVITE_LIST_COLUMNS)
+        .eq('issuer_kind', 'account')
+        .eq('issuer_account_id', issuerAccountId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) throw error;
+      return { data: (data ?? []) as unknown as BusinessOsFriendInviteListRow[], error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to list friend invites');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  /**
+   * CHAMPION: revoke one of THIS account's invites that is neither accepted nor
+   * already revoked, and has no live signup claim (F5a-8, T-20).
+   *
+   * Ownership lives INSIDE the UPDATE (`issuer_kind` + `issuer_account_id`), so
+   * there is no gap between checking and writing, and "not found", "not yours"
+   * and "no longer revocable" are all `false` (the route's one 404).
+   * `revoked_by_admin_id` stays NULL: on an account-issued invite that MEANS
+   * "revoked by the inviter" (the admin list derives `revokedByInviter` from it).
+   *
+   * Counted with `{ count: 'exact' }` and NO `.select()` (see `casWon`):
+   * `mutationOrSelect.guard.test.ts` keeps its single exemption.
+   */
+  async revokeForIssuerAccount(input: RevokeFriendInviteInput): Promise<RepositoryResult<boolean>> {
+    const methodLogger = this.logger.child({
+      method: 'revokeForIssuerAccount',
+      inviteId: input.id,
+      accountId: input.issuerAccountId,
+    });
+    const at = input.now.toISOString();
+    try {
+      const { error, count } = await this.supabase
+        .from(INVITES)
+        .update(
+          {
+            revoked_at: at,
+            revoke_reason: input.reason,
+            updated_at: at,
+          },
+          // A count, not the rows: see `casWon` for why `.select` is not used here.
+          { count: 'exact' }
+        )
+        .eq('id', input.id)
+        .eq('issuer_kind', 'account')
+        .eq('issuer_account_id', input.issuerAccountId)
+        .is('redeemed_at', null)
+        .is('revoked_at', null)
+        .or(noLiveClaim(input.claimLeaseCutoff));
+
+      if (error) throw error;
+      const won = casWon(count);
+      if (won) methodLogger.info('Friend invite revoked by its issuer');
+      return { data: won, error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to revoke friend invite');
       return { data: null, error: toError(error) };
     }
   }

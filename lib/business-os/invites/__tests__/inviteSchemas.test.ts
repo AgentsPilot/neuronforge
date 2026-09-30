@@ -18,8 +18,11 @@ import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
 import {
   completeGoogleSignupSchema,
   createInviteSchema,
+  friendInviteIdSchema,
   inviteIdSchema,
+  revokeFriendInviteSchema,
   revokeInviteSchema,
+  sendFriendInviteSchema,
   validateInviteBodySchema,
 } from '../inviteSchemas';
 
@@ -211,5 +214,38 @@ describe('completeGoogleSignupSchema (Slice 3b; L-1, AC-6, §3.4)', () => {
     ['a token over 512 characters', { token: 'a'.repeat(513) }],
   ])('refuses %s', (_label, overrides) => {
     expect(completeGoogleSignupSchema.safeParse({ ...valid, ...overrides }).success).toBe(false);
+  });
+});
+
+describe('Slice 5a: the champion friend-invite bodies (FR-30, AC-16, SA R-7)', () => {
+  const schemas = { sendFriendInviteSchema, friendInviteIdSchema, revokeFriendInviteSchema };
+  const good = { email: '  Friend@Example.COM ', language: 'he', personalNote: '  Hello  ' };
+
+  it('accepts the email, a note and a language, normalising the email and trimming the note', () => {
+    expect(schemas.sendFriendInviteSchema.parse(good)).toEqual({ email: 'friend@example.com', language: 'he', personalNote: 'Hello' });
+    expect(schemas.sendFriendInviteSchema.parse({ email: 'a@b.co', language: 'en' })).toEqual({ email: 'a@b.co', language: 'en' });
+  });
+
+  it('a whitespace-only note trims to empty (stored as NULL by the operation)', () => {
+    expect(schemas.sendFriendInviteSchema.parse({ ...good, personalNote: '    ' }).personalNote).toBe('');
+  });
+
+  it.each(['grantId', 'inviteType', 'linkExpiryDays', 'issuerAccountId', 'level', 'accountId', 'reason', 'replyTo', 'sendEmail'])(
+    'refuses an injected %s',
+    (key) => {
+      expect(schemas.sendFriendInviteSchema.safeParse({ ...good, [key]: 'x' }).success).toBe(false);
+    }
+  );
+
+  it('refuses a note over 1,000 characters and an unknown language', () => {
+    expect(schemas.sendFriendInviteSchema.safeParse({ ...good, personalNote: 'x'.repeat(1001) }).success).toBe(false);
+    expect(schemas.sendFriendInviteSchema.safeParse({ ...good, language: 'fr' }).success).toBe(false);
+  });
+
+  it('the revoke path takes a uuid and an empty body only', () => {
+    expect(schemas.friendInviteIdSchema.safeParse('11111111-1111-4111-8111-111111111111').success).toBe(true);
+    expect(schemas.friendInviteIdSchema.safeParse('abc').success).toBe(false);
+    expect(schemas.revokeFriendInviteSchema.safeParse({}).success).toBe(true);
+    expect(schemas.revokeFriendInviteSchema.safeParse({ reason: 'x' }).success).toBe(false);
   });
 });
