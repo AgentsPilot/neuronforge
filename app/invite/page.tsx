@@ -36,6 +36,11 @@
  * sign out first. The offer is still shown, but nothing on the page invites
  * them to act as the signed-in account. This is display only; the Slice 1b
  * signup routes also refuse a session on the server.
+ *
+ * ── Slice 5a ────────────────────────────────────────────────────────────────
+ * `signup_opens_soon` (FR-33, F5a-10): a champion's friend invite. The offer
+ * is shown (who invited, the note, Essentials, its price, "payment required")
+ * with NO signup form and NO Google button, until friend signup exists (5b).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -44,7 +49,13 @@ import { googleSignInClientId } from '@/lib/business-os/invites/googleSignInConf
 import { marketingUrl } from '@/lib/utils/origins';
 
 import { GoogleSignupButton } from './GoogleSignupButton';
-import { INVITE_PAGE_COPY, directionOf, inviteLocaleOf, type InviteLocale } from './invitePageCopy';
+import {
+  INVITE_PAGE_COPY,
+  directionOf,
+  inviteLocaleOf,
+  type InviteLocale,
+  type InvitePageCopy as InvitePageCopyShape,
+} from './invitePageCopy';
 import { SignupForm } from './SignupForm';
 import { useSignedInVisitor } from './useSignedInVisitor';
 
@@ -74,6 +85,15 @@ type InviteResponse =
       maskedEmail: string;
     }
   | {
+      /** Slice 5a (FR-33): a champion's friend invite. The offer, and no form. */
+      state: 'signup_opens_soon';
+      language: string;
+      inviterDisplayName: string;
+      personalNote: string | null;
+      linkExpiresAt: string;
+      offer: InviteOffer;
+    }
+  | {
       state: 'existing_account' | 'expired' | 'revoked' | 'used' | 'unavailable';
       language: string;
       inviterDisplayName: string;
@@ -93,6 +113,69 @@ function formatDate(iso: string, locale: InviteLocale): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso.slice(0, 10);
   return new Intl.DateTimeFormat(locale, { dateStyle: 'long', timeZone: 'UTC' }).format(date);
+}
+
+/** What `valid` and `signup_opens_soon` both show: who invited, the note, the offer and the expiry. */
+type OfferState = Extract<InviteResponse, { state: 'valid' | 'signup_opens_soon' }>;
+
+function InviteOfferDetails({ data, copy, locale }: { data: OfferState; copy: InvitePageCopyShape; locale: InviteLocale }) {
+  return (
+    <>
+      <h1 className="text-2xl font-semibold">{copy.validHeading(data.inviterDisplayName)}</h1>
+
+      {data.personalNote && (
+        <figure className="rounded-lg bg-slate-50 p-4">
+          <figcaption className="mb-1 text-xs font-medium text-slate-500">
+            {copy.noteHeading(data.inviterDisplayName)}
+          </figcaption>
+          <blockquote data-testid="invite-note" className="whitespace-pre-line text-slate-800">
+            {data.personalNote}
+          </blockquote>
+        </figure>
+      )}
+
+      <div className="space-y-2">
+        <h2 className="text-sm font-semibold text-slate-500">{copy.offerHeading}</h2>
+        <p data-testid="invite-plan" className="text-lg font-semibold">
+          {data.offer.planName}
+        </p>
+        <p className="text-slate-700">
+          {data.offer.free ? copy.free : copy.perMonth(data.offer.monthlyPriceUsd)}
+          {' · '}
+          {data.offer.access.kind === 'months'
+            ? copy.accessMonths(data.offer.access.months)
+            : data.offer.access.kind === 'while_paid'
+              ? copy.accessWhilePaid
+              : copy.accessOpenEnded}
+        </p>
+        {!data.offer.free && <p className="text-sm text-slate-600">{copy.paymentRequired}</p>}
+      </div>
+
+      {data.offer.included.length > 0 && (
+        <div className="space-y-2">
+          <h2 className="text-sm font-semibold text-slate-500">{copy.includedHeading}</h2>
+          <ul className="space-y-1 text-sm text-slate-700">
+            {data.offer.included.map((row) => (
+              <li key={row.category}>
+                {/*
+                  `describePlanOffer` names the heading, it does not word
+                  it. Falls back to the raw key rather than hiding the
+                  row: a missing heading should be visible and fixable,
+                  not silently drop something the invite is offering.
+                */}
+                <span className="font-medium">
+                  {copy.planCategory[row.labelKey] ?? row.labelKey}:
+                </span>{' '}
+                {row.summary}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <p className="text-sm text-slate-600">{copy.linkExpires(formatDate(data.linkExpiresAt, locale))}</p>
+    </>
+  );
 }
 
 export default function InvitePage() {
@@ -226,59 +309,7 @@ export default function InvitePage() {
 
         {data?.state === 'valid' && (
           <section data-testid="invite-state-valid" className="space-y-5">
-            <h1 className="text-2xl font-semibold">{copy.validHeading(data.inviterDisplayName)}</h1>
-
-            {data.personalNote && (
-              <figure className="rounded-lg bg-slate-50 p-4">
-                <figcaption className="mb-1 text-xs font-medium text-slate-500">
-                  {copy.noteHeading(data.inviterDisplayName)}
-                </figcaption>
-                <blockquote data-testid="invite-note" className="whitespace-pre-line text-slate-800">
-                  {data.personalNote}
-                </blockquote>
-              </figure>
-            )}
-
-            <div className="space-y-2">
-              <h2 className="text-sm font-semibold text-slate-500">{copy.offerHeading}</h2>
-              <p data-testid="invite-plan" className="text-lg font-semibold">
-                {data.offer.planName}
-              </p>
-              <p className="text-slate-700">
-                {data.offer.free ? copy.free : copy.perMonth(data.offer.monthlyPriceUsd)}
-                {' · '}
-                {data.offer.access.kind === 'months'
-                  ? copy.accessMonths(data.offer.access.months)
-                  : data.offer.access.kind === 'while_paid'
-                    ? copy.accessWhilePaid
-                    : copy.accessOpenEnded}
-              </p>
-              {!data.offer.free && <p className="text-sm text-slate-600">{copy.paymentRequired}</p>}
-            </div>
-
-            {data.offer.included.length > 0 && (
-              <div className="space-y-2">
-                <h2 className="text-sm font-semibold text-slate-500">{copy.includedHeading}</h2>
-                <ul className="space-y-1 text-sm text-slate-700">
-                  {data.offer.included.map((row) => (
-                    <li key={row.category}>
-                      {/*
-                        `describePlanOffer` names the heading, it does not word
-                        it. Falls back to the raw key rather than hiding the
-                        row: a missing heading should be visible and fixable,
-                        not silently drop something the invite is offering.
-                      */}
-                      <span className="font-medium">
-                        {copy.planCategory[row.labelKey] ?? row.labelKey}:
-                      </span>{' '}
-                      {row.summary}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            <p className="text-sm text-slate-600">{copy.linkExpires(formatDate(data.linkExpiresAt, locale))}</p>
+            <InviteOfferDetails data={data} copy={copy} locale={locale} />
 
             {/* Slice 1b: the form, only for a visitor the session check says is
                 signed out (L-8). A signed-in visitor sees the notice above. */}
@@ -301,6 +332,17 @@ export default function InvitePage() {
                 signInLabel={copy.signIn}
               />
             )}
+          </section>
+        )}
+
+        {/* Slice 5a (FR-33): the offer, and NO signup form and NO Google button.
+            Nothing is created from here until friend signup exists (5b). */}
+        {data?.state === 'signup_opens_soon' && (
+          <section data-testid="invite-state-signup_opens_soon" className="space-y-5">
+            <InviteOfferDetails data={data} copy={copy} locale={locale} />
+            <p data-testid="invite-signup-opens-soon" className="rounded-lg bg-slate-50 p-4 text-slate-800">
+              {copy.signupOpensSoon}
+            </p>
           </section>
         )}
 

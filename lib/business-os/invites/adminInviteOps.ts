@@ -116,6 +116,16 @@ export interface InviteListView {
   emailStatus: InviteEmailStatus;
   /** Slice 2a: when that status was reached, or `null` for "not emailed". */
   emailStatusAt: string | null;
+  /** Slice 5a (F5a-11): who issued it. `account` is a champion's friend invite. */
+  issuerKind: 'admin' | 'account';
+  /** Slice 5a (F5a-11): the issuing champion's account id, or `null` for an admin invite. */
+  issuerAccountId: string | null;
+  /**
+   * Slice 5a (F5a-8): revoked by the champion who sent it. An account-issued
+   * invite revoked with no admin id was revoked by its inviter; an admin's
+   * revoke always stamps the admin's id.
+   */
+  revokedByInviter: boolean;
 }
 
 /** The FR-12a record as the admin row shows it (SA D-2, T-16). */
@@ -151,6 +161,9 @@ export const INVITE_LIST_VIEW_KEYS: ReadonlyArray<keyof InviteListView> = [
   'redemptionFailure',
   'emailStatus',
   'emailStatusAt',
+  'issuerKind',
+  'issuerAccountId',
+  'revokedByInviter',
 ];
 
 /** The D-3 derivation, in one place (the C-11 one-derivation rule). */
@@ -199,6 +212,9 @@ export function toInviteListView(
       : null,
     emailStatus: email.status,
     emailStatusAt: email.at,
+    issuerKind: row.issuer_kind,
+    issuerAccountId: row.issuer_kind === 'account' ? row.issuer_account_id : null,
+    revokedByInviter: row.issuer_kind === 'account' && row.revoked_at !== null && row.revoked_by_admin_id === null,
   };
 }
 
@@ -332,9 +348,22 @@ export interface CreateInviteDeps {
 }
 
 /**
+ * The inviter's name as it is snapshotted (C-9): `profiles.full_name`, trimmed
+ * and capped at `INVITER_NAME_MAX` code points; otherwise "AgentPilot".
+ *
+ * Shared by admin invites and, from Slice 5a, a champion's friend invites (SA
+ * R-1): a nameless champion is "AgentPilot" too, NEVER their email, because the
+ * snapshot is shown on the public page to anyone holding the link and an
+ * address in a From display name is a phishing pattern.
+ */
+export function inviterNameFromProfile(fullName: unknown): string {
+  const name = typeof fullName === 'string' ? Array.from(fullName.trim()).slice(0, INVITER_NAME_MAX).join('').trim() : '';
+  return name.length > 0 ? name : INVITER_NAME_FALLBACK;
+}
+
+/**
  * The inviter's name, snapshotted onto the invite (C-9), so the public page
- * never reads admin data. `profiles.full_name`, trimmed and capped; otherwise
- * "AgentPilot". A failed read is a warning, not a failed invite.
+ * never reads admin data. A failed read is a warning, not a failed invite.
  */
 async function inviterDisplayNameFor(deps: CreateInviteDeps): Promise<string> {
   const { data, error } = await deps.profileRepository.findById(deps.adminId);
@@ -343,8 +372,7 @@ async function inviterDisplayNameFor(deps: CreateInviteDeps): Promise<string> {
     return INVITER_NAME_FALLBACK;
   }
 
-  const name = typeof data?.full_name === 'string' ? Array.from(data.full_name.trim()).slice(0, INVITER_NAME_MAX).join('').trim() : '';
-  return name.length > 0 ? name : INVITER_NAME_FALLBACK;
+  return inviterNameFromProfile(data?.full_name);
 }
 
 /**

@@ -903,3 +903,23 @@ describe('Slice 3b, SA R-1: a payload-bearing library error reaches no log, audi
     expect(everything).not.toContain('Token used too late');
   });
 });
+
+describe('Slice 5a (F5a-10): a champion friend invite cannot be redeemed until 5b', () => {
+  // A friend invite as 5a writes it: issued by an account, Paid, a tier grant.
+  const friendInvite = () =>
+    inviteRow({ issuer_kind: 'account', invite_type: 'paid', grant_kind: 'tier', grant_id: 'tier-x', access_open_ended: null });
+
+  it.each([
+    ['requestSignupCode', (deps: RedemptionDeps) => requestSignupCode(TOKEN, deps)],
+    ['completeSignup', (deps: RedemptionDeps) => complete(deps)],
+    ['completeGoogleSignup', (deps: RedemptionDeps) => google(deps)],
+  ])('%s refuses it BEFORE any account lookup, code, email, claim or user', async (_entry, run) => {
+    const w = world({ row: friendInvite() });
+    expect(await run(w.deps)).toMatchObject({ ok: false, status: 409, error: 'paid_invites_not_available' });
+    // Only the token lookup ran: no existing-account question (the champion
+    // holds the link), no code sent, no claim, no user created, nothing verified.
+    expect(w.calls).toEqual(['find']);
+    expect(w.sent).toEqual([]);
+    expect(w.created).toEqual([]);
+  });
+});

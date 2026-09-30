@@ -25,6 +25,8 @@ jest.mock('@/lib/logger', () => {
 });
 
 import {
+  BUSINESS_OS_FRIEND_INVITE_LIST_COLUMNS,
+  BUSINESS_OS_FRIEND_INVITE_LIST_LIMIT,
   BUSINESS_OS_INVITE_ADMIN_COLUMNS,
   BUSINESS_OS_INVITE_LIST_LIMIT,
   BUSINESS_OS_INVITE_PUBLIC_COLUMNS,
@@ -32,7 +34,7 @@ import {
   BusinessOsInviteRepository,
   safeDbError,
 } from '../BusinessOsInviteRepository';
-import type { CreateBusinessOsInviteInput } from '../types';
+import type { CreateBusinessOsInviteInput, CreateFriendInviteInput } from '../types';
 
 type Call = { method: string; args: unknown[] };
 
@@ -50,6 +52,10 @@ function recordingClient(result: { data: unknown; error: unknown; count?: number
     from: (table: string) => {
       calls.push({ method: 'from', args: [table] });
       return builder;
+    },
+    rpc: (name: string, args: unknown) => {
+      calls.push({ method: 'rpc', args: [name, args] });
+      return Promise.resolve(result);
     },
   } as unknown as SupabaseClient;
   return { client, calls };
@@ -94,6 +100,26 @@ function input(): CreateBusinessOsInviteInput {
   };
 }
 
+function friendInput(): CreateFriendInviteInput {
+  return {
+    issuerAccountId: ACCOUNT,
+    issuerCohort: 'cohort-a',
+    inviteType: 'type-b',
+    grantId: 'tier-a',
+    allowance: 5,
+    dailyLimit: 10,
+    dailyWindowHours: 24,
+    tokenHash: HASH,
+    email: 'friend@example.com',
+    inviterDisplayName: 'Dana',
+    inviterReplyTo: 'dana@example.com',
+    language: 'he',
+    personalNote: 'Come join',
+    internalReason: 'Friend invite from a champion account',
+    linkExpiryDays: 30,
+  };
+}
+
 beforeEach(() => {
   logged.length = 0;
 });
@@ -108,12 +134,13 @@ describe('column constants', () => {
     expect(BUSINESS_OS_INVITE_PUBLIC_COLUMNS).not.toContain('token_hash');
   });
 
-  it('the public columns hold no email, issuer, reason or redeemer', () => {
-    for (const column of ['email', 'issuer', 'reason', 'redeemed_account_id', 'revoked_by_admin_id']) {
+  it('the public columns hold no email, issuer id, reason or redeemer (issuer_kind only, Slice 5a R-5)', () => {
+    for (const column of ['email', 'issuer_admin_id', 'issuer_account_id', 'reason', 'redeemed_account_id', 'revoked_by_admin_id']) {
       expect(BUSINESS_OS_INVITE_PUBLIC_COLUMNS).not.toContain(column);
     }
     expect(BUSINESS_OS_INVITE_PUBLIC_COLUMNS.split(', ')).toEqual([
       'id',
+      'issuer_kind',
       'grant_kind',
       'grant_id',
       'access_open_ended',
@@ -697,6 +724,145 @@ describe('Slice 1b: the signup methods (token-scoped, compare-and-swap)', () => 
   });
 });
 
+describe('Slice 5a: createForIssuerAccount (the atomic SQL send, T-17)', () => {
+  it('calls the send function with exactly the allow-listed arguments, mapped field by field', async () => {
+    const { client, calls } = recordingClient({
+      data: [{ result_outcome: 'created', result_invite_id: ID, result_link_expires_at: '2026-10-31T12:00:00+00:00' }],
+      error: null,
+    });
+    const result = await new BusinessOsInviteRepository(client).createForIssuerAccount(friendInput());
+
+    expect(result).toEqual({ data: { outcome: 'created', inviteId: ID, linkExpiresAt: '2026-10-31T12:00:00+00:00' }, error: null });
+    expect(calls).toEqual([
+      {
+        method: 'rpc',
+        args: [
+          'business_os_create_friend_invite',
+          {
+            p_issuer_account_id: ACCOUNT,
+            p_issuer_cohort: 'cohort-a',
+            p_invite_type: 'type-b',
+            p_grant_id: 'tier-a',
+            p_allowance: 5,
+            p_daily_limit: 10,
+            p_daily_window_hours: 24,
+            p_token_hash: HASH,
+            p_email: 'friend@example.com',
+            p_inviter_display_name: 'Dana',
+            p_inviter_reply_to: 'dana@example.com',
+            p_language: 'he',
+            p_personal_note: 'Come join',
+            p_internal_reason: 'Friend invite from a champion account',
+            p_link_expiry_days: 30,
+          },
+        ],
+      },
+    ]);
+  });
+
+  it.each(['not_eligible', 'allowance_reached', 'daily_limit', 'already_invited'])('returns the refusal class %s', async (outcome) => {
+    const { client } = recordingClient({ data: [{ result_outcome: outcome, result_invite_id: null, result_link_expires_at: null }], error: null });
+    const result = await new BusinessOsInviteRepository(client).createForIssuerAccount(friendInput());
+    expect(result).toEqual({ data: { outcome }, error: null });
+  });
+
+  it('an unexpected shape is an error, never a success', async () => {
+    const { client } = recordingClient({ data: [{ result_outcome: 'something_else' }], error: null });
+    const result = await new BusinessOsInviteRepository(client).createForIssuerAccount(friendInput());
+    expect(result.data).toBeNull();
+    expect((result.error as Error & { code?: string }).code).toBe('FRIEND_INVITE_SHAPE');
+  });
+
+  it('never logs the arguments (the email and the note are in them)', async () => {
+    const { client } = recordingClient({ data: [{ result_outcome: 'created', result_invite_id: ID, result_link_expires_at: '2026-10-31T12:00:00Z' }], error: null });
+    await new BusinessOsInviteRepository(client).createForIssuerAccount(friendInput());
+    const text = JSON.stringify(logged);
+    expect(text).not.toContain('friend@example.com');
+    expect(text).not.toContain('Come join');
+    expect(text).not.toContain(HASH);
+  });
+});
+
+describe('Slice 5a: listForIssuerAccount (F5a-9)', () => {
+  it('reads only the narrow champion columns, scoped by BOTH issuer filters, newest first', async () => {
+    const { client, calls } = recordingClient({ data: [], error: null });
+    const result = await new BusinessOsInviteRepository(client).listForIssuerAccount(ACCOUNT);
+    expect(result).toEqual({ data: [], error: null });
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_invites'] },
+      { method: 'select', args: [BUSINESS_OS_FRIEND_INVITE_LIST_COLUMNS] },
+      { method: 'eq', args: ['issuer_kind', 'account'] },
+      { method: 'eq', args: ['issuer_account_id', ACCOUNT] },
+      { method: 'order', args: ['created_at', { ascending: false }] },
+      { method: 'limit', args: [BUSINESS_OS_FRIEND_INVITE_LIST_LIMIT] },
+    ]);
+  });
+
+  it('never selects what would tell a champion whether the friend looked or has an account', () => {
+    expect(BUSINESS_OS_FRIEND_INVITE_LIST_COLUMNS.split(', ')).toEqual([
+      'id',
+      'email',
+      'created_at',
+      'link_expires_at',
+      'revoked_at',
+      'redeemed_at',
+      'claimed_account_id',
+    ]);
+    for (const column of ['token_hash', 'first_viewed_at', 'opened_by_existing_account_at', 'inviter_reply_to', 'internal_reason', 'signup_code', 'redemption_', 'email_problem_detail', 'redeemed_account_id']) {
+      expect(BUSINESS_OS_FRIEND_INVITE_LIST_COLUMNS).not.toContain(column);
+    }
+  });
+
+  it('clamps the limit to the cap', async () => {
+    const { client, calls } = recordingClient({ data: [], error: null });
+    await new BusinessOsInviteRepository(client).listForIssuerAccount(ACCOUNT, { limit: 10_000 });
+    expect(calls.find((call) => call.method === 'limit')?.args).toEqual([BUSINESS_OS_FRIEND_INVITE_LIST_LIMIT]);
+  });
+});
+
+describe('Slice 5a: revokeForIssuerAccount (F5a-8, T-20)', () => {
+  const revoke = { id: ID, issuerAccountId: ACCOUNT, reason: 'Revoked by the inviting champion', now: NOW, claimLeaseCutoff: CUTOFF };
+
+  it('is ONE count-only UPDATE with ownership inside it, and no .select (the mutationOrSelect lesson)', async () => {
+    const { client, calls } = recordingClient({ data: null, error: null, count: 1 });
+    const result = await new BusinessOsInviteRepository(client).revokeForIssuerAccount(revoke);
+    expect(result).toEqual({ data: true, error: null });
+    expectCountOnlyUpdate(calls);
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_invites'] },
+      {
+        method: 'update',
+        args: [{ revoked_at: NOW.toISOString(), revoke_reason: 'Revoked by the inviting champion', updated_at: NOW.toISOString() }, { count: 'exact' }],
+      },
+      { method: 'eq', args: ['id', ID] },
+      { method: 'eq', args: ['issuer_kind', 'account'] },
+      { method: 'eq', args: ['issuer_account_id', ACCOUNT] },
+      { method: 'is', args: ['redeemed_at', null] },
+      { method: 'is', args: ['revoked_at', null] },
+      { method: 'or', args: [`claimed_at.is.null,claimed_at.lt."${CUTOFF.toISOString()}"`] },
+    ]);
+  });
+
+  it('leaves revoked_by_admin_id alone (NULL on an account-issued row means "revoked by the inviter")', async () => {
+    const { client, calls } = recordingClient({ data: null, error: null, count: 1 });
+    await new BusinessOsInviteRepository(client).revokeForIssuerAccount(revoke);
+    const patch = calls.find((call) => call.method === 'update')?.args[0] as Record<string, unknown>;
+    expect(Object.keys(patch)).not.toContain('revoked_by_admin_id');
+  });
+
+  it('0 rows (not found, not yours, not revocable) is false, not an error', async () => {
+    const { client } = recordingClient({ data: null, error: null, count: 0 });
+    expect(await new BusinessOsInviteRepository(client).revokeForIssuerAccount(revoke)).toEqual({ data: false, error: null });
+  });
+
+  it('more than one row is an error, never a win', async () => {
+    const { client } = recordingClient({ data: null, error: null, count: 2 });
+    const result = await new BusinessOsInviteRepository(client).revokeForIssuerAccount(revoke);
+    expect(result.data).toBeNull();
+    expect((result.error as Error & { code?: string }).code).toBe('CAS_ROW_COUNT');
+  });
+});
+
 describe('markFirstViewed', () => {
   it('stamps first_viewed_at only while it is null, and sets updated_at', async () => {
     const { client, calls } = recordingClient({ data: null, error: null });
@@ -750,6 +916,10 @@ describe('C-13: the service-role reason is written down, and the admin methods a
         'recordInviteEmailOutcome',
         // Slice 3b: the signup claim for a mailbox proven by Google, a CAS like claimForSignup.
         'claimForGoogleSignup',
+        // Slice 5a: a champion's own invites, scoped by the issuing account (C-13, F5a-7).
+        'createForIssuerAccount',
+        'listForIssuerAccount',
+        'revokeForIssuerAccount',
       ].sort()
     );
   });
@@ -821,6 +991,13 @@ describe('M-1 (C-3): a database error never carries row values into a log or a r
     [
       'recordInviteEmailOutcome',
       (repo) => repo.recordInviteEmailOutcome({ id: ID, tokenHash: HASH, now: NOW, outcome: { kind: 'sent', providerMessageId: 'msg_1' } }),
+    ],
+    // Slice 5a (SA R-6): the RPC's CHECK failure carries the friend's email and note in `details`.
+    ['createForIssuerAccount', (repo) => repo.createForIssuerAccount(friendInput())],
+    ['listForIssuerAccount', (repo) => repo.listForIssuerAccount(ACCOUNT)],
+    [
+      'revokeForIssuerAccount',
+      (repo) => repo.revokeForIssuerAccount({ id: ID, issuerAccountId: ACCOUNT, reason: 'Revoked by the inviting champion', now: NOW, claimLeaseCutoff: CUTOFF }),
     ],
   ];
 

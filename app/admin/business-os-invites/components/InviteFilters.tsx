@@ -8,7 +8,13 @@
 
 import { Search, X } from 'lucide-react';
 
-import { INVITE_STATE_FILTERS, type InviteListFilter, type InviteStateFilter } from '../inviteFilter';
+import {
+  INVITE_ISSUER_FILTERS,
+  INVITE_STATE_FILTERS,
+  type InviteIssuerFilter,
+  type InviteListFilter,
+  type InviteStateFilter,
+} from '../inviteFilter';
 
 interface Props {
   filter: InviteListFilter;
@@ -65,6 +71,22 @@ export function InviteFilters({ filter, inviteTypes, shown, total, isActive, onC
           <option value="all">All types</option>
           {inviteTypes.map((option) => (
             <option key={option.type} value={option.type}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="flex items-center gap-1 text-sm text-slate-400">
+        <span className="sr-only">Filter by issuer</span>
+        <select
+          data-testid="invite-issuer-filter"
+          value={filter.issuer}
+          onChange={(event) => onChange({ ...filter, issuer: event.target.value as InviteIssuerFilter })}
+          className="rounded border border-slate-600 bg-slate-900 px-2 py-1.5 text-sm text-slate-200"
+        >
+          {INVITE_ISSUER_FILTERS.map((option) => (
+            <option key={option.value} value={option.value}>
               {option.label}
             </option>
           ))}
