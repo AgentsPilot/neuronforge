@@ -95,6 +95,8 @@ interface EditingSmartLink {
   metadata?: {
     journeyType?: 'contact-only' | 'full';
     serviceIds?: string[];
+    /** The services this link deliberately leaves off — see the smart-link API. */
+    excludedServiceIds?: string[];
     flow?: string[];
     destinationType?: 'form' | 'booking';
   } | null;
@@ -425,6 +427,7 @@ const LABELS = {
     all_services: 'All Services',
     all_services_desc: 'Let visitors choose from all your available services',
     multi_select_hint: 'Select services to include (or skip to show all)',
+    all_services_follow: 'This link offers every service, including ones you add later.',
     // Step 2 - Journey
     journey_add_step: 'Add step',
     journey_step_booking: 'Schedule',
@@ -524,6 +527,7 @@ const LABELS = {
     all_services: 'Todos los Servicios',
     all_services_desc: 'Dejar que los visitantes elijan de todos tus servicios disponibles',
     multi_select_hint: 'Selecciona servicios a incluir (o salta para mostrar todos)',
+    all_services_follow: 'Este enlace ofrece todos los servicios, incluidos los que añadas más adelante.',
     journey_add_step: 'Añadir paso',
     journey_step_booking: 'Agendar',
     journey_step_booking_desc: 'Elegir fecha y hora',
@@ -620,6 +624,7 @@ const LABELS = {
     all_services: 'כל השירותים',
     all_services_desc: 'אפשר למבקרים לבחור מכל השירותים הזמינים שלך',
     multi_select_hint: 'בחר שירותים לכלול (או דלג להצגת הכל)',
+    all_services_follow: 'הקישור הזה כולל את כל השירותים, גם כאלה שתוסיף בהמשך.',
     journey_add_step: 'הוסף שלב',
     journey_step_booking: 'תיאום',
     journey_step_booking_desc: 'בחירת תאריך ושעה',
@@ -930,6 +935,20 @@ export function LandingPageWizard({
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(
     isEditMode && editingSmartLink?.metadata?.serviceIds ? editingSmartLink.metadata.serviceIds : []
   );
+  /**
+   * Does this link offer the WHOLE catalogue?
+   *
+   * The answer decides whether the link records a list of services or nothing
+   * at all. Nothing is what keeps it true: a link that enumerates every service
+   * is frozen on the day it is made, and the one thing a booking link must
+   * never do is stop offering something the business sells.
+   *
+   * Computed from the live list rather than stored, so ticking the last unticked
+   * service turns the link into a follow-everything link by itself.
+   */
+  const offersEverything =
+    services.length > 0 && services.every(service => selectedServiceIds.includes(service.id));
+
   const [showCreateService, setShowCreateService] = useState(false);
 
   // Step 2: Journey selection - custom flow builder
@@ -1022,13 +1041,26 @@ export function LandingPageWizard({
           }));
         setServices(mapped);
 
-        // A link with no stored services offers all of them — that is what an
-        // absent `services=` parameter means on the public page. Editing one
-        // showed an empty picker, which reads as "nothing selected" rather
-        // than "everything", and saving from there would have narrowed the
-        // link to nothing without the user asking.
+        /*
+         * What is ticked when a link is reopened.
+         *
+         * A link that names no service offers the whole catalogue — that is
+         * what an absent parameter means on the public page — minus whatever it
+         * excludes. So the picker starts from EVERYTHING and unticks the
+         * exceptions, which is also how a service created since the link was
+         * made arrives already ticked.
+         *
+         * It used to show an empty picker for such a link, which reads as
+         * "nothing selected" rather than "everything", and saving from there
+         * narrowed the link to nothing without the owner asking.
+         */
         if (isEditMode && !editingSmartLink?.metadata?.serviceIds?.length) {
-          setSelectedServiceIds(mapped.map((service: SchedulingService) => service.id));
+          const excluded = new Set(editingSmartLink?.metadata?.excludedServiceIds ?? []);
+          setSelectedServiceIds(
+            mapped
+              .map((service: SchedulingService) => service.id)
+              .filter((id: string) => !excluded.has(id))
+          );
         }
       }
     } catch {
@@ -1309,6 +1341,8 @@ export function LandingPageWizard({
     metadata?: {
       journeyType?: 'contact-only' | 'full';
       serviceIds?: string[];
+      /** The services this link deliberately leaves off — see the smart-link API. */
+      excludedServiceIds?: string[];
       flow?: string[];
     }
   ) => {
@@ -1354,6 +1388,8 @@ export function LandingPageWizard({
     metadata?: {
       journeyType?: 'contact-only' | 'full';
       serviceIds?: string[];
+      /** The services this link deliberately leaves off — see the smart-link API. */
+      excludedServiceIds?: string[];
       flow?: string[];
     }
   ) => {
@@ -1426,11 +1462,31 @@ export function LandingPageWizard({
     if (selectedServiceIds.length === 1) {
       // Single service - pre-select it
       serviceParam = `&service=${selectedServiceIds[0]}`;
-    } else if (selectedServiceIds.length > 1) {
-      // Multiple services - filter to show only these
-      serviceParam = `&services=${selectedServiceIds.join(',')}`;
+    } else if (selectedServiceIds.length > 1 && !offersEverything) {
+      /*
+       * A genuine subset, written as what it LEAVES OFF.
+       *
+       * The inclusion list this replaced froze the link: a service created
+       * afterwards could never be on it, because it was not in a list written
+       * before it existed. Saying what is excluded makes the default for
+       * anything new "on the link", which is what a booking link has to do.
+       */
+      const excluded = services
+        .filter(service => !selectedServiceIds.includes(service.id))
+        .map(service => service.id);
+      serviceParam = excluded.length > 0 ? `&exclude=${excluded.join(',')}` : '';
     }
-    // If no services selected, show all services (no param needed)
+    /*
+     * Nothing selected, or everything selected, pins nothing.
+     *
+     * A link that enumerated every service froze the catalogue on the day it
+     * was made: a service added later could never appear on it, and services
+     * deleted since stayed in the URL for ever. The link was even NAMED for the
+     * count — "5 services" — while serving three.
+     *
+     * An absent parameter already means "all services" to the public page, so
+     * saying nothing is both the smaller URL and the only one that stays true.
+     */
 
     // `?` then a stripped leading `&`, so the URL is well formed whether or not
     // any services were chosen.
@@ -1531,9 +1587,23 @@ export function LandingPageWizard({
         } else {
           linkName = labels.smart_link_all_services;
         }
+        /*
+         * Stored the way the link behaves.
+         *
+         * ONE service is a promotion — it stays that service, so it is named in
+         * `serviceIds`. Anything else is a catalogue: `serviceIds` is empty and
+         * the exceptions go in `excludedServiceIds`, so a service added next
+         * month is on the link without anybody reopening this wizard.
+         */
+        const isSingleServiceLink = selectedServiceIds.length === 1;
         const metadata = {
           journeyType: 'full' as const,
-          serviceIds: selectedServiceIds,
+          serviceIds: isSingleServiceLink ? selectedServiceIds : [],
+          excludedServiceIds: isSingleServiceLink
+            ? []
+            : services
+                .filter(service => !selectedServiceIds.includes(service.id))
+                .map(service => service.id),
         };
         // Use update if in edit mode, otherwise create
         const link = isEditMode
@@ -2210,7 +2280,13 @@ export function LandingPageWizard({
             {creationType === 'smart-link' && services.length > 1 && (
               <div className="text-sm text-[var(--v2-text-muted)] mb-2 flex items-center gap-2">
                 <Layers className="w-4 h-4" />
-                {labels.multi_select_hint}
+                {/*
+                  Everything ticked is a different KIND of link, so it says so.
+                  It pins no services at all, which is what lets it pick up a
+                  service added next month — and without a line here, that is
+                  invisible until the day it matters.
+                */}
+                {offersEverything ? labels.all_services_follow : labels.multi_select_hint}
               </div>
             )}
 

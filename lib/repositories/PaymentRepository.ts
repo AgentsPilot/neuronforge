@@ -918,23 +918,52 @@ export class PaymentInvoiceRepository {
     }
   }
 
+  /**
+   * The next invoice number, using the business's own prefix.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE PREFIX SETTING WAS IGNORED. This hardcoded `INV-`, so a business that
+   * set `invoice_number_prefix` in its invoice settings got `INV-00007` anyway.
+   * A prefix-aware generator existed beside it — `getNextInvoiceNumberWithPrefix`
+   * — with ZERO callers: every path (the invoices route, the chat, the plugin
+   * executor, stage billing, proposal acceptance) called this one.
+   *
+   * Resolved HERE rather than passed in, so all six call sites inherit it
+   * without knowing it exists. A caller that has to remember to look up a
+   * setting is a caller that will forget, and this is the number printed on a
+   * document the business sends out.
+   *
+   * TWO OTHER FAULTS FIXED ON THE WAY, both of which corrupt the sequence:
+   *
+   *   `replace(/\D/g, '')` stripped every non-digit, so a prefix containing
+   *   digits — "2026-INV", which is a perfectly ordinary thing to want — folded
+   *   the year into the counter and produced numbers in the millions.
+   *
+   *   `order('created_at').limit(1)` took the most RECENTLY CREATED invoice, not
+   *   the highest-numbered one. Backdate or import a single invoice and the
+   *   sequence restarts from it, duplicating numbers already issued — which on a
+   *   tax document is not a cosmetic problem.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   async getNextInvoiceNumber(userId: string): Promise<PaymentRepositoryResult<string>> {
     try {
-      const { data, error } = await this.supabase
-        .from('payment_invoices')
-        .select('invoice_number')
+      /*
+       * The business's own prefix, from its invoice settings.
+       *
+       * Read through `this.supabase` rather than the profile repository to avoid
+       * a circular import between the two; still repository-layer code, so
+       * CLAUDE.md rule 1 holds. A missing profile or an empty value falls back to
+       * `INV`, which is what every existing invoice already carries.
+       */
+      const { data: profile } = await this.supabase
+        .from('business_profiles')
+        .select('invoice_number_prefix')
         .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(1);
+        .maybeSingle();
 
-      if (error) throw error;
+      const prefix = (profile?.invoice_number_prefix || 'INV').trim() || 'INV';
 
-      if (data && data.length > 0) {
-        const lastNumber = parseInt(data[0].invoice_number.replace(/\D/g, '')) || 0;
-        return { data: `INV-${String(lastNumber + 1).padStart(5, '0')}`, error: null };
-      }
-
-      return { data: 'INV-00001', error: null };
+      return this.getNextInvoiceNumberWithPrefix(userId, prefix);
     } catch (error) {
       logger.error({ err: error }, 'Failed to get next invoice number');
       return { data: null, error: error as Error };
@@ -1314,13 +1343,31 @@ export class PaymentInvoiceRepository {
    */
   async getNextInvoiceNumberWithPrefix(userId: string, prefix: string = 'INV'): Promise<PaymentRepositoryResult<string>> {
     try {
-      // Get all invoices with this prefix to find the highest number
+      /*
+       * The prefix is USER INPUT and lands in two pattern languages.
+       *
+       * `%` and `_` are wildcards to `ilike`, so a prefix of `A_B` would match
+       * `AxB` and pull another series' numbers into this one's maximum. `\` is
+       * PostgREST's escape character for both.
+       */
+      const likePrefix = prefix.replace(/([\\%_])/g, '\\$1');
+
+      /*
+       * Ordered by NUMBER, not by creation date.
+       *
+       * `created_at desc` returned the most recently CREATED invoice, which is
+       * not the highest-numbered one: import or backdate a single invoice and
+       * the next number restarts from it, re-issuing numbers already sent. On a
+       * tax document that is a duplicate, not a cosmetic slip. Numbers are
+       * zero-padded, so lexical order matches numeric order; the scan below
+       * still takes the true maximum, which covers any legacy row that is not.
+       */
       const { data, error } = await this.supabase
         .from('payment_invoices')
         .select('invoice_number')
         .eq('user_id', userId)
-        .ilike('invoice_number', `${prefix}-%`)
-        .order('created_at', { ascending: false })
+        .ilike('invoice_number', `${likePrefix}-%`)
+        .order('invoice_number', { ascending: false })
         .limit(100);
 
       if (error) throw error;
@@ -1328,7 +1375,12 @@ export class PaymentInvoiceRepository {
       let maxNumber = 0;
       if (data && data.length > 0) {
         for (const invoice of data) {
-          const match = invoice.invoice_number.match(new RegExp(`^${prefix}-(\\d+)$`, 'i'));
+          /*
+           * Escaped for the regex too, and for the same reason: a prefix of
+           * `INV.` would otherwise let `INVX-00003` match and poison the series.
+           */
+          const safePrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const match = invoice.invoice_number.match(new RegExp(`^${safePrefix}-(\\d+)$`, 'i'));
           if (match) {
             const num = parseInt(match[1], 10);
             if (num > maxNumber) maxNumber = num;

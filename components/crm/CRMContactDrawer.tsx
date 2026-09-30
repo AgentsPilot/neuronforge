@@ -30,6 +30,7 @@ import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
 import type { CRMActivity } from '@/lib/repositories/CRMActivityRepository';
 import type { CRMPipelineStage } from '@/lib/repositories/CRMPipelineStagesRepository';
 import type { Country } from 'react-phone-number-input';
+import type { EmailSendStatus } from '@/lib/business-os/emailSendStatus';
 
 interface CRMContactDrawerProps {
   contact: CRMContact;
@@ -109,12 +110,20 @@ interface ContactTask {
   created_at: string;
 }
 
+/*
+ * A second declaration of the same shape as `contact-drawer/types.ts`, kept
+ * local because this drawer predates that module. The union is the part that
+ * matters: written out by hand it omitted `'complained'`, which the delivery
+ * webhook writes — so it comes from the shared roster now, and the two copies
+ * cannot drift on the one field that has already caused trouble.
+ */
 interface ContactEmail {
   id: string;
   subject: string;
   to_email: string;
-  status: 'pending' | 'sent' | 'delivered' | 'opened' | 'clicked' | 'bounced' | 'failed';
+  status: EmailSendStatus;
   sent_at: string | null;
+  delivered_at: string | null;
   opened_at: string | null;
   created_at: string;
 }

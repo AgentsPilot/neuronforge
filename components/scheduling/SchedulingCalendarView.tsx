@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { ChevronLeft, ChevronRight, Clock, Calendar, Phone, Mail, CheckCircle, XCircle, AlertCircle, Trash2, Loader2, LayoutGrid, List } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { NoShowConfirmDialog } from '@/components/scheduling/NoShowConfirmDialog';
+import { CancelReasonDialog } from '@/components/scheduling/CancelReasonDialog';
 import { businessClock, businessDateKey, businessInstant, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
 import type { SchedulingBooking, SchedulingService } from '@/lib/repositories/SchedulingRepository';
 import type { WeeklyAvailability } from './AvailabilityEditor';
@@ -219,12 +220,30 @@ export function SchedulingCalendarView({
    * the owner decides whether to invite them back.
    */
   const [noShowTarget, setNoShowTarget] = useState<{ id: string; name: string | null } | null>(null);
+  /*
+   * The booking waiting on a cancellation reason, or null.
+   *
+   * Cancelling used to fire on one click with no body, which stopped working the
+   * moment the API began requiring a reason — and was never great anyway: a
+   * mis-click emailed the client and freed the slot with nothing in between.
+   */
+  const [cancelTarget, setCancelTarget] = useState<{ id: string; name: string | null } | null>(null);
 
   const handleQuickAction = async (
     bookingId: string,
     action: 'cancel' | 'complete' | 'no-show' | 'delete',
     e: React.MouseEvent,
-    options?: { notifyClient?: boolean }
+    /*
+     * `notifyClient` belongs to a no-show; the reason belongs to a cancellation.
+     * One bag rather than two signatures — the body is passed straight through
+     * and the route validates whichever fields its own action needs.
+     */
+    options?: {
+      notifyClient?: boolean;
+      reason_code?: string;
+      reason?: string;
+      share_note_with_client?: boolean;
+    }
   ) => {
     e.stopPropagation();
     if (actionInProgress) return;
@@ -792,6 +811,15 @@ export function SchedulingCalendarView({
               {weekDates.map((date, dayIndex) => {
                 const dayBookings = getBookingsForDay(date);
                 const inlineStartPercent = ((dayIndex + 1) / 8) * 100;
+                // Which side a hover tooltip opens on. It is a fixed 240px in a
+                // column worth an eighth of the grid, so near the end of the week
+                // it does not fit after the block and gets clipped by the
+                // calendar overflow-hidden. That happens in BOTH directions,
+                // because the end of the week is the left edge in Hebrew and the
+                // right in English. Opening it back towards the middle is the
+                // only place it has room. Two columns, from the widths this
+                // dialog renders at: 240px needs a little over two of them.
+                const flipTooltip = dayIndex >= weekDates.length - 2;
                 const widthPercent = (1 / 8) * 100;
                 return (
                   <div
@@ -907,8 +935,23 @@ export function SchedulingCalendarView({
                               style={{
                                 borderRadius: '16px',
                                 top: '0',
-                                left: '100%',
-                                marginLeft: '12px'
+                                /*
+                                 * LOGICAL, NOT `left`.
+                                 *
+                                 * This was `left: '100%'` with `marginLeft`, which
+                                 * pins the tooltip to the physical right whatever
+                                 * the writing direction. The day columns around it
+                                 * already use `insetInlineStart` and mirror
+                                 * correctly in Hebrew; the tooltip did not, so it
+                                 * opened on the wrong side of its own block and was
+                                 * clipped by the calendar's `overflow-hidden`.
+                                 *
+                                 * `insetInlineStart` opens it AFTER the block in
+                                 * reading order: right in English, left in Hebrew.
+                                 */
+                                ...(flipTooltip
+                                  ? { insetInlineEnd: '100%', marginInlineEnd: '12px' }
+                                  : { insetInlineStart: '100%', marginInlineStart: '12px' }),
                               }}
                             >
                               {/*
@@ -1194,7 +1237,18 @@ export function SchedulingCalendarView({
                               {t('scheduling.quick_action.no_show')}
                             </button>
                             <button
-                              onClick={(e) => handleQuickAction(booking.id, 'cancel', e)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                // Asks for a reason instead of firing. The API
+                                // requires one, and a mis-click here emails a
+                                // client and frees their slot.
+                                setCancelTarget({
+                                  id: booking.id,
+                                  name: booking.contact
+                                    ? `${booking.contact.first_name ?? ''} ${booking.contact.last_name ?? ''}`.trim() || null
+                                    : null,
+                                });
+                              }}
                               disabled={actionInProgress?.bookingId === booking.id}
                               className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-red-500 bg-red-500/10 border border-red-500/30 rounded-full hover:bg-red-500/20 active:scale-95 transition-all disabled:opacity-50"
                             >
@@ -1251,6 +1305,26 @@ export function SchedulingCalendarView({
         Confirms before recording a no-show, and is where the owner chooses
         whether to invite the client to rebook. Off by default — see the dialog.
       */}
+      {/* Cancelling asks for a reason — mandatory on every cancellation surface,
+          and the pause a destructive one-click always needed. */}
+      <CancelReasonDialog
+        open={cancelTarget !== null}
+        onOpenChange={open => !open && setCancelTarget(null)}
+        clientName={cancelTarget?.name ?? null}
+        onConfirm={async ({ reasonCode, note, shareNote }) => {
+          if (!cancelTarget) return;
+          await handleQuickAction(
+            cancelTarget.id,
+            'cancel',
+            // Synthesised: the real click was the dialog's own button, and
+            // `handleQuickAction` only needs something to stop propagating.
+            { stopPropagation: () => {} } as React.MouseEvent,
+            { reason_code: reasonCode, reason: note || undefined, share_note_with_client: shareNote }
+          );
+          setCancelTarget(null);
+        }}
+      />
+
       <NoShowConfirmDialog
         open={noShowTarget !== null}
         onOpenChange={open => !open && setNoShowTarget(null)}

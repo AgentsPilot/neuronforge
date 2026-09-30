@@ -545,10 +545,74 @@ describe('Slice 1b: the signup methods (token-scoped, compare-and-swap)', () => 
     expectCountOnlyUpdate(calls);
   });
 
+  /** Every filter call on a claim chain, in order, without the table name or the update values. */
+  const filtersOf = (calls: Call[]) => calls.filter((call) => !['from', 'update'].includes(call.method));
+
+  it('claimForGoogleSignup (Slice 3b, D-3): the SAME claim as the code path, minus only the code-hash filter', async () => {
+    const google = recordingClient({ data: null, error: null, count: 1 });
+    const result = await new BusinessOsInviteRepository(google.client).claimForGoogleSignup({
+      id: ID,
+      accountId: ACCOUNT,
+      observedClaimedAccountId: null,
+      now: NOW,
+      claimLeaseCutoff: CUTOFF,
+    });
+    expect(result).toEqual({ data: true, error: null });
+    // Both code columns are cleared together (CHECK signup_code_paired): an outstanding code dies with the claim.
+    expect(google.calls.find((call) => call.method === 'update')?.args[0]).toEqual({
+      signup_code_hash: null,
+      signup_code_expires_at: null,
+      claimed_at: NOW.toISOString(),
+      claimed_account_id: ACCOUNT,
+      updated_at: NOW.toISOString(),
+    });
+    expectCountOnlyUpdate(google.calls);
+
+    const code = recordingClient({ data: null, error: null, count: 1 });
+    await new BusinessOsInviteRepository(code.client).claimForSignup({
+      id: ID,
+      codeHash: CODE_HASH,
+      accountId: ACCOUNT,
+      observedClaimedAccountId: null,
+      now: NOW,
+      claimLeaseCutoff: CUTOFF,
+    });
+    const codeFilters = filtersOf(code.calls);
+    expect(codeFilters).toContainEqual({ method: 'eq', args: ['signup_code_hash', CODE_HASH] });
+    expect(filtersOf(google.calls)).toEqual(
+      codeFilters.filter((call) => !(call.method === 'eq' && call.args[0] === 'signup_code_hash'))
+    );
+  });
+
+  it('claimForGoogleSignup (I-6): re-taking a lapsed claim compares the observed claimant', async () => {
+    const stale = '44444444-4444-4444-8444-444444444444';
+    const { client, calls } = recordingClient({ data: null, error: null, count: 0 });
+    const result = await new BusinessOsInviteRepository(client).claimForGoogleSignup({
+      id: ID,
+      accountId: stale,
+      observedClaimedAccountId: stale,
+      now: NOW,
+      claimLeaseCutoff: CUTOFF,
+    });
+    expect(result).toEqual({ data: false, error: null });
+    expect(calls).toContainEqual({ method: 'eq', args: ['claimed_account_id', stale] });
+    expect(calls).not.toContainEqual({ method: 'is', args: ['claimed_account_id', null] });
+    expectCountOnlyUpdate(calls);
+  });
+
+  it('SA R-7: the shared claim builder switches exhaustively on the proof, with a `never` default', () => {
+    const source = readFileSync(join(process.cwd(), 'lib', 'repositories', 'BusinessOsInviteRepository.ts'), 'utf8');
+    const builder = source.slice(source.indexOf('function signupClaimUpdate('), source.indexOf('/** What the public page'));
+    expect(builder).toMatch(/switch \(proof\.kind\)/);
+    expect(builder).toMatch(/case 'code':\s*\n\s*query = query\.eq\('signup_code_hash', proof\.codeHash\)/);
+    expect(builder).toMatch(/const unhandled: never = proof;/);
+    expect(builder).not.toMatch(/\.select\(/);
+  });
+
   /*
    * Hotfix 2026-09-29. On production PostgREST an UPDATE with `.or(...)` and
    * `.select(...)` fails with 42703 unless the `.or` column is also selected.
-   * The two `.or` CAS methods ask for `{ count: 'exact' }` instead, and the id
+   * The `.or` CAS methods ask for `{ count: 'exact' }` instead, and the id
    * filter makes 0 or 1 the only honest counts.
    */
   const orCasMethods: Array<[string, (repo: BusinessOsInviteRepository) => Promise<{ data: boolean | null; error: Error | null }>]> = [
@@ -561,6 +625,10 @@ describe('Slice 1b: the signup methods (token-scoped, compare-and-swap)', () => 
       'claimForSignup',
       (repo) =>
         repo.claimForSignup({ id: ID, codeHash: CODE_HASH, accountId: ACCOUNT, observedClaimedAccountId: null, now: NOW, claimLeaseCutoff: CUTOFF }),
+    ],
+    [
+      'claimForGoogleSignup',
+      (repo) => repo.claimForGoogleSignup({ id: ID, accountId: ACCOUNT, observedClaimedAccountId: null, now: NOW, claimLeaseCutoff: CUTOFF }),
     ],
   ];
 
@@ -680,6 +748,8 @@ describe('C-13: the service-role reason is written down, and the admin methods a
         'recordRedemptionFailure',
         // Slice 2a: the invitation email outcome, a CAS on (id, token_hash).
         'recordInviteEmailOutcome',
+        // Slice 3b: the signup claim for a mailbox proven by Google, a CAS like claimForSignup.
+        'claimForGoogleSignup',
       ].sort()
     );
   });
@@ -733,6 +803,10 @@ describe('M-1 (C-3): a database error never carries row values into a log or a r
       'claimForSignup',
       (repo) =>
         repo.claimForSignup({ id: ID, codeHash: CODE_HASH, accountId: ACCOUNT, observedClaimedAccountId: null, now: NOW, claimLeaseCutoff: CUTOFF }),
+    ],
+    [
+      'claimForGoogleSignup',
+      (repo) => repo.claimForGoogleSignup({ id: ID, accountId: ACCOUNT, observedClaimedAccountId: null, now: NOW, claimLeaseCutoff: CUTOFF }),
     ],
     ['releaseSignupClaim', (repo) => repo.releaseSignupClaim(ID, ACCOUNT, NOW)],
     [

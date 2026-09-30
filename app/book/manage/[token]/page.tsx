@@ -22,7 +22,10 @@ interface BookingData extends PublicBookingSummary {
   notes: string | null;
   canReschedule: boolean;
   canCancel: boolean;
-  hoursUntilBooking: number;
+  /** Null for a product purchase — there is no appointment to count down to. */
+  hoursUntilBooking: number | null;
+  /** False for a product purchase: nothing about it is scheduled. */
+  isScheduled?: boolean;
 }
 
 /**

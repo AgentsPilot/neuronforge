@@ -23,10 +23,12 @@
 
 import { randomUUID } from 'crypto';
 import { createLogger } from '@/lib/logger';
+import { STOP_REASONS, type StopReason } from '@/lib/business-os/cancellationReasons';
 import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
 import { runAiAction, markGenerationResult } from '@/lib/business-os/llm/aiActionAudit';
 import { websiteWritingUnavailableMessage } from '@/lib/business-os/llm/aiUnavailableMessages';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
+import { deleteContact as removeContact } from '@/lib/services/ContactLifecycleService';
 import { crmTaskRepository } from '@/lib/repositories/CRMTaskRepository';
 import { settleInvoicePaid } from '@/lib/payments/invoiceSettlement';
 import {
@@ -215,8 +217,14 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
         RepoResult<unknown>
       >,
 
+    /*
+     * Via the service: a contact with any booking cannot be deleted directly
+     * (NOT NULL `contact_id` against an ON DELETE SET NULL foreign key), and
+     * the service is where the bookings and the money rule live. See
+     * `ContactLifecycleService`.
+     */
     delete: async (q, _data, ctx) =>
-      crmContactRepository.delete(requireTargetId(q), ctx.userId) as Promise<
+      removeContact({ contactId: requireTargetId(q), userId: ctx.userId }) as Promise<
         RepoResult<unknown>
       >,
 
@@ -1170,6 +1178,24 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
         userId: ctx.userId,
         stripe: new Stripe(process.env.STRIPE_SECRET_KEY),
         reason: typeof data.reason === 'string' ? data.reason : undefined,
+        /*
+         * The code, when the chat managed to extract one.
+         *
+         * Validated against the list rather than trusted: this value comes from a
+         * planner's JSON, and an invented code would be a new reason in every
+         * report that groups them. An unrecognised one is dropped to null, which
+         * reads as "unknown" — honest, and the state the column already allows
+         * for rows that predate it.
+         *
+         * NOT required here, unlike the API routes. There is no person waiting to
+         * answer a follow-up, and refusing to stop a plan the owner asked to stop
+         * because the sentence did not name a reason would be the wrong trade.
+         */
+        reasonCode:
+          typeof data.reason_code === 'string' &&
+          (STOP_REASONS as readonly string[]).includes(data.reason_code)
+            ? (data.reason_code as StopReason)
+            : null,
       });
 
       if (!result.ok) {

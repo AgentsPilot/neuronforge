@@ -142,7 +142,10 @@ describe('no plan is described by what it withholds', () => {
    * with a `withheld` or `youDoNotHave` array would be an exclusion list nested
    * one level deeper than the rule used to look.
    */
-  const ROW_KEYS = ['category', 'label', 'features', 'summary'].sort();
+  // `labelKey`, not `label`: the heading is a dictionary key so the row can be
+  // read in the viewer's language. The allow-list still does its job — it is
+  // the exact key-set that keeps an exclusion field from appearing.
+  const ROW_KEYS = ['category', 'labelKey', 'features', 'summary'].sort();
   const FEATURE_KEYS = ['capability', 'label', 'value'].sort();
   // SA R4-4 asked for the badge object's keys to join this sweep. It became moot:
   // the user dropped the pill beside the plan heading, so the payload carries no
@@ -233,9 +236,21 @@ describe('no plan is described by what it withholds', () => {
   it('says nothing that reads as a claim about what the customer lacks', () => {
     // Every sentence this module writes, across the four real plans AND the three
     // no-plan states — which is where `problem` is actually set.
+    /*
+     * The KEYS the view names, not the sentences it used to write.
+     *
+     * The wording moved to the platform dictionary so the section can be read in
+     * Hebrew and Spanish. The exclusion-phrasing check therefore moved with it —
+     * `planCopy.i18n.test.ts` runs this same pattern over the copy behind every
+     * `plan.*` key, in all three languages, which is stricter than this file
+     * could be when it only saw the English.
+     *
+     * What remains here is the view's own job: WHICH sentence it names.
+     */
     const sentencesOf = (view: ReturnType<typeof viewFor>) =>
       [view.endsWhen, view.whenThisChanges, view.problem, view.nextPlanUp?.actionUnavailableBecause]
-        .filter((sentence): sentence is string => typeof sentence === 'string')
+        .map((sentence) => sentence?.key)
+        .filter((key): key is string => typeof key === 'string')
         .join(' | ');
 
     const views = [
@@ -250,7 +265,7 @@ describe('no plan is described by what it withholds', () => {
 
     // Non-vacuity: the failure states really were included, and really do write a
     // sentence. Without this the two extra views could contribute nothing.
-    expect(sentencesOf(views[views.length - 1])).toMatch(/plan record/i);
+    expect(sentencesOf(views[views.length - 1])).toMatch(/plan\.problem\.no_record/);
   });
 
   it('the phrasing rule catches plan claims and leaves honest copy alone', () => {

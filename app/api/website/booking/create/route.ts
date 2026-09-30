@@ -25,6 +25,19 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { syncBookingToOwnerCalendar } from '@/lib/scheduling/syncBookingCalendar';
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
+/*
+ * Restored. The conversion call at the end of this route survived an import
+ * tidy-up that took its import with it (1503dcd8), so `smartLinkRepository` was
+ * a free variable in a file that reads as if it were imported.
+ *
+ * It is not a dead branch: `resolveVisitorSessionId()` ALWAYS returns an id, so
+ * every booking from `/site/{subdomain}/book` carries `session_id` and reached
+ * this line — throwing `ReferenceError` AFTER the booking row was written and
+ * after the confirmation email was dispatched. The route's catch turned that
+ * into a 500, so the client was told the booking failed for a booking that
+ * exists, and the in-flight email was left racing an aborted request.
+ */
+import { smartLinkRepository } from '@/lib/repositories/SmartLinkRepository';
 import { buildAttributionFromRequest, type LeadSourceMetadata } from '@/lib/utils/attribution';
 import { enrichCaptureAttribution } from '@/lib/business-os/enrichCaptureAttribution';
 import { z } from 'zod';
@@ -119,7 +132,7 @@ export async function POST(request: NextRequest) {
     let ownerId: string;
 
     // Track hidden service names for validation (only used for public access)
-    let hiddenServiceNames: Set<string> = new Set();
+    const hiddenServiceNames: Set<string> = new Set();
 
     // If subdomain is provided, look up website owner (public access)
     // If userCode is provided, look up business profile owner (standalone booking page)
@@ -630,24 +643,61 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Send booking confirmation email (non-blocking)
+    // Send booking confirmation email
     // Only for FREE bookings - paid bookings get confirmation after payment in Stripe webhook
     if (!requiresPayment) {
-      // `skipInvoice` when one was just raised: its payment link travels with
-      // the confirmation rather than in a second email.
-      BookingEmailService.sendBookingConfirmation(booking.id, ownerId, bookingInvoice
-        ? {
-            skipInvoice: true,
-            invoiceId: bookingInvoice.id,
-            stripeHostedInvoiceUrl: bookingInvoice.stripe_hosted_invoice_url || undefined,
-          }
-        : undefined)
-        .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Booking confirmation email failed'));
+      /*
+       * AWAITED, not fired and forgotten.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * These two were dispatched as bare promises and the response was returned
+       * underneath them. Nothing owns work that outlives its request: a
+       * serverless invocation is frozen the moment it responds, and a dev server
+       * reloading drops it just the same. When that happened the client's
+       * confirmation, their intake request and the `booking_confirmation_sent`
+       * activity all vanished together, with no error anywhere — the `.catch`
+       * below never ran, because nothing rejected. The booking existed, the
+       * client heard nothing.
+       *
+       * It is not theoretical: booking 4cd6a797 (2026-09-28 14:03:53, website)
+       * has its `booking_created` activity — written before the response — and
+       * none of the three effects below, while an identical booking 11 minutes
+       * later has all of them.
+       *
+       * `allSettled` so a failing send is still only a warning: the booking is
+       * made either way, and the client is already looking at a confirmation
+       * screen. The cost is that they wait for the mail to be handed to the
+       * transport, which is the right trade for the one email that tells them
+       * the appointment is real.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const [confirmation, intakeRequest] = await Promise.allSettled([
+        // `skipInvoice` when one was just raised: its payment link travels with
+        // the confirmation rather than in a second email.
+        BookingEmailService.sendBookingConfirmation(booking.id, ownerId, bookingInvoice
+          ? {
+              skipInvoice: true,
+              invoiceId: bookingInvoice.id,
+              stripeHostedInvoiceUrl: bookingInvoice.stripe_hosted_invoice_url || undefined,
+            }
+          : undefined),
+        // Send intake form request email
+        // This helps clients prepare for their appointment
+        BookingEmailService.sendIntakeFormRequest(booking.id, ownerId),
+      ]);
 
-      // Send intake form request email (non-blocking)
-      // This helps clients prepare for their appointment
-      BookingEmailService.sendIntakeFormRequest(booking.id, ownerId)
-        .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Intake form request email failed'));
+      if (confirmation.status === 'rejected') {
+        requestLogger.warn({ err: confirmation.reason, bookingId: booking.id }, 'Booking confirmation email failed');
+      } else if (!confirmation.value?.sent) {
+        requestLogger.warn(
+          { bookingId: booking.id, error: confirmation.value?.error },
+          'Booking confirmation email was not delivered to any transport'
+        );
+      }
+
+      if (intakeRequest.status === 'rejected') {
+        requestLogger.warn({ err: intakeRequest.reason, bookingId: booking.id }, 'Intake form request email failed');
+      }
 
       /*
        * No email to the owner for a booking, deliberately — see the note in

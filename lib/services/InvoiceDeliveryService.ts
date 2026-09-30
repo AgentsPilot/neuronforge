@@ -52,6 +52,7 @@ import { sendEmail } from '@/lib/notifications/emailTransport';
 import { generateInvoicePDFAsync } from '@/lib/pdf/InvoicePDFGenerator';
 import { supabaseServer } from '@/lib/supabaseServer';
 import type { Locale } from '@/lib/i18n/config';
+import { recordEmailSend } from '@/lib/notifications/recordEmailSend';
 
 const logger = createLogger({ service: 'InvoiceDeliveryService' });
 const auditTrail = AuditTrailService.getInstance();
@@ -127,6 +128,58 @@ const VALID_LOCALES: Locale[] = ['en', 'es', 'he'];
  * through to email rather than failing the send — the client getting the invoice
  * matters more than which pipe carried it.
  */
+/**
+ * Has the client already got this invoice?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The single rule behind the COPY watermark, shared by every path that puts an
+ * invoice PDF in front of a client — `sendInvoice` and `buildInvoiceAttachment`,
+ * and therefore the send route, the chat, stage billing, lead dispatch, and the
+ * booking confirmation that attaches one.
+ *
+ * Derived from the INVOICE rather than passed by the caller on purpose. A caller
+ * that has to remember to say "this is a resend" is a caller that will forget,
+ * and the mark exists so a duplicate tax invoice cannot be entered in the books
+ * twice — a guarantee that cannot depend on each call site getting it right.
+ *
+ * `sent` and `overdue` are the two states that mean it went out and is still
+ * owed. A `draft` has never left, and `paid`/`cancelled`/`refunded` cannot be
+ * sent at all.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function alreadyWithTheClient(status: string | null | undefined): boolean {
+  return status === 'sent' || status === 'overdue';
+}
+
+/**
+ * Has any of this invoice's money been given back?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * READS `refund_status`, NOT `status`.
+ *
+ * `20260828d_invoice_refund_state.sql` says it outright: "`refund_status` is the
+ * field to read. `status` gains 'refunded' and 'partially_refunded' because that
+ * is what the invoice list renders, but it is a projection." A first version of
+ * this guard checked `status` and let a refunded invoice straight through —
+ * live data proves why: INV-00011 carries `refund_status: 'full'` and
+ * `refunded_amount: 300` while its `status` still reads `sent`, because it was
+ * refunded without ever having been marked paid.
+ *
+ * `refunded_amount` is checked too, so a row whose projection and ledger have
+ * drifted is still caught by whichever of them noticed.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function hasBeenRefunded(invoice: {
+  status?: string | null;
+  refund_status?: string | null;
+  refunded_amount?: number | string | null;
+}): boolean {
+  if (invoice.refund_status === 'full' || invoice.refund_status === 'partial') return true;
+  if (Number(invoice.refunded_amount ?? 0) > 0) return true;
+  // The projection, for completeness — it is the least reliable of the three.
+  return invoice.status === 'refunded' || invoice.status === 'partially_refunded';
+}
+
 export async function sendInvoice(
   params: SendInvoiceParams
 ): Promise<{ data: SendInvoiceOutcome | null; error: Error | null }> {
@@ -142,13 +195,41 @@ export async function sendInvoice(
     return { data: null, error: new Error('Invoice not found') };
   }
 
-  // Sending a paid invoice asks the client to pay twice; sending a cancelled one
-  // asks them to pay for something withdrawn. Neither is a resend.
-  if (invoice.status === 'paid') {
+  /*
+   * Sending a paid invoice asks the client to pay twice; sending a cancelled one
+   * asks them to pay for something withdrawn. Neither is a resend.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * REFUNDED COUNTS AS PAID HERE, and that was the hole.
+   *
+   * A refund moves the invoice to `refunded` or `partially_refunded` — by
+   * trigger, so the row no longer reads `paid` — and both slipped past this
+   * guard. Resending then produced an invoice for money the client had just been
+   * given back, carrying a LIVE pay button: `resolveInvoicePaymentOptions` builds
+   * `cardUrl` from the Stripe hosted page or the public pay route without asking
+   * what the invoice's status is. The client could pay it again.
+   *
+   * Blocked rather than sent without the button, because a link-less invoice for
+   * money nobody owes is not a document anyone wants: the honest artefact after a
+   * refund is a receipt, not a bill. The refund confirmation email already sends
+   * one.
+   *
+   * `partially_refunded` too. The money arrived and part came back; the invoice
+   * is not a debt again, and sending it asks for the WHOLE amount a second time.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (invoice.status === 'paid' || hasBeenRefunded(invoice)) {
     return {
       data: null,
       error: new InvoiceNotSendableError(
-        `Invoice ${invoice.invoice_number} has already been paid.`,
+        /*
+         * Names the refund when there was one. "Already been paid" over an
+         * invoice the owner personally refunded reads as the system being wrong
+         * about the money, and sends them looking for a bug.
+         */
+        invoice.status === 'paid'
+          ? `Invoice ${invoice.invoice_number} has already been paid.`
+          : `Invoice ${invoice.invoice_number} was paid and then refunded, so it cannot be sent again.`,
         'already_paid'
       ),
     };
@@ -212,7 +293,7 @@ export async function sendInvoice(
     };
   }
 
-  const resend = invoice.status === 'sent' || invoice.status === 'overdue';
+  const resend = alreadyWithTheClient(invoice.status);
   log.info({ userId, invoiceId, useStripe, resend }, 'Sending invoice');
 
   const { data: stripeAccount } = await stripeConnectRepository.findByUserId(userId);
@@ -354,11 +435,27 @@ export async function sendInvoice(
 export async function buildInvoiceAttachment(
   invoiceId: string,
   userId: string,
-  locale: 'en' | 'es' | 'he' = 'en'
+  locale: 'en' | 'es' | 'he' = 'en',
+  /**
+   * Force the copy mark on or off.
+   *
+   * Omit it. Left undefined, this derives the answer from the invoice's own
+   * status via `alreadyWithTheClient` — which is the point: no call site has to
+   * remember, so none can forget. The override exists for a caller that genuinely
+   * knows better than the row does.
+   */
+  isCopy?: boolean
 ): Promise<{ filename: string; content: Buffer; contentType: string } | null> {
   try {
     const { data: invoice } = await paymentInvoiceRepository.findById(invoiceId, userId);
     if (!invoice) return null;
+
+    /*
+     * From the invoice, unless the caller insisted. The booking confirmation
+     * attaches an invoice that may already have gone out on its own — and that
+     * copy needs the mark exactly as much as one sent from the resend button.
+     */
+    const markAsCopy = isCopy ?? alreadyWithTheClient(invoice.status);
 
     const { data: settingsRow } = await businessProfileRepository.getInvoiceSettingsWithProfile(userId);
     const settings = settingsRow ?? ({} as Record<string, never>);
@@ -371,6 +468,13 @@ export async function buildInvoiceAttachment(
     const branding = await resolveEmailBranding(userId, locale, settings as never);
 
     const pdfBuffer = await generateInvoicePDFAsync({
+      /*
+       * A resend is a COPY of an invoice the client already holds, and an
+       * unmarked duplicate tax invoice can be entered in the books twice. The
+       * number, date and amount are unchanged — the mark is the only difference,
+       * which is what makes it a copy rather than a new document.
+       */
+      isCopy: markAsCopy,
       invoice,
       businessSettings: settings as never,
       businessName,
@@ -408,8 +512,14 @@ async function sendByEmail(
   invoice: Awaited<ReturnType<typeof paymentInvoiceRepository.findById>>['data'] & object,
   userId: string,
   requestLanguage: Locale | undefined,
-  log: ContextLogger
+  log: ContextLogger,
+  /**
+   * Force the copy mark. Omit it: derived from the invoice below, the same way
+   * `buildInvoiceAttachment` does it, so neither depends on the caller.
+   */
+  isCopyOverride?: boolean
 ): Promise<Error | null> {
+  const isCopy = isCopyOverride ?? alreadyWithTheClient(invoice.status);
   try {
     const { data: settings } =
       await businessProfileRepository.getInvoiceSettingsWithProfile(userId);
@@ -527,6 +637,13 @@ async function sendByEmail(
     });
 
     const pdfBuffer = await generateInvoicePDFAsync({
+      /*
+       * A resend is a COPY of an invoice the client already holds, and an
+       * unmarked duplicate tax invoice can be entered in the books twice. The
+       * number, date and amount are unchanged — the mark is the only difference,
+       * which is what makes it a copy rather than a new document.
+       */
+      isCopy,
       invoice,
       businessSettings: {
         invoice_company_name: settings.invoice_company_name,
@@ -581,6 +698,26 @@ async function sendByEmail(
           contentType: 'application/pdf',
         },
       ],
+    });
+
+    /*
+     * Recorded whether it sent or not, and before the early return below.
+     *
+     * An invoice that bounced is the single most valuable delivery fact this
+     * platform can learn — the business is waiting on money for a document the
+     * client never received. Without a row carrying the provider's message id
+     * there is nothing for the delivery webhook to match, so that event would be
+     * discarded and the silence would look like an unpaid invoice.
+     *
+     * `invoice.contact_id` is nullable; `recordEmailSend` returns early on null.
+     */
+    await recordEmailSend({
+      userId,
+      contactId: invoice.contact_id ?? null,
+      toEmail: invoice.client_email!,
+      subject,
+      bodyHtml: html,
+      result: emailResult,
     });
 
     if (!emailResult.sent) {

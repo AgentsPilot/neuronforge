@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { verifyBookingToken } from '@/lib/services/BookingEmailService';
 import { cancelBooking, clientCancellationReason } from '@/lib/services/BookingLifecycleService';
+import { CLIENT_CANCEL_REASONS } from '@/lib/business-os/cancellationReasons';
 import { notifyOwnerOfLead } from '@/lib/services/LeadAlertService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
@@ -12,7 +13,16 @@ import { z } from 'zod';
 const logger = createLogger({ module: 'API', service: 'BookingCancel' });
 
 const cancelSchema = z.object({
-  reason: z.string().optional()
+  /*
+   * REQUIRED, from the client's list.
+   *
+   * Mandatory on every cancellation surface — see `cancellationReasons`. The
+   * client's list is the short one: somebody who came to cancel an appointment is
+   * not filling in a form, and a long list gets its first item clicked.
+   */
+  reason_code: z.enum(CLIENT_CANCEL_REASONS),
+  /** Whatever they typed. The textarea that used to BE the reason. */
+  reason: z.string().max(1000).optional()
 });
 
 // POST /api/book/manage/[token]/cancel
@@ -37,15 +47,30 @@ export async function POST(
 
     const { bookingId, email } = decoded;
 
-    // Parse body (optional reason)
-    let reason: string | undefined;
-    try {
-      const body = await request.json();
-      const validated = cancelSchema.parse(body);
-      reason = validated.reason;
-    } catch {
-      // Body is optional, continue without reason
+    /*
+     * The body is NO LONGER optional, and a parse failure must not be swallowed.
+     *
+     * This used to be a try/catch that continued "without reason" on any error.
+     * Now that `reason_code` is required, that same catch would have quietly
+     * cancelled the booking with no code at all — the requirement satisfied in
+     * the schema and defeated in the handler, which is worse than not having it.
+     */
+    const parsed = cancelSchema.safeParse(await request.json().catch(() => ({})));
+
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'reason_required',
+          error: 'Please choose a reason for cancelling.',
+          details: process.env.NODE_ENV === 'development' ? parsed.error.errors : undefined,
+        },
+        { status: 400 }
+      );
     }
+
+    const reason: string | undefined = parsed.data.reason;
+    const reasonCode = parsed.data.reason_code;
 
     // Fetch booking with contact email via JOIN
     // Note: client_* fields removed from scheduling_bookings - now JOINed from crm_contacts
@@ -144,7 +169,18 @@ export async function POST(
        * owns the wording, because the dashboard gap matches on it: a second
        * copy of the string here is a cancellation the owner never hears about.
        */
+      /*
+       * Still the prefixed prose, unchanged.
+       *
+       * `CLIENT_CANCELLED_PREFIX` is what the `booking_cancelled` gap and
+       * `CashCancelledUnrefundedDetector` parse to know the client cancelled.
+       * The structured columns below are what they should read instead, but
+       * moving them is its own change — so both are written and nothing breaks.
+       */
       reason: clientCancellationReason(reason),
+      cancelReason: reasonCode,
+      cancelNote: reason,
+      cancelledBy: 'client',
       request,
       logger: requestLogger,
     });

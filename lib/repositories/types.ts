@@ -702,6 +702,13 @@ export interface ClaimInviteForSignupInput {
   claimLeaseCutoff: Date;
 }
 
+/**
+ * Claim the invite for a server-generated account id after a verified Google
+ * ID token proved the mailbox (Slice 3b, D-3). Every condition of the code
+ * claim except the code hash; any outstanding code is cleared with the claim.
+ */
+export type ClaimInviteForGoogleSignupInput = Omit<ClaimInviteForSignupInput, 'codeHash'>;
+
 /** The FR-12a record (SA D-2). Every value already scrubbed by the caller. */
 export interface RecordRedemptionFailureInput {
   id: string;

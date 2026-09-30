@@ -110,7 +110,7 @@ const formatDuration = (minutes: number | undefined, locale?: string): string | 
   return mins > 0 ? `${hourPart} ${mins} ${unit.min}` : hourPart;
 };
 
-export function PricingBlock({ content, styles, theme, isRTL, className, locale = 'en', bookingUrl, isPreview, onOpenBooking }: BlockRendererProps) {
+export function PricingBlock({ content, styles, theme, isRTL, className, locale = 'en', bookingUrl, onOpenBooking }: BlockRendererProps) {
   const {
     title = 'Pricing',
     subtitle,
@@ -254,7 +254,7 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
   };
 
   // Check if we have booking capability
-  const hasBookingCapability = !!(bookingUrl || (isPreview && onOpenBooking));
+  const hasBookingCapability = !!(bookingUrl || (onOpenBooking));
 
   return (
     <section
@@ -341,7 +341,7 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
           <div className="apc-rows max-w-5xl mx-auto">
             {plans.map((plan, index) => {
               const canBook =
-                hasValidService(plan) && ((isPreview && onOpenBooking) || hasBookingCapability);
+                hasValidService(plan) && ((onOpenBooking) || hasBookingCapability);
               const href = `${bookingUrl}${
                 plan.serviceId || defaultServiceId
                   ? `?service=${plan.serviceId || defaultServiceId}`
@@ -383,7 +383,7 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
                       </span>
                     )}
                     {canBook &&
-                      (isPreview && onOpenBooking ? (
+                      (onOpenBooking ? (
                         <button
                           type="button"
                           onClick={() => handleBookingClick(plan, index)}
@@ -511,9 +511,9 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
 
                   {/* CTA Button with gradient - uses booking modal if available */}
                   {/* Only show booking button if we have a valid UUID serviceId */}
-                  {hasValidService(plan) && ((isPreview && onOpenBooking) || hasBookingCapability) ? (
+                  {hasValidService(plan) && ((onOpenBooking) || hasBookingCapability) ? (
                     // Has booking capability - use booking modal or link
-                    isPreview && onOpenBooking ? (
+                    onOpenBooking ? (
                       <button
                         type="button"
                         onClick={() => handleBookingClick(plan, index)}

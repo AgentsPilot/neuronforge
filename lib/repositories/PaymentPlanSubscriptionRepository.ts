@@ -23,6 +23,7 @@
  */
 
 import { supabaseServer } from '@/lib/supabaseServer';
+import type { CancelledBy } from '@/lib/business-os/cancellationReasons';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ service: 'PaymentPlanSubscriptionRepository' });
@@ -242,7 +243,20 @@ export class PaymentPlanSubscriptionRepository {
   /** The plan reached its end, or was stopped. */
   async close(
     id: string,
-    status: 'completed' | 'cancelled'
+    status: 'completed' | 'cancelled',
+    /**
+     * Why it was stopped — a code from `cancellationReasons`, the note behind it,
+     * and who stopped it.
+     *
+     * Ignored for `'completed'`: a plan that ran to its end was not cancelled and
+     * has no reason. Optional because plans closed by older callers exist; the
+     * API requires a code on everything new.
+     */
+    structured?: {
+      code?: string | null;
+      note?: string | null;
+      cancelledBy?: CancelledBy | null;
+    }
   ): Promise<PlanSubscriptionResult<PlanSubscription>> {
     try {
       const { data, error } = await this.supabase
@@ -250,6 +264,16 @@ export class PaymentPlanSubscriptionRepository {
         .update({
           status,
           [status === 'completed' ? 'completed_at' : 'cancelled_at']: new Date().toISOString(),
+          // Only a cancellation has a reason. A completed plan carrying one would
+          // read as though it had been stopped early.
+          ...(status === 'cancelled'
+            ? {
+                cancel_reason: structured?.code || null,
+                // Trimmed to null: '' reads as a note that exists and says nothing.
+                cancel_note: structured?.note?.trim() || null,
+                cancelled_by: structured?.cancelledBy || null,
+              }
+            : {}),
           updated_at: new Date().toISOString(),
         })
         .eq('id', id)

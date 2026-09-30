@@ -6,8 +6,16 @@ import { formatPublicDate, formatPublicMoney, formatPublicTime, publicT } from '
 import type { PublicBrand } from '@/lib/branding/publicBranding';
 
 export interface PublicBookingSummary {
-  startTime: string;
-  endTime: string;
+  /**
+   * Null for a PRODUCT purchase, which has no slot.
+   *
+   * `scheduling_bookings.start_time` was made nullable by
+   * `20260803_allow_null_booking_times.sql`; this type still said `string`, so
+   * `new Date(booking.startTime)` below was handed a null, produced the Unix
+   * epoch, and the client was shown "1 January 1970" as their appointment date.
+   */
+  startTime: string | null;
+  endTime: string | null;
   timezone?: string | null;
   service?: {
     service_name?: string | null;
@@ -44,7 +52,15 @@ export function AppointmentCard({
   const { locale, currency } = brand;
   const t = (key: string) => publicT(locale, key);
 
-  const start = new Date(booking.startTime);
+  /*
+   * A product purchase has no time, and must not be given one.
+   *
+   * `new Date(null)` is the epoch, so this used to render 1 January 1970 into
+   * the date row of a confirmation the client had just received for something
+   * with no date at all.
+   */
+  const start = booking.startTime ? new Date(booking.startTime) : null;
+  const end = booking.endTime ? new Date(booking.endTime) : null;
   const timeZone = booking.timezone ?? undefined;
 
   const price = booking.service?.price;
@@ -76,28 +92,35 @@ export function AppointmentCard({
         </p>
       )}
 
-      <div
-        className="mt-4 flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:gap-6"
-        style={{ background: 'var(--ap-brand-tint)', borderRadius: 'var(--ap-radius-md)' }}
-      >
-        <div className="flex items-center gap-2.5">
-          <Calendar className="h-4 w-4 shrink-0" style={{ color: 'var(--ap-brand)' }} aria-hidden />
-          <span className="text-sm font-medium" style={{ color: 'var(--ap-text)' }}>
-            {formatPublicDate(start, locale)}
-          </span>
-        </div>
+      {/* No panel at all without a time. An order has a service and a price;
+          drawing an empty date row for it would invite the reader to look for a
+          date that does not exist. */}
+      {start && (
+        <div
+          className="mt-4 flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:gap-6"
+          style={{ background: 'var(--ap-brand-tint)', borderRadius: 'var(--ap-radius-md)' }}
+        >
+          <div className="flex items-center gap-2.5">
+            <Calendar className="h-4 w-4 shrink-0" style={{ color: 'var(--ap-brand)' }} aria-hidden />
+            <span className="text-sm font-medium" style={{ color: 'var(--ap-text)' }}>
+              {formatPublicDate(start, locale)}
+            </span>
+          </div>
 
-        <div className="flex items-center gap-2.5">
-          <Clock className="h-4 w-4 shrink-0" style={{ color: 'var(--ap-brand)' }} aria-hidden />
-          {/* A time range is left-to-right in every language: mirrored, `09:00
-              - 10:00` becomes a different range. */}
-          <span dir="ltr" className="text-sm font-medium" style={{ color: 'var(--ap-text)' }}>
-            {formatPublicTime(start, locale, timeZone)}
-            {' – '}
-            {formatPublicTime(new Date(booking.endTime), locale, timeZone)}
-          </span>
+          {end && (
+            <div className="flex items-center gap-2.5">
+              <Clock className="h-4 w-4 shrink-0" style={{ color: 'var(--ap-brand)' }} aria-hidden />
+              {/* A time range is left-to-right in every language: mirrored, `09:00
+                  - 10:00` becomes a different range. */}
+              <span dir="ltr" className="text-sm font-medium" style={{ color: 'var(--ap-text)' }}>
+                {formatPublicTime(start, locale, timeZone)}
+                {' – '}
+                {formatPublicTime(end, locale, timeZone)}
+              </span>
+            </div>
+          )}
         </div>
-      </div>
+      )}
 
       {(booking.service?.duration_minutes || hasPrice) && (
         <div

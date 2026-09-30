@@ -10,6 +10,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
+/*
+ * The grouping rule, shared with the other cancellation detector rather than
+ * copied. It prefers the structured code, folds spellings that mean the same
+ * thing, and falls back to the old prose for rows that predate the code.
+ */
+import { cancelReasonBucket } from '@/lib/business-os/cancellationReasons';
 
 export class RetCancellationSpikeDetector extends BaseDetector {
   definition: DetectorDefinition = {
@@ -60,7 +66,7 @@ export class RetCancellationSpikeDetector extends BaseDetector {
     // Get current week cancellations (use updated_at since cancelled_at doesn't exist)
     const { data: currentWeek, error: currentError } = await this.supabase
       .from('scheduling_bookings')
-      .select('id, service_id, cancellation_reason, updated_at')
+      .select('id, service_id, cancellation_reason, cancel_reason, updated_at')
       .eq('user_id', userId)
       .eq('status', 'cancelled')
       .gte('updated_at', weekAgo.toISOString())
@@ -133,9 +139,27 @@ export class RetCancellationSpikeDetector extends BaseDetector {
     const estimatedLoss =
       avgBookingValue === null ? undefined : currentCount * avgBookingValue;
 
-    // Analyze cancellation reasons
+    /*
+     * Grouped by CODE, not by the sentence.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * This grouped on `cancellation_reason`, which is free text, so the key was
+     * the whole sentence: "Client is ill", "client ill", "ill" and "sick" were
+     * four reasons here and one reason in life. And since the cancel surfaces
+     * became structured, most client cancellations carry only the bare
+     * `CLIENT_CANCELLED_PREFIX` — so every one of them collapsed into a single
+     * bucket labelled "Cancelled by client", which says nothing at all.
+     *
+     * `cancel_reason` is the code the client or owner actually chose.
+     * `canonicalReason` folds the spellings that mean the same thing, so a
+     * report is not split by history.
+     *
+     * The prose is the FALLBACK, for rows cancelled before the code existed.
+     * Dropping it would erase what those rows do say.
+     * ───────────────────────────────────────────────────────────────────────
+     */
     const reasons = currentWeek?.reduce((acc, b) => {
-      const reason = b.cancellation_reason || 'No reason provided';
+      const reason = cancelReasonBucket(b, 'No reason provided');
       acc[reason] = (acc[reason] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);

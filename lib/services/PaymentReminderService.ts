@@ -648,7 +648,8 @@ export class PaymentReminderService {
               last_name: contact.last_name ?? '',
             },
             entityDetails,
-            includePaymentLink
+            includePaymentLink,
+            reminder.contact_id ?? null
           );
           break;
         case 'sms':
@@ -701,7 +702,16 @@ export class PaymentReminderService {
     userId: string,
     contact: { email: string; first_name: string; last_name: string },
     entityDetails: Record<string, unknown>,
-    includePaymentLink: boolean
+    includePaymentLink: boolean,
+    /*
+     * The client being chased, so the send is recorded against them.
+     *
+     * Without it a chase leaves no `email_sends` row, so the delivery webhook
+     * has nothing to match — and a chase that bounced is indistinguishable from
+     * a client ignoring it. That difference is the whole reason to chase again,
+     * or to stop.
+     */
+    contactId: string | null
   ): Promise<boolean> {
     const to = contact.email?.trim();
     if (!to) {
@@ -772,6 +782,17 @@ export class PaymentReminderService {
         subject,
         html,
         ownerUserId: userId,
+      });
+
+      // Recorded either way, and before the early return: a chase that failed
+      // is exactly what someone will look for later.
+      await recordEmailSend({
+        userId,
+        contactId,
+        toEmail: to,
+        subject,
+        bodyHtml: html,
+        result,
       });
 
       if (!result.sent) {
@@ -1694,4 +1715,5 @@ export class PaymentReminderService {
 
 // Singleton export
 import { supabaseServer } from '@/lib/supabaseServer';
+import { recordEmailSend } from '@/lib/notifications/recordEmailSend';
 export const paymentReminderService = new PaymentReminderService(supabaseServer);

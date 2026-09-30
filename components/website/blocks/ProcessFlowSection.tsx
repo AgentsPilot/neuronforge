@@ -23,13 +23,15 @@ import {
   ClipboardList
 } from 'lucide-react';
 import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
-import type { BlockRendererProps, FlowStep, FormField } from './types';
+import type { BlockRendererProps, FlowStep, FormField, SelectedServiceData } from './types';
 import { flowHasScheduling, flowHasClientInfo } from './types';
+import { matchServiceByName, flowForService, hasJourneyFacts } from './bookingAction';
 import { IntakeFormStep, type IntakeTemplate } from './IntakeFormStep';
 import { StripePaymentForm } from './StripePaymentForm';
 import { ConsentCheckbox, type ConsentCopy } from '@/components/public/ConsentCheckbox';
 import { useConsentCopy, consentPayload } from '@/hooks/useConsentCopy';
 import { fromBusinessLocalInput } from '@/lib/scheduling/businessTime';
+import { servicePriceLabel } from '@/lib/website-builder/serviceCard';
 
 // ============================================================================
 // TYPES
@@ -51,6 +53,23 @@ export interface Service {
    * has to say the split, not just the total.
    */
   paymentPlan?: ServicePaymentPlan;
+  /*
+   * The facts this service's own journey is built from.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The catalogue endpoint has always published them and this mapping dropped
+   * them, so a service CHOSEN INSIDE the dialog arrived with no journey of its
+   * own and the page's stored flow was used instead. A course that is bought
+   * rather than booked then asked the client to pick an hour, because the other
+   * services on the page have one.
+   *
+   * Optional because a row assembled somewhere older may not carry them, and
+   * the page's flow is still the best available answer for that one.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  is_scheduled?: boolean | null;
+  collection?: 'online' | 'invoice' | null;
+  sale_mode?: 'direct' | 'proposal' | null;
 }
 
 export interface TimeSlot {
@@ -66,17 +85,17 @@ interface ProcessFlowContent {
   flow?: FlowStep[];
   intake_form_id?: string;
   intake_fields?: FormField[];
-  /** Pre-selected service - skips service selection step */
-  initialService?: {
-    id: string;
-    name: string;
-    description: string | null;
-    duration_minutes: number;
-    price: number | null;
-    currency: string;
-    /** How this service may be paid over time, when the business offers one. */
-    paymentPlan?: ServicePaymentPlan;
-  };
+  /*
+   * Pre-selected service - skips service selection step.
+   *
+   * THE SHARED TYPE, not a copy of its fields. This was a hand-written twin
+   * that had fallen four fields behind — no journey facts and no `sale_mode` —
+   * so a service arriving with its journey attached lost it at this boundary
+   * and the page's flow was used for it instead. The copy is what made that
+   * invisible: every caller passes a `SelectedServiceData` and the compiler had
+   * nothing to compare it against.
+   */
+  initialService?: SelectedServiceData;
 }
 
 type CurrentStep = 'services' | 'datetime' | 'details' | 'request' | 'payment' | 'intake' | 'confirmation';
@@ -145,6 +164,7 @@ export const LABELS = {
     days: 'days',
     day: 'day',
     free: 'Free',
+    priceOnRequest: 'Price on request',
     dueToday: 'Due today',
     paidToday: 'Paid today',
     paymentPlan: 'Payment plan',
@@ -219,6 +239,7 @@ export const LABELS = {
     days: 'días',
     day: 'día',
     free: 'Gratis',
+    priceOnRequest: 'Precio a consultar',
     dueToday: 'A pagar hoy',
     paidToday: 'Pagado hoy',
     paymentPlan: 'Plan de pago',
@@ -293,6 +314,7 @@ export const LABELS = {
     days: 'ימים',
     day: 'יום',
     free: 'חינם',
+    priceOnRequest: 'מחיר לפי בקשה',
     dueToday: 'לתשלום היום',
     paidToday: 'שולם היום',
     paymentPlan: 'תוכנית תשלומים',
@@ -466,10 +488,34 @@ interface ServicesStepProps {
 }
 
 export function ServicesStep({ services, loading, primaryColor, onSelect, isRTL, labels, theme }: ServicesStepProps) {
-  const formatPrice = (price: number | null, currency: string) => {
-    if (price === null) return labels.free;
+  /*
+   * What the catalogue card says where the price goes.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The two cases were the wrong way round. `price === null` — nobody has set
+   * one — returned "Free", while `price === 0` — priced, at zero — fell through
+   * and rendered "₪0". So a free intro call read as a pricing error on the one
+   * screen a client sees before choosing, and a service with no price at all
+   * announced itself as free.
+   *
+   * `servicePriceLabel` is the platform's answer to this question and already
+   * had it right; the catalogue was simply not asking it. It also gets the case
+   * neither branch above could: a QUOTED service is priced at zero in the
+   * database, and "Free" is the worst possible word for a job that has not been
+   * quoted yet.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const formatPrice = (service: Service) => {
     const symbols: Record<string, string> = { USD: '$', EUR: '€', ILS: '₪', GBP: '£' };
-    return `${symbols[currency] || '$'}${price}`;
+    const figure =
+      service.price === null ? null : `${symbols[service.currency] || '$'}${service.price}`;
+
+    return (
+      servicePriceLabel(
+        { price: figure, priceRaw: service.price, sale_mode: service.sale_mode },
+        { free: labels.free, onRequest: labels.priceOnRequest }
+      ) ?? ''
+    );
   };
 
   if (loading) {
@@ -549,7 +595,7 @@ export function ServicesStep({ services, loading, primaryColor, onSelect, isRTL,
             </div>
             <div className="text-end flex-shrink-0">
               <span className="apc-price font-semibold" style={{ color: primaryColor }}>
-                {formatPrice(service.price, service.currency)}
+                {formatPrice(service)}
               </span>
               <div className="mt-2">
                 {isRTL ? (
@@ -1884,9 +1930,18 @@ interface ProcessFlowSectionProps extends BlockRendererProps {
    * flow needs.
    */
   onFooterActionsChange?: (actions: ProcessFlowFooterActions | null) => void;
+  /**
+   * What the client is actually buying, the moment they say so.
+   *
+   * The host owns the journey — it is the host that decides which steps this
+   * flow is given — and until now it could only decide from the service a CARD
+   * handed in. A client who reached the catalogue and chose there was walked
+   * through the page's stored steps instead of that service's own.
+   */
+  onServiceChange?: (service: Service | null) => void;
 }
 
-export function ProcessFlowSection({ content, styles, theme, isRTL, className, locale = 'en', subdomain, userCode, isPreview, onStepChange, onFooterActionsChange }: ProcessFlowSectionProps) {
+export function ProcessFlowSection({ content, styles, theme, isRTL, className, locale = 'en', subdomain, userCode, isPreview, onStepChange, onFooterActionsChange, onServiceChange }: ProcessFlowSectionProps) {
   const typedContent = content as unknown as ProcessFlowContent;
   const {
     title,
@@ -1915,8 +1970,24 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
    */
   const hasRequest = flow.includes('request');
 
-  // Determine initial step - skip to datetime if service is pre-selected
-  const hasInitialService = !!initialService;
+  /*
+   * Determine initial step - skip to datetime if service is pre-selected.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * "Pre-selected" means IDENTIFIED, not merely named.
+   *
+   * A services card can know which service it is and not know its id — stored
+   * block content carries names alone, and only the routes that serve the page
+   * fill in ids from the live list. Such a card hands up a service with an
+   * empty id, which still has to load the catalogue (that is where the id
+   * lives), so it counts as "no service yet" HERE and is resolved by name in
+   * the effect below. Everything the client sees then behaves as if it had been
+   * identified from the start.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const hasInitialService = !!initialService?.id;
+  /** Named but unresolved: the catalogue is fetched, then matched by name. */
+  const pendingServiceName = initialService && !initialService.id ? initialService.name : null;
 
   // State - start from appropriate step based on initial service and flow configuration
   // If we have an initial service:
@@ -1938,7 +2009,9 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
 
   // Selected data - pre-populate with initial service if provided
   const [selectedService, setSelectedService] = useState<Service | null>(
-    initialService ? {
+    // Only an IDENTIFIED one: a card that knows the name and not the id would
+    // otherwise seed the flow with an empty id and post it to `booking/create`.
+    hasInitialService && initialService ? {
       id: initialService.id,
       name: initialService.name,
       description: initialService.description,
@@ -1947,8 +2020,11 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
       currency: initialService.currency,
       // Rebuilt field by field, so anything not named here is silently lost —
       // which is exactly what happened to the plan between the pricing card and
-      // the payment step.
-      paymentPlan: initialService.paymentPlan
+      // the payment step, and then to the journey facts below.
+      paymentPlan: initialService.paymentPlan,
+      is_scheduled: initialService.is_scheduled,
+      collection: initialService.collection,
+      sale_mode: initialService.sale_mode
     } : null
   );
   const [selectedDate, setSelectedDate] = useState<string>('');
@@ -2038,7 +2114,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
 
   // When initialService changes, reset state to start from appropriate step with pre-selected service
   useEffect(() => {
-    if (initialService) {
+    if (initialService?.id) {
       // Determine starting step based on flow configuration
       const startStep = hasScheduling ? 'datetime' : (hasClientInfo ? 'details' : 'services');
       setCurrentStep(startStep);
@@ -2050,7 +2126,10 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
         duration_minutes: initialService.duration_minutes,
         price: initialService.price,
         currency: initialService.currency,
-        paymentPlan: initialService.paymentPlan
+        paymentPlan: initialService.paymentPlan,
+        is_scheduled: initialService.is_scheduled,
+        collection: initialService.collection,
+        sale_mode: initialService.sale_mode
       });
       setSelectedDate('');
       setSelectedSlot(null);
@@ -2072,6 +2151,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
       fetchServices();
     }
   }, [hasInitialService]);
+
 
   // Fetch intake template from capability API - ONLY if intake is in the flow
   useEffect(() => {
@@ -2159,6 +2239,11 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
           priceRaw?: number;
           currency: string;
           paymentPlan?: ServicePaymentPlan;
+          // Published by this endpoint since services carried a journey, and
+          // dropped here until now — see `Service` for what that cost.
+          is_scheduled?: boolean | null;
+          collection?: 'online' | 'invoice' | null;
+          sale_mode?: 'direct' | 'proposal' | null;
         };
 
         setServices((data.services as ServiceResponse[]).map(s => ({
@@ -2173,7 +2258,12 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
           currency: s.currency || 'USD',
           // Kept, so a service picked from the list describes its terms as
           // fully as one arrived at from a pricing card.
-          paymentPlan: s.paymentPlan
+          paymentPlan: s.paymentPlan,
+          // And its journey, so choosing here walks the same steps as arriving
+          // with it already chosen.
+          is_scheduled: s.is_scheduled,
+          collection: s.collection,
+          sale_mode: s.sale_mode
         })));
       }
     } catch {
@@ -2247,16 +2337,66 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
   const handleSelectService = (service: Service) => {
     setSelectedService(service);
     markStepComplete('services');
+
+    /*
+     * The next step is THIS service's next step.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * `hasScheduling` describes the flow the host handed down, which — until the
+     * host is told what was chosen — is the PAGE's flow. Deciding from it sent a
+     * client who picked an unscheduled course straight to a date picker, and the
+     * host's corrected flow arrived a render too late to stop it.
+     *
+     * So the service answers for itself where it can, from the same resolver the
+     * host uses, and the host is told in the same breath. A service carrying no
+     * journey facts falls back to the handed-down flow exactly as before.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    onServiceChange?.(service);
+
+    const ownFlow = hasJourneyFacts(service) ? flowForService(service) : null;
+    const goesToDate = ownFlow ? flowHasScheduling(ownFlow) : hasScheduling;
+    const goesToDetails = ownFlow ? flowHasClientInfo(ownFlow) : hasClientInfo;
+
     // Go to datetime if scheduling is needed, otherwise go to details (client info)
-    if (hasScheduling) {
+    if (goesToDate) {
       goToStep('datetime', 'forward');
-    } else if (hasClientInfo) {
+    } else if (goesToDetails) {
       goToStep('details', 'forward');
     } else {
       // No booking or client info - unlikely but handle gracefully
       goToStep('confirmation', 'forward');
     }
   };
+
+  /*
+   * The card named a service but could not name its id. Find it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A services card is drawn from stored block content, which holds names and
+   * no ids — the ids are filled in by whichever route serves the page. Where
+   * that has not happened, clicking "book" on a named service opened this flow
+   * on its catalogue and asked the client to choose the service they had just
+   * chosen, which is the one thing a pre-selected card must never do.
+   *
+   * The catalogue just fetched IS the authority on ids, so the name is matched
+   * against it and the flow then advances exactly as an identified card would —
+   * through `handleSelectService`, so there is one definition of what picking a
+   * service does.
+   *
+   * An exact, unique match only. Two services whose names differ by a word are
+   * two services, and guessing between them would book the wrong one; no match
+   * leaves the catalogue showing, which is the honest outcome.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  useEffect(() => {
+    if (!pendingServiceName || selectedService || services.length === 0) return;
+
+    const match = matchServiceByName(services, pendingServiceName);
+    if (match) handleSelectService(match);
+    // Waits on the catalogue; the handler is stable for the life of one dialog.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingServiceName, services, selectedService]);
 
   const handleSelectDate = (date: string) => {
     setSelectedDate(date);

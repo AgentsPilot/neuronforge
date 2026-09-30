@@ -17,7 +17,7 @@ import {
   emailPalette,
   type BrandingData,
 } from './base-template';
-import { emailTranslations } from './translations';
+import { emailTranslations, clientFacingCancelReason } from './translations';
 
 export interface ProposalEmailData {
   title: string;
@@ -198,4 +198,180 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/**
+ * The quote stopped part-way, as the client receives it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY IT IS LONG
+ *
+ * This is the email a client reads twice. They agreed a price, paid part of it,
+ * and are being told the work has ended — so every figure they might reach for
+ * has to be on the page, or they reply asking for it. It states, in this order:
+ *
+ *   what the job was            named, not "your recent order"
+ *   what was agreed             the original total
+ *   what they have paid         so the arithmetic below can be checked
+ *   what is now cancelled       invoices voided, stages that will not be billed
+ *   the owner's note            when they wrote one
+ *   what happens to the money   the ONE thing silence would be worst about
+ *
+ * THE REASON CODE IS NEVER SHOWN. `client_not_paying` and `owner_cannot_deliver`
+ * are the owner's internal vocabulary, and several of the codes would read as an
+ * accusation in a client's inbox. The free-text note is the owner's to send.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export interface QuoteStoppedEmailData {
+  title: string;
+  /** What was originally agreed, so the money below can be checked against it. */
+  total: number;
+  currency: string;
+  /** Collected across every stage, before any refund. */
+  paidAmount: number;
+  /** Handed back as part of this stop. Zero when nothing was returned. */
+  refundedAmount: number;
+  /** Invoices voided by the stop — they may be sitting in the client's inbox. */
+  invoicesVoided: number;
+  /** Stages that had not been invoiced and now never will be. */
+  stagesClosed: number;
+  /**
+   * The owner's own sentence — passed ONLY when they chose to share it.
+   *
+   * Withholding happens at the caller, not here: a template that decides what to
+   * hide is a template someone will forget to check.
+   */
+  note?: string | null;
+  /**
+   * The reason code, rendered in its CLIENT-SAFE phrasing.
+   *
+   * Never printed raw. `client_not_paying` is an accurate record and an
+   * accusation to receive, so `clientFacingCancelReason` maps each code to a
+   * neutral sentence and returns nothing for the ones that have none
+   * (`test_booking`, `other`). That is why the client still learns why the work
+   * stopped even when the owner keeps their note private.
+   */
+  reasonCode?: string | null;
+  clientFirstName?: string | null;
+  branding: BrandingData;
+  locale?: Locale;
+}
+
+export function generateQuoteStoppedEmail(
+  data: QuoteStoppedEmailData
+): { subject: string; html: string } {
+  const locale = data.locale || 'en';
+  const t = emailTranslations.quoteStopped;
+  const c = emailPalette(data.branding);
+  const brandingWithLocale = { ...data.branding, locale };
+  const money = (n: number) => formatCurrency(n, data.currency);
+
+  const paid = Math.max(0, data.paidAmount);
+  const refunded = Math.max(0, data.refundedAmount);
+  /*
+   * What the client is left out of pocket. Clamped, because a refund can exceed
+   * what this platform recorded as collected — returned from the Stripe dashboard
+   * against a charge whose transaction was never fully written back — and a
+   * negative "kept" would print as a figure the business owes itself.
+   */
+  const kept = Math.max(0, paid - refunded);
+
+  const reasonForClient = clientFacingCancelReason(data.reasonCode, locale);
+
+  const greeting = data.clientFirstName
+    ? t.greeting[locale].replace('{name}', escapeHtml(data.clientFirstName))
+    : t.greetingPlain[locale];
+
+  const rows = [emailDetailRow(t.agreedLabel[locale], money(data.total), brandingWithLocale)];
+  // Only when there is some: a "Paid so far: ₪0" line on a job nobody was charged
+  // for invites the client to wonder what they missed.
+  if (paid > 0) {
+    rows.push(emailDetailRow(t.paidLabel[locale], money(paid), brandingWithLocale));
+  }
+
+  /*
+   * Plural handled as two strings rather than one with an "(s)".
+   *
+   * Hebrew does not pluralise the way English does, and "1 חשבוניות" is wrong in
+   * a way a client notices. Each branch has its own sentence per language.
+   */
+  const cancelledLines: string[] = [];
+  if (data.invoicesVoided > 0) {
+    cancelledLines.push(
+      (data.invoicesVoided === 1 ? t.invoicesVoided : t.invoicesVoidedPlural)[locale].replace(
+        '{count}',
+        String(data.invoicesVoided)
+      )
+    );
+  }
+  if (data.stagesClosed > 0) {
+    cancelledLines.push(
+      (data.stagesClosed === 1 ? t.stagesClosed : t.stagesClosedPlural)[locale].replace(
+        '{count}',
+        String(data.stagesClosed)
+      )
+    );
+  }
+
+  /*
+   * Four states, and each one says something different about the client's money.
+   * Zero held means either "never paid" or "refunded in full", and those are
+   * opposite things to tell somebody.
+   */
+  const moneyLine =
+    paid <= 0
+      ? t.moneyNone[locale]
+      : refunded > 0 && kept <= 0
+        ? t.moneyRefundedFull[locale].replace('{amount}', money(refunded))
+        : refunded > 0
+          ? t.moneyRefundedPartly[locale]
+              .replace('{refunded}', money(refunded))
+              .replace('{kept}', money(kept))
+          : t.moneyKept[locale].replace('{amount}', money(kept));
+
+  const content = `
+    <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: ${c.ink};">
+      ${greeting}
+    </h2>
+    <p style="margin: 0 0 24px; font-size: 15px; color: ${c.inkMuted};">
+      ${t.intro[locale].replace('{title}', escapeHtml(data.title))}
+    </p>
+
+    ${emailDetailsTable(rows, brandingWithLocale)}
+
+    ${cancelledLines.length > 0 ? `
+    <h3 style="margin: 24px 0 8px; font-size: 16px; font-weight: 600; color: ${c.ink};">
+      ${t.stagesHeading[locale]}
+    </h3>
+    <ul style="margin: 0 0 16px; padding-inline-start: 20px; font-size: 14px; color: ${c.inkMuted};">
+      ${cancelledLines.map(line => `<li style="margin: 0 0 6px;">${line}</li>`).join('')}
+    </ul>
+    ` : ''}
+
+    ${reasonForClient ? `
+    <p style="margin: 16px 0 0; font-size: 14px; color: ${c.inkMuted};">
+      <strong style="color: ${c.ink};">${t.reasonHeading[locale]}</strong> ${reasonForClient}
+    </p>
+    ` : ''}
+
+    ${data.note ? `
+    <h3 style="margin: 24px 0 8px; font-size: 16px; font-weight: 600; color: ${c.ink};">
+      ${t.noteHeading[locale]}
+    </h3>
+    <p style="margin: 0 0 16px; font-size: 14px; color: ${c.inkMuted}; white-space: pre-wrap;">${escapeHtml(data.note)}</p>
+    ` : ''}
+
+    <p style="margin: 24px 0 16px; font-size: 15px; color: ${c.ink};">
+      ${moneyLine}
+    </p>
+
+    <p style="margin: 0; font-size: 14px; color: ${c.inkMuted};">
+      ${t.questions[locale]}
+    </p>
+  `;
+
+  return {
+    subject: t.subject[locale].replace('{title}', data.title),
+    html: wrapInBrandedTemplate(content, brandingWithLocale),
+  };
 }

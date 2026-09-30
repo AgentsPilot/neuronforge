@@ -1,7 +1,7 @@
 # Feature Flags
 
-> **Last Updated**: 2026-09-21
-> **Version**: 1.3.0
+> **Last Updated**: 2026-09-29
+> **Version**: 1.4.0
 
 This document describes the feature flag system used in NeuronForge for gradual rollouts, A/B testing, and feature toggling.
 
@@ -11,6 +11,7 @@ This document describes the feature flag system used in NeuronForge for gradual 
 
 | Date | Version | Author | Changes |
 |------|---------|--------|---------|
+| 2026-09-29 | 1.4.0 | Dev | Added `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` (invite-only signup Slice 3b, "Continue with Google" on a champion invite). A client id rather than a boolean: set means on. Deliberately separate from the plugin's `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (SA Q-3, R-6). |
 | 2026-09-21 | 1.3.0 | Dev | **Renamed all seven flag readers from `use…` to `is…Enabled`** (`isBusinessDeleteSurfaceVisible` for the delete surface, to keep it distinct from the server-side `isBusinessDeleteSurfaceEnabled()` authz reader in `purgeAuthz.ts`). The `use` prefix made `react-hooks/rules-of-hooks` treat these plain env readers as React hooks, producing 11 of 14 lint errors. **Also fixed the flag-authoring template**, which had been generating both halves of the defect: it instructed a `use…` name *and* hand-rolled the boolean parsing instead of importing `parseBooleanFlag`. Added `npm run lint:hooks` + its CI workflow. See [REACT_HOOKS_RULES_VIOLATIONS_WORKPLAN.md](/docs/workplans/REACT_HOOKS_RULES_VIOLATIONS_WORKPLAN.md). |
 | 2026-02-08 | 1.2.0 | - | Added `isV6ReviewModeEnabled` flag for controlling V6 split API vs single API flow. |
 | 2026-02-08 | 1.1.0 | - | Added `isV6AgentGenerationEnabled` flag. Clarified that Thread-Based and New UI flags are for legacy route only. Expanded database-based flags documentation with detailed sections for each orchestration flag. |
@@ -46,6 +47,7 @@ Feature flag functions are defined in:
 | New Agent Creation UI | `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` | Client | `false` | Legacy: `/agents/new/chat` only |
 | Automated Calibration RCA | `CALIBRATION_AUTO_RCA_ENABLED` | **Server** | `false` | `/api/v2/calibrate/batch` (admin alert tail) |
 | **Business Delete (customer surface)** | `NEXT_PUBLIC_ENABLE_BUSINESS_DELETE` | Client **hint** + **Server boundary** | `false` | `/business-os/settings`, `/v2/settings`, `/settings`, `/api/business-os/purge/*` |
+| **Invite: Continue with Google** | `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` (a client id, not a boolean) | Client + Server | unset (off) | `/invite`, `/api/public/invites/signup/google` |
 
 ---
 
@@ -223,6 +225,58 @@ AC-2, AC-5, AC-10, AC-13, AC-16, AC-24, AC-37.
 ```bash
 # .env.local — off by default; omit the line entirely for the same effect
 NEXT_PUBLIC_ENABLE_BUSINESS_DELETE=false
+```
+
+---
+
+### Invite: Continue with Google — `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID`
+
+Switches on **"Continue with Google"** on a valid champion invite (Business OS
+invite-only signup, Slice 3b). **Default: unset, which means off.** Unset or
+blank, the invite page loads no Google script and shows no button, and
+`POST /api/public/invites/signup/google` answers 404
+`google_signin_not_configured` before reading anything. The code-and-password
+signup works either way.
+
+**Its value is a Google OAuth client id, and it must be the one configured in
+Supabase's Google provider** (Supabase dashboard → Auth → Providers → Google →
+Client ID). The same id is used three ways, all through the one reader
+`googleSignInClientId()` in `lib/business-os/invites/googleSignInConfig.ts`:
+
+| Where | Use |
+|---|---|
+| Invite page (browser) | Initialises Google Identity Services and draws the button |
+| Signup route (server) | The 404 gate |
+| ID-token verifier (server) | The only accepted `aud` |
+
+The browser then signs in with Supabase's `signInWithIdToken` using the same
+token, so Supabase must accept tokens issued for this client. If a different
+client were used, it would have to be added to the provider's comma-separated
+Client IDs.
+
+> ⚠️ **Never point this at the plugin client, and never make the reader fall back to
+> `NEXT_PUBLIC_GOOGLE_CLIENT_ID`.** That variable is the Gmail/Drive/… plugin
+> client and is **already set in production**. Reading it would switch this
+> feature on the moment it deploys, before Google has the invite page's
+> JavaScript origins registered. A test pins that the plugin variable alone
+> does not enable it.
+
+**Implementation notes**
+
+- The reader uses the **literal** `process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID`,
+  so Next.js inlines it into the client bundle. The value is fixed at **build**
+  time: setting or changing it on Vercel needs a **redeploy**.
+- A client id is a public identifier, not a secret.
+- Before switching it on, the OAuth client's **Authorized JavaScript origins**
+  must include the app's origin (for example `https://neuronforge-kohl.vercel.app`),
+  plus `http://localhost:3000` and `http://localhost` for local testing, and the
+  Google consent screen must be **published** (or the tester added as a test user).
+- Rollback: unset it and redeploy. The button disappears and the route answers
+  404; accounts already created with Google are ordinary confirmed accounts.
+
+```bash
+# .env.local — off by default; omit the line entirely for the same effect
+NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID=
 ```
 
 ---

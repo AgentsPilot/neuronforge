@@ -185,3 +185,29 @@ export const completeSignupSchema = z
   .strict();
 
 export type CompleteSignupBody = z.infer<typeof completeSignupSchema>;
+
+// ── Slice 3b: sign up with Google ───────────────────────────────────────────
+
+/** A compact JWS: three base64url segments. Google's ID tokens are well under 2 KB. */
+export const GOOGLE_ID_TOKEN_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+export const GOOGLE_ID_TOKEN_MAX_LENGTH = 4096;
+
+/** The raw nonce the page made: 32 random bytes, base64url without padding (43 characters, D-6). */
+export const GOOGLE_RAW_NONCE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+/**
+ * Complete the signup with Google: the invite token, Google's ID token and the
+ * RAW nonce whose SHA-256 the page gave Google, and NOTHING else (L-1, AC-6,
+ * §3.4). An `email`, `userId`, `accountId` or `cohort` key is a 400: the email
+ * written is the invite row's, never the token's, and the account id is the
+ * server's.
+ */
+export const completeGoogleSignupSchema = z
+  .object({
+    token: z.string().max(512),
+    idToken: z.string().max(GOOGLE_ID_TOKEN_MAX_LENGTH).regex(GOOGLE_ID_TOKEN_PATTERN),
+    nonce: z.string().regex(GOOGLE_RAW_NONCE_PATTERN),
+  })
+  .strict();
+
+export type CompleteGoogleSignupBody = z.infer<typeof completeGoogleSignupSchema>;

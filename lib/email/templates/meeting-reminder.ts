@@ -110,6 +110,10 @@ export function generateMeetingReminderEmail(
       manage: 'Change the time',
       closing: 'Looking forward to seeing you.',
       // No "please confirm". See the header.
+      /*
+       * This names the button, so it is rendered ONLY when there is one — see
+       * where it is used below.
+       */
       footnote: `If something has come up, you can move it using the link above — no need to write.`,
     },
     es: {
@@ -152,6 +156,23 @@ export function generateMeetingReminderEmail(
     branding
   );
 
+  /*
+   * The button and its footnote stand or fall together.
+   *
+   * `t.footnote` says "you can move it using the link above" and used to render
+   * unconditionally, while this button did not — `manageUrlFor` returns null when
+   * APP_URL is missing or the token cannot be signed, so reminders have gone out
+   * telling clients to use a link that was not in the email. The sender now also
+   * withholds the link once the notice window has closed, which would have made
+   * that happen every time.
+   *
+   * Nothing replaces the footnote when there is no link. A "reply to us instead"
+   * line was drafted and removed: this email deliberately ASKS FOR NOTHING —
+   * no confirmation, no reply — because a reminder that creates an obligation is
+   * another thing on somebody's list. At two hours out its whole job is "do not
+   * forget", and an instruction about changes nobody can make is noise. The
+   * business is named and branded in the wrapper for anyone who needs it.
+   */
   const button = manageUrl ? emailButton(t.manage, manageUrl, { branding }) : '';
 
   const html = wrapInBrandedTemplate(
@@ -161,7 +182,7 @@ export function generateMeetingReminderEmail(
       ${details}
       ${button}
       <p style="margin:24px 0 0;font-size:16px;color:${palette.ink};">${t.closing}</p>
-      <p style="margin:16px 0 0;font-size:14px;color:${palette.inkMuted};">${t.footnote}</p>
+      ${manageUrl ? `<p style="margin:16px 0 0;font-size:14px;color:${palette.inkMuted};">${t.footnote}</p>` : ''}
       <p style="margin:16px 0 0;font-size:16px;color:${palette.ink};">${businessName}</p>
     `,
     // Locale rides on `branding`, which is where the wrapper reads it from —

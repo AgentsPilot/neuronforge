@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { activitySentence, activityFieldName, activityRecord } from '@/lib/business-os/activityText';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { deleteContact, ContactHoldsMoneyError } from '@/lib/services/ContactLifecycleService';
 
 const logger = createLogger({ module: 'CRMContactAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -348,13 +349,54 @@ export async function DELETE(
     // 2. Get contact first for audit log
     const contact = await crmContactRepository.findById(id, user.id);
 
-    // 3. Delete contact
-    const result = await crmContactRepository.delete(id, user.id);
+    /*
+     * 3. Delete the contact AND the bookings that stand in its way.
+     *
+     * This was `crmContactRepository.delete`, and it returned 500 for anybody
+     * who had ever booked: a NOT NULL `contact_id` on `scheduling_bookings`
+     * against a foreign key that sets it NULL. `ContactLifecycleService` owns
+     * the whole move now — see its header for the two migrations that
+     * disagreed — and refuses outright when the client has been paid.
+     */
+    const result = await deleteContact({
+      contactId: id,
+      userId: user.id,
+      request,
+      logger: requestLogger,
+    });
+
+    /*
+     * Money is a refusal, not a failure. 409 with the reason, so the drawer can
+     * say what is holding it instead of "Failed to delete contact" — which is
+     * what it said for weeks while the real answer was sitting in the server
+     * log.
+     */
+    if (result.error instanceof ContactHoldsMoneyError) {
+      requestLogger.info(
+        { contactId: id, userId: user.id, held: result.error.heldAmount },
+        'Contact delete refused: payments recorded'
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'contact_holds_money',
+          error: result.error.message,
+          held: result.error.heldAmount,
+          bookingCount: result.error.bookingCount,
+          invoiceNumbers: result.error.invoiceNumbers,
+        },
+        { status: 409 }
+      );
+    }
 
     if (result.error) {
       requestLogger.error({ err: result.error, contactId: id, userId: user.id }, 'Failed to delete contact');
       return NextResponse.json(
-        { success: false, error: 'Failed to delete contact' },
+        {
+          success: false,
+          error: 'Failed to delete contact',
+          details: process.env.NODE_ENV === 'development' ? result.error.message : undefined,
+        },
         { status: 500 }
       );
     }

@@ -16,7 +16,8 @@ interface PageProps {
   params: Promise<{ userCode: string }>;
   searchParams: Promise<{
     service?: string;    // Single service ID to pre-select
-    services?: string;   // Comma-separated service IDs to filter (show only these)
+    services?: string;   // Legacy: comma-separated service IDs to show ONLY these
+    exclude?: string;    // Comma-separated service IDs this link leaves off
     flow?: string;       // Comma-separated flow steps: scheduling,client_info,payment,intake
   }>;
 }
@@ -28,13 +29,14 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
 export default async function StandaloneBookingPage({ params, searchParams }: PageProps) {
   const { userCode } = await params;
-  const { service: initialServiceId, services: servicesParam } = await searchParams;
+  const { service: initialServiceId, services: servicesParam, exclude: excludeParam } = await searchParams;
 
   return (
     <PublicBookingPage
       userCode={userCode}
       initialServiceId={initialServiceId}
       servicesParam={servicesParam}
+      excludeParam={excludeParam}
     />
   );
 }

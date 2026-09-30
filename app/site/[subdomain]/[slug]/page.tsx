@@ -52,6 +52,8 @@ interface WebsiteData {
   success: boolean;
   status: 'live' | 'coming_soon';
   subdomain: string;
+  /** Stripe connected with charges enabled. False drops the dialog's card step. */
+  processorReady?: boolean;
   page?: {
     title: string;
     meta_description: string | null;
@@ -213,6 +215,7 @@ export default async function PublicLandingPage({ params }: PageProps) {
           locale={locale}
           bookingUrl={`/site/${subdomain}/book`}
           subdomain={subdomain}
+          paymentsEnabled={data.processorReady === true}
         />
       </main>
     </>

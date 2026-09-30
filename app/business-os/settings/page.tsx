@@ -1008,7 +1008,7 @@ function BusinessOSSettingsContent() {
             >
               <div className="flex items-center gap-3">
                 <CreditCard className="w-5 h-5 text-[var(--v2-text-muted)]" />
-                <span className="text-sm text-[var(--v2-text-primary)]">Your plan</span>
+                <span className="text-sm text-[var(--v2-text-primary)]">{t('plan.section_title')}</span>
               </div>
               <ChevronRight className={`w-4 h-4 text-[var(--v2-text-muted)] transition-transform ${expandedSection === 'plan' ? 'rotate-90' : ''}`} />
             </button>

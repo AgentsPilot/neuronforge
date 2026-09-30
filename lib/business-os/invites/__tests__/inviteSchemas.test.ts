@@ -16,6 +16,7 @@ import {
 import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
 
 import {
+  completeGoogleSignupSchema,
   createInviteSchema,
   inviteIdSchema,
   revokeInviteSchema,
@@ -183,5 +184,32 @@ describe('validateInviteBodySchema (shape only, F-2)', () => {
     expect(validateInviteBodySchema.safeParse({ token: 1 }).success).toBe(false);
     expect(validateInviteBodySchema.safeParse({ token: 'abc', email: 'x' }).success).toBe(false);
     expect(validateInviteBodySchema.safeParse({ token: 'a'.repeat(513) }).success).toBe(false);
+  });
+});
+
+describe('completeGoogleSignupSchema (Slice 3b; L-1, AC-6, §3.4)', () => {
+  const ID_TOKEN = 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln-_';
+  const valid = { token: 'abc', idToken: ID_TOKEN, nonce: 'A'.repeat(42) + '_' };
+
+  it('takes exactly { token, idToken, nonce }', () => {
+    expect(completeGoogleSignupSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it.each(['email', 'userId', 'accountId', 'cohort', 'tier', 'level', 'password'])('an injected %s is refused', (key) => {
+    expect(completeGoogleSignupSchema.safeParse({ ...valid, [key]: 'x' }).success).toBe(false);
+  });
+
+  it.each([
+    ['a missing idToken', { idToken: undefined }],
+    ['an idToken that is not three segments', { idToken: 'a.b' }],
+    ['an idToken with non-base64url characters', { idToken: 'a.b=.c' }],
+    ['an idToken over 4096 characters', { idToken: `a.${'b'.repeat(4094)}.c` }],
+    ['a missing nonce', { nonce: undefined }],
+    ['a 42-character nonce', { nonce: 'A'.repeat(42) }],
+    ['a 44-character nonce', { nonce: 'A'.repeat(44) }],
+    ['a padded nonce', { nonce: 'A'.repeat(42) + '=' }],
+    ['a token over 512 characters', { token: 'a'.repeat(513) }],
+  ])('refuses %s', (_label, overrides) => {
+    expect(completeGoogleSignupSchema.safeParse({ ...valid, ...overrides }).success).toBe(false);
   });
 });

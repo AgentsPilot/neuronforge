@@ -145,10 +145,31 @@ describe('cancelBooking', () => {
     });
 
     // The three steps that make a cancellation real.
-    expect(mockCancel).toHaveBeenCalledWith(BOOKING_ID, USER_ID, 'client is ill');
+    /*
+     * The prose reason AND the structured fourth argument.
+     *
+     * `cancellation_reason` still carries the sentence — the `booking_cancelled`
+     * gap and `CashCancelledUnrefundedDetector` parse `CLIENT_CANCELLED_PREFIX`
+     * out of it — and the structured columns are written alongside. This caller
+     * passed no code, so they are null rather than guessed.
+     */
+    expect(mockCancel).toHaveBeenCalledWith(BOOKING_ID, USER_ID, 'client is ill', {
+      code: null,
+      note: null,
+      cancelledBy: null,
+    });
     expect(mockDeleteCalendarEvent).toHaveBeenCalledWith(booking(), USER_ID);
     expect(mockSendCancellationEmail).toHaveBeenCalledWith(BOOKING_ID, USER_ID, 'client is ill', {
       offerRebooking: undefined,
+      /*
+       * Zero here because this fixture was never paid for. The figure is passed
+       * whatever it is: the client's email says what is still held, and it is the
+       * same number the owner is asked to refund, worked out once above.
+       */
+      amountHeld: 0,
+      heldCurrency: null,
+      paidAmount: 0,
+      refundedAmount: 0,
     });
   });
 
@@ -254,11 +275,19 @@ describe('cancelBooking', () => {
   it('cancels without a reason', async () => {
     await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
 
-    expect(mockCancel).toHaveBeenCalledWith(BOOKING_ID, USER_ID, undefined);
+    expect(mockCancel).toHaveBeenCalledWith(BOOKING_ID, USER_ID, undefined, {
+      code: null,
+      note: null,
+      cancelledBy: null,
+    });
     // Undefined, not false: an ordinary cancellation still invites the client
     // to book again. Only a closing business suppresses that.
     expect(mockSendCancellationEmail).toHaveBeenCalledWith(BOOKING_ID, USER_ID, undefined, {
       offerRebooking: undefined,
+      amountHeld: 0,
+      heldCurrency: null,
+      paidAmount: 0,
+      refundedAmount: 0,
     });
   });
 
@@ -279,7 +308,7 @@ describe('cancelBooking', () => {
       BOOKING_ID,
       USER_ID,
       'This business has ceased operating',
-      { offerRebooking: false }
+      { offerRebooking: false, amountHeld: 0, heldCurrency: null, paidAmount: 0, refundedAmount: 0 }
     );
   });
 });
@@ -446,5 +475,59 @@ describe('cancelBooking and the invoices', () => {
     expect(result.error).toBeNull();
     expect(result.data?.booking).toEqual(booking());
     expect(result.data?.invoicesCancelled).toBe(0);
+  });
+});
+
+describe('the email does not contradict the reason', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE EMAIL THAT PROMPTED THIS said, in one message: we no longer offer this
+   * service, and — would you like to book it again? With a button pointing at
+   * the page for the thing just withdrawn.
+   *
+   * `offerRebooking` predates reason codes and only ever meant "the business is
+   * closing down", so no caller was in a position to suppress it. The reason now
+   * decides.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const rebookingOffered = () =>
+    mockSendCancellationEmail.mock.calls[0][3].offerRebooking;
+
+  it.each(['service_discontinued', 'rescheduled', 'duplicate', 'test_booking'])(
+    'does not invite them back after %s',
+    async code => {
+      await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID, cancelReason: code });
+      expect(rebookingOffered()).toBe(false);
+    }
+  );
+
+  it.each(['client_cancelled', 'client_no_show', 'client_not_paying', 'owner_unavailable'])(
+    'still invites them back after %s',
+    async code => {
+      /*
+       * Deliberately including the awkward ones. A client who did not pay or did
+       * not turn up is someone a business may well want to see again, and that is
+       * the owner's call rather than a lookup table's.
+       */
+      await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID, cancelReason: code });
+      expect(rebookingOffered()).not.toBe(false);
+    }
+  );
+
+  it('lets an explicit choice win over the reason', async () => {
+    // The closing-business path has thought about it and is better informed than
+    // any table here.
+    await cancelBooking({
+      bookingId: BOOKING_ID,
+      userId: USER_ID,
+      cancelReason: 'client_cancelled',
+      offerRebooking: false,
+    });
+    expect(rebookingOffered()).toBe(false);
+  });
+
+  it('leaves it undefined when there is no code, so nothing changes for old callers', async () => {
+    await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+    expect(rebookingOffered()).toBeUndefined();
   });
 });

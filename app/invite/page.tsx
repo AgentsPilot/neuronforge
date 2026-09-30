@@ -21,6 +21,11 @@
  * Slice 1b: a valid invite ends with the signup form (`SignupForm.tsx`) for a
  * signed-out visitor. The Slice 0 "not from this page yet" line is gone.
  *
+ * Slice 3b: above that form, "Continue with Google" (`GoogleSignupButton.tsx`),
+ * only when `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` is set (D-9). Unset, the page
+ * loads no Google script and shows no button. Once a Google signup has created
+ * the account, the code form is hidden: the invite is used.
+ *
  * ── Slice 1a ────────────────────────────────────────────────────────────────
  * `existing_account` (FR-8a): the invited email already has an account. The
  * page sends the person to the NORMAL sign-in page; it never signs anyone in
@@ -35,8 +40,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { googleSignInClientId } from '@/lib/business-os/invites/googleSignInConfig';
 import { marketingUrl } from '@/lib/utils/origins';
 
+import { GoogleSignupButton } from './GoogleSignupButton';
 import { INVITE_PAGE_COPY, directionOf, inviteLocaleOf, type InviteLocale } from './invitePageCopy';
 import { SignupForm } from './SignupForm';
 import { useSignedInVisitor } from './useSignedInVisitor';
@@ -51,7 +58,7 @@ interface InviteOffer {
   free: boolean;
   monthlyPriceUsd: number;
   access: InviteAccess;
-  included: Array<{ category: string; label: string; summary: string }>;
+  included: Array<{ category: string; labelKey: string; summary: string }>;
 }
 
 type InviteResponse =
@@ -91,6 +98,11 @@ function formatDate(iso: string, locale: InviteLocale): string {
 export default function InvitePage() {
   const [view, setView] = useState<View>({ kind: 'loading' });
   const { visitor, signOut, signingOut } = useSignedInVisitor();
+  // Slice 3b (D-9): null unless the dedicated Google client id is configured.
+  const googleClientId = googleSignInClientId();
+  // Slice 3b: a Google signup created the account; the code form no longer applies.
+  const [googleAccountReady, setGoogleAccountReady] = useState(false);
+  const markGoogleAccountReady = useCallback(() => setGoogleAccountReady(true), []);
   // Held in memory only, so "try again" after a failed check needs no URL.
   const tokenRef = useRef<string | null>(null);
   // StrictMode runs effects twice in development; the fragment is gone after
@@ -250,7 +262,16 @@ export default function InvitePage() {
                 <ul className="space-y-1 text-sm text-slate-700">
                   {data.offer.included.map((row) => (
                     <li key={row.category}>
-                      <span className="font-medium">{row.label}:</span> {row.summary}
+                      {/*
+                        `describePlanOffer` names the heading, it does not word
+                        it. Falls back to the raw key rather than hiding the
+                        row: a missing heading should be visible and fixable,
+                        not silently drop something the invite is offering.
+                      */}
+                      <span className="font-medium">
+                        {copy.planCategory[row.labelKey] ?? row.labelKey}:
+                      </span>{' '}
+                      {row.summary}
                     </li>
                   ))}
                 </ul>
@@ -261,7 +282,18 @@ export default function InvitePage() {
 
             {/* Slice 1b: the form, only for a visitor the session check says is
                 signed out (L-8). A signed-in visitor sees the notice above. */}
-            {visitor.status === 'signed_out' && tokenRef.current && (
+            {visitor.status === 'signed_out' && tokenRef.current && googleClientId && (
+              <GoogleSignupButton
+                token={tokenRef.current}
+                clientId={googleClientId}
+                locale={locale}
+                maskedEmail={data.maskedEmail}
+                copy={copy.signup}
+                signInLabel={copy.signIn}
+                onAccountReady={markGoogleAccountReady}
+              />
+            )}
+            {visitor.status === 'signed_out' && tokenRef.current && !googleAccountReady && (
               <SignupForm
                 token={tokenRef.current}
                 maskedEmail={data.maskedEmail}

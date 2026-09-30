@@ -22,7 +22,11 @@
  *   npm run resend:smoke                       against localhost:3000
  *   npm run resend:smoke -- --url https://…    against a deployed host
  *   npm run resend:smoke -- --id <message-id>  use a real provider_message_id
- *   npm run resend:smoke -- --type email.clicked
+ *   npm run resend:smoke -- --type email.bounced
+ *
+ * Defaults to `email.delivered`. With no `--id` it invents one, so nothing is
+ * written and only the signature path is proven — run it that way first. Pass a
+ * real `--id` only when you intend to write to that row.
  *
  * Reads RESEND_WEBHOOK_SECRET from the environment — the same value the server
  * reads, so a mismatch here is a mismatch there.
@@ -45,7 +49,17 @@ async function main() {
 
   const base = arg('url', 'http://localhost:3000').replace(/\/$/, '');
   const url = `${base}/api/webhooks/resend`;
-  const type = arg('type', 'email.opened');
+  /*
+   * `email.delivered`, NOT `email.opened`.
+   *
+   * With a real `--id` this script writes to the row it names. Defaulting to an
+   * open manufactured a fact that cannot be observed: open tracking is off by
+   * deliberate decision — no tracking CNAME, no pixel — so an `opened_at` and
+   * an `open_count` of 1 would be recorded for something nobody could have
+   * measured. `delivered` is the event the platform actually subscribes to, and
+   * it writes a timestamp without rewriting `status`.
+   */
+  const type = arg('type', 'email.delivered');
   const messageId = arg('id', `smoke-${randomUUID()}`);
 
   const body = JSON.stringify({

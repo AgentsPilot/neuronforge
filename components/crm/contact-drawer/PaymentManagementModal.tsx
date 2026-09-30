@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   CreditCard, Check, RotateCcw, Loader2, AlertTriangle,
-  CheckCircle2, Clock, XCircle, DollarSign, User, ArrowLeft, Trash2
+  CheckCircle2, Clock, XCircle, DollarSign, User, ArrowLeft, Trash2, Undo2
 } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 import type { SessionCardData } from './types';
@@ -159,6 +159,15 @@ export function PaymentManagementModal({
   const isPaid = paymentStatus === 'paid';
   const isPending = paymentStatus === 'pending';
   const isFree = paymentStatus === 'free';
+  /*
+   * Money that arrived and went back.
+   *
+   * It had no branch in `getStatusConfig`, so it fell through to the catch-all
+   * and was labelled FAILED — telling the owner a payment did not go through
+   * when in fact it succeeded and was returned. `crm.payment.status.refunded`
+   * already existed in all three languages and was simply never reached.
+   */
+  const isRefunded = paymentStatus === 'refunded';
 
   const maxRefundable = payment.amount;
   const refundAmount = refundType === 'full' ? maxRefundable : parseFloat(partialAmount) || 0;
@@ -351,6 +360,26 @@ export function PaymentManagementModal({
       bg: 'bg-blue-500/10',
       border: 'border-blue-500/30'
     };
+    if (isRefunded) return {
+      icon: Undo2,
+      label: t('crm.payment.status.refunded') || 'Refunded',
+      /*
+       * Slate, not red. A refund is a completed movement, not a failure — the
+       * owner chose it. Red beside "refunded" reads as something gone wrong.
+       */
+      color: 'text-slate-600 dark:text-slate-300',
+      bg: 'bg-slate-500/10',
+      border: 'border-slate-500/30'
+    };
+    /*
+     * The catch-all says FAILED, so it must only be reached by something that
+     * actually failed.
+     *
+     * `refunded` used to land here, which is how a returned payment came to be
+     * reported as a failed one. A status added without a branch above lands in
+     * this one and asserts something false about the money — the same trap the
+     * booking badge's catch-all carries, and worth the same care.
+     */
     return {
       icon: XCircle,
       label: t('crm.payment.status.failed') || 'Failed',
@@ -394,6 +423,12 @@ export function PaymentManagementModal({
         // This modal is opened from a booking, so deleting it afterwards is a
         // real option here in a way it is not on the payments tab.
         showDeleteBookingOption
+        /*
+         * So a COMPLETED or no-show booking is not offered a cancellation. The
+         * meeting happened; refunding afterwards does not un-happen it, and the
+         * toggle emails the client that it was called off.
+         */
+        bookingStatus={booking.booking.status}
         onSuccess={shouldDeleteBooking => {
           onPaymentUpdated?.();
           if (shouldDeleteBooking) onBookingDeleted?.(booking.booking.id);

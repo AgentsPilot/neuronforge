@@ -155,7 +155,7 @@ export function CTABlock({ content, styles, theme, isRTL, className, locale = 'e
    *   `serviceId` + unavailable  about a gone thing  → no control
    */
   const serviceGone = !!rawContent.serviceId && rawContent.serviceUnavailable === true;
-  const hasBookingCapability = !!(bookingUrl || (isPreview && onOpenBooking));
+  const hasBookingCapability = !!(bookingUrl || (onOpenBooking));
 
   // For the unlinked case below: the same resolver the header and hero use.
   const ctaBooking = resolveBookingAction({
@@ -281,9 +281,9 @@ export function CTABlock({ content, styles, theme, isRTL, className, locale = 'e
             >
               {buttonText}
             </button>
-          ) : hasServiceLinked && ((isPreview && onOpenBooking) || hasBookingCapability) ? (
+          ) : hasServiceLinked && ((onOpenBooking) || hasBookingCapability) ? (
             // Has booking capability - use booking modal or link
-            isPreview && onOpenBooking ? (
+            onOpenBooking ? (
               <button
                 type="button"
                 onClick={handleBookingClick}

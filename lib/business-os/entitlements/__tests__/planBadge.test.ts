@@ -68,8 +68,12 @@ describe('who gets a pill', () => {
     // following the link does. The reason travels with the label.
     const badge = planBadgeFor(resolutionFor('champion'), config);
 
-    expect(badge?.title).toMatch(/no end date/i);
-    expect(badge?.title.length).toBeGreaterThan(20);
+    // The KEY now, because the sentence lives in the platform dictionary — the
+    // pill renders it, so the pill can be read in Hebrew or Spanish. Which of
+    // the two sentences is true is still decided HERE, which is what this
+    // asserts; that the sentence itself says "no end date" is asserted where the
+    // copy lives, in `planCopy.i18n.test.ts`.
+    expect(badge?.titleKey).toBe('plan.badge.no_end');
   });
 
   it('a paid plan does NOT — its name is not news', () => {

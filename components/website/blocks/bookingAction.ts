@@ -1,4 +1,82 @@
-import type { SelectedServiceData } from './types';
+import { journeySteps } from '@/lib/business-os/clientJourney';
+import type { FlowStep, SelectedServiceData } from './types';
+
+/**
+ * The two facts a journey is built from, plus the two that shape its middle.
+ *
+ * Any object carrying them will do — a services card, a catalogue row, a
+ * pricing plan — because all three describe the same `scheduling_services` row.
+ */
+export interface ServiceJourneyFacts {
+  is_scheduled?: boolean | null;
+  collection?: 'online' | 'invoice' | null;
+  price?: number | null;
+  /** `null` is how the database spells "direct", so both are accepted. */
+  sale_mode?: 'direct' | 'proposal' | null;
+}
+
+/** `journeySteps` names its steps differently from the dialog's flow keys. */
+const STEP_TO_FLOW: Record<string, FlowStep | undefined> = {
+  // Choosing what to buy is the dialog's own 'services' screen, not a flow step.
+  service: undefined,
+  datetime: 'scheduling',
+  details: 'client_info',
+  request: 'request',
+  payment: 'payment',
+  intake: 'intake',
+  confirmation: 'confirmation',
+};
+
+/**
+ * Does this service say anything about its own journey?
+ *
+ * A card or row written before services carried these says nothing, and the
+ * page's stored flow remains the best available answer for it.
+ */
+export function hasJourneyFacts(service: ServiceJourneyFacts | null | undefined): boolean {
+  return (
+    service?.is_scheduled !== undefined ||
+    service?.collection !== undefined ||
+    service?.sale_mode !== undefined
+  );
+}
+
+/**
+ * The steps THIS service is bought through.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The journey belongs to the SERVICE, not to the page. A course is not booked
+ * into an hour, an invoiced service takes no card, and a quoted one ends at the
+ * request — and a page's stored `client_flow` is one answer for a catalogue
+ * that may hold all four.
+ *
+ * This was computed in one place only — from the service a card handed to the
+ * dialog — so a client who reached the catalogue and chose there walked the
+ * PAGE's flow instead: an unscheduled course asked them to pick a time that
+ * does not exist. Shared here so the dialog can recompute it the moment the
+ * client actually chooses.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * @param processorReady Whether a card can actually be charged. Undefined means
+ *   the caller does not know, and is read as ready: removing a payment step a
+ *   business can honour is worse than leaving one it cannot.
+ */
+export function flowForService(
+  service: ServiceJourneyFacts,
+  options: { processorReady?: boolean } = {}
+): FlowStep[] {
+  return journeySteps(
+    {
+      is_scheduled: service.is_scheduled,
+      collection: service.collection,
+      price: service.price,
+      sale_mode: service.sale_mode,
+    },
+    { processorReady: options.processorReady !== false }
+  )
+    .map(step => STEP_TO_FLOW[step])
+    .filter((step): step is FlowStep => Boolean(step));
+}
 
 /**
  * How a "book" button should behave on this page.
@@ -26,13 +104,26 @@ export type BookingAction =
   | { kind: 'link'; href: string };
 
 export function resolveBookingAction(input: {
+  /**
+   * Retained because every caller passes it and it documents which surface this
+   * is. It no longer DECIDES anything here — see `onOpenBooking` below.
+   */
   isPreview?: boolean;
+  /**
+   * The dialog, when this page has one mounted.
+   *
+   * The condition used to be `isPreview && onOpenBooking`, which meant a
+   * published page — which never passes `isPreview` — could not open the dialog
+   * even with the handler in its hand. The handler's PRESENCE is the capability
+   * now: `WebsiteBlocks` passes it only where the dialog is actually rendered,
+   * so a page that cannot open one still falls through to the link below.
+   */
   onOpenBooking?: (service: SelectedServiceData | null) => void;
   bookingUrl?: string;
   /** Where to go when this page cannot take a booking at all. */
   fallbackHref: string;
 }): BookingAction {
-  if (input.isPreview && input.onOpenBooking) {
+  if (input.onOpenBooking) {
     const open = input.onOpenBooking;
     return { kind: 'open', onClick: () => open(null) };
   }
@@ -48,7 +139,38 @@ export function canBook(input: {
   onOpenBooking?: unknown;
   bookingUrl?: string;
 }): boolean {
-  return Boolean((input.isPreview && input.onOpenBooking) || input.bookingUrl);
+  return Boolean(input.onOpenBooking || input.bookingUrl);
+}
+
+/**
+ * The service a card named, found in the catalogue that knows its id.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Stored block content carries service NAMES and no ids — the ids are filled in
+ * by whichever route serves the page, from the live list. A card rendered
+ * without that injection therefore knows exactly which service it is and cannot
+ * say so in the one field the booking API accepts, and the dialog it opened
+ * asked the client to choose the service they had just chosen.
+ *
+ * EXACT AND UNIQUE. A near match is a different service — "Training 45 min" and
+ * "Training 60 min" differ by one word and cost different money — so anything
+ * other than one exact hit returns null and the client picks from the
+ * catalogue, which is the honest outcome rather than a guessed booking.
+ *
+ * Case and surrounding space are not part of a name; everything else is. No
+ * transliteration or cross-script matching: a Hebrew catalogue holds
+ * Hebrew-named services, and a Latin-script query genuinely does not match one.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function matchServiceByName<T extends { name?: string | null }>(
+  services: readonly T[],
+  name: string | null | undefined
+): T | null {
+  const wanted = (name ?? '').trim().toLowerCase();
+  if (!wanted) return null;
+
+  const matches = services.filter(service => (service.name ?? '').trim().toLowerCase() === wanted);
+  return matches.length === 1 ? matches[0] : null;
 }
 
 /**

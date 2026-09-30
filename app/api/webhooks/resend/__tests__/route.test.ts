@@ -203,3 +203,61 @@ describe('POST /api/webhooks/resend', () => {
     expect(recorded).toEqual([]);
   });
 });
+
+/**
+ * The events the platform actually subscribes to, now that open and click
+ * tracking are deliberately off.
+ */
+describe('delivery and failure, without tracking', () => {
+  /*
+   * The invariant the dashboard's "emails sent" count depends on.
+   *
+   * `email.delivered` records a TIMESTAMP and must not rewrite `status`. If it
+   * ever did, a delivered email would stop matching `status = 'sent'` and would
+   * silently leave a historical total — which is the bug that already existed
+   * for bounces. `DISPATCHED_EMAIL_STATUSES` covers the case either way, but
+   * this pins the cheaper guarantee.
+   */
+  it('records a delivery as a timestamp and leaves the status alone', async () => {
+    const response = await POST(
+      signed({ ...openedEvent, type: 'email.delivered' })
+    );
+
+    expect(response.status).toBe(200);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0].event).toEqual({ deliveredAt: '2026-09-23T10:00:00Z' });
+    expect(recorded[0].event).not.toHaveProperty('status');
+  });
+
+  it('records a complaint as terminal, separately from a bounce', async () => {
+    await POST(signed({ ...openedEvent, type: 'email.complained' }));
+
+    expect(recorded[0].event).toMatchObject({ status: 'complained' });
+  });
+
+  /*
+   * Resend accepted the send — so the row already reads 'sent' and carries a
+   * message id — and then the send failed. Without this the row says 'sent'
+   * for ever: a send that never happened, recorded as one that did.
+   */
+  it('records a provider failure as terminal', async () => {
+    const response = await POST(signed({ ...openedEvent, type: 'email.failed' }));
+
+    expect(response.status).toBe(200);
+    expect(recorded[0].event).toMatchObject({ status: 'failed' });
+  });
+
+  /*
+   * These two are deliberately NOT subscribed in the Resend dashboard, but an
+   * accidentally-ticked box must be harmless rather than write something.
+   */
+  it.each(['email.suppressed', 'email.sent', 'email.received'])(
+    'acknowledges %s without writing anything',
+    async type => {
+      const response = await POST(signed({ ...openedEvent, type }));
+
+      expect(response.status).toBe(200);
+      expect(recorded).toEqual([]);
+    }
+  );
+});

@@ -11,13 +11,22 @@ import { PublicShell } from '@/components/public/PublicShell';
 import { StatusCard } from '@/components/public/StatusCard';
 import { useOptionalPublicBrand } from '@/components/public/PublicBrandProvider';
 import { createPublicT } from '@/lib/i18n/public-pages';
+/*
+ * The client's list — the SHORT one, from the shared namespace.
+ *
+ * Somebody who came here to cancel an appointment is not filling in a form. The
+ * owner's list is longer because the owner sees more; offering it here would get
+ * its first item clicked.
+ */
+import { CLIENT_CANCEL_REASONS, type ClientCancelReason } from '@/lib/business-os/cancellationReasons';
 
 interface BookingData extends PublicBookingSummary {
   id: string;
   clientName: string;
   status: string;
   canCancel: boolean;
-  hoursUntilBooking: number;
+  /** Null for a product purchase — there is no appointment to count down to. */
+  hoursUntilBooking: number | null;
 }
 
 /**
@@ -55,6 +64,16 @@ export default function CancelBookingPage() {
    */
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [reason, setReason] = useState('');
+  /*
+   * NOTHING PRESELECTED, and the confirm button is gated on it.
+   *
+   * The reason is mandatory now, and a mandatory picker that opens on its first
+   * item makes that item the most common reason in the data forever. The public
+   * quote page shipped exactly that mistake — its decline picker defaulted to
+   * `too_expensive` with no gate — so every client who declined without looking
+   * recorded "too expensive".
+   */
+  const [reasonCode, setReasonCode] = useState<ClientCancelReason | ''>('');
 
   const locale = brand?.locale ?? 'en';
   const t = createPublicT(locale);
@@ -98,6 +117,8 @@ export default function CancelBookingPage() {
   }, [token]);
 
   const handleCancel = async () => {
+    // Mandatory. The button is disabled without one; this stops a stray call too.
+    if (!reasonCode) return;
     setCancelling(true);
     setError(null);
 
@@ -105,7 +126,10 @@ export default function CancelBookingPage() {
       const response = await fetch(`/api/book/manage/${token}/cancel`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: reason.trim() || undefined }),
+        body: JSON.stringify({
+          reason_code: reasonCode,
+          reason: reason.trim() || undefined,
+        }),
       });
       const data = await response.json();
 
@@ -194,6 +218,41 @@ export default function CancelBookingPage() {
             <StatusCard tone="warning" title={t('cancelConfirm')} description={t('cancelWarning')} />
 
             <div>
+              <p className="mb-1.5 text-sm font-medium" style={{ color: 'var(--ap-text)' }}>
+                {t('cancelReasonWhy')}
+              </p>
+              {/*
+                Radios, not a dropdown. Five options on a phone are faster to tap
+                than to open, and the whole list being visible is what stops the
+                first one being chosen by default.
+              */}
+              <div className="mb-4 space-y-2">
+                {CLIENT_CANCEL_REASONS.map(value => (
+                  <label
+                    key={value}
+                    className="flex cursor-pointer items-center gap-2.5 px-3 py-2.5 text-sm"
+                    style={{
+                      color: 'var(--ap-text)',
+                      borderRadius: 'var(--ap-radius-md)',
+                      // Tinted as well as outlined: a 1px border change is easy
+                      // to miss on a phone, and this is the answer being sent.
+                      border: `1px solid ${reasonCode === value ? 'var(--ap-brand)' : 'var(--ap-border)'}`,
+                      background: reasonCode === value ? 'var(--ap-brand-tint)' : 'transparent',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="cancel-reason-code"
+                      checked={reasonCode === value}
+                      onChange={() => setReasonCode(value)}
+                      className="h-3.5 w-3.5"
+                      style={{ accentColor: 'var(--ap-brand)' }}
+                    />
+                    {t(`cancelReason_${value}`)}
+                  </label>
+                ))}
+              </div>
+
               <label
                 htmlFor="cancel-reason"
                 className="mb-1.5 block text-sm font-medium"
@@ -250,6 +309,9 @@ export default function CancelBookingPage() {
                 size="lg"
                 fullWidth
                 loading={cancelling}
+                // Mandatory: unreachable without a reason, rather than sending a
+                // default one the client never chose.
+                disabled={!reasonCode}
                 onClick={handleCancel}
               >
                 {!cancelling && <X className="h-4 w-4" aria-hidden />}

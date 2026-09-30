@@ -48,6 +48,21 @@ jest.mock('@/lib/client/auth-actions', () => ({
 
 jest.mock('next/navigation', () => ({ useRouter: () => ({ replace: jest.fn() }) }));
 
+// Slice 3b: the Google button is tested on its own (GoogleSignupButton.render.test.tsx).
+// Here it is a stub, so the page's job is visible: when it is shown, with what,
+// and that the code form goes once a Google signup created the account.
+const mockGoogleProps: Array<{ clientId: string; locale: string; maskedEmail: string }> = [];
+jest.mock('../GoogleSignupButton', () => ({
+  GoogleSignupButton: (props: { clientId: string; locale: string; maskedEmail: string; onAccountReady: () => void }) => {
+    mockGoogleProps.push({ clientId: props.clientId, locale: props.locale, maskedEmail: props.maskedEmail });
+    return jest.requireActual<typeof import('react')>('react').createElement(
+      'button',
+      { 'data-testid': 'invite-google-stub', type: 'button', onClick: props.onAccountReady },
+      'google'
+    );
+  },
+}));
+
 import InvitePage from '../page';
 import { INVITE_PAGE_COPY } from '../invitePageCopy';
 
@@ -73,7 +88,13 @@ let events: string[] = [];
 let calls: Array<{ url: string; init?: RequestInit }> = [];
 let respond: () => { status: number; body: unknown } = () => ({ status: 200, body: { success: true, data: validData } });
 
+const savedGoogleClientId = process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID;
+const savedPluginClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+
 beforeEach(() => {
+  // Slice 3b: off unless a test switches it on (D-9).
+  delete process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID;
+  mockGoogleProps.length = 0;
   session.user = null;
   session.getSessionRejects = false;
   session.gate = null;
@@ -98,6 +119,13 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  for (const [name, value] of [
+    ['NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID', savedGoogleClientId],
+    ['NEXT_PUBLIC_GOOGLE_CLIENT_ID', savedPluginClientId],
+  ] as const) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
   jest.restoreAllMocks();
 });
 
@@ -290,6 +318,14 @@ describe('Slice 1a: a signed-in visitor is asked to sign out first (L-8)', () =>
     expect(screen.queryByTestId('invite-signup')).not.toBeInTheDocument();
   });
 
+  it('Slice 3b (L-8): a signed-in visitor gets no Google button either, even when it is configured', async () => {
+    process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID = 'client.apps.googleusercontent.com';
+    session.user = { id: 'user-1', email: 'someone@example.com' };
+    render(<InvitePage />);
+    await screen.findByTestId('invite-signed-in');
+    expect(screen.queryByTestId('invite-google-stub')).not.toBeInTheDocument();
+  });
+
   it('SA N-1: the notice body reads correctly on an existing-account invite', () => {
     expect(INVITE_PAGE_COPY.en.signedInBody).toBe('Sign out to continue with this invitation.');
     expect(INVITE_PAGE_COPY.en.signedInBody).not.toContain('can only be accepted');
@@ -410,7 +446,16 @@ describe('the note is text, never HTML', () => {
 describe('source rules', () => {
   const read = (file: string) => readFileSync(join(process.cwd(), 'app', 'invite', file), 'utf8');
 
-  it.each(['page.tsx', 'layout.tsx', 'invitePageCopy.ts', 'useSignedInVisitor.ts', 'SignupForm.tsx'])('%s uses no dangerouslySetInnerHTML, LanguageContext, navigator.language or console', (file) => {
+  it.each([
+    'page.tsx',
+    'layout.tsx',
+    'invitePageCopy.ts',
+    'useSignedInVisitor.ts',
+    'SignupForm.tsx',
+    // Slice 3b
+    'GoogleSignupButton.tsx',
+    'useGoogleIdentity.ts',
+  ])('%s uses no dangerouslySetInnerHTML, LanguageContext, navigator.language or console', (file) => {
     const source = read(file).replace(/\/\*[\s\S]*?\*\//g, '');
     expect(source).not.toContain('dangerouslySetInnerHTML');
     expect(source).not.toMatch(/LanguageContext|useLanguage/);
@@ -444,5 +489,49 @@ describe('waiting', () => {
     expect(screen.getByTestId('invite-loading')).toBeInTheDocument();
     release();
     await waitFor(() => expect(screen.getByTestId('invite-state-valid')).toBeInTheDocument());
+  });
+});
+
+describe('Slice 3b: "Continue with Google" on the page (D-9, R-6, L-8, T-3b-16)', () => {
+  const CLIENT_ID = 'client.apps.googleusercontent.com';
+
+  it('unconfigured: no Google button at all; the code form is there', async () => {
+    render(<InvitePage />);
+    await screen.findByTestId('invite-signup');
+    expect(screen.queryByTestId('invite-google-stub')).not.toBeInTheDocument();
+    expect(mockGoogleProps).toEqual([]);
+  });
+
+  it('R-6: the plugin client id alone does not show it', async () => {
+    process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID = 'plugin-client.apps.googleusercontent.com';
+    render(<InvitePage />);
+    await screen.findByTestId('invite-signup');
+    expect(screen.queryByTestId('invite-google-stub')).not.toBeInTheDocument();
+  });
+
+  it('configured, signed out, valid: the button ABOVE the code form, with the client id, the invite language and the masked email', async () => {
+    process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID = CLIENT_ID;
+    respond = () => ({ status: 200, body: { success: true, data: { ...validData, language: 'he' } } });
+    render(<InvitePage />);
+    const google = await screen.findByTestId('invite-google-stub');
+    const form = screen.getByTestId('invite-signup');
+    expect(google.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(mockGoogleProps.at(-1)).toEqual({ clientId: CLIENT_ID, locale: 'he', maskedEmail: 'i•••@example.com' });
+  });
+
+  it.each(['existing_account', 'expired', 'revoked', 'used', 'unavailable'])('not on a %s invite', async (state) => {
+    process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID = CLIENT_ID;
+    respond = () => ({ status: 200, body: { success: true, data: { state, language: 'en', inviterDisplayName: 'Dana' } } });
+    render(<InvitePage />);
+    await screen.findByTestId(`invite-state-${state}`);
+    expect(screen.queryByTestId('invite-google-stub')).not.toBeInTheDocument();
+  });
+
+  it('once a Google signup created the account, the code form is hidden', async () => {
+    process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID = CLIENT_ID;
+    const user = userEvent.setup();
+    render(<InvitePage />);
+    await user.click(await screen.findByTestId('invite-google-stub'));
+    await waitFor(() => expect(screen.queryByTestId('invite-signup')).not.toBeInTheDocument());
   });
 });

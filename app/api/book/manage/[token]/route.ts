@@ -99,11 +99,35 @@ export async function GET(
      */
     const brand = await resolvePublicBranding({ by: 'userId', userId: booking.user_id });
 
-    // Calculate if booking can be rescheduled/cancelled
-    const startTime = new Date(booking.start_time);
+    /*
+     * Whether the client may still change this themselves.
+     *
+     * ───────────────────────────────────────────────────────────────────────────
+     * A PRODUCT HAS NO START TIME, AND THE 24-HOUR RULE IS MEANINGLESS FOR IT.
+     *
+     * `start_time` is nullable — `20260803_allow_null_booking_times.sql` — and
+     * this read it straight into `new Date()`, which turns null into the Unix
+     * epoch. Everything downstream then followed from a date in 1970: the
+     * appointment card showed "1 January 1970", and `hoursUntilBooking` came out
+     * around minus half a million, so `canModify` was false. The client clicked
+     * Cancel in their confirmation email, were shown a 1970 appointment, and told
+     * it was too late to cancel it.
+     *
+     * Both halves are now decisions rather than arithmetic accidents: an order
+     * has no self-service window because there is no slot to free, and the
+     * hours are only counted when there is a time to count to.
+     * ───────────────────────────────────────────────────────────────────────────
+     */
     const now = new Date();
-    const hoursUntilBooking = (startTime.getTime() - now.getTime()) / (1000 * 60 * 60);
-    const canModify = booking.status === 'confirmed' && hoursUntilBooking > 24;
+    const startTime = booking.start_time ? new Date(booking.start_time) : null;
+    const hoursUntilBooking = startTime
+      ? (startTime.getTime() - now.getTime()) / (1000 * 60 * 60)
+      : null;
+
+    const canModify =
+      booking.status === 'confirmed' &&
+      hoursUntilBooking !== null &&
+      hoursUntilBooking > 24;
 
     return NextResponse.json({
       success: true,
@@ -120,7 +144,14 @@ export async function GET(
         service: booking.service,
         canReschedule: canModify,
         canCancel: canModify,
-        hoursUntilBooking: Math.max(0, Math.floor(hoursUntilBooking))
+        /*
+         * Null, not 0, when there is no appointment. Zero reads as "it is
+         * happening now", which is a different and wrong statement.
+         */
+        hoursUntilBooking:
+          hoursUntilBooking === null ? null : Math.max(0, Math.floor(hoursUntilBooking)),
+        /** False for a product purchase: nothing about it is scheduled. */
+        isScheduled: Boolean(booking.start_time)
       },
       business: brand ? {
         name: brand.businessName,
