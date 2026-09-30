@@ -4,8 +4,8 @@
  * The Costs & credits tab of the Business OS AI admin page (credit deduction
  * slice 4a, workplan §4.6): the operator cost report.
  *
- * Read-only: one `GET` to `/api/admin/business-os/credits/report`, and nothing
- * else. No `@/lib/` import (the page's source guard): the payload types are
+ * Read-only: one `GET` to `/api/admin/business-os/credits/report`, and the
+ * leak check panel's own `GET` (slice 4b), run only when its button is pressed. No `@/lib/` import (the page's source guard): the payload types are
  * re-declared in `../../costTypes.ts`.
  *
  * The account filter is a choice from the accounts the report itself returned
@@ -37,6 +37,7 @@ import {
 } from '../../costCopy';
 import type { CostReportPayload } from '../../costTypes';
 import { BreakdownsSection, FallbackSection, PeriodsSection, SpreadSection } from './CostsSections';
+import { LeakCheckPanel } from './LeakCheckPanel';
 
 const REPORT_URL = '/api/admin/business-os/credits/report';
 const PRESETS = [7, 30, 90] as const;
@@ -121,6 +122,7 @@ export function CostsTab() {
 
   const report = payload;
   const isEmpty = report !== null && report.sections.totals === 'ok' && report.periods.length === 0;
+  const chosenAccountLabel = accounts.find((a) => a.accountId === query.accountId)?.companyName ?? null;
 
   return (
     <div className="space-y-4" data-testid="costs-tab">
@@ -275,6 +277,10 @@ export function CostsTab() {
           )}
         </div>
       )}
+
+      {/* Slice 4b: the on-demand leak check. Its own window (at most 7 days) and
+          button; it follows the account chosen above. */}
+      <LeakCheckPanel accountId={query.accountId} accountLabel={chosenAccountLabel} />
     </div>
   );
 }

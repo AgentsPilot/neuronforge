@@ -92,7 +92,7 @@ const LOWER_BOUND_TILES: ReadonlySet<MeasuredTileId> = new Set<MeasuredTileId>([
  * tile in or out is a code change that SA reviews. `entitlements_mode` is
  * deliberately absent: a chosen mode is not a health signal (OQ-9), so it is
  * shown "for information" and never green. `scheduled_jobs` is green only when
- * all 12 jobs have a recorded Vercel cron run and the run read succeeded;
+ * every registered job has a recorded Vercel cron run and the run read succeeded;
  * `queues` only when all five queue reads succeeded (their measurements say
  * `completeness: 'complete'` exactly then).
  */

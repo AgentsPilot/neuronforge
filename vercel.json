@@ -48,6 +48,10 @@
     {
       "path": "/api/cron/abandoned-proposal-invoices",
       "schedule": "20 * * * *"
+    },
+    {
+      "path": "/api/cron/credit-leak-check",
+      "schedule": "45 4 * * *"
     }
   ],
   "rewrites": [

@@ -17,7 +17,8 @@
  *   no_run_yet       no Vercel cron run yet, still inside the first late period
  *   healthy          otherwise — only with a Vercel cron run and a good read (SC-7(h))
  * With no Vercel cron run at all, "since" is measured from the baseline:
- * COALESCE(first run of any job, installed_at) (F-6).
+ * COALESCE(first run of any job, installed_at) (F-6) — or, for a job with an
+ * `addedOn` day in the registry, the end of that day if later (QA4b-B1).
  *
  * ── Queue status (requirement §S5.8) ──────────────────────────────────────
  *   could_not_check, stuck, stopped_draining, dead_lettered_24h, behind,
@@ -184,9 +185,26 @@ export interface JobStatusResult {
   measuredFrom: string | null;
 }
 
+const DAY_MS = 24 * 60 * MINUTE_MS;
+
+/**
+ * The baseline for THIS job when it has no Vercel cron run (QA4b-B1): the
+ * global baseline, or the end of the job's `addedOn` UTC day if that is later.
+ * A job without `addedOn`, or with an unreadable one, keeps the global
+ * baseline, exactly as before.
+ */
+export function jobBaseline(job: Pick<BosCronJob, 'addedOn'>, baseline: string | null): string | null {
+  const added = job.addedOn ? Date.parse(`${job.addedOn}T00:00:00.000Z`) : Number.NaN;
+  if (!Number.isFinite(added)) return baseline;
+  const addedEnd = added + DAY_MS;
+  const global = baseline ? Date.parse(baseline) : Number.NaN;
+  return Number.isFinite(global) && global >= addedEnd ? baseline : new Date(addedEnd).toISOString();
+}
+
 /**
  * First match wins (see the header). `baseline` = COALESCE(first run of any
- * job, installed_at); null only when nothing at all is known.
+ * job, installed_at); null only when nothing at all is known. A job with an
+ * `addedOn` day is timed from `jobBaseline` instead.
  */
 export function jobStatus(
   job: BosCronJob,
@@ -194,7 +212,7 @@ export function jobStatus(
   baseline: string | null,
   now: Date
 ): JobStatusResult {
-  const measuredFrom = row?.last_cron_started_at ?? baseline;
+  const measuredFrom = row?.last_cron_started_at ?? jobBaseline(job, baseline);
   if (!measuredFrom) return { status: 'no_run_yet', sinceMinutes: null, measuredFrom: null };
   const sinceMinutes = (now.getTime() - Date.parse(measuredFrom)) / MINUTE_MS;
   const recent = row?.recent ?? [];

@@ -1,7 +1,7 @@
 /**
  * The production cron schedule (admin reorganisation slice 5, part A).
  *
- * `vercel.json` schedules exactly the 12 Business OS jobs. The three
+ * `vercel.json` schedules exactly the 13 Business OS jobs. The three
  * AgentsPilot schedules were retired on Offir's instruction (OQ-4, "sunset them
  * for now"): `/api/run-scheduled-agents`, `/api/cron/update-template-scores`
  * and `/api/cron/memory-consolidation`. Their CODE is kept (FR-A2), so
@@ -13,8 +13,9 @@
  *
  * Re-enabling one must also update this test, deliberately.
  *
- * The 12 entries below are pinned byte for byte and in order: slice 5 must not
- * change any Business OS schedule. The job registry (lib/cron/bosCronJobs.ts,
+ * The entries below are pinned byte for byte and in order: slice 5 must not
+ * change any Business OS schedule. The 13th, the credit leak check, was added
+ * deliberately by credit deduction slice 4b (2026-09-29). The job registry (lib/cron/bosCronJobs.ts,
  * slice 5 PR-2) is checked against vercel.json separately, in
  * bosCronJobs.test.ts (FR-R9).
  */
@@ -44,6 +45,8 @@ const BOS_CRONS: CronEntry[] = [
   { path: '/api/cron/daily-briefing', schedule: '10 * * * *' },
   { path: '/api/cron/lead-response', schedule: '*/5 * * * *' },
   { path: '/api/cron/abandoned-proposal-invoices', schedule: '20 * * * *' },
+  // Credit deduction slice 4b: the nightly leak check (read-only).
+  { path: '/api/cron/credit-leak-check', schedule: '45 4 * * *' },
 ];
 
 const RETIRED_AGENTSPILOT = [
@@ -55,8 +58,8 @@ const RETIRED_AGENTSPILOT = [
 describe('vercel.json crons (slice 5, part A)', () => {
   const crons = vercel.crons ?? [];
 
-  it('schedules exactly the 12 Business OS jobs, unchanged and in order', () => {
-    expect(crons).toHaveLength(12);
+  it('schedules exactly the 13 Business OS jobs, unchanged and in order', () => {
+    expect(crons).toHaveLength(13);
     expect(crons).toEqual(BOS_CRONS);
   });
 

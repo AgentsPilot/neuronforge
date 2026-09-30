@@ -1,6 +1,6 @@
 # Business OS entitlements
 
-> **Last Updated**: 2026-09-29
+> **Last Updated**: 2026-09-30
 
 ## Overview
 
@@ -234,6 +234,8 @@ Credit deduction layer, slice 3 ([workplan](/docs/workplans/BUSINESS_OS_CREDIT_D
 
 **Reading the ledger (slice 4a).** Operators read it on the **Costs & credits** tab of `/admin/business-os-llm` (route `GET /api/admin/business-os/credits/report`, `requireAdmin`): per account and billing period the stored totals row, cross-checked against the sum of its ledger rows by the totals row's own rules (a mismatch is shown, never hidden); breakdowns by action type, area, effective service and trigger, *net, including corrections* (an adjustment is counted under the charge it corrects, never under the raw `service` column, which is NULL on adjustments); the fallback-priced charges; and p50 / p90 per action type over succeeded, non-fallback charges. Read-only, through `BusinessOsCreditLedgerReadRepository` (no write method) and `lib/business-os/credits/`. Aggregated in Node with read ceilings; a report that hit one says "incomplete". [Workplan](/docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_4_WORKPLAN.md) §4.
 
+**Checking nothing escaped the bill (slice 4b).** A leak check compares every Business OS AI call in `token_usage` with the ledger, per account and grouping id (`token_usage.session_id` ↔ the charge's `group_id`). Two doors, one function (`lib/business-os/credits/creditLeakCheck.ts`): a **Run leak check** button on the same tab (route `GET /api/admin/business-os/credits/leak-check`, `requireAdmin`, at most 7 days) and a nightly cron at 04:45 UTC for the previous day (`/api/cron/credit-leak-check`, fail-closed `CRON_SECRET`, counts only in `bos_cron_runs`). Each leaking account is one `error` log `bos_credit_leak_found` with the account and the billing period; there is no results table and no email. A fallback-priced charge is "pending reconciliation", never a leak; the known uncharged chat v1 path is accepted and logged at `warn`. Read-only; nothing in this module is imported by it. [Workplan](/docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_4_WORKPLAN.md) §5.
+
 **Charging start:** *to be recorded by RM at 3b-ii's production go-live (workplan §6.4 step 6).* Rows between the 3b-i apply time and that moment are developer or preview traffic on developers' own accounts (environments share the production database).
 
 ---
@@ -259,3 +261,4 @@ Credit deduction layer, slice 3 ([workplan](/docs/workplans/BUSINESS_OS_CREDIT_D
 | 2026-09-29 | Metering: charging wired (3b-ii) | Credit deduction slice 3b-ii: every Business OS AI action now writes one charge through `aiChargeRecorder.ts` at the end of `runAiAction` — awaited, 1,500 ms budget, no retry, never throws, `service = 'ai'` from one constant. The Metering section's status now records the 3b-i PROD apply time and a placeholder for the charging start (RM, at go-live). No mode check, no refusal, `balance.ts` untouched |
 | 2026-09-29 | FYI-only `active` flag on every plan | Required on all four plans (tiers in `presentation`, cohorts beside their labels), read only through `planActive()`, shown as a badge on the admin Tiers card. **It changes no behaviour** — `planActive.noEffect.test.ts` holds resolution, the customer view, the Founding Partner pill, the shadow report, invites and the offer identical with every plan inactive; only the admin view differs. An inactive plan stays invitable by design. What inactive should *do* (stop new assignments? hide from customers? affect existing accounts?) is an open business question |
 | 2026-09-29 | Metering: the operator cost report (4a) | Credit deduction slice 4a: where operators read the ledger (the Costs & credits tab of `/admin/business-os-llm`), what it shows, and that it is read-only through a separate read repository. Nothing in this module is imported by it |
+| 2026-09-30 | Metering: the leak check (4b) | Credit deduction slice 4b: the on-demand and nightly leak check, where its findings show (the Costs & credits tab, the Scheduled jobs page, `error` logs), and that it is read-only. Nothing in this module is imported by it |

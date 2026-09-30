@@ -15,9 +15,11 @@
 // that the source names no insert, update, upsert, delete or rpc call.
 //
 // ── SERVICE ROLE (intentional RLS bypass, documented per CLAUDE.md) ─────────
-// The only caller today is the operator cost report
+// The callers are the operator cost report
 // (`lib/business-os/credits/creditReport.ts`), reached only from an admin route
-// that runs `requireAdmin` before anything else. Owners cannot read the cost
+// that runs `requireAdmin` before anything else, and the leak check (slice 4b,
+// wired in `lib/business-os/credits/creditLeakCheckDeps.ts`), reached from that
+// admin door and from a fail-closed cron. Owners cannot read the cost
 // columns at all (per-column grants, slice 3), so this read cannot be served
 // through the owner's RLS client. The constructor still takes a client, so a
 // later owner-facing reader (slice 7) can pass the RLS client instead.
@@ -346,6 +348,63 @@ export class BusinessOsCreditLedgerReadRepository {
 
       if (rows.length >= opts.ceiling) reachedCeiling = true;
       this.logger.debug({ method, accounts: unique.length, rows: rows.length, reachedCeiling }, 'Credit ledger rows read');
+      return { data: { rows: rows.slice(0, opts.ceiling), reachedCeiling }, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
+
+  /**
+   * Every ledger row (charges AND adjustments) of ONE account whose
+   * `created_at` falls in the HALF-OPEN range `from <= created_at < to`,
+   * newest first, paged, de-duplicated by id, up to `ceiling` rows.
+   *
+   * For the leak check (slice 4b, workplan §5.2 step 2), which matches an
+   * account's charges against its `token_usage` calls by the time they were
+   * written. Exclusive at the top for the reason `CreditPeriodStartRange`
+   * gives: `created_at` is a microsecond `timestamptz` too.
+   */
+  async listRowsForAccountCreatedInRange(
+    userId: string,
+    range: CreditPeriodStartRange,
+    opts: CreditLedgerPageOptions
+  ): Promise<RepositoryResult<CreditLedgerPagedResult<CreditLedgerRow>>> {
+    const method = 'listRowsForAccountCreatedInRange';
+    try {
+      this.assertAccount(userId);
+      this.assertRange(range);
+      this.assertPaging(opts);
+
+      const rows: CreditLedgerRow[] = [];
+      const seen = new Set<string>();
+
+      for (let from = 0; rows.length < opts.ceiling; from += opts.pageSize) {
+        const size = Math.min(opts.pageSize, opts.ceiling - rows.length);
+        const { data, error } = await this.supabase
+          .from('business_os_credit_charges')
+          .select(CREDIT_LEDGER_ROW_COLUMNS)
+          .eq('user_id', userId)
+          .gte('created_at', range.from.toISOString())
+          .lt('created_at', range.to.toISOString())
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(from, from + size - 1);
+        if (error) throw error;
+
+        const page = (data ?? []) as unknown as CreditLedgerRow[];
+        for (const row of page) {
+          // A row inserted during paging shifts an older one onto the next
+          // page: it is read twice, never skipped. Keep the first copy.
+          const key = String(row.id);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          rows.push(row);
+        }
+        if (page.length < size) break;
+      }
+
+      const reachedCeiling = rows.length >= opts.ceiling;
+      this.logger.debug({ method, rows: rows.length, reachedCeiling }, 'Credit ledger rows of one account read by time');
       return { data: { rows: rows.slice(0, opts.ceiling), reachedCeiling }, error: null };
     } catch (error) {
       return this.fail(method, error);

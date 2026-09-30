@@ -39,11 +39,11 @@ function intervalOf(schedule: string): number {
 const codeOf = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 
 describe('FR-R9: the registry is vercel.json', () => {
-  it('has exactly the 12 scheduled jobs, with the same schedules, byte for byte', () => {
+  it('has exactly the 13 scheduled jobs, with the same schedules, byte for byte', () => {
     const fromVercel = vercel.crons.map((c) => `${c.path} ${c.schedule}`).sort();
     const fromRegistry = BOS_CRON_JOBS.map((j) => `${j.path} ${j.schedule}`).sort();
     expect(fromRegistry).toEqual(fromVercel);
-    expect(BOS_CRON_JOBS).toHaveLength(12);
+    expect(BOS_CRON_JOBS).toHaveLength(13);
   });
 
   it('ids are unique, match their path, and satisfy the database job rule', () => {
