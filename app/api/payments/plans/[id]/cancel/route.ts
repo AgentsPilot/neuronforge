@@ -102,15 +102,26 @@ export async function POST(
       );
     }
 
-    // Stopping a client's plan changes what they will be charged, so it is
-    // audited at the same level as money moving.
+    /*
+     * Stopping a client's plan changes what they will be charged, so it is
+     * always audited — and never allowed to fail the request.
+     *
+     * `severity` is deliberately NOT passed. It used to be 'critical' here, to
+     * match the refund route, but AuditTrailService prefers the caller's value
+     * over the registration, so the two could drift — and they did, the moment
+     * refunds moved to 'warning'. Stopping a plan is a normal operation an owner
+     * performs on their own client; at 'critical' it was counted by the admin
+     * health tile, which counts severity action-blind, and shown on the owner's
+     * own /monitoring page as a security event needing immediate review. It is
+     * registered 'warning' with the SOC2 flag in lib/audit/events.ts, which is
+     * now the only place that decides.
+     */
     auditTrail
       .log({
         action: 'PAYMENT_PLAN_CANCELLED',
         entityType: 'payment_plan_subscription',
         entityId: planId,
         userId: user.id,
-        severity: 'critical',
         changes: {
           alreadyStopped: result.alreadyStopped,
           cancelledPeriods: result.cancelledPeriods,
