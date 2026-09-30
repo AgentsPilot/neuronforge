@@ -112,7 +112,7 @@ export function previewAccountFor(
 export function describePlanEnding(
   config: EntitlementConfig,
   planId: string,
-  aiActionsValue: CapabilityValue
+  allowanceValue: CapabilityValue
 ): string {
   if (config.tierOrder.includes(planId)) {
     return 'While the plan is paid for. An admin can set an end date on one account.';
@@ -128,13 +128,13 @@ export function describePlanEnding(
   // A one-off TOTAL is what makes running out an ENDING (FR-27); a monthly rate
   // simply resets. The difference is in the value, so the sentence reads it.
   const isOneOffAllowance =
-    !!aiActionsValue && typeof aiActionsValue === 'object' && 'total' in (aiActionsValue as object);
+    !!allowanceValue && typeof allowanceValue === 'object' && 'total' in (allowanceValue as object);
 
   const clock =
     cohort.clockStartsAt === 'profile_created' ? 'the business profile is created' : 'the first onboarding message';
 
   return isOneOffAllowance
-    ? `${duration.days} days from ${clock}, or when the AI actions run out — whichever comes first.`
+    ? `${duration.days} days from ${clock}, or when the credits run out — whichever comes first.`
     : `${duration.days} days from ${clock}.`;
 }
 

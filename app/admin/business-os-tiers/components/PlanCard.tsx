@@ -119,9 +119,9 @@ export function PlanCard({ plan }: Props) {
 
       <dl className="space-y-2 border-b border-slate-700 py-3 text-sm">
         <div>
-          <dt className="text-xs uppercase tracking-wide text-slate-500">AI actions</dt>
-          <dd data-testid={`plan-${plan.id}-ai`} className="text-slate-200">
-            {plan.aiActions}
+          <dt className="text-xs uppercase tracking-wide text-slate-500">Credits</dt>
+          <dd data-testid={`plan-${plan.id}-credits`} className="text-slate-200">
+            {plan.credits}
           </dd>
         </div>
         <div>

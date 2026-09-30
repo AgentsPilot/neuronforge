@@ -86,7 +86,7 @@ const basic: TierRow = {
   'chat.quotes': false,
   'chat.reporting': false,
   'chat.bulk': false,
-  'ai.actions': { perMonth: 100 },
+  'credits.allowance': { perMonth: 100 },
   'marketing.mass_email': false, // (?) B-1 — also not_built: no dispatcher
   'marketing.lead_response': false,
   'marketing.posts': false, // not_built
@@ -114,7 +114,7 @@ const growth: TierRow = {
   'chat.invoice_control': true,
   'chat.quotes': true,
   'chat.reporting': true,
-  'ai.actions': { perMonth: 500 },
+  'credits.allowance': { perMonth: 500 },
   'marketing.mass_email': false, // sheet: true — not_built (no dispatcher)
   'marketing.lead_response': true,
   'insights.checks': true, // (S)
@@ -131,7 +131,7 @@ const pro: TierRow = {
   // so the one-line-change test has something real to move.
   'chat.search': true,
   'chat.bulk': true,
-  'ai.actions': { perMonth: 2000 },
+  'credits.allowance': { perMonth: 2000 },
   'marketing.posts': false, // sheet: true — not_built
   'support.level': 'priority',
   'email.volume': { ceilingPerMonth: 20000 },

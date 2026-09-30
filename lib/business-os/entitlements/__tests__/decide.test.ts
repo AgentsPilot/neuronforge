@@ -110,11 +110,11 @@ describe('step a — entitlement', () => {
   });
 
   it('compares the requested quantity, not just presence', () => {
-    expect(ask(tierAccount('basic'), 'ai.actions', 'owner_ai', { requested: { perMonth: 500 } })).toMatchObject({
+    expect(ask(tierAccount('basic'), 'credits.allowance', 'owner_ai', { requested: { perMonth: 500 } })).toMatchObject({
       outcome: 'not_entitled',
       lowestTier: 'growth',
     });
-    expect(ask(tierAccount('basic'), 'ai.actions', 'owner_ai', { requested: { perMonth: 50 } }).outcome).toBe('allowed');
+    expect(ask(tierAccount('basic'), 'credits.allowance', 'owner_ai', { requested: { perMonth: 50 } }).outcome).toBe('allowed');
   });
 
   it('refuses a not_built capability as not_built, not as "upgrade"', () => {
@@ -174,7 +174,7 @@ describe('the order is the contract', () => {
     const decision = decide({
       config,
       resolution: snapshotFor(inGrace),
-      capability: 'ai.actions',
+      capability: 'credits.allowance',
       request: { surfaceKind: 'owner_ai' },
       balance: { sufficient: false },
     });
@@ -188,7 +188,7 @@ describe('step c — the allowance', () => {
     const decision = decide({
       config,
       resolution: snapshotFor(championAccount()),
-      capability: 'ai.actions',
+      capability: 'credits.allowance',
       request: { surfaceKind: 'owner_ai', cost: 1 },
       balance: { sufficient: false, remaining: 0 },
     });
@@ -196,9 +196,9 @@ describe('step c — the allowance', () => {
     expect(decision).toMatchObject({
       outcome: 'limit_reached',
       reason: 'allowance_exhausted',
-      // D-12: `ai.actions` is decided by the call site's audience, which is why
+      // D-12: `credits.allowance` is decided by the call site's audience, which is why
       // the behaviour travels with the decision instead of being looked up again.
-      atLimit: CAPABILITIES['ai.actions'].atLimit,
+      atLimit: CAPABILITIES['credits.allowance'].atLimit,
       remaining: 0,
     });
   });
@@ -207,7 +207,7 @@ describe('step c — the allowance', () => {
     const decision = decide({
       config,
       resolution: snapshotFor(championAccount()),
-      capability: 'ai.actions',
+      capability: 'credits.allowance',
       request: { surfaceKind: 'owner_ai' },
       balance: { sufficient: true },
     });

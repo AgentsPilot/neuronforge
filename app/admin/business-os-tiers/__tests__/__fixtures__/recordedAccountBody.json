@@ -301,9 +301,9 @@
         "granting": false,
         "display": "no"
       },
-      "ai.actions": {
+      "credits.allowance": {
         "value": {
-          "perMonth": 500
+          "perMonth": 19750
         },
         "decidedBy": "basis",
         "trace": [
@@ -311,13 +311,13 @@
             "layer": "basis",
             "from": null,
             "to": {
-              "perMonth": 500
+              "perMonth": 19750
             },
             "note": "tier basic"
           }
         ],
         "granting": true,
-        "display": "500 per month"
+        "display": "19,750 per month"
       },
       "marketing.mass_email": {
         "value": false,

@@ -47,8 +47,10 @@ describe('the credit value history is append-only (FR-3, AC-2)', () => {
     const edited = JSON.parse(JSON.stringify(CREDIT_VALUE_HISTORY)) as CreditValueVersion[];
     edited[0] = { ...edited[0], usdPerCredit: 0.002 };
     expect(editedEntries(snapshot, edited)).toEqual([0]);
+    // Removing version 0 shifts every later entry up one place, so each of them
+    // reads as edited too; what matters is that version 0 is caught.
     const removed = edited.slice(1);
-    expect(editedEntries(snapshot, removed)).toEqual([0]);
+    expect(editedEntries(snapshot, removed)).toContain(0);
   });
 
   it('versions run 0, 1, 2 … with no gap', () => {
@@ -87,6 +89,28 @@ describe('version 0', () => {
 
   it('currentCreditValue() is the last entry', () => {
     expect(currentCreditValue()).toBe(CREDIT_VALUE_HISTORY[CREDIT_VALUE_HISTORY.length - 1]);
+  });
+});
+
+describe('version 1 (credit deduction slice 5, AC-25 (a))', () => {
+  it('is the derived value, still $0.001, paired with matrix version 2', () => {
+    expect(CREDIT_VALUE_HISTORY[1]).toMatchObject({
+      version: 1,
+      usdPerCredit: 0.001,
+      status: 'derived',
+      matrixVersion: 2,
+      decidedOn: '2026-09-30',
+    });
+  });
+
+  it('names the decisions and points at the pricing doc, rather than restating the reasoning (G-8)', () => {
+    const { derivation } = CREDIT_VALUE_HISTORY[1];
+    expect(derivation).toMatch(/D1–D3/);
+    expect(derivation).toContain('docs/architecture/BUSINESS_OS_CREDIT_PRICING.md');
+  });
+
+  it('keeps the same dollar value as version 0, so no recorded charge would move (FR-3)', () => {
+    expect(CREDIT_VALUE_HISTORY[1].usdPerCredit).toBe(CREDIT_VALUE_HISTORY[0].usdPerCredit);
   });
 });
 

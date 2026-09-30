@@ -18,7 +18,7 @@ import 'server-only';
  * config, never a user id.
  */
 
-import { groupByCategory, isHiddenFromCustomer } from './customerPlanView';
+import { groupByCategory, isHiddenFromCustomer, withCustomerDisplay } from './customerPlanView';
 import { describePlanCapabilities, planLabel, planMonthlyPriceUsd, previewAccountFor } from './planPresentation';
 import { resolveEntitlements } from './resolver';
 import type { EntitlementConfig } from './source';
@@ -65,7 +65,9 @@ export function describePlanOffer(config: EntitlementConfig, planId: string, now
     now,
   });
 
-  const features = describePlanCapabilities(resolution, catalog)
+  // The customer's own display rule, including the TEMPORARY slice 5 one that
+  // names the credit allowance without its number (see `withCustomerDisplay`).
+  const features = withCustomerDisplay(describePlanCapabilities(resolution, catalog))
     .filter((row) => row.granting && !isHiddenFromCustomer(row.capability, catalog[row.capability]))
     .map((row) => ({ capability: row.capability, label: row.label, value: row.display }));
 

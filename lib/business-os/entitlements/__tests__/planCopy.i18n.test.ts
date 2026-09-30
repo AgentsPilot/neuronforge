@@ -34,7 +34,7 @@ const KEYS = [
   'plan.problem.unavailable',
   'plan.problem.no_record',
   'plan.ends_on',
-  'plan.ends_on_or_actions',
+  'plan.ends_on_or_credits',
   'plan.move_before_then',
   'plan.changes.no_end_date',
   'plan.changes.on_end',
@@ -85,8 +85,18 @@ describe('the plan section speaks all three languages', () => {
     expect(missing).toEqual([]);
   });
 
+  it('the trial sentence says CREDITS, and its old "actions" key is gone from every language (slice 5, SA Q-2)', () => {
+    // Renamed with the capability (`ai.actions` → `credits.allowance`). A stale
+    // copy of the old key would be dead text a translator keeps maintaining.
+    expect(copyFor('plan.ends_on_or_actions')).toEqual([]);
+    const [en, es, he] = copyFor('plan.ends_on_or_credits');
+    expect(en).toMatch(/credits/);
+    expect(es).toMatch(/créditos/);
+    expect(he).toMatch(/קרדיטים/);
+  });
+
   it('keeps the date placeholder in every language that needs one', () => {
-    for (const key of ['plan.ends_on', 'plan.ends_on_or_actions']) {
+    for (const key of ['plan.ends_on', 'plan.ends_on_or_credits']) {
       for (const text of copyFor(key)) {
         // Without it the component substitutes nothing and the sentence names no
         // day — which is the entire point of those two.

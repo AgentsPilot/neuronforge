@@ -30,7 +30,8 @@ export interface Plan {
   /** FYI only (2026-09-29): an operator's marker. It changes nothing. */
   active: boolean;
   inheritsFrom: string | null;
-  aiActions: string;
+  /** The credit allowance, described (`credits.allowance`). */
+  credits: string;
   endsWhen: string;
   state: string;
   basis: string;

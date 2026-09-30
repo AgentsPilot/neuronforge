@@ -43,7 +43,7 @@ const REQUIRED_CAPABILITIES = [
   'chat.quotes',
   'chat.reporting',
   'chat.bulk',
-  'ai.actions',
+  'credits.allowance',
   'marketing.mass_email',
   'marketing.lead_response',
   'marketing.posts',
@@ -193,6 +193,6 @@ describe('the attributes that drive behaviour', () => {
     // B-7: a fair-use ceiling alerts the platform team and never blocks.
     expect(CAPABILITIES['email.volume'].atLimit).toBe('alert_only');
     // The allowance itself defers to the call site, because it is spent by both.
-    expect(CAPABILITIES['ai.actions'].atLimit).toBe('by_call_site_audience');
+    expect(CAPABILITIES['credits.allowance'].atLimit).toBe('by_call_site_audience');
   });
 });

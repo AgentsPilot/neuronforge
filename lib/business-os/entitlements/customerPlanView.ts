@@ -64,10 +64,9 @@ import 'server-only';
  * holds that, so a future matrix that withheld something real would fail in CI
  * rather than in front of a customer.
  *
- * Their AI allowance is the one thing Autopilot has more of — 1,000 a month
- * against 2,000 — because `CHAMPION_VALUES` sets it explicitly and an explicit
- * cohort value wins over the tier row. So Autopilot is shown to them as the plan
- * above, honestly, with that single difference.
+ * Their credit allowance is Autopilot's too: `CHAMPION_VALUES` READS Autopilot's
+ * tier row (2026-09-27), so there is no plan above them with more of anything, and no
+ * "next plan up" is shown.
  *
  * The transition is written in now rather than later (`whenThisChanges`): a
  * champion is told their access has no end date **and** that a paid plan is what
@@ -108,6 +107,37 @@ import type { CapabilityDef, CapabilityValue } from './types';
  */
 export function isHiddenFromCustomer(_capability: string, definition: CapabilityDef): boolean {
   return definition.lifecycle === 'not_built';
+}
+
+/**
+ * ⚠️ TEMPORARY — REMOVE IN CREDIT DEDUCTION SLICE 6.
+ *
+ * The credit allowance is named to owners and invitees WITHOUT its number
+ * ("Credits (included)") until slice 6 explains what a credit is (user decision
+ * R-7, option C, 2026-09-30; BD-15). Admin screens do not come through here and
+ * still show the figures. Slice 6 deletes this set, `INCLUDED_WITHOUT_AMOUNT`
+ * and `withCustomerDisplay`'s call sites, and the tests that pin them.
+ */
+const SHOWN_WITHOUT_AMOUNT: ReadonlySet<string> = new Set(['credits.allowance']);
+
+/** The word shown in place of the amount (slice 5 only — see above). */
+const INCLUDED_WITHOUT_AMOUNT: Record<Locale, string> = { en: 'included', he: 'כלול', es: 'incluido' };
+
+/**
+ * Rows as a customer may read them: every row unchanged, except that a
+ * capability in `SHOWN_WITHOUT_AMOUNT` reads "included" instead of its amount.
+ *
+ * Applied to BOTH sides of the "next plan up" comparison, so two plans that
+ * differ only in the hidden amount render identically and no "from … to …"
+ * line can carry the number back in. TEMPORARY — slice 6 removes it.
+ */
+export function withCustomerDisplay<Row extends { capability: string; display: string }>(
+  rows: readonly Row[],
+  locale: Locale = defaultLocale
+): Row[] {
+  return rows.map((row) =>
+    SHOWN_WITHOUT_AMOUNT.has(row.capability) ? { ...row, display: INCLUDED_WITHOUT_AMOUNT[locale] } : row
+  );
 }
 
 /**
@@ -223,12 +253,14 @@ export interface CustomerPlanUpgrade {
   /**
    * Granted in both, DIFFERENT there, and not rankable — stated as a change.
    *
-   * The trial's AI allowance is `{ total: 250 }` and Essentials' is
-   * `{ perMonth: 500 }`. Those are different quantities with no honest exchange
+   * The trial's credit allowance is a one-off `{ total }` and Essentials' a
+   * `{ perMonth }` rate. Those are different quantities with no honest exchange
    * rate, so calling it an improvement would be a claim we cannot support and
    * suppressing it hides the most important line on the page. It is reported as
-   * a **change** — "250 in total becomes 500 per month" — which is exactly what
-   * is true, and lets the customer judge.
+   * a **change** — "2,000 in total becomes 19,750 per month" — which is exactly
+   * what is true, and lets the customer judge. (Until slice 6 the credit amounts
+   * are not shown to customers at all — see `withCustomerDisplay` — so today this
+   * list is empty for the shipped plans.)
    *
    * It also removes a hazard: whether a trial customer sees a paid plan at all
    * used to depend on at least one same-unit improvement happening to exist.
@@ -320,7 +352,7 @@ export interface CustomerPlanView {
    * **The condition is narrow on purpose:** a note AND no end date. It survives
    * wherever it carries information of its own — a paid plan's "While the plan is
    * paid for", and a TRIAL's "14 days from the first onboarding message, or when
-   * the AI actions run out", which is the only place that deadline appears. A
+   * the credits run out", which is the only place that deadline appears. A
    * first pass dropped it whenever the note existed and silently cost the trial
    * its countdown.
    */
@@ -416,7 +448,7 @@ export function groupByCategory(
         index: presentation?.index ?? CATEGORY_PRESENTATION.length,
         features: bucketFeatures,
         // Joined here, not in the component. A value worth printing is appended
-        // to its own name, so "AI actions (2,000 per month)" reads as one item.
+        // to its own name, so "Email volume (10,000 per month)" reads as one item.
         //
         // `yes` is dropped: "Client documents (yes)" in a list of what you HAVE is
         // noise. And a value that already carries brackets is not wrapped in more
@@ -516,11 +548,11 @@ function describeFreePlanEnding(
   // out an ending (FR-27), and that is the same fact `describePlanEnding` reads to
   // decide its own wording. Matching its English coupled this sentence to
   // somebody else's copy-editing.
-  const allowance = resolution.values['ai.actions']?.value;
+  const allowance = resolution.values['credits.allowance']?.value;
   const runsOut = !!allowance && typeof allowance === 'object' && 'total' in (allowance as object);
 
   return runsOut
-    ? { key: 'plan.ends_on_or_actions', date: endsAt }
+    ? { key: 'plan.ends_on_or_credits', date: endsAt }
     : { key: 'plan.ends_on', date: endsAt };
 }
 
@@ -571,7 +603,7 @@ function buildUpgrade(
     now,
   });
 
-  const nextRows = describePlanCapabilities(nextResolution, catalog, locale).filter(
+  const nextRows = withCustomerDisplay(describePlanCapabilities(nextResolution, catalog, locale), locale).filter(
     (row) => !isHiddenFromCustomer(row.capability, catalog[row.capability])
   );
   const currentById = new Map(current.map((row) => [row.capability, row]));
@@ -592,7 +624,7 @@ function buildUpgrade(
     if (mine.display === row.display) continue;
 
     // Granted on both and written differently — which is NOT the same as
-    // better. A Founding Partner gets a larger AI allowance than Essentials
+    // better. A Founding Partner gets a larger credit allowance than Essentials
     // does, so comparing the rendered strings alone offered them a $79 plan
     // whose headline was "1,000 per month becomes 500 per month". Rank the
     // amounts, and say nothing when there is nothing to rank.
@@ -709,7 +741,8 @@ export function buildCustomerPlanView(input: {
 
   const planId = basis.kind === 'tier' ? basis.tier : basis.cohort;
   const isTier = basis.kind === 'tier';
-  const rows = describePlanCapabilities(resolution, catalog, locale);
+  // Customer display (TEMPORARY slice 5 rule, see `withCustomerDisplay`).
+  const rows = withCustomerDisplay(describePlanCapabilities(resolution, catalog, locale), locale);
   const included = featuresFrom(rows, catalog);
   // Only for the free plans, and only as information: it says what a paid plan IS,
   // not that a decision has been made, so the eventual change is something the
@@ -748,8 +781,8 @@ export function buildCustomerPlanView(input: {
     // `null` only when the note below ALREADY SAYS IT.
     //
     // First pass suppressed it whenever the note existed, and that was too broad:
-    // a trial's line ("14 days from the first onboarding message, or when the AI
-    // actions run out") and its note ("when this ends you will be able to choose a
+    // a trial's line ("14 days from the first onboarding message, or when the
+    // credits run out") and its note ("when this ends you will be able to choose a
     // paid plan") are not duplicates — one says WHEN, the other says WHAT NEXT.
     // Dropping the first lost the only place the 14 days appears.
     //

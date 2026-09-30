@@ -69,6 +69,18 @@ describe('describeInviteOffer', () => {
     }
   });
 
+  it('names the credits without their number (R-7 option C, TEMPORARY — slice 6 removes this test)', () => {
+    // The public invite page shows this to people who are not customers yet.
+    // Until slice 6 explains what a credit is, the offer says "Credits
+    // (included)" and never the allowance (user decision, 2026-09-30).
+    const offers = [describeInviteOffer(champion(), config, NOW), ...TIER_ORDER.map((id) => describeInviteOffer(tier(id), config, NOW))];
+    for (const offer of offers) {
+      const joined = offer.included.map((row) => row.summary).join(' | ');
+      expect(joined).toContain('Credits (included)');
+      expect(joined).not.toMatch(/19,750|32,250|2,000 in total/);
+    }
+  });
+
   it('a months grant is described as data', () => {
     expect(describeInviteOffer(champion({ access_open_ended: false, access_months: 12 }), config, NOW).access).toEqual({
       kind: 'months',

@@ -23,9 +23,10 @@
 // I/O, no imports beyond types. `matrixVersion` pairs each value with the
 // matrix it was decided against (SQ-7).
 //
-// ── VERSION 0 IS PROVISIONAL ────────────────────────────────────────────────
-// Slice 5 derives the real value from slice 4's measurement together with the
-// plan allowances (FR-37, BD-8), and appends it as version 1.
+// ── VERSIONS ────────────────────────────────────────────────────────────────
+// Version 0 was the provisional working figure. Version 1 (slice 5) is the
+// derived value, paired with tier matrix version 2. The numbers, the decisions
+// behind them and the revision log: docs/architecture/BUSINESS_OS_CREDIT_PRICING.md.
 
 export interface CreditValueVersion {
   /** Recorded on every charge row (FR-3). Strictly increasing from 0, no gaps. */
@@ -51,6 +52,15 @@ export const CREDIT_VALUE_HISTORY = [
     decidedOn: '2026-09-28',
     derivation:
       'Working figure from requirement §2 (BD-1): one credit is about a tenth of a US cent of real provider cost. Provisional: slice 5 derives the real value from slice 4 measurement together with the plan allowances (FR-37, BD-8).',
+  },
+  {
+    version: 1,
+    usdPerCredit: 0.001,
+    status: 'derived',
+    matrixVersion: 2,
+    decidedOn: '2026-09-30',
+    derivation:
+      'Derived from the user\'s decisions D1–D3 (2026-09-30): 100% markup, plan allowance = 50% of the fee at retail value, generous ceiling. $0.001 kept; a chat turn measured ~2 credits (N-8). Numbers, data and revision log: docs/architecture/BUSINESS_OS_CREDIT_PRICING.md.',
   },
 ] as const satisfies readonly CreditValueVersion[];
 

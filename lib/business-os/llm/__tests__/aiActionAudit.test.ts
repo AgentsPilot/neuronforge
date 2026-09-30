@@ -63,6 +63,7 @@ import type { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 import { AUDIT_EVENTS, getEventMetadata } from '@/lib/audit/events';
 import { AI_ACTION_ENTITY_TYPE, AI_ACTION_EVENT_PREFIX } from '@/lib/audit/requestSchemas';
 import { ALL_ZERO_UUID } from '@/lib/platformAccount';
+import { currentCreditValue } from '@/lib/business-os/entitlements/config/creditValue';
 
 const OWNER = '2f734ed5-3681-4049-880d-3de7b096bea3';
 const PLATFORM = '11111111-1111-4111-8111-111111111111';
@@ -710,7 +711,7 @@ describe('the charge (slice 3b-ii)', () => {
         outcome: 'succeeded',
         credits: 1,
         costUsd: 0.001,
-        creditValueVersion: 0,
+        creditValueVersion: currentCreditValue().version,
         isFallbackPriced: false,
       });
     });
