@@ -1,6 +1,6 @@
 // lib/repositories/UserPreferencesRepository.ts
-// Read access to `user_preferences` (Business OS invite-only signup, Slice 2a;
-// requirement C-8 as amended, T-12; workplan D-8).
+// Access to `user_preferences` (Business OS invite-only signup, Slice 2a;
+// requirement C-8 as amended, T-12; workplan D-8; later the language picker).
 //
 // `user_preferences` has no DDL in this repo: it was created in the Supabase
 // dashboard. Its shape here comes from the live readers and writers (one row
@@ -10,14 +10,17 @@
 // `InvoiceDeliveryService`, `LeadAlertService`, `InsightRepository`); they are
 // not moved here by this slice.
 //
-// SERVICE-ROLE CLIENT, scoped by `user_id` (CLAUDE.md rules 1 and 4). The only
-// caller today is the admin invite form, which reads the signed-in admin's OWN
-// preference to pre-select the invitee language. Every query filters on the
-// `user_id` it is given; nothing here reads another user by omission.
+// SERVICE-ROLE CLIENT, scoped by `user_id` (CLAUDE.md rules 1 and 4). Callers:
+// the admin invite form, which reads the signed-in admin's OWN preference to
+// pre-select the invitee language, and `/api/business-os/preferences`, which
+// reads and writes the session user's own row for `LanguageContext`. Every
+// query filters on the `user_id` it is given; nothing here reads another user
+// by omission.
 //
-// Read-only on purpose: the language picker (`LanguageContext`) owns the
-// writes, and a second writer would be a second place the "both columns
-// together" rule lives (see `lib/business-os/userLanguage.ts`).
+// One writer: `upsertPreferredLanguage`, called only by
+// `PATCH /api/business-os/preferences`, which writes it together with
+// `business_profiles.language`. Keep it the only one, or the "both columns
+// together" rule (see `lib/business-os/userLanguage.ts`) gets a second home.
 //
 // Methods never throw: they return `{ data, error }`, with a database error
 // reduced to `{ code, message }` before it is logged or returned (the invite
@@ -66,6 +69,73 @@ export class UserPreferencesRepository {
     } catch (error) {
       const safe = safeDbError(error);
       methodLogger.error({ dbError: safe }, 'Failed to read the preferred language');
+      const out = new Error(safe.message) as Error & { code?: string };
+      if (safe.code) out.code = safe.code;
+      return { data: null, error: out };
+    }
+  }
+
+  /**
+   * The stored language and timezone, raw, for the interface to apply.
+   *
+   * Unlike `findPreferredLanguage`, nothing is normalised: the client validates
+   * both values itself (a language it speaks, a zone `Intl` accepts). No row is
+   * `{ preferredLanguage: null, timezone: null }`, not an error.
+   */
+  async findLocale(
+    userId: string
+  ): Promise<RepositoryResult<{ preferredLanguage: string | null; timezone: string | null }>> {
+    const methodLogger = this.logger.child({ method: 'findLocale', userId });
+    try {
+      const { data, error } = await this.supabase
+        .from(USER_PREFERENCES)
+        .select('preferred_language, timezone')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      const row = data as { preferred_language?: unknown; timezone?: unknown } | null;
+      return {
+        data: {
+          preferredLanguage: typeof row?.preferred_language === 'string' ? row.preferred_language : null,
+          timezone: typeof row?.timezone === 'string' ? row.timezone : null,
+        },
+        error: null,
+      };
+    } catch (error) {
+      const safe = safeDbError(error);
+      methodLogger.error({ dbError: safe }, 'Failed to read the locale preferences');
+      const out = new Error(safe.message) as Error & { code?: string };
+      if (safe.code) out.code = safe.code;
+      return { data: null, error: out };
+    }
+  }
+
+  /**
+   * Save the user's language, creating the row if there is none.
+   *
+   * Callers must also write `business_profiles.language` in the same action
+   * (see the header). Only `preferred_language` and `updated_at` are sent, so an
+   * existing row's other columns, such as `timezone`, are left alone.
+   */
+  async upsertPreferredLanguage(
+    userId: string,
+    language: SupportedLanguage
+  ): Promise<RepositoryResult<true>> {
+    const methodLogger = this.logger.child({ method: 'upsertPreferredLanguage', userId });
+    try {
+      const { error } = await this.supabase
+        .from(USER_PREFERENCES)
+        .upsert(
+          { user_id: userId, preferred_language: language, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id' }
+        );
+
+      if (error) throw error;
+      return { data: true, error: null };
+    } catch (error) {
+      const safe = safeDbError(error);
+      methodLogger.error({ dbError: safe }, 'Failed to save the preferred language');
       const out = new Error(safe.message) as Error & { code?: string };
       if (safe.code) out.code = safe.code;
       return { data: null, error: out };

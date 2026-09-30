@@ -909,9 +909,17 @@ function BusinessOSSettingsContent() {
                          * history, not convert it. `setCurrency` has already
                          * put the old value back; this says why, rather than
                          * leaving the picker to snap back unexplained.
+                         *
+                         * Only for that refusal. Any other failure (network,
+                         * server) is worth retrying, so it must not claim the
+                         * owner has invoices in this currency.
                          */
                         if (!result.ok) {
-                          setErrorMessage(t('settings.profile.currency_locked'));
+                          setErrorMessage(
+                            result.code === 'CURRENCY_LOCKED'
+                              ? t('settings.profile.currency_locked')
+                              : t('settings.business.error')
+                          );
                           setTimeout(() => setErrorMessage(''), 6000);
                         }
                       }}

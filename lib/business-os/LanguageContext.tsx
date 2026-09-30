@@ -57,11 +57,12 @@ interface LanguageContextType {
   /**
    * Save the business's default currency.
    *
-   * Resolves `{ ok: false, error }` when the database refuses — which it does
-   * once money exists in the current currency. The local value is put back, so
-   * the screen never shows a setting that was not stored.
+   * Resolves `{ ok: false, error }` when the save fails. The local value is put
+   * back, so the screen never shows a setting that was not stored. `code` is
+   * `'CURRENCY_LOCKED'` only when the database refused because money exists in
+   * the current currency; any other failure (network, server) has no code.
    */
-  setCurrency: (code: CurrencyCode) => Promise<{ ok: boolean; error?: string }>;
+  setCurrency: (code: CurrencyCode) => Promise<{ ok: boolean; code?: string; error?: string }>;
   availableCurrencies: typeof CURRENCY_CONFIGS;
   formatCurrency: (amount: number | null, options?: { showFree?: boolean; currencyOverride?: CurrencyCode }) => string;
 
@@ -11112,6 +11113,57 @@ export const translations = {
   },
 };
 
+/**
+ * What the server has stored for this user, raw, validated by the caller.
+ *
+ * A value is `null` when unset. A HALF is `null` when that read failed, so the
+ * caller can tell "nothing stored" from "unknown". The whole result is `null`
+ * when nothing could be read.
+ */
+interface StoredPreferences {
+  locale: { preferredLanguage: string | null; timezone: string | null } | null;
+  currency: { businessCurrency: string | null } | null;
+}
+
+async function loadPreferencesFromServer(): Promise<StoredPreferences | null> {
+  try {
+    const res = await fetch('/api/business-os/preferences', { method: 'GET' });
+    if (!res.ok) {
+      logger.debug({ status: res.status }, 'Failed to load preferences from the server');
+      return null;
+    }
+    const payload = (await res.json()) as { data?: StoredPreferences };
+    return payload.data ?? null;
+  } catch (err) {
+    logger.debug({ err }, 'Failed to load preferences from the server');
+    return null;
+  }
+}
+
+/**
+ * Save the language or the business currency through the server.
+ *
+ * The browser does not write these tables itself (CLAUDE.md rule 1). The route
+ * validates the value and scopes the write to the session user. Never throws:
+ * a network failure comes back as `{ ok: false }` like any other.
+ */
+async function savePreference(
+  body: { language: Language } | { currency: CurrencyCode }
+): Promise<{ ok: boolean; code?: string; error?: string }> {
+  try {
+    const res = await fetch('/api/business-os/preferences', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return { ok: true };
+    const payload = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
+    return { ok: false, code: payload?.code, error: payload?.error ?? `HTTP ${res.status}` };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const [language, setLanguageState] = useState<Language>('en');
   const [currencyCode, setCurrencyCode] = useState<CurrencyCode>('USD');
@@ -11155,28 +11207,28 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
 
       // Then check if user is authenticated and load from database
       try {
+        // Auth only, no table access: who is signed in decides whether the
+        // pickers save, independently of whether the read below succeeds.
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
           setUserId(user.id);
 
-          // Language AND clock off one row: both are business-level facts that
-          // every screen needs, and fetching them separately is what let the
-          // two drift apart per surface.
-          const { data: prefs } = await supabase
-            .from('user_preferences')
-            .select('preferred_language, timezone')
-            .eq('user_id', user.id)
-            .single();
+          // Language AND clock off one row, plus the business's own default
+          // currency, in one request through the server (CLAUDE.md rule 1).
+          // Both are business-level facts that every screen needs; fetching
+          // them separately is what let the two drift apart per surface.
+          //
+          // A half that could not be read is `null` and is skipped, keeping the
+          // localStorage values for it. Deliberately no language backfill then:
+          // a failed read is not "nothing stored", and writing this browser's
+          // language over a real stored one would be wrong.
+          const prefs = await loadPreferencesFromServer();
+          const businessCurrencyValue = prefs?.currency?.businessCurrency;
+          const locale = prefs?.locale;
 
           // The business's own default, for anything that WRITES a currency.
-          const { data: businessRow } = await supabase
-            .from('business_profiles')
-            .select('currency')
-            .eq('user_id', user.id)
-            .maybeSingle();
-
-          if (businessRow?.currency && businessRow.currency in CURRENCY_CONFIGS) {
-            setBusinessCurrency(businessRow.currency as CurrencyCode);
+          if (businessCurrencyValue && businessCurrencyValue in CURRENCY_CONFIGS) {
+            setBusinessCurrency(businessCurrencyValue as CurrencyCode);
 
             /*
              * The business's own currency also seeds the DISPLAY currency.
@@ -11192,35 +11244,28 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
              * this is a default.
              */
             if (!localStorage.getItem('business-os-currency')) {
-              setCurrencyCode(businessRow.currency as CurrencyCode);
+              setCurrencyCode(businessCurrencyValue as CurrencyCode);
             }
           }
 
-          if (prefs?.timezone) {
-            setTimezone(safeTimezone(prefs.timezone));
+          if (!locale) return;
+
+          if (locale.timezone) {
+            setTimezone(safeTimezone(locale.timezone));
           }
 
-          if (prefs?.preferred_language && (prefs.preferred_language === 'en' || prefs.preferred_language === 'es' || prefs.preferred_language === 'he')) {
-            setLanguageState(prefs.preferred_language);
-            localStorage.setItem('business-os-language', prefs.preferred_language);
-          } else if (savedLang) {
+          if (locale.preferredLanguage && (locale.preferredLanguage === 'en' || locale.preferredLanguage === 'es' || locale.preferredLanguage === 'he')) {
+            setLanguageState(locale.preferredLanguage);
+            localStorage.setItem('business-os-language', locale.preferredLanguage);
+          } else if (savedLang === 'en' || savedLang === 'es' || savedLang === 'he') {
             // No stored preference, but this browser knows what the user picked.
-            // Writes BOTH columns, the same pair syncLanguageToDatabase writes:
-            // filling only one leaves the two disagreeing, and server-side
-            // features have to pick a winner between them.
-            await Promise.all([
-              supabase
-                .from('user_preferences')
-                .upsert({
-                  user_id: user.id,
-                  preferred_language: savedLang,
-                  updated_at: new Date().toISOString()
-                }, { onConflict: 'user_id' }),
-              supabase
-                .from('business_profiles')
-                .update({ language: savedLang, updated_at: new Date().toISOString() })
-                .eq('user_id', user.id),
-            ]);
+            // The route writes BOTH columns, the same pair syncLanguageToDatabase
+            // writes: filling only one leaves the two disagreeing, and
+            // server-side features have to pick a winner between them.
+            const result = await savePreference({ language: savedLang });
+            if (!result.ok) {
+              logger.debug({ error: result.error }, 'Failed to backfill the language to the database');
+            }
           }
         }
       } catch (err) {
@@ -11246,37 +11291,11 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    logger.debug({ userId, lang }, 'syncLanguageToDatabase: syncing language');
-
-    try {
-      // Update user_preferences (for emails and insights)
-      const { error: prefError } = await supabase
-        .from('user_preferences')
-        .upsert({
-          user_id: userId,
-          preferred_language: lang,
-          updated_at: new Date().toISOString()
-        }, { onConflict: 'user_id' });
-
-      if (prefError) {
-        logger.error({ err: prefError }, 'Failed to update user_preferences');
-      } else {
-        logger.debug('user_preferences updated successfully');
-      }
-
-      // Also update business_profiles.language for consistency
-      const { error: profileError } = await supabase
-        .from('business_profiles')
-        .update({ language: lang, updated_at: new Date().toISOString() })
-        .eq('user_id', userId);
-
-      if (profileError) {
-        logger.error({ err: profileError }, 'Failed to update business_profiles');
-      } else {
-        logger.debug('business_profiles updated successfully');
-      }
-    } catch (err) {
-      logger.error({ err }, 'Failed to sync language to database');
+    // user_preferences (for emails and insights) and business_profiles.language,
+    // together, by the route.
+    const result = await savePreference({ language: lang });
+    if (!result.ok) {
+      logger.error({ error: result.error }, 'Failed to sync language to database');
     }
   }, [userId]);
 
@@ -11331,8 +11350,20 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
    * ───────────────────────────────────────────────────────────────────────────
    */
   const setCurrency = useCallback(
-    async (code: CurrencyCode): Promise<{ ok: boolean; error?: string }> => {
-      const previous = currencyCode;
+    async (code: CurrencyCode): Promise<{ ok: boolean; code?: string; error?: string }> => {
+      /*
+       * Three separate things to restore, each from its OWN previous value.
+       *
+       * The business currency used to be restored from `currencyCode`, the
+       * display currency. The two can differ (a device pin, or a business that
+       * never chose), so a refused save could leave `businessCurrency` holding
+       * the display value, and `businessCurrency` is what the invoice modals
+       * WRITE. That is the per-device-value-becomes-client-data bug the CLAUDE.md
+       * Currency rules exist to prevent.
+       */
+      const previousDisplay = currencyCode;
+      const previousBusiness = businessCurrency;
+      const previousPinned = localStorage.getItem('business-os-currency');
 
       // Optimistic, because the picker has always been instant.
       setCurrencyCode(code);
@@ -11341,33 +11372,36 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
 
       if (!userId) return { ok: true };
 
-      const { error } = await supabase
-        .from('business_profiles')
-        .update({ currency: code, updated_at: new Date().toISOString() })
-        .eq('user_id', userId);
+      // `code` is the owner's pick from the picker, never `currencyCode`.
+      const result = await savePreference({ currency: code });
 
-      if (error) {
+      if (!result.ok) {
         /*
          * PUT IT BACK.
          *
          * The database refuses a currency change once money exists in the old
          * one (`business_currency_lock`, 20261008), because changing it
-         * relabels history rather than converting it. Leaving the optimistic
-         * value on screen would show a setting that was not saved — the same
-         * "looks saved, isn't" failure this control had for its whole life,
-         * arrived at from the other direction.
+         * relabels history rather than converting it. The route reports that
+         * as `CURRENCY_LOCKED`. Leaving the optimistic value on screen would
+         * show a setting that was not saved — the same "looks saved, isn't"
+         * failure this control had for its whole life, arrived at from the
+         * other direction.
          */
-        setCurrencyCode(previous);
-        setBusinessCurrency(previous);
-        localStorage.setItem('business-os-currency', previous);
+        setCurrencyCode(previousDisplay);
+        setBusinessCurrency(previousBusiness);
+        if (previousPinned === null) {
+          localStorage.removeItem('business-os-currency');
+        } else {
+          localStorage.setItem('business-os-currency', previousPinned);
+        }
 
-        logger.error({ err: error }, 'Failed to save the business currency');
-        return { ok: false, error: error.message };
+        logger.error({ code: result.code, error: result.error }, 'Failed to save the business currency');
+        return { ok: false, code: result.code, error: result.error };
       }
 
       return { ok: true };
     },
-    [userId, currencyCode]
+    [userId, currencyCode, businessCurrency]
   );
 
   const t = (key: string, vars?: Record<string, string | number>): string => {
