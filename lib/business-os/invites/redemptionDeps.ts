@@ -1,8 +1,9 @@
 import 'server-only';
 
 /**
- * The production wiring of the invite redemption (Slice 1b), shared by the two
- * public signup routes, and the one mapping from an outcome to an HTTP answer.
+ * The production wiring of the invite redemption (Slice 1b), shared by the
+ * public signup routes (code, complete and, from Slice 3b, google), and the one
+ * mapping from an outcome to an HTTP answer.
  *
  * Kept out of the routes so both build the SAME dependencies, and so the only
  * application file that names the plan repository is this one (it is listed,
@@ -25,6 +26,7 @@ import { businessOsAccountPlanRepository } from '@/lib/repositories/BusinessOsAc
 import { businessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 
+import { verifyGoogleIdToken } from './googleIdToken';
 import type { RedemptionDeps, RedemptionLogger, RedemptionRefusal } from './inviteRedemption';
 import { INVITE_SIGNUP_CODE_POLICY } from './signupCodePolicy';
 
@@ -78,6 +80,8 @@ export function buildRedemptionDeps(context: {
     config: getEntitlementConfig(),
     now: () => new Date(),
     newAccountId: () => crypto.randomUUID(),
+    // Slice 3b: never throws, never logs (SA R-1); off until the client id is set (R-6).
+    verifyGoogleIdToken,
     logger: context.logger,
   };
 }

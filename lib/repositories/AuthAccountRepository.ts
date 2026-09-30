@@ -21,6 +21,8 @@
 // `createConfirmedUser` (T-3 as amended: the account is created server-side,
 // with the id the invite was ALREADY claimed for, after mailbox proof) and
 // `findUserExists` (I-4/I-6: "does a user with this id exist?", yes/no/unknown).
+// Slice 3b adds `createConfirmedUserWithoutPassword`: the same creation for a
+// mailbox proven by a verified Google ID token, with no password.
 //
 // No method here deletes a user, now or later (Slice 1 invariant I-1; the
 // repo-wide no-deletion-paths guard). A signup that stops halfway keeps its
@@ -52,6 +54,11 @@ export type CreateConfirmedUserOutcome =
       code: string | null;
       message: string;
     };
+
+/** The outcome of creating a password-less account (Slice 3b): no `weak_password` class. */
+export type CreatePasswordlessUserOutcome =
+  | { ok: true; id: string }
+  | { ok: false; kind: 'email_exists' | 'other'; code: string | null; message: string };
 
 /** The auth error codes that mean "an account already uses this email". */
 const EMAIL_TAKEN_CODES = new Set(['email_exists', 'user_already_exists']);
@@ -120,37 +127,33 @@ export class AuthAccountRepository {
    * error code and HTTP status only: never the email, never the password.
    */
   async createConfirmedUser(input: { id: string; email: string; password: string }): Promise<CreateConfirmedUserOutcome> {
-    const methodLogger = this.logger.child({ method: 'createConfirmedUser', accountId: input.id });
-    try {
-      const { data, error } = await this.supabase.auth.admin.createUser({
-        id: input.id,
-        email: input.email,
-        password: input.password,
-        email_confirm: true,
-      });
+    return createConfirmedAuthUser(
+      this.supabase,
+      this.logger.child({ method: 'createConfirmedUser', accountId: input.id }),
+      { id: input.id, email: input.email, password: input.password, email_confirm: true }
+    );
+  }
 
-      if (error) {
-        const facts = authErrorFacts(error);
-        const kind = EMAIL_TAKEN_CODES.has(facts.code ?? '')
-          ? 'email_exists'
-          : facts.code === 'weak_password'
-            ? 'weak_password'
-            : 'other';
-        methodLogger.warn({ authErrorCode: facts.code, authStatus: facts.status, kind }, 'Account creation refused');
-        return { ok: false, kind, code: facts.code, message: facts.message };
-      }
-
-      const createdId = data?.user?.id;
-      if (typeof createdId !== 'string') {
-        methodLogger.error('Account creation returned no user id');
-        return { ok: false, kind: 'other', code: null, message: 'Account creation returned no user id' };
-      }
-      return { ok: true, id: createdId };
-    } catch (error) {
-      const facts = authErrorFacts(error);
-      methodLogger.error({ authErrorCode: facts.code, authStatus: facts.status }, 'Account creation threw');
-      return { ok: false, kind: 'other', code: facts.code, message: facts.message };
-    }
+  /**
+   * Create a CONFIRMED account with NO password, for an invite already claimed
+   * for `id` after a verified Google ID token proved the mailbox (Slice 3b,
+   * D-4). The same contract as `createConfirmedUser` in every other respect:
+   * the server's id, the invite row's email, `email_confirm: true`, no
+   * metadata. The person signs in with Google, which links the identity; they
+   * can set a password later through "Forgot password".
+   *
+   * With no password there is nothing to be too weak, so the outcome has no
+   * `weak_password` class (SA optimisation): should the provider ever report
+   * one, it is `other`.
+   */
+  async createConfirmedUserWithoutPassword(input: { id: string; email: string }): Promise<CreatePasswordlessUserOutcome> {
+    const outcome = await createConfirmedAuthUser(
+      this.supabase,
+      this.logger.child({ method: 'createConfirmedUserWithoutPassword', accountId: input.id }),
+      { id: input.id, email: input.email, email_confirm: true }
+    );
+    if (!outcome.ok && outcome.kind === 'weak_password') return { ...outcome, kind: 'other' };
+    return outcome as CreatePasswordlessUserOutcome;
   }
 
   /**
@@ -177,6 +180,44 @@ export class AuthAccountRepository {
       methodLogger.error({ authErrorCode: facts.code, authStatus: facts.status }, 'User lookup threw');
       return { data: null, error: new Error(facts.message) };
     }
+  }
+}
+
+/**
+ * The one `admin.createUser` call behind both creators. A module function, not
+ * a method, so the repository's public surface (pinned by its test) stays the
+ * named doors. The attributes are an explicit allow-list built by the caller:
+ * id, email, `email_confirm` and, for the code path only, the password.
+ */
+async function createConfirmedAuthUser(
+  supabase: SupabaseClient,
+  methodLogger: Logger,
+  attributes: { id: string; email: string; password?: string; email_confirm: true }
+): Promise<CreateConfirmedUserOutcome> {
+  try {
+    const { data, error } = await supabase.auth.admin.createUser(attributes);
+
+    if (error) {
+      const facts = authErrorFacts(error);
+      const kind = EMAIL_TAKEN_CODES.has(facts.code ?? '')
+        ? 'email_exists'
+        : facts.code === 'weak_password'
+          ? 'weak_password'
+          : 'other';
+      methodLogger.warn({ authErrorCode: facts.code, authStatus: facts.status, kind }, 'Account creation refused');
+      return { ok: false, kind, code: facts.code, message: facts.message };
+    }
+
+    const createdId = data?.user?.id;
+    if (typeof createdId !== 'string') {
+      methodLogger.error('Account creation returned no user id');
+      return { ok: false, kind: 'other', code: null, message: 'Account creation returned no user id' };
+    }
+    return { ok: true, id: createdId };
+  } catch (error) {
+    const facts = authErrorFacts(error);
+    methodLogger.error({ authErrorCode: facts.code, authStatus: facts.status }, 'Account creation threw');
+    return { ok: false, kind: 'other', code: facts.code, message: facts.message };
   }
 }
 

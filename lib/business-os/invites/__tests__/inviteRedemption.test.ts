@@ -18,7 +18,15 @@
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import type { BusinessOsInviteRedemptionView } from '@/lib/repositories/types';
 
-import { completeSignup, requestSignupCode, type RedemptionAuditEntry, type RedemptionDeps } from '../inviteRedemption';
+import { createGoogleIdTokenVerifier, type GoogleIdTokenVerification, type GoogleTokenClient } from '../googleIdToken';
+import {
+  completeGoogleSignup,
+  completeSignup,
+  requestSignupCode,
+  type RedemptionAuditEntry,
+  type RedemptionDeps,
+} from '../inviteRedemption';
+import { refusalToHttp } from '../redemptionDeps';
 import { generateInviteToken, hashInviteToken } from '../inviteToken';
 import { hashSignupCode } from '../signupCode';
 
@@ -70,6 +78,8 @@ interface WorldOptions {
   finaliseReturnsNull?: boolean;
   sendFails?: boolean;
   lostCas?: 'count' | 'claim' | 'issue';
+  /** Slice 3b: what the Google verifier answers (default: ok, for the invited address). */
+  google?: GoogleIdTokenVerification;
 }
 
 function world(options: WorldOptions = {}) {
@@ -82,6 +92,7 @@ function world(options: WorldOptions = {}) {
   const created: Array<Record<string, unknown>> = [];
   const finalised: Array<Record<string, unknown>> = [];
   const sent: Array<{ to: string; code: string; language: string }> = [];
+  const verified: Array<{ idToken: string; rawNonce: string }> = [];
   let finaliseFailuresLeft = options.finaliseFailures ?? 0;
 
   const deps: RedemptionDeps = {
@@ -127,6 +138,14 @@ function world(options: WorldOptions = {}) {
         row = { ...row, signup_code_hash: null, signup_code_expires_at: null, claimed_at: input.now.toISOString(), claimed_account_id: input.accountId };
         return { data: true, error: null };
       }),
+      claimForGoogleSignup: jest.fn(async (input) => {
+        calls.push('claimGoogle');
+        if (options.lostCas === 'claim' || !row || row.claimed_account_id !== input.observedClaimedAccountId) {
+          return { data: false, error: null };
+        }
+        row = { ...row, signup_code_hash: null, signup_code_expires_at: null, claimed_at: input.now.toISOString(), claimed_account_id: input.accountId };
+        return { data: true, error: null };
+      }),
       releaseSignupClaim: jest.fn(async (id: string, accountId: string) => {
         calls.push('release');
         released.push(accountId);
@@ -165,6 +184,20 @@ function world(options: WorldOptions = {}) {
             return { ok: false as const, kind: 'other' as const, code: 'unexpected_failure', message: `timeout creating ${EMAIL}` };
         }
       }),
+      createConfirmedUserWithoutPassword: jest.fn(async (input) => {
+        calls.push('createGoogle');
+        created.push(input as unknown as Record<string, unknown>);
+        switch (options.create ?? 'ok') {
+          case 'ok':
+            return { ok: true as const, id: input.id };
+          case 'mismatch':
+            return { ok: true as const, id: '99999999-9999-4999-8999-999999999999' };
+          case 'email_exists':
+            return { ok: false as const, kind: 'email_exists' as const, code: 'email_exists', message: `A user with this email address (${EMAIL}) has already been registered` };
+          default:
+            return { ok: false as const, kind: 'other' as const, code: 'unexpected_failure', message: `timeout creating ${EMAIL}` };
+        }
+      }),
       findUserExists: jest.fn(async () => {
         calls.push('findUser');
         if (options.userExists === 'error') return { data: null, error: new Error('lookup failed') };
@@ -192,6 +225,11 @@ function world(options: WorldOptions = {}) {
     config: getEntitlementConfig(),
     now: () => NOW,
     newAccountId: () => NEW_ID,
+    verifyGoogleIdToken: jest.fn(async (input: { idToken: string; rawNonce: string }) => {
+      calls.push('verifyGoogle');
+      verified.push(input);
+      return options.google ?? { kind: 'ok' as const, email: EMAIL };
+    }),
     logger: {
       info: (...args: unknown[]) => logs.push(args),
       warn: (...args: unknown[]) => logs.push(args),
@@ -209,6 +247,7 @@ function world(options: WorldOptions = {}) {
     created,
     finalised,
     sent,
+    verified,
     row: () => row,
   };
 }
@@ -257,7 +296,12 @@ describe('the happy path', () => {
 
   it('I-1: nothing in the flow can delete a user (the accounts door has no delete)', () => {
     const w = world();
-    expect(Object.keys(w.deps.accounts).sort()).toEqual(['createConfirmedUser', 'emailHasAccount', 'findUserExists']);
+    expect(Object.keys(w.deps.accounts).sort()).toEqual([
+      'createConfirmedUser',
+      'createConfirmedUserWithoutPassword',
+      'emailHasAccount',
+      'findUserExists',
+    ]);
   });
 });
 
@@ -558,5 +602,304 @@ describe('requestSignupCode (per-invite limit, system email)', () => {
     expect(w.deps.invites.issueSignupCode).toHaveBeenCalledWith(
       expect.objectContaining({ observedLastSentAt: lastSent, claimLeaseCutoff: new Date(NOW.getTime() - 120_000) })
     );
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Slice 3b: completeGoogleSignup (T-3b-2 to T-3b-11, SA R-1, R-2, R-10, Q-4)
+// ════════════════════════════════════════════════════════════════════════════
+
+const ID_TOKEN = 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMTAxNjkifQ.c2lnbmF0dXJl';
+const RAW_NONCE = 'r'.repeat(43);
+const GOOGLE_SUB = '110169484474386276334';
+
+const google = (deps: RedemptionDeps, overrides: Partial<{ token: string; idToken: string; nonce: string }> = {}) =>
+  completeGoogleSignup({ token: TOKEN, idToken: ID_TOKEN, nonce: RAW_NONCE, ...overrides }, deps);
+
+/** Nothing from the invite or from Google in the audit, the failure records or the logs (AC-9, R-1, R-11). */
+function expectNoGoogleSecrets(w: ReturnType<typeof world>, ...extra: string[]) {
+  expectNoSecrets(w);
+  const text = JSON.stringify({ audits: w.audits, recorded: w.recorded, logs: w.logs });
+  for (const secret of [ID_TOKEN, RAW_NONCE, GOOGLE_SUB, ...extra]) expect(text).not.toContain(secret);
+}
+
+describe('Slice 3b: the Google happy path (T-3b-2)', () => {
+  it('load → verify → Google claim for a server-made id → password-less create → finalise → REDEEMED (method google)', async () => {
+    const w = world();
+    const outcome = await google(w.deps);
+
+    expect(outcome).toEqual({ ok: true, accountId: NEW_ID, inviteId: INVITE_ID });
+    expect(w.calls).toEqual(['find', `emailHasAccount:${EMAIL}`, 'verifyGoogle', 'claimGoogle', 'createGoogle', 'finalise']);
+    // The verifier gets exactly what the page sent; nothing else from the request reaches anything.
+    expect(w.verified).toEqual([{ idToken: ID_TOKEN, rawNonce: RAW_NONCE }]);
+    // §3.4 allow-list: the server's id and the ROW's email. No password, no metadata.
+    expect(w.created).toEqual([{ id: NEW_ID, email: EMAIL }]);
+    expect(w.deps.invites.claimForGoogleSignup).toHaveBeenCalledWith({
+      id: INVITE_ID,
+      accountId: NEW_ID,
+      observedClaimedAccountId: null,
+      now: NOW,
+      claimLeaseCutoff: new Date(NOW.getTime() - 120_000),
+    });
+    expect(w.finalised).toEqual([{ inviteId: INVITE_ID, accountId: NEW_ID, email: EMAIL, cohort: 'champion' }]);
+    expect(w.audits.map((entry) => entry.action)).toEqual(['BOS_INVITE_REDEEMED', 'BOS_INVITE_PLAN_PROVISIONED']);
+    expect(w.audits[0].details).toEqual({ inviteType: 'champion', level: 1, source: 'admin_invite', method: 'google' });
+    // The code path's claim and creator are never used.
+    expect(w.calls).not.toContain('claim');
+    expect(w.calls).not.toContain('create');
+    expectNoGoogleSecrets(w);
+  });
+
+  it('the success outcome carries no email (the browser signs in with the Google token)', async () => {
+    const outcome = await google(world().deps);
+    expect(JSON.stringify(outcome)).not.toContain(EMAIL);
+  });
+
+  it('T-3b-3: the code path now records method: password on REDEEMED', async () => {
+    const w = world();
+    await complete(w.deps);
+    expect(w.audits[0]).toMatchObject({ action: 'BOS_INVITE_REDEEMED', details: { method: 'password' } });
+  });
+
+  it('T-3b-5: the match is case-insensitive on both sides', async () => {
+    // The verifier returns the Google address lower-cased; a mixed-case invite email (should one exist) still matches.
+    const mixed = world({ row: inviteRow({ email: 'Invitee@Example.com' }) });
+    expect(await google(mixed.deps)).toMatchObject({ ok: true });
+    // The account is created for the ROW's address, byte for byte, never the token's.
+    expect(mixed.created).toEqual([{ id: NEW_ID, email: 'Invitee@Example.com' }]);
+  });
+});
+
+describe('Slice 3b: refusals before any claim', () => {
+  it.each([
+    ['a different address', 'someone.else@example.com'],
+    ['a +tag the invite does not have (D-7, no folding)', 'invitee+tag@example.com'],
+    ['a dot variant (no folding)', 'in.vitee@example.com'],
+  ])('T-3b-4: %s → 409 google_email_mismatch, no claim, no user, audited with no address', async (_label, googleEmail) => {
+    const w = world({ google: { kind: 'ok', email: googleEmail } });
+    const outcome = await google(w.deps);
+    expect(outcome).toEqual({ ok: false, kind: 'refused', status: 409, error: 'google_email_mismatch' });
+    expect(w.calls).not.toContain('claimGoogle');
+    expect(w.calls).not.toContain('createGoogle');
+    expect(w.audits).toEqual([
+      { action: 'BOS_INVITE_REDEMPTION_REFUSED', inviteId: INVITE_ID, accountId: null, details: { reason: 'google_email_mismatch', method: 'google' } },
+    ]);
+    expectNoGoogleSecrets(w, googleEmail);
+    const body = JSON.stringify(refusalToHttp(outcome as Extract<typeof outcome, { ok: false }>));
+    expect(body).not.toContain(EMAIL);
+    expect(body).not.toContain(googleEmail);
+  });
+
+  it('an invite to x+tag@gmail.com cannot be redeemed by x@gmail.com (the documented D-7 consequence)', async () => {
+    const w = world({ row: inviteRow({ email: 'x+tag@gmail.com' }), google: { kind: 'ok', email: 'x@gmail.com' } });
+    expect(await google(w.deps)).toMatchObject({ error: 'google_email_mismatch' });
+  });
+
+  it('T-3b-6: unverified → 409 google_email_unverified, audited, no claim', async () => {
+    const w = world({ google: { kind: 'unverified' } });
+    expect(await google(w.deps)).toEqual({ ok: false, kind: 'refused', status: 409, error: 'google_email_unverified' });
+    expect(w.calls).not.toContain('claimGoogle');
+    expect(w.audits).toEqual([
+      { action: 'BOS_INVITE_REDEMPTION_REFUSED', inviteId: INVITE_ID, accountId: null, details: { reason: 'google_email_unverified', method: 'google' } },
+    ]);
+    expectNoGoogleSecrets(w);
+  });
+
+  it('SA R-2: not authoritative → 409 google_use_code, audited google_account_not_authoritative, no claim, no user', async () => {
+    const w = world({ google: { kind: 'not_authoritative' } });
+    expect(await google(w.deps)).toEqual({ ok: false, kind: 'refused', status: 409, error: 'google_use_code' });
+    expect(w.calls).not.toContain('claimGoogle');
+    expect(w.calls).not.toContain('createGoogle');
+    expect(w.audits).toEqual([
+      {
+        action: 'BOS_INVITE_REDEMPTION_REFUSED',
+        inviteId: INVITE_ID,
+        accountId: null,
+        details: { reason: 'google_account_not_authoritative', method: 'google' },
+      },
+    ]);
+    expectNoGoogleSecrets(w);
+  });
+
+  it('an invalid token → 400 google_token_invalid, logged with its reason code only, not audited', async () => {
+    const w = world({ google: { kind: 'invalid', reason: 'nonce' } });
+    expect(await google(w.deps)).toEqual({ ok: false, kind: 'refused', status: 400, error: 'google_token_invalid' });
+    expect(w.audits).toEqual([]);
+    expect(w.calls).not.toContain('claimGoogle');
+    expect(JSON.stringify(w.logs)).toContain('"googleTokenRefusal":"nonce"');
+  });
+
+  it('R-5: Google unavailable → 503 try again, no claim', async () => {
+    const w = world({ google: { kind: 'unavailable' } });
+    expect(await google(w.deps)).toEqual({ ok: false, kind: 'unavailable_try_again' });
+    expect(w.calls).not.toContain('claimGoogle');
+  });
+
+  it('not configured → 404 google_signin_not_configured', async () => {
+    const w = world({ google: { kind: 'not_configured' } });
+    expect(await google(w.deps)).toEqual({ ok: false, kind: 'refused', status: 404, error: 'google_signin_not_configured' });
+  });
+
+  it('T-3b-7: an existing account → 409 existing_account, stamped and audited once, with no token verification', async () => {
+    const w = world({ emailHasAccount: true });
+    expect(await google(w.deps)).toMatchObject({ status: 409, error: 'existing_account' });
+    expect(w.calls).toEqual(['find', `emailHasAccount:${EMAIL}`, 'stamp']);
+    expect(w.audits.map((entry) => entry.action)).toEqual(['BOS_INVITE_OPENED_BY_EXISTING_ACCOUNT']);
+  });
+
+  it('T-3b-8: a live claim → 409 signup_in_progress before verification', async () => {
+    const w = world({ row: inviteRow({ claimed_at: at(-30_000), claimed_account_id: NEW_ID }) });
+    expect(await google(w.deps)).toMatchObject({ error: 'signup_in_progress' });
+    expect(w.calls).toEqual(['find']);
+  });
+
+  it('T-3b-10: a paid (tier) invite → 409 paid_invites_not_available, before verification', async () => {
+    const w = world({ row: inviteRow({ grant_kind: 'tier', grant_id: 'tier-x', access_open_ended: null }) });
+    expect(await google(w.deps)).toMatchObject({ status: 409, error: 'paid_invites_not_available' });
+    expect(w.calls).not.toContain('verifyGoogle');
+  });
+
+  it.each([
+    ['used', { redeemed_at: at(-1000) }],
+    ['revoked', { revoked_at: at(-1000) }],
+    ['expired', { link_expires_at: NOW.toISOString() }],
+    ['unavailable', { issuer_kind: 'account' as const }],
+  ])('%s, before verification', async (error, overrides) => {
+    const w = world({ row: inviteRow(overrides) });
+    expect(await google(w.deps)).toMatchObject({ status: 409, error });
+    expect(w.calls).not.toContain('verifyGoogle');
+  });
+
+  it('a malformed or unknown token is not_recognised, with no verification', async () => {
+    const w = world();
+    expect(await google(w.deps, { token: 'abc' })).toEqual({ ok: false, kind: 'not_recognised' });
+    expect(await google(w.deps, { token: generateInviteToken() })).toEqual({ ok: false, kind: 'not_recognised' });
+    expect(w.calls).not.toContain('verifyGoogle');
+  });
+});
+
+describe('Slice 3b: SA Q-4 / T-3b-11, the code limits do not apply to Google', () => {
+  it('an invite locked after 5 wrong codes is still redeemed with Google; the counters are untouched', async () => {
+    const w = world({ row: inviteRow({ signup_code_attempts: 5 }) });
+    expect(await complete(w.deps)).toMatchObject({ error: 'code_locked' });
+
+    const g = world({ row: inviteRow({ signup_code_attempts: 5 }) });
+    expect(await google(g.deps)).toMatchObject({ ok: true, accountId: NEW_ID });
+    expect(g.calls).not.toContain('count');
+    expect(g.calls).not.toContain('issue');
+  });
+
+  it('the outstanding code hash and its expiry are cleared by the Google claim', async () => {
+    const w = world();
+    expect(w.row()?.signup_code_hash).not.toBeNull();
+    await google(w.deps);
+    expect(w.row()?.signup_code_hash).toBeNull();
+    expect(w.row()?.signup_code_expires_at).toBeNull();
+  });
+
+  it('an invite with no code ever requested is redeemed with Google', async () => {
+    const w = world({ row: inviteRow({ signup_code_hash: null, signup_code_expires_at: null, signup_code_sent_count: 0 }) });
+    expect(await google(w.deps)).toMatchObject({ ok: true });
+  });
+});
+
+describe('Slice 3b: the shared tail after the Google claim (T-3b-9)', () => {
+  it('a lost claim CAS → 409 try_again, no user', async () => {
+    const w = world({ lostCas: 'claim' });
+    expect(await google(w.deps)).toMatchObject({ status: 409, error: 'try_again' });
+    expect(w.calls).not.toContain('createGoogle');
+  });
+
+  it('email_exists and OUR id exists → finished', async () => {
+    const w = world({ create: 'email_exists', userExists: true });
+    expect(await google(w.deps)).toMatchObject({ ok: true, accountId: NEW_ID });
+    expect(w.calls).not.toContain('release');
+  });
+
+  it('email_exists and not ours → released, 409 existing_account, audited, nothing Google-derived', async () => {
+    const w = world({ create: 'email_exists', userExists: false });
+    expect(await google(w.deps)).toMatchObject({ status: 409, error: 'existing_account' });
+    expect(w.released).toEqual([NEW_ID]);
+    expect(w.audits.map((entry) => entry.action)).toEqual(['BOS_INVITE_REDEMPTION_REFUSED']);
+    expectNoGoogleSecrets(w);
+  });
+
+  it('an uncertain user lookup keeps the claim and records find_user (scrubbed), 503', async () => {
+    const w = world({ create: 'other', userExists: 'error' });
+    expect(await google(w.deps)).toEqual({ ok: false, kind: 'unavailable_try_again' });
+    expect(w.calls).not.toContain('release');
+    expect(w.recorded).toEqual([expect.objectContaining({ step: 'find_user', claimedAccountId: NEW_ID })]);
+    expect(w.recorded[0].errorMessage).toBe('timeout creating [email]');
+    expectNoGoogleSecrets(w);
+  });
+
+  it('finalise failing twice keeps the claim and records finalise, 503', async () => {
+    const w = world({ finaliseFailures: 2 });
+    expect(await google(w.deps)).toEqual({ ok: false, kind: 'unavailable_try_again' });
+    expect(w.recorded).toEqual([expect.objectContaining({ step: 'finalise' })]);
+    expect(w.audits.map((entry) => entry.action)).toEqual(['BOS_INVITE_REDEMPTION_INCOMPLETE']);
+  });
+
+  it('an id we did not ask for is never finalised: create_user_id_mismatch', async () => {
+    const w = world({ create: 'mismatch' });
+    expect(await google(w.deps)).toEqual({ ok: false, kind: 'unavailable_try_again' });
+    expect(w.calls).not.toContain('finalise');
+    expect(w.recorded).toEqual([expect.objectContaining({ step: 'create_user_id_mismatch' })]);
+  });
+});
+
+describe('Slice 3b: I-6 across methods (T-3b-8, SA R-10)', () => {
+  const lapsed = () =>
+    inviteRow({ claimed_at: at(-10 * 60_000), claimed_account_id: NEW_ID, signup_code_hash: null, signup_code_expires_at: null });
+
+  it('a lapsed claim is re-taken by Google with the recorded id, comparing the observed claimant', async () => {
+    const w = world({ row: lapsed() });
+    w.deps.newAccountId = () => 'should-not-be-used';
+    expect(await google(w.deps)).toMatchObject({ ok: true, accountId: NEW_ID });
+    expect(w.deps.invites.claimForGoogleSignup).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: NEW_ID, observedClaimedAccountId: NEW_ID })
+    );
+  });
+
+  it('R-10: a lapsed PASSWORD-path claim whose account exists is finished by Google (email_exists → ours → finalise), method google', async () => {
+    const w = world({ row: lapsed(), emailHasAccount: true, create: 'email_exists', userExists: true });
+    expect(await google(w.deps)).toMatchObject({ ok: true, accountId: NEW_ID });
+    // The account lookup is skipped with a lapsed claim (I-6), as on the code path.
+    expect(w.calls).not.toContain(`emailHasAccount:${EMAIL}`);
+    expect(w.calls).toEqual(['find', 'verifyGoogle', 'claimGoogle', 'createGoogle', 'findUser', 'finalise']);
+    expect(w.audits[0]).toMatchObject({ action: 'BOS_INVITE_REDEEMED', details: { method: 'google' } });
+  });
+});
+
+describe('Slice 3b, SA R-1: a payload-bearing library error reaches no log, audit or response', () => {
+  const LEAKED_EMAIL = 'leak.victim@gmail.com';
+
+  it('with the REAL verifier over a client whose error message holds the payload', async () => {
+    const leakingPayload = JSON.stringify({
+      iss: 'https://accounts.google.com',
+      aud: 'client',
+      sub: GOOGLE_SUB,
+      email: LEAKED_EMAIL,
+      email_verified: true,
+      name: 'Leak Victim',
+    });
+    const client: GoogleTokenClient = {
+      getFederatedSignonCertsAsync: async () => ({}),
+      verifyIdToken: async () => {
+        throw new Error(`Token used too late, 1790000000 > 1789999000: ${leakingPayload}`);
+      },
+    };
+    const w = world({ row: inviteRow({ email: LEAKED_EMAIL }) });
+    w.deps.verifyGoogleIdToken = createGoogleIdTokenVerifier({ client, clientId: () => 'client', now: () => NOW });
+
+    const outcome = await google(w.deps);
+    expect(outcome).toEqual({ ok: false, kind: 'refused', status: 400, error: 'google_token_invalid' });
+
+    const response = refusalToHttp(outcome as Extract<typeof outcome, { ok: false }>);
+    const everything = JSON.stringify({ logs: w.logs, audits: w.audits, recorded: w.recorded, response });
+    expect(everything).not.toContain(LEAKED_EMAIL);
+    expect(everything).not.toContain(GOOGLE_SUB);
+    expect(everything).not.toContain('Leak Victim');
+    expect(everything).not.toContain('Token used too late');
   });
 });

@@ -32,9 +32,10 @@ export const INVITE_SIGNUP_CODE_POLICY = {
 export const INVITE_CLAIM_LEASE_SECONDS = 120;
 
 /**
- * The complete route's `maxDuration`. The route file exports the literal `60`
- * (Next.js reads route segment config statically, so it cannot import this);
- * a test asserts the two agree.
+ * The `maxDuration` of every route that claims an invite: `complete` and, from
+ * Slice 3b, `google`. Each route file exports the literal `60` (Next.js reads
+ * route segment config statically, so it cannot import this); a test asserts
+ * they agree.
  */
 export const COMPLETE_ROUTE_MAX_DURATION_SECONDS = 60;
 

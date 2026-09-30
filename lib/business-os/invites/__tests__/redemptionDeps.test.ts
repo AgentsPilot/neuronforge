@@ -35,6 +35,7 @@ jest.mock('@/lib/repositories/BusinessOsAccountPlanRepository', () => ({
 
 import { NextRequest } from 'next/server';
 
+import { verifyGoogleIdToken } from '../googleIdToken';
 import { NOT_RECOGNISED_BODY, buildRedemptionDeps, refusalToHttp } from '../redemptionDeps';
 
 const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
@@ -89,6 +90,18 @@ describe('audit and finalise wiring', () => {
     const input = { inviteId: 'inv', accountId: 'acct', email: 'invitee@example.com', cohort: 'champion' };
     await deps.finalise(input);
     expect(provision).toHaveBeenCalledWith(input);
+  });
+
+  it('Slice 3b: wires the production Google verifier, which is off (no network) while the client id is unset', async () => {
+    const deps = buildRedemptionDeps({ logger, correlationId: 'corr-1', request });
+    expect(deps.verifyGoogleIdToken).toBe(verifyGoogleIdToken);
+    const saved = process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID;
+    delete process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID;
+    try {
+      expect(await deps.verifyGoogleIdToken({ idToken: 'a.b.c', rawNonce: 'n'.repeat(43) })).toEqual({ kind: 'not_configured' });
+    } finally {
+      if (saved !== undefined) process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID = saved;
+    }
   });
 
   it('generates a fresh UUID per account id (I-3)', () => {
