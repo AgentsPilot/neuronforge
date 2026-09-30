@@ -261,13 +261,16 @@ export async function POST(request: NextRequest) {
         manual: body.manual,
       });
 
+      /*
+       * No `severity` here on purpose — see the single-payment path below.
+       * PAYMENT_REFUNDED's classification lives in lib/audit/events.ts alone.
+       */
       auditTrail
         .log({
           action: 'PAYMENT_REFUNDED',
           entityType: 'payment_transaction',
           entityId: transactionIds[0],
           userId: user.id,
-          severity: 'critical',
           changes: {
             scope: 'all',
             requested: group.requested,
@@ -375,15 +378,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Money leaving the business is about as material as this product gets, so
-    // it is audited at `critical` — and never allowed to fail the request.
+    /*
+     * Money leaving the business is about as material as this product gets, so
+     * it is always audited — and never allowed to fail the request.
+     *
+     * `severity` is deliberately NOT passed. It used to be 'critical' here, and
+     * AuditTrailService prefers the caller's value over the registration, so the
+     * two could (and did) drift apart. A refund is a normal operation an owner
+     * performs on their own client, and at 'critical' it was counted by the admin
+     * health tile — which counts severity action-blind — and shown on the owner's
+     * own /monitoring page as a security event needing immediate review. It is
+     * registered 'warning' with the SOC2 flag in lib/audit/events.ts, which is now
+     * the only place that decides, for both refund paths.
+     */
     auditTrail
       .log({
         action: 'PAYMENT_REFUNDED',
         entityType: 'payment_transaction',
         entityId: transactionId,
         userId: user.id,
-        severity: 'critical',
         changes: {
           refundId: result.refundId,
           processorRefundId: result.processorRefundId,
