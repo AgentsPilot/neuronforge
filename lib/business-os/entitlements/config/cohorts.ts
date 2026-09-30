@@ -163,7 +163,8 @@ export const COHORTS = {
     // Tiers card and read by nothing else. Open question before it does
     // anything: what should inactive DO — stop new assignments? hide the plan
     // from customers? affect accounts already on it?
-    active: true,
+    // Marked inactive by the user 2026-09-30 (FYI only).
+    active: false,
     // Beta capabilities are included on top of the tier row. Setting this to []
     // keeps beta for champions only — one value, no code.
     includeLifecycle: ['beta'],
