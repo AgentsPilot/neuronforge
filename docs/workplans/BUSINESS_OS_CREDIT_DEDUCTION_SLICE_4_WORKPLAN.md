@@ -1,13 +1,13 @@
 # Workplan: Business OS Credit Deduction — Slice 4 (Operator cost report and nightly leak check)
 
-> **Last Updated**: 2026-09-29
+> **Last Updated**: 2026-09-30
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_LLM_DEDUCTION_LAYER_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_DEDUCTION_LAYER_REQUIREMENT.md) — §4 (three records, effective service), §12 slice 4, FR-12c, FR-12d, FR-16 (detection), FR-33, FR-40f, AC-4, AC-23 (report half), AC-31, SA-S9, N-10, SQ-13 (3), SQ-15
 **Builds on:** [BUSINESS_OS_CREDIT_DEDUCTION_SLICE_3_WORKPLAN.md](/docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_3_WORKPLAN.md) (the ledger shape §3.2, the RPC §3.5, the checker §6.3, and open items OI-1 / OI-2 in §12)
 **Date:** 2026-09-29
 **Branch:** `feature/business-os-credit-deduction-slice-4` (worktree `neuronforge-llm-deduction`, off `origin/main` `95a7ead0`). If SA accepts the three-way split (§8), RM decides whether 4b and 4c get their own branches.
-**Status:** 4a Code Complete (uncommitted) — for SA code review. 4b and 4c not started. No migration. Nothing committed.
+**Status:** 4a QA Passed (PR #150). **4b Code Complete (uncommitted) — for SA code review**, on `feature/business-os-credit-deduction-slice-4b`. 4c not started (BQ-3). No migration.
 
 ## Overview
 
@@ -178,62 +178,87 @@ Business names come from `businessProfileRepository.findAdminIdentitiesByUserIds
 
 ## 5. Implementation approach — 4b, the leak check
 
+> **SA rulings folded in (T4b.0, 2026-09-29):** B-1 (a group is examined on ANY activity in the window, not on its first call), S-1 (plan accounts plus charged accounts), S-2 (a scale-independent tolerance), S-3 (known uncharged paths at `warn`, ungrouped calls counted separately), S-4 (the period in the output and the log), N-3 (the usage read's inclusive end), N-5 (a 7-day on-demand cap), Q-9 (no per-account legacy `onboarding` count; the helper label joins the platform count), Q-15 (the schedule's reason corrected), and the user's decision **BQ-2** (admin pages and logs only, no email). Each is marked where it lands.
+
 ### 5.1 What counts as Business OS spend
 
-`token_usage` rows matching `bosRowFilter()` (V-8), on the account being checked. Rows on the **platform account** are Business OS spend no account can be charged for; they are counted and shown separately (count only, through the existing `countInWindow`). Spend recorded under other feature values, including the legacy `onboarding` value and the shared helper label, is **outside** this check (Q-9).
+`token_usage` rows matching `bosRowFilter()` (V-8), on the account being checked. Rows on the **platform account** are Business OS spend no account can be charged for. They are counted and shown separately (count only, through the existing `countInWindow`). **Q-9:** the platform-account information also counts rows under the shared helper label `BOS_LEGACY_HELPER_LABEL` (`onboarding` / `simple-complete`), passed as data to the same `countInWindow` (`{ kind: 'label' }`). That label is the fingerprint of a Business OS call that lost its account context. The legacy `onboarding` feature value is **not** counted per account: on a Business OS account it is agent-platform spend by construction. `BOS_LEGACY_FEATURES.onboarding` stays empty (RC-3).
 
 ### 5.2 The comparison, per account
 
-For a window `[S, E)`:
+For a window `[S, E)` of whole UTC days:
 
-1. **Usage side:** `listCallsInWindow(account, [S − 1 h, E), bosRowFilter(), ceiling 5,000)`.
-2. **Charge side:** the account's `kind = 'charge'` rows with effective service `ai` and `created_at` in `[S − 1 h, E + 1 h)`, from the read repository (a new `listChargesForAccountInWindow(userId, window)`, scoped `.eq('user_id', …)`).
-3. **Group by `(user_id, group_id)` ↔ `(user_id, session_id)`** (V-10). The one-hour slack on both sides catches an action whose calls and charge straddle an edge (actions are bounded by `maxDuration` ≤ 300 s). Only groups whose **first call** falls in `[S, E)`, or whose charge was written in `[S, E)`, are reported, so a group is reported by exactly one window.
-4. **Classify each group** (tolerance `T = calls × 0.0000005 + 1e-9`, because `token_usage` keeps micro-dollars and the charge keeps 10 decimals, V-6):
+1. **Usage side:** `listCallsInWindow(account, [S − 1 h − 300 s, E + 1 h), bosRowFilter(), ceiling 5,000)`. **N-3:** that method's end is **inclusive** (`.lte`), so it is passed `E + 1 h − 1 ms`. Window membership (step 3) is always `S ≤ t < E`, so a row at exactly `E` belongs to the next window only.
+2. **Charge side:** the account's ledger rows (charges **and** adjustments) with `created_at` in `[S − 1 h, E + 1 h + 300 s)`, from the 4a read repository. It is a new account-scoped method (`.eq('user_id', …)`, half-open). Only rows whose **effective** service is `ai` are compared (N-10, through `resolveEffectiveFields`); an adjustment inherits its charge's service and group. An adjustment whose charge was not read is **unresolved**: counted and shown, never compared.
+3. **Group by `(user_id, group_id)` ↔ `(user_id, session_id)`** (V-10). **B-1: a group is examined when it has ANY usage row or ANY charge-side row inside `[S, E)`.** The rows outside `[S, E)` (the slack) are used only to match. So a reused chat or onboarding group that crosses midnight is examined on both nights, and a discrepancy near the edge can be **reported on two consecutive nights**; the output says so. Over-reporting is the safe direction; missing a leak is not.
+   - The usage read starts **300 s (the longest action, `maxDuration`) earlier** than the charge read, so every charge read has its calls read, and no phantom "charged above usage" appears at the lower edge. The charge read ends 300 s later than the usage read, so every call read near the upper edge has its charge read, and no phantom under-charge appears there.
+   - **The one residue:** a reused group with an action whose calls fall in the 300 s before the charge read starts, and whose charge also falls before it, shows an under-charge at the lower edge. That needs one group active both about an hour before the window and inside it. It is over-reporting, and the output names it (blind spot `edge_of_window`: check the previous day).
+   - **The midnight example (SA B-1), tested both ways:** chat group G, turn A at 23:40 on D−1 **charged**, turn B at 00:20 on D with its charge **lost**. Day D's run examines G (turn B is in the window); turn A's usage and charge sit in the slack; usage = A + B, charged = A, so G is **under-charged by B and reported**. With B charged too, G is **matched and not reported**.
+4. **Classify each examined group.** **S-2:** tolerance `T = calls × 0.000001 + 1e-9`, one micro-dollar per call. It holds whether `token_usage.cost_usd` rounds or truncates to micro-dollars; the charge keeps 10 decimals (V-6). An uncharged group is detected by **presence**, so an embedding-only action recorded at $0 is still found.
 
 | Case | Rule | Is it a leak? |
 |---|---|---|
 | **Matched** | a charge exists and `|usage − charged| ≤ T` | No |
-| **Uncharged group** | usage rows, no charge row at all, and the rows carry any tokens or cost | **Yes** — a call outside `runAiAction`, a lost or failed charge write (FR-16), or calls left out of their scope (V-11). Detected by **presence**, not cost, so an embedding-only action recorded at $0 is still found |
-| **No-spend group** | usage rows, no charge, zero tokens and zero cost (e.g. the plan-cache marker row) | No — shown as informational |
-| **Ungrouped spend** | Business OS rows with `session_id` NULL | **Yes** — nothing without a grouping id can be charged |
-| **Under-charged group** | a charge exists and `usage − charged > T` | **Yes** — calls that finished after the scope closed or carried another group id, or one lost charge inside a reused group (onboarding and chat reuse a group id across turns, SA-B1) |
-| **Pending reconciliation** | `charged − usage > T` and a charge in the group is fallback-priced | **No** (SQ-13 (3)); listed with the fallback rows |
-| **Charged above recorded usage** | `charged − usage > T`, nothing fallback-priced | No — informational (a `token_usage` insert that failed and was logged, V-7) |
+| **Uncharged group** | usage rows, no charge row at all, and the rows carry any tokens or cost | **Yes.** A call outside `runAiAction`, a lost or failed charge write (FR-16), a charge lost when the function froze after its calls returned (Q-14, V-7: the `token_usage` insert is awaited before a call returns), or calls left out of their scope (V-11) |
+| **No-spend group** | usage rows, no charge, zero tokens and zero cost (for example the plan-cache marker row) | No, informational |
+| **Ungrouped calls** (S-3: counted separately) | Business OS rows with `session_id` NULL that carry tokens or cost and are not a known path | **Yes.** Nothing without a grouping id can be charged |
+| **Under-charged group** | a charge exists, nothing in the group is fallback-priced, and `usage − charged > T` | **Yes.** Calls that finished after the scope closed or carried another group id, or one lost charge inside a reused group (SA-B1) |
+| **Pending reconciliation** | a charge in the group is fallback-priced and `|usage − charged| > T` | **No** (SQ-13 (3)). Shown with its direction: **over** (the expected case, since a fallback is the highest price) or **under** (SA N-8, BQ-4: the real price exceeded the fallback; shown, never hidden as matched, so the price list can be fixed) |
+| **Charged above recorded usage** | `charged − usage > T`, nothing fallback-priced | No, informational (a `token_usage` insert that failed and was logged, V-7) |
+| **Known uncharged path** (S-3) | rows whose `(feature, component)` is a `BOS_KNOWN_NON_CATALOG_COMPONENTS` entry exempt from `missing_group_id` (today `business-os-chat` / `IntentParser`, KI-6) | **Accepted**, not a leak. Its own bucket, counted and shown with feature and component, logged at **`warn` once per run**, never at `error` |
 
-A group of an account read that hit its ceiling makes the account **"incomplete"**, never "clean". An account whose read failed is **"could not check"**, never "clean".
+An account whose read hit its ceiling is **"incomplete"**, never "clean". An account whose read failed is **"could not check"**, never "clean".
 
-**Accepted blind spots (stated in the output, not hidden):** a lost charge worth less than a micro-dollar inside a reused group (invisible by cost, and the group has other charges); spend that never reached `token_usage` (a freeze mid-call, V-7; the chat path that calls the provider directly, noted in the ledger-check route header); spend under non-Business-OS feature values (Q-9).
+**Accepted blind spots.** They are stated in the output as codes, which the tab spells out; none is hidden.
+
+| Code | Blind spot |
+|---|---|
+| `no_plan_no_charge_account` | **S-1:** Business OS spend on an account with neither a plan row nor a charge in the window is not walked. SA's re-measurement (9 spenders in 30 days = the 8 plan accounts + the platform account) says none exists today. No all-accounts `token_usage` read is added to find one |
+| `sub_microdollar_reused_group` | A lost charge worth less than a micro-dollar, inside a reused group that has other charges |
+| `never_reached_token_usage` | Spend that never reached `token_usage`: a freeze during a provider call (V-7), or the chat path that calls the provider directly |
+| `outside_business_os_filter` | Spend under non-Business-OS feature values (Q-9) |
+| `edge_of_window` | A discrepancy at a window edge can be reported on two consecutive nights, or once as an edge under-charge (step 3) |
+| `fallback_masks_undercharge` | A lost charge inside a group that also holds a fallback-priced charge is shown as pending reconciliation, not as a leak |
 
 ### 5.3 The check function
 
 `lib/business-os/credits/creditLeakCheck.ts`:
 
-- `classifyLeakGroups(usageRows, chargeRows, window)` — **pure**, fully unit-tested (the table above).
-- `runCreditLeakCheck({ window, accountId?, deadlineAt }, deps)` — walks the Business OS accounts (`pagePlans`, 500 per page), one account at a time, and stops **starting** accounts at the deadline, returning `accountsRemaining` (the `insight-detect` `RUN_BUDGET_MS` pattern). Returns, per account with any finding: account, period (from the charges, else the plan anchor), counts and USD per case, and at most 20 example group ids per case for the drill-down (group id → `token_usage.session_id`, SQ-15). Never throws.
-- Logs: one `error` **`bos_credit_leak_found`** per leaking account `{ accountId, windowStart, windowEnd, unchargedGroups, ungroupedCalls, underchargedGroups, unchargedCostUsd }` (no owner text, ids and numbers only), and one `info` **`bos_credit_leak_check_completed`** summary.
+- `classifyLeakGroups(usageRows, ledgerRows, window, periodOf)` is **pure** and fully unit-tested (the table above).
+- `runCreditLeakCheck({ window, accountId?, deadlineAt, trigger }, deps)`. **S-1:** it walks the **plan accounts** (`pagePlans`, 500 per page) **plus the accounts with a totals row overlapping the window** (the read repository's named all-accounts totals read, `[S − 31 d, E)`), with platform accounts removed, one account at a time. It stops **starting** accounts at the deadline and returns `accountsRemaining` (the `insight-detect` `RUN_BUDGET_MS` pattern). It returns, per account with any finding: the account, the **period** (S-4), counts and USD per case, and at most 20 example group ids per case for the drill-down (group id → `token_usage.session_id`, SQ-15). It never throws.
+- **The period (S-4, AC-31).** A group with a charge takes the charge's stored `period_start`. Otherwise the RPC's own rule applies: the plan anchor's period at the group's first in-window call, else the UTC calendar month. The account's `periodStart` is its earliest leaking group's period, and `periodStarts` lists every distinct one.
+- The dependencies (three repositories) are wired in one file, `creditLeakCheckDeps.ts`. It is declared as a reader on the plan repository's referrer guard (RC-15) and on the read repository's importer guard. The runner and the routes take the dependencies injected.
+- **Logs (BQ-2: logs and admin pages only, no email):**
+  - one `error` **`bos_credit_leak_found`** per leaking account: `{ accountId, periodStart, periodStarts, windowStart, windowEnd, unchargedGroups, ungroupedCalls, underchargedGroups, unchargedCostUsd, groupIds }`. Ids and numbers only, no owner text; the one money figure is the one this plan allowed;
+  - one `warn` **`bos_credit_leak_known_path`** per run when a known path was seen (S-3);
+  - one `warn` per account that could not be checked;
+  - one `info` **`bos_credit_leak_check_completed`** summary.
 
 ### 5.4 The two doors
 
 | Door | Path | Auth | Window |
 |---|---|---|---|
-| **On demand** | `GET /api/admin/business-os/credits/leak-check?from=&to=[&accountId=]`, and a "Run leak check" button on the Costs & credits tab | `requireAdmin` first statement; Zod strict; window ≤ 31 days; `maxDuration = 60`, check deadline 45 s | chosen by the admin (default: yesterday UTC) |
-| **Nightly** | `GET /api/cron/credit-leak-check`, `export const GET = withCronRunRecord('credit-leak-check', runJob)`, `vercel.json` schedule `45 4 * * *` (after the 03:30 insight run and its charges) | **Fail-closed** `CRON_SECRET` bearer check copied from `payment-reminders` (a missing secret in production refuses with 401 and an `error` log) | the previous UTC day |
+| **On demand** | `GET /api/admin/business-os/credits/leak-check?from=&to=[&accountId=]`, and a "Run leak check" button on the Costs & credits tab | `requireAdmin` first statement; Zod strict; **window ≤ 7 days (N-5)**; `maxDuration = 60`, check deadline 45 s | Chosen by the admin (default: yesterday, UTC). An end later than *now − 6 min* is clamped to it, so an action that is still running is not reported as uncharged |
+| **Nightly** | `GET /api/cron/credit-leak-check`, `export const GET = withCronRunRecord('credit-leak-check', runJob)`, `vercel.json` schedule `45 4 * * *` | **Fail-closed** `CRON_SECRET` bearer check, copied from `payment-reminders` (a missing secret in production refuses with 401 and an `error` log). V-16: the secret **is** set in production | The previous UTC day; walk deadline 45 s |
 
-The cron registry entry records counts only, no money (V-17): `accountsChecked`, `accountsWithLeak`, `unchargedGroups`, `ungroupedCalls`, `underchargedGroups`, `pendingReconciliation`, `accountsIncomplete`, `accountsRemaining`; "partly done" when `accountsRemaining ≥ 1` or `accountsIncomplete ≥ 1`. The jobs page then shows the run, its counts and whether it is late or stopped, with no new UI.
+**Q-15:** 04:45 UTC is not "after the 03:30 insight run". The run checks **yesterday**, and today's 03:30 run falls in tomorrow's window. Any time after 01:05 UTC works (the window's end, plus 1 h of slack, plus 300 s). 04:45 is kept because it clashes with no hourly `:00`–`:40` job.
 
-The job **drains no table and writes nothing**, so the §8.1 claim pattern does not apply (requirement N-7); two overlapping runs are harmless.
+The cron registry entry records counts only, no money (V-17): `accountsChecked`, `accountsWithLeak`, `unchargedGroups`, `ungroupedCalls`, `underchargedGroups`, `pendingReconciliation`, `knownPathCalls`, `accountsIncomplete`, `accountsNotChecked`, `accountsRemaining`, `listingFailed`. A run is "partly done" when `accountsRemaining`, `accountsIncomplete`, `accountsNotChecked` or `listingFailed` is ≥ 1. A leak is a finding, not a job fault, so it does not colour the job (the Q-U2 precedent): the count sits on the jobs page, and the `error` log is the alert. The jobs page shows the run, its counts and whether it is late or stopped, with no new UI.
+
+The job **drains no table and writes nothing**, so the §8.1 claim pattern does not apply (requirement N-7; skill `durable-queue-drain`: nothing is claimed and no effect runs). Two overlapping runs are harmless.
+
+**No new delivery channel (BQ-2):** no email and no notification. The Costs & credits tab (on demand), the jobs page (nightly counts) and the logs are the whole surface.
 
 ### 5.5 The trade-off, for the record
 
-| | On demand only | Nightly only | **Both (proposed)** |
+| | On demand only | Nightly only | **Both (built)** |
 |---|---|---|---|
 | Runs without `CRON_SECRET` | Yes | No (fail-closed, dormant) | Yes, on demand |
-| Tells you without anyone looking | No | Yes, via the jobs page tiles and `error` logs | Yes, when the secret is set |
+| Tells you without anyone looking | No | Yes, through the jobs page and `error` logs | Yes |
 | History | None | `bos_cron_runs` counts + logs | Same |
 | Extra cost | — | One route, one registry entry, one `vercel.json` line | Same |
 
-If `CRON_SECRET` is **not** in fact set (F-1), "both" degrades cleanly to "on demand", the cron's first attempt is refused, and the jobs page shows the job as "stopped", which is itself the signal.
+`CRON_SECRET` is set (V-16, confirmed by SA), so the nightly door runs. If it were ever removed, the cron's attempts would be refused and the jobs page would show the job as "stopped", which is itself the signal. The on-demand door keeps working either way.
 
 ---
 
@@ -314,15 +339,22 @@ LANGUAGE plpgsql VOLATILE SECURITY INVOKER SET search_path = ''
 
 | File | Action | Reason |
 |---|---|---|
-| `lib/business-os/credits/creditLeakCheck.ts` | create | Pure classifier + runner (§5.3) |
-| `lib/business-os/credits/__tests__/creditLeakCheck.test.ts` | create | Every case of §5.2, AC-31 fixture |
-| `lib/repositories/BusinessOsCreditLedgerReadRepository.ts` (+ test) | modify | `listChargesForAccountInWindow` |
+| `lib/business-os/credits/creditLeakCheck.ts` | create | Pure classifier + period rule + runner (§5.2, §5.3) |
+| `lib/business-os/credits/creditLeakCheckTypes.ts` | create | The result type (server side) |
+| `lib/business-os/credits/creditLeakCheckDeps.ts` | create (D-11) | The production wiring of the three repositories |
+| `lib/business-os/credits/__tests__/creditLeakCheck.test.ts` | create | Every case of §5.2, B-1, S-1 to S-4, the runner |
+| `lib/business-os/credits/__tests__/creditLeakCheck.ac31.test.ts` | create | AC-31 through the real `runAiAction` |
+| `lib/business-os/credits/__tests__/creditLeakCheck.wireTypes.test.ts` | create | Pins `leakTypes.ts` to the server type, both directions |
+| `lib/repositories/BusinessOsCreditLedgerReadRepository.ts` (+ test) | modify | `listRowsForAccountCreatedInRange` (D-10) |
+| `lib/repositories/__tests__/businessOsEntitlements.imports.guard.test.ts` | modify (D-11) | The wiring file declared as a plan-row reader |
 | `app/api/admin/business-os/credits/leak-check/route.ts` (+ test) | create | On-demand door |
 | `app/api/cron/credit-leak-check/route.ts` (+ test) | create | Nightly door |
-| `lib/cron/bosCronJobs.ts`, `lib/cron/__tests__/bosCronJobs.test.ts` | modify | Job id, schedule, counts, time limit |
+| `lib/cron/bosCronJobs.ts`, `lib/cron/__tests__/bosCronJobs.test.ts`, `lib/cron/__tests__/vercelCrons.test.ts` | modify | Job id, schedule, counts, time limit; 13 jobs |
 | `vercel.json` | modify | `/api/cron/credit-leak-check` at `45 4 * * *` |
-| `app/admin/business-os-llm/components/costs/LeakCheckPanel.tsx` (+ render test) | create | Button and result |
-| `docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md` | modify | Route row |
+| `app/admin/business-os-llm/components/costs/LeakCheckPanel.tsx`, `leakTypes.ts`, `leakCopy.ts` (+ `__tests__/leakPanel.render.test.tsx`) | create | Button and result |
+| `app/admin/business-os-llm/components/costs/CostsTab.tsx` | modify | Mounts the panel |
+| `app/admin/__tests__/jobsQueues.render.test.tsx`, `lib/admin/jobs/__tests__/buildJobsQueuesView.test.ts`, `lib/admin/jobs/__tests__/qa-slice5-pr2.status.test.ts`, `app/api/admin/jobs-queues/__tests__/route.test.ts`, `app/api/cron/__tests__/runRecord.adoption.test.ts`, `lib/admin/health/evaluateHealth.ts` (comment) | modify (D-18) | "12 jobs" pins → 13 |
+| `docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md`, `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md` | modify | Register row 86; Metering pointer |
 
 ### 7.3 Part 4c
 
@@ -431,12 +463,82 @@ LANGUAGE plpgsql VOLATILE SECURITY INVOKER SET search_path = ''
 
 ### 9.2 Part 4b — Leak check
 
-- ⬜ **T4b.1** `classifyLeakGroups` + tests (§5.2 table, one test per case, the tolerance edge, the shared insight run id across two accounts, a reused onboarding group).
-- ⬜ **T4b.2** `listChargesForAccountInWindow` + test; `runCreditLeakCheck` + tests (deadline, one account's read failing, ceiling → incomplete).
-- ⬜ **T4b.3** On-demand route + tests; panel + render test.
-- ⬜ **T4b.4** Cron route (fail-closed) + tests; `bosCronJobs.ts` entry; `vercel.json`; `bosCronJobs.test.ts` green.
-- ⬜ **T4b.5** AC-31 evidence (§10.2) and a first real on-demand run on production data by the user (read-only), pasted here.
-- ⬜ **T4b.6** Gates, docs, handover.
+Branch `feature/business-os-credit-deduction-slice-4b` (worktree `neuronforge-llm-deduction`), stacked on 4a's branch (PR #150, which already merged `origin/main`). Uncommitted. No migration. No real database: every Jest run used `NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:9` and stub keys; the worktree has no `.env*`; no dev server was started.
+
+- ✅ **T4b.0** SA B-1, S-1 to S-4, N-3, N-5, Q-9, Q-15 and user decision BQ-2 folded into §5 (as SA asked, before code). **Baseline** (`lib/business-os/credits lib/repositories app/admin/business-os-llm app/api/admin/business-os/credits lib/cron app/api/cron`): 69 suites / 1,404 tests, **1 failure, pre-existing** (see below).
+- ✅ **T4b.1** `classifyLeakGroups` + tests: one test per §5.2 case (matched, uncharged, uncharged-by-presence at $0, no-spend, ungrouped with and without spend, under-charged, pending over, pending under (N-8), fallback within T, charged above usage, known path); the tolerance edge (exactly `T` matched, `T + 1e-9` under-charged) and the rounded-vs-truncated case (S-2); **B-1**: the 23:40 / 00:20 example both ways, the same discrepancy seen by the night before (two-night reporting), slack-only group not examined, `[S, E)` membership at both edges, a group examined through its charge only; a reused onboarding group (three turns, two charges → under by the third); an adjustment inheriting service and group (N-10); an unresolved adjustment; another service; another account's row; unreadable amounts; the examples cap; the period (S-4): charge's stored period verbatim, plan-anchor period (six date cases incl. the 31st clamped into February and a year boundary), calendar month without a plan, unreadable anchor → null. **Mutation-tested:** with B-1 reverted to "first call in the window", the midnight test fails (reverted).
+- ✅ **T4b.2** `listRowsForAccountCreatedInRange` on the 4a read repository + 7 tests (account-scoped `.eq('user_id')`, half-open `.gte` / `.lt` on `created_at`, no `kind` / `service` filter, order, paging and de-duplication, ceiling, every refusal before querying, never throws; source rule "no `.lte('created_at'`"). `runCreditLeakCheck` + tests: the walk is plan accounts ∪ charged accounts without a plan, platform account removed, id order (S-1); the exact read windows (usage `S − 1 h − 300 s` … `E + 1 h − 1 ms`, charges `S − 1 h` … `E + 1 h + 300 s`); one-account mode reads only that account; platform count and helper label (Q-9); the shared insight run id on two accounts (V-10); a failed read and a thrown read → "could not check"; a ceiling → "incomplete", no error log; the deadline → `accountsRemaining`; a failed plan listing → `listingFailed` and the charged accounts still walked; plan paging by last id; the logs (one `error` per leaking account with the exact fields, one `warn` for known paths across accounts, one `info` summary); the on-demand end clamp; the nightly window; the blind spots; a read-only source rule.
+- ✅ **T4b.3** On-demand route `GET /api/admin/business-os/credits/leak-check` + test (22): 401 / 403 with no read, 401 before validation, `requireAdmin` pinned as the first statement after the logger, `maxDuration = 60`, 9 × 400 (one date, `from > to`, 8 days, future `to`, unknown key, malformed id, impossible date, repeated key) with no read, exactly 7 days accepted, 409 platform account with no read, 200 default = yesterday with the real runner over fake reads, one-account reads, the business name in the body and in **no** log line, a failed name lookup, a failed `token_usage` read, 500 generic. Panel `LeakCheckPanel.tsx` + `leakPanel.render.test.tsx` (15): no run on mount, default dates, the query sent (with and without an account), leak / clean / 4 × partial verdicts, remaining + end-clamped notes, a could-not-check row with its reason, known paths, every blind spot, an error clears the result, one run at a time and unmount aborts. Wire-type pin `creditLeakCheck.wireTypes.test.ts`, **mutation-tested**: `accountsRemaining: string` on the client fails `typecheck:bos-llm` with 2 × TS2344 (both directions; reverted).
+- ✅ **T4b.4** Cron route `GET /api/cron/credit-leak-check` + test (9): production without `CRON_SECRET` → 401 + the fail-closed `error` log + no read; wrong bearer, no header, secret without `Bearer ` → 401, no read; the previous UTC day; counts only (no money in the body); every registered count present as a number; a read failure → `accountsNotChecked`; `withCronRunRecord` and `maxDuration` pinned; no write verb, audit or email. `bosCronJobs.ts` entry (`45 4 * * *`, `DAILY`, `MAX_60`, 11 counts, 4 partly-done rules); `vercel.json` line; the job joins the existing adoption suite automatically (its three cases pass for `credit-leak-check`). Six tests that pinned "12 jobs" updated to 13, deliberately (D-18).
+- 🟡 **T4b.5** **AC-31 evidence: done, in Jest** (`creditLeakCheck.ac31.test.ts`): (1) a Business OS call made outside `runAiAction`, and (2) an action through the **real** `runAiAction`, charge recorder and writer repository with the database refusing the charge RPC (`42501`). The captured order proves V-7 / Q-14: `token_usage_written`, `token_usage_written`, `charge_attempted`; `bos_ai_charge_write_failed` is logged. The check reports **both** groups as uncharged, with the account, the period (plan anchor rule) and an `error` `bos_credit_leak_found` naming both group ids. **Owed by the user:** the first real on-demand run on production data (read-only), for the first full day after go-live (SA N-2), pasted here.
+- ✅ **T4b.6** Gates, docs, handover (below). Docs: `ADMIN_IDENTIFICATION_AND_ACCESS.md` register row 86 + Change History; `BUSINESS_OS_ENTITLEMENTS.md` Metering pointer + Change History.
+- ✅ **T4b.7** SA and QA 4b findings fixed (2026-09-30). Uncommitted; no migration; no real database.
+
+| Finding | Fix | Test (red first) |
+|---|---|---|
+| **CR4b-S1** (SA, should fix; QA concurs) | `creditLeakCheck.ts` `checkAccount` takes the runner's `settleEndMs`; the usage read ends at `min(E + 1 h − 1 ms, now − 6 min)`. The charge read is unchanged. D-13 extended | `creditLeakCheck.test.ts` "CR4b-S1: …": now 09-29 04:45, on demand `to` = today (end clamped to 04:39), reused group G1 with a charged turn at 04:00 and an uncharged turn at 04:43 (now − 2 min), a usage fake that honours the read window. **On the old code it fails twice over:** the read end is `05:38:59.999Z` (expected `04:39:00.000Z`), and with that assertion removed `accountsWithLeak` is **1** (expected 0), the phantom under-charge at `error`. Passes after |
+| **QA4b-B1** (QA, Medium) | No migration. `BosCronJob.addedOn?: 'YYYY-MM-DD'` in `lib/cron/bosCronJobs.ts`, set only on `credit-leak-check` (`'2026-09-30'`). New pure `jobBaseline(job, baseline)` in `buildJobsQueuesView.ts`: a job with no Vercel cron run is timed from the **end** of its added UTC day, or the global baseline if later (D-22). `jobStatus` uses it; `expectedBy` / `lateAt` / `stoppedAt` follow. A job without `addedOn` keeps the global baseline exactly as before, and every other rule is unchanged | `buildJobsQueuesView.test.ts` "QA4b-B1" (6): the registry dates only the new job; `jobBaseline` (end of day, later global wins, null global, undated, unreadable date); with the other jobs' first run 2026-09-28 10:00, the new job with no run reads **"No run recorded yet"** at 09-30 15:00, 10-01 03:00 (before its first 04:45 run) and 10-02 00:59, `expectedBy` 10-02 00:00; **late** after 10-02 01:00, **stopped** after 10-03 01:00; an undated job with no run since 09-28 is still "Stopped" on 10-02; the Health "Scheduled jobs" tile at 10-02 00:30 is `not_measured` (facts 12 healthy / 0 stopped / 1 no run yet), never red. **With `addedOn` removed, 5 of the 6 fail** (the new job reads `stopped`, the tile facts carry `stopped: 1`); the undated case passes either way, as it should |
+| **QA4b-E1** (QA, Low) | `LeakCheckPanel.tsx`: a row with any of *charged above usage*, *unresolved corrections* or *unreadable amounts* carries a note beside its status, e.g. "2 charged above usage · 1 unresolved correction · 3 unreadable amounts" (`LEAK_ROW_NOTE` in `leakCopy.ts`, non-zero counts only) | `leakPanel.render.test.tsx` "QA4b-E1": a "No leak" row with all columns zero shows the note; a row without those counts has none. **Fails with the note disabled** |
+| **CR4b-N2 / QA4b-E2** (cosmetic) | When the clamp leaves `end ≤ start`, the verdict is **"Nothing to check yet — the window has not ended"** (`LEAK_EMPTY_WINDOW`), neutral with an amber edge and a clock icon, never the green "clean". Order: leak → empty window → partial → clean | `leakPanel.render.test.tsx` "CR4b-N2 / QA4b-E2": `window.start == window.end`, `endClamped` → `leak-verdict-empty`, no `leak-verdict-clean`, the end-clamped note still shown. **Fails on the old panel** (it rendered green) |
+
+Two existing tests in `qa-slice5-pr2.status.test.ts` state the global-baseline rule for **every** job; they now strip `addedOn` for the per-schedule rule (the dated behaviour is pinned in the QA4b-B1 block), and the "installed 40 days ago → every job stopped" fixture (clock 2026-09-27) now expects every **undated** job stopped and the dated one `no_run_yet`, because its added day is after that clock. Both edits are deliberate (the D-18 kind).
+
+**T4b deviations**
+
+| # | Deviation from §5 / §7.2 | Why |
+|---|---|---|
+| D-10 | The new read method is `listRowsForAccountCreatedInRange`, not `listChargesForAccountInWindow` | It returns charge **and** adjustment rows (an adjustment inherits its charge's service and group, N-10), and its range is half-open on `created_at`. The name says so |
+| D-11 | A wiring file, `creditLeakCheckDeps.ts`, holds the three repositories; it is declared on the plan repository's RC-15 guard (ALLOWED + NO_STATE_WRITE_REFERRERS, so the guard pins that it calls no plan write) and on the read repository's importer guard. `creditLeakCheck.ts` is also on the latter (type-only import) | The runner stays pure and testable with injected reads; declaring the referrer is the guard's own rule ("a declared referrer is auditable; a hidden one is not") |
+| D-12 | The usage read ends at `E + 1 h` (the plan said `E`) and the charge read at `E + 1 h + 300 s` | With B-1's "any activity" rule the slack must match on both sides; the extra 300 s at the top mirrors SA's lower-edge rule, so the upper edge produces no phantom under-charge. Stated in §5.2 |
+| D-13 | On demand, an end later than *now − 6 min* is pulled back (`endClamped`) | Otherwise an action still running (calls written, charge not yet) would be reported as uncharged. The nightly window ends at midnight, so it is never clamped. **CR4b-S1:** the usage read's upper slack is capped at the same instant, `min(E + 1 h − 1 ms, now − 6 min)`, so a reused group examined for in-window activity never sums the calls of an action still running; the charge read keeps its full `E + 1 h + 300 s` |
+| D-14 | A leak does not make the nightly run "partly done"; `knownPathCalls`, `accountsNotChecked` and `listingFailed` were added to the counts | The Q-U2 precedent: a business finding is a number, not a job fault; the `error` log is the alert. "Partly done" means "could not look everywhere" |
+| D-15 | An account whose read hit a ceiling is "incomplete", never "leak", and gets a `warn`, not the `error` | A cut read can manufacture a phantom leak (a missing charge) as easily as hide one |
+| D-16 | Pending reconciliation covers both directions; an under-charged fallback group is **shown** (with "under") but is not a leak; blind spot `fallback_masks_undercharge` states the cost | N-8 asked for it to be shown; BQ-4 says we never charge more, so it is a price-list signal, not a billing leak |
+| D-17 | Business names are added by the admin route, for display, never logged | `adminReadMethods.guard` allows `findAdminIdentitiesByUserIds` only from `app/api/admin/**` (the 4a D-1 rule) |
+| D-18 | Six existing tests and one comment pinned "12 jobs": `bosCronJobs.test.ts`, `vercelCrons.test.ts`, `jobsQueues.render.test.tsx`, `buildJobsQueuesView.test.ts`, `qa-slice5-pr2.status.test.ts`, `jobs-queues/route.test.ts`; `evaluateHealth.ts` comment; the adoption test's header | Adding a job is meant to be a deliberate edit of those pins. The Health "Scheduled jobs" tile's denominator becomes 13 |
+| D-19 | The panel's date labels are "Check from / Check to (UTC)" | The 4a tab test queries the label "From (UTC)"; two identical labels would make it ambiguous |
+| D-20 | The plan-anchor period is computed in TypeScript (the SQL rule, day clamped) at millisecond precision | A label only; a charged group always shows its stored `period_start` verbatim |
+| D-21 | The on-demand door logs `bos_credit_leak_found` at `error` too (one function) | Every door states a leak the same way; pressing the button again repeats the line |
+| D-22 | QA4b-B1: a dated job with no run is timed from the **end** of its `addedOn` UTC day (the brief said "the added-on date as its baseline") | The deploy can land at any hour, and this job's first run is 04:45 the next morning. Timed from 00:00 of the added day it would turn "Late" at 01:00 the next day, 3 h 45 min before its first scheduled run, a new false amber. From the end of the day it reads "No run yet" until 10-02 01:00, late after that, stopped after 10-03 01:00. **The date must be the real deploy day:** if 4b ships after 2026-09-30, RM updates `addedOn` in the same PR, or the false "Stopped" returns on deploy (by 10-03 01:00 for this job) |
+
+**Pre-existing reds, not in this diff:** `app/api/cron/__tests__/runRecord.adoption.test.ts` › `payment-reminders` (the route calls `paymentReminderService.billDueDatedStages`, which the test's service mock does not provide; confirmed on `origin/main` `c1ff4d42`, and red in this branch's baseline before any 4b change). The two 4a-era reds (`tokenUsageRepository.contract`, `entitlements/routes`) are outside the folders run here.
+
+**Gates after T4b**
+
+| Gate | Result |
+|---|---|
+| New suites: `creditLeakCheck` (55), `creditLeakCheck.ac31` (1), `creditLeakCheck.wireTypes` (1), leak-check route (22), cron route (9), `leakPanel.render` (15); read repository test (41, +7) | **all pass** |
+| `npx jest lib/repositories lib/business-os/credits app/admin/business-os-llm app/api/admin/business-os/credits` | **66 suites / 1,134 tests pass** |
+| Wider: + `app/api/cron lib/cron lib/admin app/admin/__tests__ app/api/admin/jobs-queues lib/business-os/llm` | 116 suites / 2,730 tests, **1 failure, the pre-existing adoption red** above |
+| `npm run test:authz-guard` | **1 / 119 pass** |
+| `npm run typecheck:bos-llm` | **328 files, 28 errors, 0 new, passed** (+10 files in scope; the same pre-existing "baseline entry fixed" note, `app/api/onboarding/build/route.ts`) |
+| `npm run check:bos-llm-literals` | **53 files, 2 exempt, 0 violations** |
+| `npm run test:bos-entitlements` | **90 / 1,891 pass** (nothing in the diff imports `lib/business-os/entitlements/**`) |
+| ESLint on every changed or new file | Clean |
+| `next build` (6 GB heap, `build.yml` placeholder env) | **Exit 0.** `ƒ /admin/business-os-llm` (13.4 kB), `ƒ /api/admin/business-os/credits/leak-check`, `ƒ /api/cron/credit-leak-check`, `ƒ /api/admin/business-os/credits/report` built. The `level:50` lines are the known pre-existing "Dynamic server usage" noise from other modules |
+| `console.*` in touched code | 0 (every new and modified file) |
+| `git diff --stat` | 17 tracked files, 286 insertions, 48 deletions; no file with deletions only. 14 new files |
+
+**Gates after T4b.7** (same env rules)
+
+| Gate | Result |
+|---|---|
+| New and touched suites: `creditLeakCheck` (56, +1), `.ac31`, `.wireTypes`, leak-check route, cron route, `leakPanel.render` (17, +2), read repository, `lib/admin/jobs` (3 suites, +6 in `buildJobsQueuesView.test.ts`) | **10 suites / 255 tests pass** |
+| `npx jest lib/business-os/credits lib/cron lib/admin app/admin/__tests__ app/admin/business-os-llm app/api/cron app/api/admin/business-os/credits app/api/admin/jobs-queues lib/repositories` | 93 suites / 2,138 tests: **1 failure, the pre-existing** `runRecord.adoption` › `payment-reminders` red |
+| `npm run test:authz-guard` | **1 / 119 pass** |
+| `npm run test:bos-entitlements` | **90 / 1,891 pass** |
+| `npm run typecheck:bos-llm` | **328 files, 28 errors, 0 new, passed** (the same "baseline entry fixed" note) |
+| `npm run check:bos-llm-literals` | **53 files, 2 exempt, 0 violations** |
+| `tsc --noEmit` (whole project), filtered to the touched files | 0 errors |
+| ESLint on every touched file | Clean |
+| `next build` (6 GB heap, `build.yml` placeholder env) | **Exit 0.** `ƒ /admin/business-os-llm` 13.6 kB, both leak-check routes built. 65 `level:50` lines, all the known "Dynamic server usage" noise, none mentioning the leak check |
+| `console.*` in touched code | 0 |
+
+**What the user will see**
+
+- **The button.** `/admin/business-os-llm` → **Costs & credits**, below the cost report: a **Leak check** box with a one-paragraph explanation, *Check from* / *Check to (UTC)* date fields (both default to yesterday; at most 7 days), a **Run leak check** button, and a scope line ("Checking every Business OS business", or "Checking one business: <name>" when an account is chosen in the tab's picker). Nothing runs until the button is pressed; while it runs the button reads "Checking…".
+- **The result.** A line with the window, how many businesses were checked, and when; then one verdict: **red** "N businesses with uncharged AI spend ($X not charged)", **amber** "Not everything could be checked…" (a read failed, a read was cut, time ran out, or the business list failed), **neutral** "Nothing to check yet — the window has not ended" (the chosen window lies entirely in the last 6 minutes, e.g. *today* just after 00:00 UTC; CR4b-N2), or **green** "No uncharged AI spend found". Then a table of businesses with a finding: business, status (Uncharged spend / Could not check / Only partly read / No leak, with a short note such as "2 charged above usage · 1 unresolved correction · 3 unreadable amounts" when those are why a row is listed, QA4b-E1), billing period, *No charge*, *No group id*, *Charged less*, *Pending reconciliation* (with "N under" when the real price beat the fallback), *Known paths*, *Not charged (USD)*; each row opens a list of grouping ids (to look up as `token_usage.session_id`) with calls, recorded and charged USD and first-call time. Below: known uncharged paths (e.g. `business-os-chat / IntentParser`) as accepted, the platform-account line ("19 Business OS calls, 3 with the shared helper label"), and a folded "What this check cannot see" list. Until charging goes live, a run shows every Business OS call as uncharged (the ledger is empty, V-4) — expected, and exactly why T4b.5 waits for the first full day after go-live.
+- **The nightly job.** On **Scheduled jobs & queues**, a 13th job **Credit leak check**, "Daily at 04:45 UTC", with its counts (businesses checked, with uncharged AI spend, AI actions with no charge, calls with no grouping id, charged less, pending reconciliation, known-path calls, partly read, could not be read, left when time ran out, list failed). It shows **"No run recorded yet"** until its first 04:45 UTC run, and the Health "Scheduled jobs" tile stays grey ("Not measured yet"), not red, meanwhile. That holds because the job is timed from the end of its deploy day (`addedOn: '2026-09-30'` in the registry, QA4b-B1 / D-22), not from the first run of any job (2026-09-27/28), which would have made it "Stopped" and the tile red on the first page load after deploy. If it still has no run by 10-02 01:00 UTC it turns **Late**, and by 10-03 01:00 UTC **Stopped**, by the usual rules. **If 4b deploys later than 2026-09-30, `addedOn` must be moved to the real deploy day in the same PR.** Each leaking business is one `error` log `bos_credit_leak_found` (account, billing period, window, counts, group ids, USD). No email (BQ-2).
 
 ### 9.3 Part 4c — Reconciliation adjustments
 
@@ -770,6 +872,100 @@ None blocks 4a. BQ-2 is needed before 4b. BQ-1 and BQ-4 are needed before 4c. BQ
 
 QA can test in parallel on everything except the rows-read range. After the fix, the re-run must cover: the new suites, `app/admin/business-os-llm`, `lib/repositories`, `npm run test:authz-guard`, `npm run typecheck:bos-llm`, `npm run check:bos-llm-literals`, plus the microsecond test. **It is ready for the user's diff view once CR-B1 (and ideally CR-S1) is in and those runs are green.**
 
+### SA code review — 4b (2026-09-30)
+
+**Reviewed by SA — 2026-09-30.** Worktree `neuronforge-llm-deduction`, branch `feature/business-os-credit-deduction-slice-4b` (uncommitted, on top of 4a's `e5dd8dff`). Diff read against `feature/business-os-credit-deduction-slice-4` plus the 14 new files. Review only: no code changed, nothing committed, no database touched (Jest ran with `NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:9` and stub keys). No PROD read was needed; the period rule was checked against the migration source.
+
+**Status: ✅ Code Approved, with one should-fix (CR4b-S1) that the Dev can fold in before the user's diff view.** Nothing blocks.
+
+#### Blocking
+
+None.
+
+#### Should fix
+
+| # | Where | Finding | Fix |
+|---|---|---|---|
+| CR4b-S1 | `creditLeakCheck.ts` `checkAccount` (usage window) together with `runCreditLeakCheck` (the settle clamp, D-13) | The clamp pulls the **window end** back to *now − 6 min*, but the **usage read** still runs to `E + 1 h − 1 ms`, which can reach past *now − 6 min*. A **reused** group (chat or onboarding) that has any activity in the window is examined, and its slack is then summed with it. If one of its actions is still running, its calls are already in `token_usage` but its charge is not yet written. That shows up as a **phantom under-charge**, logged at `error` as `bos_credit_leak_found`. This happens on demand in two cases: (a) `to` = today, or (b) the default "yesterday" run less than about 1 h after midnight UTC. (b) is the case the user is most likely to hit on the T4b.5 first run after go-live. The nightly run is not affected: at 04:45 its reads end at 01:05. | Cap the usage read's end at `min(E + 1 h − 1 ms, now − SETTLE_MS)`. Leave the charge read as it is: reading charges up to `E + 1 h + 300 s` (or now) is harmless. Any call that is read then started before *now − 6 min*. Actions are ≤ 300 s, so its charge exists unless it really was lost. Add one runner test: a reused group with a charged turn before the clamp and an uncharged turn at *now − 2 min*, expected **not** reported; it should fail on the current code. Add one sentence to D-13 |
+
+#### Notes (no action needed for 4b)
+
+- **CR4b-N1: the upper-edge mirror of the lower-edge residue.** Take an action whose calls start in the 300 s after `E + 1 h`. They are not read, but its charge is (the charge read runs 300 s longer). In a reused group this is a phantom "charged above usage", which is informational. In theory it could offset a real lost charge in the same group. That needs the same group to be active both in the window and exactly 60–65 min after it. It is the same class as `edge_of_window`. If the Dev touches `LEAK_BLIND_SPOT_TEXT.edge_of_window` for CR4b-S1, it can say "either edge". Otherwise leave it.
+- **CR4b-N2: an empty window reads as "clean".** If the clamp makes `endMs == startMs` (for example `from = to = today` at 00:03 UTC), no group is examined and the panel shows the green "No uncharged AI spend found" next to the end-clamped note. It is not wrong, but "nothing to check yet" would be clearer. Cosmetic; can wait for 4c.
+- **CR4b-N3: `unreadableAmounts` does not change the status.** An unreadable ledger `cost_usd` is summed as 0. That could give a phantom under-charge, or hide a real one, while the account still says "leak" or "clean". `cost_usd` is `numeric(16,10)` and PostgREST returns a number, so it cannot happen in practice. The count is surfaced, as in 4a. Acceptable.
+- **CR4b-N4: the plan listing sits outside the 45 s deadline.** Up to 200 pages × 500 are read before the deadline starts to count. That is far beyond today's handful of accounts, and a failed or exhausted listing sets `listingFailed`, so the risk is theoretical.
+- **CR4b-N5: `origin/main` has moved on** to `b6efd992` (#151) since 4a merged `c1ff4d42`. `vercel.json` differs from `origin/main` by the one added cron only, so no conflict is expected there. RM should re-merge `origin/main` before the PR and re-run the owed set.
+
+#### Verified
+
+| Item | Result |
+|---|---|
+| **B-1** | A group is examined when **any** usage row **or** any ledger row falls in `[S, E)` (`classifyLeakGroups`, the `examined` test); the slack only matches. The usage read starts at `S − 1 h − 300 s`, and the charge read at `S − 1 h`, 300 s later ✅. The upper edge mirrors it (D-12) ✅. The 23:40 / 00:20 midnight example is tested both ways (`creditLeakCheck.test.ts:230`), and Dev's revert mutation shows the test biting ✅ |
+| **S-1** | Accounts walked = plan rows (`pagePlans`, keyset, 500 per page) ∪ accounts with a totals row whose period starts in `[S − 31 d, E)`, minus `isPlatformAccount`, sorted by id ✅. `token_usage` is reached **only** through the existing per-account `listCallsInWindow` and `countInWindow` on the platform ids. There is **no** new `token_usage` method and no all-accounts `token_usage` read (`creditLeakCheckDeps.ts`) ✅ |
+| **S-2** | `leakTolerance(calls) = calls × 0.000001 + 1e-9`. Matched is `|diff| ≤ T`; the edge tests are at exactly `T` and `T + 1e-9` ✅. Uncharged is detected by presence (tokens **or** cost), so a $0 embedding still counts ✅ |
+| **S-3** | Known path = a `BOS_KNOWN_NON_CATALOG_COMPONENTS` entry exempt from `missing_group_id` (today only `IntentParser`, which records no group id). It is its own bucket, with one `warn` `bos_credit_leak_known_path` per run and never `error` ✅. Ungrouped calls with spend are counted separately and are a leak ✅ |
+| **S-4** | `periodStart` and `periodStarts` are in the result and in the `error` log ✅. A charged group takes the charge's stored `period_start` verbatim ✅. For an uncharged group, `creditPeriodStartAt` matches `business_os_credit_period_start` in `20261015` line for line: the month difference in UTC, `anchor + n months` with the day clamped to the end of the month (Postgres interval semantics), and one month back if the candidate is later than `at`. A NULL anchor (no plan row, or a plan row with a NULL anchor) falls to the UTC calendar month, as the RPC's `calendar_month` branch does ✅. Microseconds: the anchor is truncated to ms, which is a label only, and a charged group never uses it (D-20) ✅ |
+| Matching | Matching is on `(user_id, group_id)` ↔ `(user_id, session_id)`. Both reads are scoped to the account, and the classifier also drops ledger rows of any other account ✅. The shared insight run id across two accounts is tested (V-10) ✅ |
+| Fallback | If a group has a fallback-priced charge and `|diff| > T`, it is `pending_reconciliation` with a direction, and it is **not** a leak ✅ |
+| Effective service (N-10) | Every ledger row goes through `resolveEffectiveFields`. An adjustment inherits its charge's service and group (via `adjusts_action_id`). An unresolved one is counted and never compared ✅ |
+| Never "clean" | A failed or thrown read gives `could_not_check`. A ceiling on either read gives `incomplete`, which is never a leak and never clean, with a `warn` (D-15) ✅. The panel's verdict is amber whenever something is incomplete, not checked, remaining, or `listingFailed` ✅ |
+| Deadline | `RUN_DEADLINE_MS = 45_000` on both doors. It stops **starting** accounts and returns `accountsRemaining`. `maxDuration = 60` on both routes ✅ |
+| On-demand route | `requireAdmin(baseLogger)` is the first statement after the logger. Zod is `.strict()`, a repeated key gets 400, it rejects impossible dates, `from > to`, and more than 7 days (inclusive count), and allows `to` up to today + 1 (east-of-UTC tolerance). The clamp covers the rest (see CR4b-S1). A platform account gets 409 with no read. The error body is generic, with `details` only in development ✅. Business names come from `findAdminIdentitiesByUserIds` for display (D-17). They are never logged: the route's `info` has ids and counts only ✅ |
+| Cron route | Fail-closed: in production without `CRON_SECRET` it returns 401 and logs `error`; a wrong or missing bearer gets 401. The check is copied from `payment-reminders` ✅. `withCronRunRecord('credit-leak-check', …)` ✅. The body carries counts and window strings only, **no money**. `listingFailed` is a boolean that the recorder stores as 0 / 1 (`cronRunRecorder.ts:108`) ✅. It is not a queue drain: nothing is claimed or written, so `durable-queue-drain` does not apply ✅ |
+| Logs | `bos_credit_leak_found` (`error`) carries `trigger`, `accountId`, the periods, the window, three counts, `unchargedCostUsd` and at most 20 group ids. It has no owner text and no business name ✅. There is a `warn` for each account that was not fully checked, and one `info` summary ✅. No `console.*` in any new or touched file ✅ |
+| Repository | `listRowsForAccountCreatedInRange`: `assertAccount`, `.eq('user_id', userId)`, a half-open `.gte` / `.lt` on `created_at`, newest first with an `id` tie-break, paged, de-duplicated, and capped by a ceiling. It reads only. The service-role header states the new caller ✅ |
+| Guards | The wiring file is declared on the RC-15 plan-referrer guard, **and** in `NO_STATE_WRITE_REFERRERS` ✅. The diff has no import from `lib/business-os/entitlements/**` (checked), so the entitlements review checklist does not apply ✅. There is no LLM call, so `bos-llm-call-standards` does not apply beyond the logging rule ✅ |
+| `vercel.json` | One entry added, `/api/cron/credit-leak-check` at `45 4 * * *`. **Nothing else changed**, against the 4a branch or against `origin/main`. That makes 13 crons, all daily or hourly schedules, within Vercel Pro limits ✅ |
+| Pre-existing red | `runRecord.adoption.test.ts › payment-reminders` is confirmed red on `origin/main` `b6efd992` by source. The route calls `paymentReminderService.billDueDatedStages()` (line 114), and the test's `PaymentReminderService` mock defines only `processOverdueItems` and `processDueReminders`. It is not caused by 4b. `credit-leak-check`'s own three adoption cases pass |
+
+#### Gates re-run by SA (2026-09-30)
+
+| Gate | Result |
+|---|---|
+| `npx jest lib/business-os/credits lib/repositories app/admin/business-os-llm app/api/admin/business-os/credits app/api/cron lib/cron` | **75 suites / 1,542 tests: 1,541 pass, 1 fail.** The one failure is the pre-existing `payment-reminders` adoption red above |
+| `npm run test:authz-guard` | **1 / 119 pass** |
+| `npm run typecheck:bos-llm` | **328 files, 28 errors, 0 new, passed** (the same "baseline entry is fixed" note for `app/api/onboarding/build/route.ts`) |
+| `npm run check:bos-llm-literals` | **53 files, 2 exempt, 0 violations, passed** |
+
+#### Rulings on D-10 to D-21
+
+| # | Ruling |
+|---|---|
+| D-10 | ✅ Accepted. The name is accurate: it returns charges **and** adjustments over a half-open `created_at` range |
+| D-11 | ✅ Accepted. It is the right shape: the runner stays pure, the one wiring file is declared on both guards, and its read-only status is pinned by `NO_STATE_WRITE_REFERRERS` |
+| D-12 | ✅ Accepted. The 300 s at the top mirrors the B-1 rule at the bottom. The residue it leaves is CR4b-N1 |
+| D-13 | ✅ Accepted, **extended by CR4b-S1**. Clamping the window end is right, but it is not enough on its own: the usage read's upper slack must be capped at the same instant |
+| D-14 | ✅ Accepted. A leak is a finding, not a job fault (the Q-U2 precedent). "Partly done" means "could not look everywhere". The count is on the jobs page and the `error` log is the alert (BQ-2) |
+| D-15 | ✅ Accepted. It is the right conservative call: a cut read can make up a leak as easily as hide one |
+| D-16 | ✅ Accepted. The under-direction is shown and never hidden as matched (N-8); the blind spot `fallback_masks_undercharge` states the cost |
+| D-17 | ✅ Accepted. It follows the 4a D-1 rule, and names are for display only |
+| D-18 | ✅ Accepted. Editing the "12 jobs" pins on purpose is the intended friction. The `evaluateHealth.ts` comment now says "every registered job", so it will not drift again |
+| D-19 | ✅ Accepted |
+| D-20 | ✅ Accepted. The rule was verified line for line against `20261015` (see S-4 above), and the precision loss affects a label only |
+| D-21 | ✅ Accepted. One function logs the same way through both doors, and the `trigger` field (`on_demand` / `nightly`) lets any alert rule tell them apart. A repeated line for a repeated button press is acceptable for an admin-only tool |
+
+### Code Approved for QA: Yes
+
+It can go to the user's diff view once QA passes. CR4b-S1 is a two-line change plus one test. The Dev should fold it in first, and QA's run then covers it. If the user prefers to ship as is, CR4b-S1 must be fixed before the T4b.5 production run, **or** that run must be made after 01:10 UTC with `to` before today. The notes need no action. Before the PR, RM re-merges `origin/main` (CR4b-N5).
+
+### SA hand-off check — 4b fixes (2026-09-30)
+
+**Status: ✅ Code Approved for the user's diff view.** One RM rule (below) and one optional registry test. Nothing blocks.
+
+| Item | Verdict |
+|---|---|
+| CR4b-S1 | ✅ `checkAccount`'s usage read ends at `Math.min(window.endMs + SLACK_MS - 1, settleEndMs)`, with `settleEndMs = now − SETTLE_MS` computed once in the runner. The ledger range is unchanged (`E + SLACK + LONGEST_ACTION`). The red-first test is the case asked for (reused group, charged 04:00, uncharged at now − 2 min, `to` = today). D-13 extended. Closed |
+| QA4b-B1 approach | ✅ Right place, right size. The fault is generic: F-6's baseline is global, so *any* job added after recording began reads "Stopped" on arrival. The fix therefore belongs in the shared status rule, not in a special case for this job. It is opt-in: `jobBaseline` returns the global baseline unchanged for an undated job, so the 12 existing jobs and every other rule are untouched. It is pure and needs no migration. A registry date is the lightest per-job baseline available; a per-job `installed_at` in the DB would be a migration for the same result. Once the job has a run, `last_cron_started_at` wins and `addedOn` is inert. A measured-from instant in the future only yields a negative `sinceMinutes`, which is never displayed and falls through to `no_run_yet`. The two edits in `qa-slice5-pr2.status.test.ts` keep the generic rule pinned (by stripping `addedOn`) and are the deliberate D-18 kind. Accepted |
+| D-22 (end of day) | ✅ Accepted. Timing from 00:00 would give a false "Late" at 01:00 the next day, before the first 04:45 run. End of day costs at most one extra day of detection on a job's very first run |
+| Deploy-date risk | **A past date is not harmless.** With `addedOn: '2026-09-30'` the job is late after 10-02 01:00 and stopped after 10-03 01:00. Deployed on 10-01, it reads a false **Late** from 10-02 01:00 until its 04:45 run. Deployed on 10-02 after 01:00, it is Late at once and a false **Stopped / red tile** from 10-03 01:00 to 04:45. A date *later* than the deploy is safe: it only delays "Late" for a job that truly never runs, by the gap. So the date must be the deploy day and, when in doubt, the later day. See the RM rule |
+| Registry test (optional) | Recommended, not blocking: pin the set of jobs **without** `addedOn` to the 12 original ids, and check that any `addedOn` matches `YYYY-MM-DD`. Then a 14th job without a date fails CI, which is where this lesson should live. Can go in this PR or in the next job's PR |
+| QA4b-E1 | ✅ `LEAK_ROW_NOTE` lists only non-zero counts, pluralised, beside the status; the test fails with the note off. Closed |
+| CR4b-N2 / QA4b-E2 | ✅ Neutral amber-edged "Nothing to check yet — the window has not ended", never green; order leak → empty → partial → clean. An empty window ranks above "partial", so a listing failure in an empty window reads "Nothing to check yet"; that is correct, since nothing needed reading. Closed |
+
+**RM rule for `addedOn`:** before merging, set `credit-leak-check`'s `addedOn` to the **UTC date on which the production deploy lands** (the merge day; if the merge is near 00:00 UTC or the deploy may slip, use the **later** day). Never leave a date earlier than the deploy day. State the value in the PR description. If the PR merges and deploys on 2026-09-30 UTC, the current value stands.
+
+**SA gates** (Jest with `NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:9` + stub keys): `npx jest lib/admin/jobs lib/cron lib/business-os/credits app/admin/business-os-llm app/api/admin/jobs-queues` → 25 / 25 suites, 686 / 686 tests. `npm run typecheck:bos-llm` → passed, 0 new (28 baseline; 1 baseline entry now fixed, `app/api/onboarding/build/route.ts`, not from this slice). Review only; nothing changed except this section and its history row; nothing committed.
+
 ---
 
 ## QA Testing Report
@@ -1007,6 +1203,134 @@ QA temp:                  micro fixture 11 passed; route probe 3 passed; UI prob
 - [x] All acceptance criteria for 4a pass — ready for commit (after the user's diff view, per the standing flow)
 - [ ] Issues found
 
+### QA report — 4b (2026-09-30)
+
+**Test mode:** full
+**Strategy used:** A + B. A covers the gates plus QA's own hand-built fixtures, run through the real `runCreditLeakCheck` with faked repositories. B covers route probes with a mocked admin gate and mocked reads, and a render of the real runner's JSON in the panel. There was no browser check: that would need a dev server with real credentials, which the brief forbids. The panel was exercised by rendering it in jsdom instead.
+**Focus:** api, ui, security, pipeline of the check (classification)
+**Skipped:** the real-data run (T4b.5, owed by the user after go-live), and a live browser check (no real DB allowed)
+**Input source:** prompt keywords (TL brief), plus §5, §9.2 and §10.2
+**Environment:** worktree `neuronforge-llm-deduction`, branch `feature/business-os-credit-deduction-slice-4b`, uncommitted. Every Jest run used `NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:9` and stub keys. The worktree has no `.env*`, and no dev server was started.
+
+#### Test Coverage
+
+| Criterion / area | Tested? | Result | Notes |
+|---|---|---|---|
+| Clean account (every group charged) | ✅ | Pass | Two groups matched. No finding row, no `error` log, `listingFailed` false |
+| Group with calls and no charge → leak | ✅ | Pass | `periodStart` follows the plan-anchor rule (`2026-09-15T10:00:00.000Z` for anchor 08-15), the group id is in the examples and in `groupIds`, USD not charged = 0.005, and there is exactly one `error` `bos_credit_leak_found` |
+| B-1: 23:40 charged, 00:20 lost, across midnight | ✅ | Pass | Day D reports the group as under-charged by turn B ($0.002) |
+| Matched group straddling midnight | ✅ | Pass | Not reported on D, nor on D−1. An action at 23:58 with its charge at 00:02 is matched on both nights |
+| Fallback-priced group | ✅ | Pass | Over → pending. Under → pending with `pendingUndercharged` 1 and direction `under`. Neither is a leak: `totalUncharged` 0, no `error` |
+| Ungrouped calls | ✅ | Pass | NULL **and** `''` `session_id` with spend go to their own bucket (2 calls, $0.003) as a leak. A zero-spend ungrouped row, and one in the slack only, are ignored |
+| Known uncharged path (`business-os-chat` / `IntentParser`) | ✅ | Pass | Own bucket, 3 calls over 2 accounts. Exactly one `warn` `bos_credit_leak_known_path`, no `error`, both accounts clean |
+| Adjustments (effective service) | ✅ | Pass | A reconciliation adjustment (group NULL, inherited through its charge) on a fallback charge → matched. An adjustment whose charge was not read → `unresolvedCorrections` 1, and it neither hides nor creates a leak (a real leak in another group is still reported). A charge plus adjustment of **another service** under the same group id does not hide an AI leak |
+| Tiny costs recorded as $0 | ✅ | Pass | `'0.000000'` with tokens → uncharged by presence. $0 with 0 tokens → no-spend. A sub-µ$ charge (0.0000004) against a $0 row → matched within T |
+| Insight cron's shared run id on two businesses | ✅ | Pass | Matched per (account, group): only the uncharged account is flagged. Even when the ledger fake is made to return **the other account's** charge row, it is not matched (the `user_id` guard in the classifier) |
+| Ceiling → incomplete; failed read → could not check | ✅ | Pass | Ceiling → `incomplete`, `warn`, no `error`, not counted as a leak. An error result and a **thrown** read → `could_not_check` (`ledger_read_failed`). Never clean |
+| 45 s deadline | ✅ | Pass | At 30 s per account, 2 are checked, `accountsRemaining` is 1 and `deadlineReached` is true |
+| Platform account excluded | ✅ | Pass | The all-zero id, `SYSTEM_ADMIN_USER_ID`, and its upper-case spelling are never walked. The platform count is still reported |
+| Charged account with no plan row | ✅ | Pass | Walked (`chargedWithoutPlan` 1), with the calendar-month period `2026-09-01` |
+| Timestamps / window edges | ✅ | Pass | PostgREST microsecond `+00:00` timestamps parse (0 unreadable). A row at exactly `E` belongs to the next window |
+| D-13 end pulled back | ✅ | Pass | Runner: an end of tomorrow at 10:00 becomes `09:54:00.000Z`, `endClamped`. Route: `from = to = today` gives an end within ±50 ms of now − 6 min |
+| Admin route authz | ✅ | Pass | 401 when signed out, even with a bad query. 403 for a non-admin. No read and no name lookup before the gate |
+| Admin route 400s | ✅ | Pass | 9 probes, each with no read: only `from`, only `to`, from > to, 8 days, unknown key (`userId`), bad UUID, `2026/09/01`, `2026-02-30`, `to` 5 days ahead |
+| Admin route 409 | ✅ | Pass | The all-zero id, and the upper-case `SYSTEM_ADMIN_USER_ID`, both with no read |
+| Admin route 200 | ✅ | Pass | Default window is yesterday `[D−1 00:00, D 00:00)`. The business name is in the body and in **no** log line. The leak is logged at `error` |
+| Cron route | ✅ | Pass | 401 with no header, a wrong bearer, or the secret without `Bearer `. With no `CRON_SECRET` in production: 401 plus an `error` log. No read in any of these. The right bearer gives 200 with counts only: no `usd`, `cost` or `credit` key, the $0.123456 fixture does not appear, and there is no name lookup and no name in any log |
+| UI panel | ✅ | Pass | The **real runner's JSON** was rendered: idle "Not run yet", no fetch on mount, "Checking…" while running, red verdict "2 businesses…", "(1 under)", expandable group-id `<details>` per row, the known path "business-os-chat / IntentParser: 1 call", platform "5 Business OS calls, 2 with the shared helper label", 6 blind spots under "What this check cannot see". Red plus "also partial" when one account is incomplete. Green in one-account mode, with the platform line hidden and "Checking one business: Beta". `CostsTab` mounts the panel and never calls the leak URL on mount. Dev's 15 panel tests cover the four amber cases |
+| Jobs page: 13th job | ✅ | **Partial** | "Credit leak check", "Daily at 04:45 UTC" are listed as the 13th job. **But the status after deploy is "Stopped", not "No run yet"** (QA4b-B1 below) |
+| Health tile "Not measured yet" | ✅ | **Fail** | The tile is **red, "A job has stopped", worst job "Credit leak check"** (QA4b-B1) |
+| AC-31 (Jest) | ✅ | Pass | `creditLeakCheck.ac31` is green. The real-data half is owed by the user (T4b.5) |
+
+#### Issues Found
+
+**Bugs (must fix before commit)**
+
+1. **QA4b-B1. The new job shows "Stopped" and turns the Health tile red from deploy until its first 04:45 UTC run.** Files: `lib/admin/jobs/buildJobsQueuesView.ts` (`jobStatus` / `runBaseline`) and `supabase/migrations/20261011_bos_cron_runs.sql` (`first_run_at = min(started_at)` over **all** jobs). Severity: **Medium**.
+   - **Cause:** a job with no Vercel run is measured from the baseline `COALESCE(first run of ANY job, installed_at)` (F-6). Run recording has existed since 2026-09-27/28, so on any deploy more than 49 h later (2 × 1440 + 60 min), the new daily job is already past `stoppedAfterMinutes` on its first page load.
+   - **Steps to reproduce:** in a temporary test, give `buildJobsQueuesView` 13 summary rows: 12 healthy jobs with a run 5 min ago, and `credit-leak-check` with `last_cron_started_at: null`, all with `first_run_at: 2026-09-28T10:00Z`. Use now = 2026-10-02T12:00Z, then call `evaluateHealth` with those tile facts.
+   - **Expected (as stated in §9.2 "What the user will see"):** the job reads "No run recorded yet", and the Health "Scheduled jobs" tile is grey, "Not measured yet".
+   - **Actual:** `status: 'stopped'`, and `jobsTileFacts` returns `{ healthy: 12, stopped: 1, noRunYet: 0, worstJob: 'Credit leak check' }`. The tile is `status: 'red'`, `headline: 'A job has stopped'`, `matchedRuleId: 'jobs.stopped'`. It stays that way for up to about 24 h, until the first 04:45 UTC run.
+   - **Why it matters:** a false red alarm on the admin Health page right after the release. It also teaches the operator to ignore "Stopped", which is exactly the signal §5.5 relies on if `CRON_SECRET` is ever removed.
+   - **Root cause:** this is the first job added after recording began, so it is the first to hit the gap in F-6's baseline. Whoever fixes it should decide the approach with SA. Two options: a per-job baseline (for example, a registry "added on" date, so `measuredFrom = max(baseline, addedAt)`, and the job reads "No run yet" until its first late period ends), or an accepted, documented deploy-day red. Either way, §9.2's "What the user will see" text needs correcting.
+   - SA's 4b review did not raise this.
+
+**Performance issues:** none found. Each account gets one usage read and one ledger read, run in parallel. Accounts are walked one at a time, with the deadline checked before each one.
+
+**Edge cases (nice to fix)**
+
+1. **QA4b-E1. The panel does not explain rows that are listed only for unresolved corrections or unreadable amounts** (`LeakCheckPanel.tsx`). Such an account's row reads "No leak" with zeros in every column, because the table has no column or note for `unresolvedCorrections`, `unreadableAmounts` or `chargedAboveUsage`. `chargedAboveUsage` appears only in the drill-down. Severity: Low. This is related to SA CR4b-N3: unreadable amounts do not change the status.
+2. **QA4b-E2. An empty on-demand window reads green.** With `from = to = today` in the first 6 min after 00:00 UTC, the end is clamped to the start: the window is empty, and the verdict is "No uncharged AI spend found". The note "The window's end was pulled back…" is shown with it. Severity: Low. Same as SA CR4b-N2.
+3. **QA concurs with SA CR4b-S1 from reading the code.** `checkAccount` builds the usage read's end from the **clamped** `endMs` plus 1 h. So on demand it reaches past now, and it reads the calls of an action that is still running while its charge does not exist yet. QA did not build a separate test for this. The fix SA asked for should carry its own test.
+
+#### Test Outputs / Logs
+
+| Gate | Result |
+|---|---|
+| New suites: `creditLeakCheck`, `.ac31`, `.wireTypes`, leak-check route, cron route, `leakPanel.render`, and the read repository test | **7 suites / 144 tests pass** |
+| `npx jest lib/business-os/credits lib/repositories app/admin/business-os-llm app/api/admin/business-os/credits app/api/cron lib/cron app/admin/__tests__` | 80 suites / 1,622 tests: **1 failure, pre-existing** (`runRecord.adoption` › `payment-reminders`) |
+| Adoption suite, `credit-leak-check` cases only | 3 / 3 pass |
+| The same `payment-reminders` failure on `origin/main` `b6efd992` | **Reproduced** in a temporary detached worktree: 1 failed / 35 passed, the same test. The node_modules junction was removed first, then the worktree; the main `node_modules` is intact |
+| `npm run test:authz-guard` | 1 / 119 pass |
+| `npm run test:bos-entitlements` | 90 / 1,891 pass |
+| `npm run typecheck:bos-llm` | 328 files, 28 errors, **0 new**, passed. The same pre-existing "baseline entry fixed" note (`app/api/onboarding/build/route.ts`) |
+| `npm run check:bos-llm-literals` | 53 files, 2 exempt, **0 violations** |
+| `next build` (6 GB heap, the `build.yml` placeholder env) | **Exit 0.** Built: `ƒ /admin/business-os-llm` 13.4 kB, `ƒ /api/admin/business-os/credits/leak-check`, `ƒ /api/cron/credit-leak-check`. 65 `level:50` lines, all the known "Dynamic server usage" noise, **none** mentioning the leak check |
+| QA temporary fixtures: 20 classification + 16 route probes, 4 UI, 3 jobs/health | 40 / 40 pass, plus the 2 jobs/health probes that **reproduce QA4b-B1** (they assert "no_run_yet" / "Not measured yet" and fail with `stopped` / `red`). All 4 files were deleted |
+
+**No code changed during the run.** The SHA-1 manifest of the 30 changed or new non-workplan files is `5430c3a20e3bf27e…` before and after, and a line-for-line `diff` of the two manifests is empty. Only this section and one Change History row were edited.
+
+#### Final Status
+- [ ] All acceptance criteria pass — ready for commit
+- [x] Issues found. Dev must address **QA4b-B1** (Medium; decide the approach with SA) and SA's **CR4b-S1** before commit. No High-severity bug. The classification, both doors, authz, tenant scoping, logs and the UI all pass
+
+### QA re-test — 4b (2026-09-30)
+
+**Test mode:** focused regression on the T4b.7 fixes (QA4b-B1, CR4b-S1, QA4b-E1, CR4b-N2 / QA4b-E2), plus the full gate set
+**Strategy used:** A + B. QA wrote three temporary probe suites of its own (not the Dev's fixtures): the real `buildJobsQueuesView` → `jobsTileFacts` → `evaluateHealth` on a simulated clock; the real `runCreditLeakCheck` with faked reads that honour the read window; and the real runner's JSON, round-tripped through `JSON.stringify`, rendered in `LeakCheckPanel` under jsdom. All three were deleted after the run
+**Skipped:** a live browser check and the real-data run (T4b.5): no real database is allowed
+**Environment:** worktree `neuronforge-llm-deduction`, branch `feature/business-os-credit-deduction-slice-4b`, uncommitted. Jest ran with `NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:9` and stub keys. `next build` ran with the `build.yml` placeholder env. There is no `.env*` in the worktree
+
+#### Results
+
+| Item | Result | Evidence (QA probes) |
+|---|---|---|
+| **QA4b-B1**: no run yet at 09-30 15:00, 10-01 03:00, 10-02 00:59 (and at exactly 10-02 01:00) | ✅ Pass | The other 12 jobs first ran 2026-09-28T10:00Z and have a run 1 min ago. `credit-leak-check` has no run. At each instant it reads `no_run_yet` / "No run recorded yet", with `expectedBy` 2026-10-02T00:00Z. The tile facts are `healthy 12, stopped 0, noRunYet 1, worstJob "Credit leak check"`, and the Health tile is `not_measured`, "Not measured yet", never red |
+| QA4b-B1: late, then stopped | ✅ Pass | At 10-02 01:01 it reads `late`, and the tile is amber, "A job is late". At exactly 10-03 01:00 it is still `late`. At 10-03 01:01 it reads `stopped`, and the tile is red, "A job has stopped" |
+| QA4b-B1: once it has a run | ✅ Pass | A run 15 min before 10-01 05:00 → `healthy`, and the tile is green. A run 1,502 min ago → `late`, and one 2,941 min ago → `stopped`. Both are timed from the run, not from `addedOn` |
+| QA4b-B1: an undated job with no run is unchanged | ✅ Pass | `insight-detect` with no run, baseline 09-28 10:00: `no_run_yet` at 09-28 20:00, `late` at 09-29 12:00, still `late` at 09-30 11:00 (at the threshold, not past it), `stopped` at 09-30 11:01 with `measuredFrom` = the global first run, and the tile is red. In the same view the dated job stays `no_run_yet` |
+| QA4b-B1: other baselines | ✅ Pass | With no `first_run_at` anywhere and `installed_at` 09-27, the dated job is measured from 10-01T00:00Z. A global first run later than its added day (10-05) wins, and `expectedBy` is 10-06T00:00Z. `jobStatus` is the only consumer of the baseline (grep), so the Jobs page and the Health tile cannot disagree |
+| **CR4b-S1**: `to` = today, uncharged turn 2 min ago | ✅ Pass | Now is 09-30 12:00, and the window is [09-30, 10-01). Reused chat group: turn one at 11:00, charged at 11:00:04. Turn two at 11:58 has no charge. The window end is clamped to `11:54:00.000Z` (`endClamped`), and the usage read's end is `11:54:00.000Z`. Result: `accountsWithLeak` 0, `underchargedGroups` 0, $0, no `error` log. This holds in all-accounts mode **and** in one-account mode |
+| CR4b-S1: the same uncharged turn 10 min ago | ✅ Pass | Turn two at 11:50: `accountsWithLeak` 1, `underchargedGroups` 1, $0.001 not charged. The example is the group, with 2 calls (recorded $0.003, charged $0.002), and there is exactly one `error` `bos_credit_leak_found`. Same in both modes |
+| CR4b-S1: nightly is unaffected | ✅ Pass | A past whole-day window is not clamped, and the usage read keeps its full slack, ending at `00:59:59.999Z` |
+| **QA4b-E1**: row notes, from the real runner's JSON | ✅ Pass | Four accounts are each listed only for an informational count, and each reads "No leak" plus a note. One has an adjustment whose charge was not read: "1 unresolved correction". One has a ledger row with an unreadable time and amount: "1 unreadable amount". One was charged $0.004 against $0.001 recorded: "1 charged above usage". One has all three: "1 charged above usage · 1 unresolved correction · 1 unreadable amount". A plain clean account is not listed, and the verdict is green, which is correct because none of these is a leak |
+| **Empty window** (CR4b-N2 / QA4b-E2), from the real runner's JSON | ✅ Pass | Now is 09-30 00:03, with `from = to` = today. The runner returns `window.start == window.end` and `endClamped`. The panel shows "Nothing to check yet — the window has not ended" (`leak-verdict-empty`), with no `leak-verdict-clean` and no "No uncharged AI spend found" text, and the end-clamped note is shown. A non-empty clamped window (12:00 the same day) does **not** show the empty verdict |
+
+#### Observations (no action needed)
+
+1. **An empty window still walks every account.** With an empty window, the runner still lists and reads each account (`accountsChecked` 5 in the probe), so the line above the verdict says "5 businesses checked" next to "Nothing to check yet". This is harmless: the reads cover only the slack, and nothing can be reported. It is also cosmetic: a later slice could skip the walk when `endMs == startMs`.
+2. **The empty-window verdict outranks "partial"** (leak → empty → partial → clean, as documented in T4b.7). An empty window whose listing also failed shows "Nothing to check yet", and the listing-failed note is shown below it. That is acceptable.
+3. **The `addedOn` date is still a deploy-day dependency (D-22).** If 4b ships after 2026-09-30, RM must move `addedOn` to the deploy day in the same PR. The probe shows why. With `addedOn` at 09-30, a job with no run is `late` from 10-02 01:01 and `stopped` from 10-03 01:01, whatever the deploy day. So a deploy on or after 10-02 would show a false Late or Stopped, and a red tile, before its first 04:45 run.
+
+#### Gates
+
+| Gate | Result |
+|---|---|
+| New and touched suites (`creditLeakCheck`, `.ac31`, `.wireTypes`, both leak-check routes, `leakPanel.render`, the read repository, `lib/admin/jobs`, `lib/cron`, `jobsQueues` render and guard, `jobs-queues` routes, the adoption suite, the entitlements import guard) | 20 suites / 495 tests: **1 failure, pre-existing** (`runRecord.adoption` › `payment-reminders`, the same red as in QA report — 4b, reproduced there on `origin/main`) |
+| `npx jest lib/business-os/credits lib/cron lib/admin app/admin/__tests__ app/admin/business-os-llm app/api/cron app/api/admin/business-os/credits app/api/admin/jobs-queues lib/repositories` | 93 suites / 2,138 tests: **1 failure, the same pre-existing one**. This matches the Dev's T4b.7 count exactly |
+| `npm run test:authz-guard` | **1 / 119 pass** |
+| `npm run test:bos-entitlements` | **90 / 1,891 pass** |
+| `npm run typecheck:bos-llm` | **328 files, 28 errors, 0 new, passed** (the same "baseline entry fixed" note for `app/api/onboarding/build/route.ts`) |
+| `npm run check:bos-llm-literals` | **53 files, 2 exempt, 0 violations** |
+| `next build` (6 GB heap, `build.yml` placeholder env) | **Exit 0.** Built `ƒ /admin/business-os-llm` 13.6 kB, `ƒ /admin/jobs-queues`, `ƒ /api/admin/business-os/credits/leak-check`, `ƒ /api/cron/credit-leak-check`. There are 65 `level:50` lines, all "Dynamic server usage" noise (64 marked `DYNAMIC_SERVER_USAGE`, plus 1 from calibrate `load-configuration` with the same message). **None** mention the leak check |
+| QA probes | 8 jobs/health + 5 runner + 3 panel = **16 / 16 pass** (after 3 of QA's own probe mistakes were corrected: 2 read a field `JobView` does not carry, and 1 had wrong clock arithmetic; none was a product defect). All 3 files were deleted |
+
+**No code changed during the run.** QA took a SHA-1 manifest of the 31 changed or new non-workplan files before the run and again after it. Both hash to `e7735c879edf60fa0423d28f6dc7208383d7eb41`, and a line-for-line `diff` of the two manifests is empty. `git status --short` shows the same 18 modified and 12 untracked entries as at the start, and no probe file remains. Only this section and one Change History row were edited.
+
+#### Final Status (re-test)
+- [x] All acceptance criteria pass — ready for the user's diff view. QA4b-B1, CR4b-S1, QA4b-E1 and QA4b-E2 are all closed. No open bug; the only red is the pre-existing `payment-reminders` adoption test, which is not from this slice
+- [ ] Issues found
+
 ---
 
 ## Commit Info
@@ -1028,3 +1352,10 @@ QA temp:                  micro fixture 11 passed; route probe 3 passed; UI prob
 | 2026-09-29 | QA report — 4a | ❌ Not ready. **CR-B1 reproduced.** A microsecond `period_start` leads to 0 rows read and a false mismatch. All gates are otherwise green: 14 / 355 new + affected; authz 119; entitlements 89 / 1,854; literals 0; `typecheck:bos-llm` 0 new; `next build` exit 0. The two reds (`tokenUsageRepository.contract`, `entitlements/routes`) are confirmed pre-existing on `origin/main` `bd763222`. Route: 401 / 403 / 10 × 400 / 409 all happen with no read, and there is one `info` log with no name and no money. A hand-computed two-account fixture matches: cross-check (S-7), net breakdowns, fallback, and spreads equal to `percentile_cont` (S-6). New Low items: `unreadableAmounts` is not surfaced; a failed originals read looks like a ledger break; a cross-account unresolved correction sets `reconciled`. Read-only proof clean. No code changed (hashes identical), and temp files and worktree were removed |
 | 2026-09-29 | 4a SA / QA findings fixed (Dev, T4a.8) | **CR-B1:** rows are read with the same half-open day window as the totals, the repository's upper bound is `.lt` (range now half-open, `from < to` guarded), and the ledger mocks compare `period_start` at microsecond precision. The new microsecond test is red on the old builder (`rowsRead` 1 vs 3) and green now. **CR-S1:** an orphan period under `totals_ceiling` is "not checked", not a mismatch, and `>=` at the ceiling is documented as the rule both reads share. **CR-N1:** the exactness bound (~$900k per sum) is in the header. **CR-N2:** a stale-response guard with abort, a failed re-read clears the report, the Costs tab is kept mounted across tab switches, and `aria-controls` / `role="tabpanel"` are added. **QA Lows:** `unreadableAmounts` is on the tab and in the log; a failed originals read says the read failed; only resolved corrections set `reconciled`; below-precision percentiles keep 2 significant digits; a synchronous throw from the name lookup or the rows read fails only its section. Gates: 61 / 1,014 pass, authz 119, `typecheck:bos-llm` 0 new, literals 0, `next build` exit 0. CR-N3 and CR-N4 are left as notes. Uncommitted |
 | 2026-09-29 | QA re-test — 4a | ✅ **PASS, ready for commit.** CR-B1 is fixed: QA's hand-computed two-account fixture was re-run with microsecond `period_start` values (`.28632`, `.286321`, `.345678`, and the PROD psql shape), through a mock that compares at microsecond precision with the half-open range. For all accounts and for each single account, every in-range period is read (`rowsRead` 13 / 10 / 3), every check matches, and the breakdowns, fallback and spreads include those rows. The traps at the exact upper bound and 1 µs below the lower bound are excluded. CR-S1, the stale-response / abort / clear-on-failure behaviour, window and account kept across a tab switch, the aria roles, `unreadableAmounts` (tab and log), the originals-failure message, cross-account `reconciled`, tiny-value formatting and synchronous-throw isolation were all verified by independent probes. Gates: 9 / 158 new, 61 / 1,014 owed set, authz 119, `typecheck:bos-llm` 0 new, literals 0, `next build` exit 0. No code changed (manifest hash `74dd37e8…` before and after), and the 3 temp files were deleted |
+| 2026-09-29 | SA 4b items folded into §5 (Dev, T4b.0) | B-1 a group is examined on any usage or charge in the window, slack only matches, two-night reporting stated, usage read 300 s earlier than the charge read, the 23:40 / 00:20 example; S-1 plan accounts ∪ charged accounts, remaining blind spot stated, no all-accounts `token_usage` read; S-2 tolerance `calls × 0.000001 + 1e-9`, presence detection; S-3 known paths in their own bucket at `warn`, ungrouped calls counted separately; S-4 the period in the output and the log; N-3 inclusive usage end (`E + 1 h − 1 ms`); N-5 7-day on-demand cap; Q-9 helper label in the platform count only; Q-15 schedule reason corrected; BQ-2 no email. Six blind spots named as codes |
+| 2026-09-30 | Part 4b implemented (Dev) | The leak check: pure classifier, the RPC's period rule in TS, the runner (plan ∪ charged accounts, 45 s deadline, never throws), a new account-scoped half-open read on the 4a read repository, on-demand admin route (≤ 7 days, `requireAdmin` first), fail-closed nightly cron at `45 4 * * *` recorded through `withCronRunRecord` with counts only, the "Run leak check" panel on the Costs & credits tab. AC-31 proved through the real `runAiAction` with the charge RPC refused. 12 deviations recorded (D-10 to D-21). Gates: 6 new suites (103 tests) + 7 new repository tests pass, owed set 66 / 1,134, authz 119, `typecheck:bos-llm` 328 files 0 new, literals 53 / 0, entitlements 90 / 1,891, ESLint clean, `next build` exit 0. One pre-existing red (the adoption test's `payment-reminders` mock, also red on `origin/main`). Uncommitted, no migration. Owed by the user: the first real on-demand run after go-live (T4b.5) |
+| 2026-09-30 | SA code review — 4b | ✅ Code Approved, no blocking findings. **CR4b-S1 (should fix, before the user's diff view):** the on-demand clamp pulls the window end back to now − 6 min, but the usage read still runs to `E + 1 h`. So a reused chat or onboarding group with an action still running shows a phantom under-charge at `error`. This happens with `to` = today, or with the default "yesterday" run within about 1 h of midnight UTC. Fix: cap the usage read's end at now − 6 min, and add one test. Notes CR4b-N1 to N5 (upper-edge mirror residue, an empty window reads clean, unreadable amounts do not change the status, the listing is outside the deadline, re-merge `origin/main` `b6efd992`). B-1, S-1 to S-4, N-3, N-5, matching, fallback, N-10, never-clean, deadline, both doors, logs, repository and guards all verified. The period rule was checked line for line against `20261015`. `vercel.json` gains only the one cron (13 in total). D-10 to D-21 all accepted, D-13 extended by CR4b-S1. SA gates: 75 / 1,542 with 1 pre-existing red (`payment-reminders` adoption mock, confirmed on `origin/main` by source), authz 119, `typecheck:bos-llm` 0 new, literals 0. Review only, nothing committed |
+| 2026-09-30 | QA report — 4b | ❌ **Issues found, no High.** **QA4b-B1 (Medium):** the new job shows "Stopped", and the Health "Scheduled jobs" tile turns red ("A job has stopped", worst job "Credit leak check") from deploy until the first 04:45 UTC run. The cause is that a job with no run is measured from the global first run of any job (F-6, `first_run_at = min(started_at)`). This contradicts §9.2, which promises "No run yet" and grey. Reproduced with `buildJobsQueuesView` and `evaluateHealth`. The fix approach is for Dev and SA to agree. QA concurs with SA CR4b-S1 from reading the code. Lows: E1 (rows listed only for unresolved or unreadable amounts are unexplained), E2 (an empty window reads green). Every other item passes, through QA's own fixtures run with the real runner and faked reads: B-1 midnight both ways, straddle matched, fallback over/under, ungrouped (NULL and `''`), known path at one `warn`, adjustments (inherited group, unresolved, other service), $0 by presence, shared insight run id (even with a cross-account row injected), ceiling → incomplete, failed or thrown read → could not check, deadline → remaining, platform excluded (upper case too), no-plan account, microsecond timestamps, and the D-13 clamp. Routes: 401 / 403 / 9 × 400 / 409 with no read, 200 with the name only in the body; cron 401 × 3 plus fail-closed, 200 with counts only. The panel renders the real runner JSON. Gates: 7 / 144 new, 80 / 1,622 with 1 pre-existing red (`payment-reminders`, reproduced on `origin/main` `b6efd992`), authz 119, entitlements 90 / 1,891, `typecheck:bos-llm` 0 new, literals 0, `next build` exit 0. No code changed (manifest `5430c3a2…` before and after), and the temp files and worktree were removed |
+| 2026-09-30 | 4b SA / QA findings fixed (Dev, T4b.7) | **CR4b-S1:** the usage read ends at `min(E + 1 h − 1 ms, now − 6 min)`; the charge read is unchanged; D-13 extended. New runner test (reused group, charged turn at 04:00, uncharged turn at now − 2 min, `to` = today) fails on the old code (read end `05:38:59.999Z`, `accountsWithLeak` 1) and passes. **QA4b-B1:** no migration; `addedOn?: 'YYYY-MM-DD'` on the cron registry, set only on `credit-leak-check` (`2026-09-30`); `jobBaseline` times a dated job with no run from the end of that day or the global baseline if later (D-22). The new job reads "No run recorded yet" until 10-02 01:00, then late, then stopped after 10-03 01:00; the Health tile stays `not_measured`; undated jobs unchanged. 6 new tests, 5 red with `addedOn` removed; two generic-rule tests in `qa-slice5-pr2.status.test.ts` adjusted deliberately. **QA4b-E1:** a row note for charged-above-usage / unresolved corrections / unreadable amounts. **CR4b-N2 / QA4b-E2:** an empty window reads "Nothing to check yet — the window has not ended", never green. Panel tests +2, both red on the old panel. §9.2 "What the user will see" corrected. Gates: 10 / 255 new and touched, 93 / 2,138 with the 1 pre-existing `payment-reminders` red, authz 119, entitlements 90 / 1,891, `typecheck:bos-llm` 0 new, literals 0, `next build` exit 0. **RM:** if 4b deploys after 2026-09-30, move `addedOn` to the deploy day. Uncommitted |
+| 2026-09-30 | SA hand-off check — 4b fixes | ✅ Code Approved for the diff view. CR4b-S1 closed (usage read end `min(E + 1 h − 1 ms, now − 6 min)`, charge read unchanged, red-first test). QA4b-B1 approach accepted: opt-in `addedOn` + pure `jobBaseline` in the shared status rule, undated jobs unchanged, no migration; D-22 (end of day) accepted. A past `addedOn` is **not** harmless (one day late gives a false Late, two a false Stopped / red tile). **RM rule:** set `addedOn` to the UTC production-deploy day, the later day when in doubt, never earlier; state it in the PR. Optional registry test: pin the undated set to the 12 original jobs. QA4b-E1 and CR4b-N2 closed. Gates: 25 / 686 pass; `typecheck:bos-llm` 0 new. Nothing committed |
+| 2026-09-30 | QA re-test — 4b | ✅ **Pass; ready for the user's diff view.** Tested with QA's own temporary probes (16 / 16 pass, then deleted). **QA4b-B1 closed:** the real `buildJobsQueuesView` and `evaluateHealth` show "No run recorded yet" and a `not_measured` tile (never red) at 09-30 15:00, 10-01 03:00, 10-02 00:59 and at exactly 01:00. The job is late (amber) from 10-02 01:01 and stopped (red) from 10-03 01:01. Once it has a run it is healthy / late / stopped by the usual rules, timed from that run. An undated job with no run keeps the global baseline exactly. **CR4b-S1 closed:** with `to` = today, an uncharged turn 2 min ago in a reused group is not reported (the usage read ends at now − 6 min), and the same turn 10 min ago is reported as under-charged with one `error`. Both hold in all-accounts and in one-account mode, and the nightly run is unaffected. **QA4b-E1 closed:** on the real runner's JSON, every info-only row gets its note. **E2 closed:** an empty window reads "Nothing to check yet", never green. Observations only: an empty window still walks the accounts, and `addedOn` must equal the deploy day (D-22). Gates: 20 / 495 new and touched, 93 / 2,138 broad; each has only the pre-existing `payment-reminders` red. Authz 119, entitlements 90 / 1,891, `typecheck:bos-llm` 0 new, literals 0, `next build` exit 0. No code changed: manifest `e7735c87…` before and after |
