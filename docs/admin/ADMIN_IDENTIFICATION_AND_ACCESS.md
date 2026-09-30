@@ -1,6 +1,6 @@
 # Admin Identification & Access
 
-> **Last Updated**: 2026-09-27
+> **Last Updated**: 2026-09-29
 
 ## Overview
 
@@ -189,6 +189,7 @@ the right unit for the register.
 | 82 | `archiving` | `GET` | ✅ gated | `requireAdmin` first statement, new in Admin Archiving slice 1 (read-only overview; position pinned by its route test I-10) |
 | 83 | `archiving/runs` | `POST` | ✅ gated | `requireAdmin` first statement, new in Admin Archiving slice 2b (starts or continues an archive run; refused with 409 while runs are switched off). Position pinned by its route test P-15; in `adminGate.writes` |
 | 84 | `jobs-queues` | `GET` | ✅ gated | `requireAdmin` first statement, new in admin reorganisation slice 5 (the Scheduled jobs & queues page: the cron run record and the five queue tables, read-only, counts and timestamps only). 401/403 before 400 pinned by its route test |
+| 85 | `business-os/credits/report` | `GET` | ✅ gated | `requireAdmin` first statement, new in credit deduction slice 4a (the operator cost report on the "Costs & credits" tab of `/admin/business-os-llm`). A deliberate cross-account, read-only read of the credit ledger; 401/403 before 400/409, with no read on any of them, pinned by its route test |
 
 ### CI enforcement
 
@@ -548,3 +549,4 @@ npx eslint app lib components hooks --rule '{"no-console":"error"}'
 | 2026-09-26 | Merge: admin reorganisation slice 4 + Admin Archiving slice 1 | Both branches added one handler gated from birth and each numbered it row 81. After the merge: row 81 `health-summary#GET`, row 82 `archiving#GET`. Census re-measured on the merged tree: **82 handlers / 53 route files = 76 `requireAdmin` + 6 inline + 0 open**; **25** `/admin` pages. The "All 21 pages" truth-table row and the precedence-gap figures are updated to match; no guard cap moved (R1 parked = 6) |
 | 2026-09-26 | Admin Archiving slice 2b: 83 = 77 gated + 6 inline + 0 open, 54 files | Register row **83** `archiving/runs#POST` (start or continue an archive run; 409 while runs are switched off), `requireAdmin` as its first statement, pinned by its route test P-15 and added to `adminGate.writes` (58 → 59). Census re-measured on the branch: 54 route files, 83 handlers, 6 without `requireAdmin`. No guard cap moved. CLAUDE.md admin row (82 / 53 / 76) flagged to the user, not edited |
 | 2026-09-27 | Admin reorganisation slice 5: 84 = 78 gated + 6 inline + 0 open, 55 files | Register row **84** `jobs-queues#GET` (the Scheduled jobs & queues page), `requireAdmin` as its first statement. Census re-measured from disk after merging `origin/main` (Admin Archiving slices 2b and 3): 55 route files, 84 exported handlers, 6 without `requireAdmin` (the 6 inline rows). `/admin` pages re-counted: **26** (`jobs-queues` added, a client page under the guarded layout). No guard cap moved |
+| 2026-09-29 | Credit deduction slice 4a: register row 85 | Row **85** `business-os/credits/report#GET` (the operator cost report), gated from birth with `requireAdmin` as its first statement. **Census not re-derived here:** a quick count on this branch finds 88 exported handlers in 58 `route.ts` files under `app/api/admin/`; the difference from 84 + 1 is the invite routes (`business-os/invites`, `business-os/invites/[inviteId]/revoke`, three handlers), which are gated but were never registered. Flagged to TL for the next census; no cap moved |

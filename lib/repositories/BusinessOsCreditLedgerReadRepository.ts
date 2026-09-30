@@ -1,0 +1,396 @@
+// lib/repositories/BusinessOsCreditLedgerReadRepository.ts
+//
+// READ-ONLY access to the Business OS credit ledger: `business_os_credit_charges`
+// (charge and adjustment rows) and `business_os_credit_totals` (one running
+// total per account and billing period).
+//
+// Schema:   supabase/migrations/20261015_business_os_credit_charges.sql
+// Workplan: docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_4_WORKPLAN.md §4.4 (SA Q-3)
+//
+// ── WHY A SEPARATE, READ-ONLY REPOSITORY (SA Q-3) ────────────────────────────
+// The ledger's writer repository is guarded so that only the AI charge recorder
+// may name it. Adding reads there would force every reader onto that guard's
+// allow-list and make "who writes the ledger" unreadable. So the readers get
+// this file, and it cannot write: it has no write method, and its test pins
+// that the source names no insert, update, upsert, delete or rpc call.
+//
+// ── SERVICE ROLE (intentional RLS bypass, documented per CLAUDE.md) ─────────
+// The only caller today is the operator cost report
+// (`lib/business-os/credits/creditReport.ts`), reached only from an admin route
+// that runs `requireAdmin` before anything else. Owners cannot read the cost
+// columns at all (per-column grants, slice 3), so this read cannot be served
+// through the owner's RLS client. The constructor still takes a client, so a
+// later owner-facing reader (slice 7) can pass the RLS client instead.
+//
+// ── ACCOUNT SCOPE, BY SIGNATURE ──────────────────────────────────────────────
+// Every account method REQUIRES an account id, or a non-empty list of them, and
+// refuses a malformed one before querying (CLAUDE.md rule 4). The one
+// cross-account read is `listTotalsForPeriodsInRange`, reached by calling a
+// differently NAMED method, never by leaving an argument out (the
+// TokenUsageRepository convention). `findChargesByActionIds` looks rows up by
+// their own unique action ids: it serves the adjustments' originals, and its
+// caller checks the account of each row it gets back.
+//
+// ── COLUMNS ──────────────────────────────────────────────────────────────────
+// Only the allow-listed columns below are ever selected (exported and tested).
+// The ledger holds no owner text by design; the allow-list keeps it that way if
+// a column is ever added.
+//
+// ── NEVER FILTERS OR GROUPS ON `service` (requirement N-10, KI-14) ───────────
+// An adjustment row carries `service` NULL and inherits the service of the
+// charge it corrects, so a query on the raw column would silently drop every
+// correction. Effective fields are resolved in Node
+// (`lib/business-os/credits/effectiveFields.ts`); a source test enforces it.
+//
+// Methods never throw: they return `{ data, error }`.
+
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
+import { createLogger, type Logger } from '@/lib/logger';
+import type { AgentRepositoryResult as RepositoryResult } from './types';
+
+/** One ledger row, as read. Numeric columns may arrive as strings from PostgREST. */
+export interface CreditLedgerRow {
+  id: string;
+  kind: 'charge' | 'adjustment';
+  /** NULL on adjustment rows. */
+  action_id: string | null;
+  /** NULL on charge rows. */
+  adjusts_action_id: string | null;
+  reason_code: string | null;
+  /** NULL only when the account was deleted (ON DELETE SET NULL). */
+  user_id: string | null;
+  period_start: string;
+  group_id: string | null;
+  credits: number | string;
+  cost_usd: number | string;
+  credit_value_version: number;
+  is_fallback_priced: boolean;
+  /** NULL on adjustment rows, which inherit it. Never filter or group on it. */
+  service: string | null;
+  action_type: string | null;
+  triggered_by: string | null;
+  outcome: string | null;
+  created_at: string;
+}
+
+/** One totals row, as read. */
+export interface CreditTotalsRow {
+  user_id: string;
+  period_start: string;
+  credits_total: number | string;
+  credits_owner: number | string;
+  credits_scheduled: number | string;
+  credits_external: number | string;
+  credits_adjustment: number | string;
+  cost_usd_total: number | string;
+  charge_count: number;
+  fallback_priced_count: number;
+  updated_at: string;
+}
+
+/**
+ * A HALF-OPEN range on `period_start`: `from <= period_start < to`.
+ *
+ * Why exclusive at the top (SA CR-B1): `period_start` is a microsecond
+ * `timestamptz` (it derives from `period_anchor DEFAULT now()`), while a JS
+ * `Date` holds milliseconds. An inclusive bound built from a `Date` would be
+ * the value truncated to the millisecond, which is BELOW the real value, so
+ * `<=` would drop that very row. Callers pass a whole-day exclusive end, which
+ * no truncation can move.
+ */
+export interface CreditPeriodStartRange {
+  from: Date;
+  /** Exclusive. */
+  to: Date;
+}
+
+export interface CreditLedgerPageOptions {
+  pageSize: number;
+  ceiling: number;
+}
+
+export interface CreditLedgerPagedResult<T> {
+  rows: T[];
+  /**
+   * True when `ceiling` rows were read. Both reads use the same rule (`>=`):
+   * exactly `ceiling` rows is treated as "may be incomplete", never as
+   * complete, because the read cannot tell a full last page from a cut one.
+   */
+  reachedCeiling: boolean;
+}
+
+/** The only columns this repository selects. Exported for the tests. */
+export const CREDIT_LEDGER_ROW_COLUMNS =
+  'id, kind, action_id, adjusts_action_id, reason_code, user_id, period_start, group_id, credits, cost_usd, ' +
+  'credit_value_version, is_fallback_priced, service, action_type, triggered_by, outcome, created_at';
+
+export const CREDIT_TOTALS_COLUMNS =
+  'user_id, period_start, credits_total, credits_owner, credits_scheduled, credits_external, credits_adjustment, ' +
+  'cost_usd_total, charge_count, fallback_priced_count, updated_at';
+
+export const CREDIT_LEDGER_READ_LIMITS = {
+  /** PostgREST's default `max-rows`; a larger page would be silently cut. */
+  MAX_PAGE_SIZE: 1000,
+  MAX_CEILING: 20_000,
+  /** Ids per `.in()` request, so the URL stays well under any proxy limit. */
+  MAX_IDS_PER_REQUEST: 200,
+} as const;
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+class CreditLedgerReadGuardError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CreditLedgerReadGuardError';
+  }
+}
+
+function isValidDate(value: unknown): value is Date {
+  return value instanceof Date && !Number.isNaN(value.getTime());
+}
+
+export class BusinessOsCreditLedgerReadRepository {
+  private supabase: SupabaseClient;
+  private logger: Logger;
+
+  constructor(supabaseClient?: SupabaseClient) {
+    // Service role by default: an admin-only, cross-account read. See the header.
+    this.supabase = supabaseClient || defaultSupabase;
+    this.logger = createLogger({ service: 'BusinessOsCreditLedgerReadRepository' });
+  }
+
+  // ============ Guards ============
+
+  private assertAccount(userId: string): void {
+    if (typeof userId !== 'string' || !UUID_PATTERN.test(userId)) {
+      throw new CreditLedgerReadGuardError('An account id (UUID) is required');
+    }
+  }
+
+  private assertAccounts(userIds: readonly string[]): void {
+    if (!Array.isArray(userIds) || userIds.length === 0) {
+      throw new CreditLedgerReadGuardError('At least one account id is required');
+    }
+    userIds.forEach((id) => this.assertAccount(id));
+  }
+
+  private assertRange(range: CreditPeriodStartRange): void {
+    if (!range || !isValidDate(range.from) || !isValidDate(range.to) || range.from >= range.to) {
+      throw new CreditLedgerReadGuardError('A valid half-open period range (from < to) is required');
+    }
+  }
+
+  private assertPaging(opts: CreditLedgerPageOptions): void {
+    const { MAX_PAGE_SIZE, MAX_CEILING } = CREDIT_LEDGER_READ_LIMITS;
+    if (!opts || !Number.isInteger(opts.pageSize) || opts.pageSize < 1 || opts.pageSize > MAX_PAGE_SIZE) {
+      throw new CreditLedgerReadGuardError(`pageSize must be an integer from 1 to ${MAX_PAGE_SIZE}`);
+    }
+    if (!Number.isInteger(opts.ceiling) || opts.ceiling < 1 || opts.ceiling > MAX_CEILING) {
+      throw new CreditLedgerReadGuardError(`ceiling must be an integer from 1 to ${MAX_CEILING}`);
+    }
+  }
+
+  private fail<T>(method: string, error: unknown): RepositoryResult<T> {
+    if (error instanceof CreditLedgerReadGuardError) {
+      this.logger.warn({ method, err: error }, 'Credit ledger read refused by its guard');
+    } else {
+      this.logger.error({ method, err: error }, 'Credit ledger read failed');
+    }
+    return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
+  }
+
+  // ============ Totals ============
+
+  /**
+   * The totals rows of EVERY account whose `period_start` falls in the range —
+   * the one deliberate cross-account read here, and named so. Admin report
+   * only; never call it from an owner-facing path.
+   *
+   * Logged at info, not debug: it is the only cross-account read in this file.
+   */
+  async listTotalsForPeriodsInRange(
+    range: CreditPeriodStartRange,
+    opts: CreditLedgerPageOptions
+  ): Promise<RepositoryResult<CreditLedgerPagedResult<CreditTotalsRow>>> {
+    const method = 'listTotalsForPeriodsInRange';
+    try {
+      this.assertRange(range);
+      this.assertPaging(opts);
+      const result = await this.pageTotals(range, opts, null);
+      this.logger.info(
+        { method, rows: result.rows.length, reachedCeiling: result.reachedCeiling },
+        'Credit totals of all accounts read'
+      );
+      return { data: result, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
+
+  /** The totals rows of ONE account whose `period_start` falls in the range. */
+  async listTotalsForAccountInRange(
+    userId: string,
+    range: CreditPeriodStartRange,
+    opts: CreditLedgerPageOptions
+  ): Promise<RepositoryResult<CreditLedgerPagedResult<CreditTotalsRow>>> {
+    const method = 'listTotalsForAccountInRange';
+    try {
+      this.assertAccount(userId);
+      this.assertRange(range);
+      this.assertPaging(opts);
+      const result = await this.pageTotals(range, opts, userId);
+      this.logger.debug({ method, rows: result.rows.length, reachedCeiling: result.reachedCeiling }, 'Credit totals read');
+      return { data: result, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
+
+  /**
+   * Pages the totals table. `userId` null is reachable only from the named
+   * all-accounts method above; the public account method always passes one.
+   */
+  private async pageTotals(
+    range: CreditPeriodStartRange,
+    opts: CreditLedgerPageOptions,
+    userId: string | null
+  ): Promise<CreditLedgerPagedResult<CreditTotalsRow>> {
+    const rows: CreditTotalsRow[] = [];
+    const seen = new Set<string>();
+
+    for (let from = 0; rows.length < opts.ceiling; from += opts.pageSize) {
+      const to = from + Math.min(opts.pageSize, opts.ceiling - from) - 1;
+      let query = this.supabase
+        .from('business_os_credit_totals')
+        .select(CREDIT_TOTALS_COLUMNS)
+        .gte('period_start', range.from.toISOString())
+        .lt('period_start', range.to.toISOString());
+      if (userId !== null) query = query.eq('user_id', userId);
+      const { data, error } = await query
+        .order('period_start', { ascending: false })
+        .order('user_id', { ascending: true })
+        .range(from, to);
+      if (error) throw error;
+
+      const page = (data ?? []) as unknown as CreditTotalsRow[];
+      for (const row of page) {
+        const key = `${row.user_id}|${row.period_start}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        rows.push(row);
+      }
+      if (page.length < to - from + 1) break;
+      if (from + opts.pageSize >= opts.ceiling) break;
+    }
+
+    return { rows: rows.slice(0, opts.ceiling), reachedCeiling: rows.length >= opts.ceiling };
+  }
+
+  // ============ Ledger rows ============
+
+  /**
+   * Every ledger row (charges AND adjustments) of the named accounts whose
+   * `period_start` falls in the range, newest first, paged, de-duplicated by
+   * id, up to `ceiling` rows across all accounts. The caller keeps only the
+   * (account, period) pairs it asked about.
+   */
+  async listRowsForAccountPeriods(
+    userIds: readonly string[],
+    range: CreditPeriodStartRange,
+    opts: CreditLedgerPageOptions
+  ): Promise<RepositoryResult<CreditLedgerPagedResult<CreditLedgerRow>>> {
+    const method = 'listRowsForAccountPeriods';
+    try {
+      this.assertAccounts(userIds);
+      this.assertRange(range);
+      this.assertPaging(opts);
+
+      const unique = [...new Set(userIds)];
+      const rows: CreditLedgerRow[] = [];
+      const seen = new Set<string>();
+      let reachedCeiling = false;
+
+      chunks: for (let i = 0; i < unique.length; i += CREDIT_LEDGER_READ_LIMITS.MAX_IDS_PER_REQUEST) {
+        const chunk = unique.slice(i, i + CREDIT_LEDGER_READ_LIMITS.MAX_IDS_PER_REQUEST);
+        for (let from = 0; ; from += opts.pageSize) {
+          const room = opts.ceiling - rows.length;
+          if (room <= 0) {
+            reachedCeiling = true;
+            break chunks;
+          }
+          const size = Math.min(opts.pageSize, room);
+          const { data, error } = await this.supabase
+            .from('business_os_credit_charges')
+            .select(CREDIT_LEDGER_ROW_COLUMNS)
+            .in('user_id', chunk)
+            .gte('period_start', range.from.toISOString())
+            .lt('period_start', range.to.toISOString())
+            .order('created_at', { ascending: false })
+            .order('id', { ascending: false })
+            .range(from, from + size - 1);
+          if (error) throw error;
+
+          const page = (data ?? []) as unknown as CreditLedgerRow[];
+          for (const row of page) {
+            // A row inserted during paging shifts an older one onto the next
+            // page: it is read twice, never skipped. Keep the first copy.
+            const key = String(row.id);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            rows.push(row);
+          }
+          if (page.length < size) break;
+        }
+      }
+
+      if (rows.length >= opts.ceiling) reachedCeiling = true;
+      this.logger.debug({ method, accounts: unique.length, rows: rows.length, reachedCeiling }, 'Credit ledger rows read');
+      return { data: { rows: rows.slice(0, opts.ceiling), reachedCeiling }, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
+
+  /**
+   * The CHARGE rows with these action ids (unique per charge), at most
+   * `MAX_IDS_PER_REQUEST` per call. Serves an adjustment's original when it
+   * sits in a period that was not read. The caller checks each row's account
+   * against the adjustment's: a lookup by id is not an ownership proof.
+   */
+  async findChargesByActionIds(actionIds: readonly string[]): Promise<RepositoryResult<CreditLedgerRow[]>> {
+    const method = 'findChargesByActionIds';
+    try {
+      if (!Array.isArray(actionIds) || actionIds.length === 0) {
+        throw new CreditLedgerReadGuardError('At least one action id is required');
+      }
+      const unique = [...new Set(actionIds)];
+      if (unique.length > CREDIT_LEDGER_READ_LIMITS.MAX_IDS_PER_REQUEST) {
+        throw new CreditLedgerReadGuardError(
+          `At most ${CREDIT_LEDGER_READ_LIMITS.MAX_IDS_PER_REQUEST} action ids per call`
+        );
+      }
+      for (const id of unique) {
+        if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
+          throw new CreditLedgerReadGuardError('Every action id must be a UUID');
+        }
+      }
+
+      const { data, error } = await this.supabase
+        .from('business_os_credit_charges')
+        .select(CREDIT_LEDGER_ROW_COLUMNS)
+        .eq('kind', 'charge')
+        .in('action_id', unique);
+      if (error) throw error;
+
+      const rows = (data ?? []) as unknown as CreditLedgerRow[];
+      this.logger.debug({ method, requested: unique.length, found: rows.length }, 'Credit charges read by action id');
+      return { data: rows, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
+}
+
+/** Singleton for convenience, matching the rest of the repository layer. */
+export const businessOsCreditLedgerReadRepository = new BusinessOsCreditLedgerReadRepository();

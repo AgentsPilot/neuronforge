@@ -26,22 +26,53 @@
  * calls are two `GET`s. Changing a value is still `npm run bos:llm-settings`
  * (runbook §3) until slice 3 lands the writer.
  *
+ * ── Two tabs (credit deduction slice 4a) ────────────────────────────────
+ * **Settings** is everything above, unchanged. **Costs & credits** is the
+ * operator cost report (`components/costs/CostsTab.tsx`): what Business OS
+ * actions cost us and what we charged. It is read-only too — one more `GET`,
+ * mounted only when the tab is first chosen, then KEPT mounted (hidden) so
+ * switching tabs keeps the chosen window, account and report instead of
+ * re-reading (SA CR-N2). Each tab controls its own `tabpanel`. The settings
+ * refresh, "read at" and the standing note belong to the Settings tab and are
+ * shown only there.
+ *
  * @see docs/workplans/BUSINESS_OS_LLM_MODEL_SETTINGS_ADMIN_UI_WORKPLAN.md §5
+ * @see docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_4_WORKPLAN.md §4.6
  */
 
 import { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 
 import { AreaCard } from './components/AreaCard';
+import { CostsTab } from './components/costs/CostsTab';
 import { PAGE_STANDING_NOTE, PAGE_SUBTITLE } from './copy';
+import { COSTS_TAB_LABEL, SETTINGS_TAB_LABEL } from './costCopy';
 import { formatInstant } from './format';
 import type { SettingsPayload } from './types';
+
+type PageTab = 'settings' | 'costs';
+
+const tabId = (id: PageTab) => `bos-llm-tab-${id}`;
+const panelId = (id: PageTab) => `bos-llm-panel-${id}`;
+
+const TABS: readonly (readonly [PageTab, string])[] = [
+  ['settings', SETTINGS_TAB_LABEL],
+  ['costs', COSTS_TAB_LABEL],
+];
 
 export default function BusinessOsLlmSettingsPage() {
   const [payload, setPayload] = useState<SettingsPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [tab, setTab] = useState<PageTab>('settings');
+  const onSettings = tab === 'settings';
+  // The cost report is not read until asked for; once asked, it stays mounted.
+  const [costsOpened, setCostsOpened] = useState(false);
+  const chooseTab = (id: PageTab) => {
+    if (id === 'costs') setCostsOpened(true);
+    setTab(id);
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -81,7 +112,7 @@ export default function BusinessOsLlmSettingsPage() {
               {PAGE_SUBTITLE}
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3" hidden={!onSettings}>
             {/* The label is not rendered without its value: `formatInstant`
                 returns null for an unreadable instant, and "read at " alone
                 would read as a missing fact rather than an absent one. */}
@@ -104,51 +135,84 @@ export default function BusinessOsLlmSettingsPage() {
             </button>
           </div>
         </div>
+        <nav className="flex gap-1" role="tablist" aria-label="Business OS AI">
+          {TABS.map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              id={tabId(id)}
+              aria-selected={tab === id}
+              aria-controls={panelId(id)}
+              data-testid={`tab-${id}`}
+              onClick={() => chooseTab(id)}
+              className={`-mb-px border-b-2 px-4 py-2 text-sm transition-colors ${
+                tab === id
+                  ? 'border-purple-500 text-white'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
       </header>
 
-      {/* Above the cards, not below them: the reason a card can be wrong has
-          to be read before the card is.
+      <div role="tabpanel" id={panelId('costs')} aria-labelledby={tabId('costs')} hidden={tab !== 'costs'}>
+        {costsOpened && <CostsTab />}
+      </div>
 
-          FR-5: this one muted line replaced a ~180-word amber banner. All four
-          of that banner's strings were framed around the on/off switch, which
-          is no longer on the page — but the residual truth is about the VALUES,
-          and it is what makes every number below conditional. Muted, not styled
-          as a warning, and with nothing to dismiss. */}
-      <p data-testid="page-standing-note" className="text-xs leading-relaxed text-slate-500">
-        {PAGE_STANDING_NOTE}
-      </p>
+      <div
+        role="tabpanel"
+        id={panelId('settings')}
+        aria-labelledby={tabId('settings')}
+        hidden={!onSettings}
+        className="space-y-6"
+      >
+        {/* Above the cards, not below them: the reason a card can be wrong has
+            to be read before the card is.
 
-      {error && (
-        <div
-          data-testid="page-error"
-          className="flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200"
-        >
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-          <span>{error}</span>
-        </div>
-      )}
+            FR-5: this one muted line replaced a ~180-word amber banner. All four
+            of that banner's strings were framed around the on/off switch, which
+            is no longer on the page — but the residual truth is about the VALUES,
+            and it is what makes every number below conditional. Muted, not styled
+            as a warning, and with nothing to dismiss. */}
+        <p data-testid="page-standing-note" className="text-xs leading-relaxed text-slate-500" hidden={!onSettings}>
+          {PAGE_STANDING_NOTE}
+        </p>
 
-      {loading && !payload && (
-        <div className="flex items-center gap-3 py-12 text-slate-300">
-          <RefreshCw className="h-6 w-6 animate-spin text-purple-500" aria-hidden="true" />
-          Reading the settings&hellip;
-        </div>
-      )}
+        {onSettings && error && (
+          <div
+            data-testid="page-error"
+            className="flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200"
+          >
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>{error}</span>
+          </div>
+        )}
 
-      {payload && (
-        <div className="space-y-3">
-          {payload.areas.map((area) => (
-            <AreaCard
-              key={area.area}
-              area={area}
-              expanded={expanded === area.area}
-              /* One at a time: the expanded card is long, and two open cards
-                 invite comparing values that belong to different areas. */
-              onToggle={() => setExpanded((current) => (current === area.area ? null : area.area))}
-            />
-          ))}
-        </div>
-      )}
+        {onSettings && loading && !payload && (
+          <div className="flex items-center gap-3 py-12 text-slate-300">
+            <RefreshCw className="h-6 w-6 animate-spin text-purple-500" aria-hidden="true" />
+            Reading the settings&hellip;
+          </div>
+        )}
+
+        {onSettings && payload && (
+          <div className="space-y-3">
+            {payload.areas.map((area) => (
+              <AreaCard
+                key={area.area}
+                area={area}
+                expanded={expanded === area.area}
+                /* One at a time: the expanded card is long, and two open cards
+                   invite comparing values that belong to different areas. */
+                onToggle={() => setExpanded((current) => (current === area.area ? null : area.area))}
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

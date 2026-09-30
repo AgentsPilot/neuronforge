@@ -61,6 +61,22 @@ export type {
   BusinessOsCreditChargeTrigger,
   BusinessOsCreditChargeAnchorSource,
 } from './BusinessOsCreditChargeRepository';
+// Business OS credit ledger, READ-ONLY (credit deduction slice 4a): the operator
+// cost report's reads. Server-only, service role, no write method.
+export {
+  BusinessOsCreditLedgerReadRepository,
+  businessOsCreditLedgerReadRepository,
+  CREDIT_LEDGER_ROW_COLUMNS,
+  CREDIT_TOTALS_COLUMNS,
+  CREDIT_LEDGER_READ_LIMITS,
+} from './BusinessOsCreditLedgerReadRepository';
+export type {
+  CreditLedgerRow,
+  CreditTotalsRow,
+  CreditPeriodStartRange,
+  CreditLedgerPageOptions,
+  CreditLedgerPagedResult,
+} from './BusinessOsCreditLedgerReadRepository';
 export {
   OrganizationRepository,
   organizationRepository,
