@@ -143,8 +143,16 @@ it.each([
 });
 
 it('SA Q-2: the friend-invite switch being off does not block a revoke', async () => {
-  expect(INVITE_ISSUANCE_POLICY.accountInvitesAvailable).toBe(false);
-  expect((await revoke(OWN_INVITE)).status).toBe(200);
+  // The switch ships ON (2026-10-01), so turn it off here: the rollback state
+  // must still let a champion withdraw an invite already sent.
+  const switchable = INVITE_ISSUANCE_POLICY as unknown as { accountInvitesAvailable: boolean };
+  const shipped = switchable.accountInvitesAvailable;
+  switchable.accountInvitesAvailable = false;
+  try {
+    expect((await revoke(OWN_INVITE)).status).toBe(200);
+  } finally {
+    switchable.accountInvitesAvailable = shipped;
+  }
 });
 
 it('a database error → 500, not 404, and no audit', async () => {

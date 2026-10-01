@@ -328,8 +328,9 @@ describe('Slices 5a/5b (F5a-10, F5b-3, SA R-5, Q-8): a champion friend invite', 
     expect(withAccount).toEqual(withoutAccount);
   });
 
-  it('with the switch off (as shipped): unavailable, and nothing is stamped or asked', async () => {
-    expect(INVITE_ISSUANCE_POLICY.accountInvitesAvailable).toBe(false);
+  it('with the switch off (the rollback state): unavailable, and nothing is stamped or asked', async () => {
+    // Ships ON since 2026-10-01; set off explicitly rather than rely on test order.
+    policy.accountInvitesAvailable = false;
     const { deps, repository, accounts } = harness(friendRow(), { hasAccount: true });
     const outcome = await viewInviteByToken(TOKEN, deps);
     expect(outcome.ok && outcome.response.state).toBe('unavailable');
