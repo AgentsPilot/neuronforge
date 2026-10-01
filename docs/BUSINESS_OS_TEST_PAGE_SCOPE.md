@@ -1,6 +1,6 @@
 # Business OS Test Page — Scope & Functionality
 
-> **Last Updated**: 2026-09-18
+> **Last Updated**: 2026-10-01
 
 **Location:** `app/test-business-os/page.tsx`
 **Route:** `/test-business-os`
@@ -49,6 +49,8 @@ This document describes the page as it exists today: the shared chrome, the Acco
 - If you are not signed in, the current-user panel says so and Business OS calls will return `401`.
 
 > **Routing note:** `/test-business-os` is in the middleware `skipOnboardingCheck` allowlist (alongside `/test-plugins-v2`). Without it, the V2 UI-routing rule rewrites the path to `/v2/test-business-os` (404). See `middleware.ts`.
+
+> **Payment hold (invite-only signup Slice 5b):** a server `app/test-business-os/layout.tsx` runs the payment-hold gate first, so an account created from a champion's friend invite that has not paid is sent to `/invite/awaiting-payment` instead of this page. Signed out, and for every other account, the page behaves exactly as before. See `lib/business-os/invites/paymentHoldGate.ts`.
 
 ---
 
@@ -361,3 +363,4 @@ Could not run a live session/DB. The following need a manual pass on `/test-busi
 | 2026-08-10 | Scheduling + Payments modules | The Modules tab now also lists **Scheduling** and **Payments** (both `visibility: business_os`) — no page changes required; the module list is data-driven. Updated the Modules section, use cases (Scheduling/Payments flows + delegate-only trigger notes), and linked the per-module user docs. |
 | 2026-09-17 | LLM Usage tab (Layer 1.1) | Added the **Tab: LLM Usage** section: admin-only, read-only attribution checks for one business (five checks, statuses including Incomplete, display caps and the 5,000-row ceiling, Check 5 open-end caveat, the business-selection exception to the session model, and a non-production "verify a test session" use case). Corrected the stale "only tab" statements to list Overview, Modules, Danger Zone and LLM Usage; documenting Danger Zone is follow-up F-5. |
 | 2026-09-18 | LLM Usage tab: Layer 1.5 areas | Documented the two new areas, `onboarding` and `images`: their call names (at most three onboarding call types fire, KI-D; `client_workflow_extraction` can appear ×2 in one group), how a zero-token image row reads in Check 1, Check 5 and the area totals, the images note under the area totals, the reuse cache writing no row (KI-B), and the mid-rollout zero lines. Check 3(c) text updated: no live caller should write the helper label any more; still Info (F-7). The verify-a-session use case gains an onboarding run and an image generation. |
+| 2026-10-01 | Payment hold on the harness (invite-only signup Slice 5b, SA R-2) | New server `app/test-business-os/layout.tsx` calls the payment-hold gate first: a friend who signed up from a champion's invite and has not paid is sent to `/invite/awaiting-payment`, because middleware skips this page and its Account Setup and module testers drive the full Business OS API. One note under Account Model. No other behaviour changes; signed out, the page renders as before. |
