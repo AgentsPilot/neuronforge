@@ -45,6 +45,7 @@ import { googleSignInClientId } from '@/lib/business-os/invites/googleSignInConf
 import { completeGoogleSignup } from '@/lib/business-os/invites/inviteRedemption';
 import { completeGoogleSignupSchema } from '@/lib/business-os/invites/inviteSchemas';
 import {
+  REDEMPTION_LANDING_PATHS,
   SIGNUP_RESPONSE_HEADERS,
   buildRedemptionDeps,
   flushRedemptionAudit,
@@ -61,9 +62,6 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const logger = createLogger({ module: 'PublicInviteSignupGoogleAPI' });
-
-/** Where a new champion lands (FR-13). */
-const LANDING = '/onboarding-chat';
 
 export async function POST(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
@@ -101,7 +99,11 @@ export async function POST(request: NextRequest) {
 
     if (outcome.ok) {
       requestLogger.info({ outcome: 'redeemed', method: 'google', inviteId: outcome.inviteId, accountId: outcome.accountId }, 'Signup completed');
-      return NextResponse.json({ success: true, data: { redirectTo: LANDING } }, { status: 200, headers: SIGNUP_RESPONSE_HEADERS });
+      // FR-13 / FR-35: a champion to onboarding; a friend (Slice 5b) to the payment hold.
+      return NextResponse.json(
+        { success: true, data: { redirectTo: REDEMPTION_LANDING_PATHS[outcome.landing] } },
+        { status: 200, headers: SIGNUP_RESPONSE_HEADERS }
+      );
     }
 
     const { status, body: answer } = refusalToHttp(outcome);

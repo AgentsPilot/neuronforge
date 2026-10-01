@@ -42,6 +42,11 @@ export interface InviteRow {
   redeemedAccountId: string | null;
   /** Slice 1b: the invitation circle (1 for an admin invite), or null. */
   level: number | null;
+  /**
+   * Slice 5b (FR-36): the account the new account was invited under (its
+   * lineage parent). Null for an L1 champion; absent from an older server.
+   */
+  parentAccountId?: string | null;
   /** Slice 1b (FR-12a, T-16): the signup stopped halfway (derived on the server). */
   redemptionStoppedHalfway: boolean;
   /** Slice 1b (SA D-2): the last recorded failure. Never an email. */

@@ -109,12 +109,18 @@ const ALLOWED = new Set(
     // (SA R-8). An admin route, gated by `requireAdmin`.
     'app/api/admin/business-os/accounts/[accountId]/summary/route.ts',
     'app/api/admin/business-os/accounts/[accountId]/summary/__tests__/route.test.ts',
-    // The redemption's production wiring. It may call exactly ONE plan-state
-    // write, `provisionFromInvite` (the finalise function), after mailbox
-    // proof, the invite claim and the account creation; the test below pins
-    // that it calls no other write method (F-8).
+    // The redemption's production wiring. It may call exactly TWO plan-state
+    // writes, `provisionFromInvite` (the champion finalise) and, from Slice 5b,
+    // `provisionFromFriendInvite` (the friend finalise, T-19), each after
+    // mailbox proof, the invite claim and the account creation; the test below
+    // pins that it calls no other write method (F-8). Slice 5b also hands it the
+    // plan repository as the friend issuer's READ-ONLY plan reader
+    // (`findEntitlementInputs`, the TypeScript in-force re-check).
     'lib/business-os/invites/redemptionDeps.ts',
     'lib/business-os/invites/__tests__/redemptionDeps.test.ts',
+    // Slice 5b (QA-1): the friend code route's end-to-end test. It replaces the
+    // plan repository with a fake that only answers `findEntitlementInputs`.
+    'app/api/public/invites/signup/__tests__/code.friend.route.test.ts',
     // ── Credit deduction slice 4b, 2026-09-29 — the leak check ─────────────
     // The leak check walks every Business OS account (plan rows, SA S-1) and
     // needs each one's `period_anchor` to name the billing period of a leak
@@ -152,11 +158,13 @@ const WRITE_METHODS = [
   'resetPlanState',
   // Invite-only signup Slice 1b (F-8): the finalise function writes a plan row.
   'provisionFromInvite',
+  // Invite-only signup Slice 5b (T-19): the friend finalise writes a no-basis plan row.
+  'provisionFromFriendInvite',
 ];
 
-/** The one invite-redemption file allowed to name the plan repository, and the one write it may call. */
+/** The one invite-redemption file allowed to name the plan repository, and the writes it may call. */
 const INVITE_REDEMPTION_WIRING = 'lib/business-os/invites/redemptionDeps.ts';
-const INVITE_REDEMPTION_WRITE = 'provisionFromInvite';
+const INVITE_REDEMPTION_WRITES = ['provisionFromInvite', 'provisionFromFriendInvite'];
 
 /**
  * Allowed files that are NOT the repository layer and NOT an admin route.
@@ -288,10 +296,12 @@ describe('RC-15 — entitlement repository referrers', () => {
     expect(misclassified).toEqual([]);
   });
 
-  it('Slice 1b (F-8): the invite redemption wiring calls provisionFromInvite and NO other plan-state write', () => {
+  it('Slices 1b/5b (F-8, T-19): the invite redemption wiring calls the two finalise writes and NO other plan-state write', () => {
     const source = readFileSync(join(ROOT, ...INVITE_REDEMPTION_WIRING.split('/')), 'utf8');
-    expect(source).toMatch(new RegExp(`\\.${INVITE_REDEMPTION_WRITE}\\s*\\(`));
-    for (const method of WRITE_METHODS.filter((name) => name !== INVITE_REDEMPTION_WRITE)) {
+    for (const write of INVITE_REDEMPTION_WRITES) {
+      expect(source).toMatch(new RegExp(`\\.${write}\\s*\\(`));
+    }
+    for (const method of WRITE_METHODS.filter((name) => !INVITE_REDEMPTION_WRITES.includes(name))) {
       expect(source).not.toMatch(new RegExp(`\\.${method}\\s*\\(`));
     }
   });

@@ -176,7 +176,7 @@ describe('each state', () => {
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   });
 
-  it('valid, paid: the price and "payment required"', async () => {
+  it('valid, paid: the price and ONE payment statement (SA CR-1: "opens soon", not "required at signup", until 5c)', async () => {
     respond = () => ({
       status: 200,
       body: {
@@ -187,7 +187,8 @@ describe('each state', () => {
     render(<InvitePage />);
     const section = await screen.findByTestId('invite-state-valid');
     expect(section).toHaveTextContent('$42 per month');
-    expect(section).toHaveTextContent('Payment is required at signup.');
+    expect(section).not.toHaveTextContent('Payment is required at signup.');
+    expect(section).toHaveTextContent(INVITE_PAGE_COPY.en.paymentOpensLater);
   });
 
   it.each([
@@ -536,13 +537,14 @@ describe('Slice 3b: "Continue with Google" on the page (D-9, R-6, L-8, T-3b-16)'
   });
 });
 
-describe('Slice 5a (FR-33, F5a-10): a champion friend invite, before friend signup exists', () => {
-  const opensSoon = {
-    state: 'signup_opens_soon',
+describe('Slice 5b (FR-34, D-11): a champion friend invite is `valid`, with the form, the Google button and the payment line', () => {
+  const friendData = {
+    state: 'valid',
     language: 'en',
     inviterDisplayName: 'Dana Champion',
     personalNote: 'You will love this',
     linkExpiresAt: '2026-10-31T12:00:00.000Z',
+    maskedEmail: 'f•••@example.com',
     offer: {
       planName: 'Fixture Paid Plan',
       free: false,
@@ -552,31 +554,51 @@ describe('Slice 5a (FR-33, F5a-10): a champion friend invite, before friend sign
     },
   };
 
-  it('shows who invited, the note, the plan with its price and "payment required", and "opens soon" — with NO form and NO Google button', async () => {
+  it('shows who invited, the note, the plan, its price, "payment required", the payment-later line, the form and Google', async () => {
     process.env.NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID = 'client.apps.googleusercontent.com';
-    respond = () => ({ status: 200, body: { success: true, data: opensSoon } });
+    respond = () => ({ status: 200, body: { success: true, data: friendData } });
     render(<InvitePage />);
 
-    const section = await screen.findByTestId('invite-state-signup_opens_soon');
+    const section = await screen.findByTestId('invite-state-valid');
     const copy = INVITE_PAGE_COPY.en;
     expect(section).toHaveTextContent(copy.validHeading('Dana Champion'));
     expect(screen.getByTestId('invite-note')).toHaveTextContent('You will love this');
-    expect(screen.getByTestId('invite-plan')).toHaveTextContent('Fixture Paid Plan');
     expect(section).toHaveTextContent(copy.perMonth(49));
-    expect(section).toHaveTextContent(copy.paymentRequired);
-    expect(screen.getByTestId('invite-signup-opens-soon')).toHaveTextContent(copy.signupOpensSoon);
-
-    expect(screen.queryByTestId('invite-signup')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('invite-signup-form')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('invite-google-stub')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('invite-state-valid')).not.toBeInTheDocument();
-    // Only the validate call was made: nothing is requested or created from here.
+    expect(screen.getByTestId('invite-payment-opens-later')).toHaveTextContent(copy.paymentOpensLater);
+    expect(await screen.findByTestId('invite-signup')).toBeInTheDocument();
+    expect(screen.getByTestId('invite-google-stub')).toBeInTheDocument();
+    // Only the validate call: nothing is requested until the friend acts.
     expect(calls).toHaveLength(1);
   });
 
-  it('every locale has the "opens soon" sentence', () => {
+  it.each(['en', 'he', 'es'] as const)('SA CR-1 (%s): a friend invite shows exactly ONE payment statement, never "required at signup"', async (language) => {
+    respond = () => ({ status: 200, body: { success: true, data: { ...friendData, language } } });
+    render(<InvitePage />);
+    const section = await screen.findByTestId('invite-state-valid');
+    const copy = INVITE_PAGE_COPY[language];
+    expect(section.textContent).not.toContain(copy.paymentRequired);
+    expect(section.textContent?.split(copy.paymentOpensLater).length).toBe(2);
+  });
+
+  it('a free (champion) offer has no payment line', async () => {
+    render(<InvitePage />);
+    await screen.findByTestId('invite-state-valid');
+    expect(screen.queryByTestId('invite-payment-opens-later')).not.toBeInTheDocument();
+  });
+
+  it('the 5a "opens soon" state is gone (SA Q-8): an unknown state renders nothing actionable', async () => {
+    respond = () => ({ status: 200, body: { success: true, data: { ...friendData, state: 'signup_opens_soon' } } });
+    render(<InvitePage />);
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(screen.queryByTestId('invite-signup')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('invite-google-stub')).not.toBeInTheDocument();
+  });
+
+  it('every locale has the payment-later sentence, and it names no price or plan', () => {
     for (const locale of ['en', 'he', 'es'] as const) {
-      expect(INVITE_PAGE_COPY[locale].signupOpensSoon.length).toBeGreaterThan(10);
+      const line = INVITE_PAGE_COPY[locale].paymentOpensLater;
+      expect(line.length).toBeGreaterThan(10);
+      expect(line).not.toMatch(/[0-9$]/);
     }
   });
 });

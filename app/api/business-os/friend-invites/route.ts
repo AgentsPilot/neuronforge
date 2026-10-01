@@ -32,7 +32,6 @@ import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { resolveAccountId } from '@/lib/business-os/entitlements/account';
 import { friendInviteConfig, friendInviteEmailDeps, friendInviteRepositories } from '@/lib/business-os/invites/friendInviteDeps';
 import {
-  areFriendInvitesSwitchedOn,
   friendInviteRefusalMessage,
   getFriendInviteSummary,
   sendFriendInvite,
@@ -135,11 +134,15 @@ export async function POST(request: NextRequest) {
         return failure('Could not send the invite', 500);
       }
 
-      requestLogger.warn({ accountId, refusal: outcome.refusal }, 'Friend invite refused');
-      // SA suggestion: a refusal because the switch itself is off is reachable
-      // only by a hand-made POST, so it is not audited (it would let any
-      // signed-in user add audit rows at will). Every other refusal is.
-      if (!(outcome.refusal === 'not_eligible' && !areFriendInvitesSwitchedOn())) {
+      if (outcome.refusal === 'not_eligible') {
+        // N-4 (Slice 5b, D-12): never audited, whether the switch is off or
+        // the caller is not an in-force champion. Any signed-in account can
+        // send this POST, so auditing it would let anyone add audit rows at
+        // will, and "a non-champion was refused" carries nothing worth a
+        // permanent row. Logged instead, with the correlation id.
+        requestLogger.info({ accountId, refusal: outcome.refusal }, 'Friend invite refused (not audited)');
+      } else {
+        requestLogger.warn({ accountId, refusal: outcome.refusal }, 'Friend invite refused');
         await auditTrail
           .log({
             action: AUDIT_EVENTS.BOS_FRIEND_INVITE_REFUSED,

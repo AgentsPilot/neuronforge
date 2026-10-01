@@ -30,17 +30,21 @@ import 'server-only';
  * read is `{ ok: false }` (the route says "try again"): "no account" is never
  * the answer by default, or signup would be offered to an existing customer.
  *
- * ── A champion's friend invite (Slice 5a, F5a-10, FR-33, SA R-5) ─────────────
+ * ── A champion's friend invite (Slice 5a F5a-10, SA R-5; Slice 5b F5b-3) ────
  * Keyed on `issuer_kind = 'account'`, whatever the grant, and decided BEFORE
- * the existing-account check: the champion holds the link (FR-30), so asking
- * would tell them whether any address they typed has an AgentPilot account. A
- * pending account-issued TIER invite, with friend invites switched on, gets
- * `signup_opens_soon`: the champion's name and note and the offer (the plan,
- * its price, "payment required"), and no masked email, because there is no
- * signup form until 5b. With the switch off, or any other grant, it is
- * `unavailable` (T-18). The issuer's cohort is re-checked at redemption in 5b
- * (T-19), not here. The redemption routes refuse every tier invite regardless
- * (`inviteRedemption.ts`, `paid_invites_not_available`).
+ * the existing-account check, which an account-issued invite NEVER reaches:
+ * the champion holds the link (FR-30), so asking would tell them whether any
+ * address they typed has an AgentPilot account. From Slice 5b, a pending
+ * account-issued TIER invite with friend invites switched on gets `valid`,
+ * with the signup form (the champion's name and note, the offer with its
+ * price, and the masked address, which the champion typed anyway). The page
+ * adds ONE payment statement for it, "payment opens soon", never "payment
+ * required at signup" (SA CR-1, until 5c). Whether the address already has an account is decided only
+ * after mailbox proof, by the signup routes (`inviteRedemption.ts`). With the
+ * switch off, or any other grant, it is `unavailable` (T-18). The issuer's
+ * cohort is re-checked at redemption (T-19), not here (5a Q-6). The 5a state
+ * `signup_opens_soon` is gone (SA Q-8): the switch now means friends may be
+ * invited AND may sign up.
  *
  * ── Nothing sensitive is logged ─────────────────────────────────────────────
  * This module logs nothing itself except a failed first-view stamp, keyed by the
@@ -63,7 +67,6 @@ import { maskEmail } from './signupCode';
 export type PublicInviteState =
   | 'not_recognised'
   | 'valid'
-  | 'signup_opens_soon'
   | 'existing_account'
   | 'expired'
   | 'revoked'
@@ -88,19 +91,6 @@ export type PublicInviteResponse =
        * domain. The full email is returned only after a successful signup.
        */
       maskedEmail: string;
-    }
-  | {
-      /**
-       * Slice 5a (FR-33): a champion's friend invite before friend signup
-       * exists (5b). What `valid` carries, minus the masked email: there is no
-       * form to show it on, and nothing is created from here.
-       */
-      state: 'signup_opens_soon';
-      language: string;
-      inviterDisplayName: string;
-      personalNote: string | null;
-      linkExpiresAt: string;
-      offer: InviteOffer;
     }
   | {
       state: NarrowState;
@@ -183,21 +173,26 @@ export async function viewInviteByToken(
   // cleanly rather than described as something that no longer exists.
   if (!isInviteGrantAvailable(deps.config, row)) return narrow('unavailable');
 
-  // Slice 5a (F5a-10, SA R-5): an account-issued invite NEVER reaches the
-  // existing-account check below, nor the `valid` state with its form.
+  // Slice 5a (F5a-10, SA R-5) and 5b (F5b-3): an account-issued invite NEVER
+  // reaches the existing-account check below. With the switch on it gets the
+  // signup form; the account question waits for mailbox proof.
   if (row.issuer_kind === 'account') {
     if (row.grant_kind !== 'tier' || !INVITE_ISSUANCE_POLICY.accountInvitesAvailable) return narrow('unavailable');
+    const friend = await deps.repository.findInviteeEmailForPublicCheck(row.id);
+    if (friend.error || !friend.data) return { ok: false };
+    const friendOffer = describeInviteOffer(row, deps.config, deps.now);
     await markFirstView(row, deps);
     return {
       ok: true,
       inviteId: row.id,
       response: {
-        state: 'signup_opens_soon',
+        state: 'valid',
         language,
         inviterDisplayName,
         personalNote: row.personal_note,
         linkExpiresAt: row.link_expires_at,
-        offer: describeInviteOffer(row, deps.config, deps.now),
+        offer: friendOffer,
+        maskedEmail: maskEmail(friend.data),
       },
     };
   }

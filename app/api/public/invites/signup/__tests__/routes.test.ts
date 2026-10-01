@@ -16,10 +16,10 @@ const state = {
   user: null as { id: string } | null,
   userThrows: false,
   requestOutcome: { ok: true, codeExpiresAt: 'E', resendAvailableAt: 'R' } as Record<string, unknown>,
-  completeOutcome: { ok: true, email: 'invitee@example.com', accountId: 'acct', inviteId: 'inv' } as Record<string, unknown>,
+  completeOutcome: { ok: true, email: 'invitee@example.com', accountId: 'acct', inviteId: 'inv', landing: 'onboarding' } as Record<string, unknown>,
   requestCalls: [] as unknown[],
   completeCalls: [] as unknown[],
-  googleOutcome: { ok: true, accountId: 'acct', inviteId: 'inv' } as Record<string, unknown>,
+  googleOutcome: { ok: true, accountId: 'acct', inviteId: 'inv', landing: 'onboarding' } as Record<string, unknown>,
   googleCalls: [] as unknown[],
   googleThrows: false,
   events: [] as string[],
@@ -100,10 +100,10 @@ beforeEach(() => {
   state.user = null;
   state.userThrows = false;
   state.requestOutcome = { ok: true, codeExpiresAt: 'E', resendAvailableAt: 'R' };
-  state.completeOutcome = { ok: true, email: 'invitee@example.com', accountId: 'acct', inviteId: 'inv' };
+  state.completeOutcome = { ok: true, email: 'invitee@example.com', accountId: 'acct', inviteId: 'inv', landing: 'onboarding' };
   state.requestCalls = [];
   state.completeCalls = [];
-  state.googleOutcome = { ok: true, accountId: 'acct', inviteId: 'inv' };
+  state.googleOutcome = { ok: true, accountId: 'acct', inviteId: 'inv', landing: 'onboarding' };
   state.googleCalls = [];
   state.googleThrows = false;
   state.events = [];
@@ -183,6 +183,12 @@ describe('POST /signup/complete', () => {
     expect(headersOf(response)).toEqual({ cache: 'no-store', referrer: 'no-referrer' });
     expect(state.completeCalls).toEqual([validBody]);
     expect(state.events).toEqual(['getUser', 'completeSignup', 'flush']);
+  });
+
+  it('Slice 5b (FR-35): a friend lands on the payment hold, never onboarding', async () => {
+    state.completeOutcome = { ok: true, email: 'friend@example.com', accountId: 'acct', inviteId: 'inv', landing: 'awaiting_payment' };
+    const response = await complete(validBody);
+    expect(await response.json()).toEqual({ success: true, data: { email: 'friend@example.com', redirectTo: '/invite/awaiting-payment' } });
   });
 
   it.each([
@@ -292,6 +298,12 @@ describe('POST /signup/google (Slice 3b; T-3b-12, D-9, R-6, R-11)', () => {
     expect(headersOf(response)).toEqual({ cache: 'no-store', referrer: 'no-referrer' });
     expect(state.googleCalls).toEqual([googleBody]);
     expect(state.events).toEqual(['getUser', 'completeGoogleSignup', 'flush']);
+  });
+
+  it('Slice 5b (FR-35): a Google friend lands on the payment hold, never onboarding', async () => {
+    state.googleOutcome = { ok: true, accountId: 'acct', inviteId: 'inv', landing: 'awaiting_payment' };
+    const response = await google(googleBody);
+    expect(await response.json()).toEqual({ success: true, data: { redirectTo: '/invite/awaiting-payment' } });
   });
 
   it('D-9 / R-6: unconfigured → 404 before the body or the session is read', async () => {

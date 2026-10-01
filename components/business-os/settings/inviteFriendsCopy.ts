@@ -23,6 +23,11 @@ export type InviteFriendsErrorCode =
   | 'invalid_input'
   | 'generic';
 
+/**
+ * `joined` = the friend created an account (`redeemed_at` set, F5b-7). Until
+ * payment is live (Slice 5c) such a friend is held, so the words say "not
+ * subscribed yet" rather than implying they are using the product.
+ */
 export type InviteFriendsStatus = 'pending' | 'expired' | 'revoked' | 'joined';
 
 export interface InviteFriendsCopy {
@@ -80,7 +85,7 @@ export const INVITE_FRIENDS_COPY: Record<InviteFriendsLocale, InviteFriendsCopy>
     listHeading: 'Your invites',
     empty: "You haven't invited anyone yet.",
     sentOn: (date) => `Sent ${date}`,
-    status: { pending: 'Pending', expired: 'Expired', revoked: 'Revoked', joined: 'Signed up' },
+    status: { pending: 'Pending', expired: 'Expired', revoked: 'Revoked', joined: 'Signed up — not subscribed yet' },
     slotReturned: 'Back in your invites',
     revoke: 'Revoke',
     revokeConfirm: (email) => `Revoke the invite to ${email}? The link will stop working.`,
@@ -119,7 +124,7 @@ export const INVITE_FRIENDS_COPY: Record<InviteFriendsLocale, InviteFriendsCopy>
     listHeading: 'ההזמנות שלך',
     empty: 'עדיין לא הזמנת אף אחד.',
     sentOn: (date) => `נשלחה ${date}`,
-    status: { pending: 'ממתינה', expired: 'פג תוקף', revoked: 'בוטלה', joined: 'נרשם' },
+    status: { pending: 'ממתינה', expired: 'פג תוקף', revoked: 'בוטלה', joined: 'נרשם — עדיין ללא מנוי' },
     slotReturned: 'חזרה להזמנות שלך',
     revoke: 'ביטול',
     // The address is isolated left-to-right inside the Hebrew sentence.
@@ -160,7 +165,7 @@ export const INVITE_FRIENDS_COPY: Record<InviteFriendsLocale, InviteFriendsCopy>
     listHeading: 'Tus invitaciones',
     empty: 'Todavía no has invitado a nadie.',
     sentOn: (date) => `Enviada el ${date}`,
-    status: { pending: 'Pendiente', expired: 'Caducada', revoked: 'Revocada', joined: 'Registrado' },
+    status: { pending: 'Pendiente', expired: 'Caducada', revoked: 'Revocada', joined: 'Registrado — aún sin suscripción' },
     slotReturned: 'De vuelta en tus invitaciones',
     revoke: 'Revocar',
     revokeConfirm: (email) => `¿Revocar la invitación a ${email}? El enlace dejará de funcionar.`,

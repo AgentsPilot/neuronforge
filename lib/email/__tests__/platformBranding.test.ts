@@ -93,6 +93,9 @@ describe('who uses the platform branding', () => {
   const ALLOWED = new Set([
     'lib/email/templates/invite-invitation.ts',
     'lib/email/templates/invite-signup-code.ts',
+    // Slice 5b (F5b-3, SA R-5): the "you already have an account" notice, a
+    // platform security message from the system sender, like the code email.
+    'lib/email/templates/invite-existing-account.ts',
   ]);
 
   function walk(dir: string, out: string[]): void {
@@ -104,7 +107,7 @@ describe('who uses the platform branding', () => {
     }
   }
 
-  it('is imported only by the invitation and sign-up code templates', () => {
+  it('is imported only by the invitation, sign-up code and existing-account templates', () => {
     const files: string[] = [];
     for (const top of ['lib', 'app', 'components']) {
       const dir = path.join(ROOT, top);

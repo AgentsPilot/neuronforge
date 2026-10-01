@@ -271,7 +271,7 @@ describe('FR-8a / L-3: the invited email already has an account (Slice 1a)', () 
   });
 });
 
-describe('Slice 5a (F5a-10, FR-33, SA R-5): a champion friend invite', () => {
+describe('Slices 5a/5b (F5a-10, F5b-3, SA R-5, Q-8): a champion friend invite', () => {
   const policy = INVITE_ISSUANCE_POLICY as unknown as { accountInvitesAvailable: boolean };
   const friendRow = (overrides: Partial<BusinessOsInvitePublicView> = {}) =>
     stored({
@@ -287,21 +287,45 @@ describe('Slice 5a (F5a-10, FR-33, SA R-5): a champion friend invite', () => {
     policy.accountInvitesAvailable = false;
   });
 
-  it('with the switch on: signup_opens_soon, with the offer and no masked email, and NO existing-account check', async () => {
+  it('with the switch on (5b): valid, with the offer and the masked email, and NO existing-account check (F5b-3)', async () => {
     policy.accountInvitesAvailable = true;
+    // The address HAS an account: the page must still say nothing about it.
     const { deps, repository, accounts } = harness(friendRow(), { hasAccount: true });
     const outcome = await viewInviteByToken(TOKEN, deps);
 
     expect(outcome.ok).toBe(true);
     const response = outcome.ok ? (outcome.response as Record<string, unknown>) : {};
-    expect(response.state).toBe('signup_opens_soon');
-    expect(Object.keys(response).sort()).toEqual(['inviterDisplayName', 'language', 'linkExpiresAt', 'offer', 'personalNote', 'state']);
+    expect(response.state).toBe('valid');
+    expect(Object.keys(response).sort()).toEqual([
+      'inviterDisplayName',
+      'language',
+      'linkExpiresAt',
+      'maskedEmail',
+      'offer',
+      'personalNote',
+      'state',
+    ]);
     expect((response.offer as { free: boolean }).free).toBe(false);
+    expect(response.maskedEmail).not.toBe(INVITEE_EMAIL);
+    expect(String(response.maskedEmail)).toContain('•');
     // The champion holds the link: never ask whether the typed address has an account.
-    expect(repository.findInviteeEmailForPublicCheck).not.toHaveBeenCalled();
     expect(accounts.emailHasAccount).not.toHaveBeenCalled();
     expect(repository.markOpenedByExistingAccount).not.toHaveBeenCalled();
     expect(repository.markFirstViewed).toHaveBeenCalledTimes(1);
+  });
+
+  it('with the switch on and a failed email read: try again, never a form without a masked address', async () => {
+    policy.accountInvitesAvailable = true;
+    const { deps, accounts } = harness(friendRow(), { emailError: true });
+    expect(await viewInviteByToken(TOKEN, deps)).toEqual({ ok: false });
+    expect(accounts.emailHasAccount).not.toHaveBeenCalled();
+  });
+
+  it('whether or not the address has an account, the answer is identical (F5b-3)', async () => {
+    policy.accountInvitesAvailable = true;
+    const withAccount = await viewInviteByToken(TOKEN, harness(friendRow(), { hasAccount: true }).deps);
+    const withoutAccount = await viewInviteByToken(TOKEN, harness(friendRow(), { hasAccount: false }).deps);
+    expect(withAccount).toEqual(withoutAccount);
   });
 
   it('with the switch off (as shipped): unavailable, and nothing is stamped or asked', async () => {
