@@ -1,6 +1,6 @@
 # Workplan: Business OS Invite-Only Signup, Slice 3 (Sign up with Google, plus the platform-email fix)
 
-> **Last Updated**: 2026-09-29
+> **Last Updated**: 2026-09-30
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_INVITE_SIGNUP_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_INVITE_SIGNUP_REQUIREMENT.md) (§7.3 FR-11 to FR-13, §8.1, §10 Slice 3, AC-11, BQ-2, BQ-7, §16.3 T-3 to T-6, §16.5 L-1, L-8, L-10)
@@ -9,6 +9,7 @@
 **Branch:** `feature/bos-invite-signup-slice-3`, cut from `origin/main` at bd763222 (the #146 merge) on 2026-09-29, in the `neuronforge-invite-s0` worktree. Upstream tracking is unset, so a plain `git push` cannot reach `main`. Every file reference below was checked against bd763222.
 **3a branch:** `feature/bos-invite-signup-slice-3a`, switched from `feature/bos-invite-signup-slice-3` on 2026-09-29 carrying these docs uncommitted; no upstream. 3b is built separately in the `neuronforge-invite-s1` worktree.
 **Status:** SA approved with conditions. **3a SA code-approved; QA waived by the user for 3a (2026-09-29); user approved the commit and PR (2026-09-29); committed by RM on `feature/bos-invite-signup-slice-3a` (`646bf549`, `97339856`), PR #149 open, not merged.** 3b in progress elsewhere.
+**Final status (2026-09-30):** 3a **merged** (PR #149). 3b **merged** inert (PR #152). **Google sign-up was switched ON in production on 2026-09-30** through the Vercel setting `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` (Production only), set by the user and verified by TL: the Google endpoint now answers 400 instead of 404 `google_signin_not_configured`, and the client id is present in the `/invite` page bundle. Ops record in §6.1. **The user's production Google test is pending** (3b-10 stays open until it passes).
 
 ## Overview
 
@@ -224,6 +225,18 @@ None of these gates the **merge** (D-9). All of them gate **switching it on**.
 | **G-2** | Google Cloud console holder | On that OAuth client, **Authorized JavaScript origins**: add `https://neuronforge-kohl.vercel.app`, `http://localhost:3000` and `http://localhost` (GIS needs both localhost forms). | Screenshot or list |
 | **G-3** | User (Supabase) | Only if GIS uses a **different** client from Supabase's provider: add it to the provider's comma-separated Client IDs, so `signInWithIdToken` accepts its tokens. | Done / not needed |
 | **G-4** | Offir (Vercel admin) | Only if Q-3 chooses a new variable: set it on Production and **redeploy** (a `NEXT_PUBLIC_` value is fixed at build time). | Set + deploy id |
+
+### 6.1 Ops record (switch-on, 2026-09-30)
+
+| # | Result |
+|---|---|
+| **G-1** | ✅ Done. Client id `921980058947-mhcc99u2e8dq2bimroclqej00u5eltb6.apps.googleusercontent.com` (a public identifier, not a secret). The Google consent screen is **"In production"**. |
+| **G-2** | ✅ **Done by the user.** The JavaScript origin `https://neuronforge-kohl.vercel.app` was added. The localhost origins were **removed again** from the production client, because the user uses a separate dev client locally. |
+| **G-3** | Not needed. |
+| **G-4** | ✅ Done through the Vercel setting `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` (Production only), set by the user and verified by TL: the endpoint answers 400 instead of 404, and the client id is in the `/invite` page bundle. |
+| Alternative | The code-default switch-on (committing the public client id as the accessor's default, SA pre-approved) was prepared but **dropped** in favour of the Vercel setting. |
+| Production test | **Pending** (the user). 3b-10 is ticked only if it passes. |
+| Local testing | Now needs the **dev** client id in `.env.local` (`NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID`), **and** that dev id added to Supabase's Google provider authorized Client IDs, so `signInWithIdToken` accepts its tokens. |
 
 ---
 
@@ -744,6 +757,7 @@ None found. There is one module-level `OAuth2Client`, and the certificate cache 
 - **Commits:** `ffea1e63` feat(business-os): invite signup slice 3b — continue with Google (merges inert) · `b781cafe` test(business-os): pin the Google invite signup verifier, button, sign-in and redaction · plus this `docs:` commit recording the 3b implementation, SA and QA records
 - **PR:** to `main`, opened by RM 2026-09-29, not merged. No DB change; merges inert (button hidden, route 404) until `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` is set; merge once CI is green, on the user's instruction
 - **Switch-on owed:** G-1 (record Supabase's Google client id and the consent-screen status), G-2 (Offir adds the authorized JavaScript origins), set the client id and redeploy (SA pre-approved committing the public id as the accessor default if Vercel access stalls), R-4 check, then the production checklist in QA Report 3b (needs a real second Gmail account)
+- **Update 2026-09-30:** PR #149 (3a) and PR #152 (3b) are merged. Switch-on is done: G-1, G-2 and G-4 complete, G-3 not needed, through the Vercel setting rather than the code default (§6.1). Still owed: the user's production Google test (the checklist above, which also settles R-4 on production).
 
 ---
 
@@ -758,3 +772,4 @@ None found. There is one module-level `OAuth2Client`, and the certificate cache 
 | 2026-09-29 | QA waived by user for 3a; user approved 3a (RM) | QA waived by user for 3a (proportionate effort; email template change, SA code-approved). User approved the commit and PR. Status, 3a-6, QA Testing Report and Commit Info updated; RM commits and opens the 3a PR. |
 | 2026-09-29 | 3a committed, PR #149 opened (RM) | Commits `646bf549` (docs) and `97339856` (feat); pushed and PR #149 opened to `main`, not merged. Status and Commit Info updated. |
 | 2026-09-29 | 3b implemented, SA code-approved, QA PASS WITH NOTES; committed, PR opened (RM) | Dev task progress 3b-1..3b-9 and deviations DEV-3b-1..8 merged from Dev's notes; SA Code Review 3b (approved, no blockers, 3 Low notes + backlog: `signInWithPassword` logs `{ email }`); QA Report 3b (PASS WITH NOTES, 74 probes, 10/10 mutants killed, QA-3b-1..3, production switch-on checklist). User approved: "I approve committing 3b and opening the PR." Commits `ffea1e63` (feat), `b781cafe` (test); PR to `main` opened, not merged. 3b-10 (R-4, live GIS) and switch-on G-1/G-2/client id remain. |
+| 2026-09-30 | Final status and switch-on recorded (Dev, for TL) | 3a merged (#149) and 3b merged (#152). Google sign-up switched ON in production on 2026-09-30 through the Vercel setting `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` (Production only), set by the user and verified by TL (the endpoint answers 400 instead of 404; the client id is in the `/invite` bundle). New §6.1 ops record: G-1 done (client id recorded; consent screen "In production"), G-2 done by the user (production origin added; localhost origins removed again, a separate dev client is used locally), G-3 not needed, G-4 done via the Vercel setting. The code-default alternative was prepared and dropped. Local testing needs the dev client id in `.env.local` and in Supabase's Google provider Client IDs. The user's production Google test is pending; 3b-10 stays open. Status line and Commit Info updated in place, no lines removed. |
