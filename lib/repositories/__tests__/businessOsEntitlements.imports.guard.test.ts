@@ -135,8 +135,19 @@ const ALLOWED = new Set(
     // nothing else; listed in NO_STATE_WRITE_REFERRERS below, which pins it.
     // The operations themselves name no plan repository (a structural type).
     'lib/business-os/invites/friendInviteDeps.ts',
+    // ── Credit deduction slice 6a, 2026-09-30 — the owner credits card ──────
+    // Credit deduction slice 6a: the owner card's period — READ ONLY,
+    // `findPeriodAnchor` and nothing else (SA W6-1). The one file that wires the
+    // plan repository for `GET /api/business-os/usage`; the account id is the
+    // session's, through the account seam. Listed in NO_STATE_WRITE_REFERRERS
+    // below, which pins it, and the slice 6a test below pins the one method.
+    'lib/business-os/credits/ownerCreditUsageDeps.ts',
   ].map((p) => p.split('/').join(sep))
 );
+
+/** Slice 6a: the owner card's wiring, and the ONE plan-repository method it may call. */
+const OWNER_CREDIT_CARD_WIRING = 'lib/business-os/credits/ownerCreditUsageDeps.ts';
+const OWNER_CREDIT_CARD_METHOD = 'findPeriodAnchor';
 
 /** The methods that CHANGE entitlement state. Component 5's admin routes own these. */
 const WRITE_METHODS = [
@@ -178,6 +189,8 @@ const NO_STATE_WRITE_REFERRERS = [
   'lib/business-os/credits/creditLeakCheckDeps.ts',
   // Invite-only signup Slice 5a: the friend-invite wiring reads plan rows only.
   'lib/business-os/invites/friendInviteDeps.ts',
+  // Credit deduction slice 6a: the owner card's period — READ ONLY, `findPeriodAnchor` and nothing else.
+  'lib/business-os/credits/ownerCreditUsageDeps.ts',
 ].map((p) => p.split('/').join(sep));
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -291,6 +304,18 @@ describe('RC-15 — entitlement repository referrers', () => {
     for (const method of WRITE_METHODS.filter((name) => !INVITE_REDEMPTION_WRITES.includes(name))) {
       expect(source).not.toMatch(new RegExp(`\\.${method}\\s*\\(`));
     }
+  });
+
+  it('Slice 6a (W6-1): the owner credit card wiring calls findPeriodAnchor on the plan repository and NOTHING else', () => {
+    const source = readFileSync(join(ROOT, ...OWNER_CREDIT_CARD_WIRING.split('/')), 'utf8');
+    const calls = [...source.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1]);
+    expect(calls).toEqual([OWNER_CREDIT_CARD_METHOD]);
+    // The rule is not vacuous: it would see a second method.
+    const planted = 'businessOsAccountPlanRepository.findPeriodAnchor(a); businessOsAccountPlanRepository.updatePlan(b)';
+    expect([...planted.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1])).toEqual([
+      'findPeriodAnchor',
+      'updatePlan',
+    ]);
   });
 
   it('the allowed list names files that exist', () => {

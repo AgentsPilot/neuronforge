@@ -5,6 +5,7 @@ import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { Send, CheckCircle2, Bot, User, Phone, Mail, ExternalLink, Edit3, Trash2, Power, Calendar, Clock, AlertCircle, X, RefreshCw, DollarSign, FileText, ToggleLeft, ToggleRight, Info } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { createLogger } from '@/lib/logger';
+import { notifyCreditUsageChanged } from '@/lib/business-os/client/creditUsageSignal';
 import type { DialogAction, PendingContext } from '@/lib/business-os/DraftManagerTypes';
 
 const logger = createLogger({ module: 'ChatCommandPanel' });
@@ -1237,6 +1238,8 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
       ]);
     } finally {
       setLoading(false);
+      // The turn is over, success or failure: the credits card may re-read (S-1, FR-39 a).
+      notifyCreditUsageChanged();
     }
   }, [input, loading, router, onCommand, onAction, pendingContext, pendingAvailabilityDays, messages, useV4API, handleV4Send]);
 
@@ -1501,6 +1504,8 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
         ]);
       } finally {
         setLoading(false);
+        // The turn is over, success or failure: the credits card may re-read (S-2, FR-39 a).
+        notifyCreditUsageChanged();
       }
     },
     [loading, handleV4Send]
@@ -1536,6 +1541,8 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
         ]);
       } finally {
         setLoading(false);
+        // The turn is over, success or failure: the credits card may re-read (S-3, FR-39 a).
+        notifyCreditUsageChanged();
       }
     },
     [loading, handleV4Send]
@@ -1570,6 +1577,8 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
         ]);
       } finally {
         setLoading(false);
+        // The turn is over, success or failure: the credits card may re-read (S-4, FR-39 a).
+        notifyCreditUsageChanged();
       }
     },
     [loading, handleV4Send]

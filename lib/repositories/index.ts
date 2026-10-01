@@ -77,6 +77,19 @@ export type {
   CreditLedgerPageOptions,
   CreditLedgerPagedResult,
 } from './BusinessOsCreditLedgerReadRepository';
+// Business OS credit ledger, the OWNER'S OWN read (credit deduction slice 6a):
+// the dashboard card. Takes the caller's RLS client (required, so no singleton);
+// owner-granted columns only; no write method.
+export {
+  BusinessOsCreditOwnerReadRepository,
+  OWNER_TOTALS_COLUMNS,
+  OWNER_CHARGE_COLUMNS,
+  OWNER_CREDIT_READ_LIMITS,
+} from './BusinessOsCreditOwnerReadRepository';
+export type { OwnerCreditTotalsRow, OwnerCreditChargeRow, OwnerCeilingResult } from './BusinessOsCreditOwnerReadRepository';
+// The credit period key from the database's own rule (slice 6a). Service role:
+// the function's EXECUTE is service_role only, and it reads no table.
+export { BusinessOsCreditPeriodRepository, businessOsCreditPeriodRepository } from './BusinessOsCreditPeriodRepository';
 export {
   OrganizationRepository,
   organizationRepository,

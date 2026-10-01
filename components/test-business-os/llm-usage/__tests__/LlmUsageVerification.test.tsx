@@ -260,7 +260,9 @@ describe('LlmUsageVerification — admin', () => {
     expect(screen.getByTestId('llm-usage-summary')).toHaveTextContent('22222222-2222-4222-8222-222222222222');
     expect(screen.getByTestId('llm-usage-summary')).toHaveTextContent('Acme Coaching');
     expect(screen.getByTestId('llm-usage-card-caveat')).toHaveTextContent(/open end/);
-    expect(screen.getByTestId('llm-usage-card-caveat')).toHaveTextContent(/match it only when the windows match/);
+    // Slice 6a (SQ-23): no claim to match the owner card; the legacy unit is named.
+    expect(screen.getByTestId('llm-usage-card-caveat')).not.toHaveTextContent(/exactly as the owner/);
+    expect(screen.getByTestId('llm-usage-card-caveat')).toHaveTextContent(/legacy measure/);
     expect(onLog.mock.calls.map((c) => c[0])).toEqual(['info', 'success']);
     expect(onResponse).toHaveBeenCalledTimes(1);
   });

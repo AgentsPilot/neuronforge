@@ -124,14 +124,15 @@ export interface UsageCardCategory {
   tokens: number;
   calls: number;
   credits: number;
-  /** The owner's card lists only categories with tokens. */
+  /** The category has tokens. (Historical name: the owner card no longer reads tokens, slice 6a.) */
   shownOnCard: boolean;
 }
 
+/** Check 5, token usage by feature. Historical name (naming debt, slice 6a Q-13): it no longer mirrors the owner card. */
 export interface UsageCardCheck extends CheckBase {
   summedBy: 'database' | 'rows' | null;
   tokensPerCredit: number | null;
-  /** The card's function has no end bound: this check runs to the time of the read. */
+  /** The token summary has no end bound: this check runs to the time of the read. */
   windowEnd: 'open';
   totals: { tokens: number; calls: number; credits: number } | null;
   categories: UsageCardCategory[];

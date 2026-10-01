@@ -359,6 +359,12 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['resolveAccountId'],
       why: 'Invite-only signup Slice 5a: the CUSTOMER route by which a champion revokes their own friend invite. It resolves the session account through the account seam (SA P-1) to scope the UPDATE; it reads no plan and refuses no capability.',
     },
+    // ── Credit deduction slice 6a, 2026-09-30 — the owner credits card ──────
+    {
+      file: 'lib/business-os/credits/ownerCreditUsage.ts',
+      symbols: ['creditAllowanceForDisplay', 'getEntitlementService', 'resolveAccountId'],
+      why: 'Credit deduction slice 6a: the owner dashboard card reads its credit allowance for DISPLAY only. It resolves the session account through the seam (`resolveAccountId`), reads `getSnapshot` (never `check()` / `decide()`) and turns the snapshot into a figure with `creditAllowanceForDisplay`, which keeps the capability id inside the module. It refuses nothing: an owner over the allowance still sees their figures, and refusing by allowance is slices 8 and 10 through `check()`. If this file ever calls `check`, it is a gate and belongs in ENFORCEMENT_POINTS.',
+    },
     {
       file: 'lib/business-os/invites/paymentHoldGate.ts',
       symbols: ['resolveAccountId'],

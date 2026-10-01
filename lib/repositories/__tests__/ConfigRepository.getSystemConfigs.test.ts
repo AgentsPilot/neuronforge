@@ -60,6 +60,10 @@ describe('the owner usage route (AC-19)', () => {
       'utf8'
     );
     expect(source).not.toMatch(/\.from\(\s*['"]ais_system_config['"]\s*\)/);
-    expect(source).toMatch(/new ConfigRepository\(supabaseServer\)\.getSystemConfigs\(/);
+    // Credit deduction slice 6a (FR-36): the route reads no system config at
+    // all any more — the allowance comes from the plan, not from
+    // `monthly_ai_allowance_usd` ÷ `pilot_credit_cost_usd` — so the positive pin
+    // on its old `getSystemConfigs` call is replaced by this negative one.
+    expect(source).not.toMatch(/ConfigRepository|getSystemConfig/);
   });
 });

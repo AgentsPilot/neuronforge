@@ -487,7 +487,11 @@ export function evaluateGroupsCheck(read: ReadResult<PagedCalls>): GroupsCheck {
   };
 }
 
-// ─── Check 5: Usage card view (FR-16) ────────────────────────────────────────
+// ─── Check 5: Token usage by feature (FR-16) ─────────────────────────────────
+//
+// Naming debt (slice 6a, Q-13): `UsageCardInputs` / `evaluateUsageCardCheck`
+// keep their historical names. The check no longer mirrors the owner card,
+// which reads the credit ledger since slice 6a; it reports `token_usage` only.
 
 export interface UsageCardInputs {
   summary: ReadResult<{ summary: UsageSummary; summedBy: UsageSummedBy }>;

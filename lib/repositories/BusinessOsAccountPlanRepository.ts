@@ -243,7 +243,38 @@ export class BusinessOsAccountPlanRepository {
   }
 
   /**
-   * The same, for a batch of accounts — one query for a cron's claimed batch or
+   * The account's `period_anchor` ONLY — for the owner credit card's billing
+   * period (credit deduction slice 6a, SQ-20).
+   *
+   * Returns the string PostgREST returned, UNTOUCHED: `period_anchor` is a
+   * microsecond `timestamptz`, and the period key the charge recorder writes is
+   * derived from it, so a value re-serialised through a `Date` would name a
+   * period no charge sits in. `null` means the account has no plan row; a read
+   * error is returned as an error, never as "no row". Uncached, like the
+   * recorder's own read.
+   */
+  async findPeriodAnchor(accountId: string): Promise<RepositoryResult<string | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('business_os_account_plans')
+        .select('period_anchor')
+        .eq('user_id', accountId)
+        .maybeSingle();
+
+      if (error) throw error;
+      const anchor = (data as { period_anchor?: unknown } | null)?.period_anchor;
+      if (data !== null && typeof anchor !== 'string') {
+        throw new Error('The plan row has no readable period anchor');
+      }
+      return { data: data === null ? null : (anchor as string), error: null };
+    } catch (error) {
+      this.logger.error({ err: error, accountId }, 'Failed to read the plan period anchor');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * `findEntitlementInputs`, for a batch of accounts — one query for a cron's claimed batch or
    * a page of the report.
    *
    * An oversized batch is REFUSED — returned as an error, and no query is sent
