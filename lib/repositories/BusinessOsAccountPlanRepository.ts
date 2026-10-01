@@ -33,7 +33,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import { safeDbError } from './BusinessOsInviteRepository';
-import type { AgentRepositoryResult as RepositoryResult } from './types';
+import type { AgentRepositoryResult as RepositoryResult, FriendFinaliseOutcome } from './types';
 
 /** A row of `business_os_account_plans`. */
 export interface BusinessOsAccountPlan {
@@ -784,6 +784,77 @@ export class BusinessOsAccountPlanRepository {
     } catch (error) {
       const safe = safeDbError(error);
       methodLogger.error({ dbError: safe }, 'Failed to finalise an invite redemption');
+      const out = new Error(safe.message) as Error & { code?: string };
+      if (safe.code) out.code = safe.code;
+      return { data: null, error: out };
+    }
+  }
+
+  /**
+   * Finish a FRIEND's redemption (invite-only signup Slice 5b; T-19, T-13).
+   * The invite's redeemed stamp, the friend's plan row and the lineage row, in
+   * ONE transaction, through `business_os_finalise_friend_invite_redemption`.
+   *
+   * A plan-state WRITE, so it lives here and is listed in the entitlements
+   * imports guard's `WRITE_METHODS`, beside `provisionFromInvite`. Reached only
+   * by the public signup routes (code and Google), after mailbox proof, the
+   * claim and the account creation.
+   *
+   * ── The documented exception to R2-3 (T-13 layer 1) ────────────────────────
+   * The plan row is written with NO basis: `cohort` and `tier` NULL,
+   * `origin = 'invite'`. R2-3 ("every row has a basis") governs admin
+   * operations; this row is deliberately basis-less so the onboarding and
+   * profile triggers, whose `ON CONFLICT` can then only fill a fact, can never
+   * mint a trial for a friend who has not paid (BQ-13). Under enforcement it
+   * resolves to `no_assignment` and fails closed, which is correct.
+   *
+   * `tierId` and `issuerCohort` come from config (`INVITE_ISSUANCE_POLICY.account`),
+   * so the SQL holds no plan name (L-5). `accountId` is the server-generated id
+   * the invite was claimed for (I-3); `email` is the row's own email. Outcomes:
+   * `finalised` / `already_finalised` (re-run safe) with the invite id and the
+   * level written; `issuer_not_eligible` (the champion lost the cohort mid-request);
+   * `not_matched`. A database error is scrubbed to `{ code, message }` (M-1).
+   */
+  async provisionFromFriendInvite(input: {
+    inviteId: string;
+    accountId: string;
+    email: string;
+    tierId: string;
+    issuerCohort: string;
+  }): Promise<RepositoryResult<FriendFinaliseOutcome>> {
+    const methodLogger = this.logger.child({ method: 'provisionFromFriendInvite', inviteId: input.inviteId, accountId: input.accountId });
+    try {
+      const { data, error } = await this.supabase.rpc('business_os_finalise_friend_invite_redemption', {
+        p_invite_id: input.inviteId,
+        p_account_id: input.accountId,
+        p_email: input.email,
+        p_tier: input.tierId,
+        p_issuer_cohort: input.issuerCohort,
+      });
+
+      if (error) throw error;
+      const row = (Array.isArray(data) ? data[0] : data) as
+        | { result_outcome?: unknown; result_invite_id?: unknown; result_level?: unknown }
+        | null
+        | undefined;
+      const outcome = row?.result_outcome;
+      if (
+        (outcome === 'finalised' || outcome === 'already_finalised') &&
+        typeof row?.result_invite_id === 'string' &&
+        typeof row?.result_level === 'number'
+      ) {
+        methodLogger.info({ outcome, level: row.result_level }, 'Friend invite redemption finalised (plan row and lineage written)');
+        return { data: { outcome, inviteId: row.result_invite_id, level: row.result_level }, error: null };
+      }
+      if (outcome === 'issuer_not_eligible' || outcome === 'not_matched') {
+        methodLogger.warn({ outcome }, 'Friend invite redemption not finalised');
+        return { data: { outcome }, error: null };
+      }
+      methodLogger.error({ outcome: typeof outcome === 'string' ? outcome : null }, 'Friend finalise returned an unknown answer');
+      return { data: null, error: new Error('friend finalise returned an unknown answer') };
+    } catch (error) {
+      const safe = safeDbError(error);
+      methodLogger.error({ dbError: safe }, 'Failed to finalise a friend invite redemption');
       const out = new Error(safe.message) as Error & { code?: string };
       if (safe.code) out.code = safe.code;
       return { data: null, error: out };

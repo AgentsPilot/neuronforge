@@ -39,6 +39,10 @@
 //      and `revokeForIssuerAccount` (ownership INSIDE the UPDATE, F5a-8). They
 //      never reuse a `ForAdmin` method, which would hand one champion every
 //      invite on the platform.
+//   5. The PAYMENT HOLD (Slice 5b, T-13 layer 2), for the signed-in account
+//      itself. `findHoldFactsById` reads two facts (`grant_kind`, `language`)
+//      of the ONE invite named by that account's own lineage row, which the
+//      caller read with the session's account id. Never a caller-supplied id.
 //
 // `token_hash` is written once per invite, by `createForAdmin` or (Slice 5a)
 // by the SQL send function behind `createForIssuerAccount`, and never selected
@@ -62,6 +66,7 @@ import type {
   AgentRepositoryResult as RepositoryResult,
   BusinessOsFriendInviteListRow,
   BusinessOsInvite,
+  BusinessOsInviteHoldFacts,
   BusinessOsInvitePublicView,
   BusinessOsInviteRedemptionView,
   ClaimInviteForGoogleSignupInput,
@@ -95,7 +100,7 @@ export const BUSINESS_OS_INVITE_ADMIN_COLUMNS =
  * mailbox proof. Never `token_hash`.
  */
 export const BUSINESS_OS_INVITE_REDEMPTION_COLUMNS =
-  'id, email, invite_type, issuer_kind, grant_kind, grant_id, access_open_ended, access_months, language, ' +
+  'id, email, invite_type, issuer_kind, issuer_account_id, grant_kind, grant_id, access_open_ended, access_months, language, ' +
   'link_expires_at, revoked_at, redeemed_at, signup_code_hash, signup_code_expires_at, signup_code_attempts, ' +
   'signup_code_sent_count, signup_code_window_started_at, signup_code_last_sent_at, claimed_at, claimed_account_id';
 
@@ -626,6 +631,27 @@ export class BusinessOsInviteRepository {
       return { data: Array.isArray(data) && data.length > 0, error: null };
     } catch (error) {
       methodLogger.error({ dbError: safeDbError(error) }, 'Failed to record an open by an existing account');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  // ============ Payment hold (Slice 5b; the signed-in account's own invite) ============
+
+  /**
+   * HOLD: the grant kind and language of the invite that created the signed-in
+   * account, or `null`. `id` is the `invite_id` of THAT account's own lineage
+   * row (read by the caller with the session's account id), never a value from
+   * a request. Two columns only: no email, no issuer, no hash.
+   */
+  async findHoldFactsById(id: string): Promise<RepositoryResult<BusinessOsInviteHoldFacts>> {
+    const methodLogger = this.logger.child({ method: 'findHoldFactsById', inviteId: id });
+    try {
+      const { data, error } = await this.supabase.from(INVITES).select('grant_kind, language').eq('id', id).maybeSingle();
+
+      if (error) throw error;
+      return { data: (data ?? null) as unknown as BusinessOsInviteHoldFacts | null, error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to read the invite hold facts');
       return { data: null, error: toError(error) };
     }
   }

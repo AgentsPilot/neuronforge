@@ -348,7 +348,7 @@ describe('T-7: no token and no hash in any log line', () => {
   });
 });
 
-describe('Slice 5a (F5a-10): a champion friend invite', () => {
+describe('Slices 5a/5b (F5a-10, F5b-3): a champion friend invite', () => {
   const policy = INVITE_ISSUANCE_POLICY as unknown as { accountInvitesAvailable: boolean };
   const friendRow = () =>
     stored({ issuer_kind: 'account', grant_kind: 'tier', grant_id: INVITE_ISSUANCE_POLICY.account.grantId, access_open_ended: null });
@@ -357,7 +357,7 @@ describe('Slice 5a (F5a-10): a champion friend invite', () => {
     policy.accountInvitesAvailable = false;
   });
 
-  it('switch on: signup_opens_soon passes through, with no masked email, and the account question is never asked', async () => {
+  it('switch on (5b): valid passes through, with the masked email, and the account question is never asked', async () => {
     policy.accountInvitesAvailable = true;
     state.row = friendRow();
     state.hasAccount = true;
@@ -365,8 +365,16 @@ describe('Slice 5a (F5a-10): a champion friend invite', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('no-store');
     const body = await response.json();
-    expect(body.data.state).toBe('signup_opens_soon');
-    expect(Object.keys(body.data).sort()).toEqual(['inviterDisplayName', 'language', 'linkExpiresAt', 'offer', 'personalNote', 'state']);
+    expect(body.data.state).toBe('valid');
+    expect(Object.keys(body.data).sort()).toEqual([
+      'inviterDisplayName',
+      'language',
+      'linkExpiresAt',
+      'maskedEmail',
+      'offer',
+      'personalNote',
+      'state',
+    ]);
     expect(state.accountQuestions).toEqual([]);
     expect(state.existingMarks).toEqual([]);
     expect(state.audit).toEqual([]);

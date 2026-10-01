@@ -692,6 +692,62 @@ describe('resetPlanState', () => {
   });
 });
 
+describe('provisionFromFriendInvite (invite-only signup Slice 5b; T-19, T-13)', () => {
+  const input = {
+    inviteId: '11111111-1111-4111-8111-111111111111',
+    accountId: '33333333-3333-4333-8333-333333333333',
+    email: 'friend@example.com',
+    tierId: 'tier-x',
+    issuerCohort: 'cohort-x',
+  };
+
+  it('calls the friend finalise with exactly the five server-derived arguments, and writes no table from here', async () => {
+    const { client, calls, builder } = mockSupabase({
+      data: [{ result_outcome: 'finalised', result_invite_id: input.inviteId, result_level: 2 }],
+      error: null,
+    });
+    const result = await new BusinessOsAccountPlanRepository(client).provisionFromFriendInvite(input);
+    expect(result).toEqual({ data: { outcome: 'finalised', inviteId: input.inviteId, level: 2 }, error: null });
+    expect(calls.rpc).toEqual([
+      'business_os_finalise_friend_invite_redemption',
+      { p_invite_id: input.inviteId, p_account_id: input.accountId, p_email: input.email, p_tier: input.tierId, p_issuer_cohort: input.issuerCohort },
+    ]);
+    expect(builder.insert).not.toHaveBeenCalled();
+    expect(builder.update).not.toHaveBeenCalled();
+    expect(builder.delete).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ result_outcome: 'already_finalised', result_invite_id: 'inv', result_level: 3 }, { outcome: 'already_finalised', inviteId: 'inv', level: 3 }],
+    [{ result_outcome: 'issuer_not_eligible', result_invite_id: null, result_level: null }, { outcome: 'issuer_not_eligible' }],
+    [{ result_outcome: 'not_matched', result_invite_id: null, result_level: null }, { outcome: 'not_matched' }],
+  ])('parses %o', async (row, expected) => {
+    const { client } = mockSupabase({ data: [row], error: null });
+    expect(await new BusinessOsAccountPlanRepository(client).provisionFromFriendInvite(input)).toEqual({ data: expected, error: null });
+  });
+
+  it('an unknown or malformed answer is an error, never a success', async () => {
+    for (const data of [[{ result_outcome: 'finalised', result_invite_id: null, result_level: 2 }], [], null, [{ result_outcome: 'weird' }]]) {
+      const { client } = mockSupabase({ data, error: null });
+      const result = await new BusinessOsAccountPlanRepository(client).provisionFromFriendInvite(input);
+      expect(result.data).toBeNull();
+      expect(result.error).toBeInstanceOf(Error);
+    }
+  });
+
+  it('a database error is scrubbed to { code, message }, and the email is never logged (M-1)', async () => {
+    const { client } = mockSupabase({
+      data: null,
+      error: { code: '23505', message: 'duplicate key value violates unique constraint', details: `Key (user_id)=(x) for ${input.email}`, hint: '' },
+    });
+    const result = await new BusinessOsAccountPlanRepository(client).provisionFromFriendInvite(input);
+    expect(result.data).toBeNull();
+    expect(result.error).not.toHaveProperty('details');
+    expect((result.error as Error & { code?: string }).code).toBe('23505');
+    expect(JSON.stringify(result.error)).not.toContain(input.email);
+  });
+});
+
 describe('provisionFromInvite (invite-only signup Slice 1b; L-5, I-5, F-8)', () => {
   const input = {
     inviteId: '11111111-1111-4111-8111-111111111111',

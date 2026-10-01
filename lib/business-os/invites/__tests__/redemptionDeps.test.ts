@@ -7,11 +7,13 @@
  */
 
 const sent: Array<Record<string, unknown>> = [];
+const transport: { throws: boolean } = { throws: false };
 const audited: Array<Record<string, unknown>> = [];
 
 jest.mock('server-only', () => ({}));
 jest.mock('@/lib/notifications/emailTransport', () => ({
   sendEmail: async (params: Record<string, unknown>) => {
+    if (transport.throws) throw new Error('transport exploded');
     sent.push(params);
     return { sent: true, provider: 'resend' };
   },
@@ -29,8 +31,14 @@ jest.mock('@/lib/services/AuditTrailService', () => ({
 jest.mock('@/lib/repositories/AuthAccountRepository', () => ({ authAccountRepository: {} }));
 jest.mock('@/lib/repositories/BusinessOsInviteRepository', () => ({ businessOsInviteRepository: {} }));
 const provision = jest.fn(async () => ({ data: 'inv', error: null }));
+const provisionFriend = jest.fn(async () => ({ data: { outcome: 'finalised', inviteId: 'inv', level: 2 }, error: null }));
+const findEntitlementInputs = jest.fn(async () => ({ data: { plan: null, overrides: [] }, error: null }));
 jest.mock('@/lib/repositories/BusinessOsAccountPlanRepository', () => ({
-  businessOsAccountPlanRepository: { provisionFromInvite: (...args: unknown[]) => provision(...(args as [])) },
+  businessOsAccountPlanRepository: {
+    provisionFromInvite: (...args: unknown[]) => provision(...(args as [])),
+    provisionFromFriendInvite: (...args: unknown[]) => provisionFriend(...(args as [])),
+    findEntitlementInputs: (...args: unknown[]) => findEntitlementInputs(...(args as [])),
+  },
 }));
 
 import { NextRequest } from 'next/server';
@@ -71,7 +79,66 @@ describe('the code email (D-7, F-10, R-9)', () => {
   });
 });
 
+describe('the existing-account notice (Slice 5b; F5b-3, SA R-5)', () => {
+  it('is transactional, from the system sender (no from, replyTo or ownerUserId), with no code and nothing from the champion', async () => {
+    const deps = buildRedemptionDeps({ logger, correlationId: 'corr-1', request });
+    expect(await deps.sendExistingAccountNotice({ to: 'friend@example.com', language: 'he' })).toEqual({ sent: true });
+    expect(sent).toHaveLength(1);
+    const params = sent[0];
+    expect(params.kind).toBe('transactional');
+    expect(params.to).toEqual(['friend@example.com']);
+    expect(params).not.toHaveProperty('from');
+    expect(params).not.toHaveProperty('replyTo');
+    expect(params).not.toHaveProperty('ownerUserId');
+    expect(params.redactRecipientInLogs).toBe(true);
+    expect(String(params.html)).toContain('dir="rtl"');
+    expect(String(params.text)).not.toMatch(/[0-9]{6}/);
+    expect(String(params.text)).toMatch(/\/login/);
+  });
+});
+
+describe('the existing-account notice never throws (SA N-1)', () => {
+  it('QA-1: a malformed NEXT_PUBLIC_MARKETING_URL does not throw: the notice is sent WITHOUT a link', async () => {
+    const saved = process.env.NEXT_PUBLIC_MARKETING_URL;
+    process.env.NEXT_PUBLIC_MARKETING_URL = 'javascript:alert(1)';
+    try {
+      const deps = buildRedemptionDeps({ logger, correlationId: 'corr-1', request });
+      await expect(deps.sendExistingAccountNotice({ to: 'friend@example.com', language: 'en' })).resolves.toEqual({ sent: true });
+      expect(sent).toHaveLength(1);
+      expect(String(sent[0].html)).not.toContain('javascript:');
+    } finally {
+      if (saved === undefined) delete process.env.NEXT_PUBLIC_MARKETING_URL;
+      else process.env.NEXT_PUBLIC_MARKETING_URL = saved;
+    }
+  });
+
+  it('SA N-1: a transport that throws is { sent: false }, logged, never a throw', async () => {
+    transport.throws = true;
+    try {
+      const deps = buildRedemptionDeps({ logger, correlationId: 'corr-1', request });
+      await expect(deps.sendExistingAccountNotice({ to: 'friend@example.com', language: 'en' })).resolves.toEqual({ sent: false });
+      expect(logger.error).toHaveBeenCalled();
+    } finally {
+      transport.throws = false;
+    }
+  });
+
+  it('issuerPlans exposes only the one read method (SA N-3)', () => {
+    const deps = buildRedemptionDeps({ logger, correlationId: 'corr-1', request });
+    expect(Object.keys(deps.issuerPlans)).toEqual(['findEntitlementInputs']);
+  });
+});
+
 describe('audit and finalise wiring', () => {
+  it('Slice 5b: finaliseFriend is the plan repository provisionFromFriendInvite, and issuerPlans reads the plan row', async () => {
+    const deps = buildRedemptionDeps({ logger, correlationId: 'corr-1', request });
+    const input = { inviteId: 'inv', accountId: 'acct', email: 'friend@example.com', tierId: 't', issuerCohort: 'c' };
+    await deps.finaliseFriend(input);
+    expect(provisionFriend).toHaveBeenCalledWith(input);
+    await deps.issuerPlans.findEntitlementInputs('issuer');
+    expect(findEntitlementInputs).toHaveBeenCalledWith('issuer');
+  });
+
   it('writes the invite as the entity, the new account as user and actor, and the correlation id', async () => {
     const deps = buildRedemptionDeps({ logger, correlationId: 'corr-1', request });
     await deps.audit({ action: 'BOS_INVITE_REDEEMED', inviteId: 'inv', accountId: 'acct', details: { level: 1 } });
