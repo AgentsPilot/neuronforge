@@ -17,7 +17,9 @@
  *   Paid invites (C-6). It stays `false` until Slice 5c, when the Business OS
  *   checkout (reuse-plan S-4a) exists. Flipping it is a config edit, not code.
  * - `INVITE_ISSUANCE_POLICY.accountInvitesAvailable` (Slice 5a, T-18): the
- *   switch for champion-issued friend invites. `false` until the user chooses.
+ *   switch for champion-issued friend invites. `true` since 2026-10-01, when the
+ *   user chose to switch it on (BQ-13). Rollback: the same one-line flip back
+ *   to `false`.
  * - `FRIEND_INVITE_LIMITS` (Slice 5a, T-17, T-21): the lifetime allowance and
  *   the daily send limit, passed to the SQL send function as parameters.
  *
@@ -97,9 +99,9 @@ export const INVITE_TYPE_IDS = Object.keys(INVITE_TYPES) as InviteTypeId[];
  * - `paidInvitesAvailable` means "payment is live" (C-6). It also gates admin
  *   Paid invites (F5c-3).
  * - `accountInvitesAvailable` means "champions may send friend invites". Code
- *   config, not an environment variable: turning it on is a one-line change
- *   released through the normal review. SA advises waiting for 5b before doing
- *   so in production.
+ *   config, not an environment variable: turning it on or off is a one-line
+ *   change released through the normal review. It was switched on 2026-10-01,
+ *   after 5b shipped, by the user's choice (slice 5b workplan §10).
  */
 export const INVITE_ISSUANCE_POLICY = {
   admin: [CHAMPION_INVITE_TYPE, PAID_INVITE_TYPE] as readonly InviteTypeId[],
@@ -113,8 +115,8 @@ export const INVITE_ISSUANCE_POLICY = {
   },
   /** The C-6 switch. `false` until Slice 5c: the server refuses every Paid invite at redemption. */
   paidInvitesAvailable: false as boolean,
-  /** The T-18 switch: friend invites from champion accounts. Off until the user chooses (BQ-13). */
-  accountInvitesAvailable: false as boolean,
+  /** The T-18 switch: friend invites from champion accounts. On since 2026-10-01, by the user's choice (BQ-13). */
+  accountInvitesAvailable: true as boolean,
   /** What the form says beside the disabled Paid option (FR-1). */
   paidUnavailableReason: 'available when payments are live',
 } as const;
