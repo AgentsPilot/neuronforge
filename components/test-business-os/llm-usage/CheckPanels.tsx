@@ -275,24 +275,25 @@ export function GroupsPanel({ check }: { check: GroupsCheck }) {
 export function UsageCardPanel({ check }: { check: UsageCardCheck }) {
   return (
     <section style={panel} data-testid="llm-usage-panel-card">
-      <PanelHeader title="Check 5 — Usage card view" status={check.status} testId="llm-usage-panel-status-usageCard" />
+      <PanelHeader title="Check 5 — Token usage by feature" status={check.status} testId="llm-usage-panel-status-usageCard" />
       <ErrorLine error={check.error} />
       <p style={{ fontSize: '12px', color: '#666', margin: '6px 0' }} data-testid="llm-usage-card-caveat">
-        Computed exactly as the owner&apos;s usage card computes it, over this tab&apos;s start time with an open end (the
-        card&apos;s computation has no end bound). The owner&apos;s card uses fixed ranges (24 hours to 90 days), so the figures
-        match it only when the windows match. Covers all of the business&apos;s usage, not only Business OS.
+        Token usage from <code>token_usage</code>, by feature category, over this tab&apos;s start time with an open end (the
+        token summary has no end bound). Token credits are the legacy measure (tokens ÷ tokens per credit) — not the
+        ledger&apos;s credits, which the owner&apos;s Credits card and the Costs &amp; credits tab show. Covers all of the
+        business&apos;s usage, not only Business OS.
       </p>
       {check.totals && (
         <p style={{ fontSize: '12px', margin: '6px 0' }}>
           Total: {formatNumber(check.totals.calls)} calls · {formatNumber(check.totals.tokens)} tokens ·{' '}
-          {formatNumber(check.totals.credits)} credits (summed by {check.summedBy}, {check.tokensPerCredit} tokens per credit)
+          {formatNumber(check.totals.credits)} token credits (tokens ÷ {check.tokensPerCredit}; summed by {check.summedBy})
         </p>
       )}
       {check.categories.length > 0 && (
         <table style={table}>
           <thead>
             <tr>
-              {['Category', 'Calls', 'Tokens', 'Credits', 'On the card'].map((h) => (
+              {['Category', 'Calls', 'Tokens', `Token credits (tokens ÷ ${check.tokensPerCredit ?? 'N'})`, 'Has tokens'].map((h) => (
                 <th key={h} style={cell}>
                   {h}
                 </th>

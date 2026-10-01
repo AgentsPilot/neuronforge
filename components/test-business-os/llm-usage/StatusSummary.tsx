@@ -15,7 +15,7 @@ const CHECKS: Array<{ key: keyof LlmUsageReport['checks'] | 'areaTotals'; label:
   { key: 'platformAccount', label: 'Check 2 — Nothing on the platform account' },
   { key: 'legacyLabels', label: 'Check 3 — No legacy labels' },
   { key: 'groups', label: 'Check 4 — Grouped by action' },
-  { key: 'usageCard', label: 'Check 5 — Usage card view' },
+  { key: 'usageCard', label: 'Check 5 — Token usage by feature' },
   { key: 'areaTotals', label: 'Area totals' },
 ];
 

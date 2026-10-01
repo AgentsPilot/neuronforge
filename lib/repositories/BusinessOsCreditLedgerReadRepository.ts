@@ -21,8 +21,10 @@
 // wired in `lib/business-os/credits/creditLeakCheckDeps.ts`), reached from that
 // admin door and from a fail-closed cron. Owners cannot read the cost
 // columns at all (per-column grants, slice 3), so this read cannot be served
-// through the owner's RLS client. The constructor still takes a client, so a
-// later owner-facing reader (slice 7) can pass the RLS client instead.
+// through the owner's RLS client: every select here names a cost column the
+// owner holds no grant on. Owner-facing reads therefore use their own
+// repository, `BusinessOsCreditOwnerReadRepository` (slice 6a, C-S6-2), which
+// takes the RLS client and selects only owner-granted columns.
 //
 // ── ACCOUNT SCOPE, BY SIGNATURE ──────────────────────────────────────────────
 // Every account method REQUIRES an account id, or a non-empty list of them, and

@@ -23,6 +23,7 @@ import {
   type IntakeQuestionType,
 } from '@/lib/business-os/intake/types';
 import { createLogger } from '@/lib/logger';
+import { notifyCreditUsageChanged } from '@/lib/business-os/client/creditUsageSignal';
 
 const logger = createLogger({ module: 'AddIntakeQuestion' });
 
@@ -77,6 +78,8 @@ export function AddIntakeQuestion({ onAdd, t, isRTL }: Props) {
       setError(t('config.intake.add_failed'));
     } finally {
       setThinking(false);
+      // An owner AI action finished, success or failure: the credits card may re-read (S-7).
+      notifyCreditUsageChanged();
     }
   };
 

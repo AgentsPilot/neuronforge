@@ -18,6 +18,8 @@ import * as path from 'path';
 const ROOT = process.cwd();
 const CREDITS_DIR = 'lib/business-os/credits';
 const READ_REPOSITORY = 'lib/repositories/BusinessOsCreditLedgerReadRepository.ts';
+/** Slice 6a: the owner's own ledger read. It SELECTS `service` (for the resolver) and must never filter on it. */
+const OWNER_READ_REPOSITORY = 'lib/repositories/BusinessOsCreditOwnerReadRepository.ts';
 /** The one file allowed to read a row's own `service`. */
 const RESOLVER = `${CREDITS_DIR}/effectiveFields.ts`;
 
@@ -59,11 +61,19 @@ const RULES = [
   },
 ] as const;
 
-const files = [...sourceFiles(CREDITS_DIR), READ_REPOSITORY];
+const files = [...sourceFiles(CREDITS_DIR), READ_REPOSITORY, OWNER_READ_REPOSITORY];
 
 describe('N-10: no grouping or filtering on the raw service column', () => {
-  it('scans the credits module and the read repository', () => {
-    expect(files).toEqual(expect.arrayContaining([RESOLVER, `${CREDITS_DIR}/creditReport.ts`, READ_REPOSITORY]));
+  it('scans the credits module and both read repositories', () => {
+    expect(files).toEqual(
+      expect.arrayContaining([
+        RESOLVER,
+        `${CREDITS_DIR}/creditReport.ts`,
+        `${CREDITS_DIR}/ownerCreditUsage.ts`,
+        READ_REPOSITORY,
+        OWNER_READ_REPOSITORY,
+      ])
+    );
   });
 
   it.each(RULES.map((r) => [r.name, r] as const))('the rule "%s" matches its planted violations', (_n, rule) => {

@@ -30,6 +30,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ImageIcon, Loader2, Sparkles, Upload, X } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { notifyCreditUsageChanged } from '@/lib/business-os/client/creditUsageSignal';
 
 interface LibraryItem {
   id: string;
@@ -213,6 +214,11 @@ export function MediaLibraryPicker({
       setGenerateError(t('media.generate.failed'));
     } finally {
       setGenerating(false);
+      // An owner AI action finished, success or failure: the credits card may
+      // re-read (S-8, W6-2). Raised here, in the shared picker, so every host is
+      // covered: the dashboard's configuration dialog reaches it through the
+      // logo uploader. With no card mounted it is a no-op.
+      notifyCreditUsageChanged();
     }
   };
 
