@@ -37,10 +37,12 @@
  * them to act as the signed-in account. This is display only; the Slice 1b
  * signup routes also refuse a session on the server.
  *
- * ── Slice 5a ────────────────────────────────────────────────────────────────
- * `signup_opens_soon` (FR-33, F5a-10): a champion's friend invite. The offer
- * is shown (who invited, the note, Essentials, its price, "payment required")
- * with NO signup form and NO Google button, until friend signup exists (5b).
+ * ── Slice 5b ────────────────────────────────────────────────────────────────
+ * A champion's friend invite is `valid`, with the signup form and the Google
+ * button (FR-34). Under a PAID offer the page adds one honest line: the
+ * account can be created now, and payment opens later (workplan D-11). After
+ * signup the server sends the friend to the payment hold (FR-35). The 5a
+ * `signup_opens_soon` state is gone (SA Q-8).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -85,15 +87,6 @@ type InviteResponse =
       maskedEmail: string;
     }
   | {
-      /** Slice 5a (FR-33): a champion's friend invite. The offer, and no form. */
-      state: 'signup_opens_soon';
-      language: string;
-      inviterDisplayName: string;
-      personalNote: string | null;
-      linkExpiresAt: string;
-      offer: InviteOffer;
-    }
-  | {
       state: 'existing_account' | 'expired' | 'revoked' | 'used' | 'unavailable';
       language: string;
       inviterDisplayName: string;
@@ -115,8 +108,8 @@ function formatDate(iso: string, locale: InviteLocale): string {
   return new Intl.DateTimeFormat(locale, { dateStyle: 'long', timeZone: 'UTC' }).format(date);
 }
 
-/** What `valid` and `signup_opens_soon` both show: who invited, the note, the offer and the expiry. */
-type OfferState = Extract<InviteResponse, { state: 'valid' | 'signup_opens_soon' }>;
+/** What `valid` shows above the form: who invited, the note, the offer and the expiry. */
+type OfferState = Extract<InviteResponse, { state: 'valid' }>;
 
 function InviteOfferDetails({ data, copy, locale }: { data: OfferState; copy: InvitePageCopyShape; locale: InviteLocale }) {
   return (
@@ -148,7 +141,13 @@ function InviteOfferDetails({ data, copy, locale }: { data: OfferState; copy: In
               ? copy.accessWhilePaid
               : copy.accessOpenEnded}
         </p>
-        {!data.offer.free && <p className="text-sm text-slate-600">{copy.paymentRequired}</p>}
+        {/*
+          SA CR-1 (Slice 5b): no "Payment is required at signup" here. While
+          payment is not live, the only paid offer that reaches `valid` is a
+          champion's friend invite (admin Paid invites are refused until 5c),
+          and it gets ONE payment statement, `paymentOpensLater`, under the
+          offer. 5c brings `copy.paymentRequired` back when checkout exists.
+        */}
       </div>
 
       {data.offer.included.length > 0 && (
@@ -311,6 +310,13 @@ export default function InvitePage() {
           <section data-testid="invite-state-valid" className="space-y-5">
             <InviteOfferDetails data={data} copy={copy} locale={locale} />
 
+            {/* Slice 5b (D-11): a paid offer, while payment is not live. */}
+            {!data.offer.free && (
+              <p data-testid="invite-payment-opens-later" className="rounded-lg bg-slate-50 p-4 text-slate-800">
+                {copy.paymentOpensLater}
+              </p>
+            )}
+
             {/* Slice 1b: the form, only for a visitor the session check says is
                 signed out (L-8). A signed-in visitor sees the notice above. */}
             {visitor.status === 'signed_out' && tokenRef.current && googleClientId && (
@@ -332,17 +338,6 @@ export default function InvitePage() {
                 signInLabel={copy.signIn}
               />
             )}
-          </section>
-        )}
-
-        {/* Slice 5a (FR-33): the offer, and NO signup form and NO Google button.
-            Nothing is created from here until friend signup exists (5b). */}
-        {data?.state === 'signup_opens_soon' && (
-          <section data-testid="invite-state-signup_opens_soon" className="space-y-5">
-            <InviteOfferDetails data={data} copy={copy} locale={locale} />
-            <p data-testid="invite-signup-opens-soon" className="rounded-lg bg-slate-50 p-4 text-slate-800">
-              {copy.signupOpensSoon}
-            </p>
           </section>
         )}
 

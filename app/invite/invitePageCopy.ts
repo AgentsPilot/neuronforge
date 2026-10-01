@@ -32,9 +32,13 @@ export interface InvitePageCopy {
   offerHeading: string;
   free: string;
   perMonth: (priceUsd: number) => string;
+  /** Not rendered in 5b (SA CR-1): kept for 5c, when payment at signup is live. */
   paymentRequired: string;
-  /** Slice 5a (FR-33): a champion's friend invite, before friend signup exists. */
-  signupOpensSoon: string;
+  /**
+   * Slice 5b (workplan D-11): under a PAID offer's signup form, while payment is
+   * not live. Honest before signup: the account waits, with no trial.
+   */
+  paymentOpensLater: string;
   accessOpenEnded: string;
   accessMonths: (months: number) => string;
   accessWhilePaid: string;
@@ -145,7 +149,7 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     free: 'Free',
     perMonth: (price) => `$${price} per month`,
     paymentRequired: 'Payment is required at signup.',
-    signupOpensSoon: 'Sign-up for this invitation opens soon. Keep this email: the link will work then.',
+    paymentOpensLater: "You can create your account now. Payment opens soon, and you'll be able to use AgentPilot once you've paid.",
     accessOpenEnded: 'No end date',
     accessMonths: (months) => (months === 1 ? '1 month from signup' : `${months} months from signup`),
     accessWhilePaid: 'While the plan is paid for',
@@ -238,7 +242,7 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     free: 'חינם',
     perMonth: (price) => `$${price} לחודש`,
     paymentRequired: 'נדרש תשלום בעת ההרשמה.',
-    signupOpensSoon: 'ההרשמה להזמנה הזו תיפתח בקרוב. כדאי לשמור את המייל: הקישור יעבוד אז.',
+    paymentOpensLater: 'אפשר ליצור את החשבון עכשיו. התשלום ייפתח בקרוב, ואחרי התשלום אפשר יהיה להשתמש ב־AgentPilot.',
     accessOpenEnded: 'ללא תאריך סיום',
     accessMonths: (months) => (months === 1 ? 'חודש אחד מההרשמה' : `${months} חודשים מההרשמה`),
     accessWhilePaid: 'כל עוד התוכנית בתשלום',
@@ -332,7 +336,7 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     free: 'Gratis',
     perMonth: (price) => `$${price} al mes`,
     paymentRequired: 'Se requiere el pago al registrarte.',
-    signupOpensSoon: 'El registro para esta invitación se abrirá pronto. Guarda este correo: el enlace funcionará entonces.',
+    paymentOpensLater: 'Puedes crear tu cuenta ahora. El pago estará disponible pronto y podrás usar AgentPilot cuando hayas pagado.',
     accessOpenEnded: 'Sin fecha de fin',
     accessMonths: (months) => (months === 1 ? '1 mes desde el registro' : `${months} meses desde el registro`),
     accessWhilePaid: 'Mientras el plan esté pagado',

@@ -699,6 +699,8 @@ export interface BusinessOsInviteRedemptionView {
   email: string;
   invite_type: string;
   issuer_kind: 'admin' | 'account';
+  /** Slice 5b: the champion who sent a friend invite (NULL on an admin invite). */
+  issuer_account_id: string | null;
   grant_kind: BusinessOsInviteGrantKind;
   grant_id: string;
   access_open_ended: boolean | null;
@@ -783,3 +785,28 @@ export interface BusinessOsAccountLineageLevel {
   invite_id: string | null;
   level: number;
 }
+
+/**
+ * Slice 5b (T-13 layer 2): what the payment hold reads about ONE account's own
+ * lineage row. Nothing about its parent or its tree.
+ */
+export interface BusinessOsAccountHoldFacts {
+  invite_id: string | null;
+  source: 'admin_invite' | 'account_invite' | 'organic';
+  first_paid_at: string | null;
+}
+
+/** Slice 5b: the two invite facts the payment hold and its screen need. */
+export interface BusinessOsInviteHoldFacts {
+  grant_kind: BusinessOsInviteGrantKind;
+  language: string;
+}
+
+/**
+ * Slice 5b (T-19): what `business_os_finalise_friend_invite_redemption`
+ * answered. `finalised` and `already_finalised` carry the invite id and the
+ * level written; the refusals carry neither.
+ */
+export type FriendFinaliseOutcome =
+  | { outcome: 'finalised' | 'already_finalised'; inviteId: string; level: number }
+  | { outcome: 'issuer_not_eligible' | 'not_matched' };

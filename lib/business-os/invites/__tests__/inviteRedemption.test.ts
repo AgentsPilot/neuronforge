@@ -13,10 +13,15 @@
  *
  * The fake world below behaves like the database: compare-and-swap updates
  * that report whether they matched, and a finalise that is re-run safe.
+ *
+ * Slice 5b adds a champion's FRIEND (F5b-2, F5b-3, T-19): the explicit branch,
+ * the existing-account check after mailbox proof (with the decoy code), the
+ * friend finalise for both methods, and the landing on the payment hold.
  */
 
+import { INVITE_ISSUANCE_POLICY } from '@/lib/business-os/entitlements/config/invites';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
-import type { BusinessOsInviteRedemptionView } from '@/lib/repositories/types';
+import type { BusinessOsInviteRedemptionView, FriendFinaliseOutcome } from '@/lib/repositories/types';
 
 import { createGoogleIdTokenVerifier, type GoogleIdTokenVerification, type GoogleTokenClient } from '../googleIdToken';
 import {
@@ -45,6 +50,7 @@ function inviteRow(overrides: Partial<BusinessOsInviteRedemptionView> = {}): Bus
     email: EMAIL,
     invite_type: 'champion',
     issuer_kind: 'admin',
+    issuer_account_id: null,
     grant_kind: 'cohort',
     grant_id: 'champion',
     access_open_ended: true,
@@ -80,6 +86,10 @@ interface WorldOptions {
   lostCas?: 'count' | 'claim' | 'issue';
   /** Slice 3b: what the Google verifier answers (default: ok, for the invited address). */
   google?: GoogleIdTokenVerification;
+  /** Slice 5b: the issuer's plan row (default: an in-force champion). */
+  issuerPlan?: { cohort: string | null; cohort_expires_at: string | null } | null | 'error';
+  /** Slice 5b: what successive friend finalise calls answer (default: finalised at L2). */
+  friendFinalise?: Array<FriendFinaliseOutcome | 'error'>;
 }
 
 function world(options: WorldOptions = {}) {
@@ -93,6 +103,9 @@ function world(options: WorldOptions = {}) {
   const finalised: Array<Record<string, unknown>> = [];
   const sent: Array<{ to: string; code: string; language: string }> = [];
   const verified: Array<{ idToken: string; rawNonce: string }> = [];
+  const notices: Array<{ to: string; language: string }> = [];
+  const friendFinalised: Array<Record<string, unknown>> = [];
+  const friendAnswers = [...(options.friendFinalise ?? [])];
   let finaliseFailuresLeft = options.finaliseFailures ?? 0;
 
   const deps: RedemptionDeps = {
@@ -214,9 +227,30 @@ function world(options: WorldOptions = {}) {
       if (options.finaliseReturnsNull) return { data: null, error: null };
       return { data: input.inviteId, error: null };
     }),
+    finaliseFriend: jest.fn(async (input) => {
+      calls.push('finaliseFriend');
+      friendFinalised.push(input as unknown as Record<string, unknown>);
+      const answer = friendAnswers.length > 0 ? friendAnswers.shift() : undefined;
+      if (answer === 'error') return { data: null, error: Object.assign(new Error(`insert failed for ${EMAIL}`), { code: '23505' }) };
+      return { data: answer ?? { outcome: 'finalised' as const, inviteId: input.inviteId, level: 2 }, error: null };
+    }),
+    issuerPlans: {
+      findEntitlementInputs: jest.fn(async (accountId: string) => {
+        calls.push(`issuerPlan:${accountId}`);
+        if (options.issuerPlan === 'error') return { data: null, error: new Error('plan read failed') };
+        const plan =
+          options.issuerPlan === undefined ? { cohort: INVITE_ISSUANCE_POLICY.account.issuerCohort, cohort_expires_at: null } : options.issuerPlan;
+        return { data: { plan }, error: null };
+      }),
+    },
     sendCode: jest.fn(async (input) => {
       calls.push('send');
       sent.push(input);
+      return { sent: !options.sendFails };
+    }),
+    sendExistingAccountNotice: jest.fn(async (input) => {
+      calls.push('notice');
+      notices.push(input);
       return { sent: !options.sendFails };
     }),
     audit: jest.fn(async (entry: RedemptionAuditEntry) => {
@@ -248,6 +282,8 @@ function world(options: WorldOptions = {}) {
     finalised,
     sent,
     verified,
+    notices,
+    friendFinalised,
     row: () => row,
   };
 }
@@ -270,7 +306,7 @@ describe('the happy path', () => {
     const w = world();
     const outcome = await complete(w.deps);
 
-    expect(outcome).toEqual({ ok: true, email: EMAIL, accountId: NEW_ID, inviteId: INVITE_ID });
+    expect(outcome).toEqual({ ok: true, email: EMAIL, accountId: NEW_ID, inviteId: INVITE_ID, landing: 'onboarding' });
     expect(w.calls).toEqual([
       'find',
       `emailHasAccount:${EMAIL}`,
@@ -628,7 +664,7 @@ describe('Slice 3b: the Google happy path (T-3b-2)', () => {
     const w = world();
     const outcome = await google(w.deps);
 
-    expect(outcome).toEqual({ ok: true, accountId: NEW_ID, inviteId: INVITE_ID });
+    expect(outcome).toEqual({ ok: true, accountId: NEW_ID, inviteId: INVITE_ID, landing: 'onboarding' });
     expect(w.calls).toEqual(['find', `emailHasAccount:${EMAIL}`, 'verifyGoogle', 'claimGoogle', 'createGoogle', 'finalise']);
     // The verifier gets exactly what the page sent; nothing else from the request reaches anything.
     expect(w.verified).toEqual([{ idToken: ID_TOKEN, rawNonce: RAW_NONCE }]);
@@ -904,22 +940,288 @@ describe('Slice 3b, SA R-1: a payload-bearing library error reaches no log, audi
   });
 });
 
-describe('Slice 5a (F5a-10): a champion friend invite cannot be redeemed until 5b', () => {
-  // A friend invite as 5a writes it: issued by an account, Paid, a tier grant.
-  const friendInvite = () =>
-    inviteRow({ issuer_kind: 'account', invite_type: 'paid', grant_kind: 'tier', grant_id: 'tier-x', access_open_ended: null });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Slice 5b: a champion's FRIEND signs up (F5b-2, F5b-3, T-19, FR-34, FR-35)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CHAMPION_ID = '44444444-4444-4444-8444-444444444444';
+const switchable = INVITE_ISSUANCE_POLICY as unknown as { accountInvitesAvailable: boolean };
+
+/** A friend invite exactly as the 5a send writes it. */
+const friendInvite = (overrides: Partial<BusinessOsInviteRedemptionView> = {}) =>
+  inviteRow({
+    issuer_kind: 'account',
+    issuer_account_id: CHAMPION_ID,
+    invite_type: INVITE_ISSUANCE_POLICY.account.inviteType,
+    grant_kind: 'tier',
+    grant_id: INVITE_ISSUANCE_POLICY.account.grantId,
+    access_open_ended: null,
+    ...overrides,
+  });
+
+describe('Slice 5b: switch OFF (as shipped): a friend invite is refused before any side effect (T-18)', () => {
+  it('the switch ships off', () => {
+    expect(INVITE_ISSUANCE_POLICY.accountInvitesAvailable).toBe(false);
+  });
 
   it.each([
     ['requestSignupCode', (deps: RedemptionDeps) => requestSignupCode(TOKEN, deps)],
     ['completeSignup', (deps: RedemptionDeps) => complete(deps)],
     ['completeGoogleSignup', (deps: RedemptionDeps) => google(deps)],
-  ])('%s refuses it BEFORE any account lookup, code, email, claim or user', async (_entry, run) => {
-    const w = world({ row: friendInvite() });
-    expect(await run(w.deps)).toMatchObject({ ok: false, status: 409, error: 'paid_invites_not_available' });
-    // Only the token lookup ran: no existing-account question (the champion
-    // holds the link), no code sent, no claim, no user created, nothing verified.
+  ])('%s answers "no longer available" with only the token lookup run', async (_entry, run) => {
+    const w = world({ row: friendInvite(), emailHasAccount: true });
+    expect(await run(w.deps)).toMatchObject({ ok: false, status: 409, error: 'unavailable' });
     expect(w.calls).toEqual(['find']);
     expect(w.sent).toEqual([]);
+    expect(w.notices).toEqual([]);
     expect(w.created).toEqual([]);
+  });
+
+  it('an ADMIN Paid invite is still paid_invites_not_available (F5b-2: the generic refusal stays until 5c)', async () => {
+    const w = world({ row: inviteRow({ invite_type: 'paid', grant_kind: 'tier', grant_id: 'tier-x', access_open_ended: null }) });
+    expect(await complete(w.deps)).toMatchObject({ status: 409, error: 'paid_invites_not_available' });
+    expect(w.calls).toEqual(['find']);
+  });
+});
+
+describe('Slice 5b: switch ON', () => {
+  beforeEach(() => {
+    switchable.accountInvitesAvailable = true;
+  });
+  afterEach(() => {
+    switchable.accountInvitesAvailable = false;
+  });
+
+  describe('the friend branch refuses before any code, email, claim or account (F5b-2)', () => {
+    it.each([
+      ['a wrong type', { invite_type: 'champion' }],
+      ['a wrong tier', { grant_id: 'another-tier' }],
+      ['a cohort grant', { grant_kind: 'cohort' as const, grant_id: 'champion' }],
+      ['no issuer id', { issuer_account_id: null }],
+    ])('%s → unavailable', async (_label, overrides) => {
+      const w = world({ row: friendInvite(overrides) });
+      expect(await requestSignupCode(TOKEN, w.deps)).toMatchObject({ status: 409, error: 'unavailable' });
+      expect(w.calls.filter((call) => !call.startsWith('find'))).toEqual([]);
+    });
+
+    it.each([
+      ['not a champion', { cohort: 'trial', cohort_expires_at: null }],
+      ['a lapsed champion', { cohort: INVITE_ISSUANCE_POLICY.account.issuerCohort, cohort_expires_at: at(-1000) }],
+      ['no plan row', null],
+    ])('the issuer is %s → unavailable (AC-18: nothing written)', async (_label, plan) => {
+      const w = world({ row: friendInvite(), issuerPlan: plan });
+      expect(await complete(w.deps)).toMatchObject({ status: 409, error: 'unavailable' });
+      expect(w.calls).toEqual(['find', `issuerPlan:${CHAMPION_ID}`]);
+    });
+
+    it('the issuer read failing is "try again", never a pass', async () => {
+      const w = world({ row: friendInvite(), issuerPlan: 'error' });
+      expect(await complete(w.deps)).toEqual({ ok: false, kind: 'unavailable_try_again' });
+      expect(w.calls).not.toContain('claim');
+    });
+  });
+
+  describe('the password path', () => {
+    it('happy path: the friend finalise with the config tier and cohort, and the landing is the payment hold', async () => {
+      const w = world({ row: friendInvite() });
+      const outcome = await complete(w.deps);
+
+      expect(outcome).toEqual({ ok: true, email: EMAIL, accountId: NEW_ID, inviteId: INVITE_ID, landing: 'awaiting_payment' });
+      expect(w.calls).toEqual([
+        'find',
+        `issuerPlan:${CHAMPION_ID}`,
+        'count',
+        // F5b-3: the account question is asked only AFTER the code matched.
+        `emailHasAccount:${EMAIL}`,
+        'claim',
+        'create',
+        'finaliseFriend',
+      ]);
+      expect(w.friendFinalised).toEqual([
+        {
+          inviteId: INVITE_ID,
+          accountId: NEW_ID,
+          email: EMAIL,
+          tierId: INVITE_ISSUANCE_POLICY.account.grantId,
+          issuerCohort: INVITE_ISSUANCE_POLICY.account.issuerCohort,
+        },
+      ]);
+      expect(w.finalised).toEqual([]);
+      expect(w.audits).toEqual([
+        {
+          action: 'BOS_INVITE_REDEEMED',
+          inviteId: INVITE_ID,
+          accountId: NEW_ID,
+          details: { inviteType: INVITE_ISSUANCE_POLICY.account.inviteType, level: 2, source: 'account_invite', method: 'password' },
+        },
+        {
+          action: 'BOS_INVITE_PLAN_PROVISIONED',
+          inviteId: INVITE_ID,
+          accountId: NEW_ID,
+          details: {
+            grantKind: 'tier',
+            grantId: INVITE_ISSUANCE_POLICY.account.grantId,
+            basis: 'none',
+            awaitingPayment: true,
+            origin: 'invite',
+          },
+        },
+      ]);
+      expectNoSecrets(w);
+    });
+
+    it('audits the level the function wrote (L3 under an L2 champion)', async () => {
+      const w = world({ row: friendInvite(), friendFinalise: [{ outcome: 'finalised', inviteId: INVITE_ID, level: 3 }] });
+      await complete(w.deps);
+      expect(w.audits[0].details.level).toBe(3);
+    });
+
+    it('F5b-3: an existing account with a WRONG code answers code_invalid, exactly like a new address', async () => {
+      const withAccount = world({ row: friendInvite(), emailHasAccount: true });
+      const withoutAccount = world({ row: friendInvite(), emailHasAccount: false });
+      const a = await complete(withAccount.deps, { signupCode: '000000' });
+      const b = await complete(withoutAccount.deps, { signupCode: '000000' });
+      expect(a).toEqual(b);
+      expect(a).toMatchObject({ error: 'code_invalid' });
+      expect(withAccount.calls).not.toContain(`emailHasAccount:${EMAIL}`);
+    });
+
+    it('F5b-3: an existing account with the RIGHT code (mailbox proven): existing_account before any claim, stamped once', async () => {
+      const w = world({ row: friendInvite(), emailHasAccount: true });
+      expect(await complete(w.deps)).toMatchObject({ status: 409, error: 'existing_account' });
+      expect(w.calls).toEqual(['find', `issuerPlan:${CHAMPION_ID}`, 'count', `emailHasAccount:${EMAIL}`, 'stamp']);
+      expect(w.audits.map((entry) => entry.action)).toEqual(['BOS_INVITE_OPENED_BY_EXISTING_ACCOUNT']);
+    });
+
+    it('I-6 keeps its meaning: with a lapsed claim the post-proof account question is skipped, and the same id is reused', async () => {
+      const w = world({ row: friendInvite({ claimed_at: at(-10 * 60_000), claimed_account_id: NEW_ID }), create: 'email_exists', userExists: true });
+      expect(await complete(w.deps)).toMatchObject({ ok: true, landing: 'awaiting_payment' });
+      expect(w.calls).not.toContain(`emailHasAccount:${EMAIL}`);
+      expect(w.friendFinalised[0].accountId).toBe(NEW_ID);
+    });
+  });
+
+  describe('the finish (T-19, SA Q-1)', () => {
+    it('already_finalised is a success (re-run safe)', async () => {
+      const w = world({ row: friendInvite(), friendFinalise: [{ outcome: 'already_finalised', inviteId: INVITE_ID, level: 2 }] });
+      expect(await complete(w.deps)).toMatchObject({ ok: true, landing: 'awaiting_payment' });
+    });
+
+    it('issuer_not_eligible: NO retry, the claim is kept, and FR-12a names the cause', async () => {
+      const w = world({ row: friendInvite(), friendFinalise: [{ outcome: 'issuer_not_eligible' }] });
+      expect(await complete(w.deps)).toEqual({ ok: false, kind: 'unavailable_try_again' });
+      expect(w.calls.filter((call) => call === 'finaliseFriend')).toHaveLength(1);
+      expect(w.released).toEqual([]);
+      expect(w.recorded).toEqual([
+        expect.objectContaining({ step: 'finalise', errorCode: 'issuer_not_eligible', failedAccountId: NEW_ID }),
+      ]);
+      expect(w.audits.map((entry) => entry.action)).toEqual(['BOS_INVITE_REDEMPTION_INCOMPLETE']);
+      expectNoSecrets(w);
+    });
+
+    it('not_matched then success: retried once (I-5)', async () => {
+      const w = world({ row: friendInvite(), friendFinalise: [{ outcome: 'not_matched' }] });
+      expect(await complete(w.deps)).toMatchObject({ ok: true });
+      expect(w.calls.filter((call) => call === 'finaliseFriend')).toHaveLength(2);
+    });
+
+    it('two errors: the claim is kept and recorded, and the scrubbed message has no email (AC-5a)', async () => {
+      const w = world({ row: friendInvite(), friendFinalise: ['error', 'error'] });
+      expect(await complete(w.deps)).toEqual({ ok: false, kind: 'unavailable_try_again' });
+      expect(w.recorded).toEqual([expect.objectContaining({ step: 'finalise', errorCode: '23505' })]);
+      expect(w.released).toEqual([]);
+      expectNoSecrets(w);
+    });
+  });
+
+  describe('the code route: the decoy code (F5b-3, D-3)', () => {
+    const request = async (hasAccount: boolean, extra: WorldOptions = {}) => {
+      const w = world({ row: friendInvite({ signup_code_last_sent_at: at(-10 * 60_000) }), emailHasAccount: hasAccount, ...extra });
+      return { w, outcome: await requestSignupCode(TOKEN, w.deps) };
+    };
+
+    it('the HTTP answer is identical whether or not the address has an account', async () => {
+      const a = await request(true);
+      const b = await request(false);
+      expect(a.outcome).toEqual(b.outcome);
+      expect(a.outcome).toMatchObject({ ok: true });
+    });
+
+    it('a new address: a code is stored, then the account question, then the CODE email', async () => {
+      const { w } = await request(false);
+      expect(w.calls).toEqual(['find', `issuerPlan:${CHAMPION_ID}`, 'issue', `emailHasAccount:${EMAIL}`, 'send']);
+      expect(w.sent).toHaveLength(1);
+      expect(w.notices).toEqual([]);
+    });
+
+    it('an existing account: a code is STILL stored (the decoy), and the NOTICE goes instead of the code', async () => {
+      const { w } = await request(true);
+      expect(w.calls.slice(0, 4)).toEqual(['find', `issuerPlan:${CHAMPION_ID}`, 'issue', `emailHasAccount:${EMAIL}`]);
+      expect(w.calls).toContain('notice');
+      expect(w.calls).toContain('stamp');
+      expect(w.calls).not.toContain('send');
+      expect(w.sent).toEqual([]);
+      expect(w.notices).toEqual([{ to: EMAIL, language: 'en' }]);
+      // The stored code is live, so a later `complete` answers code_invalid, not code_expired.
+      expect(w.row()?.signup_code_hash).not.toBeNull();
+      expect(w.audits.map((entry) => entry.action)).toEqual(['BOS_INVITE_OPENED_BY_EXISTING_ACCOUNT']);
+    });
+
+    it('both branches log the same line (the log must not tell them apart)', async () => {
+      const a = await request(true);
+      const b = await request(false);
+      expect(JSON.stringify(a.w.logs)).toBe(JSON.stringify(b.w.logs));
+    });
+
+    it('QA-1: a notice that fails to send still answers EXACTLY like a new address that got its code', async () => {
+      const existing = await request(true, { sendFails: true });
+      const fresh = await request(false);
+      expect(existing.outcome).toEqual(fresh.outcome);
+      expect(existing.outcome).toMatchObject({ ok: true });
+      // Logged at warn, by invite id only: never the address.
+      expect(JSON.stringify(existing.w.logs)).toContain('Existing-account notice was not sent');
+      expect(JSON.stringify(existing.w.logs)).not.toContain(EMAIL);
+    });
+
+    it("a new address's own code email failing stays 503 code_not_sent (it is about that address)", async () => {
+      const { outcome } = await request(false, { sendFails: true });
+      expect(outcome).toMatchObject({ status: 503, error: 'code_not_sent' });
+    });
+
+    it('a failed account lookup is "try again" for both (never "no account")', async () => {
+      const { outcome } = await request(true, { emailHasAccountError: true });
+      expect(outcome).toEqual({ ok: false, kind: 'unavailable_try_again' });
+    });
+  });
+
+  describe('the Google path', () => {
+    it('happy path: the friend finalise, method google, the payment hold', async () => {
+      const w = world({ row: friendInvite() });
+      expect(await google(w.deps)).toEqual({ ok: true, accountId: NEW_ID, inviteId: INVITE_ID, landing: 'awaiting_payment' });
+      expect(w.calls).toEqual([
+        'find',
+        `issuerPlan:${CHAMPION_ID}`,
+        'verifyGoogle',
+        `emailHasAccount:${EMAIL}`,
+        'claimGoogle',
+        'createGoogle',
+        'finaliseFriend',
+      ]);
+      expect(w.audits[0].details).toEqual({ inviteType: INVITE_ISSUANCE_POLICY.account.inviteType, level: 2, source: 'account_invite', method: 'google' });
+    });
+
+    it('F5b-3: the account question comes only AFTER the proof; an existing account then gets existing_account, nothing claimed', async () => {
+      const w = world({ row: friendInvite(), emailHasAccount: true });
+      expect(await google(w.deps)).toMatchObject({ status: 409, error: 'existing_account' });
+      expect(w.calls.indexOf('verifyGoogle')).toBeLessThan(w.calls.indexOf(`emailHasAccount:${EMAIL}`));
+      expect(w.calls).not.toContain('claimGoogle');
+    });
+
+    it('a refused proof never reaches the account question', async () => {
+      const w = world({ row: friendInvite(), emailHasAccount: true, google: { kind: 'invalid', reason: 'nonce' } });
+      expect(await google(w.deps)).toMatchObject({ status: 400, error: 'google_token_invalid' });
+      expect(w.calls).not.toContain(`emailHasAccount:${EMAIL}`);
+    });
   });
 });

@@ -7,10 +7,13 @@ import 'server-only';
  *
  * Kept out of the routes so both build the SAME dependencies, and so the only
  * application file that names the plan repository is this one (it is listed,
- * with its reason, in the entitlements imports guard: it may call exactly one
- * plan-state write, `provisionFromInvite`).
+ * with its reason, in the entitlements imports guard: it may call exactly two
+ * plan-state writes, `provisionFromInvite` and, from Slice 5b,
+ * `provisionFromFriendInvite`; and one read, `findEntitlementInputs`, for the
+ * friend issuer's in-force champion re-check).
  *
- * The code email is sent from the platform's system sender (no `from`, no
+ * The code email, and from Slice 5b the "you already have an account" notice
+ * (F5b-3, SA R-5), are sent from the platform's system sender (no `from`, no
  * `replyTo`, no `ownerUserId`), `kind: 'transactional'` (D-7, SA F-10).
  */
 
@@ -18,6 +21,7 @@ import type { NextRequest } from 'next/server';
 
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
+import { generateInviteExistingAccountEmail } from '@/lib/email/templates/invite-existing-account';
 import { generateInviteSignupCodeEmail } from '@/lib/email/templates/invite-signup-code';
 import { defaultLocale, isValidLocale, type Locale } from '@/lib/i18n/config';
 import { sendEmail } from '@/lib/notifications/emailTransport';
@@ -25,9 +29,11 @@ import { authAccountRepository } from '@/lib/repositories/AuthAccountRepository'
 import { businessOsAccountPlanRepository } from '@/lib/repositories/BusinessOsAccountPlanRepository';
 import { businessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
+import { marketingUrl } from '@/lib/utils/origins';
 
 import { verifyGoogleIdToken } from './googleIdToken';
-import type { RedemptionDeps, RedemptionLogger, RedemptionRefusal } from './inviteRedemption';
+import type { RedemptionDeps, RedemptionLanding, RedemptionLogger, RedemptionRefusal } from './inviteRedemption';
+import { AWAITING_PAYMENT_PATH } from './paymentHold';
 import { INVITE_SIGNUP_CODE_POLICY } from './signupCodePolicy';
 
 /** On every signup response, success or not (C-4, T-7). */
@@ -50,6 +56,10 @@ export function buildRedemptionDeps(context: {
     invites: businessOsInviteRepository,
     accounts: authAccountRepository,
     finalise: (input) => businessOsAccountPlanRepository.provisionFromInvite(input),
+    finaliseFriend: (input) => businessOsAccountPlanRepository.provisionFromFriendInvite(input),
+    // Read-only: the friend issuer's plan row (the TypeScript in-force re-check,
+    // T-19). Only the one read method is handed over (SA N-3).
+    issuerPlans: { findEntitlementInputs: (accountId) => businessOsAccountPlanRepository.findEntitlementInputs(accountId) },
     sendCode: async ({ to, code, language }) => {
       const locale: Locale = isValidLocale(language) ? (language as Locale) : (defaultLocale as Locale);
       const email = generateInviteSignupCodeEmail({ code, validMinutes: INVITE_SIGNUP_CODE_POLICY.ttlMinutes, locale });
@@ -63,6 +73,30 @@ export function buildRedemptionDeps(context: {
         redactRecipientInLogs: true,
       });
       return { sent: result.sent };
+    },
+    sendExistingAccountNotice: async ({ to, language }) => {
+      // SA N-1: never throws. A malformed marketing URL renders the notice
+      // without a link (QA-1, the template never throws); anything that still
+      // fails is `{ sent: false }`, logged. The code route answers the same
+      // either way (QA-1): the champion must not learn the address has an account.
+      try {
+        const locale: Locale = isValidLocale(language) ? (language as Locale) : (defaultLocale as Locale);
+        const email = generateInviteExistingAccountEmail({ signInUrl: marketingUrl('/login'), locale });
+        // SA R-5: the system sender, exactly like the code email. No `from`, no
+        // `replyTo` (never the champion's), no `ownerUserId`.
+        const result = await sendEmail({
+          kind: 'transactional',
+          to: [to],
+          subject: email.subject,
+          html: email.html,
+          text: email.text,
+          redactRecipientInLogs: true,
+        });
+        return { sent: result.sent };
+      } catch (err) {
+        context.logger.error({ err }, 'Existing-account notice could not be built or sent');
+        return { sent: false };
+      }
     },
     audit: async (entry) => {
       await auditTrail
@@ -85,6 +119,16 @@ export function buildRedemptionDeps(context: {
     logger: context.logger,
   };
 }
+
+/**
+ * Where the browser goes after a redemption (FR-13, FR-35): a champion to
+ * onboarding, a friend (Slice 5b, not yet paid) to the payment hold. One map,
+ * shared by the complete and Google routes, so the two can never disagree.
+ */
+export const REDEMPTION_LANDING_PATHS: Readonly<Record<RedemptionLanding, string>> = {
+  onboarding: '/onboarding-chat',
+  awaiting_payment: AWAITING_PAYMENT_PATH,
+};
 
 /** Flush the audit queue before answering (WC-7): a serverless instance can freeze after. */
 export async function flushRedemptionAudit(logger: { error: (context: Record<string, unknown>, message: string) => void }) {

@@ -26,7 +26,7 @@ import { BusinessOsAccountLineageRepository, LINEAGE_LOOKUP_LIMIT } from '../Bus
 function client(result: { data: unknown; error: unknown }) {
   const calls: Array<{ method: string; args: unknown[] }> = [];
   const builder: Record<string, unknown> = {};
-  for (const method of ['select', 'in']) {
+  for (const method of ['select', 'in', 'eq', 'maybeSingle']) {
     builder[method] = (...args: unknown[]) => {
       calls.push({ method, args });
       return builder;
@@ -81,10 +81,40 @@ describe('findByInviteIdsForAdmin', () => {
   });
 });
 
+describe('findHoldFactsForAccount (Slice 5b, the payment hold)', () => {
+  const ACCOUNT = '55555555-5555-4555-8555-555555555555';
+
+  it("reads the account's OWN row by primary key: invite id, source and first payment, nothing about the tree", async () => {
+    const row = { invite_id: INVITE, source: 'account_invite', first_paid_at: null };
+    const { client: c, calls } = client({ data: row, error: null });
+    expect(await new BusinessOsAccountLineageRepository(c).findHoldFactsForAccount(ACCOUNT)).toEqual({ data: row, error: null });
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_account_lineage'] },
+      { method: 'select', args: ['invite_id, source, first_paid_at'] },
+      { method: 'eq', args: ['account_id', ACCOUNT] },
+      { method: 'maybeSingle', args: [] },
+    ]);
+  });
+
+  it('no row is null data (a pre-invite account)', async () => {
+    const { client: c } = client({ data: null, error: null });
+    expect(await new BusinessOsAccountLineageRepository(c).findHoldFactsForAccount(ACCOUNT)).toEqual({ data: null, error: null });
+  });
+
+  it('an error is scrubbed to { code, message } (M-1), never a default', async () => {
+    const dbError = new PostgrestError({ code: '42703', message: 'column does not exist', details: 'row x@example.com', hint: '' });
+    const result = await new BusinessOsAccountLineageRepository(client({ data: null, error: dbError }).client).findHoldFactsForAccount(ACCOUNT);
+    expect(result.data).toBeNull();
+    expect(result.error).not.toHaveProperty('details');
+    expect((result.error as Error & { code?: string }).code).toBe('42703');
+    expect(JSON.stringify(logged)).not.toContain('x@example.com');
+  });
+});
+
 describe('no writer', () => {
-  it('has exactly one method, and no insert/update/upsert/delete call', () => {
+  it('has exactly two reads, and no insert/update/upsert/delete call', () => {
     const methods = Object.getOwnPropertyNames(BusinessOsAccountLineageRepository.prototype).filter((name) => name !== 'constructor');
-    expect(methods).toEqual(['findByInviteIdsForAdmin']);
+    expect(methods.sort()).toEqual(['findByInviteIdsForAdmin', 'findHoldFactsForAccount']);
     const source = readFileSync(join(process.cwd(), 'lib', 'repositories', 'BusinessOsAccountLineageRepository.ts'), 'utf8');
     expect(source).not.toMatch(/\.(insert|update|upsert|delete)\(/);
   });

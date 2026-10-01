@@ -360,6 +360,11 @@ describe('backward: a gate cannot ship unregistered', () => {
       why: 'Invite-only signup Slice 5a: the CUSTOMER route by which a champion revokes their own friend invite. It resolves the session account through the account seam (SA P-1) to scope the UPDATE; it reads no plan and refuses no capability.',
     },
     {
+      file: 'lib/business-os/invites/paymentHoldGate.ts',
+      symbols: ['resolveAccountId'],
+      why: 'Invite-only signup Slice 5b (T-13 layer 2, SA Q-6): the payment-hold gate that four layouts call first. It uses `resolveAccountId` ONLY, as the account seam for the session account. It reads no plan row, no snapshot and no capability: the hold is keyed on the account LINEAGE (a friend or Paid invite with no first payment), not on a plan, so it is not a capability gate and has no place in ENFORCEMENT_POINTS. If this file ever reads a plan or calls `check()`, it becomes a gate and moves there.',
+    },
+    {
       file: 'lib/business-os/invites/redemptionDeps.ts',
       symbols: ['getEntitlementConfig'],
       why: 'Invite-only signup Slice 1b: the production wiring hands the config to the redemption flow so it can re-check the grant (GR-1). It resolves no account and refuses no capability.',
