@@ -104,6 +104,12 @@ export interface InviteListView {
   /** Slice 1b: the invitation circle of that account (1 for every admin invite), or `null`. */
   level: number | null;
   /**
+   * Slice 5b (FR-36): the account that account was invited under, read from
+   * its lineage row. `null` for an L1 champion, a pending invite, or a failed
+   * lineage read.
+   */
+  parentAccountId: string | null;
+  /**
    * Slice 1b (FR-12a, SA D-3, T-16): a signup that stopped halfway, derived
    * from data: not redeemed AND (a failure is recorded OR a claim is older than
    * the lease). The second half catches a function killed by its timeout, which
@@ -157,6 +163,7 @@ export const INVITE_LIST_VIEW_KEYS: ReadonlyArray<keyof InviteListView> = [
   'openedByExistingAccountAt',
   'redeemedAccountId',
   'level',
+  'parentAccountId',
   'redemptionStoppedHalfway',
   'redemptionFailure',
   'emailStatus',
@@ -178,7 +185,8 @@ export function toInviteListView(
   row: BusinessOsInvite,
   config: EntitlementConfig,
   now: Date,
-  level: number | null = null
+  level: number | null = null,
+  parentAccountId: string | null = null
 ): InviteListView {
   const email = deriveInviteEmailStatus(row);
   return {
@@ -200,6 +208,7 @@ export function toInviteListView(
     openedByExistingAccountAt: row.opened_by_existing_account_at,
     redeemedAccountId: row.redeemed_account_id,
     level,
+    parentAccountId,
     redemptionStoppedHalfway: isRedemptionStoppedHalfway(row, now),
     redemptionFailure: row.redemption_failed_at
       ? {
@@ -499,7 +508,8 @@ export type ListInvitesOutcome =
 
 /**
  * The newest invites (up to `INVITE_LIST_CEILING`), each with its derived
- * state, the lineage level of accepted ones (Slice 1b), the T-16 banner summary,
+ * state, the lineage level of accepted ones (Slice 1b) and their parent account
+ * (Slice 5b, FR-36), the T-16 banner summary,
  * and `truncated` (Slice 1c): the ceiling was reached, so older invites may
  * exist that the list, and therefore its filters and search, cannot see.
  *
@@ -519,7 +529,7 @@ export async function listInvitesForAdmin(deps: {
   const { data, error } = await deps.repository.listRecentForAdmin({ limit: INVITE_LIST_CEILING });
   if (error || !data) return { ok: false };
 
-  const levels = new Map<string, number>();
+  const lineageByInvite = new Map<string, { level: number; parentAccountId: string | null }>();
   const redeemedIds = data.filter((row) => row.redeemed_at).map((row) => row.id);
   if (deps.lineage) {
     for (let start = 0; start < redeemedIds.length; start += INVITE_LINEAGE_BATCH) {
@@ -530,12 +540,17 @@ export async function listInvitesForAdmin(deps: {
         deps.logger?.warn({ err: lineage.error, invites: batch.length }, 'Could not read lineage levels for the invite list');
       }
       for (const entry of lineage.data ?? []) {
-        if (entry.invite_id) levels.set(entry.invite_id, entry.level);
+        if (entry.invite_id) {
+          lineageByInvite.set(entry.invite_id, { level: entry.level, parentAccountId: entry.parent_account_id ?? null });
+        }
       }
     }
   }
 
-  const invites = data.map((row) => toInviteListView(row, deps.config, deps.now, levels.get(row.id) ?? null));
+  const invites = data.map((row) => {
+    const lineage = lineageByInvite.get(row.id);
+    return toInviteListView(row, deps.config, deps.now, lineage?.level ?? null, lineage?.parentAccountId ?? null);
+  });
   const stopped = invites.filter((invite) => invite.redemptionStoppedHalfway).map((invite) => invite.id);
   return {
     ok: true,

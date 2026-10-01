@@ -38,7 +38,9 @@
 //      function, T-17), `listForIssuerAccount` (a narrow column list, F5a-9)
 //      and `revokeForIssuerAccount` (ownership INSIDE the UPDATE, F5a-8). They
 //      never reuse a `ForAdmin` method, which would hand one champion every
-//      invite on the platform.
+//      invite on the platform. Slice 5b adds `findRedeemedForIssuerAccount`,
+//      a read with the same two issuer filters, so a revoke of an accepted
+//      invite can answer "already used" (409) without widening the 404.
 //   5. The PAYMENT HOLD (Slice 5b, T-13 layer 2), for the signed-in account
 //      itself. `findHoldFactsById` reads two facts (`grant_kind`, `language`)
 //      of the ONE invite named by that account's own lineage row, which the
@@ -554,6 +556,42 @@ export class BusinessOsInviteRepository {
       return { data: won, error: null };
     } catch (error) {
       methodLogger.error({ dbError: safeDbError(error) }, 'Failed to revoke friend invite');
+      return { data: null, error: toError(error) };
+    }
+  }
+
+  /**
+   * CHAMPION: whether THIS account's invite `id` has already been accepted
+   * (Slice 5b, 5a Q-3). Asked only after `revokeForIssuerAccount` matched no
+   * row, so the route can answer 409 "already used" instead of 404.
+   *
+   * Scoped exactly like the revoke (`issuer_kind` + `issuer_account_id` from
+   * the session), so another account's accepted invite reads as `false` and
+   * still gets the shared 404: "not found" and "not yours" stay
+   * indistinguishable. A plain SELECT of one column, kept as its own method so
+   * it never shares a block with the revoke's `.update(` (the
+   * `mutationOrSelect` guard reads to the end of that block).
+   */
+  async findRedeemedForIssuerAccount(id: string, issuerAccountId: string): Promise<RepositoryResult<boolean>> {
+    const methodLogger = this.logger.child({
+      method: 'findRedeemedForIssuerAccount',
+      inviteId: id,
+      accountId: issuerAccountId,
+    });
+    try {
+      const { data, error } = await this.supabase
+        .from(INVITES)
+        .select('redeemed_at')
+        .eq('id', id)
+        .eq('issuer_kind', 'account')
+        .eq('issuer_account_id', issuerAccountId)
+        .maybeSingle();
+
+      if (error) throw error;
+      const redeemedAt = (data as { redeemed_at?: unknown } | null)?.redeemed_at;
+      return { data: typeof redeemedAt === 'string' && redeemedAt.length > 0, error: null };
+    } catch (error) {
+      methodLogger.error({ dbError: safeDbError(error) }, 'Failed to read whether a friend invite was accepted');
       return { data: null, error: toError(error) };
     }
   }

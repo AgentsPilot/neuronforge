@@ -46,8 +46,10 @@ export class BusinessOsAccountLineageRepository {
   }
 
   /**
-   * ADMIN: the lineage level of each account created from these invites.
-   * Invites with no lineage row (not redeemed) are simply absent.
+   * ADMIN: the lineage level of each account created from these invites, and
+   * (Slice 5b, FR-36) the account it was invited under. Invites with no
+   * lineage row (not redeemed) are simply absent. The parent is read from
+   * lineage, never inferred from the invite's issuer.
    */
   async findByInviteIdsForAdmin(inviteIds: string[]): Promise<RepositoryResult<BusinessOsAccountLineageLevel[]>> {
     const methodLogger = this.logger.child({ method: 'findByInviteIdsForAdmin' });
@@ -59,7 +61,7 @@ export class BusinessOsAccountLineageRepository {
     try {
       const { data, error } = await this.supabase
         .from('business_os_account_lineage')
-        .select('account_id, invite_id, level')
+        .select('account_id, invite_id, level, parent_account_id')
         .in('invite_id', inviteIds);
 
       if (error) throw error;

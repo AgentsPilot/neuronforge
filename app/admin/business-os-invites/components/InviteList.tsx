@@ -123,6 +123,12 @@ export function InviteList({ invites, onRevoked, emptyMessage = 'No invites yet.
                       {' · '}
                       {day(invite.redeemedAt)}
                       {invite.level !== null && <> {' · '}L{invite.level}</>}
+                      {invite.parentAccountId && (
+                        <span data-testid="invite-parent-account">
+                          {' · parent '}
+                          <span className="font-mono">{invite.parentAccountId}</span>
+                        </span>
+                      )}
                     </p>
                   )}
                   {invite.redemptionStoppedHalfway && (

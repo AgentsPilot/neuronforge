@@ -70,7 +70,11 @@ export interface FriendInviteLogger {
 
 export type FriendInviteRepository = Pick<
   BusinessOsInviteRepository,
-  'createForIssuerAccount' | 'listForIssuerAccount' | 'revokeForIssuerAccount' | 'recordInviteEmailOutcome'
+  | 'createForIssuerAccount'
+  | 'listForIssuerAccount'
+  | 'revokeForIssuerAccount'
+  | 'findRedeemedForIssuerAccount'
+  | 'recordInviteEmailOutcome'
 >;
 
 /** The plan-row facts eligibility reads. */
@@ -147,7 +151,11 @@ export function isCountedFriendInvite(row: FriendInviteCountFacts, now: Date): b
   return Number.isFinite(expiresAt) && expiresAt > now.getTime();
 }
 
-/** What a champion's list says about one invite (FR-31). `joined` is refined by 5b (F5b-7). */
+/**
+ * What a champion's list says about one invite (FR-31). `joined` is derived
+ * from `redeemed_at` only (F5b-7): the section words it "Signed up — not
+ * subscribed yet", because a friend is held until payment (Slice 5c).
+ */
 export type FriendInviteStatus = 'pending' | 'expired' | 'revoked' | 'joined';
 
 /**
@@ -255,7 +263,7 @@ export async function getFriendInviteSummary(deps: {
 
 // ── Send (POST) ─────────────────────────────────────────────────────────────
 
-/** Why a send was refused. Audited by class only (F5a-13). */
+/** Why a send was refused. Audited by class only (F5a-13), except `not_eligible`, which is logged and never audited (N-4, Slice 5b). */
 export type FriendInviteRefusal = 'not_eligible' | 'own_email' | 'allowance_reached' | 'daily_limit' | 'already_invited';
 
 export type SendFriendInviteOutcome =
@@ -425,18 +433,23 @@ export async function sendFriendInvite(body: SendFriendInviteBody, deps: SendFri
 
 // ── Revoke ──────────────────────────────────────────────────────────────────
 
-export type RevokeFriendInviteOutcome = { ok: true } | { ok: false; status: 404 | 500 };
+export type RevokeFriendInviteOutcome = { ok: true } | { ok: false; status: 404 | 409 | 500 };
 
 /**
  * Revoke one of THIS account's invites (FR-32, F5a-8, SA Q-2): gated by the
  * session and by ownership INSIDE the UPDATE, not by the switch or the cohort,
- * so a champion can always withdraw their own pending invite. Not found, not
- * yours and no longer revocable are one 404.
+ * so a champion can always withdraw their own pending invite.
+ *
+ * When the UPDATE matches nothing, a second read with the same issuer scope
+ * (Slice 5b, 5a Q-3) tells "your friend already used it" (409) apart from
+ * everything else. Not found, not yours and otherwise not revocable (already
+ * revoked, a live claim) stay one 404, so another account's accepted invite is
+ * still indistinguishable from a missing one.
  */
 export async function revokeFriendInvite(deps: {
   accountId: string;
   inviteId: string;
-  repository: Pick<FriendInviteRepository, 'revokeForIssuerAccount'>;
+  repository: Pick<FriendInviteRepository, 'revokeForIssuerAccount' | 'findRedeemedForIssuerAccount'>;
   now: Date;
 }): Promise<RevokeFriendInviteOutcome> {
   const { data, error } = await deps.repository.revokeForIssuerAccount({
@@ -447,5 +460,9 @@ export async function revokeFriendInvite(deps: {
     claimLeaseCutoff: claimLeaseCutoff(deps.now),
   });
   if (error || data === null) return { ok: false, status: 500 };
-  return data ? { ok: true } : { ok: false, status: 404 };
+  if (data) return { ok: true };
+
+  const redeemed = await deps.repository.findRedeemedForIssuerAccount(deps.inviteId, deps.accountId);
+  if (redeemed.error || redeemed.data === null) return { ok: false, status: 500 };
+  return { ok: false, status: redeemed.data ? 409 : 404 };
 }

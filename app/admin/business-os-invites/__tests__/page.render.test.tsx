@@ -140,6 +140,36 @@ describe('the list', () => {
     expect(accepted).toHaveTextContent('acct-123');
     expect(accepted).toHaveTextContent('2026-10-03');
     expect(accepted).toHaveTextContent('L1');
+    // An L1 champion has no parent, so nothing is shown for it.
+    expect(within(list).queryByTestId('invite-parent-account')).not.toBeInTheDocument();
+  });
+
+  it('Slice 5b (FR-36): an accepted friend invite shows L2 and its parent account', async () => {
+    responder = () => ({
+      status: 200,
+      body: {
+        success: true,
+        data: payload({
+          invites: [
+            row({
+              state: 'accepted',
+              redeemedAt: '2026-10-03T09:00:00.000Z',
+              redeemedAccountId: 'friend-456',
+              level: 2,
+              parentAccountId: 'champion-789',
+              issuerKind: 'account',
+              issuerAccountId: 'champion-789',
+            }),
+          ],
+        }),
+      },
+    });
+    render(<BusinessOsInvitesPage />);
+    const list = await screen.findByTestId('invite-list');
+    const accepted = within(list).getByTestId('invite-accepted-account');
+    expect(accepted).toHaveTextContent('friend-456');
+    expect(accepted).toHaveTextContent('L2');
+    expect(within(accepted).getByTestId('invite-parent-account')).toHaveTextContent('parent champion-789');
   });
 
   it('T-16: the banner counts signups that stopped halfway, and each row shows the step, code, message and account', async () => {

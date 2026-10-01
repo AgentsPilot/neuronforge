@@ -779,11 +779,13 @@ export interface RecordRedemptionFailureInput {
   now: Date;
 }
 
-/** One lineage row, as the admin list reads it (Slice 1b). */
+/** One lineage row, as the admin list reads it (Slice 1b; parent from Slice 5b). */
 export interface BusinessOsAccountLineageLevel {
   account_id: string;
   invite_id: string | null;
   level: number;
+  /** NULL for an L1 champion (`admin_invite`); the inviting account for L2+ (FR-36). */
+  parent_account_id: string | null;
 }
 
 /**

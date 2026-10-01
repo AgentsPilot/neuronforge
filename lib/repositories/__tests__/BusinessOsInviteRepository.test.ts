@@ -888,6 +888,45 @@ describe('Slice 5a: revokeForIssuerAccount (F5a-8, T-20)', () => {
   });
 });
 
+describe('Slice 5b: findRedeemedForIssuerAccount (5a Q-3, revoke 409)', () => {
+  it('a plain SELECT of redeemed_at only, scoped by id AND both issuer filters, with no mutation', async () => {
+    const { client, calls } = recordingClient({ data: { redeemed_at: NOW.toISOString() }, error: null });
+    const result = await new BusinessOsInviteRepository(client).findRedeemedForIssuerAccount(ID, ACCOUNT);
+    expect(result).toEqual({ data: true, error: null });
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_invites'] },
+      { method: 'select', args: ['redeemed_at'] },
+      { method: 'eq', args: ['id', ID] },
+      { method: 'eq', args: ['issuer_kind', 'account'] },
+      { method: 'eq', args: ['issuer_account_id', ACCOUNT] },
+      { method: 'maybeSingle', args: [] },
+    ]);
+    expect(calls.some((call) => ['update', 'insert', 'or'].includes(call.method))).toBe(false);
+  });
+
+  it.each([
+    ['not redeemed', { redeemed_at: null }],
+    ['no row (not found, or another account’s invite)', null],
+  ])('%s is false, not an error', async (_label, data) => {
+    const { client } = recordingClient({ data, error: null });
+    expect(await new BusinessOsInviteRepository(client).findRedeemedForIssuerAccount(ID, ACCOUNT)).toEqual({ data: false, error: null });
+  });
+
+  it('an error is returned, never a default', async () => {
+    const { client } = recordingClient({ data: null, error: { message: 'timeout' } });
+    const result = await new BusinessOsInviteRepository(client).findRedeemedForIssuerAccount(ID, ACCOUNT);
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('timeout');
+  });
+
+  it('lives in its own method, outside revokeForIssuerAccount (the mutationOrSelect guard reads to the end of that block)', () => {
+    const source = readFileSync(join(process.cwd(), 'lib', 'repositories', 'BusinessOsInviteRepository.ts'), 'utf8');
+    const revokeBody = source.slice(source.indexOf('async revokeForIssuerAccount('), source.indexOf('async findRedeemedForIssuerAccount('));
+    expect(revokeBody).toContain('.update(');
+    expect(revokeBody).not.toContain(".select('redeemed_at')");
+  });
+});
+
 describe('markFirstViewed', () => {
   it('stamps first_viewed_at only while it is null, and sets updated_at', async () => {
     const { client, calls } = recordingClient({ data: null, error: null });
@@ -945,6 +984,8 @@ describe('C-13: the service-role reason is written down, and the admin methods a
         'createForIssuerAccount',
         'listForIssuerAccount',
         'revokeForIssuerAccount',
+        // Slice 5b: whether the champion's OWN invite was accepted (revoke 409), same issuer scope.
+        'findRedeemedForIssuerAccount',
         // Slice 5b: the payment hold's two facts of the signed-in account's own invite.
         'findHoldFactsById',
       ].sort()
@@ -1028,6 +1069,8 @@ describe('M-1 (C-3): a database error never carries row values into a log or a r
       'revokeForIssuerAccount',
       (repo) => repo.revokeForIssuerAccount({ id: ID, issuerAccountId: ACCOUNT, reason: 'Revoked by the inviting champion', now: NOW, claimLeaseCutoff: CUTOFF }),
     ],
+    // Slice 5b: the revoke's second read.
+    ['findRedeemedForIssuerAccount', (repo) => repo.findRedeemedForIssuerAccount(ID, ACCOUNT)],
   ];
 
   for (const [label, dbError] of rowLeakingErrors()) {

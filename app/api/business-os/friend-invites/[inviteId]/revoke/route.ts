@@ -11,6 +11,9 @@
  * (`issuer_kind = 'account' AND issuer_account_id = <session account>`), so
  * there is no gap between checking and writing. Not found, not yours and no
  * longer revocable are one identical 404 (tenant-isolation-guard step 7).
+ * Slice 5b: the caller's OWN invite that a friend already accepted answers
+ * 409 `already_used`, from a second read with the same issuer scope, so
+ * another account's accepted invite is still the 404.
  *
  * ── Not gated by the switch or the cohort (SA Q-2) ──────────────────────────
  * Withdrawing an invite is never harmful, so a champion whose cohort lapsed, or
@@ -20,6 +23,7 @@
  * Every response is `Cache-Control: no-store`.
  *
  * @see docs/workplans/BUSINESS_OS_INVITE_FRIENDS_SLICE_5A_WORKPLAN.md
+ * @see docs/workplans/BUSINESS_OS_INVITE_FRIENDS_SLICE_5B_WORKPLAN.md (D-13)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -90,6 +94,13 @@ export async function POST(request: NextRequest, { params }: { params: { inviteI
       if (outcome.status === 500) {
         requestLogger.error({ accountId, inviteId: id.data }, 'Friend invite revoke failed');
         return failure('Could not revoke the invite', 500);
+      }
+      if (outcome.status === 409) {
+        // The caller's OWN invite, already accepted (Slice 5b, 5a Q-3). The
+        // second read carried the session's account, so this never says
+        // anything about another account's invite.
+        requestLogger.info({ accountId, inviteId: id.data }, 'Friend invite revoke refused: already used');
+        return failure('already_used', 409);
       }
       // One answer for not found, not yours, and no longer revocable.
       requestLogger.info({ accountId, inviteId: id.data }, 'Friend invite revoke matched no row');
