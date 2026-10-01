@@ -418,9 +418,14 @@ describe('refusal messages (T-21, SA R-7)', () => {
 
 // ── Revoke ──────────────────────────────────────────────────────────────────
 
-describe('revokeFriendInvite (F5a-8, SA Q-2)', () => {
-  const revoke = (data: boolean | null, error: Error | null = null) => ({
+describe('revokeFriendInvite (F5a-8, SA Q-2; 409 from Slice 5b)', () => {
+  const revoke = (
+    data: boolean | null,
+    error: Error | null = null,
+    redeemed: { data: boolean | null; error: Error | null } = { data: false, error: null }
+  ) => ({
     revokeForIssuerAccount: jest.fn(async () => ({ data, error })),
+    findRedeemedForIssuerAccount: jest.fn(async () => redeemed),
   });
 
   it('is scoped to the session account, with the fixed reason and the claim lease, even with the switch off', async () => {
@@ -433,15 +438,40 @@ describe('revokeFriendInvite (F5a-8, SA Q-2)', () => {
       now: NOW,
       claimLeaseCutoff: expect.any(Date),
     });
+    // A won revoke needs no second read.
+    expect(repository.findRedeemedForIssuerAccount).not.toHaveBeenCalled();
   });
 
-  it('0 rows (not found, not yours, not revocable) → 404', async () => {
-    expect(await revokeFriendInvite({ accountId: ACCOUNT, inviteId: INVITE_ID, repository: revoke(false), now: NOW })).toEqual({ ok: false, status: 404 });
+  it('0 rows and not accepted (not found, not yours, otherwise not revocable) → 404', async () => {
+    const repository = revoke(false);
+    expect(await revokeFriendInvite({ accountId: ACCOUNT, inviteId: INVITE_ID, repository, now: NOW })).toEqual({ ok: false, status: 404 });
+    expect(repository.findRedeemedForIssuerAccount).toHaveBeenCalledWith(INVITE_ID, ACCOUNT);
   });
 
-  it('a database error → 500', async () => {
-    expect(
-      await revokeFriendInvite({ accountId: ACCOUNT, inviteId: INVITE_ID, repository: revoke(null, new Error('x')), now: NOW })
-    ).toEqual({ ok: false, status: 500 });
+  it('0 rows and the caller’s OWN invite was accepted → 409 (5a Q-3)', async () => {
+    const repository = revoke(false, null, { data: true, error: null });
+    expect(await revokeFriendInvite({ accountId: ACCOUNT, inviteId: INVITE_ID, repository, now: NOW })).toEqual({ ok: false, status: 409 });
+  });
+
+  it('the second read carries the SESSION account, so another account’s accepted invite stays a 404', async () => {
+    const OTHER = '99999999-9999-4999-8999-999999999999';
+    // A repository that answers "accepted" only for the real issuer, as the scoped SELECT does.
+    const repository = {
+      revokeForIssuerAccount: jest.fn(async () => ({ data: false, error: null })),
+      findRedeemedForIssuerAccount: jest.fn(async (_id: string, issuer: string) => ({ data: issuer === OTHER, error: null })),
+    };
+    expect(await revokeFriendInvite({ accountId: ACCOUNT, inviteId: INVITE_ID, repository, now: NOW })).toEqual({ ok: false, status: 404 });
+    expect(repository.findRedeemedForIssuerAccount).toHaveBeenCalledWith(INVITE_ID, ACCOUNT);
+  });
+
+  it('a database error on the revoke → 500, with no second read', async () => {
+    const repository = revoke(null, new Error('x'));
+    expect(await revokeFriendInvite({ accountId: ACCOUNT, inviteId: INVITE_ID, repository, now: NOW })).toEqual({ ok: false, status: 500 });
+    expect(repository.findRedeemedForIssuerAccount).not.toHaveBeenCalled();
+  });
+
+  it('a database error on the second read → 500, never a guessed 404 or 409', async () => {
+    const repository = revoke(false, null, { data: null, error: new Error('timeout') });
+    expect(await revokeFriendInvite({ accountId: ACCOUNT, inviteId: INVITE_ID, repository, now: NOW })).toEqual({ ok: false, status: 500 });
   });
 });

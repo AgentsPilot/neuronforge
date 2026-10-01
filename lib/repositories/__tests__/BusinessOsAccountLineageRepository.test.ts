@@ -46,13 +46,16 @@ beforeEach(() => {
 });
 
 describe('findByInviteIdsForAdmin', () => {
-  it('reads account, invite and level for the given invites', async () => {
-    const rows = [{ account_id: 'a', invite_id: INVITE, level: 1 }];
+  it('reads account, invite, level and parent for the given invites', async () => {
+    const rows = [
+      { account_id: 'a', invite_id: INVITE, level: 1, parent_account_id: null },
+      { account_id: 'b', invite_id: INVITE, level: 2, parent_account_id: 'a' },
+    ];
     const { client: c, calls } = client({ data: rows, error: null });
     expect(await new BusinessOsAccountLineageRepository(c).findByInviteIdsForAdmin([INVITE])).toEqual({ data: rows, error: null });
     expect(calls).toEqual([
       { method: 'from', args: ['business_os_account_lineage'] },
-      { method: 'select', args: ['account_id, invite_id, level'] },
+      { method: 'select', args: ['account_id, invite_id, level, parent_account_id'] },
       { method: 'in', args: ['invite_id', [INVITE]] },
     ]);
   });

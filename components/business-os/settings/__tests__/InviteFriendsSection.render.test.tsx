@@ -202,6 +202,31 @@ describe('an eligible champion', () => {
     expect(calls.find((call) => call.init?.method === 'POST')?.url).toBe('/api/business-os/friend-invites/p1/revoke');
   });
 
+  it('Slice 5b (F5b-7): a joined friend reads "Signed up — not subscribed yet", in every language, with no Revoke', async () => {
+    const joined = { id: 'j1', email: 'joined@example.com', createdAt: '2026-09-25T00:00:00.000Z', linkExpiresAt: '2026-10-25T00:00:00.000Z', status: 'joined', slotReturned: false };
+    respond = () => ({ status: 200, body: { success: true, data: summary({ invites: [joined] }) } });
+    await openSection();
+    const row = screen.getByTestId('invite-friends-row-j1');
+    expect(within(row).getByTestId('invite-friends-status')).toHaveTextContent('Signed up — not subscribed yet');
+    expect(within(row).queryByRole('button', { name: 'Revoke' })).not.toBeInTheDocument();
+    expect(row).not.toHaveTextContent(INVITE_FRIENDS_COPY.en.slotReturned);
+    expect(INVITE_FRIENDS_COPY.he.status.joined).toBe('נרשם — עדיין ללא מנוי');
+    expect(INVITE_FRIENDS_COPY.es.status.joined).toBe('Registrado — aún sin suscripción');
+  });
+
+  it('Slice 5b: a revoke answered 409 already_used (the friend signed up meanwhile) says so and refreshes', async () => {
+    respond = (call) =>
+      call.init?.method === 'POST'
+        ? { status: 409, body: { success: false, error: 'already_used' } }
+        : { status: 200, body: { success: true, data: summary() } };
+    const { user } = await openSection();
+    const pending = screen.getByTestId('invite-friends-row-p1');
+    await user.click(within(pending).getByRole('button', { name: 'Revoke' }));
+    await user.click(within(pending).getByRole('button', { name: INVITE_FRIENDS_COPY.en.revokeYes }));
+    expect(await screen.findByText(INVITE_FRIENDS_COPY.en.revokeFailed)).toBeInTheDocument();
+    await waitFor(() => expect(calls.filter((call) => !call.init?.method)).toHaveLength(2));
+  });
+
   it('cancelling a revoke sends nothing', async () => {
     const { user } = await openSection();
     const pending = screen.getByTestId('invite-friends-row-p1');

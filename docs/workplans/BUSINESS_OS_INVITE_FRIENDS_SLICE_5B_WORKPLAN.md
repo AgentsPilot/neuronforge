@@ -7,7 +7,7 @@
 **Previous slices:** [Slice 1](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_1_WORKPLAN.md) (1b claim → create → finalise, I-1 to I-6, D-1 to D-13), [Slice 3](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_3_WORKPLAN.md) (3b Google, R-1 to R-12), [Slice 5a](/docs/workplans/BUSINESS_OS_INVITE_FRIENDS_SLICE_5A_WORKPLAN.md) (PR #154; carries **N-4** and the Q-3 "already used → 409" to this slice)
 **Date:** 2026-09-30
 **Branch:** `feature/bos-invite-friend-5b`, cut from `origin/main` at `de4b31f2` (the #160 merge) in the `neuronforge-invite-s0` worktree, fast-forwarded to `56feb9d2` (#161, which touches only the my-plan route) before implementation. Upstream tracking unset. Every file and line reference below was checked on this branch.
-**Status:** SA workplan review ✅ approved with conditions (R-1 to R-11 folded in, 2026-10-01). **Two PRs (SA ruling):** **5b-1 committed** by RM on 2026-10-01 (`4e179c93`, `18ae66e4`, `ef5429da`, `bb2caeaf`, plus a docs commit) after SA code approval and QA PASS WITH NOTES; **migration `20261024` applied to production and verified on 2026-10-01** (pre-check 0,0; the 5b, 5a and Slice 0 checkers PASS; TL live probe OK); pushed and PR opened on the user's decision, on the SA and QA test runs. **5b-2 not started** (the champion's label, revoke 409, N-4, admin parent, the entitlements doc row). The switch `accountInvitesAvailable` stays **false**.
+**Status:** SA workplan review ✅ approved with conditions (R-1 to R-11 folded in, 2026-10-01). **Two PRs (SA ruling):** **5b-1 committed** by RM on 2026-10-01 (`4e179c93`, `18ae66e4`, `ef5429da`, `bb2caeaf`, plus a docs commit) after SA code approval and QA PASS WITH NOTES; **migration `20261024` applied to production and verified on 2026-10-01** (pre-check 0,0; the 5b, 5a and Slice 0 checkers PASS; TL live probe OK); pushed and PR opened on the user's decision, on the SA and QA test runs. **5b-2 implemented, uncommitted** (2026-10-01, Dev, §6.2) on `feature/bos-invite-friend-5b2`, cut from `origin/feature/bos-invite-friend-5b` in the `neuronforge-invite-s1` worktree, to be rebased onto `main` after #162 merges: the champion's label, revoke 409, N-4, admin parent, the entitlements doc row. No migration. Awaiting SA code review. The switch `accountInvitesAvailable` stays **false**.
 
 ## Overview
 
@@ -359,7 +359,7 @@ Same shape as 5a's: `SET default_transaction_read_only = on`, one final `SELECT`
 
 ## 6. Task List
 
-**Split (SA ruling):** **5b-1** = T-0 to T-7, T-10, T-12, T-13 (✅ below). **5b-2** = T-8, T-9, T-11, plus the R-8 doc row (⬜, not started). The switch stays off until both are merged.
+**Split (SA ruling):** **5b-1** = T-0 to T-7, T-10, T-12, T-13 (✅ below). **5b-2** = T-8, T-9, T-11, plus the R-8 doc row (✅ implemented, uncommitted, §6.2). The switch stays off until both are merged.
 
 - ✅ **T-0** Confirm the branch (`git branch --show-current` = `feature/bos-invite-friend-5b`). Run `npm run schema:check` (skill `business-os-schema-check`) and record the ref; confirm on the live DB, read-only, that `business_os_invites.issuer_account_id`, `business_os_account_lineage.parent_account_id` / `source` / `level` / `root_account_id`, and the `onboarding_conversations` columns used by the AC-18 probe (`user_id`, `message_sequence`, `role`, `content`) exist. Re-run `ls supabase/migrations` and confirm `20261024` is still free.
 - ✅ **T-1** Migration, checker, rollback and text test (§4). Run the migration in PGlite over `20261005`, `20261009`, `20261012`, `20261013`, `20261014`, `20261020`, `20261023` (5a's QA pattern): checker PASS; every outcome class; L2 with no issuer lineage (root = issuer); L3 under an L2 issuer (root = the issuer's root); revoked → `not_matched`; lapsed issuer → `issuer_not_eligible` with nothing written; second call → `already_finalised`; a trigger-style `INSERT … ON CONFLICT` into the plan row after finalise leaves `cohort` NULL; `anon` / `authenticated` denied; rollback returns the pre-check to `0, 0`.
@@ -369,10 +369,10 @@ Same shape as 5a's: `SET default_transaction_read_only = on`, one final `SELECT`
 - ✅ **T-5** Routes: landing in `complete` and `google`; the routes test (friend happy path per method, the identical code-route answers, landing).
 - ✅ **T-6** `publicInviteView.ts` (`valid` for friend invites; remove `signup_opens_soon`), the invite page line and copy, their tests.
 - ✅ **T-7** `paymentHold.ts` + `paymentHoldGate.ts` and tests (D-7 to D-9, R-3); the **four** layouts (R-1, R-2); the holding screen with its R-4 error state, its copy, sign-out button and render test; the `BUSINESS_OS_TEST_PAGE_SCOPE.md` note.
-- ⬜ **T-8** *(5b-2)* Champion side: the copy change, the revoke second read and 409, N-4 in the send route, their tests (D-12, D-13).
-- ⬜ **T-9** *(5b-2)* Admin list `parentAccountId` (D-15) and its tests.
+- ✅ **T-8** *(5b-2)* Champion side: the copy change, the revoke second read and 409, N-4 in the send route, their tests (D-12, D-13).
+- ✅ **T-9** *(5b-2)* Admin list `parentAccountId` (D-15) and its tests.
 - ✅ **T-10** Registrations: `enforcementPoints.test.ts` (`paymentHoldGate.ts`), the RC-15 imports guard (`provisionFromFriendInvite`). Run `npm run test:bos-entitlements` on the final diff and record the result here.
-- ⬜ **T-11** *(5b-2)* `BUSINESS_OS_ENTITLEMENTS.md`: the T-9 switch-on row (D-14), **widened by SA R-8** to (a) T-9, (b) the shadow report labels held accounts "awaiting payment" (Q-5), (c) if Slice 4 resumes before S-5, first close the F5b-5 API residual and the Q-1 / FR-12a friend-orphan trial path; and Change History.
+- ✅ **T-11** *(5b-2)* `BUSINESS_OS_ENTITLEMENTS.md`: the T-9 switch-on row (D-14), **widened by SA R-8** to (a) T-9, (b) the shadow report labels held accounts "awaiting payment" (Q-5), (c) if Slice 4 resumes before S-5, first close the F5b-5 API residual and the Q-1 / FR-12a friend-orphan trial path; and Change History.
 - ✅ **T-12** Guards and full check: `npx tsc --noEmit` (filtered to touched files), `npm run lint`, `npm run lint:hooks`, `mutationOrSelect.guard` (EXEMPT unchanged), `tierLiteral.forbidden` (no baseline change), `npm run test:authz-guard`, the touched suites, a full `npx jest --ci` compared with a clean `origin/main` baseline, `npx next build` with the CI env. **Live read-only probes** (production PostgREST, the 5a pattern, a throwaway script deleted afterwards): the redemption select with `issuer_account_id`, `findHoldFactsForAccount` and `findHoldFactsById` with a zero uuid, the admin lineage select with `parent_account_id` (after `20261024` for the hold read), `findRedeemedForIssuerAccount` with a zero uuid. `git diff --stat` before hand-over: no deletion without insertion.
 - ✅ **T-13** Hand over **uncommitted** for SA code review, the user's diff view, then QA.
 
@@ -437,6 +437,44 @@ Built on `feature/bos-invite-friend-5b` at `56feb9d2`, **uncommitted**. `2026102
 Re-run after the QA fixes: touched suites and repository guards 108 suites, 2,244/2,244; `npm run test:bos-entitlements` 2,058/2,058; `npm run test:authz-guard` 119/119; eslint 0 errors (4 old warnings). Migration SQL unchanged.
 
 **What the live check means for the merge order:** until `20261024` is applied, the lineage hold read fails with 42703 on every gated layout render. The gate then fails **open** (Q-2), logged at `error`, so nobody is locked out, but the logs would be noisy and the holding screen would show its error state. So the order is the usual one, and it is required: **apply `20261024` → checker PASS → re-run this probe (expect the RPC to answer `not_matched` and the lineage read `{ data: null, error: null }`) → merge.**
+
+
+### 6.2 Implementation record, 5b-2 (Dev, 2026-10-01)
+
+Built on `feature/bos-invite-friend-5b2`, cut from `origin/feature/bos-invite-friend-5b` (`08fc6018`, PR #162, not merged) in the `neuronforge-invite-s1` worktree; upstream unset; to be rebased onto `main` after #162 merges. **Uncommitted. No migration, no DB write.** Nothing of 5b-2 had landed in 5b-1: §6.1 records no 5b-2 item, and `findRedeemedForIssuerAccount` (listed under T-2) was not in the code, so it is built here. **Files: 0 new, 19 modified** (8 of them tests) plus this workplan. `git diff --stat` (code and entitlements doc): 19 files, +425 / −48; every deletion is a replaced line (the old `not_eligible` audit condition, the old revoke tests rewritten with the 409 cases, the select list, the `joined` copy). No file shrinks.
+
+| Task | As built |
+|---|---|
+| T-8 copy (F5b-7) | `inviteFriendsCopy.ts` `status.joined`: en "Signed up — not subscribed yet", he "נרשם — עדיין ללא מנוי" (SA CR2: "ללא", the standard written form), es "Registrado — aún sin suscripción" (BA to confirm the he/es words). Status still derived from `redeemed_at` only; `InviteFriendsSection.tsx` unchanged (the Revoke button was already Pending-only, and its existing "can't be revoked any more" line + refresh already covers a 409) |
+| T-8 revoke 409 (D-13, 5a Q-3) | New `BusinessOsInviteRepository.findRedeemedForIssuerAccount(id, issuerAccountId)`: `select('redeemed_at')`, `.eq('id')`, `.eq('issuer_kind','account')`, `.eq('issuer_account_id')`, `maybeSingle`; returns a boolean; M-1 scrub. **Its own method, outside `revokeForIssuerAccount`'s block** (SA's mutationOrSelect note; a test pins that the revoke body holds no `.select('redeemed_at')`). `revokeFriendInvite` calls it only when the UPDATE matched 0 rows: redeemed → 409, else 404; a failed second read → 500. The route maps 409 to `{ error: 'already_used' }`, no audit, `no-store`. `revokeForIssuerAccount` itself is unchanged (no `.or()` with `.select()`; `EXEMPT` still one entry) |
+| T-8 N-4 (D-12) | `app/api/business-os/friend-invites/route.ts`: `not_eligible` is logged at `info` ("Friend invite refused (not audited)") and never audited, from either side (TS eligibility or the SQL send function). The other four refusals keep `warn` + `BOS_FRIEND_INVITE_REFUSED`. The now-unused `areFriendInvitesSwitchedOn` import is removed from the route (the function stays in `friendInviteOps.ts`) |
+| T-9 admin parent (D-15, FR-36) | `findByInviteIdsForAdmin` selects `parent_account_id`; `BusinessOsAccountLineageLevel` gains it; `InviteListView` / `INVITE_LIST_VIEW_KEYS` gain `parentAccountId` (from lineage, never from the issuer; null for L1, pending, or a failed lineage read); `toInviteListView` takes it as an optional fifth argument; the admin `InviteRow` type gains it (optional, an older server omits it); `InviteList.tsx` renders "L2 · parent <id>" in the accepted line. No file under `/api/admin/**` changed |
+| T-11 entitlements doc (D-14, SA R-8) | `BUSINESS_OS_ENTITLEMENTS.md` § Before enforcement can be switched on: a **Held paid invitees** row with (a) T-9 (the launch execution skips, the dry run lists; today's dry run counts them in `wouldBecomeChampion`), (b) the shadow report's "awaiting payment" label (Q-5), (c) if Slice 4 resumes before S-5, close the F5b-5 API residual and the Q-1 / FR-12a friend-orphan trial path first. Change History row; Last Updated bumped |
+| R-8 (c) §10, R-10, R-11 | Already in this workplan from 5b-1 (§10 item 6, §10 awareness bullet, §11 paragraph); not repeated |
+| CR-1 | Already fixed in 5b-1 (Change History, 2026-10-01). Nothing to do here |
+
+**Deviations (for SA):**
+1. **A failed second read on revoke answers 500**, not 404. D-13 names only 409 and 404; a 404 on a read error would tell the champion "not yours / gone" without knowing. Logged by the route at `error`, as today's revoke failure is.
+2. **`InviteFriendsSection.tsx` is not modified.** Its generic `revokeFailed` line ("That invite can't be revoked any more. The list has been refreshed.") already reads correctly for a 409, and after the refresh the row shows "Signed up — not subscribed yet". A dedicated `already_used` sentence is left for BA if wanted.
+3. **`lib/audit/events.ts` comment** — first left stale (§3 lists the file as not touched); **fixed per SA CR2-1**: `not_eligible` removed from the recorded reasons, with a note that it is logged, never audited (N-4). Comment only.
+4. **SA N-6 not taken** (the public view's friend branch not checking `invite_type` / `grant_id`). It was "align in 5b-2 if convenient" and outside the five items briefed for this PR; harmless (redemption refuses a malformed row).
+5. **Hebrew and Spanish wording** of the new label is Dev's; BA to confirm before switch-on.
+
+**Checks run (2026-10-01):**
+
+| Check | Result |
+|---|---|
+| Touched suites (`lib/business-os/invites`, the lineage and invite repository suites, `app/api/business-os/friend-invites`, `app/admin/business-os-invites`, `components/business-os/settings`, `app/api/admin/business-os/invites`) | ✅ 24 suites, 910 tests |
+| New/changed tests | Repository: `findRedeemedForIssuerAccount` call shape and no mutation, false for not-redeemed or no row, error returned, kept out of the revoke block, method list, M-1 leak suite; lineage select with parent. Ops: 404 / 409 / session-scoped second read / 500 on either read / no second read on a win. Revoke route: own accepted → 409 `already_used`, no audit; another's accepted → the same 404 as missing; 500 on a failed read. Send route: `not_eligible` with the switch on (three plans) and from the SQL side → no audit; the other four audited by class. Admin: L2 with the lineage parent (not the issuer), L1 null, pending null; the page shows "parent <id>", an L1 row shows none. Section: the joined label (en, he, es) with no Revoke; a 409 revoke shows the line and refreshes |
+| Every `guard` / `forbidden` / `invariant` / `eventAudience` suite (incl. `mutationOrSelect`, `tierLiteral.forbidden`) | ✅ 51 suites, 1,156 tests; `EXEMPT` unchanged |
+| `npm run test:authz-guard` | ✅ 119/119; no `/api/admin/**` file touched |
+| `npm run test:bos-entitlements` | ✅ 98 suites, 2,065 tests. No new import from the entitlements module (the routes already imported `resolveAccountId`; the send route's import list only lost `areFriendInvitesSwitchedOn`, which is not from the module) |
+| `npm run lint:hooks` | ✅ clean |
+| `npx eslint` on the 18 touched `.ts`/`.tsx` | ✅ 0 errors; 1 `no-explicit-any` warning at `lib/repositories/types.ts:393`, a line this slice did not change |
+| `tsc` over the touched non-test files (a scratch project, 67 files) | ✅ 0 errors |
+| `npx next build` (the CI placeholder env from `build.yml`) | ✅ exit 0; `/admin/business-os-invites`, both friend-invite routes and `/business-os/settings` are `ƒ` |
+| `console.*` in touched files | 0 |
+| Switch | `accountInvitesAvailable` still `false`; `config/invites.ts` not in the diff |
 
 ---
 
@@ -555,6 +593,8 @@ After 5b merges, the switch is still **one line** (`accountInvitesAvailable: tru
 5. The user chooses to (BQ-13), knowing that: every in-force Founding Partner then sees "Invite friends"; any friend who signs up is **held with no time limit** and has nothing to do until 5c; and, until G-1 and Slice 4, invite-only is a business control, not a security boundary (§8.4).
 
 6. **SA R-8(c):** if Slice 4 (closing open signup) resumes before S-5, first close the F5b-5 API residual and the Q-1 / FR-12a friend-orphan trial path.
+7. **SA CR2-2 (i):** BA has checked the Hebrew and Spanish wording of "Signed up — not subscribed yet" (`inviteFriendsCopy.ts` `status.joined`: he "נרשם — עדיין ללא מנוי", es "Registrado — aún sin suscripción").
+8. **SA CR2-2 (ii):** SA N-6 (the public view's friend branch also checking `invite_type` / `grant_id`, as `loadFriendInvite` does) is either done or explicitly waived in writing.
 
 **Awareness (SA R-10):** in 5b **no admin can let a held friend in**. Assigning a tier or cohort on the Tiers page does not lift the hold; only 5c's payment stamp does. Whether the business wants an admin "let in without paying" is a question for the 5c BA pass.
 
@@ -785,6 +825,73 @@ Yes. Order: §4.1 step 1 (pre-check `0, 0`) → step 2 (paste) → step 3 (check
 
 Conditions: CR-1 is fixed in 5b-2, before the switch-on PR, and §10 gains that as a precondition. The nits are the Dev's choice; N-1 and N-3 are recommended in this PR if it is reopened anyway. **Merge only after `20261024` is applied and its checker is PASS.** RM puts that sentence in the PR body.
 
+### SA Code Review 5b-2 — 2026-10-01
+
+**Reviewed by SA — 2026-10-01**
+**Status:** ✅ Code Approved, with two small conditions (CR2-1, CR2-2) that need no re-review.
+
+Reviewed the uncommitted diff in `neuronforge-invite-s1` on `feature/bos-invite-friend-5b2` (base `08fc6018`, PR #162): 20 files, +469 / −53, no migration. Every deletion is a replaced line; no file shrinks.
+
+#### Verification
+
+| Item | Result | Evidence |
+|---|---|---|
+| Label "Signed up — not subscribed yet" (F5b-7, FR-31, FR-36) | ✅ | `inviteFriendsCopy.ts` `status.joined`: en is the requirement's exact words; he "נרשם — עדיין בלי מנוי"; es "Registrado — aún sin suscripción". Status still from `redeemed_at` only. Render test pins all three and no Revoke on a joined row. |
+| `findRedeemedForIssuerAccount` scope and shape | ✅ | `select('redeemed_at')`, `.eq('id')`, `.eq('issuer_kind','account')`, `.eq('issuer_account_id', <session>)`, `maybeSingle`; returns a boolean only, never the row; M-1 scrub on error. Its own method, outside the revoke block. Call shape, no-mutation and placement pinned; added to the C-13 service-role method list and the M-1 leak suite. |
+| Second read only after 0 rows | ✅ | `revokeFriendInvite`: error or `null` → 500 with no second read; a won revoke returns before it (both pinned). |
+| Another account's accepted invite → same 404 | ✅ | The read carries the session account, so another issuer's row reads `false`. Route test: body identical to the missing-id 404, and every second read carried the session account. |
+| `revokeForIssuerAccount` unchanged | ✅ | No hunk in the method; still count-only, no `.select`. |
+| `mutationOrSelect` `EXEMPT` | ✅ | One entry (`revokeForAdmin`); guard green. |
+| Deviation 1 (read error → 500) | ✅ **Accepted** | A guessed 404 or 409 on an unknown state would be a wrong answer to the champion. Route logs at `error`, no audit. Pinned at the ops and route levels. |
+| N-4 (D-12), TypeScript path | ✅ | The eligibility refusal → `info` "Friend invite refused (not audited)", no audit, for the switch off and three non-champion plans. |
+| N-4, SQL path | ✅ | The SQL outcome `not_eligible` maps to the same `refusal` value (`friendInviteOps.ts` `result.outcome` → `refusal`), so it takes the same branch; pinned with one RPC call and no audit. |
+| Other four refusals still audited | ✅ | `own_email`, `allowance_reached`, `daily_limit`, `already_invited` → `warn` + `BOS_FRIEND_INVITE_REFUSED` by class; pinned. The dead `areFriendInvitesSwitchedOn` import is gone from the route. |
+| Admin parent (D-15, FR-36) | ✅ | Read from lineage (`parent_account_id`) only; the test deliberately sets a lineage parent unlike the issuer and expects lineage's value. Null-safe: `?? null` on the entry and the map lookup; L1, pending and a failed lineage read are null; the UI renders nothing for null; `InviteRow.parentAccountId` optional for an older server. No file under `app/api/admin/**` changed; the admin route test's key equality follows `INVITE_LIST_VIEW_KEYS`. |
+| Entitlements doc row "Held paid invitees" | ✅ | In § Before enforcement, with (a) T-9 (skip + list; today counted in `wouldBecomeChampion`), (b) the "awaiting payment" label (Q-5), (c) Slice 4 before S-5 → close F5b-5 and the Q-1 / FR-12a orphan path first. Change History row; Last Updated bumped. |
+| R-8 (c) in §10, R-10, R-11 | ✅ | Present from 5b-1 (§10 item 6 and the awareness bullet, §11 paragraph). |
+| Switch | ✅ | `INVITE_ISSUANCE_POLICY.accountInvitesAvailable: false` (`lib/business-os/entitlements/config/invites.ts:117`); file not in the diff. |
+| Entitlements imports | ✅ | No new import from `lib/business-os/entitlements/`. |
+| `console.*` in touched files | ✅ | 0. |
+
+#### Rulings on deviations
+
+| # | Ruling |
+|---|---|
+| 1 | **Accepted** (above). |
+| 2 | **Accepted.** The existing `revokeFailed` line ("can't be revoked any more. The list has been refreshed.") is true for a 409, and after the refresh the row reads "Signed up — not subscribed yet", which says why. A dedicated sentence is a BA nicety, not needed. |
+| 3 | **Not accepted as left.** `lib/audit/events.ts:202-207` documents the audit contract and now names `not_eligible` as a written reason class, which is false. §3's "not touched" list does not outrank a wrong contract comment. **CR2-1** below. |
+| 4 | **Accepted, with tracking.** N-6 was "if convenient"; redemption refuses a malformed row. **CR2-2** records it so it does not get lost. |
+| 5 | **A BA / native check is needed, before switch-on, not before merge.** With the switch off no champion sees the section's list, so merging is harmless. Notes for BA: "נרשם" and "Registrado" are masculine (unchanged from 5a's label, so not new); "בלי" is colloquial beside the section's other strings ("ללא" is the more usual written form); and "not subscribed yet" must not read as the friend's choice while payment is not open. **CR2-2** puts the check in §10. |
+
+#### Code Review Comments
+
+| # | File:line | Issue | Priority |
+|---|---|---|---|
+| CR2-1 | `lib/audit/events.ts:204` | The comment lists `not_eligible` among `BOS_FRIEND_INVITE_REFUSED` reason classes; since N-4 it is never written. Drop it from the list and say "`not_eligible` is logged, never audited (N-4, Slice 5b)". Comment-only; no re-review. | Low (condition) |
+| CR2-2 | this workplan §10 | Add two switch-on preconditions: (i) BA / native check of the he and es `status.joined` wording (deviation 5); (ii) N-6, the public view's friend branch checking `invite_type` / `grant_id`, done or explicitly waived (deviation 4). Doc-only; no re-review. | Low (condition) |
+
+#### Optimisation Suggestions (non-blocking)
+
+- The admin line shows the raw parent account id. Fine for 5b (the Tiers page finds it); a link to the account on the Tiers page would help the admin later.
+- A live-claimed (not yet redeemed) invite still answers 404 on revoke. That matches D-13; once the friend finishes, the next refresh shows "Signed up". No change needed.
+
+#### Checks run by SA (2026-10-01, in the s1 worktree)
+
+| Check | Result |
+|---|---|
+| Touched suites (`lib/business-os/invites`, lineage and invite repository suites, `app/api/business-os/friend-invites`, `app/admin/business-os-invites`, `components/business-os/settings`, `app/api/admin/business-os/invites`) | ✅ 24 suites, 910 tests |
+| Every `guard` / `forbidden` / `invariant` / `eventAudience` suite | ✅ 51 suites, 1,156 tests |
+| `npm run test:authz-guard` | ✅ 119 / 119 |
+| `npm run test:bos-entitlements` | ✅ 98 suites, 2,065 tests |
+| `npm run lint:hooks` | ✅ clean |
+| `npx eslint` on the touched `.ts` / `.tsx` | ✅ 0 errors; 1 pre-existing `no-explicit-any` warning at `lib/repositories/types.ts:393` (line not in the diff) |
+| `npx tsc --noEmit -p .` | Repo has pre-existing errors elsewhere; **0 in any touched file** |
+| `npx next build` with the `build.yml` placeholder env | ✅ exit 0; `/admin/business-os-invites`, both friend-invite routes and `/business-os/settings` are `ƒ`. The `DYNAMIC_SERVER_USAGE` lines are the usual pre-render noise. |
+
+### Code Approved for QA: Yes
+
+Conditions: CR2-1 and CR2-2 are made before the commit (comment and doc only; Dev confirms, no SA re-review). The switch stays **false**. Merge order: after #162 merges, rebase onto `main`, re-run the touched suites, then PR.
+
 ---
 
 ## QA Testing Report
@@ -938,6 +1045,70 @@ Tree vs snapshot:      status identical, diff --stat identical, 43/43 hashes OK 
 
 ---
 
+### QA Report 5b-2 — 2026-10-01
+
+**Test mode:** proportionate (the user asked for a lean pass on a small slice): the guarantees only, no long probe suite
+**Strategy used:** A + B (Jest unit and route-level tests with the real ops and fake repositories), two temporary route-level probes (deleted after the run), and file mutation testing. No DB, no production call, no migration in this slice.
+**Focus:** security (revoke scope, audit noise), api, ui label, admin view
+**Skipped:** browser check (the switch is off, so no champion sees the section) and PGlite (no SQL in 5b-2)
+**Input source:** TL brief (QA judgment within it)
+
+Tree: `neuronforge-invite-s1`, `feature/bos-invite-friend-5b2`, base `08fc6018`, 21 modified files, uncommitted. Every modified file and `git diff --stat` were snapshotted before the run; the tree matched the snapshot afterwards (21/21 sha256, `git status` and `--stat` identical). The only change is this section.
+
+#### Test Coverage
+
+| Guarantee | Tested? | Result | Notes |
+|---|---|---|---|
+| Revoke: the caller's own accepted invite → 409 `already_used`, no audit | ✅ | Pass | Route test, plus probe: body `{"success":false,"error":"already_used"}`, `info` log "Friend invite revoke refused: already used", no audit row, row unchanged |
+| Revoke: another account's accepted invite → 404, byte-identical to a missing id | ✅ | Pass | Probe beyond the suite's JSON comparison: status, every header except `date` (`cache-control: no-store`, `content-type: application/json`) and the raw body text are identical (`{"success":false,"error":"not_found"}`). The second read carried the session account |
+| Revoke: pending → revoked | ✅ | Pass | 200, row revoked, one UPDATE, no second read |
+| Revoke: read error → 500 | ✅ | Pass | Body "Could not revoke the invite", `error` log, no audit; 500 also on a revoke error, with no second read |
+| No second read after a won revoke | ✅ | Pass | Ops and route tests; mutant M2 killed |
+| N-4: `not_eligible` from the TypeScript path → `info`, not audited | ✅ | Pass | Probe with a logger spy: switch off, and switch on with a lapsed cohort → 403, `info` "Friend invite refused (not audited)", no `warn`, no audit, no RPC |
+| N-4: `not_eligible` from the SQL path → `info`, not audited | ✅ | Pass | RPC answers `not_eligible` → 403, one RPC call, `info` only, no audit |
+| N-4: the other four refusals are still audited | ✅ | Pass | `own_email`, `allowance_reached`, `daily_limit`, `already_invited` → `warn` "Friend invite refused" + `BOS_FRIEND_INVITE_REFUSED` with the class only |
+| Label en / he / es; a joined row has no Revoke | ✅ | Pass | en "Signed up — not subscribed yet", he "נרשם — עדיין ללא מנוי", es "Registrado — aún sin suscripción"; render test pins no Revoke button on a joined row. The he/es wording still needs the BA/native check before switch-on (§10, CR2-2) |
+| Admin parent from lineage, null-safe | ✅ | Pass | The test sets a lineage parent unlike the issuer and expects lineage's value; L1, pending and a failed lineage read give `null` (`?? null` on the entry and the lookup); the UI renders nothing for null or undefined; `InviteRow.parentAccountId` is optional |
+| Switch still false | ✅ | Pass | `lib/business-os/entitlements/config/invites.ts:117` `accountInvitesAvailable: false`; file not in the diff |
+
+#### Suites and guards
+
+| Check | Result |
+|---|---|
+| Touched suites (`lib/business-os/invites`, lineage and invite repository suites, `app/api/business-os/friend-invites`, `app/admin/business-os-invites`, `components/business-os/settings`, `app/api/admin/business-os/invites`) | ✅ 24 suites, 910 tests |
+| Every `guard` / `forbidden` / `invariant` / `eventAudience` suite | ✅ 51 suites, 1,156 tests |
+| `npm run test:authz-guard` | ✅ 119 / 119 |
+| `npm run test:bos-entitlements` | ✅ 98 suites, 2,065 tests |
+| `npm run lint:hooks` | ✅ clean |
+
+#### Mutation testing (one file at a time, restored from the backup and hash-checked after each)
+
+| # | Mutant | File | Result |
+|---|---|---|---|
+| M1 | Drop `.eq('issuer_account_id', …)` from `findRedeemedForIssuerAccount` (issuer scope) | `BusinessOsInviteRepository.ts` | ✅ Killed (6 failures) |
+| M2 | Do the second read before checking the UPDATE count (so it also runs after a won revoke) | `friendInviteOps.ts` | ✅ Killed (2) |
+| M3a | Audit `not_eligible` again (N-4 removed) | `friend-invites/route.ts` | ✅ Killed (5) |
+| M3b | Also suppress the audit for `daily_limit` (N-4 too broad) | `friend-invites/route.ts` | ✅ Killed (1) |
+| M4 | Parent taken from the invite's `issuer_account_id` instead of lineage | `adminInviteOps.ts` | ✅ Killed (1) |
+| M5a | Hebrew label back to "נרשם" | `inviteFriendsCopy.ts` | ✅ Killed (1) |
+| M5b | English label back to "Signed up" | `inviteFriendsCopy.ts` | ✅ Killed (2) |
+
+8 of 8 killed.
+
+#### Issues Found
+
+**Bugs:** none.
+
+**Performance issues:** none. The second read happens only after an UPDATE matched 0 rows, and selects one column of one row.
+
+**Edge cases / notes (Low, non-blocking):**
+1. **QA2-1:** No committed test asserts the log level of the N-4 branch (`info` vs `warn`) or the raw-byte and header identity of the two 404s; the suite compares parsed JSON. QA's probes confirmed both. Optional: pin them if the route is touched again.
+2. **QA2-2 (carried from SA, unchanged):** the he/es wording check and N-6 remain switch-on preconditions in §10 (CR2-2). They don't block the merge.
+
+#### Final Status
+- [x] All guarantees pass. **Verdict: PASS.** Ready for the user's diff review and commit once #162 merges and the branch is rebased; re-run the touched suites after the rebase.
+- [ ] Issues found — Dev must address before commit
+
 ## Commit Info
 
 *(RM to populate.)*
@@ -959,6 +1130,13 @@ Tree vs snapshot:      status identical, diff --stat identical, 43/43 hashes OK 
 
 Any FAIL at steps 2–4: stop, do not merge; rollback per §11 (pre-check first).
 
+**Slice 5b-2 (RM, 2026-10-01).**
+
+- **User approval (2026-10-01, in session):** "I approve committing 5b-2 and opening the PR." SA code-approved (CR2-1 and CR2-2 done); QA PASS, no bugs, 8/8 mutants killed.
+- **Branch:** `feature/bos-invite-friend-5b2`, rebased on `origin/main` after #162 (5b-1) merged, pushed by RM. Commits: `docs(invites)` slice 5b-2 records (this workplan and the entitlements held-invitee row); `feat(business-os)` 5b-2 code plus edits to existing tests. Hashes and PR number are reported to TL by RM.
+- **Database:** no change. Merge once CI is green.
+- **PR:** to `main`, opened by RM, **not merged**, no auto-merge. Merge commit (not squash). The switch `accountInvitesAvailable` stays `false`; §10 lists the switch-on preconditions still owed.
+
 ---
 
 ## Change History
@@ -974,3 +1152,7 @@ Any FAIL at steps 2–4: stop, do not merge; rollback per §11 (pre-check first)
 | 2026-10-01 | QA fixes QA-1 and QA-3 (Dev) | QA-1: the existing-account branch of the friend code route answers exactly like a new address's success whether or not the notice was sent (the failure is logged at warn, no address); the notice template never throws and drops the link for an unusable URL; a route-level test proves byte-identical answers with a malformed marketing URL (registered in two repository-caller guards as a test file). QA-3: the stale public-view comment. Recorded in §6.1. Migration SQL unchanged. |
 | 2026-10-01 | User approved the commit and PR; committed, PR opened (RM) | User: "I approve committing 5b-1 and opening the PR." RM committed 5b-1 on `feature/bos-invite-friend-5b` (docs, feat, test), pushed and opened the PR to `main`, not merged. Commit Info updated; the merge stays gated on the merge order there. |
 | 2026-10-01 | Migration applied and verified; push on SA/QA runs (RM) | The user applied `20261024` to production; pre-check 0,0, all three checkers PASS, TL live probe OK. User: "Push 5b-1 and open the PR based on the SA and QA test runs." Status line replaced in place; Commit Info gains commits, database and push-decision bullets. Merge once CI is green. |
+| 2026-10-01 | 5b-2 implemented (Dev), uncommitted | On `feature/bos-invite-friend-5b2` (from the unmerged 5b branch, s1 worktree). T-8 (the "Signed up — not subscribed yet" label in en/he/es; revoke of an own accepted invite → 409 `already_used` through a new scoped read `findRedeemedForIssuerAccount`, outside the revoke's block; N-4: `not_eligible` logged, never audited), T-9 (`parentAccountId` from lineage in the admin list), T-11 (the entitlements doc's held-paid-invitees row with R-8's three conditions). Status line, §6 split line and T-8/T-9/T-11 replaced in place; new §6.2 record with 5 deviations and checks. No migration. |
+| 2026-10-01 | SA code review 5b-2 conditions (Dev) | CR2-1: `lib/audit/events.ts` comment no longer lists `not_eligible` as recorded (logged, never audited, N-4); deviation 3 replaced in place. CR2-2: §10 gains items 7 (he/es wording check) and 8 (N-6 done or waived). Hebrew label "בלי" → "ללא" in the copy, its render test and §6.2. |
+| 2026-10-01 | SA code review 5b-2 | Code approved for QA, with CR2-1 (the stale `not_eligible` reason class in the `lib/audit/events.ts` comment) and CR2-2 (§10 gains a he/es wording check and N-6 done-or-waived as switch-on preconditions), both doc/comment-only with no re-review. Deviations 1, 2, 4 accepted; 3 not accepted (CR2-1); 5 needs a BA/native check before switch-on, not before merge. SA re-ran touched suites 910/910, guards 1,156/1,156, authz-guard 119/119, bos-entitlements 2,065/2,065, lint:hooks clean, `next build` exit 0. |
+| 2026-10-01 | User approved the 5b-2 commit and PR; committed, PR opened (RM) | User: "I approve committing 5b-2 and opening the PR." RM committed 5b-2 on `feature/bos-invite-friend-5b2` (docs, feat), rebased on `origin/main`, pushed and opened the PR to `main`, not merged. Commit Info gains a Slice 5b-2 block. No DB change; friend invites stay off. |

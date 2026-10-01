@@ -22,10 +22,12 @@ const MISSING = '00000000-0000-4000-8000-000000000000';
 
 const state = {
   user: null as { id: string } | null,
-  rows: new Map<string, { issuer: string; revoked: boolean }>(),
+  rows: new Map<string, { issuer: string; revoked: boolean; redeemed?: boolean }>(),
+  redeemedReads: [] as Array<{ id: string; issuer: string }>,
   updates: [] as Array<Record<string, unknown>>,
   audits: [] as Array<Record<string, unknown>>,
   fail: false,
+  failRead: false,
 };
 
 jest.mock('@/lib/auth', () => ({ getUser: async () => state.user }));
@@ -48,9 +50,16 @@ jest.mock('@/lib/business-os/invites/friendInviteDeps', () => ({
         state.updates.push(input);
         if (state.fail) return { data: null, error: new Error('db down') };
         const row = state.rows.get(input.id);
-        if (!row || row.issuer !== input.issuerAccountId || row.revoked) return { data: false, error: null };
+        if (!row || row.issuer !== input.issuerAccountId || row.revoked || row.redeemed) return { data: false, error: null };
         row.revoked = true;
         return { data: true, error: null };
+      },
+      // Slice 5b: models the scoped SELECT (id AND issuer), as the real one does.
+      findRedeemedForIssuerAccount: async (id: string, issuer: string) => {
+        state.redeemedReads.push({ id, issuer });
+        if (state.failRead) return { data: null, error: new Error('db down') };
+        const row = state.rows.get(id);
+        return { data: Boolean(row && row.issuer === issuer && row.redeemed), error: null };
       },
     },
   },
@@ -74,8 +83,10 @@ beforeEach(() => {
     [OTHERS_INVITE, { issuer: OTHER_CHAMPION, revoked: false }],
   ]);
   state.updates = [];
+  state.redeemedReads = [];
   state.audits = [];
   state.fail = false;
+  state.failRead = false;
 });
 
 it('401 without a session, and no write', async () => {
@@ -140,4 +151,43 @@ it('a database error → 500, not 404, and no audit', async () => {
   state.fail = true;
   expect((await revoke(OWN_INVITE)).status).toBe(500);
   expect(state.audits).toEqual([]);
+});
+
+describe('Slice 5b (5a Q-3): revoking an invite a friend already used', () => {
+  const OWN_REDEEMED = '33333333-3333-4333-8333-333333333333';
+  const OTHERS_REDEEMED = '44444444-4444-4444-8444-444444444444';
+
+  beforeEach(() => {
+    state.rows.set(OWN_REDEEMED, { issuer: CHAMPION, revoked: false, redeemed: true });
+    state.rows.set(OTHERS_REDEEMED, { issuer: OTHER_CHAMPION, revoked: false, redeemed: true });
+  });
+
+  it("the champion's OWN accepted invite → 409 already_used, no-store, no audit, row unchanged", async () => {
+    const response = await revoke(OWN_REDEEMED);
+    expect(response.status).toBe(409);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await response.json()).toMatchObject({ success: false, error: 'already_used' });
+    expect(state.rows.get(OWN_REDEEMED)?.revoked).toBe(false);
+    expect(state.audits).toEqual([]);
+  });
+
+  it('ANOTHER account’s accepted invite → the shared 404, identical to "not found"; the read carried the SESSION account', async () => {
+    const theirs = await revoke(OTHERS_REDEEMED);
+    const missing = await revoke(MISSING);
+    expect(theirs.status).toBe(404);
+    expect(await theirs.json()).toEqual(await missing.json());
+    for (const read of state.redeemedReads) expect(read.issuer).toBe(CHAMPION);
+    expect(state.rows.get(OTHERS_REDEEMED)?.revoked).toBe(false);
+  });
+
+  it('a won revoke never reads a second time', async () => {
+    expect((await revoke(OWN_INVITE)).status).toBe(200);
+    expect(state.redeemedReads).toEqual([]);
+  });
+
+  it('a failed second read → 500, not a guessed 404 or 409, and no audit', async () => {
+    state.failRead = true;
+    expect((await revoke(OWN_REDEEMED)).status).toBe(500);
+    expect(state.audits).toEqual([]);
+  });
 });

@@ -7,7 +7,8 @@
  * 401 without a session; the account is the session's; the body is `.strict()`
  * and parsed BEFORE any business read (an injected plan, issuer, expiry, level
  * or account id is a 400 and nothing is written); 403 for a non-champion and
- * for the switch being off; the allowance and daily-limit refusals have
+ * for the switch being off, neither of them audited (N-4, Slice 5b); the
+ * other four refusals audited by class; the allowance and daily-limit refusals have
  * distinct statuses and messages; every response is `no-store`; and nothing
  * logged to the audit carries the friend's email or the link.
  */
@@ -224,15 +225,36 @@ describe('POST', () => {
     ['a trial account', { cohort: 'trial', cohort_expires_at: null }],
     ['an Essentials account', { cohort: null, cohort_expires_at: null }],
     ['an expired champion', { cohort: COHORT, cohort_expires_at: '2020-01-01T00:00:00.000Z' }],
-  ])('403 for %s, audited as not_eligible, with no SQL call', async (_label, plan) => {
+  ])('403 for %s, with the switch ON: NOT audited (N-4, Slice 5b D-12), and no SQL call', async (_label, plan) => {
     state.plan = plan as typeof state.plan;
     const response = await POST(post(GOOD));
     expect(response.status).toBe(403);
     expect((await response.json()).error).toBe('not_eligible');
     expect(state.rpcCalls).toEqual([]);
-    expect(state.audits.map((entry) => [entry.action, (entry.details as Record<string, unknown>).reason])).toEqual([
-      ['BOS_FRIEND_INVITE_REFUSED', 'not_eligible'],
-    ]);
+    expect(state.audits).toEqual([]);
+  });
+
+  it('N-4: a not_eligible from the SQL side (a champion lapsing mid-request) is not audited either', async () => {
+    state.rpcOutcome = 'not_eligible';
+    const response = await POST(post(GOOD));
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toBe('not_eligible');
+    expect(state.rpcCalls).toHaveLength(1);
+    expect(state.audits).toEqual([]);
+  });
+
+  it('N-4: the other four refusals are still audited, by class only', async () => {
+    const reasons: string[] = [];
+    await POST(post({ ...GOOD, email: 'DANA@example.com' }));
+    for (const outcome of ['allowance_reached', 'daily_limit', 'already_invited']) {
+      state.rpcOutcome = outcome;
+      await POST(post(GOOD));
+    }
+    for (const entry of state.audits) {
+      expect(entry.action).toBe('BOS_FRIEND_INVITE_REFUSED');
+      reasons.push(String((entry.details as Record<string, unknown>).reason));
+    }
+    expect(reasons).toEqual(['own_email', 'allowance_reached', 'daily_limit', 'already_invited']);
   });
 
   it('403 with the switch off, and NOT audited (only a hand-made POST reaches it)', async () => {

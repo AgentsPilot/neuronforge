@@ -201,8 +201,9 @@ export const AUDIT_EVENTS = {
   BOS_INVITE_EMAIL_NOT_SENT: 'BOS_INVITE_EMAIL_NOT_SENT',
   // Slice 5a (F5a-13): a champion's friend invites. Actor = the champion
   // account. CREATED carries the language; REVOKED nothing beyond the invite
-  // id; REFUSED the reason class only (`not_eligible`, `own_email`,
-  // `allowance_reached`, `daily_limit`, `already_invited`). Never the friend's
+  // id; REFUSED the reason class only (`own_email`, `allowance_reached`,
+  // `daily_limit`, `already_invited`). `not_eligible` is logged, never audited
+  // (Slice 5b, N-4: any signed-in account can trigger it). Never the friend's
   // email, the note, the link, the token or its hash. The email outcome reuses
   // BOS_INVITE_EMAIL_SENT / BOS_INVITE_EMAIL_NOT_SENT with the champion as actor.
   BOS_FRIEND_INVITE_CREATED: 'BOS_FRIEND_INVITE_CREATED',
