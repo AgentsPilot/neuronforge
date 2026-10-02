@@ -172,8 +172,19 @@ export const CLIENT_WRITABLE_EVENTS: readonly string[] = [
   AUDIT_EVENTS.USER_ONBOARDING_FAILED, // useOnboarding
   AUDIT_EVENTS.SETTINGS_NOTIFICATIONS_UPDATED, // NotificationsTab (V1, V2)
   AUDIT_EVENTS.SETTINGS_PROFILE_UPDATED, // ProfileTab (V1, V2)
-  AUDIT_EVENTS.SETTINGS_SECURITY_UPDATED, // SecurityTab
-  AUDIT_EVENTS.USER_PASSWORD_CHANGED, // SecurityTab (V1, V2)
+  // SETTINGS_SECURITY_UPDATED: SecurityTab (V1) contains the only write in the
+  // repo, but its containing function `handleSecuritySettingsSave`
+  // (SecurityTab.tsx:50) is referenced NOWHERE — the tab renders
+  // (settings/page.tsx:313) and no control calls it, so the event has no
+  // reachable writer today. It stays on the list anyway: removing an event
+  // from an accepted-input list is its own decision and was not taken here.
+  AUDIT_EVENTS.SETTINGS_SECURITY_UPDATED,
+  // USER_PASSWORD_CHANGED was here for "SecurityTab (V1, V2)". NEITHER writes
+  // it: SecurityTabV2 deliberately stopped (SecurityTabV2.tsx:72-84) and the V1
+  // tab never did. Its only writer is POST /api/user/change-password, which is
+  // server code. Removed 2026-10-01, so a signed-in customer can no longer
+  // write "my password changed" into their own compliance log — a narrowing of
+  // accepted input with no caller behind it.
   AUDIT_EVENTS.USER_DATA_EXPORTED, // SecurityTabV2
   AUDIT_EVENTS.PLUGIN_DISCONNECTED, // PluginsTab (POST /api/audit-trail)
 ];

@@ -496,8 +496,28 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['SOC2'],
     description: 'Failed login attempt',
   },
+  /*
+   * A password change is RECORDED, not ALERTED (user decision, 2026-10-01).
+   *
+   * It was 'critical', which is the severity the admin Health "Critical audit
+   * events" tile counts action-blind and the /monitoring page shows as a
+   * security incident — so a customer following security advice raised an
+   * operational alarm. Same reasoning as PAYMENT_REFUNDED (#157) and
+   * PAYMENT_PLAN_CANCELLED (#160): the event is fully auditable and
+   * compliance-flagged, it is simply not an incident.
+   *
+   * Compliance flags are UNCHANGED, and this registration is now the single
+   * owner of both: /api/user/change-password used to pass severity 'warning'
+   * and complianceFlags ['SOC2'] of its own, and both overrides are deleted.
+   * That means future rows gain GDPR, which is correct for a credential change.
+   *
+   * Stored rows keep the severity they were written with: this is a
+   * write-forward change, not a rewrite of a compliance table.
+   *
+   * Pinned by lib/audit/__tests__/passwordChangeSeverity.guard.test.ts.
+   */
   [AUDIT_EVENTS.USER_PASSWORD_CHANGED]: {
-    severity: 'critical',
+    severity: 'warning',
     complianceFlags: ['SOC2', 'GDPR'],
     description: 'User password changed',
   },
@@ -543,8 +563,17 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['GDPR'],
     description: 'Notification preferences updated',
   },
+  /*
+   * Changing your own security preferences is RECORDED, not ALERTED — the same
+   * decision and the same reasoning as USER_PASSWORD_CHANGED above.
+   *
+   * Its only writer is the V1 settings Security tab, which posts a severity in
+   * its body that the write route has always ignored (AuditWriteBodySchema
+   * accepts `severity` and drops it), so this registration has always been the
+   * only thing that decided. Flags unchanged; write-forward only.
+   */
   [AUDIT_EVENTS.SETTINGS_SECURITY_UPDATED]: {
-    severity: 'critical',
+    severity: 'warning',
     complianceFlags: ['SOC2', 'GDPR'],
     description: 'Security settings modified',
   },
@@ -744,6 +773,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['SOC2'],
     description: 'Anomalous activity detected',
   },
+  /*
+   * The one event in this family anything writes: lib/audit/recordRefusedAccess.ts,
+   * from the two admin gates and the refused act-as. Stays 'critical' — a
+   * signed-in account being told no on an admin surface is worth an alert.
+   *
+   * Severity and flags live here and nowhere else: no call site may pass them.
+   */
   [AUDIT_EVENTS.SECURITY_UNAUTHORIZED_ACCESS]: {
     severity: 'critical',
     complianceFlags: ['SOC2', 'GDPR'],

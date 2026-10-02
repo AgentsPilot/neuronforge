@@ -83,11 +83,18 @@ export default function SecurityTab() {
 
       // AUDIT TRAIL: Log security settings update
       try {
+        // No severity, no complianceFlags and no x-user-id: all three were
+        // already ignored by the write route. The account is the session user
+        // (POST /api/audit/log answers 401 without one), and severity and
+        // compliance flags come from the registration in lib/audit/events.ts —
+        // AuditWriteBodySchema accepts both keys for backward compatibility and
+        // drops them. Sending them advertised a classification this file cannot
+        // set, which is how 'critical' here outlived the registration's own
+        // value. SETTINGS_SECURITY_UPDATED is now registered 'warning'.
         await fetch('/api/audit/log', {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
-            'x-user-id': user.id
+            'Content-Type': 'application/json'
           },
           body: JSON.stringify({
             action: 'SETTINGS_SECURITY_UPDATED',
@@ -109,9 +116,7 @@ export default function SecurityTab() {
                 return oldVal !== newVal;
               }),
               timestamp: new Date().toISOString()
-            },
-            severity: 'critical',
-            complianceFlags: ['SOC2', 'GDPR']
+            }
           })
         });
       } catch (auditError) {
