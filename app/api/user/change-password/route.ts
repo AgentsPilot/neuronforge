@@ -199,8 +199,20 @@ export async function POST(request: NextRequest) {
       resourceName: user.email || 'User',
       // Never the password, old or new.
       details: requestContext(request),
-      severity: 'warning',
-      complianceFlags: ['SOC2'],
+      /*
+       * NO severity and NO complianceFlags.
+       *
+       * AuditTrailService resolves `input.severity || metadata.severity`, so a
+       * caller's value wins — which is how a route and a registration came to
+       * disagree in the first place. The registration in lib/audit/events.ts is
+       * the single owner of the classification: 'warning' (recorded, not
+       * alerted) with ['SOC2', 'GDPR'].
+       *
+       * Deleting the ['SOC2'] override here is what makes a password change
+       * carry the GDPR flag — correct for a credential change, and the
+       * registration's job. Pinned by
+       * lib/audit/__tests__/passwordChangeSeverity.guard.test.ts.
+       */
     }).catch(err => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
 
     return NextResponse.json({ success: true });

@@ -3,7 +3,11 @@
  *
  * Auth is deliberately NOT re-tested here: app/api/admin/__tests__/
  * auditAdminGate.test.ts already drives this route through 401 / 403 /
- * admin-check-throws / 200 and asserts no table is read before the gate passes.
+ * admin-check-throws / 200. On the 401 and admin-check-throws paths it asserts
+ * no table is touched at all; on the 403 it asserts the exact list
+ * `['audit_trail']` — the one refusal row `requireAdmin` records (since
+ * 2026-10-01) and nothing else, so a pre-gate read of this route's own
+ * protected table still fails there as a second entry.
  * The one auth-adjacent case below is the ORDERING one, which nothing covered:
  * a non-admin sending an invalid query must still get 403, not 400.
  *
@@ -87,6 +91,20 @@ const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
 const setNodeEnv = (value: string) => {
   (process.env as Record<string, string | undefined>).NODE_ENV = value;
 };
+
+/**
+ * Tables touched other than `audit_trail`.
+ *
+ * `mockTablesRead` counts every `from(table)`, write as well as read. Since
+ * 2026-10-01 `requireAdmin` records a refusal (an INSERT into `audit_trail`)
+ * before answering 403, so a refused request legitimately touches one table.
+ * Every "before any read" assertion in this file is about PROTECTED data, and
+ * this is how it says so without going blind to a real read of it.
+ */
+const protectedTablesRead = () => mockTablesRead.filter((table) => table !== 'audit_trail');
+
+/** Builder calls that are not the refusal INSERT — i.e. anything that READS. */
+const readBuilderCalls = () => mockBuilderCalls.filter((call) => call.method !== 'insert');
 
 beforeEach(() => {
   mockGetUser.mockReset();
@@ -219,7 +237,10 @@ describe('rejected queries', () => {
     const res = await call('?page=abc&date_from=notadate');
 
     expect(res.status).toBe(403);
-    expect(mockTablesRead).toHaveLength(0);
+    // The refusal row is written; no audit DATA is read. (The 401 case below
+    // stays at strictly zero: there was no identity to refuse.)
+    expect(protectedTablesRead()).toHaveLength(0);
+    expect(readBuilderCalls()).toHaveLength(0);
   });
 
   it('returns 401 — not 400 — for a signed-out caller sending an invalid query', async () => {
@@ -319,7 +340,8 @@ describe('the account filter (user_id)', () => {
     const res = await call('?user_id=abc');
 
     expect(res.status).toBe(403);
-    expect(mockTablesRead).toHaveLength(0);
+    expect(protectedTablesRead()).toHaveLength(0);
+    expect(readBuilderCalls()).toHaveLength(0);
   });
 
   it('still filters by an event the operator dropdown hides (the route knows nothing of audiences)', async () => {

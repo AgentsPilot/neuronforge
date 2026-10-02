@@ -8,7 +8,16 @@
 
 const getUser = jest.fn();
 const isAdmin = jest.fn();
+/** The GRANTED act-as write: fire-and-forget, through the service instance. */
 const auditLog = jest.fn();
+/**
+ * The REFUSED act-as write: awaited and flushed, through the `AuditTrail`
+ * singleton that lib/audit/boundedAuditFlush.ts uses. A separate pair of mocks
+ * on purpose — the two writes have deliberately different shapes, and one spy
+ * for both would hide a payload drifting from one into the other.
+ */
+const refusalLog = jest.fn();
+const refusalFlush = jest.fn();
 
 jest.mock('@/lib/auth', () => ({ getUser: () => getUser() }));
 
@@ -18,6 +27,10 @@ jest.mock('@/lib/services/AdminAccessService', () => ({
 
 jest.mock('@/lib/services/AuditTrailService', () => ({
   AuditTrailService: { getInstance: () => ({ log: (e: unknown) => auditLog(e) }) },
+  AuditTrail: {
+    log: (e: unknown) => refusalLog(e),
+    flush: (...a: unknown[]) => refusalFlush(...a),
+  },
 }));
 
 import { resolveActingUserIdentity } from '../route-identity';
@@ -32,6 +45,8 @@ describe('resolveActingUserIdentity', () => {
     getUser.mockResolvedValue({ id: SESSION_ID, email: SESSION_EMAIL });
     isAdmin.mockResolvedValue(false);
     auditLog.mockResolvedValue(undefined);
+    refusalLog.mockResolvedValue(undefined);
+    refusalFlush.mockResolvedValue(undefined);
   });
 
   // R1
@@ -43,6 +58,7 @@ describe('resolveActingUserIdentity', () => {
     expect(result).toMatchObject({ ok: false, status: 401 });
     expect(isAdmin).not.toHaveBeenCalled();
     expect(auditLog).not.toHaveBeenCalled();
+    expect(refusalLog).not.toHaveBeenCalled();
   });
 
   // R2
@@ -73,7 +89,55 @@ describe('resolveActingUserIdentity', () => {
     const result = await resolveActingUserIdentity({ requestedUserId: OTHER_ID, route: 'test' });
 
     expect(result).toMatchObject({ ok: false, status: 403 });
+    // No PLUGIN_ACT_AS: nothing was granted.
     expect(auditLog).not.toHaveBeenCalled();
+  });
+
+  /**
+   * R4b — the refusal is RECORDED (security-audit-events slice).
+   *
+   * The shape differs from the granted write above on every axis that matters,
+   * and each difference is asserted because each one is a thing a future reader
+   * would "align" with its neighbour eleven lines away.
+   */
+  it('records the refused act-as against the CALLER, with the target only in details', async () => {
+    const result = await resolveActingUserIdentity({
+      requestedUserId: OTHER_ID,
+      route: 'POST /api/plugins/execute',
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+    expect(refusalLog).toHaveBeenCalledTimes(1);
+    expect(refusalFlush).toHaveBeenCalledTimes(1); // awaited, not fire-and-forget
+
+    const entry = refusalLog.mock.calls[0][0] as Record<string, unknown>;
+    expect(entry).toMatchObject({
+      action: 'SECURITY_UNAUTHORIZED_ACCESS',
+      entityType: 'system',
+      entityId: null,
+      userId: SESSION_ID, // the caller, NOT the target
+      actorId: SESSION_ID,
+    });
+    expect(entry.details).toMatchObject({
+      surface: 'act_as',
+      reason: 'not_an_admin',
+      route: 'POST /api/plugins/execute',
+      requestedUserId: OTHER_ID,
+    });
+    expect(entry).not.toHaveProperty('request');
+    expect(entry).not.toHaveProperty('severity');
+    expect(entry).not.toHaveProperty('complianceFlags');
+    // The granted write carries details.adminEmail; this caller is not an admin
+    // and an email in a compliance row is personal data that adds nothing.
+    expect(JSON.stringify(entry)).not.toContain(SESSION_EMAIL);
+  });
+
+  it('still refuses with 403 when the refusal audit write rejects', async () => {
+    refusalFlush.mockRejectedValue(new Error('audit down'));
+
+    const result = await resolveActingUserIdentity({ requestedUserId: OTHER_ID, route: 'test' });
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
   });
 
   // R5
@@ -143,6 +207,10 @@ describe('resolveActingUserIdentity', () => {
 
     expect(result).toMatchObject({ ok: false, status: 403 });
     expect(auditLog).not.toHaveBeenCalled();
+    // And no refusal row either: a lookup that could not answer is not a probe.
+    // This path returns its own 403 above the `if (!isAdmin)` branch, which is
+    // why this resolver needs no three-valued answer as the two gates do.
+    expect(refusalLog).not.toHaveBeenCalled();
   });
 
   // R7 — a Supabase outage must be a 401, never an unhandled 500

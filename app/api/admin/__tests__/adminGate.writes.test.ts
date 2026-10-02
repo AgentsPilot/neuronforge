@@ -13,8 +13,10 @@
  * A happy-path test would have passed on all of that. So the load-bearing
  * assertions here are the four denial cases, and in particular the one that
  * checks **nothing happened before the gate**: `mockTablesTouched` must be
- * empty on every denial. A route that returns 403 *after* running its query has
- * satisfied its status code and leaked its data anyway.
+ * empty on every denial, bar the one refusal row `requireAdmin` itself records
+ * on the 403 (see the note above the 403 case). A route that returns 403
+ * *after* running its query has satisfied its status code and leaked its data
+ * anyway.
  *
  * ── The four denial cases, and why each exists ─────────────────────────────
  *   1. signed out                → 401  (FR-4)
@@ -343,14 +345,38 @@ describe('slice 1 — anonymous writes and destructive actions are refused', () 
       expect(mockIsAdmin).not.toHaveBeenCalled();
     });
 
-    it('403 for a signed-in non-admin, and touches nothing', async () => {
+    /*
+     * What a 403 is allowed to touch, and why it is an exact list.
+     *
+     * Since 2026-10-01 `requireAdmin` RECORDS a refusal — one INSERT into
+     * `audit_trail` — before answering 403, so "touches nothing" is no longer
+     * literally true of the refused case. So this case asserts the exact list
+     * `['audit_trail']` rather than filtering that table name out: one refusal
+     * is exactly one `from('audit_trail')`, so equality pins the recording AND
+     * keeps the original strictness in both directions — an extra touch of the
+     * audit trail fails, and a missing refusal row fails too.
+     *
+     * Filtering would not be safe here, and not hypothetically: among the 59
+     * cases `archiving/runs#POST` reaches `ArchiveRepository`, which reads
+     * `audit_trail` platform-wide and cross-account (`ArchiveRepository.ts:51`,
+     * `:106-141`). A filter would make "did this handler read the audit trail
+     * before the gate?" unanswerable for exactly the handler where it is a live
+     * question.
+     *
+     * The 401 and both fail-closed cases stay at strict `[]`, because an
+     * anonymous caller has no identity to refuse and an admin check that could
+     * not answer is not a probe (OQ-3). If a future change started writing on
+     * either path, those three assertions catch it.
+     */
+    it('403 for a signed-in non-admin, and touches nothing but the audit trail', async () => {
       mockGetUser.mockResolvedValue(CUSTOMER);
       mockIsAdmin.mockResolvedValue(false);
 
       const res = await call();
 
       expect(res.status).toBe(403);
-      expect(mockTablesTouched).toEqual([]);
+      // Exactly the refusal record, and nothing of the handler's own work.
+      expect(mockTablesTouched).toEqual(['audit_trail']);
     });
 
     it('403 (not 500) when the admin check throws — fails closed', async () => {
