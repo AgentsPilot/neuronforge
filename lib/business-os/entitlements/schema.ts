@@ -534,6 +534,7 @@ export function catalogSchema(): z.ZodTypeAny {
     .object({
       labels,
       category: z.enum([
+        'credits',
         'crm',
         'website_intake',
         'payments',

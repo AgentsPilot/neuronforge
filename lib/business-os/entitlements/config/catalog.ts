@@ -299,8 +299,10 @@ export const CAPABILITIES = {
   'credits.allowance': {
     // Working neutral labels (G-10); the final owner wording is slices 6 / 7 (BD-15).
     labels: { en: 'Credits', he: 'קרדיטים', es: 'Créditos' },
-    // Kept under 'ai_chat' until slice 6 decides a neutral heading (N-12).
-    category: 'ai_chat',
+    // Its own 'credits' category, shown first to customers (credit deduction
+    // slice 6, D-g / SQ-25): one pool spent by every chargeable action, not an
+    // AI-chat feature — the N-12 placeholder under 'ai_chat' is gone.
+    category: 'credits',
     shape: { kind: 'metered', unit: 'credit', period: 'month' },
     lifecycle: 'available',
     // The only `mixed` entry: the same allowance is spent by owner-facing AI and

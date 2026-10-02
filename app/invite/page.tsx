@@ -48,6 +48,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { googleSignInClientId } from '@/lib/business-os/invites/googleSignInConfig';
+import { planCategoryLine } from '@/lib/business-os/planCategoryLine';
 import { marketingUrl } from '@/lib/utils/origins';
 
 import { GoogleSignupButton } from './GoogleSignupButton';
@@ -71,7 +72,19 @@ interface InviteOffer {
   free: boolean;
   monthlyPriceUsd: number;
   access: InviteAccess;
-  included: Array<{ category: string; labelKey: string; summary: string }>;
+  /**
+   * `noteKey`: the sentence under the row (credits only today), worded by `copy.planCategoryNote`.
+   * `features`: name and value per feature, for `planCategoryLine` (a row whose only
+   * feature is named like its heading prints the value alone). Optional: a body
+   * without it prints the summary, as before.
+   */
+  included: Array<{
+    category: string;
+    labelKey: string;
+    noteKey: string | null;
+    features?: Array<{ label: string; value: string }>;
+    summary: string;
+  }>;
 }
 
 type InviteResponse =
@@ -154,20 +167,39 @@ function InviteOfferDetails({ data, copy, locale }: { data: OfferState; copy: In
         <div className="space-y-2">
           <h2 className="text-sm font-semibold text-slate-500">{copy.includedHeading}</h2>
           <ul className="space-y-1 text-sm text-slate-700">
-            {data.offer.included.map((row) => (
-              <li key={row.category}>
-                {/*
-                  `describePlanOffer` names the heading, it does not word
-                  it. Falls back to the raw key rather than hiding the
-                  row: a missing heading should be visible and fixable,
-                  not silently drop something the invite is offering.
-                */}
-                <span className="font-medium">
-                  {copy.planCategory[row.labelKey] ?? row.labelKey}:
-                </span>{' '}
-                {row.summary}
-              </li>
-            ))}
+            {data.offer.included.map((row) => {
+              /*
+                `describePlanOffer` names the heading, it does not word
+                it. Falls back to the raw key rather than hiding the
+                row: a missing heading should be visible and fixable,
+                not silently drop something the invite is offering.
+              */
+              const heading = copy.planCategory[row.labelKey] ?? row.labelKey;
+              // "Credits: 19,750 per month", never "Credits: Credits (…)"
+              // (user decision, 2026-10-02). `null` = the heading says it all.
+              const line = planCategoryLine(heading, row);
+              return (
+                <li key={row.category}>
+                  <span className="font-medium">
+                    {heading}
+                    {line !== null && ':'}
+                  </span>
+                  {line !== null && <>{' '}{line}</>}
+                  {/*
+                    Credit deduction slice 6 (D-h): what a credit is, under the
+                    credits row, monthly or one-off by the allowance's shape —
+                    chosen server-side. A key this page has no words for shows
+                    nothing rather than a raw key to a prospect; a test holds
+                    that every key the module can name is worded here.
+                  */}
+                  {row.noteKey && copy.planCategoryNote[row.noteKey] && (
+                    <p className="mt-0.5 text-xs text-slate-500" data-testid={`invite-category-note-${row.category}`}>
+                      {copy.planCategoryNote[row.noteKey]}
+                    </p>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

@@ -40,6 +40,7 @@ const KEYS = [
   'plan.changes.on_end',
   'plan.badge.no_end',
   'plan.badge.ends',
+  'plan.category.credits',
   'plan.category.crm',
   'plan.category.website_intake',
   'plan.category.payments',
@@ -49,6 +50,14 @@ const KEYS = [
   'plan.category.support',
   'plan.category.platform',
   'plan.category.addon',
+  // The plan screen's own words, translated (user decision, 2026-10-02).
+  'plan.features_unavailable',
+  'plan.next.adds_heading',
+  'plan.next.improves_line',
+  'plan.next.changes_heading',
+  'plan.next.changes_line',
+  'plan.next.available',
+  'plan.next.coming_soon',
 ];
 
 const LANGUAGES = 3;
@@ -105,6 +114,22 @@ describe('the plan section speaks all three languages', () => {
     }
     for (const text of copyFor('plan.price.per_month')) {
       expect(text).toContain('{amount}');
+    }
+  });
+
+  it('the next-plan-up templates keep their placeholders in every language (user decision, 2026-10-02)', () => {
+    // A translation that drops `{from}` or `{plan}` would print a sentence with a
+    // hole in it, in the one language nobody on the team reads every day.
+    const slots: Record<string, string[]> = {
+      'plan.next.adds_heading': ['{plan}'],
+      'plan.next.changes_heading': ['{plan}'],
+      'plan.next.improves_line': ['{from}', '{to}'],
+      'plan.next.changes_line': ['{from}', '{to}'],
+    };
+    for (const [key, needed] of Object.entries(slots)) {
+      const texts = copyFor(key);
+      expect(texts).toHaveLength(LANGUAGES);
+      for (const text of texts) for (const slot of needed) expect(text).toContain(slot);
     }
   });
 

@@ -10,6 +10,7 @@ import type { BusinessOsInvitePublicView } from '@/lib/repositories/types';
 
 import { generateInviteToken, hashInviteToken } from '../inviteToken';
 import { NOT_RECOGNISED, viewInviteByToken, type PublicInviteRepository } from '../publicInviteView';
+import { describeInviteOffer } from '../inviteOffer';
 
 const NOW = new Date('2026-10-10T00:00:00.000Z');
 const config = getEntitlementConfig();
@@ -176,6 +177,26 @@ describe('the valid state', () => {
     const outcome = await viewInviteByToken(TOKEN, deps);
     expect(outcome.ok && (outcome.response as { language: string }).language).toBe('en');
   });
+
+  it.each(['en', 'he', 'es'] as const)(
+    "OI-10 (%s): the offer is described in the invite's own language — the same one the page renders in",
+    async (language) => {
+      const row = stored({ language });
+      const { deps } = harness(row);
+      const outcome = await viewInviteByToken(TOKEN, deps);
+      if (!outcome.ok) throw new Error('expected ok');
+      const offer = (outcome.response as { offer: unknown }).offer;
+      expect(offer).toEqual(describeInviteOffer(row, config, NOW, language));
+    }
+  );
+
+  it('OI-10: an unknown stored language describes the offer in English, like the page', async () => {
+    const row = stored({ language: 'fr' });
+    const { deps } = harness(row);
+    const outcome = await viewInviteByToken(TOKEN, deps);
+    if (!outcome.ok) throw new Error('expected ok');
+    expect((outcome.response as { offer: unknown }).offer).toEqual(describeInviteOffer(row, config, NOW, 'en'));
+  });
 });
 
 describe('matched but not valid: the narrow allow-list', () => {
@@ -313,6 +334,26 @@ describe('Slices 5a/5b (F5a-10, F5b-3, SA R-5, Q-8): a champion friend invite', 
     expect(repository.markOpenedByExistingAccount).not.toHaveBeenCalled();
     expect(repository.markFirstViewed).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['en', 'he', 'es'] as const)(
+    "OI-10 / QA-6b-E4 (%s): the friend's offer is described in the invite's own language, like the admin path",
+    async (language) => {
+      policy.accountInvitesAvailable = true;
+      const row = friendRow({ language });
+      const outcome = await viewInviteByToken(TOKEN, harness(row).deps);
+      if (!outcome.ok) throw new Error('expected ok');
+
+      const response = outcome.response as { state: string; language: string; offer: unknown };
+      expect(response.state).toBe('valid');
+      expect(response.language).toBe(language);
+      expect(response.offer).toEqual(describeInviteOffer(row, config, NOW, language));
+      // Non-vacuity: the languages really differ, so the equality above could
+      // not pass on one English offer handed to every invite.
+      if (language !== 'en') {
+        expect(response.offer).not.toEqual(describeInviteOffer(row, config, NOW, 'en'));
+      }
+    }
+  );
 
   it('with the switch on and a failed email read: try again, never a form without a masked address', async () => {
     policy.accountInvitesAvailable = true;

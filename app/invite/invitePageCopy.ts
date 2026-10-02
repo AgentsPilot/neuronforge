@@ -8,14 +8,18 @@
  * and the admin's explicit choice on the invite is the answer.
  *
  * Plan and capability names are NOT here. They arrive from the server, from the
- * entitlements config, and are English placeholders in every locale today
- * (SA ruling F-4), exactly as on the customer "Your plan" section.
+ * entitlements config, already in the invite's language (credit deduction
+ * slice 6, OI-10), with the value phrases ("per month", "in total") and the
+ * numbers grouped the same way. Neither are any credit figures: those come from
+ * config through the resolver, never from this file.
  *
  * Hebrew is written gender-neutrally, because the page cannot know who is
  * reading it or who sent it.
  *
  * Client-safe: plain data and pure functions, no server import.
  */
+
+import { CREDIT_EXPLANATION } from '@/lib/i18n/creditExplanation';
 
 export type InviteLocale = 'en' | 'he' | 'es';
 
@@ -55,6 +59,15 @@ export interface InvitePageCopy {
    * `plan.category.*` entries there.
    */
   planCategory: Record<string, string>;
+  /**
+   * The sentence under a row, keyed by the `noteKey` that `describePlanOffer`
+   * returns (credit deduction slice 6, D-h). Today only the credits row has one.
+   *
+   * The wording is NOT repeated here: it is the shared `CREDIT_EXPLANATION`,
+   * which the dashboard card and the plan screen read through `LanguageContext`
+   * under the same keys — so the three surfaces cannot say different things.
+   */
+  planCategoryNote: Record<string, string>;
   linkExpires: (date: string) => string;
   /** Slice 1b: the signup form (FR-11). */
   signup: SignupCopy;
@@ -155,6 +168,7 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     accessWhilePaid: 'While the plan is paid for',
     includedHeading: 'What it includes',
     planCategory: {
+      'plan.category.credits': 'Credits',
       'plan.category.crm': 'Clients (CRM)',
       'plan.category.website_intake': 'Website and enquiries',
       'plan.category.payments': 'Payments',
@@ -164,6 +178,10 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
       'plan.category.support': 'Support',
       'plan.category.platform': 'Platform',
       'plan.category.addon': 'Add-ons',
+    },
+    planCategoryNote: {
+      'usage.explain.monthly': CREDIT_EXPLANATION.en.monthly,
+      'usage.explain.trial': CREDIT_EXPLANATION.en.trial,
     },
     linkExpires: (date) => `You can accept this invitation until ${date}.`,
     signup: {
@@ -248,6 +266,7 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     accessWhilePaid: 'כל עוד התוכנית בתשלום',
     includedHeading: 'מה כלול',
     planCategory: {
+      'plan.category.credits': 'קרדיטים',
       'plan.category.crm': 'לקוחות (CRM)',
       'plan.category.website_intake': 'אתר ופניות',
       'plan.category.payments': 'תשלומים',
@@ -257,6 +276,10 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
       'plan.category.support': 'תמיכה',
       'plan.category.platform': 'פלטפורמה',
       'plan.category.addon': 'תוספות',
+    },
+    planCategoryNote: {
+      'usage.explain.monthly': CREDIT_EXPLANATION.he.monthly,
+      'usage.explain.trial': CREDIT_EXPLANATION.he.trial,
     },
     linkExpires: (date) => `אפשר לקבל את ההזמנה עד ${date}.`,
     signup: {
@@ -342,6 +365,7 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     accessWhilePaid: 'Mientras el plan esté pagado',
     includedHeading: 'Qué incluye',
     planCategory: {
+      'plan.category.credits': 'Créditos',
       'plan.category.crm': 'Clientes (CRM)',
       'plan.category.website_intake': 'Web y consultas',
       'plan.category.payments': 'Pagos',
@@ -351,6 +375,10 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
       'plan.category.support': 'Soporte',
       'plan.category.platform': 'Plataforma',
       'plan.category.addon': 'Complementos',
+    },
+    planCategoryNote: {
+      'usage.explain.monthly': CREDIT_EXPLANATION.es.monthly,
+      'usage.explain.trial': CREDIT_EXPLANATION.es.trial,
     },
     linkExpires: (date) => `Puedes aceptar esta invitación hasta el ${date}.`,
     signup: {

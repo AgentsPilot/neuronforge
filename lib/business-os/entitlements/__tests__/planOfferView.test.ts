@@ -50,6 +50,9 @@ describe('describePlanOffer', () => {
         customer.included.map((row) => ({
           category: row.category,
           labelKey: row.labelKey,
+          noteKey: row.noteKey,
+          // Name and value only: the offer reaches a public page, so no capability id.
+          features: row.features.map((feature) => ({ label: feature.label, value: feature.value })),
           summary: row.summary,
         }))
       );
@@ -67,10 +70,10 @@ describe('describePlanOffer', () => {
     }
   });
 
-  it('returns exactly the four offer keys, and each row three', () => {
+  it('returns exactly the four offer keys, and each row four', () => {
     const offer = describePlanOffer(config, TIER_ORDER[0], NOW);
     expect(Object.keys(offer).sort()).toEqual(['free', 'included', 'monthlyPriceUsd', 'planName']);
-    for (const row of offer.included) expect(Object.keys(row).sort()).toEqual(['category', 'labelKey', 'summary']);
+    for (const row of offer.included) expect(Object.keys(row).sort()).toEqual(['category', 'features', 'labelKey', 'noteKey', 'summary']);
   });
 
   it('is server-only and reads nothing but config (no repository, no account id)', () => {

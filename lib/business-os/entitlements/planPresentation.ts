@@ -160,7 +160,9 @@ export function describePlanCapabilities(
       // English feature list in front of a Hebrew business.
       label: labelIn(definition.labels, locale, capability),
       category: definition.category,
-      display: describeCapabilityValue(resolved.value, definition),
+      // In the reader's language too (OI-10): "per month" / "in total" and the
+      // number's grouping. Admin callers pass no locale and stay English.
+      display: describeCapabilityValue(resolved.value, definition, locale),
       granting: isGrantingValue(resolved.value, definition),
       // A `not_built` capability needs no gate: there is nothing to refuse.
       // Marking it "nothing in the product refuses it yet" reads as "a customer

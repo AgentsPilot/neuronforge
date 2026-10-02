@@ -65,6 +65,10 @@ jest.mock('../GoogleSignupButton', () => ({
 
 import InvitePage from '../page';
 import { INVITE_PAGE_COPY } from '../invitePageCopy';
+import { describeInviteOffer } from '@/lib/business-os/invites/inviteOffer';
+import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
+import { previewAccountFor } from '@/lib/business-os/entitlements/planPresentation';
+import { resolveEntitlements } from '@/lib/business-os/entitlements/resolver';
 
 const TOKEN = 'Abcdefghijklmnopqrstuvwxyz0123456789_-ABCDE';
 
@@ -429,6 +433,75 @@ describe('language (C-8)', () => {
     const keys = Object.keys(INVITE_PAGE_COPY.en).sort();
     expect(Object.keys(INVITE_PAGE_COPY.he).sort()).toEqual(keys);
     expect(Object.keys(INVITE_PAGE_COPY.es).sort()).toEqual(keys);
+  });
+});
+
+describe('credit deduction slice 6: the credits row, its number and its sentence (D-g, D-h, OI-10)', () => {
+  // The offer is the REAL one the server builds, in the invite's language — no
+  // credit figure is written in this test; the expected number is read off the
+  // resolver, and grouped by the same `Intl` call the module makes.
+  const config = getEntitlementConfig();
+  const NOW = new Date('2026-10-01T00:00:00.000Z');
+  const plans = [...config.tierOrder, ...Object.keys(config.cohorts)];
+
+  function allowanceOf(planId: string): { perMonth?: number; total?: number } {
+    const resolution = resolveEntitlements({ config, account: previewAccountFor(config, planId, NOW), overrides: [], addons: [], now: NOW });
+    return resolution.values['credits.allowance'].value as { perMonth?: number; total?: number };
+  }
+
+  function grantFor(planId: string) {
+    return config.tierOrder.includes(planId)
+      ? { grant_kind: 'tier' as const, grant_id: planId, access_open_ended: null, access_months: null }
+      : { grant_kind: 'cohort' as const, grant_id: planId, access_open_ended: true, access_months: null };
+  }
+
+  const PHRASE = {
+    en: { perMonth: 'per month', total: 'in total' },
+    he: { perMonth: 'לחודש', total: 'בסך הכול' },
+    es: { perMonth: 'al mes', total: 'en total' },
+  } as const;
+
+  it.each((['en', 'he', 'es'] as const).flatMap((language) => plans.map((planId) => [language, planId] as const)))(
+    '%s, %s: "Credits" heads the list, the line carries the configured number, the sentence sits under it',
+    async (language, planId) => {
+      const offer = describeInviteOffer(grantFor(planId), config, NOW, language);
+      respond = () => ({ status: 200, body: { success: true, data: { ...validData, language, offer } } });
+      render(<InvitePage />);
+      await screen.findByTestId('invite-state-valid');
+
+      const copy = INVITE_PAGE_COPY[language];
+      const allowance = allowanceOf(planId);
+      const oneOff = typeof allowance.total === 'number';
+      const number = new Intl.NumberFormat(language, { maximumFractionDigits: 0 }).format(
+        (oneOff ? allowance.total : allowance.perMonth)!
+      );
+      const sentence = copy.planCategoryNote[oneOff ? 'usage.explain.trial' : 'usage.explain.monthly'];
+
+      const firstRow = screen.getAllByRole('listitem')[0];
+      const heading = copy.planCategory['plan.category.credits'];
+      // "Credits: 19,750 per month" — the value alone after the heading, never
+      // "Credits: Credits (…)" (user decision, 2026-10-02).
+      const note = firstRow.querySelector('[data-testid^="invite-category-note-"]')?.textContent ?? '';
+      const headingAndLine = (firstRow.textContent ?? '').replace(note, '').trim();
+      expect(headingAndLine).toBe(`${heading}: ${number} ${oneOff ? PHRASE[language].total : PHRASE[language].perMonth}`);
+      expect(headingAndLine.split(heading)).toHaveLength(2);
+      expect(screen.getByTestId('invite-category-note-credits')).toHaveTextContent(sentence);
+      // Once, and only under the credits row.
+      expect(screen.getAllByTestId(/^invite-category-note-/)).toHaveLength(1);
+    }
+  );
+
+  it('a note key the page has no words for shows nothing, never the raw key', async () => {
+    const offer = {
+      ...validData.offer,
+      included: [{ category: 'credits', labelKey: 'plan.category.credits', noteKey: 'usage.explain.unknown', summary: 'Credits (x)' }],
+    };
+    respond = () => ({ status: 200, body: { success: true, data: { ...validData, offer } } });
+    render(<InvitePage />);
+    await screen.findByTestId('invite-state-valid');
+
+    expect(screen.queryByTestId('invite-category-note-credits')).not.toBeInTheDocument();
+    expect(document.body.textContent ?? '').not.toContain('usage.explain.unknown');
   });
 });
 
