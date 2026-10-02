@@ -21,6 +21,7 @@ import { getUser } from '@/lib/auth';
 import { adminAccessService } from '@/lib/services/AdminAccessService';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
+import { recordRefusedAccess } from '@/lib/audit/recordRefusedAccess';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ module: 'RouteIdentity' });
@@ -135,6 +136,42 @@ export async function resolveActingUserIdentity(
       { route, sessionUserId, requestedUserId },
       'Act-as refused — session user is not a platform admin'
     );
+    /*
+     * Deliberately NOT shaped like the GRANTED act-as write forty lines below,
+     * and the differences are the point — do not "align" them:
+     *
+     *  - `userId` is the SESSION user, not the target. The target did nothing;
+     *    the caller did. The target appears only in `details.requestedUserId`.
+     *  - no `adminEmail`: this caller is not an admin, and an email in a
+     *    compliance row is personal data that adds nothing to an investigation
+     *    a user id does not already give.
+     *  - no `request`: it would copy the caller's live session credential into
+     *    `session_id`.
+     *  - no `severity` / `complianceFlags`: the registration owns them.
+     *  - AWAITED, not fire-and-forget. The granted write can be non-blocking
+     *    because a legitimate admin action continues either way; this one is
+     *    about to return 403 and the instance may freeze, which is how a
+     *    fire-and-forget row gets lost. Bounded at 2 s and it cannot throw.
+     *
+     * The reached-only-on-a-real-"no" property is free here: the thrown path
+     * returns its own 403 above, so `isAdmin === false` means the check
+     * answered.
+     */
+    await recordRefusedAccess({
+      userId: sessionUserId,
+      surface: 'act_as',
+      route,
+      requestedUserId: targetUserId,
+      // From the request this function already holds, rather than next/headers
+      // (SA D-1 condition 3). The request object itself is never passed on.
+      headers: {
+        ip:
+          request?.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+          request?.headers.get('x-real-ip'),
+        userAgent: request?.headers.get('user-agent'),
+      },
+      logger,
+    });
     return { ok: false, status: 403, error: 'Not permitted to act on behalf of another user' };
   }
 
