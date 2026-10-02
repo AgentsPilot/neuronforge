@@ -17,6 +17,8 @@ For now, Business OS signup is by invitation only, and Business OS is a **closed
 
 **This requirement is the single source of truth for the overall status of invite signup and friend invites. Per-slice detail (tasks, checks, preconditions, waivers) lives in the workplans:** [Slice 0](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_0_WORKPLAN.md), [Slice 1](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_1_WORKPLAN.md), [Slice 2](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_2_WORKPLAN.md), [Slice 3](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_3_WORKPLAN.md), [Slice 5a](/docs/workplans/BUSINESS_OS_INVITE_FRIENDS_SLICE_5A_WORKPLAN.md), [Slice 5b](/docs/workplans/BUSINESS_OS_INVITE_FRIENDS_SLICE_5B_WORKPLAN.md). Status as of **2026-10-02**.
 
+**Priority order:** [§0.8](#08-prioritised-open-items-2026-10-02).
+
 ### 0.1 Live in production
 
 | Slice | What | PR |
@@ -53,21 +55,17 @@ For now, Business OS signup is by invitation only, and Business OS is a **closed
 
 ### 0.5 Hardening backlog (lower priority)
 
-Detail for the first four is in the §10 backlog table.
+Detail for the first three is in the §10 backlog table.
 
 | Item | Note |
 |---|---|
 | 2b | Resend with a fresh link, plus its cap |
 | 2c | Delivery status (delivered / bounced) |
-| Sign-up code email sender | Use `platformSenderAddress()` and fail closed when it is unset |
 | Invite link domain | `vercel.app` → `app.agentspilot.ai` once that domain is live |
-| `businessName` unescaped | In `lib/email/templates/base-template.ts` (img alt and header span) |
-| `signInWithPassword` logs the email on rejection | Remove the address from the log |
 | QA-3b-2 | The rare Google sign-in hiccup ([Slice 3 workplan](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_3_WORKPLAN.md)) |
 | OI-1: per-IP rate limit on `/api/public/invites/` | Vercel setting, requested from Offir |
 | Old 1a/1b checkers (E02/S02) | Fail by design now that later migrations changed what they check; retire or update them |
 | Invite test clean-up hooks | Still reset the friend-invites switch to `false` |
-| `app/onboarding-chat/page.tsx` `console.*` → Pino | **In progress elsewhere** (the user's own session) |
 
 ### 0.6 Recorded for later
 
@@ -89,6 +87,42 @@ Detail for the first four is in the §10 backlog table.
 | 5a P-1 concurrency proof and the 5b §9 demo | Waived by the user for the switch-on |
 | Offir's Google configuration step | Not needed: the user did it |
 | LanguageContext logging fix | Merged (#155) |
+| `app/onboarding-chat/page.tsx` `console.*` → Pino | Merged (#168, 2026-10-02) |
+| Hardening bundle: sign-up code and existing-account emails fail closed without the platform sender (the From line in production is unchanged; an unset sender gives the same answer on both paths, so it cannot reveal whether an address has an account); no email address in the rejected password sign-in log; business name, logo and website links escaped in the branded email template | Merged (#171, 2026-10-02). SA approved; QA waived by the user. |
+
+### 0.8 Prioritised open items (2026-10-02)
+
+Ranked by the user on 2026-10-02. This table holds rank, effort and impact only; status and detail stay in the row named in the Detail column, or in the workplans. Effort: S (small), M (medium), L (large).
+
+| # | Item | Why it matters | Effort | Owner | Blocked by | Detail |
+|---|---|---|---|---|---|---|
+| 1 | Supabase service-role key rotation (G-1) | Security; blocks 5c and enforcement | M (ops) | User + Offir | — | §0.3 |
+| 2 | The user's two production tests: a friend invite to a Gmail +alias, and Google sign-up with a second real Gmail. TL checks the DB afterwards | Proves the live loop end to end | S | User; TL | — | §0.2 |
+| 3 | Run the full Jest suite in CI (guards such as `mutationOrSelect` only catch problems when they run) | Stability | M | Dev + SA (separate session) | — | Cross-cutting, not invite-only; TEST_STRATEGY_AND_CI_TIERING workplan (not on main yet) |
+| 4 | Sign-up code email uses `platformSenderAddress()` and fails closed. ✅ Done (#171) | Stability / trust | S | — | — | §0.7 |
+| 5 | `signInWithPassword` no longer logs the email on rejection. ✅ Done (#171) | Privacy | S | — | — | §0.7 |
+| 6 | `businessName` escaped in `base-template.ts`. ✅ Done (#171) | Stability / security | S | — | — | §0.7 |
+| 7 | Vercel per-IP rate limit on `/api/public/invites/` (OI-1) | Security / cost | S (ops) | Offir | Offir's time | §0.5 |
+| 8 | Slice 4: close open signup (R-8(c), G-7) | Security; required before launch | M | Dev + SA | The user's decision to un-park | §0.4 |
+| 9 | Pre-enforcement conditions (T-9, the shadow report's "awaiting payment" label, Slice 4 revisit) | Required before entitlements are enforced | M | Dev + SA | — | §0.6; D-14 row in [BUSINESS_OS_ENTITLEMENTS.md](/docs/architecture/BUSINESS_OS_ENTITLEMENTS.md) |
+| 10 | 5c: the friend pays | Revenue | L | Dev + SA | S-4a (Stripe buy path) and #1 | §0.3 |
+| 11 | BA question for 5c: may admins let a held friend in without paying? | Business decision | S | User (BA frames it) | — | §0.6 |
+| 12 | 2b: resend an invite with a fresh link (cap 3 a day) | UX | M | Dev | — | §0.5; §10 backlog |
+| 13 | Invite links on `app.agentspilot.ai` instead of `neuronforge-kohl.vercel.app` | Trust | S (ops) | User / Offir | The domain going live | §0.5 |
+| 14 | Account deletion blocked by the `profiles` FK (no cascade); erasure not called | Compliance | M–L | Dev + SA | — | §0.6 |
+| 15 | Level reporting (Slice 6) | Analytics | S–M | Dev | — | §0.6; §6.5 |
+| 16 | Perks: bonus credits on a friend's first payment | Growth | M | BA → Dev | 5c | §0.3 |
+| 17 | 2c: delivery status | Ops / UX | M | Dev | Resend webhook secret and events | §0.5 |
+| 18 | QA-3b-2: the rare Google sign-up hiccup | UX | S | Dev | — | §0.5; [Slice 3 workplan](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_3_WORKPLAN.md) |
+| 19 | Future invite features: default note template (BQ-12), earning invites, admins granting invites | Growth | S–M each | BA → Dev | — | §0.6; §14 |
+| 20 | Fix the `new-api-route` skill's audit advice (log non-blocking, then await the flush) | Maintainability | S | Dev | — | Cross-cutting, not invite-only |
+| 21 | Tidy-ups: old 1a/1b checkers (E02/S02 fail by design); invite test clean-up hooks still reset the switch to `false` | Hygiene | S | Dev | — | §0.5 |
+| 22 | L-12: 12-month anonymisation of unused invite emails (`durable-queue-drain` job) | Compliance; first due 2027-09-28 | M | Dev + SA | — | §0.6 |
+| 23 | Email template tidy-up found in #171: colours and font names go into style attributes unchecked; the button and info-row helpers rely on callers to escape; seven duplicate private `escapeHtml` copies could become one shared helper | Maintainability; low risk, nothing customer-typed reaches them today | S | Dev | — | #171 PR description |
+
+**Suggested next:** #1, #2 and #7 (ops, with Offir); #3 in a separate session; then #8 (needs the user's OK to un-park Slice 4); then #10 once S-4a and #1 are done.
+
+The credits diary is a separate workstream (credit-deduction slice 7) and is deliberately left out of this table.
 
 ---
 
@@ -947,3 +981,4 @@ Checked against `origin/main` `fe7f6410` on 2026-09-30. **This branch is 14 comm
 | 2026-09-30 | SA review of the friend-invite scoping (5a–5c): APPROVED WITH CONDITIONS (SA) | Added §17, a ToC entry, and the status line. Checked against `origin/main` `fe7f6410`; this branch is 14 commits behind. **Corrections:** 5a **needs a migration** (`20261023`: the atomic send function and a partial index on `issuer_account_id`); the lifetime 5 lives in **`config/invites.ts`, not a `referrals.invites` capability** (the capability would break the tier-matrix rule and champion parity, appear in customer plan views, and depend on the mode; it is easy to move later because the SQL takes the allowance as a parameter). **T-17:** per-issuer `pg_advisory_xact_lock`, in-force-champion re-check, count, daily count, duplicate check and insert in one function; counted = not revoked and (accepted or claimed or unexpired), so a signup that finishes after expiry cannot let a sixth invite through. **T-18** approved as code config. **T-19** approved with explicit `revoked_at`/claimant filters, a plain INSERT, and lineage `first_paid_at`/`first_payment_ref` added in 5b (`20261024`). **T-20** approved: customer routes under `app/api/business-os/friend-invites/**`, ownership inside the UPDATE, 404 for not-yours. **T-21** approved at 10 per rolling 24 hours, plus a per-recipient guard. As-built additions: no issuer index; `internal_reason`/`revoke_reason` are required, so the server writes fixed strings; the existing tier refusal at `inviteRedemption.ts:242` keeps 5a friend invites unredeemable; the public view's existing-account check would leak whether an address has an account to the champion who holds the link, so it is skipped for account-issued invites in 5a (F5a-10) and redesigned in 5b (F5b-3). Conditions F5a-1 to F5a-16, F5b-1 to F5b-7, F5c-1 to F5c-4. 5c is blocked on S-4a WS-1 (none of it started), the WS-2 localisation gate, and G-1. No business decision needed; four awareness notes for the user (§17.6). |
 | 2026-10-01 | Friend invites switched on, pending merge (Dev) | User: "Switch friend invites on, waiving the concurrency proof and the demo." Progress note in §10: the switch-on PR sets `accountInvitesAvailable: true`; `paidInvitesAvailable` stays `false`. Live on merge and deploy. Preconditions and waivers (5a P-1, the 5b demo, N-6; he/es wording approved) recorded in the Slice 5b workplan §10.1. |
 | 2026-10-02 | Status section added; requirement made the master status document (BA) | User: "keep it our main document". Added §0 "Current status & open items" (and a ToC entry): live in production (Slices 0, 1a–1c, 2a, 3a, 3b switched on 2026-09-30 via `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID`, 5a, 5b-1/5b-2, friend-invites switch-on #164, migrations 20261012/13/14/20/23/24 applied), pending user tests, next and blocked (5c on S-4a and G-1; key rotation still open, owned by the user with Offir), parked (Slice 4), hardening backlog (including the onboarding-chat `console.*` conversion, in progress elsewhere), recorded-for-later and done items. Per-slice detail stays in the workplans. Replaced the stale status line; the §10 switch-on note now reads "merged (#164, 2026-10-02)". No requirement, FR or decision changed. |
+| 2026-10-02 | Prioritised open items added (BA) | Added §0.8: the user's ranking of 22 open items, plus #23 (email template tidy-up found in #171), each with effort, impact, owner, blocker and a pointer to where its detail lives; #4 to #6 keep their numbers, marked done in #171. Moved from §0.5 to §0.7: the onboarding-chat `console.*` conversion (merged #168) and the hardening bundle (sign-up code sender failing closed, no email in the rejected sign-in log, business name escaped; merged #171); the §0.5 intro now says "first three". Added a priority pointer at the top of §0. The credits diary is kept out of §0.8 by the user's decision (separate workstream, credit-deduction slice 7). No requirement, FR or decision changed. |
