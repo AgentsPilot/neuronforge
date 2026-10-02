@@ -197,6 +197,16 @@ export function emailTone(
   };
 }
 
+/** Business-entered text headed for HTML (text or a double-quoted attribute). */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /**
  * Wrap email content in a branded HTML template
  * Uses inline styles for maximum email client compatibility
@@ -210,7 +220,16 @@ export function wrapInBrandedTemplate(
   content: string,
   branding: BrandingData
 ): string {
-  const { businessName, logoUrl, primaryColor, websiteUrl, locale = 'en' } = branding;
+  const { locale = 'en' } = branding;
+  /*
+   * Business-entered text and URLs, escaped once here for every place below
+   * that writes them into the markup (attribute or text). A `"`, `<` or `&` in
+   * a business name otherwise broke that business's emails. `&` in a URL is
+   * correctly written `&amp;` inside an attribute; clients decode it back.
+   */
+  const businessName = escapeHtml(branding.businessName);
+  const logoUrl = branding.logoUrl ? escapeHtml(branding.logoUrl) : undefined;
+  const websiteUrl = branding.websiteUrl ? escapeHtml(branding.websiteUrl) : undefined;
 
   // Determine text direction based on locale
   const rtl = isRTL(locale);

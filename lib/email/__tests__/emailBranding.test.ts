@@ -401,3 +401,32 @@ describe('business emails after the platform-email fix (Slice 3a)', () => {
     expect(html).toContain(OLD_LOGO_MARKUP);
   });
 });
+
+describe('business-entered text is HTML-escaped in the shell', () => {
+  const branding: BrandingData = {
+    businessName: 'Tom & "Jerry" <Co>',
+    logoUrl: 'https://cdn.example.com/logo.png?a=1&b="x"',
+    websiteUrl: 'https://example.com/?q=<x>&r=1',
+    primaryColor: '#4F46E5',
+    secondaryColor: '#111111',
+  };
+  const escapedName = 'Tom &amp; &quot;Jerry&quot; &lt;Co&gt;';
+
+  it('escapes the business name in the title, the header wordmark and the footer', () => {
+    const html = wrapInBrandedTemplate('<p>x</p>', { ...branding, logoUrl: undefined });
+    expect(html).toContain(`<title>${escapedName}</title>`);
+    // Header span and footer paragraph.
+    expect(html.split(escapedName).length - 1).toBe(3);
+    expect(html).not.toContain('Tom & "Jerry" <Co>');
+  });
+
+  it('escapes the business name in the logo alt (both logo variants) and the logo/website URLs', () => {
+    for (const extra of [{}, { logoWidth: 154, logoHeight: 34 }]) {
+      const html = wrapInBrandedTemplate('<p>x</p>', { ...branding, ...extra });
+      expect(html).toContain(`alt="${escapedName}"`);
+      expect(html).toContain('src="https://cdn.example.com/logo.png?a=1&amp;b=&quot;x&quot;"');
+      expect(html).toContain('href="https://example.com/?q=&lt;x&gt;&amp;r=1"');
+      expect(html).not.toContain('<x>');
+    }
+  });
+});
