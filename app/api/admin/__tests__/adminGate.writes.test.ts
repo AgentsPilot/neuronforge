@@ -7,8 +7,9 @@
  * request. Anyone on the internet who knew a URL could rewrite platform-wide
  * pricing tiers, credit rewards, model-routing weights and system limits;
  * trigger a bulk background job; mutate stored agent memory; and re-send
- * platform communications. The 22nd (`settings/admin-users`) accepted any
- * signed-in customer — and one of its two handlers is a GET that WRITES.
+ * platform communications. The 22nd (the admin-users settings route, since
+ * deleted) accepted any signed-in customer — and one of its two handlers was a
+ * GET that WROTE.
  *
  * A happy-path test would have passed on all of that. So the load-bearing
  * assertions here are the four denial cases, and in particular the one that
@@ -172,7 +173,6 @@ import * as migrateLabels from '../migrate-labels/route';
 import * as onboardingConfig from '../onboarding-config/route';
 import * as orchestrationConfig from '../orchestration-config/route';
 import * as rewardConfig from '../reward-config/route';
-import * as adminUsersSettings from '../settings/admin-users/route';
 import * as storageTiers from '../storage-tiers/route';
 import * as systemLimits from '../system-limits/route';
 import * as uiConfig from '../ui-config/route';
@@ -182,7 +182,6 @@ import * as userEmails from '../user-emails/route';
 import * as adminUsersList from '../users/route';
 import * as userStats from '../users/[id]/stats/route';
 import * as onboardingUsers from '../onboarding-users/route';
-import * as platformUsers from '../settings/platform-users/route';
 import * as tokenUsage from '../token-usage/route';
 import * as tokenUsageDrill from '../token-usage/drill-down/route';
 import * as tokenUsageStats from '../token-usage/stats/route';
@@ -193,6 +192,9 @@ import * as adminMessages from '../messages/route';
 
 // ── Admin Archiving slice 2b (2026-09-26) — gated from birth ─────────────────
 import * as archivingRuns from '../archiving/runs/route';
+
+// ── ADMIN_BOS_CLEANUP slice 1 (2026-10-02) — gated from birth ───────────────
+import * as adminsList from '../admins/route';
 
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };
 const CUSTOMER = { id: '22222222-2222-4222-8222-222222222222', email: 'customer@example.com' };
@@ -247,10 +249,9 @@ const CASES: Array<{ name: string; call: () => Promise<Response> }> = [
   { name: 'POST /api/admin/migrate-labels', call: () => migrateLabels.POST(req('/api/admin/migrate-labels', 'POST')) },
 
   // ── Category C — the write hidden behind a GET (finding N-1) ─────────────
-  // Its GET upserts the caller in as `super_admin` with the service role when
-  // the list is empty. It is gated in the WRITE slice because it is a write.
-  { name: 'GET /api/admin/settings/admin-users (writes!)', call: () => adminUsersSettings.GET(req('/api/admin/settings/admin-users', 'GET')) },
-  { name: 'POST /api/admin/settings/admin-users', call: () => adminUsersSettings.POST(req('/api/admin/settings/admin-users', 'POST', { action: 'add', email: 'x@y.z' })) },
+  // Its two cases (the admin-users settings GET that upserted the caller as
+  // `super_admin`, and its POST) left with the route itself: deleted by
+  // ADMIN_BOS_CLEANUP slice 1 (2026-10-02), folding in admin-authz slice 7.
 
   // ── Gated ahead of slice 2, on its own branch ────────────────────────────
   // `user-emails` is a READ shaped as a POST, so it was sorted into the read
@@ -269,7 +270,6 @@ const CASES: Array<{ name: string; call: () => Promise<Response> }> = [
   { name: 'HEAD /api/admin/users', call: () => adminUsersList.HEAD() },
   { name: 'GET /api/admin/users/[id]/stats', call: () => userStats.GET(req(`/api/admin/users/${TARGET_USER}/stats`, 'GET'), { params: Promise.resolve({ id: TARGET_USER }) }) },
   { name: 'GET /api/admin/onboarding-users', call: () => onboardingUsers.GET(req('/api/admin/onboarding-users?filter=all', 'GET')) },
-  { name: 'GET /api/admin/settings/platform-users', call: () => platformUsers.GET(req('/api/admin/settings/platform-users?search=', 'GET')) },
   { name: 'GET /api/admin/token-usage', call: () => tokenUsage.GET(req('/api/admin/token-usage', 'GET')) },
   { name: 'HEAD /api/admin/token-usage', call: () => tokenUsage.HEAD() },
   { name: 'GET /api/admin/token-usage/drill-down', call: () => tokenUsageDrill.GET(req('/api/admin/token-usage/drill-down?period=30d', 'GET')) },
@@ -309,6 +309,12 @@ const CASES: Array<{ name: string; call: () => Promise<Response> }> = [
   // Gated from birth; proven here like the rest. With runs switched off it
   // would touch nothing even for an admin, but the denial must come first.
   { name: 'POST /api/admin/archiving/runs', call: () => archivingRuns.POST(req('/api/admin/archiving/runs', 'POST', { action: 'start', source: 'audit_trail', retentionDays: 365 })) },
+
+  // ── ADMIN_BOS_CLEANUP slice 1 (2026-10-02) ──────────────────────────────
+  // The read-only list of who can open admin (`admin_users` rows plus
+  // ADMIN_EMAILS-only addresses). Gated from birth; the list must never be
+  // read before the gate answers.
+  { name: 'GET /api/admin/admins', call: () => adminsList.GET(req('/api/admin/admins', 'GET')) },
 ];
 
 beforeEach(() => {
@@ -328,10 +334,14 @@ describe('slice 1 — anonymous writes and destructive actions are refused', () 
     //  + 23 slice 2 (14 cross-tenant reads incl. 3 HEAD probes, 9 internal-config GETs)
     //  + 4  slice 3 catalogue GETs
     //  + 1  `archiving/runs#POST`, Admin Archiving slice 2b, gated from birth
-    //  = 59, which is every admin handler now on the canonical gate EXCEPT the
+    //  = 59
+    //  - 3  deleted with admin-authz slice 7's routes (ADMIN_BOS_CLEANUP slice 1:
+    //       the admin-users settings GET and POST, the platform-users GET)
+    //  + 1  `admins#GET`, gated from birth
+    //  = 57, which is every admin handler now on the canonical gate EXCEPT the
     // 3 category-A system-config routes (covered by their own suites) and the 6
     // correct-but-inline copies (slice 4, still parked; 7 until `audit-trail#GET` moved to `requireAdmin` on 2026-09-25).
-    expect(CASES).toHaveLength(59);
+    expect(CASES).toHaveLength(57);
   });
 
   describe.each(CASES)('$name', ({ call }) => {
