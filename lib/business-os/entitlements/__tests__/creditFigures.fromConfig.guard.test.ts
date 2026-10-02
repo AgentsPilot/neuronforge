@@ -100,6 +100,10 @@ const SOURCES = [
   'lib/business-os/credits/creditDisplay.ts',
   'lib/business-os/credits/creditBalance.ts',
   'lib/business-os/credits/ownerCreditUsageDeps.ts',
+  // Credit deduction slice 7a — the credit history (SA W7-3).
+  'app/api/business-os/credits/history/route.ts',
+  'lib/business-os/credits/ownerCreditHistory.ts',
+  'components/business-os/CreditHistoryPanel.tsx',
   // The one presentation rule both surfaces apply to a category's line.
   'lib/business-os/planCategoryLine.ts',
 ];

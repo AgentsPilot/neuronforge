@@ -9,8 +9,11 @@
  * instead silently drops every correction from its service (KI-14).
  *
  * This module is the ONE place that resolves them. It is pure: the caller
- * supplies the originals it has read. Slice 7's owner diary is meant to reuse
- * it.
+ * supplies the originals it has read. The owner's credit history (slice 7a)
+ * reuses it, and takes its diary labels from `diaryLabelFor` below.
+ *
+ * Server-only: it reads the slice 1 declarations (`aiActionAudit.ts`), which
+ * must never reach a client bundle (SA F7-10).
  *
  * The area is looked up by (effective service, action type) (N-11): for the AI
  * service, from the slice 1 declarations; for any other service it is "not
@@ -18,6 +21,8 @@
  *
  * @module lib/business-os/credits/effectiveFields
  */
+
+import 'server-only';
 
 import { AI_ACTION_DECLARATIONS } from '@/lib/business-os/llm/aiActionAudit';
 import { AI_CHARGE_SERVICE } from '@/lib/business-os/llm/aiChargeRecorder';
@@ -60,6 +65,30 @@ export function areaFor(effectiveService: string | null, actionType: string | nu
   if (effectiveService !== AI_CHARGE_SERVICE || actionType === null) return null;
   if (!Object.prototype.hasOwnProperty.call(AI_ACTION_DECLARATIONS, actionType)) return null;
   return AI_ACTION_DECLARATIONS[actionType as keyof typeof AI_ACTION_DECLARATIONS].area;
+}
+
+/**
+ * A diary label in the three platform languages. A LOCAL structural type on
+ * purpose (SA C-S7-1): naming the entitlements `Labels` type here would make
+ * this file a new importer of that module.
+ */
+export interface DiaryLabel {
+  en: string;
+  he: string;
+  es: string;
+}
+
+/**
+ * The plain-language label of an action, or NULL when it is not declared
+ * (N-11): the same rule as `areaFor` — the effective service AND the action
+ * type, never the action type alone. A NULL label is shown as "Other
+ * activity" and the line is still counted.
+ */
+export function diaryLabelFor(effectiveService: string | null, actionType: string | null): DiaryLabel | null {
+  if (effectiveService !== AI_CHARGE_SERVICE || actionType === null) return null;
+  if (!Object.prototype.hasOwnProperty.call(AI_ACTION_DECLARATIONS, actionType)) return null;
+  const labels = AI_ACTION_DECLARATIONS[actionType as keyof typeof AI_ACTION_DECLARATIONS].diaryLabels;
+  return { en: labels.en, he: labels.he, es: labels.es };
 }
 
 function own(row: EffectiveFieldsInput): EffectiveFields {

@@ -33,6 +33,7 @@ import {
   BusinessOsCreditOwnerReadRepository,
   OWNER_CHARGE_COLUMNS,
   OWNER_CREDIT_READ_LIMITS,
+  OWNER_DIARY_COLUMNS,
   OWNER_TOTALS_COLUMNS,
 } from '../BusinessOsCreditOwnerReadRepository';
 
@@ -116,6 +117,30 @@ describe('columns (owner-granted only)', () => {
     expect(columns(OWNER_CHARGE_COLUMNS)).toEqual(
       expect.arrayContaining(['kind', 'action_id', 'adjusts_action_id', 'user_id', 'service', 'action_type', 'triggered_by'])
     );
+  });
+});
+
+describe('columns of the credit history (slice 7a, SA SQ-31)', () => {
+  const migration = fs.readFileSync(
+    path.join(process.cwd(), 'supabase/migrations/20261015_business_os_credit_charges.sql'),
+    'utf8'
+  );
+  const granted = /GRANT SELECT \(([^)]*)\) ON TABLE public\.business_os_credit_charges TO authenticated;/
+    .exec(migration)![1]
+    .split(',')
+    .map((c) => c.trim());
+  const columns = OWNER_DIARY_COLUMNS.split(',').map((c) => c.trim());
+
+  it('selects only charge columns the owner is granted', () => {
+    expect(granted).toContain('outcome');
+    expect(columns.filter((c) => !granted.includes(c))).toEqual([]);
+  });
+
+  it('is exactly the SA list: no group id, reason code or credit value version', () => {
+    expect(columns).toEqual([
+      'id', 'kind', 'action_id', 'adjusts_action_id', 'period_start', 'credits',
+      'service', 'action_type', 'triggered_by', 'outcome', 'created_at', 'user_id',
+    ]);
   });
 });
 
