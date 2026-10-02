@@ -15,6 +15,9 @@ import { currencySymbol, currencyForLanguage, currencyFromText } from '@/lib/bus
 import { ServicePaymentOptions } from '@/components/scheduling/ServicePaymentOptions';
 import { ServiceCurrencySelect, getCurrencySymbol } from '@/components/scheduling/ServiceCurrencySelect';
 import { cn } from '@/lib/utils';
+import { clientLogger } from '@/lib/logger/client';
+
+const logger = clientLogger.child({ module: 'OnboardingChatPage' });
 
 interface ServiceInput {
   name: string;
@@ -348,9 +351,9 @@ export default function OnboardingChatPage() {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' }
             });
-          } catch {
+          } catch (err) {
             // Non-blocking - continue even if reset fails
-            console.warn('Failed to reset old conversation data');
+            logger.warn({ err }, 'Failed to reset old conversation data');
           }
         }
 
@@ -366,7 +369,7 @@ export default function OnboardingChatPage() {
         setMessages([welcomeMessage]);
         setIsLoading(false);
       } catch (err) {
-        console.error('Initialization error:', err);
+        logger.error({ err }, 'Onboarding chat initialization failed');
         setIsLoading(false);
       }
     }
@@ -504,7 +507,7 @@ export default function OnboardingChatPage() {
       }
 
     } catch (error) {
-      console.error('Message send error:', error);
+      logger.error({ err: error }, 'Onboarding chat message send failed');
       const errorMessage: Message = {
         role: 'assistant',
         content: selectedLanguage === 'he'
