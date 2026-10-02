@@ -1,6 +1,6 @@
 # Business OS credit pricing: the credit value and plan allowances
 
-> **Last Updated**: 2026-09-30
+> **Last Updated**: 2026-10-02
 
 ## Overview
 
@@ -46,7 +46,7 @@ The mechanism (how a charge is recorded, the ledger, the balance) is specified i
 | Founding Partner (`champion` cohort) | Reads the `pro` row (structural parity) | Inherits **32,250** automatically |
 | Test Flight (`trial` cohort) | One-off total 250 (placeholder) | **2,000 credits in total** (one-off, BD-16 — the user's decision, see [Revision log](#7-revision-log)) |
 
-The capability was renamed from `ai.actions` to **`credits.allowance`** (unit `credit`) in slice 5, as SA ruled under requirement SQ-17; the tier matrix moved to **version 2** (SQ-19). Until slice 6, owners and invitees see the allowance as "Credits (included)" without the number; admin screens show the figures.
+The capability was renamed from `ai.actions` to **`credits.allowance`** (unit `credit`) in slice 5, as SA ruled under requirement SQ-17; the tier matrix moved to **version 2** (SQ-19). Since slice 6b, owners (Settings → Plan) and invitees (the public invite page) see the allowance with its number under a first "Credits" heading, with the sentence explaining what a credit is; the numbers are read from config only.
 
 ---
 
@@ -266,7 +266,7 @@ Use the counting rules in §4.2 for deterministic actions, so figures stay compa
 | **Trial (Test Flight) one-off total.** D1–D3 derive allowances from a fee; the trial is $0, so the formula gives 0. The trial total must be sized on setup instead (B-12: setup AI counts against it, and using it up ends the trial) | ✅ Decided by the user on 2026-09-30 — **2,000 credits** in total (BD-16; revision log §7). A permanent guard (`trialAllowance.invariant.test.ts`) keeps it a whole one-off total of at least 1,000 |
 | **Capability id and unit** | ✅ SA ruled (SQ-17): renamed to **`credits.allowance`**, unit `credit`; shipped in slice 5 |
 | **Whether slice 5 bumps the tier-matrix `version`** | ✅ SA ruled (SQ-19): yes, **version 2**, no removal; credit value version 1 carries `matrixVersion: 2` |
-| **Showing the number to owners and invitees** | ⬜ Until slice 6, "Credits (included)" without the number (user decision R-7, option C, 2026-09-30); slice 6 decides the wording and removes the rule |
+| **Showing the number to owners and invitees** | ✅ Slice 6b: "Credits (32,250 per month)" etc. under a first "Credits" heading with the explanation sentence (D-g, D-h), in en / he / es; the R-7 option C rule is removed. Figures come only from config (guard test) |
 | **The 50% share once a non-AI service is priced** (BD-12) | Revisit when the first non-AI service is designed (§5, §6.1) |
 | **A chat / image per-action cap** as the practical abuse guard (D3) | To be considered in slice 12 |
 | **Orphan system-config key `monthly_ai_allowance_usd`** | ⬜ Since slice 6a it has **no reader**: the owner card reads the plan's `credits.allowance` from the entitlements resolver, and the dollar allowance and its conversion by `pilot_credit_cost_usd` left the owner surface (FR-36). Left in place — removing a config row is a migration for no owner benefit. Remove in a later clean-up if ever wanted (slice 6 Q-12) |
@@ -280,3 +280,4 @@ Use the counting rules in §4.2 for deterministic actions, so figures stay compa
 | 2026-09-30 | Created | Credit deduction slice 5. What a credit is (BD-1, BD-12, FR-3); the user's decisions D1–D3 resolving BD-8 (100% markup, allowance = 50% of fee at retail, cost ceiling 25% of fee, generous ceiling over a tight limit); the formula and resulting allowances (Essentials 19,750, Autopilot 32,250 credits / month; Founding Partner inherits Autopilot; trial open as BD-16); the 2026-09-30 benchmark (two test accounts on the champion cohort, counting rules, actions per 30 days, trigger split, cost per action type, usage vs allowance, caveats); considerations and trade-offs; revisit triggers, data sources and change procedure; revision log; open items (BD-16, SQ-17, SQ-19) |
 | 2026-09-30 | Slice 5 shipped; BD-16 decided | P-1: §4.7 caveat 2 no longer hints at who account B belongs to. P-2: §1 and §6.3 name `credits.allowance` (renamed from `ai.actions`, SQ-17) and matrix version 2 (SQ-19). §1 and §3 gain the trial's **2,000** one-off total; §7 gains two rows (slice 5 shipped; BD-16 decided); §8 closes BD-16, SQ-17 and SQ-19 and records the temporary "Credits (included)" display until slice 6 |
 | 2026-09-30 | Slice 6a: the card rounds; an orphan key | §5 "Fractional credits" row decided for the card (D-c: whole credits, "less than 1", parts that add up). §8 gains the orphan `monthly_ai_allowance_usd` key (no reader since slice 6a, Q-12). The "Showing the number" row is unchanged until 6b removes R-7 |
+| 2026-10-02 | Slice 6b: the number is shown | §1 note and §8 "Showing the number" row: owners and invitees now see the allowance with its number under a "Credits" heading, with the explanation sentence, localised; R-7 option C removed |

@@ -1,6 +1,6 @@
 # Workplan: Business OS credit deduction — slice 6, the owner usage card in credits
 
-> **Last Updated**: 2026-10-01
+> **Last Updated**: 2026-10-02
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_LLM_DEDUCTION_LAYER_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_DEDUCTION_LAYER_REQUIREMENT.md) — §12 "Slice 6 — Owner usage card in credits", "Slice 6 scoping (BA, 2026-09-30)", §13 "Slice 6 decisions for the user (2026-09-30)" (D-a to D-h, all decided), AC-18, AC-21, AC-33, AC-35, AC-36, AC-37, FR-6, FR-24, FR-25, FR-28, FR-29, FR-36, FR-39, SQ-20 to SQ-28, KI-17, KI-18, OI-10, and **"SA review — slice 6 scoping (2026-09-30)"** (binding)
@@ -8,7 +8,7 @@
 **Worktree:** `neuronforge-llm-deduction`
 **Branch:** `feature/business-os-credit-deduction-slice-6` (off `origin/main` `d5a7a93a`; confirmed with `git branch --show-current`). 6b gets its own branch from RM when 6a is merged (see §3).
 **Date:** 2026-09-30
-**Status:** 6a Code Complete (uncommitted; awaiting SA code review). SA conditions W6-1 to W6-9 folded in below, marked "(W6-n)"; evidence in §4.12
+**Status:** 6b Code Complete — SA approved, QA passed, then the user decisions U-5 / U-6 and chips added on 2026-10-02 (§15.1; SA quick look at the new rule owed). Uncommitted on `feature/business-os-credit-deduction-slice-6b`, stacked on 6a / PR #165; evidence §5.4. 6a: Code Complete (uncommitted; awaiting SA code review). SA conditions W6-1 to W6-9 folded in below, marked "(W6-n)"; evidence in §4.12
 
 ## Overview
 
@@ -382,18 +382,75 @@ All changes inside the entitlements module and the two plan surfaces; no new imp
 
 ### 5.3 Task list — 6b
 
-- ⬜ **T-b0** RM cuts the 6b branch from `main` after 6a merges; Dev confirms the branch.
-- ⬜ **T-b1** Remove the R-7 rule and its call sites.
-- ⬜ **T-b2** Delete the temporary test file and the `inviteOffer.test.ts` TEMPORARY test.
-- ⬜ **T-b3** Restore the `customerPlanView.test.ts` assertions (4 sites).
-- ⬜ **T-b4** Restore `PlanSection.render.test.tsx` (`renderFor('trial')`, the "becomes" line, block removal).
-- ⬜ **T-b5** D-g: category, schema, presentation, catalog, dictionary ×2 surfaces, order tests.
-- ⬜ **T-b6** D-h: `noteKey`, `PlanSection` and invite page rendering, en/he/es, render tests.
-- ⬜ **T-b7** OI-10: locale through `describeCapabilityValue` / `describePlanOffer` / `describeInviteOffer`; he/es value tests; admin stays English (test).
-- ⬜ **T-b8** Docs.
-- ⬜ **T-b9** Exit grep over `app lib components hooks`: `withCustomerDisplay|SHOWN_WITHOUT_AMOUNT|INCLUDED_WITHOUT_AMOUNT|TEMPORARY \(R-7|R-7 option` → nothing (the second pattern catches the two line-wrapped markers).
-- ⬜ **T-b10** Gates (§7), `npm run test:bos-entitlements` green, results pasted; `git diff --stat` check.
-- ⬜ **T-b11** Handover uncommitted, same chain.
+- ✅ **T-b0** Branch `feature/business-os-credit-deduction-slice-6b`, stacked on the 6a branch (PR #165, HEAD `3f707e17` incl. a main merge) — built in parallel as SA allowed; merges only after 6a. Confirmed with `git branch --show-current`.
+- ✅ **T-b1** Remove the R-7 rule and its call sites.
+- ✅ **T-b2** Delete the temporary test file and the `inviteOffer.test.ts` TEMPORARY test.
+- ✅ **T-b3** Restore the `customerPlanView.test.ts` assertions (4 sites).
+- ✅ **T-b4** Restore `PlanSection.render.test.tsx` (`renderFor('trial')`, the "becomes" line, block removal).
+- ✅ **T-b5** D-g: category, schema, presentation, catalog, dictionary ×2 surfaces, order tests.
+- ✅ **T-b6** D-h: `noteKey`, `PlanSection` and invite page rendering, en/he/es, render tests.
+- ✅ **T-b7** OI-10: locale through `describeCapabilityValue` / `describePlanOffer` / `describeInviteOffer`; he/es value tests; admin stays English (test).
+- ✅ **T-b8** Docs.
+- ✅ **T-b9** Exit grep over `app lib components hooks`: `withCustomerDisplay|SHOWN_WITHOUT_AMOUNT|INCLUDED_WITHOUT_AMOUNT|TEMPORARY \(R-7|R-7 option` → nothing (the second pattern catches the two line-wrapped markers).
+- ✅ **T-b10** Gates (§7), `npm run test:bos-entitlements` green, results pasted; `git diff --stat` check.
+- ✅ **T-b11** Handover uncommitted, same chain (SA code review → user diff → QA → user approval → RM).
+
+- ✅ **T-b12 (user requirement, 2026-10-01)** Credit numbers only from configuration: verified the plan screen, the invite page and the card read the allowance through the resolver (tier matrix / `TRIAL_CREDIT_TOTAL`); dictionary strings are templates. New guard `creditFigures.fromConfig.guard.test.ts`.
+
+### 5.4 6b implementation evidence (Dev, 2026-10-02)
+
+Uncommitted on `feature/business-os-credit-deduction-slice-6b`. No migration, no DB write; Jest with `NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:9` and stub keys.
+
+**What changed**
+
+| Area | As built |
+|---|---|
+| R-7 removal (T-b1, T-b2) | `SHOWN_WITHOUT_AMOUNT`, `INCLUDED_WITHOUT_AMOUNT`, `withCustomerDisplay` and their three call sites deleted (`customerPlanView.ts` next-plan and included; `planOfferView.ts`), plus the `changes` comment pointing at them. `creditsShownWithoutAmount.temporary.test.ts` deleted; the TEMPORARY `inviteOffer.test.ts` test replaced by a slice 6 test |
+| Restores (T-b3, T-b4) | `customerPlanView.test.ts`: trial `changes` holds `credits.allowance` "2,000 in total" → "19,750 per month" and not in `improves`; Essentials → Autopilot `improves` `toEqual(['credits.allowance'])` ("19,750 per month → 32,250 per month"); both thresholds back to 2; `Credits (19,750 per month)` in the Essentials summary. The `email.volume` positive control kept (SA). `PlanSection.render.test.tsx`: `renderTrialWithCrossUnitChange` removed, its callers back to `renderFor('trial')` (change line "from 2,000 in total to 19,750 per month, which is different rather than larger"); "19,750 per month becomes 32,250 per month" restored; the R-7 describe block removed, its "ends when the credits run out" case moved under "a trial" |
+| D-g (T-b5) | Category `credits` in `CapabilityCategory` and the schema's `z.enum`; `credits.allowance` moved to it in `catalog.ts` (N-12 comment replaced); first in `CATEGORY_PRESENTATION`; `plan.category.credits` "Credits" / "קרדיטים" / "Créditos" in `LanguageContext` ×3 and `invitePageCopy.ts` ×3. Order and count tests updated (`order[0]` = `credits`, ten rows, AI chat row ≥ 9 and no longer holds the allowance). No snapshot regeneration (no category field, V-17) |
+| D-h (T-b6) | Optional `note: { monthly, total }` on a `CATEGORY_PRESENTATION` entry; `noteKeyFor` picks the variant from the first **metered** feature's value shape (`{ total }` → `total`, else `monthly`) — no capability id, no plan name (SA Q-9). New `noteKey: string \| null` on `CustomerPlanCategory` and `PlanOfferCategory`. The keys are the card's existing `usage.explain.monthly` / `usage.explain.trial`; their wording now lives once in `lib/i18n/creditExplanation.ts`, which both `LanguageContext` (×3) and `invitePageCopy.ts` (`planCategoryNote` ×3) reference — no duplicated sentence text. `PlanSection.tsx` renders `t(row.noteKey)` under the row (included and "would add" lists); the invite page renders `copy.planCategoryNote[row.noteKey]`, and nothing for a key it has no words for |
+| OI-10 (T-b7) | `describeCapabilityValue(value, definition, locale = 'en')`: "per month" / "in total" / the fair-use note / units / "more purchasable" per locale; numbers via `Intl.NumberFormat(locale)` (the card's call). `describePlanCapabilities` passes its `locale`; `describePlanOffer(config, planId, now, locale)` (plan name too); `describeInviteOffer(grant, config, now, locale)`; `publicInviteView` passes the validated `pageLanguage(row.language)` (now typed `Locale`). Admin callers (`adminPlansView`, the accounts route) pass nothing and stay English. Variant ids and `yes` / `no` unchanged (never shown to a customer: `yes` is dropped, `no` is not granting). Stale "English today" comments in `inviteOffer.ts` and `invitePageCopy.ts` updated. Settings → Plan in he / es localises at the same time (the `my-plan` route already passed `locale`; it was **not** edited) |
+| Config-only figures (T-b12) | Plan screen: `my-plan` → `buildCustomerPlanView` → resolver. Invite: `publicInviteView` → `describeInviteOffer` → `describePlanOffer` → resolver. Card: usage route → `ownerCreditUsage` → `creditAllowanceForDisplay(getSnapshot)`. Guard: 17 owner / invite source files (comments stripped) and every `plan.*` / `usage.*` / credit-worded dictionary string must contain none of 19,750 / 32,250 / 2,000 in any typed form (`19750`, `19,750`, `19.750`, `19 750` incl. NBSP, `19_750`), plus whatever allowances the config holds today; planted violations prove the pattern; config and tests excluded |
+| Docs (T-b8) | Entitlements doc: the temporary callout replaced by what owners and invitees see; Change History row. Pricing doc: §1 note, §8 row ✅, Change History row |
+
+**Gates**
+
+| Gate | Result |
+|---|---|
+| `npm run test:bos-entitlements` | **102 / 102 suites, 2,171 / 2,171 tests** |
+| `app/api/admin/business-os/entitlements/__tests__/routes.test.ts` | **40 / 40** |
+| `components/business-os/settings` | 2 / 2 suites, **47 / 47** |
+| `app/invite` | 5 / 5 suites, **130 / 130** |
+| `lib/business-os/invites` | 14 / 14 suites, **522 / 522** |
+| `components/business-os` (card unaffected) | 6 / 6 suites, **103 / 103** |
+| `lib/business-os/credits` | 15 / 15 suites, **238 / 238** |
+| `app/api/business-os/entitlements`, `app/api/business-os/usage`, `app/admin/business-os-tiers` | 21 / 21, 12 / 12, 88 / 88 |
+| i18n: `planCopy.i18n.test.ts` (+ `plan.category.credits`) and the 7 suites that read `LanguageContext` | green (93 / 93 for the 7) |
+| Wider: `lib/business-os app/api/business-os components/business-os app/invite components/test-business-os app/api/admin/business-os/entitlements app/admin/business-os-tiers` | 257 / 261 suites, 5,010 / 5,013 tests — the **same 4 baseline reds** recorded for 6a (`tokenUsageRepository.contract`, `proposals-capability`, `callParams.boundary.step3`, `chat-v4/route.audit`), unrelated |
+| `npm run typecheck:bos-llm` | passed, **0 new** (28 baseline; the one "fixed" baseline entry is pre-existing) |
+| `npm run check:bos-llm-literals` | passed, 0 violations |
+| `npm run lint:hooks` | clean (exit 0) |
+| `npx tsc --noEmit` (touched files) | 0 errors in any touched or new file except `LanguageContext.tsx`'s **24 pre-existing TS1117 duplicate keys** (`config.intake.preview`, `crm.booking.status.*`, `crm.task.priority.*`, ×3 languages; same count in HEAD) |
+| `npx eslint` on changed + new files | 0 errors; 2 pre-existing warnings (`LanguageContext.tsx` `currencyInitialized`, `customerPlanView.ts` unused `describePlanEnding` import) |
+| `next build` (6 GB heap, CI placeholder env from `build.yml`) | **exit 0** — run in a scratch export of this working tree (node_modules junction removed as a link afterwards, target untouched), so the worktree's `.next` was not touched |
+| T-b9 exit grep `withCustomerDisplay\|SHOWN_WITHOUT_AMOUNT\|INCLUDED_WITHOUT_AMOUNT\|TEMPORARY \(R-7\|R-7 option` over `app lib components hooks` | **nothing** |
+
+**New tests**: `creditsRow.test.ts` (D-g first row for every plan; line equals the resolver's figure; D-h variant by shape for every plan, both variants reachable, no other row has a note, a paid tier given `{ total }` reads the trial sentence; note keys worded on both surfaces ×3; OI-10 he / es lines for every plan, no English phrase left, next-plan and trial-change in en / he / es, ids identical across languages, variant ids untranslated, default English, admin Tiers stays English). `creditFigures.fromConfig.guard.test.ts` (above). Invite page render: every plan × en / he / es from the REAL offer builder — "Credits:" heads the list, the configured number with the localised phrase, the sentence once; an unknown note key renders nothing. `publicInviteView`: the offer is described in the row's language (en / he / es) and in English for an unknown stored language. `PlanSection`: four plans' first row (heading, line, sentence once), only one note on the page.
+
+**Deviations (for SA)**
+
+| # | What | Why |
+|---|---|---|
+| DV-10 | The sentence reuses `usage.explain.*` keys instead of new `plan.category.credits.note.*` keys (§5.1 item 3) | The user's instruction for 6b: reuse or share, never duplicate the sentence. Reusing the card's keys gives one wording on three surfaces |
+| DV-11 | New `lib/i18n/creditExplanation.ts` holds the sentence in three languages; `LanguageContext` and `invitePageCopy.ts` reference it | The invite page cannot read `LanguageContext` (its source guard), so without a shared module the sentence would exist twice. First placed in `lib/business-os/credits/`, then moved: that directory is in `typecheck:bos-llm`'s core scope, which pulled `LanguageContext.tsx` in as a caller and surfaced its 24 pre-existing duplicate-key errors as "new" |
+| DV-12 | `noteKey` is always present (`string \| null`), so the exact key-set pins in `planOfferView.test.ts`, `inviteOffer.test.ts` and `customerPlanView.noExclusions.test.ts` gained it | A stable shape; a key, never a list, so it cannot carry an exclusion |
+| DV-13 | `groupByCategory` takes an optional `valueOf` lookup (the only way to read the shape without putting raw values in the payload) | Without it a row has no note — never a guess |
+| DV-14 | `yes` / `no` and variant ids are not localised | Q-10 (ids unchanged); `yes` / `no` never reach a customer, and `groupByCategory` keys on the English `yes` |
+| DV-15 | The new tests read every figure off config / `Intl`, rather than hand-typing them | The user's config-only rule; the restored workplan assertions keep their literal values as specified (tests are excluded from the guard) |
+
+**`console.*` in touched files:** 0 in every touched or new file (counted). Nothing to flag.
+
+**Not done / for the user:** no browser check — no dev server was listening on :3000 when checked (it was not stopped by this work; the build ran in a scratch export). QA's manual §7 check (Settings → Plan and `/invite` per plan, en / he / es) is still owed. The es / he wording of the value phrases ("לחודש", "בסך הכול", "al mes", "en total") and the fair-use / unit phrases should get the same native review as D-b (R-3).
 
 **Estimate 6b: ≈ 1.0 day required + D-g + D-h, ≈ 1.5 days with OI-10.** SA range 0.75–1.25 d; OI-10 is the extra half day.
 
@@ -543,6 +600,49 @@ Numbered 15 so it does not collide with the requirement's §12–§13 decision l
 **Dictionary:** `usage.by_you`, `usage.automatic`, `usage.none_period`, `usage.none_trial` removed in en / he / es — the card was their only reader (repo grep), and all four were added by this uncommitted slice. Kept: `usage.used` and `usage.less_than_one` (still read by the no-allowance centre), `usage.explain.*` (the tooltip). The es / he D-b native-review note in §4.7 still applies — the sentence is unchanged, only moved.
 
 **Tests:** `UsageCard.render.test.tsx` — every state asserts no `credits-split` and none of the split / "nothing used" words in the card body (tooltip excluded), the sentence appears exactly once and only inside the ring's tooltip (en / he / es, monthly and trial), and a new case drives focus → visible, Escape → hidden, hover → visible, mouse-out → hidden, with the ring described by the tooltip. No-allowance: no tooltip, no `tabindex`, no `aria-describedby`.
+
+
+### 15.1 User decisions on 6b (2026-10-02)
+
+Recorded by Dev on 2026-10-02, after SA's code review and QA's report on 6b. Presentation and copy only: no route, repository, query or migration change. The offer payload gains one field (below).
+
+| # | Decision (user, 2026-10-02) | As built |
+|---|---|---|
+| U-5 | **No repeated "Credits"** (SA comment 1, option a). When a category has a single feature whose label matches the category heading, show only the value under the heading. Generic rule, not a rename of the capability label (admins see that label). Admin views unchanged | New `lib/business-os/planCategoryLine.ts` — `planCategoryLine(heading, row)`: one feature, label equal to the heading (case, outer spaces and Unicode form ignored) → the value alone; such a feature whose value is `yes` → `null` (no line; the heading says it); anything else → the server `summary`, untouched. It names no capability, category or plan. It runs on the **surface** because only the surface knows the heading's words (plan screen: platform dictionary; invite page: its own copy, in the invite's language). Plan screen: "Credits" → "19,750 per month" → the sentence, applied to both "what your plan includes" and "what {plan} would add" through one `CategoryRowText`. Invite page: "Credits: 19,750 per month" (no colon when the line is `null`). To let the invite page compare, `PlanOfferCategory` gains `features: { label, value }[]` (no capability ids, as it reaches a public page); `describeInviteOffer` passes it through. The page treats the field as optional and falls back to `summary`. `buildAdminPlansView` and the admin routes do not use the rule, so admins still read "Credits (…)" |
+| U-6 | **Translate the hardcoded English on the plan screen** (QA-6b-E1) | Seven new dictionary keys in en / he / es (table below). `NextPlanUp`'s price suffix now reuses `plan.price.per_month`. Placeholders are filled by a local `fill()` with a function replacer, so a `$` in a price or a name is printed literally. The developer note "(The buy flow arrives with this flag — see WS-2 step 3.)" was dropped from the owner-facing text and kept as a code comment: it is not a sentence for an owner, in any language. The invite page was checked: it had no hardcoded English (every string already comes from `invitePageCopy.ts`) |
+
+**New dictionary keys** (`lib/business-os/LanguageContext.tsx`). The he / es wording joins the D-b / R-3 native-review item already owed before release.
+
+| Key | en | he | es |
+|---|---|---|---|
+| `plan.features_unavailable` | We could not list your features just now. Nothing has been removed from your account. | לא הצלחנו להציג את התכונות שלך כרגע. שום דבר לא הוסר מהחשבון שלך. | No hemos podido mostrar tus funciones en este momento. No se ha quitado nada de tu cuenta. |
+| `plan.next.adds_heading` | What {plan} would add | מה נוסף ב־{plan} | Qué añadiría {plan} |
+| `plan.next.improves_line` | {from} becomes {to} | {to} במקום {from} | {from} pasa a {to} |
+| `plan.next.changes_heading` | What changes on {plan} | מה משתנה ב־{plan} | Qué cambia en {plan} |
+| `plan.next.changes_line` | from {from} to {to}, which is different rather than larger | מ־{from} ל־{to}, שינוי ולא הגדלה | de {from} a {to}, que es distinto, no mayor |
+| `plan.next.available` | Available to choose. | זמינה לבחירה. | Disponible para elegir. |
+| `plan.next.coming_soon` | Coming soon | בקרוב | Próximamente |
+
+**Chips folded in:**
+
+| Item | Done |
+|---|---|
+| SA Low #2 (guard allow-list) | A note at `SOURCES` says any new allowance-showing surface must be added. Plus a completeness test: every product file under `app/ lib/ components/ hooks/` (tests and config excluded, comments stripped) that names `describePlanOffer`, `describeInviteOffer`, `buildCustomerPlanView`, `creditAllowanceForDisplay` or `ownerCreditUsage` must be in `SOURCES`. It found one unlisted caller, `lib/business-os/credits/ownerCreditUsageDeps.ts`, now listed (clean). `planCategoryLine.ts` is listed too |
+| SA Low #3 | Unused `describePlanEnding` import removed from `customerPlanView.ts` |
+| QA-6b-E2 | The dictionary scan accepts single- or double-quoted keys (`dictionaryEntries`), with a planted test: single, double, mixed-quote Hebrew and template entries are all read and all flagged |
+| QA-6b-E4 | `publicInviteView.test.ts`: the friend-invite path, en / he / es, returns `describeInviteOffer(row, …, language)`, and he / es differ from the English offer (non-vacuity) |
+| SA optimisation | `capabilityDisplay.ts` caches one `Intl.NumberFormat` per locale in a module-level `Map` |
+
+**Tests:**
+
+| Suite | Change |
+|---|---|
+| `lib/business-os/__tests__/planCategoryLine.test.ts` (new) | The rule: value alone in en / he / es; case and NFC/NFD ignored; `yes` → `null`; different name, several features and a payload without `features` → `summary` |
+| `PlanSection.render.test.tsx` | Now renders with the **real** dictionary (as `UsageCard.render.test.tsx` does) and switches language. Credits rows assert the value alone and "Credits" once in heading + line. New: he / es × every plan show none of 11 English phrases; en / he / es × every plan show the credits heading once over the value, and the summary nowhere; he / es next-plan headings, the improvement line and "Coming soon", and the trial's change line, all from the dictionary |
+| `app/invite/__tests__/page.render.test.tsx` | Every plan × en / he / es: the credits row reads exactly "{heading}: {number} {phrase}", heading once |
+| `planCopy.i18n.test.ts` | The seven keys exist ×3; placeholders `{plan}` / `{from}` / `{to}` present in every language |
+| `planOfferView.test.ts`, `inviteOffer.test.ts` | Row key set now includes `features`; offer rows equal the customer rows' name / value pairs |
+| `creditFigures.fromConfig.guard.test.ts` | Completeness check, double-quoted keys, SOURCES note (above) |
 
 ---
 
@@ -704,6 +804,81 @@ None. DV-3 is ruled above as the correct reading of D-b. The only open release c
 
 #### Code Approved for QA: **Yes**
 
+### SA code review — 6b (2026-10-02)
+
+**Code Review by SA — 2026-10-02**
+**Status:** ✅ Code Approved (no conditions; three Low chips below, none blocking)
+
+Reviewed the uncommitted diff on `feature/business-os-credit-deduction-slice-6b` (stacked on 6a / PR #165, HEAD `3f707e17`): 25 files, +573 / −310, plus three new files (`creditExplanation.ts`, `creditsRow.test.ts`, `creditFigures.fromConfig.guard.test.ts`). Every changed hunk read, not only the evidence table. Review only; no code changed, no DB touched.
+
+#### Gates re-run by SA
+
+| Gate | Result |
+|---|---|
+| `npm run test:bos-entitlements` | **102 / 102 suites, 2,171 / 2,171** |
+| routes.test.ts + `components/business-os/settings` + `app/invite` + `lib/business-os/invites` + `planCopy.i18n` + `creditsRow` + the guard | **25 / 25 suites, 797 / 797** |
+| Every suite that reads `LanguageContext` (19) + `components/business-os/__tests__` | **19 / 19, 478 / 478** |
+| Wider run (`lib/business-os app/api/business-os components/business-os app/invite components/test-business-os app/api/admin/business-os/entitlements app/admin/business-os-tiers`) | 257 / 261 suites, 5,010 / 5,013 — the **same four baseline reds** as 6a (`tokenUsageRepository.contract`, `proposals-capability`, `callParams.boundary.step3`, `chat-v4/route.audit`), unrelated |
+| `npm run typecheck:bos-llm` | passed, 28 errors, **0 new** (the one "fixed" baseline entry is pre-existing) |
+| `npm run check:bos-llm-literals` | passed, 0 violations |
+| Shared `node_modules` | Intact. The worktree's `node_modules` is a symlink to `neuronforge/node_modules`; `.bin` holds 165 entries incl. `jest`, `tsc`, `next`; 841 packages; every gate above ran from it |
+
+#### The specific checks asked for
+
+| Check | Finding |
+|---|---|
+| **R-7 removal** | Complete. `SHOWN_WITHOUT_AMOUNT`, `INCLUDED_WITHOUT_AMOUNT`, `withCustomerDisplay` and all three call sites gone; the temporary test file deleted; the TEMPORARY `inviteOffer.test.ts` case replaced by one that reads the figure from the matrix. SA's exit grep (the T-b9 pattern plus `renderTrialWithCrossUnitChange` and `creditsShownWithoutAmount`) over `app lib components hooks scripts tests docs/architecture` hits only the two doc Change History rows that record the removal. The restored `customerPlanView.test.ts` assertions ("2,000 in total" → "19,750 per month" in `changes`, `improves` = `['credits.allowance']`, "Credits (19,750 per month)") and the `PlanSection` restore match §5.3 |
+| **`credits` category first (D-g / SQ-25)** | Correct in all four places: `CapabilityCategory`, the schema's `z.enum`, `catalog.ts`, and first in `CATEGORY_PRESENTATION`, with its heading on both dictionaries ×3. **Snapshot / drift:** nothing needed. `snapshot.ts` has no `category` field, and the catalog is code-only (`catalogSchema()` parses only `readCodeConfig`'s `CAPABILITIES`), so no regeneration. **Version / `removals`:** don't apply. Moving a category takes no value away from any tier, so the snapshot rule is not triggered. The other admin `category` read (`NotBuiltPanel`) is for `not_built` capabilities only, and `credits.allowance` is `available` |
+| **Entitlements registration (skill checklist)** | No new non-test importer of the module. `inviteOffer.ts` keeps the same symbols. `publicInviteView.ts` now imports only `Locale` from `lib/i18n/config`, not from the module. The three new imports in the diff are all in test files. No tier-name or new capability-id literal in product code. All checklist items are ✅ |
+| **`noteKey` design (Q-9)** | Built as ruled. The category-level optional `note` is chosen in `noteKeyFor` by the shape of the row's first `metered` value. It names no capability and no plan, and gives `null` when there is no metered value or no `valueOf`, which is better than guessing. `creditsRow.test.ts` proves it is chosen by shape: a paid tier given `{ total }` reads the trial sentence, and both variants are reachable. A note can only appear on a row that renders, because empty categories never get a bucket. DV-12 and DV-13 accepted: `noteKey` is a key, never a list, so the no-exclusions key pins stay meaningful |
+| **`lib/i18n/creditExplanation.ts` (DV-10, DV-11)** | **Accepted.** It is plain data with no imports, so it is client-safe for both `LanguageContext` and `invitePageCopy.ts` and keeps the invite page's no-`LanguageContext` guard intact. `lib/i18n/` already holds the platform's locale config, so it is a natural home. Moving it out of `lib/business-os/credits/` so that `typecheck:bos-llm` does not pull in `LanguageContext.tsx` (and its 24 old TS1117 duplicate keys) is the right call: putting it back would only move baseline noise, and there is nothing in the file to type-check beyond a literal. Reusing `usage.explain.*` gives one wording on three surfaces (DV-10) |
+| **OI-10 locale plumbing (Q-10)** | Correct at the root. `describeCapabilityValue(…, locale = defaultLocale)` gets the locale from `describePlanCapabilities`, `describePlanOffer` (plan name too), `describeInviteOffer` and `publicInviteView`'s validated `pageLanguage` (now typed `Locale`). Admin callers pass nothing and stay English, which a test pins (`adminPlansView` / Tiers). `PHRASES[locale] ?? PHRASES[defaultLocale]` is a safe fallback. Variant ids and `yes` / `no` are left as they are (DV-14 accepted: `yes` is the key `groupByCategory` compares on, and `no` is never listed). English quantity values now get grouping (`1,000 seats`), which is harmless |
+| **Spanish "2000"** | Confirmed in Node's ICU: `es` formats 2000 → `2000` and 19750 → `19.750`, while `en` and `he` give `2,000`. This is CLDR's rule, and also the RAE's: Spanish does not group four-digit numbers. SA accepted it in Q-10, and the dashboard card makes the same `Intl` call, so the plan screen and the card agree. **Not a business decision**: it is correct Spanish typography. The user can ask for en-US grouping everywhere, but that would make the Spanish screens look foreign |
+| **Guard test (T-b12)** | **Meaningful, and not brittle in practice.** Planted violations show it catches `19750`, `19,750`, `19.750`, `19 750` (incl. NBSP and narrow NBSP), `19_750` and `2 000`, and planted clean strings (`120000`, `1,2000`, dates, prices) do not fire. Figures are the user's list plus whatever the resolver gives every plan today, so a re-price stays covered, and the non-vacuity test fails loudly if the list goes stale. Comments are stripped, with its own planted test. Dictionary scope is every `plan.*` / `usage.*` / credit-worded string ×3, with non-vacuity on `plan.category.credits` and `usage.of` (SA checked: `LanguageContext` has no multi-line entries the single-line regex could miss). Only config and tests are excluded. **The allow-list is the right design, not a sweep.** SA swept `components/business-os` and `lib/business-os` outside config and tests: there are real `2000`s (`setTimeout(…, 2000)` ×3, `.limit(2000)`, detector thresholds), so a directory sweep would be noisy. A renamed file makes `readFileSync` throw, which fails loudly. See L-6b-2 for the one gap |
+| **No owner-facing literal figures** | Confirmed. The guard's 17 sources pass. The plan screen gets its figures from `my-plan` → `buildCustomerPlanView` → resolver, the invite page from `publicInviteView` → `describeInviteOffer` → `describePlanOffer` → resolver, and the card from `creditAllowanceForDisplay`. The new tests read their figures off config or `Intl` (DV-15 accepted). The restored workplan assertions keep the literals the workplan specified, and tests are excluded by design |
+| **DV-12 to DV-15** | All accepted (reasons above) |
+| **Logging / `console.*`** | 0 in every touched or new product file (SA counted). Nothing to flag |
+| **Security / RLS / Zod** | No route, repository, query or input boundary changed. The invite locale is the stored, already-validated `row.language`, never caller-supplied |
+
+#### Code Review Comments
+
+1. `app/invite/page.tsx` (row render) and `PlanSection.tsx` — **the credits row says "Credits" twice** — Priority: Low (wording, for the user at the diff view; not a defect). The heading is the category name "Credits", and the line is the feature summary, whose label is also "Credits". The invite page therefore reads **"Credits: Credits (19,750 per month)"** ("Créditos: Créditos (2000 en total)" in Spanish), and Settings → Plan prints "Credits" over "Credits (19,750 per month)". It follows from D-g's own heading over a one-feature row, and the render tests pin it as is. If the user wants it gone, there are two options. (a) A generic rule in `groupByCategory`: when a category has exactly one feature whose label equals the heading's wording, show the value only ("Credits: 19,750 per month"). This is category-level and capability-agnostic like `noteKey`, and about an hour of work plus test updates. (b) Leave it. **Do not** fix it by renaming the capability label: the label is also the admin name. See Business questions
+2. `lib/business-os/entitlements/__tests__/creditFigures.fromConfig.guard.test.ts:SOURCES` — **an allow-list can miss a new surface** — Priority: Low. A future owner or invite surface that shows the allowance (a pricing page, an upgrade dialog, a boost purchase screen) is not checked until someone adds it to `SOURCES`. Suggest a one-line note at `SOURCES`, "add any new surface that renders a credit allowance". Optionally, a cheap completeness check: every non-test file that imports `describePlanOffer`, `buildCustomerPlanView`, `creditAllowanceForDisplay` or `ownerCreditUsage` must be listed. Not blocking
+3. `lib/business-os/entitlements/customerPlanView.ts:81` — **unused `describePlanEnding` import** (pre-existing in HEAD, ESLint warning) — Priority: Low. This is a touched file, so remove it with this change (dead code)
+
+#### Optimisation Suggestions (non-blocking)
+
+- `capabilityDisplay.ts` builds a `new Intl.NumberFormat(locale, …)` on every call, and the plan screen calls it about 30 times per plan, twice per render with the next plan up. Caching one formatter per locale in a module-level `Map` is trivial and removes the churn. The cost is measured in microseconds today, so this is style, not a performance problem.
+- `PlanSection.tsx` gives the "would add" note no `data-testid`, unlike the included-list note. Adding one would let a later test address it directly.
+
+#### Business questions
+
+One optional wording question, for the user's own look at the diff. **It is not a release blocker:**
+
+- **"Credits: Credits (19,750 per month)"** (comment 1). The credits row repeats its own heading. Should the line under the "Credits" heading read just "19,750 per month", or is the repetition fine? If the user wants it shortened, it is a small generic change in 6b before RM.
+
+The Spanish `2000` is **not** a business question (see the check above). The native review of the he / es value phrases ("לחודש", "בסך הכול", "al mes", "en total", the fair-use and unit words) joins the D-b / R-3 native-review item that is already owed before release.
+
+#### Code Approved for QA: **Yes**
+
+Comments 2 and 3 are chips that Dev may fold in before RM, and neither needs SA re-review. Comment 1 waits on the user's answer. If the user picks (a), SA needs only a quick look at the changed rule and tests.
+
+### SA hand-off check — 6b final fixes (2026-10-02)
+
+**Status:** ✅ Approved. No change requested. This is the quick look promised above, covering §15.1 (U-5, U-6 and the chips).
+
+| # | Check | Finding |
+|---|---|---|
+| 1 | `planCategoryLine` rule and where it runs | Generic: it names no capability, category or plan, and has no imports, so it is safe in the client component and the public page. One feature whose label equals the heading (NFC, trim, locale lower-case) → the value alone. Such a feature with value `yes` → `null`, which matches the server summary: for `yes` the summary already prints the label only, so the line would just repeat the heading. Anything else → `summary`, unchanged. It runs on the **surface** in both places: `PlanSection.tsx` uses one `CategoryRowText` for both "includes" and "would add", and `app/invite/page.tsx` drops the colon when the line is `null`. The server builders and the admin views do not use it, so admins still read the capability label. The `yes` comparison keys on the English word, which is consistent with `capabilityDisplay` (booleans are not localised, by design) |
+| 2 | `PlanOfferCategory.features` on the public invite payload | `planOfferView.ts` maps each feature explicitly to `{ label, value }`, so no `capability` id is sent. The rows are the same ones that already went into `summary`: they are filtered by `isHiddenFromCustomer` and granting-only, and they come from config, not from any user or tenant data. So the payload carries **no new information**, only a structure for what `summary` already joined. The page types `features` as optional, and `planCategoryLine` falls back to `summary` when it is absent |
+| 3 | `PlanSection.tsx` dictionary and `fill()` | The 7 keys exist in en / he / es, and `planCopy.i18n.test.ts` checks the placeholders. `fill()` uses a function replacer, so `$79` prints literally. An unknown slot is left as-is. It uses `hasOwnProperty`, so it does not read the prototype. The output is a React text node (escaped), not HTML, so there is no injection path. The price suffix reuses `plan.price.per_month` (`{amount}` in all 3 languages). The developer note was removed from the owner-facing text and kept as a JSX comment. A grep found no English text nodes left in the component and no `console.*` in the touched files |
+| 4 | Guard completeness and the double-quoted-key scan | The walk covers `app/ lib/ components/ hooks/` (`.ts` / `.tsx`). It skips `__tests__`, `*.test` / `*.spec`, `.d.ts`, `node_modules` and the entitlements config, which is the figures' source by design. It strips comments before matching the five builder names, as whole words. It has a non-vacuity anchor: it must find `my-plan/route.ts` and `publicInviteView.ts`. `dictionaryEntries` uses a back-referenced key quote, and its value quote can be `'`, `"` or a backtick. The planted test covers single, double, mixed-quote Hebrew and template entries. Remaining limits, accepted: a caller that reaches a builder through a re-export alias, and unquoted identifier keys, are not caught. The dictionary's keys are dotted, so they are always quoted |
+| 5 | `Intl.NumberFormat` cache | A module-level `Map` keyed by locale. The options are fixed and there are only 3 locales, so the map stays small. Chip (Low, optional): the phrases fall back to `defaultLocale` for an unknown locale, but the formatter is keyed and built on the raw string. Building the formatter from the same resolved locale would keep the two consistent. Today every caller passes a validated `Locale`, so this cannot happen |
+
+**Gates (re-run by SA, stub env):** `npm run test:bos-entitlements` gives 102 / 102 suites and 2,176 / 2,176 tests. `npx jest components/business-os/settings app/invite lib/business-os/invites lib/business-os/__tests__/planCategoryLine.test.ts` gives 22 / 22 suites and 735 / 735 tests. No code changed by SA.
+
+**Owed before RM (unchanged):** the browser check, and the he / es native review (D-b / R-3), which now includes the 7 new keys.
+
 ---
 
 ## QA Testing Report
@@ -821,6 +996,113 @@ QA probes: route 15/15, numbers 19/19, card 44/44 (all deleted after the run)
 
   he / es native review remains the release precondition (D-b).
 
+### QA report — 6b (2026-10-02)
+
+**QA — 2026-10-02**
+**Test mode:** full
+**Strategy used:** A + B (Jest: unit and render tests against the real builders, the real config and the real dictionary) + temporary QA probes. D (manual browser check) was not possible because no dev server was running; see "Not verified".
+**Focus:** ui, schema (entitlements presentation), i18n
+**Skipped:** the browser check (no server); `next build` (Dev ran it green, and no code changed since)
+**Input source:** the TL prompt (items 1–7)
+
+Run in the worktree `neuronforge-llm-deduction` on `feature/business-os-credit-deduction-slice-6b`, uncommitted. Jest ran with `NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:9` and stub keys, so no real DB was touched. No temporary worktree and no `node_modules` junction were created. Probes were written into the worktree's test folders, run, and deleted.
+
+#### Gates
+
+| Gate | Result |
+|---|---|
+| `npm run test:bos-entitlements` | **102 / 102 suites, 2,171 / 2,171**. Run before the probes and again after deleting them |
+| `app/api/admin/business-os/entitlements/__tests__/routes.test.ts` | 40 / 40 |
+| `components/business-os/settings` | 2 / 2 suites, 47 / 47 |
+| `components/business-os` (incl. the card) | 6 / 6 suites, 103 / 103 |
+| `app/invite` | 5 / 5 suites, 130 / 130 |
+| `lib/business-os/invites` | 14 / 14 suites, 522 / 522 |
+| `lib/business-os/credits` | 15 / 15 suites, **237 / 237**. §5.4 says 238; see QA-6b-E5 |
+| i18n: `planCopy.i18n` + the other 9 suites that read `LanguageContext` (outside the paths above) | 10 / 10 suites, 190 / 190 |
+| Wider run (same paths as §5.4, probes excluded from the run) | 4 baseline reds (`tokenUsageRepository.contract`, `proposals-capability`, `callParams.boundary.step3`, `chat-v4/route.audit`), the same as 6a. A fifth red, `tierLiteral.forbidden`, was caused by the QA probe files themselves: they name tiers, and that guard scans all source. It went green (3 / 3) once the probes were deleted |
+| `npm run typecheck:bos-llm` | passed, 0 new (the one "fixed" baseline entry is pre-existing) |
+| `npm run check:bos-llm-literals` | passed, 53 files, 0 violations |
+| `npm run lint:hooks` | exit 0 |
+
+#### Test Coverage
+
+| Criterion (TL item) | Tested? | Result | Notes |
+|---|---|---|---|
+| 2. Plan screen: credits row first, under a "Credits" heading, with the number | ✅ | Pass | Probe rendered the real `PlanSection` with the real `translations` (en / he / es) and payloads from the real `buildCustomerPlanView` (locale passed, as `my-plan` does). Founding Partner and Autopilot show "Credits (32,250 per month)", "קרדיטים (32,250 לחודש)" and "Créditos (32.250 al mes)". Essentials shows 19,750 / 19.750. The trial shows "Credits (2,000 in total)", "קרדיטים (2,000 בסך הכול)" and "Créditos (2000 en total)". The credits row is the first list item in all 12 plan × language cases |
+| 2. The explanation sentence, monthly vs trial | ✅ | Pass | Under the credits row, exactly once per page. Paid plans and Founding Partner get `CREDIT_EXPLANATION[lang].monthly`, and the trial gets `.trial` |
+| 2. Essentials' next plan up shows 19,750 → 32,250 per month | ✅ | Pass | It appears under `improves`, and the DOM shows "19,750 per month becomes 32,250 per month". In he / es the values are localised ("19,750 לחודש" → "32,250 לחודש", "19.750 al mes" → "32.250 al mes"); see QA-6b-E1 |
+| 2. Trial → Essentials is a change, not an increase | ✅ | Pass | `credits.allowance` is in `changes` and not in `improves`. The DOM reads "from 2,000 in total to 19,750 per month, which is different rather than larger", and there is no "becomes" line for it |
+| 2. No "(included)" anywhere | ✅ | Pass | Checked in all 12 renders, plus a grep of product code: no `(included)` display string remains |
+| 3. Invite page, every plan × en / he / es, from the real offer builder | ✅ | Pass | 12 renders of the real `InvitePage` fed by `describeInviteOffer(grant, config, now, lang)`. "Credits:" / "קרדיטים:" / "Créditos:" is the first list item with the configured number and phrase. The sentence appears once (`invite-category-note-credits`). Plan names come through `planLabel(…, locale)`; the config holds the same brand names in all three languages, so they read the same. In he / es no list item contains "per month", "in total", "alerts, never blocks" or "more purchasable" |
+| 3. Admin screens still English | ✅ | Pass | `buildAdminPlansView` credits read "2,000 in total", "32,250 per month", "19,750 per month" and "32,250 per month", with no Hebrew or Spanish phrase. The accounts route calls `describeCapabilityValue` without a locale (read in the code) |
+| 4. Config-only figures | ✅ | Pass | The probe changed Essentials' `credits.allowance` to `{ perMonth: 23456 }` **in a `jest.mock` of `tierMatrix` only**. The other plans were unchanged (Autopilot and Founding Partner 32,250, trial 2,000). The plan screen (en / he / es) showed "23,456 per month", "23,456 לחודש" and "23.456 al mes". The next plan up followed: Essentials → Autopilot `from`, and the trial → Essentials `changes.to`. The invite page (en / he / es) showed the new figure. The card took `creditAllowanceForDisplay` → `{ amount: 23456, per: 'month' }` and rendered "23,456 left of 23,456". No surface still showed 19,750 |
+| 4. The guard fails on a figure planted in a dictionary string | ✅ | Pass, with one blind spot | A temporary test mocked `fs.readFileSync` so that only the in-memory **text** of `LanguageContext.tsx` changed, then ran the real guard file. With nothing planted: 23 / 23. Planted `'plan.qa_probe': 'Credits (19,750 per month)'`: **fails** (1 failed). Planted the Hebrew `'קרדיטים (32,250 לחודש)'`: **fails**. Planted the template literal `` `Créditos (19.750 al mes)` ``: **fails**. Planted a **double-quoted** key `"usage.qa_probe": "Credits (19,750 per month)"`: **passes**, which is a miss (QA-6b-E2). The probe was deleted afterwards |
+| 5. Housekeeping | ✅ | Pass | `withCustomerDisplay\|SHOWN_WITHOUT_AMOUNT\|INCLUDED_WITHOUT_AMOUNT\|TEMPORARY \(R-7\|R-7 option\|renderTrialWithCrossUnitChange\|creditsShownWithoutAmount` over `app lib components hooks` returns nothing. The only hits in `docs/architecture` are history rows and the "done" row. The temporary test file is gone. Restored assertions are present and pass: trial `changes` "2,000 in total" → "19,750 per month", not in `improves`; Essentials → Autopilot `improves` `toEqual(['credits.allowance'])`; both thresholds back to 2; `Credits (19,750 per month)`; `renderFor('trial')`; "becomes 32,250 per month" |
+| 6. Card unaffected; tooltip = plan-screen sentence | ✅ | Pass | Card suites 103 / 103. A probe rendered `UsageCard` (monthly and `trial_total`) and `PlanSection` (Founding Partner and trial) with the real dictionary in en / he / es. The `role="tooltip"` text **equals** the `plan-category-note-credits` text for each variant, and the two variants differ |
+| 7. Shared `node_modules` intact | ✅ | Pass | `neuronforge/node_modules/.bin` had 165 entries at the start and at the end |
+| Manual browser check (Settings → Plan, `/invite`, en / he / es) | ❌ | Not run | No dev server. Still owed, as in §5.4 |
+
+#### Issues Found
+
+##### Bugs (must fix before commit)
+
+None.
+
+##### Performance Issues (should fix)
+
+None beyond SA's non-blocking `Intl.NumberFormat` caching suggestion.
+
+##### Edge Cases (nice to fix)
+
+1. **QA-6b-E1: the "next plan up" block now mixes languages within one line in he / es.** Severity: Low–Medium (wording). File: `components/business-os/settings/PlanSection.tsx` (`NextPlanUp`).
+   - The values are now localised (OI-10), but the surrounding words are still hardcoded English: "becomes", "What {plan} would add", "What changes on {plan}", "— from … to …, which is different rather than larger", " a month", "Coming soon", "Available to choose…". Likewise "We could not list your features just now…" in the main section.
+   - A Hebrew reader therefore sees, for example, "קרדיטים — 19,750 לחודש becomes 32,250 לחודש".
+   - Before 6b the whole line was English, which was consistent but untranslated. Now it is mixed, and in RTL.
+   - These strings are pre-existing and outside 6b's task list. Suggested fix: dictionary keys with `{from}` / `{to}` placeholders. That is a follow-up or a quick add before RM, the user's call.
+2. **QA-6b-E2: the guard does not see dictionary entries with double-quoted keys.** Severity: Low. File: `lib/business-os/entitlements/__tests__/creditFigures.fromConfig.guard.test.ts` (`dictionaryStringsAboutCredits`).
+   - The regex only matches `'key': …`. `LanguageContext.tsx` already has 33 double-quoted keys (none about plans or credits today), so a future `"usage.x": "19,750 …"` would pass the guard. Proven by a planted probe.
+   - Fix: accept `(['"])key\1:` as the key quote.
+3. **QA-6b-E3: variant ids stay English inside he / es lines.** Severity: Low; accepted as DV-14 / Q-10, recorded for the native review.
+   - Examples: "(unbranded)", "(ai)", "(priority)", as in "מיתוג האתר (unbranded)" and "Nivel de soporte (priority)".
+4. **QA-6b-E4: the friend-invite path has no localisation test.** Severity: Low.
+   - `publicInviteView.ts:183` passes `language` on the friend path too (read in the code), but only the main `valid` path has an OI-10 test.
+5. **QA-6b-E5: the §5.4 evidence says `lib/business-os/credits` 238 / 238, but QA counts 237 / 237.** Severity: Low (evidence only). None of those files changed in 6b.
+   - The likely cause is DV-11: `creditExplanation.ts` briefly sat in `lib/business-os/credits/`, where a file-enumerating guard counted it.
+
+SA's comment 1 ("Credits: Credits (…)" repeats the heading) was confirmed on both surfaces in every language: "Credits: Credits (32,250 per month)", "קרדיטים: קרדיטים (…)", "Créditos: Créditos (…)". This is left with the user's open wording question; QA does not count it as a defect. The Spanish "2000" (no grouping) next to "10.000" was observed and matches SA's CLDR note.
+
+#### Test Outputs / Logs
+
+```text
+test:bos-entitlements  Test Suites: 102 passed | Tests: 2171 passed (before and after probes)
+named suites           routes 40 | settings 47 | components/business-os 103 | app/invite 130 | invites 522 | credits 237
+i18n (10 suites)       190 / 190
+wider                  5 failed / 261 → 4 baseline + tierLiteral.forbidden (QA probe files); tierLiteral 3/3 after deletion
+typecheck:bos-llm passed (0 new) | check:bos-llm-literals 0 violations | lint:hooks exit 0
+probes: plan screen 16/16 | invite 13/13 | config-only 8/8 | card==plan sentence 3/3
+guard plants: none 23/23 pass | single-quoted FAIL | he FAIL | template FAIL | double-quoted PASS (miss)
+[QA] en trial -> "Credits (2,000 in total)" | changes: 2,000 in total -> 19,750 per month
+[QA] he basic improves: 19,750 לחודש -> 32,250 לחודש
+[QA] es trial -> "Créditos (2000 en total)"
+[QA] card (Essentials mocked 23456): "Credits Resets Oct 14 23,456 left of 23,456 …"
+```
+
+**No code changed during the QA run.** SHA-1 of all 26 changed and new code / doc files (everything in `git status` except this workplan and the deleted file) was taken before the run and re-checked after the probes were deleted, and all 26 match. `git status --short` shows the same 28 entries as at the start. No `qa6b` file remains.
+
+#### Not verified
+
+- The browser check of Settings → Plan and `/invite` in en / he / es. No dev server was running, so this is still owed before RM.
+- The he / es native review of the value phrases. This is the existing D-b / R-3 precondition.
+
+#### Final Status
+
+- [ ] All acceptance criteria pass — ready for commit
+- [x] **6b code: PASS. No bug found, and every tested criterion passes.** Before RM commits:
+  1. the manual browser check;
+  2. the user's answer to SA's "Credits: Credits" wording question.
+
+  QA-6b-E1 (mixed-language next-plan line) is worth deciding at the user's diff view. E2–E5 are Low chips.
+
 ---
 
 ## Commit Info
@@ -839,3 +1121,8 @@ QA probes: route 15/15, numbers 19/19, card 44/44 (all deleted after the run)
 | 2026-09-30 | SA code review — 6a: ✅ CODE APPROVED | New "SA code review — 6a (2026-09-30)" under SA Review Notes. W6-1 to W6-9 verified in code and tests. Tenant isolation, grants, microsecond strings, route contract, FR-28, rounding, the 8 signal sites, no timers, FR-36, entitlements registration, Check 5 relabel and the `buildCardBreakdown` removal all checked. Gates re-run: test:bos-entitlements 100 / 100; the wider run shows only the 4 known baseline reds, all unrelated; typecheck:bos-llm, literals and lint:hooks green. DV-1 to DV-9 accepted (DV-3 is the correct reading of D-b). Two non-blocking chips: L-1 `MediaLibraryPicker` `catch {}` logging, L-2 `ConfigRepository.getSystemConfigs` with no caller. No business questions. Approved for QA |
 | 2026-09-30 | QA report — 6a: PASS, no bug; three items owed before RM | New "QA report — 6a (2026-09-30)" under QA Testing Report. Gates: new and touched suites 682 / 683, and entitlements 2,091 / 2,091. The wider run shows only the 4 baseline reds, confirmed pre-existing on `origin/main` `56feb9d2`. typecheck:bos-llm, literals and lint:hooks green. 78 QA probe tests (route, numbers, card in en / he / es, refresh coalescing, no timers) all passed and were deleted. Three Low edge notes (QA-E1 to E3). **Environment incident:** QA's temporary worktree cleanup deleted part of the shared `neuronforge/node_modules`, and QA's `npm ci` repair was denied. Owed before RM: the user runs `npm ci` in the main checkout, `next build` is re-run, and the manual AC-33 browser check is done. No code changed (hash-verified) |
 | 2026-10-01 | User decision after local preview — card simplified (Dev, uncommitted) | New §15 (U-1 to U-4): the used / "by you" / "automatic" line under the ring removed (with "Nothing used yet", which was the same element); the D-b sentence removed from the body and shown as a keyboard- and hover-accessible tooltip on the ring (hand-rolled pattern, no new dependency; allowance only, DV-3); payload and route unchanged. Dictionary: four now-unread keys removed in en / he / es. §4.7 bullets struck through. Card tests updated; card + `lib/business-os/credits` 285 / 285, lint:hooks and typecheck:bos-llm green. Needs SA + QA re-look |
+| 2026-10-02 | 6b implemented (Dev) — Code Complete, uncommitted | On `feature/business-os-credit-deduction-slice-6b`, stacked on 6a (PR #165). T-b0 to T-b11 done plus T-b12 (the user's config-only rule, guard test). R-7 removed with restored assertions; `credits` category first with its heading (D-g); the "what a credit is" sentence under it on Settings → Plan and the invite page via a category-level `noteKey` reusing `usage.explain.*` (one shared copy in `lib/i18n/creditExplanation.ts`); OI-10 locale threaded to the root, admin English. Gates in §5.4: entitlements 102 / 2,171, routes 40 / 40, settings 47, invite 130, invites 522, card 103, wider = 4 baseline reds only, typecheck 0 new, literals 0, hooks clean, `next build` exit 0, exit grep empty. Deviations DV-10 to DV-15. Needs SA code review |
+| 2026-10-02 | SA code review — 6b: ✅ CODE APPROVED | New "SA code review — 6b (2026-10-02)" under SA Review Notes. R-7 removal complete (exit grep clean; restores match §5.3); `credits` category first in types / schema / catalog / presentation — no snapshot regeneration, version or `removals` needed (snapshot has no category; a category move removes nothing); no new entitlements importer. Q-9 `noteKey`, DV-10 to DV-15 (incl. `lib/i18n/creditExplanation.ts` placement) accepted; OI-10 plumbing correct, admin English; Spanish `2000` is CLDR / RAE, not a business question. Guard meaningful and an allow-list by design (a sweep hits real `2000`s). Gates re-run: entitlements 102 / 2,171; targeted 797 / 797; LanguageContext readers 478 / 478; wider = the 4 baseline reds only; typecheck 0 new; literals 0. Shared node_modules intact. Three Low chips (heading repeated as "Credits: Credits (…)" — optional user wording question; guard allow-list note; unused import) and one optimisation. Approved for QA |
+| 2026-10-02 | QA report — 6b: PASS, no bug | New "QA report — 6b (2026-10-02)" under QA Testing Report. Gates: entitlements 102 / 2,171; routes 40; settings 47; card 103; invite 130; invites 522; credits 237; i18n 190; the wider run shows only the 4 baseline reds; typecheck 0 new, literals 0, hooks clean. Probes (deleted after the run): plan screen and invite page for every plan × en / he / es with the real dictionary and builders; a mocked Essentials allowance followed on the plan screen, the invite page and the card; card tooltip = plan-screen sentence. Guard planted in memory: it catches single-quoted, Hebrew and template entries but misses a double-quoted key (QA-6b-E2). Edge notes E1–E5, the main one being E1: the next-plan line mixes English words with localised values in he / es. Owed before RM: the browser check and SA's "Credits: Credits" wording question. No code changed (hash-verified) |
+| 2026-10-02 | 6b user decisions U-5, U-6 and chips (Dev) | New §15.1. U-5: generic `planCategoryLine` rule — a category whose single feature is named like its heading prints the value alone (plan screen and invite page, en / he / es; admin unchanged); `PlanOfferCategory` gains `features` (name / value). U-6: the plan screen's hardcoded English moved to 7 dictionary keys ×3. Folded in SA Low #2 (SOURCES note + completeness test; `ownerCreditUsageDeps.ts` added), SA Low #3 (unused import), QA-6b-E2 (double-quoted keys), QA-6b-E4 (friend-path localisation test) and SA's per-locale `NumberFormat` cache. Gates: see §15.1 and the hand-off report. Uncommitted; SA quick look at the rule requested by SA's review |
+| 2026-10-02 | SA hand-off check — 6b final fixes: ✅ Approved | New "SA hand-off check — 6b final fixes (2026-10-02)" under SA Review Notes. `planCategoryLine` is generic and runs only on the surfaces; admin is unchanged. The `yes` → `null` result matches the summary. The public `features` field carries only `{ label, value }`: no capability ids and nothing beyond what `summary` already joined, and it is optional on the page. `fill()` is safe: a function replacer, own keys only, React text. The developer note is gone from the owner view. The guard's completeness walk and the double-quoted scan are sound. The NumberFormat cache is fine, with one optional Low chip (key the formatter on the resolved locale). Gates: entitlements 102 / 2,176; targeted 22 suites / 735. No code changed |
