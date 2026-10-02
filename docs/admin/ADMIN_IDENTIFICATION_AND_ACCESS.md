@@ -40,8 +40,8 @@ It exists because, before this work, the system had **no trustworthy admin signa
 > version of it described an *intended* end state and a reader would have
 > concluded the system was protected when it was not.
 
-Re-derived **2026-09-27** (admin reorganisation slice 5, on top of `main` with Admin Archiving slices 2b and 3): **84 handlers across 55
-route files = 78 `requireAdmin` + 6 inline + 0 open.** The split is measured, not
+Re-derived **2026-10-02** (ADMIN_BOS_CLEANUP slice 1, on `main` `023dde98` plus that slice): **87 handlers across 58
+route files = 81 `requireAdmin` + 6 inline + 0 open.** The split is measured, not
 asserted — re-run the census rather than trusting these figures if much time has
 passed.
 
@@ -66,6 +66,22 @@ passed.
 > Scheduled jobs & queues page), gated from birth with `requireAdmin` as its first
 > statement. Re-measured from disk after merging `origin/main`: **84 / 78 + 6 / 55
 > files**; 26 `/admin` pages. No cap moved.
+>
+> **84 → 89 → 87 (2026-10-02):** between 2026-09-27 and `main` `023dde98`, five
+> handlers landed, all gated from birth: rows 85 and 86 (credit deduction slices
+> 4a/4b) were registered; the three invite handlers were not. Measured on
+> `023dde98`: **89 / 83 + 6 / 59 files**. ADMIN_BOS_CLEANUP slice 1 then deleted
+> the two admin settings routes (three handlers, rows 47–49, admin-authz slice 7
+> folded in), added `admins#GET` (row 87), and registered the three invite
+> handlers (rows 88–90, doc only). Measured on the branch: **87 / 81 + 6 / 58
+> files**, and the register's live (non-struck) rows now equal that count.
+> **Method:** a scratch Node script walks `app/api/admin/**/route.ts` (skipping
+> `__tests__`), strips comments, counts each exported `GET`/`POST`/`PUT`/
+> `PATCH`/`DELETE`/`HEAD`/`OPTIONS` function or const, and classifies a handler
+> as `requireAdmin` if its body calls `requireAdmin(`, otherwise inline if the
+> file names the access service. The register rows were diffed against that list
+> (on `023dde98` the only difference was the three invite handlers). The R4 cap
+> moved 2 → 0; no other cap moved.
 
 ### What is true
 
@@ -75,7 +91,7 @@ passed.
 | It derives admin identity **only** from `admin_users`, via `AdminAccessService` | ✅ True |
 | It fails closed, answers **401** signed-out / **403** non-admin, and never 500s on an authorization outcome | ✅ True |
 | No app-code access decision reads `profiles.role` — a repo-wide sweep returns **zero** hits | ✅ True, and CI rule R4 keeps it that way |
-| **Every one of the 84 `/api/admin/*` handlers requires an admin.** 78 via `requireAdmin`, 6 via their own equivalent check. **Zero open.** | ✅ **True as of 2026-09-27** (slices 2 + 3 of the unification; re-counted after admin reorganisation slice 5) |
+| **Every one of the 87 `/api/admin/*` handlers requires an admin.** 81 via `requireAdmin`, 6 via their own equivalent check. **Zero open.** | ✅ **True as of 2026-10-02** (slices 2 + 3 of the unification; re-counted from disk in ADMIN_BOS_CLEANUP slice 1) |
 | **All 26 `/admin` pages are protected on the server**, by inheritance from `app/admin/layout.tsx` | ✅ **True as of 2026-09-21** (slice 5), for the 21 pages then. The 5 added since inherited it without an edit: `business-os-tiers`, `platform-dashboard` (the old landing, moved in admin reorganisation slice 4, beside the rewritten `/admin` Health page), `archiving` (Admin Archiving slice 1) and `jobs-queues` (admin reorganisation slice 5, a client page). Re-counted 2026-09-27: 26 `page.tsx` files under `app/admin/` |
 | A **new** admin route cannot ship ungated | ✅ **True.** `Admin authz surface guard` is a **required status check** on `main` with `enforce_admins` and `strict` — a red guard blocks the merge |
 | A **new** `/admin` page is protected before its author writes a line of it | ✅ True — it renders as `children` of the guarded layout; there is no per-page opt-out |
@@ -89,20 +105,20 @@ the work mostly done, as it was when the work had barely started.
 |---|---|
 | ~~"There is one way to validate that a caller is a platform admin"~~ | **Still not literally true in use.** One way exists, is canonical and is CI-enforced for new code — but **6 handlers still hand-roll their own `AdminAccessService` check** (7 until `audit-trail` was converted on 2026-09-25). They are *correct*; they are not *the one way*. Slice 4 (de-duplication) is **PARKED**. Until it lands, "one way" describes the standard, not the codebase. |
 | ~~"The admin surface is fully hardened"~~ | Every handler is gated, but most still construct a **service-role client inline**, bypassing RLS and the repository layer. **Gated, not isolated** — see Open Item 9. And **26 of 44 files** still return a raw error `.message` to the client with no `NODE_ENV` guard (Open Item 7). |
-| ~~"The admin Settings screen has been retired"~~ | **False.** Slice 7 is **PARKED**. `app/admin/settings/page.tsx` and `app/api/admin/settings/admin-users/route.ts` still exist. They are **non-functional and gated**: an operator who "adds an admin" there writes to `system_settings_config.admin_users`, a store that **grants nothing**. Never describe this as retired. |
+| ~~"The admin Settings screen has been retired"~~ | **Still false, differently since 2026-10-02.** The screen is **not retired**: `app/admin/settings/page.tsx` ("Admin users" in the sidebar) is now a **truthful, read-only list** of who can open admin: the active rows of `admin_users`, plus addresses granted only by `ADMIN_EMAILS`, with a marker on a table admin who is also in `ADMIN_EMAILS` (removing the row alone does not revoke them). Its only request is `GET /api/admin/admins`. The two management routes (`settings/admin-users`, `settings/platform-users`) are **deleted** (ADMIN_BOS_CLEANUP slice 1, folding in admin-authz slice 7). There is **no add, remove or role control** anywhere: adding or removing an admin is the seed script or SQL, see [Bootstrapping Admins](#bootstrapping-admins). The old `system_settings_config.admin_users` key still holds rows that nothing reads or writes. |
 | ~~"The page guard makes the admin pages secure"~~ | The page guard is **defence-in-depth**; the **API gate is the security boundary**. Three escapes remain, by construction rather than oversight: **E1** a `route.ts` under `app/admin/` is not wrapped by layouts (zero exist; CI rule R3 keeps it so); **E2** layouts do not re-render on client-side soft navigation, so the guard runs on entry to the subtree and on full loads; **E3** admin content served from a URL outside `/admin` is outside the boundary. |
 | ~~"The guard proves every gate actually runs"~~ | R1 proves a gate is **present**, not that it runs **first** or runs at all. 77 handlers are gated (2026-09-26): the 65 counted on 2026-09-21 were verified by hand and by the oracle, the 12 added since only by their own route tests — measured, not enforced. See [Known gaps in the guard itself](#known-gaps-in-the-guard-itself) and Open Item 8. |
 | ~~"A refused admin access is recorded"~~ | **Only on three surfaces.** Since 2026-10-01 the shared gates write one `audit_trail` row with `action = SECURITY_UNAUTHORIZED_ACCESS` when they answer "no": `requireAdmin` (`lib/admin/requireAdminRoute.ts`), `requireAdminPage` (`lib/admin/requireAdminPage.ts`) and the refused act-as (`lib/server/route-identity.ts`). The **6 hand-rolled handlers above record NOTHING on refusal** — `agents`, `business-os/llm-usage`, `business-os/llm-usage/businesses`, `chat-usage`, `users/[id]/audit-logs`, `users/[id]/login-stats`. So filtering `/admin/audit-trail` by that action shows refusals on the counted surfaces only; an empty result means "nothing was refused on those three", never "nobody probed". Anonymous callers are also not recorded (401, no identity to refuse), and a refusal caused by the admin check **throwing** is deliberately not recorded either. Closing this is part of the **parked slice 4** conversion, which is also the only thing that can shorten the list of six. |
 | ~~"The published counts cannot drift"~~ | The equality caps stop the exemption lists getting **longer**. Nothing forces an entry to be deleted when its handler is gated, so the figures can still drift **conservatively** — understating how much is gated (OI-22). |
 
-### Every admin handler and its state (84)
+### Every admin handler and its state (87)
 
 The unit is the **handler**, not the file: slice 1 gated write verbs and left read
 verbs open in the *same* files, so a file-level table would have been misleading.
 That asymmetry is gone now — every row below is gated — but the handler remains
 the right unit for the register.
 
-**78 `requireAdmin` · 6 correct-but-inline · 0 open.** (Rows 73–80 were added 2026-09-25, rows 81–83 on 2026-09-26 and row 84 on 2026-09-27; the numbering of rows 1–72 is kept so older references still resolve.)
+**81 `requireAdmin` · 6 correct-but-inline · 0 open.** (Rows 73–80 were added 2026-09-25, rows 81–83 on 2026-09-26, row 84 on 2026-09-27, rows 85–86 on 2026-09-29/30 and rows 87–90 on 2026-10-02; the numbering of rows 1–72 is kept so older references still resolve. Rows 47–49 are struck through, not removed: their handlers were deleted on 2026-10-02. **90 rows, 87 live**, equal to the measured handler count.)
 
 | # | Route | Verb | State | Note |
 |---|---|---|---|---|
@@ -152,9 +168,9 @@ the right unit for the register.
 | 44 | `orchestration-config` | `PUT` | ✅ gated | `requireAdmin` |
 | 45 | `reward-config` | `GET` | ✅ gated | `requireAdmin` |
 | 46 | `reward-config` | `POST` | ✅ gated | `requireAdmin` |
-| 47 | `settings/admin-users` | `GET` | ✅ gated | `requireAdmin` |
-| 48 | `settings/admin-users` | `POST` | ✅ gated | `requireAdmin` |
-| 49 | `settings/platform-users` | `GET` | ✅ gated | `requireAdmin` |
+| ~~47~~ | ~~`settings/admin-users`~~ | ~~`GET`~~ | 🗑 deleted 2026-10-02 | ADMIN_BOS_CLEANUP slice 1, folding in admin-authz slice 7. Was gated by `requireAdmin`; its GET wrote to `system_settings_config.admin_users`, a store that grants nothing. |
+| ~~48~~ | ~~`settings/admin-users`~~ | ~~`POST`~~ | 🗑 deleted 2026-10-02 | Idem. |
+| ~~49~~ | ~~`settings/platform-users`~~ | ~~`GET`~~ | 🗑 deleted 2026-10-02 | Idem. It listed every auth user for the old add form. |
 | 50 | `storage-stats` | `GET` | ✅ gated | `requireAdmin` |
 | 51 | `storage-tiers` | `DELETE` | ✅ gated | `requireAdmin` |
 | 52 | `storage-tiers` | `GET` | ✅ gated | `requireAdmin` |
@@ -192,6 +208,10 @@ the right unit for the register.
 | 84 | `jobs-queues` | `GET` | ✅ gated | `requireAdmin` first statement, new in admin reorganisation slice 5 (the Scheduled jobs & queues page: the cron run record and the five queue tables, read-only, counts and timestamps only). 401/403 before 400 pinned by its route test |
 | 85 | `business-os/credits/report` | `GET` | ✅ gated | `requireAdmin` first statement, new in credit deduction slice 4a (the operator cost report on the "Costs & credits" tab of `/admin/business-os-llm`). A deliberate cross-account, read-only read of the credit ledger; 401/403 before 400/409, with no read on any of them, pinned by its route test |
 | 86 | `business-os/credits/leak-check` | `GET` | ✅ gated | `requireAdmin` first statement, new in credit deduction slice 4b (the on-demand leak check: the "Run leak check" button on the "Costs & credits" tab of `/admin/business-os-llm`). A deliberate cross-account, read-only comparison of `token_usage` with the credit ledger, window at most 7 days; 401/403 before 400/409, with no read on any of them, pinned by its route test. Its nightly twin is the cron `/api/cron/credit-leak-check` (fail-closed `CRON_SECRET`, not an admin route) |
+| 87 | `admins` | `GET` | ✅ gated | `requireAdmin` first statement, new in ADMIN_BOS_CLEANUP slice 1 (the read-only "Admin users" page). Read-only list of the active `admin_users` rows plus `ADMIN_EMAILS`-only addresses, with an `alsoInEnv` marker. Reads `AdminUserRepository.listActive()`, not the access service (guard R2, and the service's list returns an empty list on a database error). A failed read is a 500, never an empty list. Response built by explicit field picking (no `id`, `user_id`, `granted_by`); logs counts only. Position pinned by its route test R-9 and by `adminGate.writes`. An address granted **only** by `ADMIN_EMAILS` passes the app gates but **not** the database predicate `is_platform_admin()`, which reads the table only |
+| 88 | `business-os/invites` | `GET` | ✅ gated | `requireAdmin` first statement (`invites/route.ts:79`). Gated from birth by the Business OS invite signup work; registered 2026-10-02 (doc only) so the register matches the measured census |
+| 89 | `business-os/invites` | `POST` | ✅ gated | `requireAdmin` first statement (`invites/route.ts:136`). Idem |
+| 90 | `business-os/invites/[inviteId]/revoke` | `POST` | ✅ gated | `requireAdmin` first statement (`revoke/route.ts:34`). Idem |
 
 ### CI enforcement
 
@@ -210,7 +230,7 @@ Current caps, after slices 2, 3 and 5:
 | **R1** | **6** (was 34, then 7) | 0 | The 6 correct-but-inline handlers. Slice 4 takes this to 0. `audit-trail` left on 2026-09-25. |
 | **R2** | 6 (was 7) | **1** | Same 6 files; the permanent entry is `calibrate/batch`, a capability flag rather than a gate. |
 | **R3** | 0 | 0 | Genuinely zero — no `route.ts` under `app/admin/**`, which is what keeps the page guard airtight. |
-| **R4** | 2 | 0 | Both in files slice 7 would delete; neither reads `profiles`. |
+| **R4** | **0** (was 2) | 0 | Emptied 2026-10-02 (ADMIN_BOS_CLEANUP slice 1): slice 7's routes deleted and the Admin users page rewritten read-only, with no role comparison. Genuinely zero, asserted alongside R3 and R5. |
 | **R5** | 0 | 0 | Genuinely zero. |
 | **R6** | **0** (was 1) | 0 | The `/admin` layout carries its server guard **as the first statement of its body** (strengthened 2026-09-24; proved against twelve disabling shapes and nine correct ones). |
 | **R8** | 0 | 0 | Genuinely zero — every render entry point under `app/admin/**` is a client component **or awaits the guard as its own first statement**. Added 2026-09-24. |
@@ -325,6 +345,8 @@ One authoritative allow-list (`admin_users`), reached only through one service (
 | Migration (data) | `supabase/migrations/20260701_seed_admin_users.sql` | Bootstrap the initial admin(s) by email. Edit before running. |
 | Repository | `lib/repositories/AdminUserRepository.ts` | Data access: `findByUserId`, `findByEmail`, `listActive`, `upsertByEmail`, `bindUserId`, `deactivateByEmail`. |
 | Service | `lib/services/AdminAccessService.ts` | **The consumption surface:** `isAdmin`, `isAdminById`, `listAdmins`, `listAdminEmails`, `invalidateCache`. 60s cache, fails closed, env fallback, self-heal. |
+| Env parser | `lib/admin/adminEmailsEnv.ts` | The one `ADMIN_EMAILS` parser for app code: `parseAdminEmails(raw)` and `readEnvAdminEmails()` (reads at call time). Used by the service and by `GET /api/admin/admins`. Added 2026-10-02. |
+| Admin list route | `app/api/admin/admins/route.ts` (+ types `lib/admin/adminList-types.ts`) | `GET` only, `requireAdmin` first. Active table rows plus `ADMIN_EMAILS`-only addresses, with the overlap marker; 500 on a read error. Backs the read-only `/admin/settings` "Admin users" page. Added 2026-10-02. |
 | Seed script | `scripts/seed-admin-users.ts` | Populates `admin_users` from `ADMIN_EMAILS` (resolves emails → user ids via `auth.admin.listUsers`). |
 | Env | `.env.example` → `ADMIN_EMAILS` | Comma/semicolon-separated admin emails. |
 | Tests | `lib/repositories/__tests__/AdminUserRepository.test.ts`, `lib/services/__tests__/AdminAccessService.test.ts` | Unit coverage: query shape/normalization/errors (repo); 3-step resolution, self-heal, fail-closed, union, caching (service). |
@@ -479,6 +501,25 @@ Edit the email list in `supabase/migrations/20260701_seed_admin_users.sql`, then
 
 Either path is idempotent (keyed on `email`) and re-activates a soft-revoked row.
 
+There is no button for this. The `/admin/settings` "Admin users" page is read-only by decision (ADMIN_BOS_CLEANUP OQ-1 = B) and only shows who has access.
+
+### Removing an admin
+
+1. Deactivate the row (soft revoke; the row is kept):
+
+   ```sql
+   UPDATE public.admin_users SET is_active = false WHERE lower(trim(email)) = lower(trim('person@x.com'));
+   ```
+
+   Check that the `UPDATE` reports **1 row**, then refresh the Admin users page. A row inserted by hand can be stored in mixed case, so matching on the stored value alone could revoke nothing without any error.
+
+2. If the address is also in `ADMIN_EMAILS` (Vercel, and any `.env.local`), remove it there and **redeploy**. Until then the person **still has access**: the access check grants an `ADMIN_EMAILS` address on its own, even with the row deactivated. The Admin users page marks such admins ("Also in the environment setting: removing the row alone does not revoke access") and lists a deactivated-but-still-in-env address under "Granted by the ADMIN_EMAILS environment setting".
+3. **Remove the address from both add paths, or it comes back.** The seed script and `supabase/migrations/20260701_seed_admin_users.sql` both upsert `is_active = true` (`ON CONFLICT … SET is_active = true`). Re-running either with the address still in `.env.local`'s `ADMIN_EMAILS` or in the migration's `VALUES` list silently re-activates the row. Delete it from the migration's `VALUES` list and from every `ADMIN_EMAILS`.
+
+**Timing:** a table change reaches every server within about 60 seconds in the app (the access service's cache) and immediately in the database predicate. An `ADMIN_EMAILS` change takes effect only on redeploy, because the variable is read when the service is constructed.
+
+**One asymmetry to know:** an address granted **only** by `ADMIN_EMAILS` passes the app gates (`requireAdmin`, `requireAdminPage`) but **not** the database predicate `is_platform_admin()`, which reads the `admin_users` table only. That matters little while admin reads use the service role, but it is why the table, not the env setting, is the source of truth.
+
 ---
 
 ## Open Items / Follow-ups
@@ -488,8 +529,8 @@ Either path is idempotent (keyed on `email`) and re-activates a soft-revoked row
 | 1 | **Close the self-promotion hole** in `app/api/user/profile/route.ts` (stop accepting `role='admin'` from the body; drop "Administrator" from `ProfileTabV2` options). | 🟡 **Partly closed 2026-09-20** | The **app-code** side is done and enforced: a repo-wide sweep for an access decision on `profiles.role` returns **zero** hits, and CI rule **R4** fails the build on a new one. What remains: **(a)** the write itself still exists on the customer profile route, so a user can still set the column even though nothing reads it for access; **(b)** whether a policy living **only in the live database** still trusts the column is a `pg_policies` read nobody has run. Tracked as its own P0. |
 | 2 | **Wire the gate into `/api/admin/*` routes.** | ✅ **Done 2026-09-21 — 0 open** | 65 of 72 handlers use `requireAdmin`; the other 7 perform a correct but hand-rolled check. Slice 1 gated the writes (PR #67), PR #69 gated `user-emails`, and slices 2 + 3 gated the remaining 27 reads. **See [As-Built State](#as-built-state--read-this-first).** Slice 4 (de-duplicate the 7) is PARKED — it is hygiene, not risk. |
 | 2a | **Server-side guard for the 21 `/admin` pages.** | ✅ **Done 2026-09-21 (slice 5)** | `app/admin/layout.tsx` is an async Server Component awaiting `requireAdminPage()`, rendering the chrome (moved verbatim to `app/admin/components/AdminChrome.tsx`) only for an admin. **None of the 21 `page.tsx` files was edited** — protection is inherited, so page 22 is guarded before it is written. A non-admin is silently redirected to `/business-os`, and anonymous vs signed-in-non-admin are asserted **indistinguishable** (BQ-3). CI rule R6 holds it. |
-| 2b | **Retire the non-functional admin Settings screen.** | 🔴 **Not done — PARKED** | `app/admin/settings/page.tsx` + `app/api/admin/settings/admin-users/route.ts` still exist. They are **gated but non-functional**: they manage `system_settings_config.admin_users`, a store that grants no access. Do not describe this as retired. |
-| 3 | **`GET /api/admin/admins` route** to list admins over HTTP (gated by `AdminAccessService.isAdmin`), backed by `listAdmins()` / `listAdminEmails()`. | ⬜ Recommended | No HTTP endpoint exposes the admin list today — service/repo are server-side only. Needed for any UI that shows or manages admins. |
+| 2b | **~~Retire~~ Make truthful the non-functional admin Settings screen.** | ✅ **Done 2026-10-02, in a new form** (ADMIN_BOS_CLEANUP slice 1) | Not retired: the page was **kept and rewritten read-only** ("Admin users": active `admin_users` rows plus `ADMIN_EMAILS`-only addresses, with the overlap marker), and the two management routes were **deleted** (admin-authz slice 7 folded in). Nothing reads or writes `system_settings_config.admin_users` any more; its rows are left in place (authz workplan OI-7). |
+| 3 | **`GET /api/admin/admins` route** to list admins over HTTP. | ✅ **Done 2026-10-02** (ADMIN_BOS_CLEANUP slice 1) | Built with one correction to the original idea: it is gated by **`requireAdmin`** (not a hand-rolled service call, which guard R2 forbids in a route) and reads **`AdminUserRepository.listActive()`**, not `listAdmins()`, because `listAdmins()` returns an empty list on a database error and the page would then say "no admins". Register row 87. |
 | 4 | **Admin management UI/API** (grant/revoke) instead of env/SQL only. | ⬜ Future | `AdminUserRepository` already supports `upsertByEmail` / `deactivateByEmail`. |
 | 5 | **Audit-log admin grants/revocations** via `AuditTrailService`. | ⬜ Future | — |
 | 6 | Decide whether to **retire `admin`/`viewer` from the `profiles.role` constraint** once nothing reads them for access. | ⬜ Future | Keep persona values; drop access-level values. Blocked on item 1's remaining halves. |
@@ -498,6 +539,7 @@ Either path is idempotent (keyed on `email`) and re-activates a soft-revoked row
 | 9 | **Admin routes repository-pattern migration.** | ⬜ Todo — **template agreed 2026-09-25** | **38 of 44** admin route files do direct DB access (25 construct their own service-role client at module scope), violating CLAUDE.md mandatory rule 1. They are **gated, not isolated**. 14 tables already have an owning repository to reuse; 6 table groups would need a new one. ⚠️ Blocked on a design decision: these are cross-user admin reads **by design**, so they need methods that are *not* the `.eq('user_id', userId)` shape the repository layer exists to enforce. Full write-up in [admin-authz-unification.md](/docs/workplans/admin-authz-unification.md).<br><br>📌 **The design decision is now made, and there is a template (2026-09-25, admin reorganisation slice 2a, SA C-3).** `lib/repositories/AdminTokenUsageAnalyticsRepository.ts` is the first admin-only, cross-account repository: service role with the reason in the header, "all accounts" in the method **name**, no `lib/business-os/**` import (filters arrive as data), allow-listed columns, `{ data, error }` and never throws, `info` log per read, singleton + barrel, and a source guard that fails if anything outside `app/api/admin/**` imports it. Admin reads on owner repositories follow the same discipline with "Admin" in the method name and their own source guard (`lib/repositories/__tests__/adminReadMethods.guard.test.ts`). **Counts (26 of 44, 38 of 44) above and in OI-7 are from 2026-09-20 and predate the 51-file tree; re-measure before quoting them.** Still inline after slice 2: the `audit-trail` read and the drill-down route's label lookups and execution-detail path. |
 | 11 | **Assert what makes the `/admin` page-guard bypass harmless (OI-21).** A crafted `Next-Router-State-Tree` header skips the layout render, so `requireAdminPage()` never runs — demonstrated unauthenticated. It is contained **only** because every `/admin` page is `'use client'` with no server props **and** every admin API is gated; the first of those is a hand-verified property that a future Server Component page would break with no test failing. | ✅ **Done 2026-09-24** — rule **R8**, in the required check | Built on the `isClient` the scanner already computed (now read from *stripped* source, so a comment mentioning the directive cannot fake it). Covers every render entry point, not only `page.tsx`; accepts a self-guarding server page and rejects a lookalike; nothing exempted. **The header bypass itself remains open** — what is closed is that the property containing it can no longer break silently. See [Known gaps in the guard itself](#known-gaps-in-the-guard-itself). Found by QA of the Business OS AI admin screen, 2026-09-24. |
 | 10 | **`app/admin/learning-system/page.tsx:233` still uses `console.error`.** | ⬜ Todo | Rule-3 cleanup around the `user-emails` feature is incomplete. |
+| 12 | **A second `ADMIN_EMAILS` parser survives in `scripts/seed-admin-users.ts`** (`:38-46`, same regex, returns an array). | ⬜ Debt, low | App code has one parser since 2026-10-02 (`lib/admin/adminEmailsEnv.ts`). The CLI script was left alone on purpose (SA ruling O-3): it is outside rule 3's scope, and converting it would pull in its 11 `console.*` calls and inline client for a two-line gain. Its regex is identical today; if either changes, make the script import the shared parser. |
 
 ---
 
@@ -554,3 +596,4 @@ npx eslint app lib components hooks --rule '{"no-console":"error"}'
 | 2026-09-29 | Credit deduction slice 4a: register row 85 | Row **85** `business-os/credits/report#GET` (the operator cost report), gated from birth with `requireAdmin` as its first statement. **Census not re-derived here:** a quick count on this branch finds 88 exported handlers in 58 `route.ts` files under `app/api/admin/`; the difference from 84 + 1 is the invite routes (`business-os/invites`, `business-os/invites/[inviteId]/revoke`, three handlers), which are gated but were never registered. Flagged to TL for the next census; no cap moved |
 | 2026-09-30 | Credit deduction slice 4b: register row 86 | Row **86** `business-os/credits/leak-check#GET` (the on-demand credit leak check), gated from birth with `requireAdmin` as its first statement. Census still not re-derived (see the 4a row above); no cap moved |
 | 2026-10-02 | A refused admin access is now recorded — on three surfaces only | `requireAdmin`, `requireAdminPage` and the refused act-as each write one `audit_trail` row (`action = SECURITY_UNAUTHORIZED_ACCESS`) when the admin check answers "no". Added a **"What is NOT true"** row recording that the **6 hand-rolled handlers record nothing on refusal**, so that action covers the three shared surfaces only and an empty filter result is not "nobody probed"; closing it is part of the parked slice 4. No gate, count or cap changed |
+| 2026-10-02 | ADMIN_BOS_CLEANUP slice 1: Admin users page read-only, slice 7's routes deleted, R4 → 0, census 87 = 81 + 6 + 0, 58 files | `/admin/settings` ("Admin users") rewritten as a **truthful read-only list** (active `admin_users` rows, `ADMIN_EMAILS`-only addresses, overlap marker); its only request is the new **`GET /api/admin/admins`** (row 87, `requireAdmin` first, repository read, 500 never an empty list, counts-only logs). `settings/admin-users` (GET + POST) and `settings/platform-users` (GET) **deleted**, folding in admin-authz slice 7 (rows 47–49 struck). One `ADMIN_EMAILS` parser for app code, `lib/admin/adminEmailsEnv.ts` (the seed script's copy is OI-12). Guard **R4 parked 2 → 0**, no other cap moved; `adminGate.writes` 59 → 57. Census **re-measured from disk** (method in [As-Built State](#as-built-state--read-this-first)): 89 / 59 files on `023dde98`, **87 / 81 + 6 / 58 files** after; the three gated-but-unregistered invite handlers registered as rows 88–90 (doc only) so live rows = measured handlers. Added "Removing an admin" to [Bootstrapping Admins](#bootstrapping-admins), including the seed re-activation trap and the `is_platform_admin()` asymmetry. OI-2b and OI-3 done; "What is NOT true" Settings row restated |
