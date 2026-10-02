@@ -340,3 +340,34 @@ describe('Feature Flags', () => {
     });
   });
 });
+
+describe('isBusinessOsCreditHistoryEnabled (credit deduction slice 7a — parked, default off)', () => {
+  const original = process.env.NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY;
+  beforeEach(() => {
+    jest.resetModules();
+    delete process.env.NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY;
+  });
+  afterAll(() => {
+    if (original === undefined) delete process.env.NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY;
+    else process.env.NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY = original;
+  });
+
+  it('is off when unset (the default)', async () => {
+    const { isBusinessOsCreditHistoryEnabled } = await import('../featureFlags');
+    expect(isBusinessOsCreditHistoryEnabled()).toBe(false);
+  });
+
+  it.each([['', false], ['false', false], ['0', false], ['yes', false], ['true', true], ['TRUE', true], ['1', true]])(
+    'value %p → %p',
+    async (value, expected) => {
+      process.env.NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY = value;
+      const { isBusinessOsCreditHistoryEnabled } = await import('../featureFlags');
+      expect(isBusinessOsCreditHistoryEnabled()).toBe(expected);
+    }
+  );
+
+  it('is listed by getFeatureFlags', async () => {
+    const { getFeatureFlags } = await import('../featureFlags');
+    expect(getFeatureFlags().isBusinessOsCreditHistoryEnabled).toBe(false);
+  });
+});

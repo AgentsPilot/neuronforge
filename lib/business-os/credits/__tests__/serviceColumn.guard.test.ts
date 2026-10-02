@@ -99,3 +99,13 @@ describe('N-10: no grouping or filtering on the raw service column', () => {
     }
   });
 });
+
+describe('slice 7a: the credit history\'s paged read is covered by name (workplan §4.11)', () => {
+  it('listLedgerRowsForWindow exists in the scanned owner repository and has no filter, order or grouping on service', () => {
+    const code = codeOf(fs.readFileSync(path.join(ROOT, OWNER_READ_REPOSITORY), 'utf8'));
+    const start = code.indexOf('async listLedgerRowsForWindow(');
+    expect(start).toBeGreaterThan(-1);
+    const body = code.slice(start, code.indexOf('\n  }\n', start));
+    for (const rule of RULES) expect({ rule: rule.name, matched: rule.pattern.test(body) }).toEqual({ rule: rule.name, matched: false });
+  });
+});

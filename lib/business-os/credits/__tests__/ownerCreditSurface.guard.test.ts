@@ -13,6 +13,10 @@
  *   4. Service role — the route and the payload builder hold no service-role
  *      client; it is confined to the wiring file's repositories.
  *
+ * Slice 7a (workplan §4.11, SA condition 3) extends every rule to the credit
+ * history: its route, builder, cursor, types and panel. And a new rule: no
+ * client file may import the server modules behind the labels.
+ *
  * Every rule is proved on a planted violation first: a rule that cannot match
  * reads exactly like a rule that found nothing.
  */
@@ -32,6 +36,12 @@ const DISPLAY = 'lib/business-os/credits/creditDisplay.ts';
 const TYPES = 'lib/business-os/credits/ownerCreditUsageTypes.ts';
 const BUILDER = 'lib/business-os/credits/ownerCreditUsage.ts';
 const DEPS = 'lib/business-os/credits/ownerCreditUsageDeps.ts';
+// Slice 7a — the credit history.
+const HISTORY_ROUTE = 'app/api/business-os/credits/history/route.ts';
+const HISTORY_BUILDER = 'lib/business-os/credits/ownerCreditHistory.ts';
+const HISTORY_CURSOR = 'lib/business-os/credits/creditHistoryCursor.ts';
+const HISTORY_TYPES = 'lib/business-os/credits/creditHistoryTypes.ts';
+const HISTORY_PANEL = 'components/business-os/CreditHistoryPanel.tsx';
 
 const OWNER_SURFACE = [
   ROUTE,
@@ -46,6 +56,13 @@ const OWNER_SURFACE = [
   'lib/business-os/entitlements/creditAllowanceView.ts',
   'lib/repositories/BusinessOsCreditOwnerReadRepository.ts',
   'lib/repositories/BusinessOsCreditPeriodRepository.ts',
+  HISTORY_ROUTE,
+  HISTORY_BUILDER,
+  HISTORY_CURSOR,
+  HISTORY_TYPES,
+  HISTORY_PANEL,
+  'lib/business-os/credits/effectiveFields.ts',
+  'lib/business-os/credits/creditHistoryFlag.ts',
 ];
 
 describe('1. FR-36: the agent-platform measure is retired from the owner surface', () => {
@@ -78,8 +95,14 @@ describe('2. AC-33: no timers, no background channel', () => {
     expect(TIMER.test('clearTimeoutish')).toBe(false);
   });
 
-  it.each([CARD, SIGNAL])('%s uses none', (file) => {
+  it.each([CARD, SIGNAL, HISTORY_PANEL])('%s uses none', (file) => {
     expect(codeOf(read(file))).not.toMatch(TIMER);
+  });
+
+  it('the history panel never listens for the card\'s refresh signal: it reads on open and on "Show more" only', () => {
+    const SIGNAL_USE = /onCreditUsageChanged|creditUsageSignal|CREDIT_USAGE_CHANGED_EVENT/;
+    expect(SIGNAL_USE.test("import { onCreditUsageChanged } from '@/lib/business-os/client/creditUsageSignal';")).toBe(true);
+    expect(codeOf(read(HISTORY_PANEL))).not.toMatch(SIGNAL_USE);
   });
 });
 
@@ -101,6 +124,19 @@ describe('3. Q-11: the client-safe files stay client-safe', () => {
     expect(codeOf(read(TYPES))).not.toMatch(VALUE_IMPORT);
   });
 
+  it('creditHistoryTypes.ts imports nothing at all (SA C-S7-1: not even a type from the entitlements module)', () => {
+    expect(codeOf(read(HISTORY_TYPES))).not.toMatch(IMPORT);
+  });
+
+  it('the history panel imports only creditDisplay and creditHistoryTypes from the credits directory, and no server module', () => {
+    const code = codeOf(read(HISTORY_PANEL));
+    const fromCredits = [...code.matchAll(/from\s+['"]@\/lib\/business-os\/credits\/([^'"]+)['"]/g)].map((m) => m[1]).sort();
+    expect(fromCredits).toEqual(['creditDisplay', 'creditHistoryTypes']);
+    expect(code).not.toMatch(
+      /@\/lib\/repositories|supabaseServer|business-os\/entitlements|server-only|llm\/aiActionAudit|effectiveFields|callCatalog|ownerCreditHistory/
+    );
+  });
+
   it('the card imports only those two from the credits directory, and no server module', () => {
     const code = codeOf(read(CARD));
     const fromCredits = [...code.matchAll(/from\s+['"]@\/lib\/business-os\/credits\/([^'"]+)['"]/g)].map((m) => m[1]).sort();
@@ -110,19 +146,54 @@ describe('3. Q-11: the client-safe files stay client-safe', () => {
 });
 
 describe('4. the service role stays in the wiring file', () => {
-  it.each([ROUTE, BUILDER])('%s imports no service-role client and no repository singleton', (file) => {
+  it.each([ROUTE, BUILDER, HISTORY_ROUTE, HISTORY_BUILDER])('%s imports no service-role client and no repository singleton', (file) => {
     const code = codeOf(read(file));
     expect(code).not.toMatch(/supabaseServer['"]/);
     expect(code).not.toMatch(/import\s+\{[^}]*\bbusinessOs\w+Repository\b[^}]*\}/);
   });
 
-  it('the route imports nothing from the entitlements module', () => {
-    expect(codeOf(read(ROUTE))).not.toMatch(/business-os\/entitlements/);
+  it.each([ROUTE, HISTORY_ROUTE, HISTORY_BUILDER, HISTORY_CURSOR, HISTORY_TYPES, HISTORY_PANEL])(
+    '%s imports nothing from the entitlements module (SA C-S7-1)',
+    (file) => {
+      expect(codeOf(read(file))).not.toMatch(/business-os\/entitlements/);
+    }
+  );
+
+  it.each([HISTORY_BUILDER, 'lib/business-os/credits/effectiveFields.ts'])('%s is server-only', (file) => {
+    expect(codeOf(read(file))).toMatch(/^import 'server-only';$/m);
   });
 
   it('the payload builder never calls check() or decide() — it is display only, never a gate', () => {
     const code = codeOf(read(BUILDER));
     expect(code).not.toMatch(/\.check\s*\(|\bdecide\s*\(/);
     expect(code).toMatch(/\.getSnapshot\(\s*accountId\s*\)/);
+  });
+});
+
+describe('5. no client file imports the server modules behind the labels (slice 7a, SA SQ-33, F7-10)', () => {
+  const SERVER_ONLY_MODULES = /from\s+['"][^'"]*(llm\/aiActionAudit|credits\/effectiveFields|llm\/callCatalog|credits\/ownerCreditHistory)['"]/;
+
+  function clientFiles(dir: string): string[] {
+    const out: string[] = [];
+    for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name === '__tests__' || entry.name.startsWith('.')) continue;
+      const rel = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) out.push(...clientFiles(rel));
+      else if (/\.tsx?$/.test(entry.name) && /^\s*['"]use client['"]/.test(read(rel))) out.push(rel);
+    }
+    return out;
+  }
+
+  it('the rule matches planted imports', () => {
+    expect(SERVER_ONLY_MODULES.test("import { AI_ACTION_DECLARATIONS } from '@/lib/business-os/llm/aiActionAudit';")).toBe(true);
+    expect(SERVER_ONLY_MODULES.test("import { diaryLabelFor } from '@/lib/business-os/credits/effectiveFields';")).toBe(true);
+    expect(SERVER_ONLY_MODULES.test("import type { X } from '@/lib/business-os/credits/creditHistoryTypes';")).toBe(false);
+  });
+
+  it('none of the client files does', () => {
+    const files = ['app', 'components', 'hooks', 'lib'].flatMap(clientFiles);
+    // Non-vacuity: the panel and the card are client files and are scanned.
+    expect(files).toEqual(expect.arrayContaining([CARD, HISTORY_PANEL]));
+    expect(files.filter((file) => SERVER_ONLY_MODULES.test(codeOf(read(file))))).toEqual([]);
   });
 });

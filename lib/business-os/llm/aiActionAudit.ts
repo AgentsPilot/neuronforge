@@ -22,7 +22,8 @@
 // production trigger yet. What each type is (its area, who it faces, whether it
 // is setup AI, whether it is charged, its diary label, whether a template
 // fallback exists) is declared once, in `AI_ACTION_DECLARATIONS` below the
-// union (deduction layer FR-4, slice 1). Nothing reads those facts yet.
+// union (deduction layer FR-4, slice 1). Read by the credit ledger's effective-
+// fields resolver (area) and the owner's credit history (diary label).
 //
 // What an entry may hold is fixed (D-2, FR-4, FR-5): ids, counts, tokens, the
 // estimated cost, catalog call names, model names, the outcome and an error
@@ -79,7 +80,8 @@ export type AiActionAudience = 'owner' | 'client';
 
 /**
  * What the charge, the diary and the limit need to know about one action type
- * (deduction layer FR-4). Nothing reads it yet: later slices do.
+ * (deduction layer FR-4). The area and the diary label are read by
+ * `lib/business-os/credits/effectiveFields.ts` (the credit history, slice 7).
  *
  * Audience and template fallback travel together, so the type itself refuses
  * an owner-facing action with a fallback status, or a client-facing one without.
@@ -95,8 +97,9 @@ export type AiActionDeclaration = {
   isCharged: boolean;
   /**
    * Plain-language diary label; the area is shown beside it, so it says what
-   * the action did. DRAFT wording: BA/user (and native he/es) review before
-   * anything renders it.
+   * the action did. Rendered in the owner's credit history since slice 7
+   * (English approved by the user, D-q); he / es pending native review before
+   * release.
    */
   diaryLabels: Labels;
   /** Declared and labelled, but no production trigger yet (KI-4). */
@@ -180,7 +183,7 @@ export const AI_ACTION_DECLARATIONS = {
   },
   onboarding_turn: {
     area: 'onboarding', audience: 'owner', templateFallback: 'n/a', isSetup: true, isCharged: true,
-    diaryLabels: { en: 'Setup conversation', he: 'שיחת הקמה', es: 'Conversación de configuración' },
+    diaryLabels: { en: 'Replied in your setup conversation', he: 'מענה בשיחת ההקמה', es: 'Respuesta en tu conversación de configuración' },
   },
   image_generation: {
     area: 'images', audience: 'owner', templateFallback: 'n/a', isSetup: false, isCharged: true,
