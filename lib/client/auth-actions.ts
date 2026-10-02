@@ -110,7 +110,8 @@ export async function signInWithPassword(
       details: { email, error: error.message, login_method: 'password' },
       severity: 'warning',
     });
-    logger.warn({ email }, 'Password sign-in rejected');
+    // No address in the log line (PII); the audit row above is where the attempt is recorded.
+    logger.warn({ authStatus: error.status ?? null, authCode: error.code ?? null }, 'Password sign-in rejected');
     return { ok: false, error: error.message };
   }
 
