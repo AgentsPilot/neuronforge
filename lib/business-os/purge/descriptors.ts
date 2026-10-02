@@ -398,6 +398,13 @@ const EXCLUDED: PurgeDescriptor[] = [
   never('business_os_credit_totals', U,
     'The running total of business_os_credit_charges per billing period. Derived from the bill and rebuilt from it; never purged. Keyed to auth.users (ON DELETE CASCADE), not business_profiles.'),
 
+  // Credit deduction slice 11a (S11-SQ-12): credit lots. Financial records,
+  // like the bill: never purged and never archived.
+  never('business_os_credit_lots', U,
+    'Credits added to the account: one row per admin grant, later per boost purchase. A financial record: never purged and never archived — a Reset that removed it would erase credits the account was given or paid for. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
+  never('business_os_credit_lot_draws', U,
+    'Credits taken back out of a lot (admin reversals; consumption from slice 9). A financial record that what is left of a lot is rebuilt from; never purged and never archived. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
+
   // Admin Archiving (Slice 2, condition C-4)
   never('archive_runs', G,
     'The platform run log of archiving: who ran it, when, which cutoff, how many rows. No user_id and no business content, counts only. Never archived and never purged.'),

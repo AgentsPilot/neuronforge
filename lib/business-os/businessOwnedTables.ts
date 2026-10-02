@@ -168,6 +168,14 @@ export const USER_OWNED_TABLES: Record<string, string> = {
   business_os_credit_totals:
     'A running total of business_os_credit_charges per billing period — derived from the bill, ' +
     'so it follows the account for the same reason.',
+
+  // Credit deduction slice 11a (S11-SQ-12).
+  business_os_credit_lots:
+    'Credits added to the account (admin grants, later boost purchases). Keyed to auth.users, ' +
+    'not business_profiles, so a business Reset cannot erase them.',
+
+  business_os_credit_lot_draws:
+    'Credits taken back from a lot; follows the account for the same reason.',
   profiles: 'Account level.',
   plugin_connections: 'Account level — the user\'s own third-party credentials.',
   admin_users: 'Platform authorization.',
