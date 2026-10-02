@@ -8,7 +8,7 @@
 **Worktree:** `neuronforge-llm-layer2-step4`
 **Branch:** `feature/business-os-credit-deduction-slice-11` (off `origin/main` `023dde98`; confirmed with `git branch --show-current` on 2026-10-02). 11b, 11c and 11d get their own branches from RM.
 **Date:** 2026-10-02
-**Status:** 11a committed, PR open (2026-10-02) — SA workplan review APPROVED WITH CONDITIONS (W11a-1 to W11a-10 applied); SA code review approved; QA pass. NOT applied to PROD — the user applies 20261017 via §6.6 and pastes the checker / probe output into §17 before 11b merges (PGlite local run only, §7.4).
+**Status:** 11a committed, PR #173 open (2026-10-02) — SA workplan review APPROVED WITH CONDITIONS (W11a-1 to W11a-10 applied); SA code review approved; QA pass. NOT applied to PROD — the user applies 20261017 via §6.6 and pastes the checker / probe output into §17 before 11b merges (PGlite local run only, §7.4).
 
 ## Overview
 

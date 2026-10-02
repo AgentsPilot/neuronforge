@@ -1001,7 +1001,7 @@ S11-KI-1 to S11-KI-5, recorded in §17 (Fragment E).
 | Scoping (BA) | ✅ 2026-10-02 | This subsection |
 | User decisions S11-D-1 to S11-D-8, S11-BQ-1 | ✅ 2026-10-02 | §13: all recommendations accepted; S11-D-6 ruled technical (A); BQ-1 = Yes |
 | SA rulings S11-SQ-1 to S11-SQ-16 (incl. T-2 / R-5 acknowledgement) | ✅ 2026-10-02 | §14; [SA review — slice 11 scoping](#sa-review--slice-11-scoping-2026-10-02): approved with conditions, S11-D-6 ruled technical, S11-BQ-1 raised |
-| 11a Credit lots table + runbook | 🟡 PR open (2026-10-02) — SA approved, QA pass; NOT applied to PROD (user, workplan §6.6) | Migration 20261017 + checker, probe, rollback, repository, `creditLots.ts`; [workplan](/docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_11_WORKPLAN.md) §7.6 |
+| 11a Credit lots table + runbook | 🟡 PR #173 open (2026-10-02) — SA approved, QA pass; NOT applied to PROD (user, workplan §6.6) | Migration 20261017 + checker, probe, rollback, repository, `creditLots.ts`; [workplan](/docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_11_WORKPLAN.md) §7.6 |
 | 11a applied to PROD + checker + probe | ⬜ | User, by hand |
 | 11b Admin give / take back (API) | ⬜ | |
 | 11c Admin per-account credit view | ⬜ | |
