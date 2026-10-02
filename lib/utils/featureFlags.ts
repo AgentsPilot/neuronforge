@@ -158,6 +158,31 @@ export function isBusinessDeleteSurfaceVisible(): boolean {
 }
 
 /**
+ * Whether the owner's **Credit history** link and panel are drawn on the
+ * Business OS Credits card (credit deduction slice 7a).
+ *
+ * Parked by the user's decision of 2026-10-02: the history ships committed but
+ * dark. **Defaults to off** — unset, blank or anything unrecognised is off.
+ *
+ * A rendering switch only. The route `GET /api/business-os/credits/history`
+ * makes its own server-side read of the same variable
+ * (`isCreditHistoryRouteEnabled()` in
+ * `lib/business-os/credits/creditHistoryFlag.ts`) and answers 404 while it is
+ * off, so the history is unreachable whatever a client draws. Neither reader
+ * imports the other (the server one must not pull this module's client logger
+ * into a route; this one must not pull server code into the client bundle).
+ *
+ * The literal `process.env.NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY` access is
+ * what lets Next inline the value into the client bundle.
+ *
+ * @returns {boolean} True if the credit history link should render
+ */
+export function isBusinessOsCreditHistoryEnabled(): boolean {
+  const flag = process.env.NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY;
+  return parseBooleanFlag(flag, false);
+}
+
+/**
  * Get all feature flags status.
  *
  * ⚠️ **Debug helper only — it has NO production consumer**, by design. Nothing
@@ -180,5 +205,6 @@ export function getFeatureFlags() {
     isMoveToCalibrationAfterCreationEnabled: isMoveToCalibrationAfterCreationEnabled(),
     isAIDataLayerEnabled: isAIDataLayerEnabled(),
     isBusinessDeleteSurfaceVisible: isBusinessDeleteSurfaceVisible(),
+    isBusinessOsCreditHistoryEnabled: isBusinessOsCreditHistoryEnabled(),
   };
 }

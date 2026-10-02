@@ -10,7 +10,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { calendarMonthStartUtc, nextPeriodStartUtc, resolveCreditPeriod, type CreditPeriodDeps } from '../creditPeriod';
+import {
+  calendarMonthStartUtc,
+  displayInstantIso,
+  nextPeriodStartUtc,
+  resolveCreditPeriod,
+  type CreditPeriodDeps,
+} from '../creditPeriod';
 
 const ACCOUNT = '11111111-1111-4111-8111-111111111111';
 const ANCHOR = '2026-09-14T09:31:07.123456+00:00';
@@ -120,23 +126,33 @@ describe('source guard: period keys never pass through Date (SQ-20, R-1)', () =>
       .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
   /** `new Date(` or `Date.parse(` whose argument names an anchor or a period key. */
-  const KEY_TO_DATE = /(new Date|Date\.parse)\(\s*[\w.?]*(anchor|periodStart|period_start)/i;
+  const KEY_TO_DATE = /(new Date|Date\.parse)\(\s*[\w.?]*(anchor|periodStart|period_start|created_at|createdAt)/i;
 
   /** The body of `nextPeriodStartUtc` (and its display helper), the one place a Date is allowed. */
   function withoutDisplayMaths(code: string): string {
     return code
       .replace(/export function nextPeriodStartUtc[\s\S]*?\n}\n/, '')
-      .replace(/function displayInstantMs[\s\S]*?\n}\n/, '');
+      .replace(/function displayInstantMs[\s\S]*?\n}\n/, '')
+      // Slice 7a (SA W7-4): the history's display instant, and nothing else.
+      .replace(/export function displayInstantIso[\s\S]*?\n}\n/, '');
   }
 
   it('the rule matches planted violations', () => {
     expect(KEY_TO_DATE.test('const d = new Date(anchor);')).toBe(true);
     expect(KEY_TO_DATE.test('new Date(period.periodStart)')).toBe(true);
     expect(KEY_TO_DATE.test('Date.parse(row.period_start)')).toBe(true);
+    expect(KEY_TO_DATE.test('new Date(row.created_at)')).toBe(true);
+    expect(KEY_TO_DATE.test('Date.parse(cursor.createdAt)')).toBe(true);
     expect(KEY_TO_DATE.test('new Date(now)')).toBe(false);
   });
 
-  it.each(['lib/business-os/credits/creditPeriod.ts', 'lib/business-os/credits/ownerCreditUsage.ts'])(
+  it.each([
+    'lib/business-os/credits/creditPeriod.ts',
+    'lib/business-os/credits/ownerCreditUsage.ts',
+    // Slice 7a (SA W7-4): the credit history's builder and its cursor.
+    'lib/business-os/credits/ownerCreditHistory.ts',
+    'lib/business-os/credits/creditHistoryCursor.ts',
+  ])(
     '%s builds no Date from an anchor or a period key outside the display maths',
     (file) => {
       const code = withoutDisplayMaths(codeOf(file));
@@ -149,5 +165,19 @@ describe('source guard: period keys never pass through Date (SQ-20, R-1)', () =>
     expect(code).toMatch(/export function nextPeriodStartUtc/);
     expect(withoutDisplayMaths(code)).not.toMatch(/export function nextPeriodStartUtc/);
     expect(withoutDisplayMaths(code)).toMatch(/export async function resolveCreditPeriod/);
+    expect(code).toMatch(/export function displayInstantIso/);
+    expect(withoutDisplayMaths(code)).not.toMatch(/export function displayInstantIso/);
+  });
+});
+
+describe('displayInstantIso (slice 7a, display only)', () => {
+  it('turns a microsecond PostgREST string into a millisecond ISO instant', () => {
+    expect(displayInstantIso('2026-09-30T07:00:00.123456+00:00')).toBe('2026-09-30T07:00:00.123Z');
+    expect(displayInstantIso('2026-09-30T10:00:00+03:00')).toBe('2026-09-30T07:00:00.000Z');
+  });
+
+  it('answers null for anything that is not a timestamp', () => {
+    expect(displayInstantIso('')).toBeNull();
+    expect(displayInstantIso('yesterday')).toBeNull();
   });
 });

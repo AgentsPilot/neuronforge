@@ -31,10 +31,23 @@
  * restored from the back-forward cache; (c) on the refresh icon. Never on a
  * timer. One request at a time: a trigger during a read queues exactly one
  * more read, however many arrive.
+ *
+ * ── CREDIT HISTORY (slice 7a, D-i) ──────────────────────────────────────────
+ * One link under the ring opens the history panel. It is shown whenever the
+ * card has a result (gauged, trial or no allowance), never while loading or on
+ * the error line. The panel is mounted on first open — so the card's own mount
+ * makes no extra request — and reads only when it opens. Nothing else on the
+ * card changes.
+ *
+ * Parked (user decision 2026-10-02): the link is drawn only when
+ * `isBusinessOsCreditHistoryEnabled()` is on (`NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY`,
+ * default off). Off, the card renders exactly as slice 6a built it.
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
+import { CreditHistoryPanel } from '@/components/business-os/CreditHistoryPanel';
+import { isBusinessOsCreditHistoryEnabled } from '@/lib/utils/featureFlags';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { onCreditUsageChanged } from '@/lib/business-os/client/creditUsageSignal';
 import { toDisplayedCredits, type DisplayedCreditFigure } from '@/lib/business-os/credits/creditDisplay';
@@ -92,6 +105,10 @@ export function UsageCard() {
   const [failed, setFailed] = useState(false);
   const [reading, setReading] = useState(false);
   const [explainOpen, setExplainOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyMounted, setHistoryMounted] = useState(false);
+  // Parked behind a flag (default off): off, nothing below is drawn or mounted.
+  const historyEnabled = isBusinessOsCreditHistoryEnabled();
   const explainId = useId();
 
   // One request at a time. Refs, not state: a trigger must see the CURRENT
@@ -416,6 +433,31 @@ export function UsageCard() {
           )}
         </div>
       </div>
+
+      {historyEnabled && usage && (
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: 6 }}>
+          <button
+            type="button"
+            data-testid="credits-history-link"
+            onClick={() => {
+              setHistoryMounted(true);
+              setHistoryOpen(true);
+            }}
+            style={{
+              fontSize: '11.5px',
+              color: 'var(--v2-primary)',
+              background: 'transparent',
+              border: 'none',
+              padding: 0,
+              cursor: 'pointer',
+            }}
+          >
+            {t('credits.history.link')}
+          </button>
+        </div>
+      )}
+
+      {historyEnabled && historyMounted && <CreditHistoryPanel open={historyOpen} onOpenChange={setHistoryOpen} />}
     </div>
   );
 }

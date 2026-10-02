@@ -107,3 +107,61 @@ export function toDisplayedCredits(input: DisplayedCreditsInput): DisplayedCredi
 
   return { nothingUsed: used === 0, used: usedFigure, byOwner, automatic: byAutomatic, left };
 }
+
+// ── The credit history (slice 7a, decision D-m) ─────────────────────────────
+//
+// One decimal; a non-zero line that would show as 0.0 shows "less than 0.1"
+// (a correction keeps its sign — never "0.0" or "−0.0"); whole numbers show
+// without ".0" (the caller formats with `maximumFractionDigits: 1`). The
+// payload carries the EXACT credits; only the display rounds. The summary
+// total is the exact sum shown at the same precision, and its two parts are
+// shared out at tenths so they add up to it (the D-c rule at D-m precision).
+
+/** One history figure as the panel shows it. */
+export type DiaryCreditFigure =
+  | { kind: 'zero' }
+  | { kind: 'tenths'; value: number }
+  | { kind: 'less_than_tenth'; negative: boolean };
+
+/** A line's credits, for display. */
+export function toDiaryCredits(credits: number): DiaryCreditFigure {
+  if (!Number.isFinite(credits) || credits === 0) return { kind: 'zero' };
+  const tenths = Math.round(Math.abs(credits) * 10);
+  if (tenths === 0) return { kind: 'less_than_tenth', negative: credits < 0 };
+  return { kind: 'tenths', value: (credits < 0 ? -tenths : tenths) / 10 };
+}
+
+export interface DiarySummaryInput {
+  used: number;
+  usedByOwner: number;
+  usedAutomatic: number;
+}
+
+export interface DisplayedDiarySummary {
+  used: DiaryCreditFigure;
+  byOwner: DiaryCreditFigure;
+  automatic: DiaryCreditFigure;
+}
+
+const tenthsFigure = (tenths: number): DiaryCreditFigure =>
+  tenths === 0 ? { kind: 'zero' } : { kind: 'tenths', value: tenths / 10 };
+
+/** The summary's total and its split, at one decimal, the parts adding up to the shown total. */
+export function toDiarySummary(input: DiarySummaryInput): DisplayedDiarySummary {
+  const used = Number.isFinite(input.used) ? input.used : 0;
+  const owner = clamp(input.usedByOwner);
+  const automatic = clamp(input.usedAutomatic);
+
+  if (used <= 0) {
+    // Only reachable through corrections larger than the charges; never split.
+    return { used: toDiaryCredits(used), byOwner: { kind: 'zero' }, automatic: { kind: 'zero' } };
+  }
+  const usedTenths = Math.round(used * 10);
+  if (usedTenths === 0) {
+    const ownerTakesIt = owner >= automatic;
+    const tiny: DiaryCreditFigure = { kind: 'less_than_tenth', negative: false };
+    return { used: tiny, byOwner: ownerTakesIt ? tiny : { kind: 'zero' }, automatic: ownerTakesIt ? { kind: 'zero' } : tiny };
+  }
+  const [ownerTenths, automaticTenths] = shareOut(usedTenths, owner, automatic);
+  return { used: tenthsFigure(usedTenths), byOwner: tenthsFigure(ownerTenths), automatic: tenthsFigure(automaticTenths) };
+}

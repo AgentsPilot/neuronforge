@@ -66,6 +66,17 @@ function displayInstantMs(iso: string): number {
   return Date.parse(`${y}-${mo}-${d}T${h}:${mi}:${s}.${millis}${offset}`);
 }
 
+/**
+ * A ledger timestamp as a millisecond ISO instant, for DISPLAY only (credit
+ * history, slice 7a, SA SQ-37): some browsers mis-parse six fractional
+ * digits. Never a key, a filter or a page position — those travel as the
+ * exact string PostgREST returned. `null` when the string does not parse.
+ */
+export function displayInstantIso(iso: string): string | null {
+  const ms = displayInstantMs(iso);
+  return Number.isNaN(ms) ? null : new Date(ms).toISOString();
+}
+
 /** Postgres `timestamp + interval 'n months'`: same day, clamped to the target month's last day. */
 function addMonthsClampedUtc(base: Date, months: number): Date {
   const targetMonthIndex = base.getUTCMonth() + months;

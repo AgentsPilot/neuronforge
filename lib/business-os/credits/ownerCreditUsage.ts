@@ -19,8 +19,14 @@
  *     the charge it corrects (`effectiveFields.ts`); one that cannot be resolved
  *     counts in neither part and is logged.
  *
+ * ── TWO CONSUMERS, ONE WINDOW (slice 7a, SA SQ-30) ──────────────────────────
+ * `resolveOwnerCreditWindow` is the one place the owner's window (period,
+ * trial total or calendar month) and its figures are resolved. The card
+ * (`readOwnerCreditUsage`) and the credit history (`ownerCreditHistory.ts`)
+ * both read it; the history never computes a period of its own.
+ *
  * ── THIS FILE AND THE ENTITLEMENTS MODULE ────────────────────────────────────
- * The ONE file outside the module that imports from it for this card:
+ * The ONE file outside the module that imports from it for these surfaces:
  * `getEntitlementService` (`getSnapshot`, never `check`), `resolveAccountId`
  * (the account seam) and `creditAllowanceForDisplay`. Registered as a non-gate
  * importer: it is display only and refuses nothing.
@@ -50,6 +56,7 @@ import type {
   BusinessOsCreditOwnerReadRepository,
   OwnerCreditChargeRow,
   OwnerCreditTotalsRow,
+  OwnerLedgerWindow,
 } from '@/lib/repositories/BusinessOsCreditOwnerReadRepository';
 import { computeCreditBalance, roundToLedger } from './creditBalance';
 import { nextPeriodStartUtc, resolveCreditPeriod, type CreditPeriodDeps } from './creditPeriod';
@@ -188,6 +195,149 @@ async function attributeCorrections(
   return { byOwner, automatic };
 }
 
+/**
+ * The window the owner's credits are read over, resolved ONCE for both owner
+ * surfaces (credit deduction slice 7a, SA SQ-30): the dashboard card and the
+ * credit history. The ledger-row read and the totals read take the same
+ * `ledger` predicate, so the history can only ever list the rows the card's
+ * total was summed from.
+ */
+export interface OwnerCreditWindow {
+  /** From `resolveAccountId(userId)` only. */
+  accountId: string;
+  kind: OwnerCreditPeriodKind;
+  /** The predicate BOTH the totals read and the ledger-row read use. */
+  ledger: OwnerLedgerWindow;
+  /** The window key, the EXACT string read: the period key, or the trial anchor. */
+  key: string;
+  /** The plan anchor, verbatim, or null with no plan row. */
+  anchor: string | null;
+  /** The current period key, verbatim. */
+  periodStart: string;
+  allowance: OwnerCreditAllowance | null;
+  /**
+   * When the next period starts (ISO instant), DISPLAY ONLY. Computed once here
+   * (SA W6-5: null without an allowance, and for a trial or a calendar month):
+   * the card's `resetsOn` and the history's `endsBefore` (SA W7-5).
+   */
+  resetsOn: string | null;
+  /** Exact, 6 dp, from the totals row(s) — never a page sum. */
+  used: number;
+  usedByOwner: number;
+  usedAutomatic: number;
+}
+
+/** Resolves the window; THROWS `OwnerCreditUsageError`. Callers own the logging. */
+async function computeOwnerCreditWindow(
+  accountId: string,
+  now: Date,
+  deps: OwnerCreditUsageDeps,
+  log: OwnerCreditUsageLogger
+): Promise<OwnerCreditWindow> {
+  const [allowanceRead, periodRead] = await Promise.all([
+    (deps.readAllowance ?? readAllowanceFromEntitlements)(accountId, log),
+    resolveCreditPeriod(accountId, now, deps),
+  ]);
+  if (periodRead.error || !periodRead.data) {
+    throw new OwnerCreditUsageError('period_read_failed', 'Could not resolve the credit period', periodRead.error);
+  }
+  const period = periodRead.data;
+
+  // No plan row means no allowance, whatever a cached snapshot still says.
+  const allowance = period.anchor === null ? null : allowanceRead;
+
+  let kind: OwnerCreditPeriodKind;
+  let ledger: OwnerLedgerWindow;
+  let totals: OwnerCreditTotalsRow[];
+
+  if (allowance?.per === 'total' && period.anchor !== null) {
+    // A one-off (trial) allowance: every period from the anchor on (V-7).
+    kind = 'trial_total';
+    ledger = { kind: 'from', fromPeriodStart: period.anchor };
+    const read = await deps.owner.listTotalsFrom(accountId, ledger.fromPeriodStart);
+    if (read.error || !read.data) {
+      throw new OwnerCreditUsageError('totals_read_failed', 'Could not read the credit totals', read.error);
+    }
+    if (read.data.reachedCeiling) {
+      // An anomaly (a trial allowance on a years-old anchor): never a partial total (SA W6-6).
+      log.warn({ accountId }, 'Trial credit totals reached the read ceiling; not shown as a partial total');
+      throw new OwnerCreditUsageError('trial_ceiling', 'Too many credit periods for a trial total');
+    }
+    totals = read.data.rows;
+  } else {
+    kind = period.kind;
+    ledger = { kind: 'period', periodStart: period.periodStart };
+    const read = await deps.owner.findTotalsForPeriod(accountId, ledger.periodStart);
+    if (read.error) {
+      throw new OwnerCreditUsageError('totals_read_failed', 'Could not read the credit totals', read.error);
+    }
+    // No row yet: nothing charged this period.
+    totals = read.data ? [read.data] : [];
+  }
+
+  const sums = sumTotals(totals);
+  let byOwner = sums.byOwner;
+  let automatic = sums.automatic;
+  if (sums.periodsWithCorrections.length > 0) {
+    const corrections = await attributeCorrections(accountId, sums.periodsWithCorrections, deps, log);
+    byOwner += corrections.byOwner;
+    automatic += corrections.automatic;
+  }
+
+  // No reset date without an allowance (SA W6-5): it would promise a refill.
+  const resetsOn =
+    allowance !== null && kind === 'monthly' && period.anchor !== null
+      ? nextPeriodStartUtc(period.anchor, period.periodStart)
+      : null;
+
+  return {
+    accountId,
+    kind,
+    ledger,
+    key: ledger.kind === 'from' ? ledger.fromPeriodStart : ledger.periodStart,
+    anchor: period.anchor,
+    periodStart: period.periodStart,
+    allowance,
+    resetsOn,
+    used: roundToLedger(sums.used),
+    usedByOwner: roundToLedger(byOwner),
+    usedAutomatic: roundToLedger(automatic),
+  };
+}
+
+function logReadFailure(log: OwnerCreditUsageLogger, error: unknown, accountId: string, message: string): Error {
+  const err = error instanceof Error ? error : new Error(String(error));
+  log.error(
+    {
+      err,
+      accountId,
+      code: error instanceof OwnerCreditUsageError ? error.code : 'unexpected',
+      readError: error instanceof OwnerCreditUsageError ? error.readError : undefined,
+    },
+    message
+  );
+  return err;
+}
+
+/**
+ * The owner's credit window and its figures, for the credit history (slice 7a).
+ * Never throws; `{ data, error }`.
+ */
+export async function resolveOwnerCreditWindow(
+  userId: string,
+  deps: OwnerCreditUsageDeps,
+  log: OwnerCreditUsageLogger
+): Promise<Result<OwnerCreditWindow>> {
+  // The ONLY account this can read: the session user's, through the seam.
+  const accountId = resolveAccountId(userId);
+  const now = (deps.now ?? (() => new Date()))();
+  try {
+    return { data: await computeOwnerCreditWindow(accountId, now, deps, log), error: null };
+  } catch (error) {
+    return { data: null, error: logReadFailure(log, error, accountId, 'Owner credit window read failed') };
+  }
+}
+
 /** The owner's credit usage for the card. Never throws; `{ data, error }`. */
 export async function readOwnerCreditUsage(
   userId: string,
@@ -199,85 +349,21 @@ export async function readOwnerCreditUsage(
   const now = (deps.now ?? (() => new Date()))();
 
   try {
-    const [allowanceRead, periodRead] = await Promise.all([
-      (deps.readAllowance ?? readAllowanceFromEntitlements)(accountId, log),
-      resolveCreditPeriod(accountId, now, deps),
-    ]);
-    if (periodRead.error || !periodRead.data) {
-      throw new OwnerCreditUsageError('period_read_failed', 'Could not resolve the credit period', periodRead.error);
-    }
-    const period = periodRead.data;
-
-    // No plan row means no allowance, whatever a cached snapshot still says.
-    const allowance = period.anchor === null ? null : allowanceRead;
-
-    let kind: OwnerCreditPeriodKind;
-    let totals: OwnerCreditTotalsRow[];
-
-    if (allowance?.per === 'total' && period.anchor !== null) {
-      // A one-off (trial) allowance: every period from the anchor on (V-7).
-      kind = 'trial_total';
-      const read = await deps.owner.listTotalsFrom(accountId, period.anchor);
-      if (read.error || !read.data) {
-        throw new OwnerCreditUsageError('totals_read_failed', 'Could not read the credit totals', read.error);
-      }
-      if (read.data.reachedCeiling) {
-        // An anomaly (a trial allowance on a years-old anchor): never a partial total (SA W6-6).
-        log.warn({ accountId }, 'Trial credit totals reached the read ceiling; not shown as a partial total');
-        throw new OwnerCreditUsageError('trial_ceiling', 'Too many credit periods for a trial total');
-      }
-      totals = read.data.rows;
-    } else {
-      kind = period.kind;
-      const read = await deps.owner.findTotalsForPeriod(accountId, period.periodStart);
-      if (read.error) {
-        throw new OwnerCreditUsageError('totals_read_failed', 'Could not read the credit totals', read.error);
-      }
-      // No row yet: nothing charged this period.
-      totals = read.data ? [read.data] : [];
-    }
-
-    const sums = sumTotals(totals);
-    let byOwner = sums.byOwner;
-    let automatic = sums.automatic;
-    if (sums.periodsWithCorrections.length > 0) {
-      const corrections = await attributeCorrections(accountId, sums.periodsWithCorrections, deps, log);
-      byOwner += corrections.byOwner;
-      automatic += corrections.automatic;
-    }
-
-    const used = roundToLedger(sums.used);
+    const window = await computeOwnerCreditWindow(accountId, now, deps, log);
     const granted = 0;
-
-    // No reset date without an allowance (SA W6-5): it would promise a refill.
-    const resetsOn =
-      allowance !== null && kind === 'monthly' && period.anchor !== null
-        ? nextPeriodStartUtc(period.anchor, period.periodStart)
-        : null;
-
     return {
       data: {
-        period: { kind, resetsOn },
-        allowance: allowance ? { amount: allowance.amount, per: allowance.per } : null,
-        used,
-        usedByOwner: roundToLedger(byOwner),
-        usedAutomatic: roundToLedger(automatic),
+        period: { kind: window.kind, resetsOn: window.resetsOn },
+        allowance: window.allowance ? { amount: window.allowance.amount, per: window.allowance.per } : null,
+        used: window.used,
+        usedByOwner: window.usedByOwner,
+        usedAutomatic: window.usedAutomatic,
         granted,
-        remaining: computeCreditBalance({ allowance: allowance?.amount ?? null, granted, used }),
+        remaining: computeCreditBalance({ allowance: window.allowance?.amount ?? null, granted, used: window.used }),
       },
       error: null,
     };
   } catch (error) {
-    const err = error instanceof Error ? error : new Error(String(error));
-    log.error(
-      {
-        err,
-        accountId,
-        code: error instanceof OwnerCreditUsageError ? error.code : 'unexpected',
-        readError: error instanceof OwnerCreditUsageError ? error.readError : undefined,
-      },
-      'Owner credit usage read failed'
-    );
-    return { data: null, error: err };
+    return { data: null, error: logReadFailure(log, error, accountId, 'Owner credit usage read failed') };
   }
 }

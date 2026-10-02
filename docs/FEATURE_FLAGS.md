@@ -1,7 +1,7 @@
 # Feature Flags
 
-> **Last Updated**: 2026-09-29
-> **Version**: 1.4.0
+> **Last Updated**: 2026-10-02
+> **Version**: 1.5.0
 
 This document describes the feature flag system used in NeuronForge for gradual rollouts, A/B testing, and feature toggling.
 
@@ -11,6 +11,7 @@ This document describes the feature flag system used in NeuronForge for gradual 
 
 | Date | Version | Author | Changes |
 |------|---------|--------|---------|
+| 2026-10-02 | 1.5.0 | Dev | Added `NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY` (credit deduction slice 7a). The owner's Credit history is **parked by the user's decision of 2026-10-02 — shipped dark behind this flag**, default off: the Credits card draws no link and `GET /api/business-os/credits/history` answers 404. Two readers: `isBusinessOsCreditHistoryEnabled()` (client, rendering) and `isCreditHistoryRouteEnabled()` (server, the route). |
 | 2026-09-29 | 1.4.0 | Dev | Added `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` (invite-only signup Slice 3b, "Continue with Google" on a champion invite). A client id rather than a boolean: set means on. Deliberately separate from the plugin's `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (SA Q-3, R-6). |
 | 2026-09-21 | 1.3.0 | Dev | **Renamed all seven flag readers from `use…` to `is…Enabled`** (`isBusinessDeleteSurfaceVisible` for the delete surface, to keep it distinct from the server-side `isBusinessDeleteSurfaceEnabled()` authz reader in `purgeAuthz.ts`). The `use` prefix made `react-hooks/rules-of-hooks` treat these plain env readers as React hooks, producing 11 of 14 lint errors. **Also fixed the flag-authoring template**, which had been generating both halves of the defect: it instructed a `use…` name *and* hand-rolled the boolean parsing instead of importing `parseBooleanFlag`. Added `npm run lint:hooks` + its CI workflow. See [REACT_HOOKS_RULES_VIOLATIONS_WORKPLAN.md](/docs/workplans/REACT_HOOKS_RULES_VIOLATIONS_WORKPLAN.md). |
 | 2026-02-08 | 1.2.0 | - | Added `isV6ReviewModeEnabled` flag for controlling V6 split API vs single API flow. |
@@ -48,6 +49,7 @@ Feature flag functions are defined in:
 | Automated Calibration RCA | `CALIBRATION_AUTO_RCA_ENABLED` | **Server** | `false` | `/api/v2/calibrate/batch` (admin alert tail) |
 | **Business Delete (customer surface)** | `NEXT_PUBLIC_ENABLE_BUSINESS_DELETE` | Client **hint** + **Server boundary** | `false` | `/business-os/settings`, `/v2/settings`, `/settings`, `/api/business-os/purge/*` |
 | **Invite: Continue with Google** | `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` (a client id, not a boolean) | Client + Server | unset (off) | `/invite`, `/api/public/invites/signup/google` |
+| **Business OS: Credit history** (parked) | `NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY` | Client + Server | `false` (unset = off) | `/business-os` Credits card, `/api/business-os/credits/history` |
 
 ---
 
@@ -277,6 +279,36 @@ Client IDs.
 ```bash
 # .env.local — off by default; omit the line entirely for the same effect
 NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID=
+```
+
+---
+
+### Business OS: Credit history — `NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY`
+
+The owner's **Credit history** (credit deduction slice 7a): a link on the
+dashboard's Credits card that opens a side panel listing every charged action of
+the card's own period. **Parked by the user's decision of 2026-10-02 — shipped
+dark behind this flag. Default: off** (unset, blank or unrecognised is off).
+
+| Reader | Where | Off means |
+|---|---|---|
+| `isBusinessOsCreditHistoryEnabled()` | `lib/utils/featureFlags.ts` (client) | The Credits card draws no link and mounts no panel — it renders exactly as slice 6a built it |
+| `isCreditHistoryRouteEnabled()` | `lib/business-os/credits/creditHistoryFlag.ts` (server) | `GET /api/business-os/credits/history` answers **404 `Not found`** to every caller, before the session is read and before any read — so it does not even reveal that it exists |
+
+Two readers on purpose: the client one only decides what is drawn; the route
+makes its own read (through the zero-import `parseBooleanFlag`, never the client
+module). Both use the **literal** `process.env.NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY`,
+so the value is fixed at **build** time — switching it on or off on Vercel needs
+a **redeploy**. The code behind it (panel, builder, repository read, cursor,
+labels) stays in place and fully tested while it is off.
+
+**Before switching it on:** the user's native review of the he / es strings
+(the `credits.history.*` and `credits.area.*` keys and the D-q label), and the
+signed-in walkthrough in the slice 7 workplan's QA report.
+
+```bash
+# .env.local — off by default; omit the line entirely for the same effect
+NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY=false
 ```
 
 ---

@@ -4,7 +4,7 @@
  */
 
 import { AI_ACTION_DECLARATIONS } from '@/lib/business-os/llm/aiActionAudit';
-import { areaFor, resolveEffectiveFields, type EffectiveFieldsInput } from '../effectiveFields';
+import { areaFor, diaryLabelFor, resolveEffectiveFields, type EffectiveFieldsInput } from '../effectiveFields';
 
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
@@ -95,5 +95,32 @@ describe('resolveEffectiveFields', () => {
   it('an adjustment whose charge sits on ANOTHER account is unresolved, so no figure moves between accounts', () => {
     const originals = new Map([[ORIGINAL_ID, charge({ user_id: B })]]);
     expect(resolveEffectiveFields(adjustment(), originals).resolved).toBe(false);
+  });
+});
+
+describe('diaryLabelFor (slice 7a; N-11: keyed on service AND action type)', () => {
+  it('answers the declared label of an AI action, in the three languages', () => {
+    expect(diaryLabelFor('ai', 'chat_turn')).toEqual(AI_ACTION_DECLARATIONS.chat_turn.diaryLabels);
+  });
+
+  it('carries the D-q wording for a setup conversation turn', () => {
+    expect(diaryLabelFor('ai', 'onboarding_turn')?.en).toBe('Replied in your setup conversation');
+  });
+
+  it('is null for another service, even with an AI action type name (never by action type alone)', () => {
+    expect(diaryLabelFor('notification_email', 'chat_turn')).toBeNull();
+    expect(diaryLabelFor(null, 'chat_turn')).toBeNull();
+  });
+
+  it('is null for an undeclared action type and for no action type', () => {
+    expect(diaryLabelFor('ai', 'not_declared')).toBeNull();
+    expect(diaryLabelFor('ai', 'toString')).toBeNull();
+    expect(diaryLabelFor('ai', null)).toBeNull();
+  });
+
+  it('returns a copy, so a caller cannot change the declarations', () => {
+    const label = diaryLabelFor('ai', 'chat_turn')!;
+    label.en = 'changed';
+    expect(AI_ACTION_DECLARATIONS.chat_turn.diaryLabels.en).toBe('Answered a question');
   });
 });
