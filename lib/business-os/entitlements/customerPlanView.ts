@@ -78,7 +78,6 @@ import 'server-only';
 
 import {
   describePlanCapabilities,
-  describePlanEnding,
   planCommercialFlags,
   planLabel,
   planMonthlyPriceUsd,
@@ -107,37 +106,6 @@ import type { CapabilityDef, CapabilityValue } from './types';
  */
 export function isHiddenFromCustomer(_capability: string, definition: CapabilityDef): boolean {
   return definition.lifecycle === 'not_built';
-}
-
-/**
- * ⚠️ TEMPORARY — REMOVE IN CREDIT DEDUCTION SLICE 6.
- *
- * The credit allowance is named to owners and invitees WITHOUT its number
- * ("Credits (included)") until slice 6 explains what a credit is (user decision
- * R-7, option C, 2026-09-30; BD-15). Admin screens do not come through here and
- * still show the figures. Slice 6 deletes this set, `INCLUDED_WITHOUT_AMOUNT`
- * and `withCustomerDisplay`'s call sites, and the tests that pin them.
- */
-const SHOWN_WITHOUT_AMOUNT: ReadonlySet<string> = new Set(['credits.allowance']);
-
-/** The word shown in place of the amount (slice 5 only — see above). */
-const INCLUDED_WITHOUT_AMOUNT: Record<Locale, string> = { en: 'included', he: 'כלול', es: 'incluido' };
-
-/**
- * Rows as a customer may read them: every row unchanged, except that a
- * capability in `SHOWN_WITHOUT_AMOUNT` reads "included" instead of its amount.
- *
- * Applied to BOTH sides of the "next plan up" comparison, so two plans that
- * differ only in the hidden amount render identically and no "from … to …"
- * line can carry the number back in. TEMPORARY — slice 6 removes it.
- */
-export function withCustomerDisplay<Row extends { capability: string; display: string }>(
-  rows: readonly Row[],
-  locale: Locale = defaultLocale
-): Row[] {
-  return rows.map((row) =>
-    SHOWN_WITHOUT_AMOUNT.has(row.capability) ? { ...row, display: INCLUDED_WITHOUT_AMOUNT[locale] } : row
-  );
 }
 
 /**
@@ -219,6 +187,18 @@ export interface CustomerPlanCategory {
    * see `groupByCategory`.
    */
   labelKey: string;
+  /**
+   * A dictionary key for a sentence shown under the row, or `null`.
+   *
+   * Category-level and capability-agnostic (SA Q-9): a presentation entry may
+   * carry a note, and its variant follows the SHAPE of the category's metered
+   * value — `{ perMonth }` → the monthly sentence, `{ total }` → the one-off
+   * one. It changes no value and names no capability, so it is not a display
+   * exception of the kind slice 6 removed. Today only `credits` has one: the
+   * sentence explaining what a credit is (D-h), the same keys the dashboard
+   * card's tooltip reads, so the wording exists once.
+   */
+  noteKey: string | null;
   features: CustomerPlanFeature[];
   /** The feature names, joined — the one string a row prints. */
   summary: string;
@@ -258,9 +238,7 @@ export interface CustomerPlanUpgrade {
    * rate, so calling it an improvement would be a claim we cannot support and
    * suppressing it hides the most important line on the page. It is reported as
    * a **change** — "2,000 in total becomes 19,750 per month" — which is exactly
-   * what is true, and lets the customer judge. (Until slice 6 the credit amounts
-   * are not shown to customers at all — see `withCustomerDisplay` — so today this
-   * list is empty for the shipped plans.)
+   * what is true, and lets the customer judge.
    *
    * It also removes a hazard: whether a trial customer sees a paid plan at all
    * used to depend on at least one same-unit improvement happening to exist.
@@ -384,8 +362,12 @@ export interface CustomerPlanView {
  * Not alphabetical (which would open on "Add-ons") and not catalog order (which
  * is grouped for the people who maintain the catalog, and opens on add-ons too).
  * It follows **the order a business meets these things**, which is also roughly
- * how much they care:
+ * how much they care — after one row that frames everything below it:
  *
+ *   0. Credits            — the one allowance every chargeable action draws on
+ *                           (credit deduction slice 6, D-g / SQ-25). First,
+ *                           because it is the number a plan is sized by, and it
+ *                           carries the sentence saying what a credit is.
  *   1. CRM                — the clients. The reason the product exists.
  *   2. Website & intake    — how those clients arrive.
  *   3. Payments            — getting paid by them.
@@ -409,7 +391,23 @@ export interface CustomerPlanView {
  * paired in the copy itself (user decision, 2026-09-27) — "Clients" is what it
  * is, "CRM" is what somebody has been calling it for twenty years.
  */
-const CATEGORY_PRESENTATION: ReadonlyArray<{ category: string; labelKey: string }> = [
+/**
+ * `note` (SA Q-9): the sentence under a category, as a key per allowance shape.
+ * Reuses the dashboard card's `usage.explain.*` keys, so the plan screen, the
+ * invite page and the card cannot say different things about what a credit is.
+ */
+interface CategoryPresentation {
+  category: string;
+  labelKey: string;
+  note?: { monthly: string; total: string };
+}
+
+const CATEGORY_PRESENTATION: ReadonlyArray<CategoryPresentation> = [
+  {
+    category: 'credits',
+    labelKey: 'plan.category.credits',
+    note: { monthly: 'usage.explain.monthly', total: 'usage.explain.trial' },
+  },
   { category: 'crm', labelKey: 'plan.category.crm' },
   { category: 'website_intake', labelKey: 'plan.category.website_intake' },
   { category: 'payments', labelKey: 'plan.category.payments' },
@@ -421,10 +419,45 @@ const CATEGORY_PRESENTATION: ReadonlyArray<{ category: string; labelKey: string 
   { category: 'addon', labelKey: 'plan.category.addon' },
 ];
 
-/** Features grouped into rows, in the order above. Empty categories are dropped. */
+/**
+ * Which note variant a category takes, from the shape of its metered value.
+ *
+ * Generic (SA Q-9): the first feature in the row whose catalog shape is
+ * `metered` decides — a one-off `{ total }` reads the `total` sentence, anything
+ * else the monthly one. No capability id and no plan name is consulted; the
+ * trial is recognised by its `{ total }` value, as everywhere else. With no
+ * metered value in the row (or no value lookup) there is no note: a sentence
+ * about an allowance must not appear beside something that is not one.
+ */
+function noteKeyFor(
+  note: CategoryPresentation['note'],
+  features: readonly CustomerPlanFeature[],
+  catalog: Record<string, CapabilityDef>,
+  valueOf: ((capability: string) => CapabilityValue | undefined) | undefined
+): string | null {
+  if (!note || !valueOf) return null;
+
+  for (const feature of features) {
+    if (catalog[feature.capability]?.shape.kind !== 'metered') continue;
+    const value = valueOf(feature.capability);
+    if (!value || typeof value !== 'object') continue;
+    return 'total' in (value as object) ? note.total : note.monthly;
+  }
+
+  return null;
+}
+
+/**
+ * Features grouped into rows, in the order above. Empty categories are dropped.
+ *
+ * `valueOf` reads a capability's resolved value, for the category note only
+ * (`noteKeyFor`). Optional, so a caller with no resolution gets rows without
+ * notes rather than a guess.
+ */
 export function groupByCategory(
   features: readonly CustomerPlanFeature[],
-  catalog: Record<string, CapabilityDef>
+  catalog: Record<string, CapabilityDef>,
+  valueOf?: (capability: string) => CapabilityValue | undefined
 ): CustomerPlanCategory[] {
   const known = new Map(CATEGORY_PRESENTATION.map((entry, index) => [entry.category, { ...entry, index }]));
   const buckets = new Map<string, CustomerPlanFeature[]>();
@@ -445,6 +478,9 @@ export function groupByCategory(
         // An unnamed category shows its raw id rather than disappearing. It is
         // not a key, so the component prints it as-is — which is the point.
         labelKey: presentation?.labelKey ?? category,
+        // Only for a row that renders at least one line — every row here does,
+        // since an empty category never gets a bucket (SA Q-9).
+        noteKey: noteKeyFor(presentation?.note, bucketFeatures, catalog, valueOf),
         index: presentation?.index ?? CATEGORY_PRESENTATION.length,
         features: bucketFeatures,
         // Joined here, not in the component. A value worth printing is appended
@@ -470,6 +506,7 @@ export function groupByCategory(
     .map((row) => ({
       category: row.category,
       labelKey: row.labelKey,
+      noteKey: row.noteKey,
       features: row.features,
       summary: row.summary,
     }));
@@ -603,7 +640,7 @@ function buildUpgrade(
     now,
   });
 
-  const nextRows = withCustomerDisplay(describePlanCapabilities(nextResolution, catalog, locale), locale).filter(
+  const nextRows = describePlanCapabilities(nextResolution, catalog, locale).filter(
     (row) => !isHiddenFromCustomer(row.capability, catalog[row.capability])
   );
   const currentById = new Map(current.map((row) => [row.capability, row]));
@@ -664,7 +701,7 @@ function buildUpgrade(
       // badge, and a sentence restating it is noise — it also made the two
       // indistinguishable to a reader looking for either.
       : { key: 'plan.move_before_then' },
-    adds: groupByCategory(adds, catalog),
+    adds: groupByCategory(adds, catalog, (capability) => nextResolution.values[capability]?.value),
     improves,
     changes,
   };
@@ -741,8 +778,7 @@ export function buildCustomerPlanView(input: {
 
   const planId = basis.kind === 'tier' ? basis.tier : basis.cohort;
   const isTier = basis.kind === 'tier';
-  // Customer display (TEMPORARY slice 5 rule, see `withCustomerDisplay`).
-  const rows = withCustomerDisplay(describePlanCapabilities(resolution, catalog, locale), locale);
+  const rows = describePlanCapabilities(resolution, catalog, locale);
   const included = featuresFrom(rows, catalog);
   // Only for the free plans, and only as information: it says what a paid plan IS,
   // not that a decision has been made, so the eventual change is something the
@@ -804,7 +840,7 @@ export function buildCustomerPlanView(input: {
         { key: 'plan.ends.while_paid' }
       : describeFreePlanEnding(config, planId, resolution),
     whenThisChanges,
-    included: groupByCategory(included, catalog),
+    included: groupByCategory(included, catalog, (capability) => resolution.values[capability]?.value),
     // Shown only when the plan above genuinely gives this customer something.
     //
     // A Founding Partner already has more than Essentials, so for them the

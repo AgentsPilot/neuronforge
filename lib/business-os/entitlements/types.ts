@@ -72,6 +72,7 @@ export type AtLimitBehaviour =
   | 'by_call_site_audience';
 
 export type CapabilityCategory =
+  | 'credits'
   | 'crm'
   | 'website_intake'
   | 'payments'

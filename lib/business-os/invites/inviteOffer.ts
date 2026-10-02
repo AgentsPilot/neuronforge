@@ -12,9 +12,10 @@ import 'server-only';
  * written here, so the invite page cannot disagree with the rest of the
  * product.
  *
- * Plan and capability names are English today, like the customer section
- * (SA ruling F-4): the helpers read `labels.en`, and every locale holds an
- * English placeholder until real translations land.
+ * The offer is described in the INVITE's language (credit deduction slice 6,
+ * OI-10): plan and capability names from the config's own `labels`, and the
+ * value phrases ("per month", "in total") with numbers grouped by that
+ * language. Variant ids pass through unchanged (SA Q-10).
  *
  * ── Grant availability (GR-1, D-8) ──────────────────────────────────────────
  * `isInviteGrantAvailable` re-checks a STORED grant against today's config: an
@@ -26,6 +27,7 @@ import { describePlanOffer, type PlanOfferCategory } from '@/lib/business-os/ent
 import type { EntitlementConfig } from '@/lib/business-os/entitlements/source';
 import { INVITE_TYPES, INVITE_TYPE_IDS } from '@/lib/business-os/entitlements/config/invites';
 import type { BusinessOsInviteGrantKind } from '@/lib/repositories/types';
+import { defaultLocale, type Locale } from '@/lib/i18n/config';
 
 /** The grant columns of an invite row. */
 export interface InviteGrantFacts {
@@ -101,9 +103,16 @@ export function describeInviteAccess(grant: InviteGrantFacts): string {
  * Throws only if the config itself cannot resolve a plan it lists, which the
  * config loader already refuses; the caller treats a throw as "try again".
  * Call `isInviteGrantAvailable` first: an unavailable grant is not described.
+ *
+ * `locale` is the invite's own, already validated language (OI-10).
  */
-export function describeInviteOffer(grant: InviteGrantFacts, config: EntitlementConfig, now: Date): InviteOffer {
-  const plan = describePlanOffer(config, grant.grant_id, now);
+export function describeInviteOffer(
+  grant: InviteGrantFacts,
+  config: EntitlementConfig,
+  now: Date,
+  locale: Locale = defaultLocale
+): InviteOffer {
+  const plan = describePlanOffer(config, grant.grant_id, now, locale);
   return {
     planName: plan.planName,
     free: plan.free,

@@ -52,7 +52,7 @@ import 'server-only';
  * hashing, and neither logs the hash.
  */
 
-import { defaultLocale, isValidLocale } from '@/lib/i18n/config';
+import { defaultLocale, isValidLocale, type Locale } from '@/lib/i18n/config';
 import { INVITE_ISSUANCE_POLICY } from '@/lib/business-os/entitlements/config/invites';
 import type { EntitlementConfig } from '@/lib/business-os/entitlements/source';
 import type { AuthAccountRepository } from '@/lib/repositories/AuthAccountRepository';
@@ -127,7 +127,7 @@ export type ViewInviteOutcome =
   | { ok: false };
 
 /** A stored language the page can render, or the default. */
-function pageLanguage(stored: string): string {
+function pageLanguage(stored: string): Locale {
   return isValidLocale(stored) ? stored : defaultLocale;
 }
 
@@ -180,7 +180,7 @@ export async function viewInviteByToken(
     if (row.grant_kind !== 'tier' || !INVITE_ISSUANCE_POLICY.accountInvitesAvailable) return narrow('unavailable');
     const friend = await deps.repository.findInviteeEmailForPublicCheck(row.id);
     if (friend.error || !friend.data) return { ok: false };
-    const friendOffer = describeInviteOffer(row, deps.config, deps.now);
+    const friendOffer = describeInviteOffer(row, deps.config, deps.now, language);
     await markFirstView(row, deps);
     return {
       ok: true,
@@ -216,7 +216,8 @@ export async function viewInviteByToken(
     return marked.data === true && outcome.ok ? { ...outcome, firstOpenByExistingAccount: true } : outcome;
   }
 
-  const offer = describeInviteOffer(row, deps.config, deps.now);
+  // In the invite's own language (OI-10), the same one the page renders in.
+  const offer = describeInviteOffer(row, deps.config, deps.now, language);
   await markFirstView(row, deps);
 
   return {

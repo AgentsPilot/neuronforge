@@ -40,6 +40,7 @@ import { useEffect, useState } from 'react';
 import { ArrowRight, Check, Info, Loader2, Sparkles } from 'lucide-react';
 
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { planCategoryLine } from '@/lib/business-os/planCategoryLine';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ module: 'BusinessOsPlanSection' });
@@ -85,6 +86,12 @@ interface PlanCategory {
   category: string;
   /** A dictionary key, so the heading is read in the viewer's language. */
   labelKey: string;
+  /**
+   * A dictionary key for the sentence under the row, or `null` (credit deduction
+   * slice 6, D-h). The server chooses it — monthly or one-off by the allowance's
+   * shape — and this component only renders it.
+   */
+  noteKey: string | null;
   features: PlanFeature[];
   summary: string;
 }
@@ -173,6 +180,51 @@ function renderSentence(
        */
       timeZone: 'UTC',
     })
+  );
+}
+
+/**
+ * A dictionary template with its `{name}` slots filled.
+ *
+ * A function replacer, not a replacement string: the values are plan names,
+ * prices and formatted amounts, and a `$` in one ("$79") must be printed, never
+ * read as a `$&`-style pattern.
+ */
+function fill(template: string, values: Record<string, string>): string {
+  return template.replace(/\{(\w+)\}/g, (slot, name: string) => (Object.prototype.hasOwnProperty.call(values, name) ? values[name] : slot));
+}
+
+/**
+ * One category row: its heading, its line, and its note.
+ *
+ * The line goes through `planCategoryLine`, so a category whose only feature is
+ * named like its heading prints the value alone — "Credits" over "19,750 per
+ * month", not over "Credits (19,750 per month)" (user decision, 2026-10-02).
+ * Shared by what the plan includes and what the next plan would add, so the two
+ * lists cannot word the same row differently.
+ */
+function CategoryRowText({
+  row,
+  t,
+  noteTestId,
+}: {
+  row: PlanCategory;
+  t: (key: string) => string;
+  noteTestId?: string;
+}) {
+  const heading = t(row.labelKey);
+  const line = planCategoryLine(heading, row);
+
+  return (
+    <span className="text-sm min-w-0">
+      <span className="text-[var(--v2-text-primary)]">{heading}</span>
+      {line !== null && <span className="block text-[var(--v2-text-muted)]">{line}</span>}
+      {row.noteKey && (
+        <span className="block mt-0.5 text-xs text-[var(--v2-text-muted)]" data-testid={noteTestId}>
+          {t(row.noteKey)}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -271,9 +323,7 @@ export function PlanSection() {
           {t('plan.includes')}
         </h4>
         {plan.included.length === 0 ? (
-          <p className="text-sm text-[var(--v2-text-muted)]">
-            We could not list your features just now. Nothing has been removed from your account.
-          </p>
+          <p className="text-sm text-[var(--v2-text-muted)]">{t('plan.features_unavailable')}</p>
         ) : (
           // Named so a screen reader says which list this is, and so a test can
           // scope to it: an unnamed second list two elements down carries similar
@@ -282,10 +332,7 @@ export function PlanSection() {
             {plan.included.map((row) => (
               <li key={row.category} className="flex items-start gap-2">
                 <Check className="w-4 h-4 shrink-0 mt-0.5 text-[var(--v2-primary)]" />
-                <span className="text-sm min-w-0">
-                  <span className="text-[var(--v2-text-primary)]">{t(row.labelKey)}</span>
-                  <span className="block text-[var(--v2-text-muted)]">{row.summary}</span>
-                </span>
+                <CategoryRowText row={row} t={t} noteTestId={`plan-category-note-${row.category}`} />
               </li>
             ))}
           </ul>
@@ -301,6 +348,11 @@ export function PlanSection() {
 function NextPlanUp({ upgrade }: { upgrade: PlanUpgrade }) {
   const { t, language } = useLanguage();
   const sentence = (value: PlanSentence | null | undefined) => renderSentence(value, t, language);
+  // Every word on this card comes from the dictionary (user decision,
+  // 2026-10-02): the values were already in the reader's language, and English
+  // words around them made one mixed line in Hebrew and Spanish (QA-6b-E1).
+  const addsHeading = fill(t('plan.next.adds_heading'), { plan: upgrade.name });
+  const changesHeading = fill(t('plan.next.changes_heading'), { plan: upgrade.name });
 
   return (
     <div className="pt-4 border-t border-[var(--v2-border)]">
@@ -308,7 +360,8 @@ function NextPlanUp({ upgrade }: { upgrade: PlanUpgrade }) {
         <Sparkles className="w-3.5 h-3.5" />
         <span>
           {upgrade.name}
-          {upgrade.monthlyPriceUsd > 0 && ` — $${upgrade.monthlyPriceUsd} a month`}
+          {upgrade.monthlyPriceUsd > 0 &&
+            ` — ${fill(t('plan.price.per_month'), { amount: `$${upgrade.monthlyPriceUsd}` })}`}
         </span>
       </h4>
 
@@ -316,17 +369,12 @@ function NextPlanUp({ upgrade }: { upgrade: PlanUpgrade }) {
           something in one of these lists, so a "nothing to show" paragraph here
           was unreachable (QA-2). When there is nothing above this plan the whole
           section is absent. */}
-      <h5 className="text-xs uppercase tracking-wide text-[var(--v2-text-muted)]">
-        What {upgrade.name} would add
-      </h5>
-      <ul className="mt-1.5 space-y-1.5" aria-label={`What ${upgrade.name} would add`}>
+      <h5 className="text-xs uppercase tracking-wide text-[var(--v2-text-muted)]">{addsHeading}</h5>
+      <ul className="mt-1.5 space-y-1.5" aria-label={addsHeading}>
           {upgrade.adds.map((row) => (
             <li key={row.category} className="flex items-start gap-2">
               <Check className="w-4 h-4 shrink-0 mt-0.5 text-[var(--v2-text-muted)]" />
-              <span className="text-sm min-w-0">
-                <span className="text-[var(--v2-text-primary)]">{t(row.labelKey)}</span>
-                <span className="block text-[var(--v2-text-muted)]">{row.summary}</span>
-              </span>
+              <CategoryRowText row={row} t={t} noteTestId={`plan-next-category-note-${row.category}`} />
             </li>
           ))}
           {upgrade.improves.map((entry) => (
@@ -336,7 +384,7 @@ function NextPlanUp({ upgrade }: { upgrade: PlanUpgrade }) {
                 {entry.label}
                 <span className="text-[var(--v2-text-muted)]">
                   {' '}
-                  — {entry.from} becomes {entry.to}
+                  — {fill(t('plan.next.improves_line'), { from: entry.from, to: entry.to })}
                 </span>
               </span>
             </li>
@@ -362,10 +410,8 @@ function NextPlanUp({ upgrade }: { upgrade: PlanUpgrade }) {
           to decide. */}
       {upgrade.changes.length > 0 && (
         <>
-          <h5 className="mt-3 text-xs uppercase tracking-wide text-[var(--v2-text-muted)]">
-            What changes on {upgrade.name}
-          </h5>
-          <ul className="mt-1.5 space-y-1.5" aria-label={`What changes on ${upgrade.name}`}>
+          <h5 className="mt-3 text-xs uppercase tracking-wide text-[var(--v2-text-muted)]">{changesHeading}</h5>
+          <ul className="mt-1.5 space-y-1.5" aria-label={changesHeading}>
             {upgrade.changes.map((entry) => (
               <li key={entry.capability} className="flex items-start gap-2">
                 <ArrowRight className="w-4 h-4 shrink-0 mt-0.5 text-[var(--v2-text-muted)]" />
@@ -373,7 +419,7 @@ function NextPlanUp({ upgrade }: { upgrade: PlanUpgrade }) {
                   {entry.label}
                   <span className="text-[var(--v2-text-muted)]">
                     {' '}
-                    — from {entry.from} to {entry.to}, which is different rather than larger
+                    — {fill(t('plan.next.changes_line'), { from: entry.from, to: entry.to })}
                   </span>
                 </span>
               </li>
@@ -388,13 +434,13 @@ function NextPlanUp({ upgrade }: { upgrade: PlanUpgrade }) {
           Driven by `availableToBuy`, so WS-2 step 3 flips a config flag and this
           becomes a real action without the component being touched. */}
       {upgrade.availableToBuy ? (
-        <p className="text-xs text-[var(--v2-text-muted)] mt-3">
-          Available to choose. (The buy flow arrives with this flag — see WS-2 step 3.)
-        </p>
+        // The buy flow arrives with this flag (WS-2 step 3). That note is for us,
+        // not the owner, so it lives here rather than on the screen.
+        <p className="text-xs text-[var(--v2-text-muted)] mt-3">{t('plan.next.available')}</p>
       ) : (
         <p className="text-xs text-[var(--v2-text-muted)] mt-3">
           <span className="inline-block px-1.5 py-0.5 me-1.5 bg-[var(--v2-bg)] text-[var(--v2-text-muted)] rounded">
-            Coming soon
+            {t('plan.next.coming_soon')}
           </span>
           {sentence(upgrade.actionUnavailableBecause)}
         </p>

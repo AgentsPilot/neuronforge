@@ -213,17 +213,21 @@ describe('a trial (Test Flight)', () => {
     expect(improved).toContain('email.volume');
   });
 
-  it('is NOT told the credit numbers of either plan until slice 6 (R-7 option C, TEMPORARY)', () => {
-    // ⚠️ TEMPORARY — slice 6 removes the rule and restores the previous test here:
-    // "IS told the allowance changes, as a change rather than an improvement"
-    // (user decision 4: `{ total }` against `{ perMonth }` goes in `changes`,
-    // both numbers shown). Until slice 6 explains credits, both plans read
-    // "included", so no `changes` or `improves` line can carry a number back in.
+  it('IS told the credit allowance changes, as a change rather than an improvement', () => {
+    // User decision 4. The trial has a one-off `{ total }` and Essentials a
+    // `{ perMonth }` rate — different quantities with no honest exchange rate. So
+    // it is neither claimed as an improvement nor suppressed: it is stated, with
+    // both numbers, and the customer judges.
     const changed = view.nextPlanUp?.changes ?? [];
 
-    expect(changed.map((entry) => entry.capability)).not.toContain('credits.allowance');
+    expect(changed.map((entry) => entry.capability)).toContain('credits.allowance');
+
+    const creditChange = changed.find((entry) => entry.capability === 'credits.allowance')!;
+    expect(creditChange.from).toBe('2,000 in total');
+    expect(creditChange.to).toBe('19,750 per month');
+
+    // And NOT in `improves`, which is the list that asserts a direction.
     expect(view.nextPlanUp?.improves.map((entry) => entry.capability) ?? []).not.toContain('credits.allowance');
-    expect(capabilityIdsOf(view.nextPlanUp?.adds)).not.toContain('credits.allowance');
   });
 
   it('is NOT told the credit allowance IMPROVES — the units do not match (SA P-2)', () => {
@@ -259,12 +263,12 @@ describe('Essentials and Autopilot — the two nobody is on yet', () => {
     expect(view.whenThisChanges).toBeNull();
 
     expect(view.nextPlanUp?.name).toBe('Autopilot');
-    // The two paid tiers differ in exactly two things: the chat capabilities
-    // Autopilot adds, and the larger credit allowance. ⚠️ TEMPORARY (R-7 option
-    // C): the credit numbers are not shown to customers until slice 6, so the
-    // larger allowance is not listed; slice 6 restores
-    // `toEqual(['credits.allowance'])` here.
-    expect(view.nextPlanUp?.improves.map((entry) => entry.capability)).toEqual([]);
+    // The two paid tiers differ in exactly two things, and the customer is told
+    // about both: the chat capabilities Autopilot adds, and the larger credit
+    // allowance.
+    expect(view.nextPlanUp?.improves.map((entry) => entry.capability)).toEqual(['credits.allowance']);
+    const credits = view.nextPlanUp!.improves[0];
+    expect(`${credits.from} → ${credits.to}`).toBe('19,750 per month → 32,250 per month');
     expect(capabilityIdsOf(view.nextPlanUp?.adds)).toContain('chat.access');
     expect(capabilityIdsOf(view.nextPlanUp?.adds).length).toBeGreaterThanOrEqual(9);
     // And the nine arrive as ONE row, which is the point of grouping them.
@@ -367,13 +371,11 @@ describe('Essentials and Autopilot — the two nobody is on yet', () => {
       }
     }
 
-    // Trial → Essentials contributes at least one (email volume). A run with none
-    // means the comparison stopped producing anything, not that it produced
-    // nothing wrong. ⚠️ TEMPORARY (R-7 option C): Essentials → Autopilot's only
-    // improvement is the credit allowance, which customers are not shown until
-    // slice 6 — slice 6 restores both thresholds below to 2.
-    expect(pairs.length).toBeGreaterThanOrEqual(1);
-    expect(new Set(pairs.map((pair) => pair.planId)).size).toBeGreaterThanOrEqual(1);
+    // Trial → Essentials and Essentials → Autopilot each contribute at least
+    // one. A run with none means the comparison stopped producing anything, not
+    // that it produced nothing wrong.
+    expect(pairs.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(pairs.map((pair) => pair.planId)).size).toBeGreaterThanOrEqual(2);
 
     for (const pair of pairs) {
       expect(pair.to).toBeGreaterThan(pair.from);
@@ -439,8 +441,8 @@ describe('Essentials and Autopilot — the two nobody is on yet', () => {
               ...config.matrix.tiers.pro,
               'team.seats': { included: 1, purchasable: true },
               // The positive control below: an amount that genuinely increases.
-              // (It was the credit allowance until slice 5 stopped showing its
-              // number to customers, R-7 option C.)
+              // (Kept on `email.volume` after slice 6 restored the credit number:
+              // a control that depends on no display rule is the better control.)
               'email.volume': { ceilingPerMonth: 20000 },
             },
           },
@@ -774,20 +776,23 @@ describe('a plan is not told when it ends twice', () => {
  * The grouped list (refinement 3).
  */
 describe('the included list is grouped by category', () => {
-  it('a champion reads nine rows rather than twenty-eight lines', () => {
+  it('a champion reads ten rows rather than twenty-eight lines', () => {
     const view = viewFor('champion');
 
     expect(capabilityIdsOf(view.included).length).toBeGreaterThan(20);
-    expect(view.included.length).toBeLessThanOrEqual(9);
+    // Nine categories, plus the credits row slice 6 put first (D-g).
+    expect(view.included.length).toBeLessThanOrEqual(10);
   });
 
   it('AI chat is ONE long row, not an expander', () => {
-    // The user's 3–4-per-row rule of thumb, explicitly broken here: ten entries on
-    // one line beats hiding six of them behind "+N more", which would be a new
-    // interaction on a read-only screen.
+    // The user's 3–4-per-row rule of thumb, explicitly broken here: nine entries
+    // on one line beats hiding five of them behind "+N more", which would be a new
+    // interaction on a read-only screen. (Ten until slice 6 moved the credit
+    // allowance to its own row, D-g.)
     const row = viewFor('champion').included.find((entry) => entry.category === 'ai_chat')!;
 
-    expect(row.features.length).toBeGreaterThanOrEqual(10);
+    expect(row.features.length).toBeGreaterThanOrEqual(9);
+    expect(row.features.map((feature) => feature.capability)).not.toContain('credits.allowance');
     expect(row.labelKey).toBe('plan.category.ai_chat');
     // One string, joined server-side — the component prints it and composes
     // nothing.
@@ -798,9 +803,7 @@ describe('the included list is grouped by category', () => {
     const rows = viewFor('basic').included;
     const summaries = rows.map((row) => row.summary).join(' | ');
 
-    // ⚠️ TEMPORARY (R-7 option C): the credit allowance reads "included" until
-    // slice 6; slice 6 restores its number here (`Credits (19,750 per month)`).
-    expect(summaries).toMatch(/Credits \(included\)/);
+    expect(summaries).toMatch(/Credits \(19,750 per month\)/);
     expect(summaries).not.toMatch(/\(yes\)/);
     // And a value that already carries brackets is not wrapped in more of them:
     // "Email volume (10,000 per month (alerts, never blocks))" was the first thing
@@ -814,10 +817,13 @@ describe('the included list is grouped by category', () => {
     // opens on add-ons). Clients first because that is why the product exists.
     const order = viewFor('champion').included.map((row) => row.category);
 
-    expect(order[0]).toBe('crm');
+    // Credits first (slice 6, D-g / SQ-25), then the clients.
+    expect(order[0]).toBe('credits');
+    expect(viewFor('champion').included[0].labelKey).toBe('plan.category.credits');
+    expect(order[1]).toBe('crm');
     // The plain word AND the acronym (user decision, 2026-09-27) — pinned because
     // it is a wording choice somebody made, not a default.
-    expect(viewFor('champion').included[0].labelKey).toBe('plan.category.crm');
+    expect(viewFor('champion').included[1].labelKey).toBe('plan.category.crm');
     expect(order.indexOf('website_intake')).toBeLessThan(order.indexOf('payments'));
     expect(order.indexOf('payments')).toBeLessThan(order.indexOf('ai_chat'));
     expect(order.indexOf('insights')).toBeLessThan(order.indexOf('support'));

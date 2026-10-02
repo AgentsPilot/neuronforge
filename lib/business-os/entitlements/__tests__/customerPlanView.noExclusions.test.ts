@@ -145,7 +145,9 @@ describe('no plan is described by what it withholds', () => {
   // `labelKey`, not `label`: the heading is a dictionary key so the row can be
   // read in the viewer's language. The allow-list still does its job — it is
   // the exact key-set that keeps an exclusion field from appearing.
-  const ROW_KEYS = ['category', 'labelKey', 'features', 'summary'].sort();
+  // `noteKey` (slice 6, D-h): a dictionary key for the sentence under the
+  // credits row — a key, never a list, so it cannot carry an exclusion.
+  const ROW_KEYS = ['category', 'labelKey', 'noteKey', 'features', 'summary'].sort();
   const FEATURE_KEYS = ['capability', 'label', 'value'].sort();
   // SA R4-4 asked for the badge object's keys to join this sweep. It became moot:
   // the user dropped the pill beside the plan heading, so the payload carries no
