@@ -844,16 +844,20 @@ qa11a-delete.mjs: auth admin delete succeeded; lots_detached 1, draws_detached 1
 
 ## 17. PROD apply record (the user pastes here)
 
+**Applied to PROD by the user on 2026-10-02. Every check PASS.** Recorded by TL from the outputs the user pasted (production project, Supabase SQL editor).
+
 | Step (§6.6) | Output |
 |---|---|
-| 2 — pre-check (names) | |
-| 2 — pre-check (charge function md5) | |
-| 2 — server version | |
-| 4 — apply time (UTC) | |
-| 5 — new checker grid | |
-| 6 — existing checker verdict and C7 | |
-| 8 — probe full text | |
-| 9 — both checkers again (verdicts, L9) | |
+| 2 — pre-check (names) | Not pasted. Superseded: the apply succeeded on the first paste, and a second paste answered `relation "business_os_credit_lots" already exists` (42P07) with nothing changed, exactly as step 3 predicts |
+| 2 — pre-check (charge function md5) | Not run before the apply. Covered after the apply by L8 (`record charge 1 of 1 and period start 1 of 1 match`) and by the charge checker's C7 PASS — the charge functions on PROD are the bodies in 20261015 |
+| 2 — server version | **PostgreSQL 17.4** (local verification ran on PGlite 0.5.8 / PG 18.3, §7.4; nothing in 20261017 depends on 18 — it applied and every check passed on 17.4) |
+| 4 — apply time (UTC) | **2026-10-02 19:56:27.565561** |
+| 5 — new checker grid | 20:02:16 UTC: **VERDICT PASS, 23 pass 0 fail.** L1–L8 all PASS (L2: 14 of 23 columns readable by owners, mismatches none; L3: service_role SELECT, INSERT only on both tables; L4: 12 + 6 checks, kind admits reversal only, 3 foreign keys, 3 indexes, 0 triggers; L5/L6 exact signatures, invoker, volatile, pinned search path, service_role-only EXECUTE; L7 parity rows 0 mismatches; L8 charge bodies and columns match 20261015). L9: `0 lots and 0 draws and 0 accounts and 0 unexpired credits and first lot at none`; `admin_grant 0 and boost_purchase 0 and reversal 0` |
+| 6 — existing checker verdict and C7 | 19:57:31 and 19:58:22 UTC: **VERDICT PASS, 19 pass 0 fail; C7 totals equal the rebuild — PASS, 0 mismatched account periods.** C7 ledger size: 82 charge rows, 6 totals rows, 0 detached, first row 2026-09-29 16:50:53 UTC |
+| 8 — probe full text | `P0001: PROBE PASS  this error is expected and rolls everything back` — P00 INFO (0 lots, 0 draws, 82 charge rows, 6 totals rows); **P01–P17 PASS**; P18 INFO (lot expired not producible in one transaction; covered by migration tests and the local run). Run with the user's own id |
+| 9 — both checkers again (verdicts, L9) | New checker 20:04:50 UTC: **VERDICT PASS 23/0**, L9 `0 lots and 0 draws …`, `admin_grant 0 and boost_purchase 0 and reversal 0` — the probe kept nothing. Charge checker 20:06:50 UTC: **VERDICT PASS 19/0, C7 PASS**, 82 / 6 rows unchanged |
+
+**Gate S11-C-5 met:** 11b may merge (after its own review cycle). Boost slice 2's "20261017 applied to PROD" precondition is met.
 
 ## 18. Commit Info
 
@@ -871,3 +875,4 @@ qa11a-delete.mjs: auth admin delete succeeded; lots_detached 1, draws_detached 1
 | 2026-10-02 | SA code review (11a): APPROVED WITH CONDITIONS | Section "SA Code Review — 11a (2026-10-02)" added. All six §7.6 deviations accepted. G1 and the L8 md5 constants independently verified. The barrel `tsc` errors are confirmed pre-existing. Condition CR11a-1: the repository must not log PostgREST `details` (it can carry the reason). Nits CR11a-2, -3, -5; CR11a-4 is a note for 11b. Code approved for QA |
 | 2026-10-02 | QA (11a): PASS WITH NOTES | Section "QA Report — 11a (2026-10-02)" added. Jest new 180/180, with registries 264/264, `test:bos-entitlements` 2,322/2,322. The creditPeriod and `tsc` failures are confirmed pre-existing (they also fail on main). Dev's PGlite run re-passed; QA's own PGlite edge cases 64/64. Core and checker L9 agree (57.345677). Charge files untouched, no `console.*`. QA11a-1 = CR11a-1, still open (Medium); edge notes QA11a-2 to -4 |
 | 2026-10-02 | CR11a-1 fixed; CR11a-3 applied | `fail()` in `BusinessOsCreditLotRepository.ts` now logs method, SQLSTATE, message and ids only, and returns an error rebuilt from the message (no `details`/`hint`); new test asserts the failing-row details never reach the logger or the returned error (repository suite 55/55). Runbook §6.6 step 6 gains the explicit stop. CR11a-2, CR11a-5 and QA11a-3 deferred to 11b/11c (nits); QA11a-2 / CR11a-4 carried into the 11b outline |
+| 2026-10-02 | 20261017 applied to PROD (user) and recorded | §17 filled: applied 19:56:27 UTC on PostgreSQL 17.4; new checker VERDICT PASS 23/0 before and after the probe (L9 0 lots / 0 draws); charge checker VERDICT PASS 19/0 with C7 PASS before and after (82 / 6 rows); probe PROBE PASS P01–P17. Step 2 pre-checks not run before the apply; covered by L8 and C7 after it. S11-C-5 met |
