@@ -14,7 +14,13 @@ import 'server-only';
  *
  * The code email, and from Slice 5b the "you already have an account" notice
  * (F5b-3, SA R-5), are sent from the platform's system sender (no `from`, no
- * `replyTo`, no `ownerUserId`), `kind: 'transactional'` (D-7, SA F-10).
+ * `replyTo`, no `ownerUserId`), `kind: 'transactional'` (D-7, SA F-10). The
+ * sender FAILS CLOSED like the invitation email (`inviteEmail.ts`, SA R-2):
+ * `platformSenderAddress()` is the gate only. When `RESEND_FROM_EMAIL` is not
+ * configured nothing is sent (`{ sent: false, senderNotConfigured: true }`)
+ * rather than falling back to the transport's NeuronForge default; when it is,
+ * no `from` is passed, so the transport uses `RESEND_FROM_EMAIL` exactly as
+ * configured (display name included) and production mail is unchanged.
  */
 
 import type { NextRequest } from 'next/server';
@@ -24,7 +30,7 @@ import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import { generateInviteExistingAccountEmail } from '@/lib/email/templates/invite-existing-account';
 import { generateInviteSignupCodeEmail } from '@/lib/email/templates/invite-signup-code';
 import { defaultLocale, isValidLocale, type Locale } from '@/lib/i18n/config';
-import { sendEmail } from '@/lib/notifications/emailTransport';
+import { platformSenderAddress, sendEmail } from '@/lib/notifications/emailTransport';
 import { authAccountRepository } from '@/lib/repositories/AuthAccountRepository';
 import { businessOsAccountPlanRepository } from '@/lib/repositories/BusinessOsAccountPlanRepository';
 import { businessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
@@ -52,6 +58,27 @@ export function buildRedemptionDeps(context: {
 }): RedemptionDeps {
   const auditTrail = AuditTrailService.getInstance();
 
+  /**
+   * Is the platform sender configured? Logs (no recipient address) when not.
+   * Never throws. A gate only: the From header itself is left to the transport.
+   */
+  const senderConfigured = (email: 'signup_code' | 'existing_account_notice'): boolean => {
+    let address: string | undefined;
+    try {
+      address = platformSenderAddress();
+    } catch {
+      address = undefined;
+    }
+    if (!address) {
+      context.logger.warn(
+        { email, reason: 'sender_not_configured' },
+        'System email not sent: RESEND_FROM_EMAIL is not configured, and invite emails never use the default sender'
+      );
+      return false;
+    }
+    return true;
+  };
+
   return {
     invites: businessOsInviteRepository,
     accounts: authAccountRepository,
@@ -62,6 +89,7 @@ export function buildRedemptionDeps(context: {
     issuerPlans: { findEntitlementInputs: (accountId) => businessOsAccountPlanRepository.findEntitlementInputs(accountId) },
     sendCode: async ({ to, code, language }) => {
       const locale: Locale = isValidLocale(language) ? (language as Locale) : (defaultLocale as Locale);
+      if (!senderConfigured('signup_code')) return { sent: false, senderNotConfigured: true };
       const email = generateInviteSignupCodeEmail({ code, validMinutes: INVITE_SIGNUP_CODE_POLICY.ttlMinutes, locale });
       const result = await sendEmail({
         kind: 'transactional',
@@ -80,6 +108,9 @@ export function buildRedemptionDeps(context: {
       // fails is `{ sent: false }`, logged. The code route answers the same
       // either way (QA-1): the champion must not learn the address has an account.
       try {
+        // Checked before anything is composed. The redemption answers this the
+        // SAME way as the code email's `senderNotConfigured` (no account oracle).
+        if (!senderConfigured('existing_account_notice')) return { sent: false, senderNotConfigured: true };
         const locale: Locale = isValidLocale(language) ? (language as Locale) : (defaultLocale as Locale);
         const email = generateInviteExistingAccountEmail({ signInUrl: marketingUrl('/login'), locale });
         // SA R-5: the system sender, exactly like the code email. No `from`, no

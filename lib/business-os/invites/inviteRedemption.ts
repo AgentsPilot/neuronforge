@@ -160,6 +160,13 @@ export interface RedemptionLogger {
   error: (context: Record<string, unknown>, message: string) => void;
 }
 
+/** What a system email send reports back (code email, existing-account notice). */
+export interface SystemEmailSendResult {
+  sent: boolean;
+  /** True only when nothing was attempted because the platform sender is not configured. */
+  senderNotConfigured?: boolean;
+}
+
 export interface RedemptionDeps {
   invites: RedemptionInviteRepository;
   accounts: RedemptionAccounts;
@@ -168,14 +175,18 @@ export interface RedemptionDeps {
   finaliseFriend: FinaliseFriendRedemption;
   /** Slice 5b: the issuer's plan row, for the in-force champion re-check (T-19; the SQL re-check decides). */
   issuerPlans: IssuerPlanReader;
-  /** Sends the code email; never throws. The code is in the body only. */
-  sendCode: (input: { to: string; code: string; language: string }) => Promise<{ sent: boolean }>;
+  /**
+   * Sends the code email; never throws. The code is in the body only.
+   * `senderNotConfigured`: nothing was attempted because the platform sender is
+   * not configured (fail closed).
+   */
+  sendCode: (input: { to: string; code: string; language: string }) => Promise<SystemEmailSendResult>;
   /**
    * Slice 5b (F5b-3, SA R-5): the "you already have an account, sign in"
    * notice, sent INSTEAD of the code when a friend invite's address already
    * has an account. Never throws. Carries nothing from the champion.
    */
-  sendExistingAccountNotice: (input: { to: string; language: string }) => Promise<{ sent: boolean }>;
+  sendExistingAccountNotice: (input: { to: string; language: string }) => Promise<SystemEmailSendResult>;
   audit: (entry: RedemptionAuditEntry) => Promise<void>;
   config: EntitlementConfig;
   now: () => Date;
@@ -437,6 +448,14 @@ export async function requestSignupCode(token: string, deps: RedemptionDeps): Pr
     // success, whether or not the notice went out. A 503 here, against a 200
     // for a new address, would tell the champion the address has an account.
     // The failure is logged at warn, keyed by the invite id only (no email).
+    // The one exception: an unconfigured platform sender. Then the code email
+    // cannot go out either, so every new address gets 503 `code_not_sent`; the
+    // notice must answer the same, or the 200/503 split would itself be the
+    // account oracle. Same refusal, same log line as the code branch below.
+    if (notice.senderNotConfigured) {
+      deps.logger.warn({ inviteId: row.id }, 'Signup code email was not sent');
+      return refuse(503, 'code_not_sent');
+    }
     if (!notice.sent) deps.logger.warn({ inviteId: row.id }, 'Existing-account notice was not sent');
   } else {
     const sent = await deps.sendCode({ to: row.email, code, language });
