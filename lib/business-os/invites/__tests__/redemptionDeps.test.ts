@@ -1,13 +1,14 @@
 /**
  * The production wiring of the redemption (Slice 1b): the code email goes from
  * the platform's SYSTEM sender (D-7, SA F-10, R-9): `kind: 'transactional'`,
- * no `from`, no `replyTo`, no `ownerUserId`, code in the body only. Audit entries
+ * no `from` (`platformSenderAddress()` is only a gate: nothing is sent when it
+ * is unset), no `replyTo`, no `ownerUserId`, code in the body only. Audit entries
  * carry the correlation id and the invite as the entity. The not-recognised body
  * is the validate route's, byte for byte.
  */
 
 const sent: Array<Record<string, unknown>> = [];
-const transport: { throws: boolean } = { throws: false };
+const transport: { throws: boolean; sender: string | undefined } = { throws: false, sender: 'notifications@agentspilot.ai' };
 const audited: Array<Record<string, unknown>> = [];
 
 jest.mock('server-only', () => ({}));
@@ -17,6 +18,7 @@ jest.mock('@/lib/notifications/emailTransport', () => ({
     sent.push(params);
     return { sent: true, provider: 'resend' };
   },
+  platformSenderAddress: () => transport.sender,
 }));
 jest.mock('@/lib/services/AuditTrailService', () => ({
   AuditTrailService: {
@@ -52,6 +54,8 @@ const request = new NextRequest('http://localhost:3000/api/public/invites/signup
 beforeEach(() => {
   sent.length = 0;
   audited.length = 0;
+  transport.sender = 'notifications@agentspilot.ai';
+  jest.clearAllMocks();
 });
 
 describe('the code email (D-7, F-10, R-9)', () => {
@@ -62,6 +66,7 @@ describe('the code email (D-7, F-10, R-9)', () => {
     const params = sent[0];
     expect(params.kind).toBe('transactional');
     expect(params.to).toEqual(['invitee@example.com']);
+    // The sender is only a gate: the transport keeps using RESEND_FROM_EMAIL as configured.
     expect(params).not.toHaveProperty('from');
     expect(params).not.toHaveProperty('replyTo');
     expect(params).not.toHaveProperty('ownerUserId');
@@ -87,6 +92,7 @@ describe('the existing-account notice (Slice 5b; F5b-3, SA R-5)', () => {
     const params = sent[0];
     expect(params.kind).toBe('transactional');
     expect(params.to).toEqual(['friend@example.com']);
+    // The sender is only a gate: the transport keeps using RESEND_FROM_EMAIL as configured.
     expect(params).not.toHaveProperty('from');
     expect(params).not.toHaveProperty('replyTo');
     expect(params).not.toHaveProperty('ownerUserId');
@@ -94,6 +100,32 @@ describe('the existing-account notice (Slice 5b; F5b-3, SA R-5)', () => {
     expect(String(params.html)).toContain('dir="rtl"');
     expect(String(params.text)).not.toMatch(/[0-9]{6}/);
     expect(String(params.text)).toMatch(/\/login/);
+  });
+});
+
+describe('both system emails fail closed without a platform sender (never the transport default)', () => {
+  it('the code email is not sent and reports senderNotConfigured, logged without the address', async () => {
+    transport.sender = undefined;
+    const deps = buildRedemptionDeps({ logger, correlationId: 'corr-1', request });
+    expect(await deps.sendCode({ to: 'invitee@example.com', code: '482913', language: 'en' })).toEqual({
+      sent: false,
+      senderNotConfigured: true,
+    });
+    expect(sent).toHaveLength(0);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('invitee@example.com');
+  });
+
+  it('the existing-account notice is not sent and reports senderNotConfigured, logged without the address', async () => {
+    transport.sender = undefined;
+    const deps = buildRedemptionDeps({ logger, correlationId: 'corr-1', request });
+    expect(await deps.sendExistingAccountNotice({ to: 'friend@example.com', language: 'en' })).toEqual({
+      sent: false,
+      senderNotConfigured: true,
+    });
+    expect(sent).toHaveLength(0);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('friend@example.com');
   });
 });
 

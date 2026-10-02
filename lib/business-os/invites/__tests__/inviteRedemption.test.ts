@@ -83,6 +83,8 @@ interface WorldOptions {
   finaliseFailures?: number;
   finaliseReturnsNull?: boolean;
   sendFails?: boolean;
+  /** Both system emails report the platform sender as unconfigured (fail closed). */
+  senderNotConfigured?: boolean;
   lostCas?: 'count' | 'claim' | 'issue';
   /** Slice 3b: what the Google verifier answers (default: ok, for the invited address). */
   google?: GoogleIdTokenVerification;
@@ -246,11 +248,13 @@ function world(options: WorldOptions = {}) {
     sendCode: jest.fn(async (input) => {
       calls.push('send');
       sent.push(input);
+      if (options.senderNotConfigured) return { sent: false, senderNotConfigured: true };
       return { sent: !options.sendFails };
     }),
     sendExistingAccountNotice: jest.fn(async (input) => {
       calls.push('notice');
       notices.push(input);
+      if (options.senderNotConfigured) return { sent: false, senderNotConfigured: true };
       return { sent: !options.sendFails };
     }),
     audit: jest.fn(async (entry: RedemptionAuditEntry) => {
@@ -1197,6 +1201,15 @@ describe('Slice 5b: switch ON', () => {
     it("a new address's own code email failing stays 503 code_not_sent (it is about that address)", async () => {
       const { outcome } = await request(false, { sendFails: true });
       expect(outcome).toMatchObject({ status: 503, error: 'code_not_sent' });
+    });
+
+    it('an unconfigured platform sender answers EXACTLY the same for both (503 code_not_sent, same log)', async () => {
+      const existing = await request(true, { senderNotConfigured: true });
+      const fresh = await request(false, { senderNotConfigured: true });
+      expect(fresh.outcome).toMatchObject({ status: 503, error: 'code_not_sent' });
+      expect(existing.outcome).toEqual(fresh.outcome);
+      expect(JSON.stringify(existing.w.logs)).toBe(JSON.stringify(fresh.w.logs));
+      expect(JSON.stringify(existing.w.logs)).not.toContain(EMAIL);
     });
 
     it('a failed account lookup is "try again" for both (never "no account")', async () => {

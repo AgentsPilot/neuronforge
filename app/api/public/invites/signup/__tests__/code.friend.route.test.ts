@@ -39,6 +39,8 @@ jest.mock('@/lib/notifications/emailTransport', () => ({
     world.sent.push(params);
     return { sent: true, provider: 'resend' };
   },
+  // The platform sender is configured (prod): both system emails fail closed without it.
+  platformSenderAddress: () => 'notifications@agentspilot.ai',
 }));
 jest.mock('@/lib/repositories/AuthAccountRepository', () => ({
   authAccountRepository: { emailHasAccount: async () => ({ data: world.hasAccount, error: null }) },
