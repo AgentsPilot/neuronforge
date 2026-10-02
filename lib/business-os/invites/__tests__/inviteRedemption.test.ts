@@ -960,8 +960,18 @@ const friendInvite = (overrides: Partial<BusinessOsInviteRedemptionView> = {}) =
     ...overrides,
   });
 
-describe('Slice 5b: switch OFF (as shipped): a friend invite is refused before any side effect (T-18)', () => {
-  it('the switch ships off', () => {
+describe('Slice 5b: switch OFF (the rollback state): a friend invite is refused before any side effect (T-18)', () => {
+  // The switch ships ON since 2026-10-01 (pinned in inviteConfig.invariant.test.ts),
+  // so this block turns it off itself and restores the shipped value after.
+  const shipped = INVITE_ISSUANCE_POLICY.accountInvitesAvailable;
+  beforeEach(() => {
+    switchable.accountInvitesAvailable = false;
+  });
+  afterEach(() => {
+    switchable.accountInvitesAvailable = shipped;
+  });
+
+  it('the switch is off in this block', () => {
     expect(INVITE_ISSUANCE_POLICY.accountInvitesAvailable).toBe(false);
   });
 

@@ -14,10 +14,20 @@
  * probing a guessed URL that an admin area exists there.
  *
  * The constraint that makes that worth anything: **an anonymous visitor and a
- * signed-in non-admin must be indistinguishable.** If anonymous went to
+ * signed-in non-admin must get the same RESPONSE.** If anonymous went to
  * `/login` and a non-admin went to `/business-os`, the difference between the
  * two responses would itself be the disclosure the choice was meant to prevent.
  * So both get the same redirect, and a test asserts it.
+ *
+ * ONE QUALIFIER, added when the refusal became audited (SA review M-4): the
+ * responses are identical, the LATENCY is not. A signed-in non-admin's redirect
+ * waits on a bounded audit flush (up to 2 s); an anonymous visitor's does not,
+ * because there is no identity to record. That is a timing side channel, and it
+ * is accepted: the secret this property protects is "does an admin area exist
+ * at this URL", and only a caller who already holds a valid session can observe
+ * the slow path — at which point it tells them nothing they did not know by
+ * being signed in. Do not "fix" it by deleting the `await`; that would silently
+ * stop recording refused page loads, which is the thing this exists to record.
  *
  * ── Three escapes this does NOT close ─────────────────────────────────────
  *  E1  A `route.ts` under `app/admin/` is not wrapped by layouts at all. None
@@ -43,6 +53,7 @@
 
 import { redirect } from 'next/navigation';
 import { getUser } from '@/lib/auth';
+import { recordRefusedAccess } from '@/lib/audit/recordRefusedAccess';
 import { createLogger } from '@/lib/logger';
 import { AdminAccessService } from '@/lib/services/AdminAccessService';
 
@@ -69,21 +80,46 @@ export async function requireAdminPage(): Promise<{ id: string; email?: string }
     user = null;
   }
 
-  let isAdmin = false;
+  /*
+   * Three-valued, not a boolean, so the audit write below can tell "we asked
+   * and the answer was no" from "we could not ask" — a thrown check must not
+   * look like a refused admin on the Health landing. 'threw' is also the
+   * correct state for an anonymous visitor: nothing was asked, nothing is
+   * recorded.
+   */
+  let answer: 'yes' | 'no' | 'threw' = 'threw';
   if (user) {
     try {
-      isAdmin = await AdminAccessService.getInstance().isAdmin({ id: user.id, email: user.email });
+      answer = (await AdminAccessService.getInstance().isAdmin({ id: user.id, email: user.email }))
+        ? 'yes'
+        : 'no';
     } catch (err) {
       // Fail closed: a check that cannot answer is a "no".
       logger.error({ err, userId: user.id }, 'Admin check threw on an admin page; denying');
     }
   }
 
-  if (!isAdmin) {
+  if (answer !== 'yes') {
     // Logged only when we know who it was. An anonymous visitor produces no
     // identifying line, and — importantly — no DIFFERENT response either.
     if (user) {
       logger.warn({ userId: user.id }, 'Non-admin attempted to open an admin page');
+    }
+    /*
+     * Awaited, immediately before the redirect, and OUTSIDE every try/catch.
+     *
+     * `recordRefusedAccess` never throws and never rejects, so awaiting it here
+     * can neither swallow the redirect signal nor raise one of its own; and
+     * `redirect()` must stay outside a catch, so this is the only correct
+     * position. Not awaiting it would lose the row: `redirect()` unwinds the
+     * render immediately.
+     *
+     * The response is unchanged for both populations; only the latency differs,
+     * and only for a caller who already holds a session. See the header's
+     * qualifier before changing this.
+     */
+    if (answer === 'no' && user) {
+      await recordRefusedAccess({ userId: user.id, surface: 'admin_page', logger });
     }
     // Outside any try/catch: this throws to unwind the render.
     redirect(NON_ADMIN_REDIRECT);

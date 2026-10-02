@@ -77,7 +77,16 @@ describe('GET /api/agent-executions/stats — admin only', () => {
     const res = await GET(get());
 
     expect(res.status).toBe(403);
-    expect(from).not.toHaveBeenCalled();
+    /*
+     * `audit_trail` and NOTHING else.
+     *
+     * This was `expect(from).not.toHaveBeenCalled()`. Since 2026-10-01
+     * `requireAdmin` records the refusal before answering 403, so one write to
+     * `audit_trail` is now expected and correct. The claim this test carries is
+     * unchanged and is asserted positively below: no agent data was touched.
+     */
+    expect(from.mock.calls.map(([table]) => table)).toEqual(['audit_trail']);
+    expect(from).not.toHaveBeenCalledWith('agent_executions');
   });
 
   it('fails closed when the admin check throws', async () => {

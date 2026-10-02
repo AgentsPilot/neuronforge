@@ -59,10 +59,41 @@ const OWNER = { id: '2f734ed5-3681-4049-880d-3de7b096bea3', email: 'owner@exampl
 const TARGET = '99999999-9999-4999-8999-999999999999';
 const ctx = { params: { id: TARGET } };
 
-const routes: Array<[string, () => Promise<Response>]> = [
-  ['/api/admin/audit-trail', () => auditTrailGET(new NextRequest('http://localhost/api/admin/audit-trail?page=1'))],
-  ['/api/admin/users/[id]/audit-logs', () => userAuditLogsGET(new NextRequest(`http://localhost/api/admin/users/${TARGET}/audit-logs`), ctx)],
-  ['/api/admin/users/[id]/login-stats', () => loginStatsGET(new Request(`http://localhost/api/admin/users/${TARGET}/login-stats`), ctx)],
+/*
+ * [name, call, tablesTouchedOnRefusal]
+ *
+ * The third element is the exact, ordered list of `from(table)` calls a 403 for
+ * a signed-in non-admin is allowed to make — and it differs per route, which is
+ * the whole reason it is in the tuple:
+ *
+ * - `/api/admin/audit-trail` uses the shared `requireAdmin`, which since
+ *   2026-10-01 records the refusal as one INSERT into `audit_trail` before
+ *   answering 403. One row, so exactly one `from('audit_trail')`.
+ * - the two `users/[id]/*` routes hand-roll their gate with an inline
+ *   `AdminAccessService` call and record NOTHING on refusal (parked slice 4),
+ *   so they must stay at strict zero.
+ *
+ * Do not collapse this into a blanket `filter(t => t !== 'audit_trail')`:
+ * `audit_trail` IS the protected data all three of these routes read, so
+ * filtering it out would delete the entire read this suite exists to catch —
+ * and for the two hand-rolled routes nothing else covers it.
+ */
+const routes: Array<[string, () => Promise<Response>, string[]]> = [
+  [
+    '/api/admin/audit-trail',
+    () => auditTrailGET(new NextRequest('http://localhost/api/admin/audit-trail?page=1')),
+    ['audit_trail'],
+  ],
+  [
+    '/api/admin/users/[id]/audit-logs',
+    () => userAuditLogsGET(new NextRequest(`http://localhost/api/admin/users/${TARGET}/audit-logs`), ctx),
+    [],
+  ],
+  [
+    '/api/admin/users/[id]/login-stats',
+    () => loginStatsGET(new Request(`http://localhost/api/admin/users/${TARGET}/login-stats`), ctx),
+    [],
+  ],
 ];
 
 beforeEach(() => {
@@ -71,7 +102,7 @@ beforeEach(() => {
   mockTablesRead.length = 0;
 });
 
-describe.each(routes)('%s', (_name, call) => {
+describe.each(routes)('%s', (_name, call, tablesTouchedOnRefusal) => {
   it('returns 401 when signed out, before any read', async () => {
     mockGetUser.mockResolvedValue(null);
     const res = await call();
@@ -86,7 +117,21 @@ describe.each(routes)('%s', (_name, call) => {
     const res = await call();
     expect(res.status).toBe(403);
     expect(mockIsAdmin).toHaveBeenCalledWith({ id: OWNER.id, email: OWNER.email });
-    expect(mockTablesRead).toHaveLength(0);
+    /*
+     * Exactly the refusal record this route writes, and nothing else.
+     *
+     * `tablesTouchedOnRefusal` is `['audit_trail']` for the one route that uses
+     * the shared `requireAdmin` (one INSERT, written before the 403) and `[]`
+     * for the two hand-rolled gates, which record nothing. An EQUALITY check,
+     * not a filter: `audit_trail` is also the protected table all three routes
+     * read, so a pre-gate `select` on it shows up as a second entry here and
+     * still fails — for the gated route as well as the two inline ones.
+     *
+     * Still strictly zero on the 401 and admin-check-threw cases below, and
+     * that is deliberate (OQ-3): no identity to refuse, and a database outage
+     * must not look like a probe.
+     */
+    expect(mockTablesRead).toEqual(tablesTouchedOnRefusal);
   });
 
   it('fails closed with 403 when the admin check throws', async () => {

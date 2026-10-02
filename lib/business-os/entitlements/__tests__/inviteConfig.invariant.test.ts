@@ -105,8 +105,8 @@ describe('friend invites from champion accounts (Slice 5a, T-17, T-18, T-21)', (
     expect(INVITE_TYPES[INVITE_ISSUANCE_POLICY.account.inviteType].grantKind).toBe('tier');
   });
 
-  it('friend invites are switched OFF until the user chooses (BQ-13, T-18)', () => {
-    expect(INVITE_ISSUANCE_POLICY.accountInvitesAvailable).toBe(false);
+  it('friend invites are switched ON, by the user\'s choice on 2026-10-01 (BQ-13, T-18)', () => {
+    expect(INVITE_ISSUANCE_POLICY.accountInvitesAvailable).toBe(true);
   });
 
   it('the lifetime allowance is 5, the rate limit 10 per rolling 24 hours (BQ-10, T-21)', () => {

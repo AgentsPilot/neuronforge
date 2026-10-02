@@ -212,6 +212,10 @@ describe.each(WRITE_URLS)('POST %s', (url) => {
 
   // SA CR-1: registered is not enough; only the browser allow-list is writable.
   it.each([
+    // The event this slice introduced. Acceptance criterion 4 of the refused-
+    // access work is "a browser POST of the event is rejected"; without this
+    // row it was only inferable from the allow-list equality test above.
+    [{ ...valid, action: 'SECURITY_UNAUTHORIZED_ACCESS' }],
     [{ ...valid, action: 'PAYMENT_REFUNDED' }],
     [{ ...valid, action: 'BUSINESS_DATA_PURGED' }],
     [{ ...valid, action: 'SUBSCRIPTION_CANCELED' }],
@@ -286,9 +290,24 @@ describe('flush on logout (FR-29)', () => {
     expect(mockLogged.some((l) => l.level === 'error' && l.msg === 'Audit flush on logout failed; logout continues')).toBe(true);
   });
 
+  /**
+   * The hang is released at the END rather than left dangling.
+   *
+   * Since the bounded flush serialises (lib/audit/boundedAuditFlush.ts, SA
+   * review M-1), a flush left hanging forever blocks the next bounded write on
+   * the same module instance — which is the whole point of the chain, and in a
+   * Jest file the "instance" lasts the whole file. The request under test has
+   * already timed out and answered before the release, so what is asserted is
+   * unchanged; releasing only stops one test leaking into the rest.
+   */
   it('still answers success, after about 2 s, when the flush hangs', async () => {
     mockGetUser.mockResolvedValue(OWNER_A);
-    mockFlush.mockReturnValue(new Promise(() => undefined)); // never settles
+    let release: () => void = () => undefined;
+    mockFlush.mockReturnValue(
+      new Promise<void>((resolve) => {
+        release = resolve;
+      })
+    );
     const started = Date.now();
     const res = await logPOST(post('http://localhost/api/audit/log', logout));
     const elapsed = Date.now() - started;
@@ -296,6 +315,7 @@ describe('flush on logout (FR-29)', () => {
     expect(elapsed).toBeGreaterThanOrEqual(1900);
     expect(elapsed).toBeLessThan(5000);
     expect(mockLogged.some((l) => l.level === 'warn' && l.msg === 'Audit flush on logout timed out; logout continues')).toBe(true);
+    release();
   }, 10_000);
 
   it('any other event does not flush', async () => {
@@ -308,7 +328,7 @@ describe('flush on logout (FR-29)', () => {
 });
 
 describe('the browser allow-list (CR-1)', () => {
-  it('is exactly the 10 events and 3 entity types the surveyed callers send', () => {
+  it('is exactly the 9 events and 3 entity types the surveyed callers send', () => {
     expect([...CLIENT_WRITABLE_EVENTS].sort()).toEqual(
       [
         'PLUGIN_DISCONNECTED',
@@ -320,10 +340,34 @@ describe('the browser allow-list (CR-1)', () => {
         'USER_LOGOUT',
         'USER_ONBOARDING_COMPLETED',
         'USER_ONBOARDING_FAILED',
-        'USER_PASSWORD_CHANGED',
+        // USER_PASSWORD_CHANGED is deliberately ABSENT (2026-10-01): no browser
+        // writes it, and its only writer is the server route. See the rejection
+        // case below.
       ].sort()
     );
     expect([...CLIENT_WRITABLE_ENTITY_TYPES].sort()).toEqual(['connection', 'settings', 'user']);
+  });
+});
+
+/**
+ * The replaced half of the deleted 'SecurityTab password' caller row above.
+ *
+ * Dropping the row would have stopped covering the event rather than proving
+ * the channel is shut, which is the whole point of the change.
+ */
+describe('a browser cannot write a password change (2026-10-01)', () => {
+  it.each(WRITE_URLS)('%s: USER_PASSWORD_CHANGED is rejected with 400 and nothing is written', async (url) => {
+    mockGetUser.mockResolvedValue(OWNER_A);
+    const res = await writeHandler(url)(
+      post(url, { action: 'USER_PASSWORD_CHANGED', entityType: 'user', entityId: OWNER_A.id })
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('Invalid request data');
+    expect(mockLog).not.toHaveBeenCalled();
+  });
+
+  it('the server route is unaffected: the event itself is still a real, registered event', () => {
+    expect(Object.values(AUDIT_EVENTS)).toContain('USER_PASSWORD_CHANGED');
   });
 });
 
@@ -347,7 +391,6 @@ describe('existing browser callers keep working (T-C1)', () => {
     ['NotificationsTab', '/api/audit/log', { action: 'SETTINGS_NOTIFICATIONS_UPDATED', entityType: 'settings', entityId: OWNER_A.id, userId: OWNER_A.id, before: null, after: { email: true }, severity: 'info' }],
     ['ProfileTab', '/api/audit/log', { action: 'SETTINGS_PROFILE_UPDATED', entityType: 'user', entityId: OWNER_A.id, userId: OWNER_A.id, before: { full_name: 'A' }, after: { full_name: 'B' }, severity: 'info' }],
     ['SecurityTab settings', '/api/audit/log', { action: 'SETTINGS_SECURITY_UPDATED', entityType: 'settings', entityId: OWNER_A.id, userId: OWNER_A.id, before: {}, after: { two_factor: true }, severity: 'critical', complianceFlags: ['SOC2', 'GDPR'] }],
-    ['SecurityTab password', '/api/audit/log', { action: 'USER_PASSWORD_CHANGED', entityType: 'user', entityId: OWNER_A.id, userId: OWNER_A.id, severity: 'critical', complianceFlags: ['SOC2', 'GDPR'] }],
     ['SecurityTabV2 data export', '/api/audit/log', { action: 'USER_DATA_EXPORTED', entityType: 'user', entityId: OWNER_A.id, userId: OWNER_A.id, severity: 'medium', complianceFlags: ['GDPR', 'CCPA'] }],
     ['PluginsTab', '/api/audit-trail', { action: 'PLUGIN_DISCONNECTED', entityType: 'connection', entityId: 'conn-1', userId: OWNER_A.id, resourceName: 'Gmail', details: { plugin_key: 'google-mail' }, severity: 'warning', complianceFlags: ['SOC2'] }],
   ];

@@ -1,10 +1,10 @@
 # Requirement: Business OS Invite-Only Signup
 
-> **Last Updated**: 2026-09-30
+> **Last Updated**: 2026-10-02
 
 **Created by:** BA
 **Date:** 2026-09-28
-**Status:** SA reviewed 2026-09-28 — **APPROVED WITH CONDITIONS** (§16). The user decided BQ-1 to BQ-9 on 2026-09-28, and BQ-10 to BQ-12 later the same day (§13). Slice 0 is merged, and the user tested it on production on 2026-09-28: invites work. The user agreed to split Slice 1 into 1a, 1b and 1c (§10). **2026-09-29:** the user **parked Slice 4** (closing open signup) and made the **friend-invite loop** the next work, re-cut as **Slice 5 (5a, 5b, 5c)** with **no perks** (§10). **2026-09-30:** the user decided **BQ-13 to BQ-15** (§13.1), so **there are no open business questions**. Slice 3b (Google) merged inert as PR #152 on 2026-09-30. The technical items T-17 to T-21 were **reviewed by SA on 2026-09-30: APPROVED WITH CONDITIONS** (§17). 5a may proceed to a workplan.
+**Status:** **Master document for invite signup and friend invites.** SA approved with conditions (§16, §17); no open business questions (§13). As of 2026-10-02: Slices 0, 1a–1c, 2a, 3a, 3b, 5a and 5b are live in production, and friend invites are switched on (#164). Next is 5c (the friend pays), which is blocked on S-4a and G-1. Slice 4 is parked. Full status and open items: [§0](#0-current-status--open-items).
 **Related:** [BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md), [BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md](/docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md) (plan of record for tiers and billing), [BUSINESS_OS_ENTITLEMENTS.md](/docs/architecture/BUSINESS_OS_ENTITLEMENTS.md), [BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md) (sibling, in flight), [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md).
 
 ## Overview
@@ -13,8 +13,88 @@ For now, Business OS signup is by invitation only, and Business OS is a **closed
 
 ---
 
+## 0. Current status & open items
+
+**This requirement is the single source of truth for the overall status of invite signup and friend invites. Per-slice detail (tasks, checks, preconditions, waivers) lives in the workplans:** [Slice 0](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_0_WORKPLAN.md), [Slice 1](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_1_WORKPLAN.md), [Slice 2](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_2_WORKPLAN.md), [Slice 3](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_3_WORKPLAN.md), [Slice 5a](/docs/workplans/BUSINESS_OS_INVITE_FRIENDS_SLICE_5A_WORKPLAN.md), [Slice 5b](/docs/workplans/BUSINESS_OS_INVITE_FRIENDS_SLICE_5B_WORKPLAN.md). Status as of **2026-10-02**.
+
+### 0.1 Live in production
+
+| Slice | What | PR |
+|---|---|---|
+| 0 | Invite records and links | #128 |
+| 1a / 1b / 1c | Existing-account detection; password signup with a 6-digit code; admin list filters | #133, #139, #142 (+ hotfix #143) |
+| 2a | The invitation email | #145 |
+| 3a | AgentPilot logo on platform emails; developer comments stripped from sent HTML | #149 |
+| 3b | Sign up with Google. **Switched on 2026-09-30** via the Vercel setting `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID` | #152 |
+| 5a | Champion friend invites ("Invite friends" screen) | #154 |
+| 5b-1 / 5b-2 | Friend signs up at L2, held on "payment coming soon" | #162, #163 |
+| Switch-on | **Friend invites switched on** (`accountInvitesAvailable: true`; `paidInvitesAvailable` stays `false`). Merged 2026-10-02 | #164 |
+| Migrations | 20261012, 20261013, 20261014, 20261020, 20261023, 20261024: all applied to production | — |
+
+### 0.2 Pending user tests
+
+| Test | Owner | Detail |
+|---|---|---|
+| Friend invite on production (champion sends, friend signs up, lands on "payment coming soon") | User | [Slice 5b workplan](/docs/workplans/BUSINESS_OS_INVITE_FRIENDS_SLICE_5B_WORKPLAN.md) §10.1 |
+| Google sign-up with a second real Gmail (3b-10) | User | [Slice 3 workplan](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_3_WORKPLAN.md) |
+
+### 0.3 Next, and what blocks it
+
+| Item | Blocked by | Owner of the blocker |
+|---|---|---|
+| **5c: the friend pays** (also switches on admin Paid invites) | The Stripe buy path, S-4a ([reuse plan](/docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md)); for real money also **G-1**, the Supabase service-role key rotation, **still open** | S-4a: not started. G-1: **the user, together with Offir** |
+| Perks (bonus credits on a friend's first payment) | 5c, and only once scoped | — |
+
+### 0.4 Parked
+
+| Item | Note |
+|---|---|
+| **Slice 4: close open signup** | Parked 2026-09-29. **Required before launch.** See R-8(c) and the research notes P4-1 to P4-3 in §10, including **G-7**: Supabase's automatic Google identity linking is a platform-wide weakness that can only be recorded here, not closed. |
+
+### 0.5 Hardening backlog (lower priority)
+
+Detail for the first four is in the §10 backlog table.
+
+| Item | Note |
+|---|---|
+| 2b | Resend with a fresh link, plus its cap |
+| 2c | Delivery status (delivered / bounced) |
+| Sign-up code email sender | Use `platformSenderAddress()` and fail closed when it is unset |
+| Invite link domain | `vercel.app` → `app.agentspilot.ai` once that domain is live |
+| `businessName` unescaped | In `lib/email/templates/base-template.ts` (img alt and header span) |
+| `signInWithPassword` logs the email on rejection | Remove the address from the log |
+| QA-3b-2 | The rare Google sign-in hiccup ([Slice 3 workplan](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_3_WORKPLAN.md)) |
+| OI-1: per-IP rate limit on `/api/public/invites/` | Vercel setting, requested from Offir |
+| Old 1a/1b checkers (E02/S02) | Fail by design now that later migrations changed what they check; retire or update them |
+| Invite test clean-up hooks | Still reset the friend-invites switch to `false` |
+| `app/onboarding-chat/page.tsx` `console.*` → Pino | **In progress elsewhere** (the user's own session) |
+
+### 0.6 Recorded for later
+
+| Item | Note |
+|---|---|
+| Account deletion is blocked by the `profiles` FK (no cascade) | Deleting a user needs a manual `profiles` delete first. Ties to the existing "account deletion never calls erasure" item. |
+| L-12: 12-month anonymisation of unused invite emails | A `durable-queue-drain` job; first due **2027-09-28** |
+| Pre-enforcement conditions | T-9; the "awaiting payment" label in the shadow report; revisit Slice 4. See the D-14 row in [BUSINESS_OS_ENTITLEMENTS.md](/docs/architecture/BUSINESS_OS_ENTITLEMENTS.md) |
+| 5c BA question | May admins let a held friend in without paying? To be decided when 5c is scoped |
+| Level reporting | Slice 6 (§6.5, FR-27) |
+| Future invite features | Default personal-note template (BQ-12); earning invites; admins granting extra invites (§14) |
+
+### 0.7 Done or closed
+
+| Item | Outcome |
+|---|---|
+| SA N-6 | Waived by the user |
+| he/es labels for friend invites | Approved by the user |
+| 5a P-1 concurrency proof and the 5b §9 demo | Waived by the user for the switch-on |
+| Offir's Google configuration step | Not needed: the user did it |
+| LanguageContext logging fix | Merged (#155) |
+
+---
+
 ## Table of Contents
 
+0. [Current status & open items](#0-current-status--open-items)
 1. [Vocabulary](#1-vocabulary)
 2. [As-built: what exists and what we reuse](#2-as-built-what-exists-and-what-we-reuse)
 3. [User stories](#3-user-stories)
@@ -453,6 +533,8 @@ Until **G-1** (service-role key rotation, which is outstanding and not ours to s
 
 **Slice 4 is not a dependency of the friend-invite loop.** Every friend account is created by the same server-side redemption as a champion's (admin-API user creation after the claim, T-3/T-6), which does not use public signup and keeps working whether or not public signup is ever switched off. Nothing in 5a, 5b or 5c needs the signup policy. The one consequence of leaving Slice 4 parked is commercial, not technical: while signup is open, a friend could skip the invite and sign up directly on the marketing site, which the user accepts while the platform is not live.
 
+**Friend invites switched on (merged #164, 2026-10-02).** The user decided: "Switch friend invites on, waiving the concurrency proof and the demo." Slices 5a (#154), 5b-1 (#162) and 5b-2 (#163) are merged. The switch-on PR (#164) sets `accountInvitesAvailable: true` (T-18); `paidInvitesAvailable` stays `false` (payment is not live). With #164 merged and deployed, every in-force Founding Partner sees "Invite friends", and a friend who signs up is held on "payment coming soon" until 5c. The user waived the 5a P-1 concurrency proof, the 5b end-to-end demo and SA N-6, and approved the he/es wording. Precondition status: [Slice 5b workplan](/docs/workplans/BUSINESS_OS_INVITE_FRIENDS_SLICE_5B_WORKPLAN.md) §10.1. Rollback is the same one-line flip back to `false`. Overall status: §0.
+
 | Slice | Scope | Done means (the demo) | Depends on | Blocked by S-4a / G-1? |
 |---|---|---|---|---|
 | **0 Invite records and link** ✅ merged, tested on production 2026-09-28 | Invite table and repository; issuance policy (admin: champion, basic, pro); expiry setting (15/30/60, default 30); admin create/list/revoke routes; the `/admin` invites page (the Paid type shown disabled); the invite page **read-only**: it validates the token and shows welcome / offered plan / expired / revoked / not recognised. **No signup yet.** FR-1 to FR-10, except the signup form. | *An admin creates a champion invite for `x@example.com` with the 30-day default, copies the link, opens it in a private window, and sees the Founding Partner welcome with their note. They revoke it, refresh, and the page says it was withdrawn. The admin list shows both states.* | None | No |
@@ -863,3 +945,5 @@ Checked against `origin/main` `fe7f6410` on 2026-09-30. **This branch is 14 comm
 | 2026-09-29 | Slice 4 parked; friend-invite loop scoped as Slice 5 (5a, 5b, 5c); three business questions opened (BA) | **User decisions UD-5.1 to UD-5.3:** Slice 4 (closing open signup) parked because the platform is not live yet, with research notes P4-1 (`lib/client/auth-actions.ts:145` is the only in-repo account-creating path), P4-2 (a refused signup lands on `app/auth/callback/page.tsx:60`, which wrongly says "No active session found") and P4-3 (G-7, Supabase auto identity-linking, recorded and not closable here). Slice 4 confirmed **not a dependency** of the friend loop (friends are created by the server-side redemption, not public signup). The friend-invite loop is next: Essentials only, 5 invites per champion for life, lineage L2 under the champion, **no perks**. Re-cut as **5a** (the champion's "Invite friends" screen: count, send with the 2a email, own list, revoke; demoable before payment), **5b** (friend signs up at L2, held on "payment coming soon"; needs a new friend-finalise migration; demoable before payment as a held account) and **5c** (friend pays; folds in the former Slice 5, admin Paid invites and payment attribution; blocked on S-4a WS-1 and, for real money, G-1). Payment status recorded as AB-22 (only S-4a WS-2 step 1, a read-only plan section, is built; nothing is buyable; G-1 open). New as-built rows AB-23 to AB-30 (issuer columns, issuance policy with a single paid switch, lineage table ready, finalise function admin-cohort-only, pre-invite champions have no lineage row). New FR-28 to FR-38 (§7.9), AC-15 to AC-20, T-17 (cap as a mode-independent quantity capability with an atomic count), T-18 (a separate friend-invites switch), T-19 (friend finalise: no-basis plan row, L2, issuer re-check), T-20 (issuer-scoped champion routes). §6.3 adds the rule for a champion with no lineage row (L2, root = champion, no backfill). Open: **BQ-13** (until payment is live: held account, recommended), **BQ-14** (who may invite: champions only, recommended), **BQ-15** (does a revoked invite come back: only if revoked before the friend opened it, recommended). §16 unchanged. |
 | 2026-09-30 | BQ-13 to BQ-15 decided; business questions closed; 3b merged inert (BA) | **BQ-13** (recommended default): a friend who accepts before payment is live creates the account and waits on "payment coming soon", with no trial and no free use; friend invites switch on only when the user chooses (T-18's switch is off by default). **BQ-14** (recommended default): only Founding Partners may invite, for now. **BQ-15: the user chose "always"** over the recommended default: a revoked **or** expired invite gives its slot back whether or not the friend opened it; only an accepted invite uses a slot for good, plus pending ones while live, so the count is **accepted + pending-and-unexpired**. The earlier BA reading that every invite counts is recorded as superseded. Business consequence recorded: the cap limits friends who joined plus invites in flight, not attempts, so a champion can re-send after an invite lapses; new **T-21** recommends a per-champion daily send limit (for example 10 per rolling 24 hours) to SA, without asking the user. Updated §1 (invite cap, rate limit), §4.2, §6.5, FR-6, FR-28, FR-29, FR-31, FR-32, FR-35, §8.1, §8.2, §8.3, §10 (5a and 5b rows and demos), AC-15, AC-19, T-17, T-18, §13, §14. Recorded that Slice 3b (Google) merged inert as PR #152 on 2026-09-30 (§10, AB-27). §13.2 now reads "None". §16 unchanged. |
 | 2026-09-30 | SA review of the friend-invite scoping (5a–5c): APPROVED WITH CONDITIONS (SA) | Added §17, a ToC entry, and the status line. Checked against `origin/main` `fe7f6410`; this branch is 14 commits behind. **Corrections:** 5a **needs a migration** (`20261023`: the atomic send function and a partial index on `issuer_account_id`); the lifetime 5 lives in **`config/invites.ts`, not a `referrals.invites` capability** (the capability would break the tier-matrix rule and champion parity, appear in customer plan views, and depend on the mode; it is easy to move later because the SQL takes the allowance as a parameter). **T-17:** per-issuer `pg_advisory_xact_lock`, in-force-champion re-check, count, daily count, duplicate check and insert in one function; counted = not revoked and (accepted or claimed or unexpired), so a signup that finishes after expiry cannot let a sixth invite through. **T-18** approved as code config. **T-19** approved with explicit `revoked_at`/claimant filters, a plain INSERT, and lineage `first_paid_at`/`first_payment_ref` added in 5b (`20261024`). **T-20** approved: customer routes under `app/api/business-os/friend-invites/**`, ownership inside the UPDATE, 404 for not-yours. **T-21** approved at 10 per rolling 24 hours, plus a per-recipient guard. As-built additions: no issuer index; `internal_reason`/`revoke_reason` are required, so the server writes fixed strings; the existing tier refusal at `inviteRedemption.ts:242` keeps 5a friend invites unredeemable; the public view's existing-account check would leak whether an address has an account to the champion who holds the link, so it is skipped for account-issued invites in 5a (F5a-10) and redesigned in 5b (F5b-3). Conditions F5a-1 to F5a-16, F5b-1 to F5b-7, F5c-1 to F5c-4. 5c is blocked on S-4a WS-1 (none of it started), the WS-2 localisation gate, and G-1. No business decision needed; four awareness notes for the user (§17.6). |
+| 2026-10-01 | Friend invites switched on, pending merge (Dev) | User: "Switch friend invites on, waiving the concurrency proof and the demo." Progress note in §10: the switch-on PR sets `accountInvitesAvailable: true`; `paidInvitesAvailable` stays `false`. Live on merge and deploy. Preconditions and waivers (5a P-1, the 5b demo, N-6; he/es wording approved) recorded in the Slice 5b workplan §10.1. |
+| 2026-10-02 | Status section added; requirement made the master status document (BA) | User: "keep it our main document". Added §0 "Current status & open items" (and a ToC entry): live in production (Slices 0, 1a–1c, 2a, 3a, 3b switched on 2026-09-30 via `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID`, 5a, 5b-1/5b-2, friend-invites switch-on #164, migrations 20261012/13/14/20/23/24 applied), pending user tests, next and blocked (5c on S-4a and G-1; key rotation still open, owned by the user with Offir), parked (Slice 4), hardening backlog (including the onboarding-chat `console.*` conversion, in progress elsewhere), recorded-for-later and done items. Per-slice detail stays in the workplans. Replaced the stale status line; the §10 switch-on note now reads "merged (#164, 2026-10-02)". No requirement, FR or decision changed. |

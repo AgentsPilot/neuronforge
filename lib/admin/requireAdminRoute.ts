@@ -15,6 +15,9 @@
  *   database read, no write) may happen before this returns a user.
  * - Logs carry `userId` only — never the email, which is personal data and is
  *   not needed to investigate a denial.
+ * - A refusal that ANSWERED NO is written to the audit trail before the 403,
+ *   through a bounded flush. A refusal because the check THREW is not: see the
+ *   comment at the write.
  *
  * Middleware does not protect `/api` (`middleware.ts:83`), so this gate is the
  * only thing between an anonymous request and an admin handler.
@@ -24,6 +27,7 @@
 
 import { NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
+import { recordRefusedAccess } from '@/lib/audit/recordRefusedAccess';
 import { AdminAccessService } from '@/lib/services/AdminAccessService';
 
 /** The subset of the authenticated user an admin handler needs. */
@@ -73,16 +77,42 @@ export async function requireAdmin(logger: AdminGateLogger): Promise<RequireAdmi
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
   }
 
-  let isAdmin = false;
+  /*
+   * Three-valued, not a boolean, so the write below can tell "we asked and the
+   * answer was no" from "we could not ask".
+   *
+   * A thrown check used to leave `isAdmin === false` and fall into the same
+   * branch as a real refusal — which would make a Supabase outage look like a
+   * burst of unauthorised access attempts on the admin Health landing. Starts
+   * at 'threw' so a future `return` added inside the try cannot leave it
+   * accidentally optimistic.
+   */
+  let answer: 'yes' | 'no' | 'threw' = 'threw';
   try {
-    isAdmin = await AdminAccessService.getInstance().isAdmin({ id: user.id, email: user.email });
+    answer = (await AdminAccessService.getInstance().isAdmin({ id: user.id, email: user.email }))
+      ? 'yes'
+      : 'no';
   } catch (err) {
     // Fail closed: a check that cannot answer is a "no".
     logger.error({ err, userId: user.id }, 'Admin check threw; denying access');
   }
 
-  if (!isAdmin) {
+  if (answer !== 'yes') {
     logger.warn({ userId: user.id }, 'Non-admin attempted an admin request');
+    /*
+     * Awaited on purpose. This handler is about to return and the serverless
+     * instance may freeze immediately, so a queued-but-unflushed row is lost —
+     * which is why nothing was ever recorded here. `recordRefusedAccess` never
+     * throws and is bounded at 2 s, so the worst case is a slow 403: access is
+     * already denied before the write runs, and a failing audit trail can
+     * never grant it.
+     *
+     * Only on 'no'. A check that threw produces NO row (OQ-3(a)): the tile this
+     * feeds must mean "someone was refused", not "the database was down".
+     */
+    if (answer === 'no') {
+      await recordRefusedAccess({ userId: user.id, surface: 'admin_api', logger });
+    }
     return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 });
   }
 

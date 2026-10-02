@@ -600,13 +600,32 @@ After 5b merges, the switch is still **one line** (`accountInvitesAvailable: tru
 
 Nothing else gates it: the switch is read on the GET, the send, the page and at redemption, so turning it off again is the same one-line PR, and held friends simply stay held.
 
+### 10.1 Precondition status on 2026-10-01 (switch-on)
+
+**User's decision (2026-10-01, in session):** "Switch friend invites on, waiving the concurrency proof and the demo."
+
+Prepared on `feature/bos-friend-invites-switch-on` (cut from `origin/main` at `e35c1e44`, the #163 merge), uncommitted: `accountInvitesAvailable: true` in `lib/business-os/entitlements/config/invites.ts`, the config invariant test now expecting `true`. `paidInvitesAvailable` stays `false` (payment is not live). Friend invites are live only once that PR merges and deploys.
+
+| # | Precondition | Status on 2026-10-01 |
+|---|---|---|
+| 1 | `20261023` and `20261024` applied, checkers PASS; 5a P-1 lock probe | ✅ Both applied on production; the 5a checker, the 5b friend-signup checker (15 pass, 0 fail) and the Slice 0 checker PASS (Commit Info). **The 5a P-1 concurrency proof is WAIVED by the user** ("waiving the concurrency proof"). The logic was proven in PGlite by QA 5a (P-2) |
+| 2 | 5b merged and deployed, with N-4 | ✅ 5b-1 (#162) and 5b-2 (#163) merged to `main` and deployed; N-4 (`not_eligible` logged, never audited) is in 5b-2 |
+| 3 | §9 Part A and Part B passed and recorded | **WAIVED by the user** ("waiving ... the demo"): the end-to-end demo was not run. The flow was covered by QA's route-level probes (QA 5b-1 and QA 5b-2). Part C (the 5c path) is not applicable |
+| 4 | The T-9 row in the entitlements switch-on list (D-14) | ✅ In `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md` (5b-2) |
+| 5 | The user chooses to (BQ-13), with awareness | ✅ The user chose to switch on, aware that every in-force Founding Partner sees "Invite friends", that a friend who signs up is held with no time limit until 5c, and that no admin can let a held friend in (R-10) |
+| 6 | SA R-8(c) | Still applies: if Slice 4 resumes before S-5, first close the F5b-5 API residual and the Q-1 / FR-12a friend-orphan trial path. Not a blocker for this switch-on |
+| 7 | SA CR2-2 (i): he/es wording of "Signed up — not subscribed yet" | ✅ **Approved by the user** on 2026-10-01 |
+| 8 | SA CR2-2 (ii): SA N-6 done or waived in writing | **WAIVED by the user** on 2026-10-01 |
+
+Rollback: the same one-line flip back to `accountInvitesAvailable: false` (§11, Behaviour row).
+
 ---
 
 ## 11. Rollback
 
 | Layer | How | Notes |
 |---|---|---|
-| Behaviour | The switch is off at merge. If a switch-on PR misbehaves, revert that one line | Friends already held stay held (the gate reads lineage, not the switch). Their invites are burned |
+| Behaviour | The switch is off at merge. If a switch-on PR misbehaves, revert that one line: `accountInvitesAvailable: false` in `config/invites.ts`, with the config invariant test back to `false` (switch-on prepared 2026-10-01, §10.1) | Friends already held stay held (the gate reads lineage, not the switch). Their invites are burned |
 | Code | Revert the merge PR | Friend invites go back to 5a behaviour (`signup_opens_soon`, refused at redemption). **A friend created before the revert would then fall through to onboarding**: their no-basis plan row stops a trial, but the page gate is gone. So revert the code only with the switch off and no friend accounts, or accept that |
 | Database | `supabase/SQL Scripts/20261024_business_os_friend_invite_signup_rollback.sql`: a read-only pre-check that no lineage row has `first_paid_at` set (5c not live), then `BEGIN; DROP FUNCTION public.business_os_finalise_friend_invite_redemption(uuid, uuid, text, text, text); ALTER TABLE public.business_os_account_lineage DROP CONSTRAINT business_os_account_lineage_first_payment_ref_length; ALTER TABLE public.business_os_account_lineage DROP CONSTRAINT business_os_account_lineage_first_payment_paired; ALTER TABLE public.business_os_account_lineage DROP COLUMN first_payment_ref; ALTER TABLE public.business_os_account_lineage DROP COLUMN first_paid_at; COMMIT;` | **Revert the code first**: the hold read selects `first_paid_at`, and without the column it fails (open, D-9) and every held friend is released. Rows are never deleted |
 
@@ -1156,3 +1175,4 @@ Any FAIL at steps 2–4: stop, do not merge; rollback per §11 (pre-check first)
 | 2026-10-01 | SA code review 5b-2 conditions (Dev) | CR2-1: `lib/audit/events.ts` comment no longer lists `not_eligible` as recorded (logged, never audited, N-4); deviation 3 replaced in place. CR2-2: §10 gains items 7 (he/es wording check) and 8 (N-6 done or waived). Hebrew label "בלי" → "ללא" in the copy, its render test and §6.2. |
 | 2026-10-01 | SA code review 5b-2 | Code approved for QA, with CR2-1 (the stale `not_eligible` reason class in the `lib/audit/events.ts` comment) and CR2-2 (§10 gains a he/es wording check and N-6 done-or-waived as switch-on preconditions), both doc/comment-only with no re-review. Deviations 1, 2, 4 accepted; 3 not accepted (CR2-1); 5 needs a BA/native check before switch-on, not before merge. SA re-ran touched suites 910/910, guards 1,156/1,156, authz-guard 119/119, bos-entitlements 2,065/2,065, lint:hooks clean, `next build` exit 0. |
 | 2026-10-01 | User approved the 5b-2 commit and PR; committed, PR opened (RM) | User: "I approve committing 5b-2 and opening the PR." RM committed 5b-2 on `feature/bos-invite-friend-5b2` (docs, feat), rebased on `origin/main`, pushed and opened the PR to `main`, not merged. Commit Info gains a Slice 5b-2 block. No DB change; friend invites stay off. |
+| 2026-10-01 | Friend invites switch-on prepared (Dev), uncommitted | User: "Switch friend invites on, waiving the concurrency proof and the demo." New §10.1 records each precondition's status: (1) both migrations applied, checkers PASS, 5a P-1 concurrency proof WAIVED by the user; (2) #162/#163 merged and deployed with N-4; (3) §9 demo WAIVED by the user, covered by QA route-level probes, Part C not applicable; (4) T-9 row present; (5) user's informed choice; (6) R-8(c) still applies; (7) he/es wording approved by the user; (8) N-6 waived by the user. §11 Behaviour row names the one-line rollback. On `feature/bos-friend-invites-switch-on`; live on merge. |
