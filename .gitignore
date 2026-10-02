@@ -73,3 +73,6 @@ scripts/tmp-*.ts
 
 # ESLint machine-readable report from `npm run lint:report` (never committed).
 .eslint-report.json
+
+# Claude Code launch configuration: local dev-server definitions, per machine.
+.claude/launch.json
