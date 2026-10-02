@@ -33,6 +33,20 @@ jest.mock('@/lib/services/AdminAccessService', () => ({
   },
 }));
 
+/**
+ * Mocked because the non-admin cases below now WRITE. `AuditTrail` is built at
+ * module scope against the jest env stubs, so without this the redirect cases
+ * would attempt a real insert at a stub URL from inside a unit test.
+ */
+const auditLog = jest.fn();
+const auditFlush = jest.fn();
+jest.mock('@/lib/services/AuditTrailService', () => ({
+  AuditTrail: {
+    log: (...args: unknown[]) => auditLog(...args),
+    flush: (...args: unknown[]) => auditFlush(...args),
+  },
+}));
+
 const loggedArgs: unknown[] = [];
 jest.mock('@/lib/logger', () => {
   const make = (): Record<string, unknown> => {
@@ -64,6 +78,7 @@ jest.mock('next/navigation', () => ({
 }));
 
 import { requireAdminPage, NON_ADMIN_REDIRECT } from '../requireAdminPage';
+import { AUDIT_EVENTS } from '@/lib/audit/events';
 
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };
 /** Onboarded — see the header. This is the population that reaches the guard. */
@@ -83,6 +98,10 @@ async function outcome(): Promise<{ redirectedTo: string } | { allowed: true }> 
 beforeEach(() => {
   mockGetUser.mockReset();
   mockIsAdmin.mockReset();
+  auditLog.mockReset();
+  auditLog.mockResolvedValue(undefined);
+  auditFlush.mockReset();
+  auditFlush.mockResolvedValue(undefined);
   loggedArgs.length = 0;
 });
 
@@ -109,6 +128,9 @@ describe('requireAdminPage', () => {
     // The security claim of option A. If these two ever diverge — one to
     // /login, one to /business-os — the redirect itself tells a prober that an
     // admin area exists at this URL, and the whole point is lost.
+    //
+    // This is about the RESPONSE. The latency differs since the refusal became
+    // audited, deliberately and acceptably — see the module header's qualifier.
     mockGetUser.mockResolvedValue(null);
     const anonymous = await outcome();
 
@@ -158,4 +180,108 @@ describe('requireAdminPage', () => {
 
     expect(JSON.stringify(loggedArgs)).not.toContain('@');
   });
+});
+
+/**
+ * The refused page load is recorded (security-audit-events slice). The lockout
+ * story the requirement is sold on is "an admin locked out of /admin leaves a
+ * trace"; before this, it left none.
+ */
+describe('requireAdminPage records a refusal', () => {
+  it('writes exactly one row for a signed-in non-admin, and still redirects', async () => {
+    mockGetUser.mockResolvedValue(ONBOARDED_CUSTOMER);
+    mockIsAdmin.mockResolvedValue(false);
+
+    expect(await outcome()).toEqual({ redirectedTo: NON_ADMIN_REDIRECT });
+    expect(auditLog).toHaveBeenCalledTimes(1);
+    expect(auditFlush).toHaveBeenCalledTimes(1);
+    expect(auditLog.mock.calls[0][0]).toMatchObject({
+      action: AUDIT_EVENTS.SECURITY_UNAUTHORIZED_ACCESS,
+      entityType: 'system',
+      entityId: null,
+      userId: ONBOARDED_CUSTOMER.id,
+      actorId: ONBOARDED_CUSTOMER.id,
+      details: { surface: 'admin_page', reason: 'not_an_admin' },
+    });
+  });
+
+  it('the flush happens BEFORE the redirect unwinds the render', async () => {
+    // Not awaiting it would lose the row: redirect() throws immediately.
+    const order: string[] = [];
+    mockGetUser.mockResolvedValue(ONBOARDED_CUSTOMER);
+    mockIsAdmin.mockResolvedValue(false);
+    auditFlush.mockImplementation(async () => void order.push('flush'));
+
+    const result = await outcome();
+    order.push('redirect');
+
+    expect(result).toEqual({ redirectedTo: NON_ADMIN_REDIRECT });
+    expect(order).toEqual(['flush', 'redirect']);
+  });
+
+  it('the row carries no request, no severity, no flags and no email', async () => {
+    mockGetUser.mockResolvedValue(ONBOARDED_CUSTOMER);
+    mockIsAdmin.mockResolvedValue(false);
+    await outcome();
+
+    const entry = auditLog.mock.calls[0][0] as Record<string, unknown>;
+    expect(entry).not.toHaveProperty('request');
+    expect(entry).not.toHaveProperty('severity');
+    expect(entry).not.toHaveProperty('complianceFlags');
+    expect(JSON.stringify(entry)).not.toContain(ONBOARDED_CUSTOMER.email);
+  });
+
+  it('writes NOTHING for an anonymous visitor — no identity was refused (OQ-3)', async () => {
+    mockGetUser.mockResolvedValue(null);
+    expect(await outcome()).toEqual({ redirectedTo: NON_ADMIN_REDIRECT });
+    expect(auditLog).not.toHaveBeenCalled();
+  });
+
+  it('writes NOTHING when the admin check threw', async () => {
+    mockGetUser.mockResolvedValue(ONBOARDED_CUSTOMER);
+    mockIsAdmin.mockRejectedValue(new Error('admin_users unreachable'));
+
+    expect(await outcome()).toEqual({ redirectedTo: NON_ADMIN_REDIRECT });
+    expect(auditLog).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing when the auth lookup threw, and nothing for an admin', async () => {
+    mockGetUser.mockRejectedValue(new Error('malformed cookie jar'));
+    await outcome();
+    expect(auditLog).not.toHaveBeenCalled();
+
+    mockGetUser.mockReset();
+    mockGetUser.mockResolvedValue(ADMIN);
+    mockIsAdmin.mockResolvedValue(true);
+    await outcome();
+    expect(auditLog).not.toHaveBeenCalled();
+  });
+
+  it('a REJECTING audit write still redirects — it can never swallow the signal', async () => {
+    mockGetUser.mockResolvedValue(ONBOARDED_CUSTOMER);
+    mockIsAdmin.mockResolvedValue(false);
+    auditFlush.mockRejectedValue(new Error('database unreachable'));
+
+    expect(await outcome()).toEqual({ redirectedTo: NON_ADMIN_REDIRECT });
+  });
+
+  it('a HANGING audit write still redirects, after the bounded wait', async () => {
+    mockGetUser.mockResolvedValue(ONBOARDED_CUSTOMER);
+    mockIsAdmin.mockResolvedValue(false);
+    let release: () => void = () => undefined;
+    auditFlush.mockReturnValue(
+      new Promise<void>((resolve) => {
+        release = resolve;
+      })
+    );
+
+    const started = Date.now();
+    const result = await outcome();
+    const elapsed = Date.now() - started;
+
+    expect(result).toEqual({ redirectedTo: NON_ADMIN_REDIRECT });
+    expect(elapsed).toBeGreaterThanOrEqual(1900);
+    expect(elapsed).toBeLessThan(5000);
+    release();
+  }, 10_000);
 });
