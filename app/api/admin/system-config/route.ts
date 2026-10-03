@@ -20,8 +20,10 @@
  * write today, `payment_grace_period_days`, is read directly, so there is no
  * practical effect.
  *
- * Response shapes are deliberately identical to the pre-Step-0 route, so
- * `app/admin/system-config/page.tsx` needs no change.
+ * Response shapes are deliberately identical to the pre-Step-0 route. Since
+ * ADMIN_BOS_CLEANUP slice 2 the only caller is
+ * `app/admin/agentspilot-billing/page.tsx` (grace period and the `billing` rows),
+ * which needed no route change.
  *
  * @module app/api/admin/system-config
  */

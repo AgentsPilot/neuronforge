@@ -20,10 +20,12 @@
  * error level and writes an `AI_PRICING_ZERO_SET` entry — a zero price is allowed
  * (user decision, 2026-09-20) but it means that model is billed at nothing. The
  * one exception is an input-only model (`text-embedding-*`), whose $0 output
- * cost is correct (D-14, QA D-Q9).
+ * cost is correct (D-14, QA D-Q9). The write handlers flush the queued audit
+ * entries before responding (ADMIN_BOS_CLEANUP slice 2, C2-7; the WC-7 pattern),
+ * so a serverless instance frozen after the response cannot lose a price change.
  *
- * Response shapes are unchanged from the pre-Step-0 route, so
- * `app/admin/system-config/page.tsx` needs no change.
+ * Response shapes are unchanged from the pre-Step-0 route, so the Model pricing
+ * page (`app/admin/system-config/page.tsx`) needs no change.
  *
  * @module app/api/admin/system-config/pricing
  */
@@ -41,8 +43,11 @@ import { isInputOnlyPricedModel } from '@/lib/ai/pricing';
 import { createLogger, type Logger } from '@/lib/logger';
 import { aiModelPricingRepository } from '@/lib/repositories/AiModelPricingRepository';
 import type { AiModelPricing } from '@/lib/repositories/types';
+import { AuditTrailService } from '@/lib/services/AuditTrailService';
 
 const logger = createLogger({ module: 'AdminPricingAPI' });
+// The same singleton `logAIPricing*` queue into, so `flush()` drains their rows.
+const auditTrail = AuditTrailService.getInstance();
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -244,6 +249,13 @@ export async function PUT(request: NextRequest) {
 
     await reportZeroPrice(data, gate.user.id, 'update', requestLogger);
 
+    // WC-7 / C2-7: flushed BEFORE the response. `auditLog` only queues, and a
+    // serverless instance can be frozen the moment it responds; a price change
+    // with no audit row is the failure this prevents. Non-blocking: a failed
+    // flush never turns a saved price into a 500. One flush covers both the
+    // update entry and any zero-price entry queued above.
+    await auditTrail.flush().catch((err) => requestLogger.error({ err }, 'Audit flush failed'));
+
     return NextResponse.json({ success: true, data, message: 'Pricing updated successfully' });
   } catch (error) {
     requestLogger.error({ err: error }, 'Error updating pricing');
@@ -303,6 +315,9 @@ export async function POST(request: NextRequest) {
 
     await reportZeroPrice(data, gate.user.id, 'create', requestLogger);
 
+    // WC-7 / C2-7: flushed before the response, non-blocking (see PUT).
+    await auditTrail.flush().catch((err) => requestLogger.error({ err }, 'Audit flush failed'));
+
     return NextResponse.json({ success: true, data, message: 'Pricing created successfully' });
   } catch (error) {
     requestLogger.error({ err: error }, 'Error creating pricing');
@@ -347,6 +362,9 @@ export async function DELETE(request: NextRequest) {
         (err) => requestLogger.error({ err, pricingId: id }, 'Audit failed (non-blocking)')
       );
     }
+
+    // WC-7 / C2-7: flushed before the response, non-blocking (see PUT).
+    await auditTrail.flush().catch((err) => requestLogger.error({ err }, 'Audit flush failed'));
 
     return NextResponse.json({ success: true, message: 'Pricing deleted successfully' });
   } catch (error) {

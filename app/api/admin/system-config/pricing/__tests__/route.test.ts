@@ -8,6 +8,8 @@
  * development.
  */
 
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { NextRequest } from 'next/server';
 
 const getUser = jest.fn();
@@ -42,6 +44,22 @@ jest.mock('@/lib/audit/admin-helpers', () => ({
   logAIPricingUpdated: (...a: unknown[]) => logAIPricingUpdated(...a),
   logAIPricingDeleted: (...a: unknown[]) => logAIPricingDeleted(...a),
   logAIPricingZeroCost: (...a: unknown[]) => logAIPricingZeroCost(...a),
+}));
+
+/**
+ * C2-7 (ADMIN_BOS_CLEANUP slice 2, SA W2-2): the write handlers flush the
+ * queued audit entries BEFORE responding. `flush` resolves one macrotask
+ * later and records `flush:start` / `flush:end`, so a handler that only
+ * called it (`void auditTrail.flush()`) would return before `flush:end`.
+ * The route takes the singleton at module load, so `getInstance` returns a
+ * stable object that delegates to the per-test `mockFlush`.
+ */
+const mockEvents: string[] = [];
+const mockFlush = jest.fn();
+jest.mock('@/lib/services/AuditTrailService', () => ({
+  AuditTrailService: {
+    getInstance: () => ({ flush: () => mockFlush() }),
+  },
 }));
 
 /**
@@ -125,6 +143,12 @@ beforeEach(() => {
   logAIPricingUpdated.mockResolvedValue(undefined);
   logAIPricingDeleted.mockResolvedValue(undefined);
   logAIPricingZeroCost.mockResolvedValue(undefined);
+  mockEvents.length = 0;
+  mockFlush.mockImplementation(async () => {
+    mockEvents.push('flush:start');
+    await new Promise((resolve) => setImmediate(resolve));
+    mockEvents.push('flush:end');
+  });
 });
 
 describe('admin gate on every method', () => {
@@ -494,5 +518,126 @@ describe('zero-price policy (T0-9)', () => {
 
     expect(response.status).toBe(200);
     expect(logAIPricingZeroCost).toHaveBeenCalledTimes(1);
+  });
+});
+
+// C2-7 (ADMIN_BOS_CLEANUP slice 2; SA W2-2): one awaited, non-blocking flush
+// per write handler, after every audit call and before the success response.
+describe('audit flush before respond (C2-7)', () => {
+  beforeEach(() => {
+    logAIPricingUpdated.mockImplementation(async () => {
+      mockEvents.push('updated');
+    });
+    logAIPricingCreated.mockImplementation(async () => {
+      mockEvents.push('created');
+    });
+    logAIPricingDeleted.mockImplementation(async () => {
+      mockEvents.push('deleted');
+    });
+    logAIPricingZeroCost.mockImplementation(async () => {
+      mockEvents.push('zero');
+    });
+  });
+
+  it('F-1: PUT flushes after the audit and before it responds', async () => {
+    const updated = { ...ROW, input_cost_per_token: 2 };
+    mockResults.push({ data: ROW, error: null }, { data: updated, error: null });
+
+    const response = await PUT(request('PUT', { id: ROW.id, input_cost_per_token: 2 }));
+
+    expect(response.status).toBe(200);
+    // `flush:end` is already recorded when the handler resolves: awaited, not fired.
+    expect(mockEvents).toEqual(['updated', 'flush:start', 'flush:end']);
+    expect(mockFlush).toHaveBeenCalledTimes(1);
+  });
+
+  it('F-2: PUT with a zero cost flushes once, after both audit entries', async () => {
+    const zeroRow = { ...ROW, input_cost_per_token: 0 };
+    mockResults.push({ data: ROW, error: null }, { data: zeroRow, error: null });
+
+    const response = await PUT(request('PUT', { id: ROW.id, input_cost_per_token: 0 }));
+
+    expect(response.status).toBe(200);
+    expect(mockEvents).toEqual(['updated', 'zero', 'flush:start', 'flush:end']);
+    expect(mockFlush).toHaveBeenCalledTimes(1);
+  });
+
+  it('F-3: a rejected flush still answers 200 with the unchanged body, and is logged', async () => {
+    const updated = { ...ROW, input_cost_per_token: 2 };
+    mockResults.push({ data: ROW, error: null }, { data: updated, error: null });
+    mockFlush.mockRejectedValue(new Error('audit_trail unreachable'));
+
+    const response = await PUT(request('PUT', { id: ROW.id, input_cost_per_token: 2 }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      success: true,
+      data: updated,
+      message: 'Pricing updated successfully',
+    });
+    expect(
+      logs.some(
+        (entry) =>
+          entry.level === 'error' &&
+          entry.message === 'Audit flush failed' &&
+          (entry.context as { err?: unknown })?.err instanceof Error
+      )
+    ).toBe(true);
+  });
+
+  it('F-4: POST flushes after the audit and before it responds', async () => {
+    mockResults.push({ data: ROW, error: null });
+
+    const response = await POST(
+      request('POST', {
+        provider: 'openai',
+        model_name: 'gpt-4o-mini',
+        input_cost_per_token: 0.00000015,
+        output_cost_per_token: 0.0000006,
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockEvents).toEqual(['created', 'flush:start', 'flush:end']);
+  });
+
+  it('F-5: DELETE flushes after the audit and before it responds', async () => {
+    mockResults.push({ data: ROW, error: null }, { data: [{ id: ROW.id }], error: null });
+
+    const response = await DELETE(request('DELETE', undefined, `?id=${ROW.id}`));
+
+    expect(response.status).toBe(200);
+    expect(mockEvents).toEqual(['deleted', 'flush:start', 'flush:end']);
+  });
+
+  it('F-6: no flush on a 404, a 400 or a refused request', async () => {
+    mockResults.push({ data: null, error: null }, { data: null, error: null });
+    expect((await PUT(request('PUT', { id: ROW.id, input_cost_per_token: 2 }))).status).toBe(404);
+
+    expect((await PUT(request('PUT', { id: ROW.id }))).status).toBe(400);
+
+    isAdmin.mockResolvedValue(false);
+    expect((await PUT(request('PUT', { id: ROW.id, input_cost_per_token: 2 }))).status).toBe(403);
+
+    expect(mockFlush).not.toHaveBeenCalled();
+  });
+
+  it('F-7: an audit call that rejects still flushes, and still answers 200', async () => {
+    const updated = { ...ROW, input_cost_per_token: 2 };
+    mockResults.push({ data: ROW, error: null }, { data: updated, error: null });
+    logAIPricingUpdated.mockRejectedValue(new Error('audit_trail unreachable'));
+
+    const response = await PUT(request('PUT', { id: ROW.id, input_cost_per_token: 2 }));
+
+    expect(response.status).toBe(200);
+    expect(mockFlush).toHaveBeenCalledTimes(1);
+    expect(mockEvents).toEqual(['flush:start', 'flush:end']);
+  });
+
+  // SA W2-2: one awaited flush per write handler, pinned at the source.
+  it('the route awaits `auditTrail.flush().catch(` exactly three times', () => {
+    const source = readFileSync(join(__dirname, '..', 'route.ts'), 'utf8');
+
+    expect(source.split('await auditTrail.flush().catch(').length - 1).toBe(3);
   });
 });

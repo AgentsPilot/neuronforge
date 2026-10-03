@@ -67,6 +67,11 @@ interface NavSection {
  * dashboard to `/admin/platform-dashboard`, listed only in the hidden parked
  * section (URL-only, user decision U-6).
  *
+ * ADMIN_BOS_CLEANUP slice 2 split Model pricing from the AgentsPilot billing
+ * settings, which moved to a new URL-only parked page, and moved Free tier &
+ * onboarding to the parked section: the Business OS free plan is the trial
+ * shown on Plans & entitlements.
+ *
  * Exchange Rates is deliberately NOT listed (requirement §4.3): it writes to
  * the database straight from the browser, so surfacing it would widen exposure.
  *
@@ -130,8 +135,9 @@ const navigationSections: NavSection[] = [
         href: '/admin/business-os-tiers',
         icon: Layers,
         // Names the product so it is never mistaken for the AgentsPilot free
-        // tier on the onboarding page.
-        description: 'Business OS plans, read-only'
+        // tier on the onboarding page. The Business OS free plan is the
+        // entitlements trial, shown here (ADMIN_BOS_CLEANUP FR-FT2).
+        description: 'Business OS plans & trial, read-only'
       },
       {
         // Invite-only signup, Slice 0: issue, list and revoke invite links.
@@ -165,16 +171,14 @@ const navigationSections: NavSection[] = [
         description: 'Models, temperatures & costs'
       },
       {
-        name: 'Model pricing & billing',
+        // ADMIN_BOS_CLEANUP slice 2: only the AI model price table every
+        // Business OS charge is computed from. The AgentsPilot billing settings
+        // (grace period, boost packs, calculator) moved to the parked
+        // AgentsPilot billing page below.
+        name: 'Model pricing',
         href: '/admin/system-config',
         icon: DollarSign,
-        description: 'Pricing, grace period, boosts'
-      },
-      {
-        name: 'Free tier & onboarding',
-        href: '/admin/onboarding',
-        icon: UserCheck,
-        description: 'Free-tier grant & signups'
+        description: 'Sets every Business OS charge'
       },
       {
         name: 'Admin users',
@@ -188,7 +192,8 @@ const navigationSections: NavSection[] = [
     // Parked, not retired (decision D-3): every page still works at its old
     // URL. Hidden from the sidebar (user decision after slice 1 review,
     // 2026-09-25): twelve always-open items forced a scrollbar for pages
-    // nobody operates day to day.
+    // nobody operates day to day. Fifteen items after ADMIN_BOS_CLEANUP
+    // slice 2 (2026-10-03).
     title: 'AgentsPilot (parked)',
     hidden: true,
     items: [
@@ -274,6 +279,23 @@ const navigationSections: NavSection[] = [
         href: '/admin/helpbot-config',
         icon: MessageCircle,
         description: 'AgentsPilot help assistant'
+      },
+      {
+        // ADMIN_BOS_CLEANUP slice 2 (FR-FT1): moved from Settings. This is the
+        // AgentsPilot free-tier grant; the Business OS free plan is the trial
+        // on Plans & entitlements.
+        name: 'Free tier & onboarding',
+        href: '/admin/onboarding',
+        icon: UserCheck,
+        description: 'AgentsPilot free-tier grant & signups'
+      },
+      {
+        // ADMIN_BOS_CLEANUP slice 2 (FR-PR2): grace period, boost packs and the
+        // Pilot Credit calculator, moved off the Model pricing page.
+        name: 'AgentsPilot billing',
+        href: '/admin/agentspilot-billing',
+        icon: DollarSign,
+        description: 'AgentsPilot boost packs, grace, calculator'
       },
     ]
   },
