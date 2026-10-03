@@ -4,9 +4,10 @@
  *
  * Also the slice's source guards: the `<=` expiry rule is the same in this file
  * and in the reversal function (cross-file pin); neither new file imports the
- * entitlements module (G6); and nothing but the barrel and the tests names the
- * lot repository or this module yet (G3, SA W11a-7: searched by exported
- * symbol, so an import through the barrel is caught too).
+ * entitlements module (G6); and nothing outside an exact allowed list names
+ * the lot repository or this module (G3, SA W11a-7: searched by exported
+ * symbol, so an import through the barrel is caught too). Slice 11b turned G3
+ * from "no caller yet" into that exact list (OP-20, SA W11b-8).
  */
 
 import { readdirSync, readFileSync, statSync } from 'fs';
@@ -188,18 +189,28 @@ describe('source guards (G3, G6, W11a-7)', () => {
     'isCreditLotExpired',
   ];
   /**
-   * The two new files, the barrel (the one permitted re-export, not a caller:
-   * W11a-7) and the tests. 11b adds its admin op here, in a reviewable diff.
+   * EXACTLY these files may name the lot repository or the balance core: the
+   * two 11a files, the barrel (the one permitted re-export, not a caller:
+   * W11a-7), the 11b admin credit ops, the accounts route that wires the
+   * repository in, and their tests (SA W11b-8). `adminOps.ts` is deliberately
+   * absent: it takes the repository's type through `creditAdminOps.ts`'s
+   * exported context type, so it names none of the symbols. A new caller is
+   * added here, in a reviewable diff, or this test fails.
    */
-  const ALLOWED = new Set(
-    [
-      'lib/business-os/credits/creditLots.ts',
-      'lib/business-os/credits/__tests__/creditLots.test.ts',
-      'lib/repositories/BusinessOsCreditLotRepository.ts',
-      'lib/repositories/__tests__/BusinessOsCreditLotRepository.test.ts',
-      'lib/repositories/index.ts',
-    ].map((p) => p.split('/').join(sep))
-  );
+  const BARREL = 'lib/repositories/index.ts';
+  const ALLOWED_LIST = [
+    'lib/business-os/credits/creditLots.ts',
+    'lib/business-os/credits/__tests__/creditLots.test.ts',
+    'lib/repositories/BusinessOsCreditLotRepository.ts',
+    'lib/repositories/__tests__/BusinessOsCreditLotRepository.test.ts',
+    BARREL,
+    // Slice 11b.
+    'lib/business-os/credits/creditAdminOps.ts',
+    'lib/business-os/credits/__tests__/creditAdminOps.test.ts',
+    'app/api/admin/business-os/entitlements/accounts/[accountId]/route.ts',
+    'app/api/admin/business-os/entitlements/__tests__/routes.test.ts',
+  ];
+  const ALLOWED = new Set(ALLOWED_LIST.map((p) => p.split('/').join(sep)));
 
   function walk(path: string, out: string[] = []): string[] {
     let stats;
@@ -225,13 +236,28 @@ describe('source guards (G3, G6, W11a-7)', () => {
     expect(files.length).toBeGreaterThan(500);
   });
 
-  it.each(SYMBOLS)('nothing outside the new files, the barrel and their tests names %s yet', (symbol) => {
+  it.each(SYMBOLS)('nothing outside the exact allowed list names %s', (symbol) => {
     const referrers = files
       .filter((file) => readFileSync(file, 'utf8').includes(symbol))
       .map((file) => relative(ROOT, file))
       .filter((rel) => !ALLOWED.has(rel))
       .sort();
     expect(referrers).toEqual([]);
+  });
+
+  it('non-vacuity (W11b-8): every non-barrel, non-test entry of the list really names a symbol, so a stale entry fails', () => {
+    const callers = ALLOWED_LIST.filter((p) => p !== BARREL && !p.includes('/__tests__/'));
+    expect(callers.length).toBeGreaterThan(0);
+    const stale = callers.filter((p) => {
+      const source = readFileSync(join(ROOT, ...p.split('/')), 'utf8');
+      return !SYMBOLS.some((symbol) => source.includes(symbol));
+    });
+    expect(stale).toEqual([]);
+  });
+
+  it('adminOps.ts names none of the symbols (it goes through creditAdminOps.ts)', () => {
+    const source = readFileSync(join(ROOT, 'lib', 'business-os', 'entitlements', 'adminOps.ts'), 'utf8');
+    expect(SYMBOLS.filter((symbol) => source.includes(symbol))).toEqual([]);
   });
 
   it('the barrel only re-exports the repository and does not export creditLots', () => {

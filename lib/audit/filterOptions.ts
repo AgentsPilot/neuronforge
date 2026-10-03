@@ -104,6 +104,8 @@ const GROUP_RULES: readonly GroupRule[] = [
   { prefix: 'BOS_INVITE_', label: 'Business OS Signup Invites' },
   // Slice 5a: a champion's friend invites belong with the other invite events.
   { prefix: 'BOS_FRIEND_INVITE_', label: 'Business OS Signup Invites' },
+  // Credit deduction slice 11b: an admin giving or taking back extra credits.
+  { prefix: 'BOS_CREDIT_LOT_', label: 'Business OS Credits' },
   { prefix: 'AGENTKIT_', label: 'AgentKit' },
   { prefix: 'AIS_', label: 'Agent Intelligence Score' },
   { prefix: 'AI_PRICING_', label: 'AI Pricing' },
