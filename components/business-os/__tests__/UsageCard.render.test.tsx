@@ -103,7 +103,12 @@ const t = (key: string, vars: Record<string, string> = {}) => {
   for (const [name, value] of Object.entries(vars)) text = text.replace(`{${name}}`, value);
   return text;
 };
-const n = (value: number) => new Intl.NumberFormat(mockLang.language, { maximumFractionDigits: 0 }).format(value);
+/** A whole percentage as the card writes it, in the current language (slice 8a). */
+const pct = (value: number) =>
+  new Intl.NumberFormat(mockLang.language, { style: 'percent', maximumFractionDigits: 0 })
+    .format(value / 100)
+    // toHaveTextContent collapses the element's whitespace (es "99 %" uses a no-break space).
+    .replace(/\s/g, ' ');
 
 /** The used / "by you" / "automatic" line under the ring is gone (user decision 2026-10-01), in every state. */
 function expectNoSplitLine() {
@@ -112,7 +117,8 @@ function expectNoSplitLine() {
   const body = screen.getByTestId('credits-card').cloneNode(true) as HTMLElement;
   body.querySelector('[role="tooltip"]')?.remove();
   const text = body.textContent ?? '';
-  const gauged = screen.queryByTestId('credits-of') !== null;
+  // Slice 8a: a gauged ring carries its band (the "of N" line is gone).
+  const gauged = screen.getByTestId('credits-ring').hasAttribute('data-band');
   // "used" is still the centre label of the no-allowance state; a gauged card has no "used" anywhere.
   if (gauged) expect(text).not.toContain(t('usage.used'));
   for (const word of ['by you', 'על ידך', 'por ti', 'automatic', 'אוטומטי', 'automático', 'Nothing used yet', 'עדיין לא נוצל', 'Aún no has usado']) {
@@ -155,17 +161,17 @@ describe('states (English)', () => {
     await act(async () => releases.forEach((r) => r()));
   });
 
-  it('a Founding Partner: left of the allowance, the reset date, and the explanation on the ring', async () => {
+  it('a Founding Partner: the percentage left, the reset date, and the explanation on the ring', async () => {
     await renderWith(FOUNDING_PARTNER);
 
     expect(screen.getByText('Credits')).toBeInTheDocument();
     const date = new Intl.DateTimeFormat('en', { day: 'numeric', month: 'short', timeZone: 'UTC' }).format(new Date(RESETS));
     expect(screen.getByTestId('credits-period')).toHaveTextContent(`Resets ${date}`);
-    // 62.5 → 63 used; left = 32,250 − 63.
-    expect(screen.getByTestId('credits-headline')).toHaveTextContent(n(32187));
+    // Slice 8a: 62.5 used of 32,250 → 99.8% → "99%" (BD-20, rounded down), no "of" line.
+    expect(screen.getByTestId('credits-headline')).toHaveTextContent(pct(99));
     expect(screen.getByText('left')).toBeInTheDocument();
-    expect(screen.getByTestId('credits-of')).toHaveTextContent(`of ${n(32250)}`);
-    expect(screen.getByTestId('credits-arc')).toHaveAttribute('data-low', 'false');
+    expect(screen.queryByTestId('credits-of')).not.toBeInTheDocument();
+    expect(screen.getByTestId('credits-arc')).toHaveAttribute('data-band', 'plenty');
     expectNoSplitLine();
     expectExplainOnlyInTooltip(t('usage.explain.monthly'));
   });
@@ -183,32 +189,38 @@ describe('states (English)', () => {
 
   it('nothing used yet this period', async () => {
     await renderWith(with_({ used: 0, usedByOwner: 0, usedAutomatic: 0, remaining: 32250 }));
-    expect(screen.getByTestId('credits-headline')).toHaveTextContent(n(32250));
+    expect(screen.getByTestId('credits-headline')).toHaveTextContent(pct(100));
     // The "Nothing used yet" wording lived on the removed line (user decision 2026-10-01).
     expectNoSplitLine();
   });
 
-  it('less than one credit used: "less than 1", and one fewer left', async () => {
+  it('less than one credit used: no longer "100%" (100% only when nothing was used)', async () => {
     await renderWith(with_({ used: 0.4, usedByOwner: 0.4, usedAutomatic: 0, remaining: 32249.6 }));
-    expect(screen.getByTestId('credits-headline')).toHaveTextContent(n(32249));
+    expect(screen.getByTestId('credits-headline')).toHaveTextContent(pct(99));
     expectNoSplitLine();
   });
 
-  it('near the allowance: the arc turns orange, and nothing else changes (no warning text)', async () => {
-    await renderWith(with_({ used: 30000, usedByOwner: 30000, usedAutomatic: 0, remaining: 2250 }));
-    expect(screen.getByTestId('credits-arc')).toHaveAttribute('data-low', 'true');
+  it.each([
+    // Slice 8a: the colour is the band of the SHOWN percentage (BD-19).
+    ['59% → blue', 32250 * 0.41, 'comfortable'],
+    ['29% → orange', 32250 * 0.71, 'low'],
+    ['9% → red', 32250 * 0.91, 'below_line'],
+  ])('near the allowance, %s — and nothing else changes (no warning text)', async (_name, used, band) => {
+    await renderWith(with_({ used, usedByOwner: used, usedAutomatic: 0, remaining: 32250 - used }));
+    expect(screen.getByTestId('credits-arc')).toHaveAttribute('data-band', band);
     expect(screen.getByTestId('credits-card').textContent).not.toMatch(/warn|paus|upgrade|limit|running out/i);
   });
 
-  it('over the allowance: 0 left and the true figure used — no "paused" wording', async () => {
+  it('over the allowance: 0% — no "paused" wording', async () => {
     await renderWith(with_({ used: 32260, usedByOwner: 32000, usedAutomatic: 260, remaining: 0 }));
-    expect(screen.getByTestId('credits-headline')).toHaveTextContent('0');
+    expect(screen.getByTestId('credits-headline')).toHaveTextContent(pct(0));
+    expect(screen.getByTestId('credits-ring')).toHaveAttribute('data-band', 'below_line');
     expect(screen.queryByTestId('credits-arc')).not.toBeInTheDocument();
     expectNoSplitLine();
     expect(screen.getByTestId('credits-card').textContent).not.toMatch(/paus|upgrade|limit/i);
   });
 
-  it('a trial: "For your trial", of the one-off total, no reset date and no "per month"', async () => {
+  it('a trial: "For your trial", the percentage of the one-off total, no reset date and no "per month"', async () => {
     await renderWith({
       period: { kind: 'trial_total', resetsOn: null },
       allowance: { amount: 2000, per: 'total' },
@@ -219,8 +231,9 @@ describe('states (English)', () => {
       remaining: 1652,
     });
     expect(screen.getByTestId('credits-period')).toHaveTextContent('For your trial');
-    expect(screen.getByTestId('credits-headline')).toHaveTextContent(n(1652));
-    expect(screen.getByTestId('credits-of')).toHaveTextContent(`of ${n(2000)} in total`);
+    // 1,652 of 2,000 left → 82.6% → "82%".
+    expect(screen.getByTestId('credits-headline')).toHaveTextContent(pct(82));
+    expect(screen.queryByTestId('credits-of')).not.toBeInTheDocument();
     expectExplainOnlyInTooltip(t('usage.explain.trial'));
     expect(screen.getByTestId('credits-card').textContent).not.toMatch(/Resets|per month|every month/);
   });
@@ -235,7 +248,7 @@ describe('states (English)', () => {
       granted: 0,
       remaining: 2000,
     });
-    expect(screen.getByTestId('credits-headline')).toHaveTextContent(n(2000));
+    expect(screen.getByTestId('credits-headline')).toHaveTextContent(pct(100));
     expectNoSplitLine();
   });
 
@@ -287,8 +300,8 @@ describe.each<Lang>(['en', 'he', 'es'])('in %s', (language) => {
   it('renders the title, the figures in the locale, and the direction', async () => {
     const view = await renderWith(FOUNDING_PARTNER);
     expect(screen.getByText(t('usage.title'))).toBeInTheDocument();
-    expect(screen.getByTestId('credits-headline')).toHaveTextContent(n(32187));
-    expect(screen.getByTestId('credits-of')).toHaveTextContent(t('usage.of', { n: n(32250) }));
+    expect(screen.getByTestId('credits-headline')).toHaveTextContent(pct(99));
+    expect(screen.queryByTestId('credits-of')).not.toBeInTheDocument();
     expectNoSplitLine();
     expect(view.getByTestId('credits-card')).toHaveStyle({ direction: language === 'he' ? 'rtl' : 'ltr' });
   });
@@ -403,7 +416,7 @@ describe('refresh triggers (FR-39) — never a timer', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     await act(async () => releases.shift()!());
     await waitFor(() => expect(button).not.toBeDisabled());
-    expect(screen.getByTestId('credits-headline')).toHaveTextContent(n(32187));
+    expect(screen.getByTestId('credits-headline')).toHaveTextContent(pct(99));
   });
 
   it('three triggers during a read cause exactly ONE more read (one request at a time)', async () => {

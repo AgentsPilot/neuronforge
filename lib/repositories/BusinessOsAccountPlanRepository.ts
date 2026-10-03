@@ -22,7 +22,9 @@
 // The two exceptions are deliberate and are account-wide by definition:
 // `findEntitlementInputsBatch` (a cron's claimed batch, scoped by an explicit
 // `IN` list built server-side) and `pagePlans` (the admin report walking every
-// account). Neither takes an id from request input.
+// account). Neither takes an id from request input. `findPeriodAnchorsBatch`
+// (credit deduction slice 8a) is a third of the first kind: an explicit `IN`
+// list the admin Businesses list builds from its own rows.
 //
 // ── WHAT THIS REPOSITORY DOES NOT DO ────────────────────────────────────────
 // It contains no entitlement logic. Resolution is a pure function over the rows
@@ -158,6 +160,9 @@ const OVERRIDE_COLUMNS =
  */
 export const BOS_ENTITLEMENT_BATCH_LIMIT = 100;
 
+/** An account id is an auth user id (a UUID). */
+const ACCOUNT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * The answer from `business_os_tenants_missing_plan_row`.
  *
@@ -269,6 +274,58 @@ export class BusinessOsAccountPlanRepository {
       return { data: data === null ? null : (anchor as string), error: null };
     } catch (error) {
       this.logger.error({ err: error, accountId }, 'Failed to read the plan period anchor');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * `period_anchor` for a batch of accounts — the admin Businesses list's
+   * "Credits left" column (credit deduction slice 8a, SA SQ-42): one query per
+   * 100 accounts instead of one per row.
+   *
+   * Scoped by an explicit `IN` list of account ids (the multi-account form of
+   * CLAUDE.md rule 4); the caller builds it server-side from the admin list's
+   * own profile rows, behind `requireAdmin` — never from request input.
+   *
+   * Anchors come back VERBATIM (microsecond strings, never through a `Date`,
+   * as `findPeriodAnchor`). An account missing from the result has no plan
+   * row. An empty, oversized (> 100) or malformed id list is REFUSED with no
+   * query; a row with no readable anchor is an error. Never throws.
+   */
+  async findPeriodAnchorsBatch(accountIds: readonly string[]): Promise<RepositoryResult<Record<string, string>>> {
+    try {
+      if (!Array.isArray(accountIds) || accountIds.length === 0) {
+        throw new Error('findPeriodAnchorsBatch needs at least one account id');
+      }
+      if (accountIds.length > BOS_ENTITLEMENT_BATCH_LIMIT) {
+        throw new Error(
+          `findPeriodAnchorsBatch accepts at most ${BOS_ENTITLEMENT_BATCH_LIMIT} ids, received ${accountIds.length}`
+        );
+      }
+      if (!accountIds.every((id) => typeof id === 'string' && ACCOUNT_ID_PATTERN.test(id))) {
+        throw new Error('findPeriodAnchorsBatch accepts account ids (UUIDs) only');
+      }
+
+      const { data, error } = await this.supabase
+        .from('business_os_account_plans')
+        .select('user_id, period_anchor')
+        .in('user_id', [...accountIds]);
+
+      if (error) throw error;
+
+      const anchors: Record<string, string> = {};
+      for (const row of (data ?? []) as Array<{ user_id?: unknown; period_anchor?: unknown }>) {
+        if (typeof row.user_id !== 'string' || typeof row.period_anchor !== 'string') {
+          throw new Error('A plan row has no readable period anchor');
+        }
+        anchors[row.user_id] = row.period_anchor;
+      }
+      return { data: anchors, error: null };
+    } catch (error) {
+      this.logger.error(
+        { err: error, count: Array.isArray(accountIds) ? accountIds.length : 0 },
+        'Failed to read plan period anchors'
+      );
       return { data: null, error: error as Error };
     }
   }

@@ -33,6 +33,8 @@ const ROUTE = 'app/api/business-os/usage/route.ts';
 const CARD = 'components/business-os/UsageCard.tsx';
 const SIGNAL = 'lib/business-os/client/creditUsageSignal.ts';
 const DISPLAY = 'lib/business-os/credits/creditDisplay.ts';
+// Slice 8a — the one band and percentage definition.
+const BANDS = 'lib/business-os/credits/creditBands.ts';
 const TYPES = 'lib/business-os/credits/ownerCreditUsageTypes.ts';
 const BUILDER = 'lib/business-os/credits/ownerCreditUsage.ts';
 const DEPS = 'lib/business-os/credits/ownerCreditUsageDeps.ts';
@@ -63,6 +65,7 @@ const OWNER_SURFACE = [
   HISTORY_PANEL,
   'lib/business-os/credits/effectiveFields.ts',
   'lib/business-os/credits/creditHistoryFlag.ts',
+  BANDS,
 ];
 
 describe('1. FR-36: the agent-platform measure is retired from the owner surface', () => {
@@ -120,6 +123,11 @@ describe('3. Q-11: the client-safe files stay client-safe', () => {
     expect(codeOf(read(DISPLAY))).not.toMatch(IMPORT);
   });
 
+  it('creditBands.ts imports nothing (slice 8a, SA SQ-39: the card and the admin screen both load it)', () => {
+    expect(codeOf(read(BANDS))).not.toMatch(IMPORT);
+    expect(codeOf(read(BANDS))).not.toMatch(/\brequire\s*\(/);
+  });
+
   it('ownerCreditUsageTypes.ts has no value import', () => {
     expect(codeOf(read(TYPES))).not.toMatch(VALUE_IMPORT);
   });
@@ -137,10 +145,10 @@ describe('3. Q-11: the client-safe files stay client-safe', () => {
     );
   });
 
-  it('the card imports only those two from the credits directory, and no server module', () => {
+  it('the card imports only those two — and, since slice 8a (SQ-40), the band module — from the credits directory, and no server module', () => {
     const code = codeOf(read(CARD));
     const fromCredits = [...code.matchAll(/from\s+['"]@\/lib\/business-os\/credits\/([^'"]+)['"]/g)].map((m) => m[1]).sort();
-    expect(fromCredits).toEqual(['creditDisplay', 'ownerCreditUsageTypes']);
+    expect(fromCredits).toEqual(['creditBands', 'creditDisplay', 'ownerCreditUsageTypes']);
     expect(code).not.toMatch(/@\/lib\/repositories|supabaseServer|business-os\/entitlements|server-only/);
   });
 });

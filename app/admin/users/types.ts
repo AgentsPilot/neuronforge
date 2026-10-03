@@ -9,6 +9,18 @@ export interface RowBusiness {
   vertical: string;
 }
 
+/**
+ * A Business OS row's credits left (credit deduction slice 8a, FR-48) — the
+ * shape `GET /api/admin/users` sends (`AdminCreditsLeft`), declared here
+ * structurally so this file imports nothing. A percentage only: no credit
+ * count, token or cost. Absent on a row with no business.
+ */
+export type RowCreditsLeft =
+  | { kind: 'percent'; value: number; trial: boolean }
+  | { kind: 'less_than_one'; trial: boolean }
+  | { kind: 'no_allowance' }
+  | { kind: 'unknown' };
+
 export interface AreaTotalsLineView {
   key: string;
   kind: 'area' | 'legacy' | 'unknown';

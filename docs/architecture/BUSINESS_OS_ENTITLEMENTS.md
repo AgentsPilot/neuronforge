@@ -1,6 +1,6 @@
 # Business OS entitlements
 
-> **Last Updated**: 2026-10-02
+> **Last Updated**: 2026-10-03
 
 ## Overview
 
@@ -252,6 +252,8 @@ Credit deduction layer, slice 3 ([workplan](/docs/workplans/BUSINESS_OS_CREDIT_D
 
 **The owner's credit history (slice 7a).** A **Credit history** link on the Credits card opens a side panel that reads `GET /api/business-os/credits/history` (one optional opaque cursor, 50 lines a page, never cached): every ledger row of the card's own window — the same window function as the card (`resolveOwnerCreditWindow` in `lib/business-os/credits/ownerCreditUsage.ts`) — newest first, through the owner's RLS client (`BusinessOsCreditOwnerReadRepository.listLedgerRowsForWindow`, granted columns only). A correction is shown under the service, area, label and trigger of the charge it corrects (`effectiveFields.ts`). It adds **no** importer of this module: `ownerCreditUsage.ts` stays the one registered non-gate importer, its symbol list unchanged.
 
+**The admin "Credits left" column (slice 8a).** `GET /api/admin/users` gives each Business OS row the percentage of credits left the owner's card shows (`creditBands.ts`), read in one batched pass (`lib/business-os/credits/adminCreditPercent.ts`): `getSnapshots` and a batched plan-anchor read per 100 accounts, then the totals per 200 accounts (`user_id, period_start, credits_total` only), under a 2 s budget — on any failure every row reads "Unknown" and the list still answers. `adminCreditPercent.ts` is a **registered non-gate importer** (`getEntitlementService`, `resolveAccountId`, `creditAllowanceForDisplay`) — **display only**: `getSnapshots`, never `check()`. Its wiring, `adminCreditPercentDeps.ts`, is a declared plan-repository reader (`findPeriodAnchorsBatch` only). The route itself imports nothing from this module.
+
 **Credits added: lots (slice 11a).** Credits given to an account on top of its plan — an admin grant now, a boost purchase later — are **lots**, kept apart from the bill ([workplan](/docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_11_WORKPLAN.md) §3, migration `20261017`). **Status: applied to PROD 2026-10-02; written only through the 11b admin ops (`grant_credits`, `reduce_credit_lot`, see [Admin operations](#admin-operations)); nothing is enforced (shadow).**
 
 | Object | What it is |
@@ -300,3 +302,4 @@ What is left of a lot is **always rebuilt from rows**: credits granted minus its
 | 2026-10-02 | Metering: the owner's credit history (credit deduction slice 7a) | One paragraph in the Metering section: the history panel reads the card's own window through the owner's RLS client; no new importer of this module |
 | 2026-10-02 | Metering: credits added as lots (credit deduction slice 11a) | New "Credits added: lots" paragraph and object table in § Metering: `business_os_credit_lots`, `business_os_credit_lot_draws` and their two `service_role`-only write functions (migration `20261017`, not yet applied), append-only by privilege, owner column grants, the per-account advisory lock key that slice 9 / 10 must reuse, the binding consumption order, the one definition of extra credits (`creditLots.ts`), and the lifecycle verdicts (`never` purged, `minimise` on deletion). Nothing reads or writes them before 11b; nothing enforced. No import of this module, no capability or tier change |
 | 2026-10-02 | Admin give / take back credits (credit deduction slice 11b) | § Admin operations: `grant_credits` and `reduce_credit_lot` on the accounts route, their order of checks and refusal codes, replays (no audit entry), the audit keys and entity, and why a credit op leaves the entitlement cache alone (and when that must change, slice 9 / 10). New rule: no admin may run any op on their own account (403 `own_account`, all nine ops, S11-BQ-1; S11-C-11 for the plain-words copy). § Metering: the lots are applied to PROD and written only through the 11b ops (CR11a-2). No new importer of this module (`creditAdminOps.ts` imports nothing from it); no capability or tier change |
+| 2026-10-03 | Metering: the admin "Credits left" column (credit deduction slice 8a) | One paragraph in § Metering: the batched, failure-isolated percentage read for `/admin/users`; `adminCreditPercent.ts` registered as a non-gate importer (display only); `adminCreditPercentDeps.ts` a declared plan-repository reader. No capability or tier change |

@@ -33,8 +33,9 @@ import { createLogger } from '@/lib/logger';
 import { ArchivedBeforeNotice } from '@/app/admin/components/ArchivedBeforeNotice';
 import { BusinessOsPanel } from './components/BusinessOsPanel';
 import { UserNameLine } from './components/UserNameLine';
+import { CreditsLeftCell } from './components/CreditsLeftCell';
 import { countLabels, toStatusFilter, type StatusFilter } from './userName';
-import type { RowBusiness } from './types';
+import type { RowBusiness, RowCreditsLeft } from './types';
 
 const logger = createLogger({ module: 'AdminUsersPage' });
 
@@ -55,6 +56,8 @@ interface User {
    * has none; `undefined` = the lookup failed, so the page says "unknown".
    */
   business?: RowBusiness | null;
+  /** Credits left (credit deduction slice 8a): only on rows with a business. */
+  creditsLeft?: RowCreditsLeft;
 }
 
 /** The business line of a row: the business name, or why there is none. */
@@ -639,6 +642,7 @@ export default function UsersPage() {
             <thead className="bg-slate-900/50">
               <tr className="text-left text-xs text-slate-400 uppercase tracking-wider">
                 <th className="px-4 py-3 font-medium">Business / user</th>
+                <th className="px-4 py-3 font-medium">Credits left</th>
                 <th className="px-4 py-3 font-medium">Contact</th>
                 {/* No status/role column (U-9, 2026-09-26): the Active badge sits
                     beside the name, and the Supabase sign-in role it would have
@@ -652,7 +656,7 @@ export default function UsersPage() {
             <tbody className="divide-y divide-slate-700/50">
               {filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
+                  <td colSpan={7} className="px-6 py-12 text-center text-slate-400">
                     <Database className="w-12 h-12 mx-auto mb-4 text-slate-600" />
                     {searchTerm.trim() !== '' && filter !== 'all' ? (
                       <>
@@ -717,6 +721,9 @@ export default function UsersPage() {
                               <p className="text-xs text-slate-500 font-mono mt-1">{user.id.slice(0, 8)}...</p>
                             </div>
                           </div>
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          <CreditsLeftCell business={user.business} creditsLeft={user.creditsLeft} />
                         </td>
                         <td className="px-6 py-4">
                           <div className="space-y-1">
@@ -790,7 +797,7 @@ export default function UsersPage() {
                       {/* Expanded Details Row */}
                       {isExpanded && (
                         <tr className="bg-slate-900/50">
-                          <td colSpan={6} className="px-6 py-6">
+                          <td colSpan={7} className="px-6 py-6">
                             {isLoading ? (
                               <div className="text-center py-12">
                                 <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>

@@ -142,12 +142,23 @@ const ALLOWED = new Set(
     // session's, through the account seam. Listed in NO_STATE_WRITE_REFERRERS
     // below, which pins it, and the slice 6a test below pins the one method.
     'lib/business-os/credits/ownerCreditUsageDeps.ts',
+    // ── Credit deduction slice 8a, 2026-10-03 — the admin "Credits left" column ─
+    // READ ONLY, `findPeriodAnchorsBatch` and nothing else (SA SQ-43). The one
+    // file that wires the plan repository for the admin Businesses list's
+    // credits pass; the ids are that admin route's own rows, behind
+    // requireAdmin. Listed in NO_STATE_WRITE_REFERRERS below, and the slice 8a
+    // test below pins the one method.
+    'lib/business-os/credits/adminCreditPercentDeps.ts',
   ].map((p) => p.split('/').join(sep))
 );
 
 /** Slice 6a: the owner card's wiring, and the ONE plan-repository method it may call. */
 const OWNER_CREDIT_CARD_WIRING = 'lib/business-os/credits/ownerCreditUsageDeps.ts';
 const OWNER_CREDIT_CARD_METHOD = 'findPeriodAnchor';
+
+/** Slice 8a: the admin "Credits left" wiring, and the ONE plan-repository method it may call. */
+const ADMIN_CREDITS_LEFT_WIRING = 'lib/business-os/credits/adminCreditPercentDeps.ts';
+const ADMIN_CREDITS_LEFT_METHOD = 'findPeriodAnchorsBatch';
 
 /** The methods that CHANGE entitlement state. Component 5's admin routes own these. */
 const WRITE_METHODS = [
@@ -191,6 +202,8 @@ const NO_STATE_WRITE_REFERRERS = [
   'lib/business-os/invites/friendInviteDeps.ts',
   // Credit deduction slice 6a: the owner card's period — READ ONLY, `findPeriodAnchor` and nothing else.
   'lib/business-os/credits/ownerCreditUsageDeps.ts',
+  // Credit deduction slice 8a: the admin "Credits left" column — READ ONLY, `findPeriodAnchorsBatch` and nothing else.
+  'lib/business-os/credits/adminCreditPercentDeps.ts',
 ].map((p) => p.split('/').join(sep));
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -315,6 +328,19 @@ describe('RC-15 — entitlement repository referrers', () => {
     expect([...planted.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1])).toEqual([
       'findPeriodAnchor',
       'updatePlan',
+    ]);
+  });
+
+  it('Slice 8a (SQ-43): the admin "Credits left" wiring calls findPeriodAnchorsBatch on the plan repository and NOTHING else', () => {
+    const source = readFileSync(join(ROOT, ...ADMIN_CREDITS_LEFT_WIRING.split('/')), 'utf8');
+    const calls = [...source.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1]);
+    expect(calls).toEqual([ADMIN_CREDITS_LEFT_METHOD]);
+    // The rule is not vacuous: it would see a second method.
+    const planted =
+      'businessOsAccountPlanRepository.findPeriodAnchorsBatch(a); businessOsAccountPlanRepository.ensurePlanRow(b)';
+    expect([...planted.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1])).toEqual([
+      'findPeriodAnchorsBatch',
+      'ensurePlanRow',
     ]);
   });
 
