@@ -588,6 +588,8 @@ Related: [ADMIN_MODULE_BOS_REORGANISATION_REQUIREMENT.md](/docs/requirements/ADM
 ### Approval
 - [x] Requirement for slices 1 and 5a approved, **with conditions C-1..C-15**. Dev writes one workplan per PR, and SA reviews each workplan before any code.
 
+**SA note, 2026-10-02 (5a workplan review): C-13's FR-BU6 bullet is superseded.** The "Role" on the Businesses detail is not `profiles.role`. `app/api/admin/users/route.ts` overwrites the spread profile's `role` with the Supabase auth role (`authUser?.role || 'authenticated'`), which is `'authenticated'` for every login and is also the fallback when the auth lookup fails. Labelling it "Persona (from profile)" would therefore be false. **Ruling:** remove the Role row and its Shield instead of relabelling it. That meets NF-8's goal (nothing on the detail can be read as admin status) and matches the U-9 precedent, which already dropped the same value from the list. NF-8's premise ("`profiles.role`") and FR-BU6's text are read with this note. Details: [5a workplan](/docs/workplans/ADMIN_BOS_CLEANUP_SLICE_5A_WORKPLAN.md), "SA Workplan Review (2026-10-02)", SA-5a-1.
+
 ---
 
 ## Change History
@@ -598,3 +600,4 @@ Related: [ADMIN_MODULE_BOS_REORGANISATION_REQUIREMENT.md](/docs/requirements/ADM
 | 2026-10-02 | User decisions | OQ-1 answered: option B, read-only. Slices 1 and 5a go first; the rest of §6 stays open. The admin credit add/remove capability is **not** added here: credit-deduction slice 11 (FR-30, FR-31) already owns it, and the user chose not to document it twice. |
 | 2026-10-02 | SA review: slices 1 and 5a | **APPROVED WITH CONDITIONS (C-1..C-15).** Live read-only schema check on `34d665b4`: `agent_executions.total_tokens_used` and `user_subscriptions.plan_name` are confirmed missing, and `user_subscriptions.subscription_status` is a **third phantom** (the Subscription card has never rendered). FR-BU1 is corrected: the fold holds only agents and executions; Plugins and AI spend stay, and the AP Subscription card is retired. TA-4 is overruled in part: the new `GET /api/admin/admins` reads the repository, because guard R2 forbids importing `AdminAccessService` in a route. Slice 7's two routes are folded in and R4 goes to 0/0. Two PRs. Other slices not reviewed. |
 | 2026-10-02 | Q-SA-1 answered | The user keeps the Plugins and AI spend cards on the Businesses detail (SA's recommendation). Slice 1 workplan requested. |
+| 2026-10-02 | SA note: C-13 FR-BU6 superseded | The 5a workplan review found that the detail's "Role" is the Supabase auth role, not `profiles.role`. Ruling: remove the row and its Shield rather than relabel it. |
