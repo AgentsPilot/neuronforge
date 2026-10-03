@@ -64,7 +64,6 @@ describe('QA — who can write user_subscriptions at all', () => {
       'app/api/stripe/cancel-subscription/route.ts', // supabaseAdmin
       'app/api/stripe/reactivate-subscription/route.ts', // supabaseAdmin
       'app/api/stripe/sync-subscription/route.ts', // supabaseAdmin
-      'app/api/stripe/update-subscription/route.ts', // supabaseServer (W-2)
       'app/api/stripe/webhook/route.ts', // supabaseAdmin
       'lib/credits/rewardService.ts', // injected; browser client on purpose (W-3 / D-3)
       'lib/repositories/UserSubscriptionRepository.ts', // supabaseServer by default (S-6)
@@ -102,9 +101,9 @@ describe('QA — injected-client services that write the table', () => {
       // W-1: the only CreditService in the app, on the service role.
       'app/api/run-agent/route.ts::CreditService(supabaseServer)',
       'app/api/stripe/sync-subscription/route.ts::QuotaAllocationService(supabaseAdmin)',
-      'app/api/stripe/webhook/route.ts::QuotaAllocationService(supabaseAdmin)',
-      'app/api/stripe/webhook/route.ts::QuotaAllocationService(supabaseAdmin)',
-      'app/api/stripe/webhook/route.ts::QuotaAllocationService(supabaseAdmin)',
+      // Plan payments P-1 removed three of the five webhook sites with their
+      // Pilot-Credit conversions (handleInvoicePaid, and the subscription-mode
+      // checkout with its welcome bonus). Left: boost pack, subscription.updated.
       'app/api/stripe/webhook/route.ts::QuotaAllocationService(supabaseAdmin)',
       'app/api/stripe/webhook/route.ts::QuotaAllocationService(supabaseAdmin)',
       // Documented exception (SA RC9-8): the caller's cookie client. Only the
@@ -167,33 +166,31 @@ describe('QA — the service-role swaps keep user scoping (tenant-isolation-guar
     expect(src).not.toMatch(/creditService\.\w+\(\s*executionUserId/);
   });
 
-  it('the Stripe plan update stays scoped to the session user and to two columns', () => {
+  // Plan payments P-1 (SA Q-3): update-subscription is refused with 410 and
+  // writes nothing, so the service-role write this test scoped is gone. What
+  // must hold now is that it stays gone.
+  it('the Stripe plan update writes nothing: no service-role client, no table write', () => {
     const src = read('app/api/stripe/update-subscription/route.ts');
-    const at = src.indexOf('await supabaseServer');
-    expect(at).toBeGreaterThan(-1);
-    const stmt = src.slice(at, src.indexOf(';', at));
-    expect(stmt).toContain(".from('user_subscriptions')");
-    expect(stmt).toContain(".eq('user_id', user.id)");
-    const keys = [...stmt.matchAll(/^ {8}(\w+):/gm)].map((m) => m[1]).sort();
-    expect(keys).toEqual(['monthly_amount_usd', 'monthly_credits']);
-    // No balance, no quotas, no account_frozen, no user_id in the payload.
-    for (const forbidden of ['balance', 'account_frozen', 'storage_quota_mb', 'executions_quota', 'user_id:']) {
-      expect(stmt).not.toContain(forbidden);
-    }
+    expect(src).not.toContain('supabaseServer');
+    expect(src).not.toMatch(WRITE_OP);
+    expect(src).not.toContain('getStripeService');
+    expect(src).toContain('status: 410');
   });
 
-  it('create-checkout passes the session user id, not a body value, into both calls', () => {
+  it('create-checkout passes the session user id, not a body value, into its customer-creating call', () => {
     const src = read('app/api/stripe/create-checkout/route.ts');
-    const blocks = [...src.matchAll(/stripeService\.create\w+\(\{([^]*?)\n {6}\}\)/g)].map(
+    // Closing indent 4 since P-1 un-nested the boost-pack call; 6 before.
+    const blocks = [...src.matchAll(/stripeService\.create\w+\(\{([^]*?)\n {4,6}\}\)/g)].map(
       (m) => m[1]
     );
-    expect(blocks).toHaveLength(2);
+    // One call since plan payments P-1: the custom_credits branch is a 410.
+    expect(blocks).toHaveLength(1);
     for (const block of blocks) {
       expect(block).toContain('supabase: supabaseServer,');
       expect(block).toContain('userId: user.id,');
       expect(block).not.toMatch(/userId:\s*(body|provided|params)/);
     }
-    expect(src.match(/supabase: supabaseServer,/g)).toHaveLength(2);
+    expect(src.match(/supabase: supabaseServer,/g)).toHaveLength(1);
 
     // getOrCreateCustomer must stay user-scoped on every statement it issues.
     const svc = read('lib/stripe/StripeService.ts');

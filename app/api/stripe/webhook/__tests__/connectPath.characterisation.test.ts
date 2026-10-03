@@ -34,6 +34,13 @@
  * The route is re-imported for each scenario (`jest.isolateModules`) because it
  * keeps a module-level account-owner cache: without a fresh module, one
  * scenario's cache would decide whether the next one looks the owner up.
+ *
+ * PLAN PAYMENTS P-1 extended this file with platform scenarios (the Business OS
+ * router, deny by default) in a second `describe`. The Connect snapshots must
+ * stay byte-identical (SR-10, SA P1-C4). P-1 needs to assert WHICH deny reason
+ * the route logged, so the logger mock now keeps lines in `mockLogLines`, a side
+ * channel that the P-1 scenarios assert on explicitly and that `run()` never
+ * returns: logging still does not reach any snapshot (P0-C1 holds).
  */
 
 import fs from 'fs';
@@ -46,6 +53,13 @@ type Answer = { data: unknown; error: unknown };
 
 interface Scenario {
   fixture: string;
+  /** Fixture folder under `fixtures/`. Default `connect` (the P-0 scenarios). */
+  fixtureDir?: 'connect' | 'platform';
+  /**
+   * P-1: price id → lookup key the plan catalog should "know". Unset → the real
+   * catalog (empty in P-1, so nothing is recognised).
+   */
+  knownPlanPrices?: Record<string, string>;
   /** Connected account → the business it maps to (resolveAccountOwner). */
   owners?: Record<string, string | null>;
   /** `table:operation` → answer, or answers consumed in order. Default: no rows, no error. */
@@ -59,6 +73,8 @@ const mockEffects: unknown[] = [];
 let mockScenario: Scenario = { fixture: '' };
 let mockEvent: unknown = null;
 const mockDbQueues: Record<string, Answer[]> = {};
+/** Side channel for P-1 log assertions. Never part of a snapshot (P0-C1). */
+const mockLogLines: Array<{ level: string; ctx: unknown; msg: unknown }> = [];
 
 function mockRecord(effect: Record<string, unknown>): void {
   mockEffects.push(effect);
@@ -101,17 +117,34 @@ const mockSupabase = { __mockKind: 'supabase-admin', from: (table: string) => mo
 
 // ─── Module mocks ────────────────────────────────────────────────────────────
 
-// Logging: a no-op that records NOTHING (P0-C1).
+// Logging: records nothing into the snapshot (P0-C1). Lines go only to the
+// `mockLogLines` side channel, which `run()` does not return.
 jest.mock('@/lib/logger', () => {
-  const noop = (): void => undefined;
+  const at = (level: string) => (ctx: unknown, msg?: unknown): void => {
+    mockLogLines.push({ level, ctx, msg });
+  };
   const make = (): Record<string, unknown> => {
     const logger: Record<string, unknown> = {
-      info: noop, warn: noop, error: noop, debug: noop, trace: noop, fatal: noop,
+      info: at('info'), warn: at('warn'), error: at('error'), debug: at('debug'), trace: at('trace'), fatal: at('fatal'),
     };
     logger.child = () => logger;
     return logger;
   };
   return { createLogger: () => make() };
+});
+
+// P-1: the plan catalog is the real one unless a scenario says which prices it knows.
+jest.mock('@/lib/business-os/billing/planPriceCatalog', () => {
+  const actual = jest.requireActual('@/lib/business-os/billing/planPriceCatalog');
+  return {
+    ...actual,
+    planPriceCatalog: {
+      load: (...args: unknown[]) =>
+        mockScenario.knownPlanPrices
+          ? Promise.resolve({ byPriceId: new Map(Object.entries(mockScenario.knownPlanPrices)), fromCache: false })
+          : actual.planPriceCatalog.load(...args),
+    },
+  };
 });
 
 jest.mock('@supabase/supabase-js', () => ({ createClient: () => mockSupabase }));
@@ -232,7 +265,7 @@ jest.mock('@/lib/utils/pricingConfig', () => ({
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const FIXTURES = path.join(__dirname, 'fixtures', 'connect');
+const FIXTURES = path.join(__dirname, 'fixtures');
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 let runStartedAt = Date.now();
 
@@ -257,8 +290,11 @@ async function run(scenario: Scenario) {
   for (const [key, answer] of Object.entries(scenario.db ?? {})) {
     mockDbQueues[key] = Array.isArray(answer) ? [...answer] : [answer];
   }
+  mockLogLines.length = 0;
   mockScenario = scenario;
-  mockEvent = JSON.parse(fs.readFileSync(path.join(FIXTURES, scenario.fixture), 'utf8'));
+  mockEvent = JSON.parse(
+    fs.readFileSync(path.join(FIXTURES, scenario.fixtureDir ?? 'connect', scenario.fixture), 'utf8')
+  );
   runStartedAt = Date.now();
 
   let POST: (req: NextRequest) => Promise<Response> = async () => {
@@ -552,5 +588,115 @@ describe('Stripe webhook, Connect path characterisation (P-0 baseline)', () => {
 
   it('11. platform invoice.paid with no user_id anywhere returns early (sanity only)', async () => {
     expect(await run({ fixture: 'platform-invoice-paid-no-user.json' })).toMatchSnapshot();
+  });
+});
+
+// ─── P-1: platform events through the Business OS router ─────────────────────
+
+type Effect = Record<string, unknown>;
+const effectsOf = (result: unknown): Effect[] => (result as { effects: Effect[] }).effects;
+const statusOf = (result: unknown): number => (result as { status: number }).status;
+
+/** Tables the Pilot-Credit conversions wrote. */
+const CREDIT_TABLES = ['user_subscriptions', 'credit_transactions', 'billing_events', 'subscription_invoices'];
+
+function writesTo(result: unknown, tables: string[]): string[] {
+  return effectsOf(result)
+    .filter((e) => e.type === 'db' && e.operation !== 'select' && tables.includes(String(e.table)))
+    .map((e) => `${e.table}:${e.operation}`);
+}
+
+/** The status the last claim update set, if any. */
+function claimStatus(result: unknown): string | undefined {
+  const updates = effectsOf(result).filter(
+    (e) => e.type === 'db' && e.table === 'processed_webhook_events' && e.operation === 'update'
+  );
+  const last = updates[updates.length - 1] as { chain: unknown[][] } | undefined;
+  return (last?.chain[0][1] as { status?: string } | undefined)?.status;
+}
+
+/** A Stripe client constructed = a Stripe API call was about to be made (retrieve / list). */
+const stripeTouched = (result: unknown): boolean => effectsOf(result).some((e) => e.type === 'stripe.client');
+
+function logged(event: string): Array<{ level: string; reason: unknown; alert: unknown }> {
+  return mockLogLines
+    .filter((l) => (l.ctx as { event?: string } | null)?.event === event)
+    .map((l) => ({
+      level: l.level,
+      reason: (l.ctx as { reason?: unknown }).reason,
+      alert: (l.ctx as { alert?: unknown }).alert,
+    }));
+}
+
+describe('Stripe webhook, platform path through the Business OS router (P-1)', () => {
+  it('P1. hazard: invoice.paid, unknown price, legacy user_id + credits metadata is denied, nothing credited', async () => {
+    const result = await run({ fixtureDir: 'platform', fixture: 'invoice-paid-unknown-price-legacy-metadata.json' });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    expect(writesTo(result, CREDIT_TABLES)).toEqual([]);
+    expect(stripeTouched(result)).toBe(false);
+    expect(logged('bos_billing_event_denied')).toEqual([{ level: 'warn', reason: 'unknown_price', alert: undefined }]);
+  });
+
+  it('P2. fallback shape: invoice.paid, unknown price, no metadata: the customer fallback is never consulted', async () => {
+    const result = await run({ fixtureDir: 'platform', fixture: 'invoice-paid-unknown-price-no-metadata.json' });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    expect(writesTo(result, CREDIT_TABLES)).toEqual([]);
+    expect(stripeTouched(result)).toBe(false);
+    expect(logged('bos_billing_event_denied')).toEqual([{ level: 'warn', reason: 'unknown_price', alert: undefined }]);
+  });
+
+  it('P3. invoice.paid on a price the catalog knows: no handler yet, claim released, 500', async () => {
+    const result = await run({
+      fixtureDir: 'platform',
+      fixture: 'invoice-paid-known-price.json',
+      knownPlanPrices: { price_bos_probe_a: 'bos_router_fixture_probe_a' },
+    });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(500);
+    expect(claimStatus(result)).toBe('failed');
+    expect(writesTo(result, CREDIT_TABLES)).toEqual([]);
+    expect(logged('bos_billing_event_denied')).toEqual([]);
+    expect(logged('bos_billing_plan_unhandled')).toEqual([{ level: 'warn', reason: undefined, alert: undefined }]);
+  });
+
+  it('P4. invoice.paid, unknown price but a Business OS marker: denied and alerted', async () => {
+    const result = await run({ fixtureDir: 'platform', fixture: 'invoice-paid-unknown-price-bos-marker.json' });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    expect(writesTo(result, CREDIT_TABLES)).toEqual([]);
+    expect(logged('bos_billing_event_denied')).toEqual([{ level: 'error', reason: 'metadata_mismatch', alert: true }]);
+  });
+
+  it('P5. subscription-mode checkout.session.completed with credits metadata is denied, nothing credited', async () => {
+    const result = await run({ fixtureDir: 'platform', fixture: 'checkout-completed-subscription.json' });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    expect(writesTo(result, CREDIT_TABLES)).toEqual([]);
+    expect(logged('bos_billing_event_denied')).toEqual([
+      { level: 'warn', reason: 'legacy_subscription_checkout', alert: undefined },
+    ]);
+  });
+
+  it('P6. boost-pack checkout.session.completed still runs the boost-pack branch (TK-5)', async () => {
+    const result = await run({ fixtureDir: 'platform', fixture: 'checkout-completed-boost-pack.json' });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(logged('bos_billing_event_denied')).toEqual([]);
+    expect(writesTo(result, ['credit_transactions'])).toEqual(['credit_transactions:insert']);
+  });
+
+  it('P7. invoice.payment_failed, unknown price is denied: the legacy dunning does not run (SA Q-1)', async () => {
+    const result = await run({ fixtureDir: 'platform', fixture: 'invoice-payment-failed-unknown-price.json' });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    expect(writesTo(result, CREDIT_TABLES)).toEqual([]);
+    expect(logged('bos_billing_event_denied')).toEqual([{ level: 'warn', reason: 'unknown_price', alert: undefined }]);
   });
 });
