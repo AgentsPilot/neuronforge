@@ -365,6 +365,12 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['creditAllowanceForDisplay', 'getEntitlementService', 'resolveAccountId'],
       why: 'Credit deduction slice 6a: the owner dashboard card reads its credit allowance for DISPLAY only. It resolves the session account through the seam (`resolveAccountId`), reads `getSnapshot` (never `check()` / `decide()`) and turns the snapshot into a figure with `creditAllowanceForDisplay`, which keeps the capability id inside the module. It refuses nothing: an owner over the allowance still sees their figures, and refusing by allowance is slices 8 and 10 through `check()`. If this file ever calls `check`, it is a gate and belongs in ENFORCEMENT_POINTS.',
     },
+    // ── Credit deduction slice 8a, 2026-10-03 — the admin "Credits left" column ─
+    {
+      file: 'lib/business-os/credits/adminCreditPercent.ts',
+      symbols: ['creditAllowanceForDisplay', 'getEntitlementService', 'resolveAccountId'],
+      why: 'Credit deduction slice 8a: the admin Businesses list shows each account\'s percentage of credits left, for DISPLAY only. It maps the list\'s rows through the account seam (`resolveAccountId`), reads `getSnapshots` (never `check()` / `decide()`) and turns each snapshot into a figure with `creditAllowanceForDisplay`, which keeps the capability id inside the module. It refuses nothing: every account is listed whatever its figure. If this file ever calls `check`, it is a gate and belongs in ENFORCEMENT_POINTS.',
+    },
     {
       file: 'lib/business-os/invites/paymentHoldGate.ts',
       symbols: ['resolveAccountId'],

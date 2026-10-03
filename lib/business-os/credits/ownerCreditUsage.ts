@@ -60,6 +60,7 @@ import type {
 } from '@/lib/repositories/BusinessOsCreditOwnerReadRepository';
 import { computeCreditBalance, roundToLedger } from './creditBalance';
 import { nextPeriodStartUtc, resolveCreditPeriod, type CreditPeriodDeps } from './creditPeriod';
+import { creditWindowRule, parseLedgerFigure } from './creditWindowRule';
 import { resolveEffectiveFields, type EffectiveFieldsInput } from './effectiveFields';
 import type { OwnerCreditAllowance, OwnerCreditPeriodKind, OwnerCreditUsage } from './ownerCreditUsageTypes';
 
@@ -120,8 +121,8 @@ async function readAllowanceFromEntitlements(
  * an ERROR, never 0 (SA W6-4).
  */
 function figure(value: number | string | null | undefined, column: string): number {
-  const parsed = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : Number.NaN;
-  if (!Number.isFinite(parsed)) {
+  const parsed = parseLedgerFigure(value);
+  if (parsed === null) {
     throw new OwnerCreditUsageError('unreadable_figure', `Unreadable credit figure in ${column}`);
   }
   return parsed;
@@ -243,14 +244,16 @@ async function computeOwnerCreditWindow(
   }
   const period = periodRead.data;
 
-  // No plan row means no allowance, whatever a cached snapshot still says.
-  const allowance = period.anchor === null ? null : allowanceRead;
+  // No plan row means no allowance, whatever a cached snapshot still says. The
+  // rule is shared with the admin column and the low-line record (slice 8a).
+  const rule = creditWindowRule({ anchor: period.anchor, allowance: allowanceRead });
+  const allowance = rule.allowance;
 
   let kind: OwnerCreditPeriodKind;
   let ledger: OwnerLedgerWindow;
   let totals: OwnerCreditTotalsRow[];
 
-  if (allowance?.per === 'total' && period.anchor !== null) {
+  if (rule.mode === 'trial_total' && period.anchor !== null) {
     // A one-off (trial) allowance: every period from the anchor on (V-7).
     kind = 'trial_total';
     ledger = { kind: 'from', fromPeriodStart: period.anchor };
