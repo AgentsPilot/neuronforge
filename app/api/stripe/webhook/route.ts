@@ -20,6 +20,12 @@ import { phaseDurationFor, planPhases, planSchedule, type PlanFrequency } from '
 import { paymentPlanSubscriptionRepository } from '@/lib/repositories/PaymentPlanSubscriptionRepository';
 import { describeChargeAccount } from '@/lib/payments/stripeAccountContext';
 import { createLogger, type Logger } from '@/lib/logger';
+import {
+  BusinessOsHandlerMissingError,
+  denyLevel,
+  dispatchBusinessOsEvent,
+  type BusinessOsFlow,
+} from '@/lib/business-os/billing/webhookDispatcher';
 import Stripe from 'stripe';
 
 // Disable body parsing for webhook signature verification
@@ -42,334 +48,14 @@ const supabaseAdmin = createClient(
   }
 );
 
-/**
- * Handle invoice.paid event
- * - Award credits to user
- * - Record invoice in database
- * - Create credit transaction
- */
-async function handleInvoicePaid(invoice: Stripe.Invoice, log: Logger) {
-  log.info({ stripeInvoiceId: invoice.id }, 'Processing invoice.paid');
-
-  let userId = invoice.metadata?.user_id;
-  let pilotCredits = parseInt(invoice.metadata?.credits || '0');
-
-  // If metadata not in invoice, fetch from subscription
-  const invoiceSubscription = subscriptionIdFromInvoice(invoice);
-  if (!userId) {
-    const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY!);
-
-    try {
-      // Try to get subscription from invoice.subscription field
-      if (invoiceSubscription) {
-        log.info({ subscriptionId: invoiceSubscription }, 'Fetching metadata from invoice.subscription');
-        const subscription = await stripe.subscriptions.retrieve(invoiceSubscription as string);
-        userId = subscription.metadata?.user_id;
-        pilotCredits = parseInt(subscription.metadata?.credits || '0');
-        log.info({ userId, pilotCredits }, 'Found metadata in subscription');
-      }
-      // If still no userId, try getting subscription from customer
-      else if (invoice.customer) {
-        log.info(
-          { customerId: typeof invoice.customer === 'string' ? invoice.customer : invoice.customer.id },
-          'Invoice has no subscription field, looking up by customer'
-        );
-        const subscriptions = await stripe.subscriptions.list({
-          customer: invoice.customer as string,
-          limit: 1
-        });
-
-        if (subscriptions.data.length > 0) {
-          const subscription = subscriptions.data[0];
-          userId = subscription.metadata?.user_id;
-          pilotCredits = parseInt(subscription.metadata?.credits || subscription.metadata?.pilot_credits || '0');
-          log.info({ userId, pilotCredits }, 'Found metadata from customer subscription');
-        }
-      }
-    } catch (stripeError: any) {
-      // This can happen if the customer/subscription doesn't exist in our platform's Stripe account
-      // This is likely a Connect event that wasn't properly identified (missing stripe-account header)
-      log.info(
-        { err: stripeError },
-        'Failed to lookup subscription/customer - likely a Connect event without stripe-account header'
-      );
-      // Keys only: invoice metadata is written by whoever created the invoice
-      // and is not logged as values.
-      log.debug(
-        {
-          stripeInvoiceId: invoice.id,
-          customerId: typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id,
-          metadataKeys: Object.keys(invoice.metadata ?? {}),
-        },
-        'Invoice details'
-      );
-      return; // Exit early - let the Connect handler process it if it's re-sent
-    }
-  }
-
-  if (!userId) {
-    log.error({ stripeInvoiceId: invoice.id }, 'No user_id in invoice or subscription metadata');
-    return;
-  }
-
-  // Check if this is a prorated invoice (subscription upgrade/downgrade mid-cycle)
-  // Proration is detected by:
-  // 1. Multiple line items (typically one negative for unused time, one positive for new subscription)
-  // 2. Line item descriptions containing "Unused time" or "Remaining time"
-  const hasMultipleItems = invoice.lines.data.length > 1;
-  const hasProrationDescriptions = invoice.lines.data.some(line =>
-    line.description?.includes('Unused time') ||
-    line.description?.includes('Remaining time')
-  );
-  const hasProration = hasMultipleItems && hasProrationDescriptions;
-
-  if (hasProration) {
-    log.info({ stripeInvoiceId: invoice.id }, 'Prorated invoice detected - calculating prorated credits');
-    log.info(
-      { lineItems: invoice.lines.data.map(l => ({ desc: l.description, amount: l.amount })) },
-      'Line items'
-    );
-
-    // For prorated invoices, calculate credits based on amount paid
-    // Get pricing config to convert amount to credits
-    const { data: configData } = await supabaseAdmin
-      .from('ais_system_config')
-      .select('pilot_credit_cost_usd')
-      .single();
-
-    const pilotCreditCostUsd = configData?.pilot_credit_cost_usd || 0.00048;
-    const amountPaidUsd = invoice.amount_paid / 100; // Convert cents to USD
-
-    // Calculate prorated Pilot Credits from amount paid
-    pilotCredits = Math.floor(amountPaidUsd / pilotCreditCostUsd);
-
-    log.info(
-      { amountPaidUsd: amountPaidUsd.toFixed(2), pilotCreditCostUsd, pilotCredits },
-      'Prorated calculation'
-    );
-  }
-
-  // Convert Pilot Credits to tokens for storage (fetched from database)
-  const credits = await pilotCreditsToTokens(pilotCredits, supabaseAdmin);
-
-  log.info({ pilotCredits, tokens: credits }, 'Converting Pilot Credits to tokens');
-
-  // Get current user balance
-  const { data: userSub } = await supabaseAdmin
-    .from('user_subscriptions')
-    .select('balance, total_earned')
-    .eq('user_id', userId)
-    .single();
-
-  const currentBalance = userSub?.balance || 0;
-  const currentTotalEarned = userSub?.total_earned || 0;
-
-  // Calculate remaining boost, reward, and welcome bonus credits (these roll over)
-  const { data: boostTransactions } = await supabaseAdmin
-    .from('credit_transactions')
-    .select('credits_delta')
-    .eq('user_id', userId)
-    .eq('activity_type', 'boost_pack_purchase');
-
-  const totalBoostCredits = boostTransactions?.reduce((sum, tx) => sum + tx.credits_delta, 0) || 0;
-
-  const { data: rewardTransactions } = await supabaseAdmin
-    .from('credit_transactions')
-    .select('credits_delta')
-    .eq('user_id', userId)
-    .eq('activity_type', 'reward_credit');
-
-  const totalRewardCredits = rewardTransactions?.reduce((sum, tx) => sum + tx.credits_delta, 0) || 0;
-
-  const { data: welcomeTransactions } = await supabaseAdmin
-    .from('credit_transactions')
-    .select('credits_delta')
-    .eq('user_id', userId)
-    .eq('activity_type', 'welcome_bonus');
-
-  const totalWelcomeCredits = welcomeTransactions?.reduce((sum, tx) => sum + tx.credits_delta, 0) || 0;
-
-  log.info(
-    { boostCredits: totalBoostCredits, rewardCredits: totalRewardCredits, welcomeCredits: totalWelcomeCredits },
-    'Preserving credits'
-  );
-
-  // Calculate new balance based on whether this is an upgrade or renewal
-  let newBalance;
-  if (hasProration) {
-    // SUBSCRIPTION UPGRADE: Add prorated credits to existing balance
-    // User keeps everything they had + gets the upgrade amount
-    newBalance = currentBalance + credits;
-    log.info({ credits, currentBalance }, 'Upgrade detected: adding credits to existing balance');
-  } else {
-    // SUBSCRIPTION RENEWAL: Replace subscription credits, preserve boost/reward/welcome
-    // SUBSCRIPTION CREDITS DO NOT ROLL OVER - replace with new allocation
-    // BUT boost, reward, and welcome credits DO roll over - preserve them
-    newBalance = credits + totalBoostCredits + totalRewardCredits + totalWelcomeCredits;
-    log.info({ credits }, 'Renewal detected: new subscription credits plus rolling credits');
-  }
-  const newTotalEarned = currentTotalEarned + credits;
-
-  // Update user subscription balance
-  const periodStart = invoice.lines?.data[0]?.period?.start;
-  const periodEnd = invoice.lines?.data[0]?.period?.end;
-
-  await supabaseAdmin
-    .from('user_subscriptions')
-    .update({
-      balance: newBalance,
-      total_earned: newTotalEarned,
-      current_period_start: periodStart ? new Date(periodStart * 1000).toISOString() : null,
-      current_period_end: periodEnd ? new Date(periodEnd * 1000).toISOString() : null,
-      last_payment_attempt: new Date().toISOString(),
-      payment_retry_count: 0, // Reset on successful payment
-      status: 'active',
-      agents_paused: false,
-      // Clear free tier expiration on purchase (user is now a paying customer)
-      free_tier_expires_at: null,
-      account_frozen: false
-    })
-    .eq('user_id', userId);
-
-  // Create credit transaction
-  const { error: txError } = await supabaseAdmin
-    .from('credit_transactions')
-    .insert({
-      user_id: userId,
-      credits_delta: credits,
-      balance_before: currentBalance,
-      balance_after: newBalance,
-      transaction_type: 'allocation',
-      activity_type: hasProration ? 'subscription_upgrade' : 'subscription_renewal',
-      description: hasProration
-        ? `Subscription upgrade (prorated): ${credits.toLocaleString()} credits`
-        : `Monthly credit allocation: ${credits.toLocaleString()} credits`,
-      metadata: {
-        stripe_invoice_id: invoice.id,
-        stripe_payment_intent_id: (invoice as any).payment_intent,
-        amount_paid_cents: invoice.amount_paid,
-        is_prorated: hasProration,
-        period_start: invoice.lines?.data[0]?.period?.start ? new Date(invoice.lines.data[0].period.start * 1000).toISOString() : new Date().toISOString(),
-        period_end: invoice.lines?.data[0]?.period?.end ? new Date(invoice.lines.data[0].period.end * 1000).toISOString() : new Date().toISOString()
-      }
-    });
-
-  if (txError) {
-    log.error({ err: txError, userId }, 'Failed to create credit transaction');
-  } else {
-    log.info({ userId }, 'Credit transaction created successfully');
-  }
-
-  // Record invoice in database
-  await supabaseAdmin
-    .from('subscription_invoices')
-    .insert({
-      user_id: userId,
-      stripe_invoice_id: invoice.id,
-      stripe_invoice_pdf: invoice.invoice_pdf || null,
-      stripe_hosted_invoice_url: invoice.hosted_invoice_url || null,
-      stripe_payment_intent_id: (invoice as any).payment_intent || null,
-      invoice_number: invoice.number || `INV-${Date.now()}`,
-      amount_due: (invoice.amount_due / 100).toFixed(2),
-      amount_paid: (invoice.amount_paid / 100).toFixed(2),
-      status: 'paid',
-      credits_allocated: credits,
-      invoice_date: new Date(invoice.created * 1000).toISOString(),
-      due_date: invoice.due_date ? new Date(invoice.due_date * 1000).toISOString() : null,
-      paid_at: new Date().toISOString(),
-      period_start: invoice.lines?.data[0]?.period?.start ? new Date(invoice.lines.data[0].period.start * 1000).toISOString() : new Date().toISOString(),
-      period_end: invoice.lines?.data[0]?.period?.end ? new Date(invoice.lines.data[0].period.end * 1000).toISOString() : new Date().toISOString(),
-      metadata: {
-        stripe_customer_id: typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id,
-        stripe_subscription_id: subscriptionIdFromInvoice(invoice),
-        line_items: invoice.lines.data.map(line => ({
-          description: line.description,
-          amount: line.amount,
-          quantity: line.quantity
-        }))
-      }
-    });
-
-  // Log billing event
-  const { error: billingError } = await supabaseAdmin
-    .from('billing_events')
-    .insert({
-      user_id: userId,
-      event_type: hasProration ? 'subscription_upgraded' : 'renewal_success',
-      credits_delta: credits,
-      description: hasProration
-        ? `Subscription upgraded (prorated): ${credits.toLocaleString()} credits awarded`
-        : `Subscription renewed: ${credits.toLocaleString()} credits awarded`,
-      stripe_event_id: invoice.id,
-      stripe_invoice_id: invoice.id,
-      amount_cents: invoice.amount_paid,
-      currency: invoice.currency
-    });
-
-  if (billingError) {
-    log.error({ err: billingError, userId }, 'Failed to create billing event');
-  } else {
-    log.info({ userId }, 'Billing event created successfully');
-  }
-
-  // AUDIT TRAIL: Log payment and credit allocation
-  try {
-    const { auditLog } = await import('@/lib/services/AuditTrailService');
-
-    await auditLog({
-      action: hasProration ? 'SUBSCRIPTION_UPGRADED' : 'SUBSCRIPTION_RENEWED',
-      entityType: 'subscription',
-      entityId: String(subscriptionIdFromInvoice(invoice) || invoice.id),
-      userId: userId,
-      resourceName: `Subscription Payment`,
-      details: {
-        stripe_invoice_id: invoice.id,
-        stripe_payment_intent_id: (invoice as any).payment_intent,
-        amount_paid_cents: invoice.amount_paid,
-        amount_paid_usd: (invoice.amount_paid / 100).toFixed(2),
-        credits_allocated: credits,
-        pilot_credits: pilotCredits,
-        is_prorated: hasProration,
-        balance_before: currentBalance,
-        balance_after: newBalance,
-        period_start: periodStart ? new Date(periodStart * 1000).toISOString() : null,
-        period_end: periodEnd ? new Date(periodEnd * 1000).toISOString() : null,
-        total_boost_credits: totalBoostCredits,
-        total_reward_credits: totalRewardCredits,
-        total_welcome_credits: totalWelcomeCredits
-      },
-      severity: 'info',
-      complianceFlags: ['SOC2']
-    });
-
-    log.info({ userId }, 'Audit trail logged for payment');
-  } catch (auditError) {
-    log.error({ err: auditError, userId }, 'Audit logging failed (non-critical)');
-  }
-
-  log.info({
-    userId,
-    credits,
-    newBalance
-  }, 'Invoice processed successfully');
-
-  // Allocate storage and execution quotas based on new balance
-  try {
-    const quotaService = new QuotaAllocationService(supabaseAdmin);
-    const quotaResult = await quotaService.allocateQuotasForUser(userId);
-
-    if (quotaResult.success) {
-      log.info(
-        { userId, storageQuotaMB: quotaResult.storageQuotaMB, executionQuota: quotaResult.executionQuota ?? 'unlimited' },
-        'Quotas allocated'
-      );
-    } else {
-      log.error({ err: quotaResult.error, userId }, 'Failed to allocate quotas');
-    }
-  } catch (quotaError: any) {
-    log.error({ err: quotaError, userId }, 'Error allocating quotas (non-critical)');
-  }
-}
+// Plan payments P-1 removed `handleInvoicePaid`, the agent-platform conversion
+// of a platform `invoice.paid` into Pilot Credits. It took the account from
+// `metadata.user_id` (the invoice's, its subscription's, or the customer's FIRST
+// subscription's) and wrote that account's balance on the service role, so the
+// first Business OS plan invoice would have been converted into credits for
+// whichever user the metadata named (as-built G-6). Every platform `invoice.paid`
+// now goes through the Business OS router in `POST`, which either hands it to a
+// plan flow or denies it. Do not bring a metadata-keyed conversion back.
 
 /**
  * Handle invoice.payment_failed event
@@ -483,7 +169,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice, log: Logger) 
 /**
  * Handle checkout.session.completed event
  * - For boost packs: apply credits immediately
- * - For subscriptions: record subscription details
+ * - Subscriptions: no longer converted (plan payments P-1)
  */
 async function handleCheckoutCompleted(session: Stripe.Checkout.Session, log: Logger) {
   log.info({ sessionId: session.id }, 'Processing checkout.session.completed');
@@ -621,255 +307,14 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, log: Lo
     }
 
   } else if (session.mode === 'subscription') {
-    // Subscription created - allocate initial credits and update subscription IDs
-    const pilotCredits = parseInt(session.metadata?.credits || '0');
-
-    if (!pilotCredits) {
-      log.error({ sessionId: session.id, userId }, 'No credits in session metadata for subscription');
-      return;
-    }
-
-    // Convert Pilot Credits to tokens for storage (fetched from database)
-    const credits = await pilotCreditsToTokens(pilotCredits, supabaseAdmin);
-
-    log.info({ pilotCredits, tokens: credits }, 'Converting Pilot Credits to tokens');
-
-    // Get current balance
-    const { data: userSub } = await supabaseAdmin
-      .from('user_subscriptions')
-      .select('balance, total_earned')
-      .eq('user_id', userId)
-      .single();
-
-    const currentBalance = userSub?.balance || 0;
-    const currentTotalEarned = userSub?.total_earned || 0;
-
-    // Calculate remaining boost and reward credits (these roll over)
-    const { data: boostTransactions } = await supabaseAdmin
-      .from('credit_transactions')
-      .select('credits_delta')
-      .eq('user_id', userId)
-      .eq('activity_type', 'boost_pack_purchase');
-
-    const totalBoostCredits = boostTransactions?.reduce((sum, tx) => sum + tx.credits_delta, 0) || 0;
-
-    const { data: rewardTransactions } = await supabaseAdmin
-      .from('credit_transactions')
-      .select('credits_delta')
-      .eq('user_id', userId)
-      .eq('activity_type', 'reward_credit');
-
-    const totalRewardCredits = rewardTransactions?.reduce((sum, tx) => sum + tx.credits_delta, 0) || 0;
-
-    log.info(
-      { boostCredits: totalBoostCredits, rewardCredits: totalRewardCredits },
-      'Initial subscription - preserving credits'
+    // Plan payments P-1 (SA Q-2): the session-time Pilot-Credit conversion that
+    // lived here is gone, with its welcome bonus. The Business OS router denies
+    // every platform subscription-mode session before the switch, so reaching
+    // this line means the router was bypassed. Nothing is written.
+    log.error(
+      { sessionId: session.id, alert: true },
+      'Platform subscription checkout reached the legacy handler; not converted'
     );
-
-    // SUBSCRIPTION CREDITS DO NOT ROLL OVER - replace with new allocation
-    // This applies to initial subscription purchase (free tier → paid transition)
-    // BUT boost and reward credits DO roll over - preserve them
-    const newBalance = credits + totalBoostCredits + totalRewardCredits;
-    const newTotalEarned = currentTotalEarned + credits;
-
-    // Calculate monthly amount from credits
-    const { data: configData } = await supabaseAdmin
-      .from('ais_system_config')
-      .select('pilot_credit_cost_usd')
-      .single();
-
-    const pilotCreditCostUsd = configData?.pilot_credit_cost_usd || 0.00048;
-    const monthlyAmountUsd = pilotCredits * pilotCreditCostUsd;
-
-    // Update subscription with IDs, initial balance, and monthly amounts
-    const { error: updateError } = await supabaseAdmin
-      .from('user_subscriptions')
-      .update({
-        stripe_subscription_id: session.subscription as string,
-        stripe_customer_id: session.customer as string,
-        status: 'active',
-        balance: newBalance,
-        total_earned: newTotalEarned,
-        monthly_credits: pilotCredits,
-        monthly_amount_usd: monthlyAmountUsd,
-        // Clear free tier expiration on purchase (user is now a paying customer)
-        free_tier_expires_at: null,
-        account_frozen: false
-      })
-      .eq('user_id', userId);
-
-    if (updateError) {
-      log.error({ err: updateError, userId }, 'Failed to update subscription');
-    } else {
-      log.info({ userId, monthlyCredits: pilotCredits }, 'Subscription updated successfully with monthly_credits');
-    }
-
-    // Create credit transaction for initial subscription
-    const { error: txError } = await supabaseAdmin
-      .from('credit_transactions')
-      .insert({
-        user_id: userId,
-        credits_delta: credits,
-        balance_before: currentBalance,
-        balance_after: newBalance,
-        transaction_type: 'allocation',
-        activity_type: 'subscription_renewal',
-        description: `Initial subscription: ${credits.toLocaleString()} credits`,
-        metadata: {
-          stripe_session_id: session.id,
-          stripe_subscription_id: session.subscription,
-          amount_paid_cents: session.amount_total
-        }
-      });
-
-    if (txError) {
-      log.error({ err: txError, userId }, 'Failed to create credit transaction');
-    } else {
-      log.info({ userId }, 'Credit transaction created successfully');
-    }
-
-    // Log billing event
-    const { error: billingError } = await supabaseAdmin
-      .from('billing_events')
-      .insert({
-        user_id: userId,
-        event_type: 'subscription_created',
-        credits_delta: credits,
-        description: `Subscription created: ${credits.toLocaleString()} credits awarded`,
-        stripe_event_id: session.id,
-        amount_cents: session.amount_total,
-        currency: 'usd'
-      });
-
-    if (billingError) {
-      log.error({ err: billingError, userId }, 'Failed to create billing event');
-    } else {
-      log.info({ userId }, 'Billing event created successfully');
-    }
-
-    log.info({
-      userId,
-      subscriptionId: session.subscription,
-      credits,
-      newBalance
-    }, 'Subscription checkout completed');
-
-    // Allocate storage and execution quotas based on new balance
-    try {
-      const quotaService = new QuotaAllocationService(supabaseAdmin);
-      const quotaResult = await quotaService.allocateQuotasForUser(userId);
-
-      if (quotaResult.success) {
-        log.info(
-          { userId, storageQuotaMB: quotaResult.storageQuotaMB, executionQuota: quotaResult.executionQuota ?? 'unlimited' },
-          'Quotas allocated'
-        );
-      } else {
-        log.error({ err: quotaResult.error, userId }, 'Failed to allocate quotas');
-      }
-    } catch (quotaError: any) {
-      log.error({ err: quotaError, userId }, 'Error allocating quotas (non-critical)');
-    }
-
-    // Check if this is a NEW subscription (first-time subscriber)
-    // Award welcome bonus if user has never had a subscription before
-    const { data: existingTransactions } = await supabaseAdmin
-      .from('credit_transactions')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('activity_type', 'welcome_bonus')
-      .limit(1);
-
-    const isNewUser = !existingTransactions || existingTransactions.length === 0;
-
-    if (isNewUser) {
-      log.info({ userId }, 'New subscriber detected, awarding welcome bonus');
-
-      // Award 10,417 Pilot Tokens as welcome bonus (half of 20,834)
-      const WELCOME_BONUS_TOKENS = 10417;
-
-      // Convert Pilot Credits to tokens
-      const welcomeBonusCredits = await pilotCreditsToTokens(WELCOME_BONUS_TOKENS, supabaseAdmin);
-
-      // Get updated balance
-      const { data: currentSub } = await supabaseAdmin
-        .from('user_subscriptions')
-        .select('balance, total_earned')
-        .eq('user_id', userId)
-        .single();
-
-      const balanceBeforeBonus = currentSub?.balance || 0;
-      const totalEarnedBeforeBonus = currentSub?.total_earned || 0;
-      const balanceAfterBonus = balanceBeforeBonus + welcomeBonusCredits;
-      const totalEarnedAfterBonus = totalEarnedBeforeBonus + welcomeBonusCredits;
-
-      // Update subscription with welcome bonus
-      await supabaseAdmin
-        .from('user_subscriptions')
-        .update({
-          balance: balanceAfterBonus,
-          total_earned: totalEarnedAfterBonus
-        })
-        .eq('user_id', userId);
-
-      // Create credit transaction for welcome bonus
-      await supabaseAdmin
-        .from('credit_transactions')
-        .insert({
-          user_id: userId,
-          credits_delta: welcomeBonusCredits,
-          balance_before: balanceBeforeBonus,
-          balance_after: balanceAfterBonus,
-          transaction_type: 'allocation',
-          activity_type: 'welcome_bonus',
-          description: `Welcome to NeuronForge! ${WELCOME_BONUS_TOKENS.toLocaleString()} free Pilot Tokens`,
-          metadata: {
-            pilot_tokens: WELCOME_BONUS_TOKENS,
-            raw_tokens: welcomeBonusCredits,
-            stripe_subscription_id: session.subscription
-          }
-        });
-
-      // Log billing event for welcome bonus
-      await supabaseAdmin
-        .from('billing_events')
-        .insert({
-          user_id: userId,
-          event_type: 'welcome_bonus',
-          credits_delta: welcomeBonusCredits,
-          description: `Welcome bonus: ${WELCOME_BONUS_TOKENS.toLocaleString()} Pilot Tokens`,
-          stripe_event_id: session.id,
-          amount_cents: 0, // Free bonus
-          currency: 'usd'
-        });
-
-      log.info(
-        { userId, pilotTokens: WELCOME_BONUS_TOKENS, rawTokens: welcomeBonusCredits },
-        'Welcome bonus awarded'
-      );
-      log.info({ userId, newBalance: balanceAfterBonus }, 'New balance after welcome bonus');
-
-      // Re-allocate quotas with welcome bonus included
-      try {
-        const quotaService = new QuotaAllocationService(supabaseAdmin);
-        const updatedQuotaResult = await quotaService.allocateQuotasForUser(userId);
-
-        if (updatedQuotaResult.success) {
-          log.info(
-            {
-              userId,
-              storageQuotaMB: updatedQuotaResult.storageQuotaMB,
-              executionQuota: updatedQuotaResult.executionQuota ?? 'unlimited',
-            },
-            'Updated quotas with welcome bonus'
-          );
-        }
-      } catch (quotaError: any) {
-        log.error({ err: quotaError, userId }, 'Error re-allocating quotas with welcome bonus');
-      }
-    } else {
-      log.info({ userId }, 'Existing subscriber - no welcome bonus awarded');
-    }
   }
 }
 
@@ -2521,6 +1966,27 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription, log:
 }
 
 /**
+ * Mark a claimed event done, so later deliveries of it are skipped. The one
+ * place a claim is completed: the switch path and the Business OS deny path both
+ * use it (SA P1-C4).
+ */
+async function completeClaim(eventId: string) {
+  await supabaseAdmin
+    .from('processed_webhook_events')
+    .update({ status: 'completed', completed_at: new Date().toISOString() })
+    .eq('event_id', eventId);
+}
+
+/**
+ * Business OS flow handlers, registered by the slices that build them (P-3b adds
+ * `plan`; boost adds `boost`). Empty in P-1: a recognised flow with no handler
+ * throws, the claim is released and Stripe retries (SA Q-6).
+ */
+const BUSINESS_OS_FLOW_HANDLERS: Partial<
+  Record<BusinessOsFlow, (event: Stripe.Event, log: Logger) => Promise<void>>
+> = {};
+
+/**
  * Main webhook handler
  */
 export async function POST(request: NextRequest) {
@@ -2704,6 +2170,41 @@ export async function POST(request: NextRequest) {
       log.info('Connect event from account');
     }
 
+    // Business OS billing router (plan payments P-1). Platform events only:
+    // Connect events never reach it. Deny by default: a platform invoice whose
+    // price is not a Business OS plan price is acknowledged and NO handler runs,
+    // so it can never be converted into Pilot Credits. A resolver that cannot
+    // tell (e.g. Stripe unavailable) throws, and the catch below releases the
+    // claim so Stripe retries.
+    if (!isConnectEvent) {
+      const outcome = await dispatchBusinessOsEvent(event, { log });
+
+      if (outcome.kind === 'deny') {
+        const denied = { event: 'bos_billing_event_denied', reason: outcome.reason, ...outcome.detail };
+        if (denyLevel(outcome.reason) === 'error') {
+          log.error({ ...denied, alert: true }, 'Business OS billing: event denied');
+        } else {
+          log.warn(denied, 'Business OS billing: event denied');
+        }
+        await completeClaim(event.id);
+        return NextResponse.json({ received: true });
+      }
+
+      if (outcome.kind === 'flow') {
+        const handler = BUSINESS_OS_FLOW_HANDLERS[outcome.flow];
+        if (!handler) {
+          log.warn(
+            { event: `bos_billing_${outcome.flow}_unhandled`, lookupKeys: outcome.lookupKeys },
+            'Business OS billing: recognised, but no handler is registered yet; releasing for retry'
+          );
+          throw new BusinessOsHandlerMissingError(outcome.flow);
+        }
+        await handler(event, log);
+        await completeClaim(event.id);
+        return NextResponse.json({ received: true });
+      }
+    }
+
     // Process event based on type
     switch (event.type) {
       case 'invoice.paid':
@@ -2711,8 +2212,10 @@ export async function POST(request: NextRequest) {
           // Business user's client paid an invoice
           await handleConnectInvoicePaid(event.data.object as Stripe.Invoice, connectAccountId!, log);
         } else {
-          // Platform subscription invoice paid
-          await handleInvoicePaid(event.data.object as Stripe.Invoice, log);
+          // The Business OS router decides every platform invoice.paid (flow or
+          // deny) before the switch. Reaching here means it was bypassed; the
+          // old Pilot-Credit conversion is gone (P-1), so nothing is written.
+          log.error({ alert: true }, 'Platform invoice.paid reached the switch; not processed');
         }
         break;
 
@@ -2747,7 +2250,8 @@ export async function POST(request: NextRequest) {
           // Business user's client completed a checkout (invoice payment, booking payment, etc.)
           await handleConnectCheckoutCompleted(event.data.object as Stripe.Checkout.Session, connectAccountId!, log);
         } else {
-          // Platform checkout (boost packs, subscriptions)
+          // Platform checkout: boost packs (subscription sessions are denied by
+          // the Business OS router above)
           await handleCheckoutCompleted(event.data.object as Stripe.Checkout.Session, log);
         }
         break;
@@ -2830,10 +2334,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Only now is it safe to suppress future deliveries of this event.
-    await supabaseAdmin
-      .from('processed_webhook_events')
-      .update({ status: 'completed', completed_at: new Date().toISOString() })
-      .eq('event_id', event.id);
+    await completeClaim(event.id);
 
     return NextResponse.json({ received: true });
 
@@ -2865,8 +2366,16 @@ export async function POST(request: NextRequest) {
     // 5xx, not 400. Stripe retries on any non-2xx, but a 4xx says "this request
     // was malformed, sending it again will not help" — which is the opposite of
     // true when our own handler threw.
+    //
+    // The body never carries the internal message outside development (SA
+    // P1-C5): the status is what Stripe acts on, and the message stays in the
+    // log and in the claim row's failure_message.
     return NextResponse.json(
-      { error: error.message || 'Webhook processing failed' },
+      {
+        success: false,
+        error: 'Webhook processing failed',
+        details: process.env.NODE_ENV === 'development' ? String(error?.message ?? error) : undefined,
+      },
       { status: 500 }
     );
   }

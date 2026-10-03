@@ -147,10 +147,15 @@ describe('Stripe routes keep writing their audit entries (Q-1)', () => {
     expectStored('CUSTOMER_PORTAL_ACCESSED', 'info', ['SOC2']);
   });
 
-  it('create-checkout (custom credits) → SUBSCRIPTION_CHECKOUT_INITIATED', async () => {
+  // Plan payments P-1 (PF-12): credit subscriptions are no longer sold. No
+  // checkout is initiated, so no SUBSCRIPTION_CHECKOUT_INITIATED entry is
+  // written, and Stripe is never called. The event stays registered for the
+  // entries already in the trail.
+  it('create-checkout (custom credits) → 410, no audit entry, no Stripe call', async () => {
     const res = await checkoutPOST(req('http://localhost/api/stripe/create-checkout', { purchaseType: 'custom_credits', pilotCredits: 5000 }));
-    expect(res.status).toBe(200);
-    expect(onlyEntry()).toMatchObject({ action: 'SUBSCRIPTION_CHECKOUT_INITIATED', entityType: 'subscription', entityId: 'cs_1', userId: USER.id });
+    expect(res.status).toBe(410);
+    expect(mockLog).not.toHaveBeenCalled();
+    expect(mockStripeService.createCustomCreditSubscription).not.toHaveBeenCalled();
     expectStored('SUBSCRIPTION_CHECKOUT_INITIATED', 'info', ['SOC2', 'FINANCIAL']);
   });
 

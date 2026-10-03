@@ -4,7 +4,7 @@
 
 **Created by:** BA
 **Date:** 2026-10-02
-**Status:** SA approved with conditions C-1 to C-12 (see "SA Review — 2026-10-02"); C-12 text corrections applied. All business questions decided 2026-10-02 (§10.1). Not yet marked Approved: that needs user or TL sign-off.
+**Status:** SA approved with conditions C-1 to C-12 (see "SA Review — 2026-10-02"); C-12 text corrections applied. All business questions decided 2026-10-02 (§10.1). **APPROVED by the user 2026-10-02:** "I approve the payments scope and committing the two documents in a PR; Dev can start the P-0 and P-1 workplans."
 **Related:** [BUSINESS_OS_PLAN_PAYMENTS_ASBUILT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_ASBUILT.md) (SA as-built, 2026-10-02: the authority on what exists), [BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md](/docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md) (plan of record: Q-B, RD, Q-T, S-4a, WS-1/2/3, TK), [BUSINESS_OS_INVITE_SIGNUP_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_INVITE_SIGNUP_REQUIREMENT.md) (§7.6, §7.7, §7.9, Slice 5c, F5c-1 to F5c-4), [BUSINESS_OS_ENTITLEMENTS.md](/docs/architecture/BUSINESS_OS_ENTITLEMENTS.md), [BUSINESS_OS_CREDIT_PRICING.md](/docs/architecture/BUSINESS_OS_CREDIT_PRICING.md), [BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md) (sibling; untracked in the main checkout on this date; shares the webhook dispatcher).
 
 ## Overview
@@ -410,6 +410,17 @@ P-2 and P-1 can run in parallel. P-1 must be deployed to production before P-3a 
 | `billing_events` | Neither | Business OS writes its own `business_os_billing_events` (SA-P5, Q-T3 reversed); boost does not write `billing_events` either (boost T-16) |
 | Admin views | Separate homes | Boosts on the Costs & credits tab; plan billing on the Tiers page |
 
+**Recorded by P-1 (2026-10-03).** Boost 4a had not landed, so **P-1 built the dispatcher**: `lib/business-os/billing/webhookDispatcher.ts`, called once from `POST /api/stripe/webhook` for platform events only. Boost 4a adds its resolver by appending it to `DEFAULT_RESOLVERS` and registers its handler in the route's `BUSINESS_OS_FLOW_HANDLERS` (`boost`); the metadata marker it uses is `BOS_BOOST_PRODUCT_MARKER` in `lib/business-os/billing/stripeMetadataKeys.ts`. Two resolvers deciding the same event is denied as `resolver_conflict`.
+
+**P-1 carry-forwards (SA P1-C8).** Not lost between slices:
+
+| # | Carry-forward | Owner |
+|---|---|---|
+| CF-1 | **Retired-price recognition (Q-4).** Lookup keys move to the new price when a price changes, so a renewal on the old price would carry an id no key resolves to, and be denied. The P-2 workplan must state how such a renewal is recognised (and with which tier) | P-2 |
+| CF-2 | **Fetch on truncation (Q-8).** P-1 denies an invoice whose `lines.has_more` is true. Before P-3b assigns plans, a truncated **recognised** invoice must be fetched in full, not denied for good | Before P-3b |
+| CF-3 | **`sync-subscription` stays a metadata-driven credit path** until P-10. No Business OS impact, because Business OS uses its own Stripe customer (SA-P1), but it must stay on P-10's list | P-10 |
+| CF-4 | **P-3a writes no legacy metadata** (`user_id`, `credits`, `pilot_credits`) on any Business OS object (C-3, SA Q-7): P-1's router denies a known plan price that carries them, and `handleSubscriptionUpdated` / `sync-subscription` still act on them | P-3a |
+
 ### 9.5 Go-live checklist (P-12)
 
 | # | Item | Owner |
@@ -733,3 +744,4 @@ Dependencies confirmed: P-0 → P-1 → P-3a; P-2 ∥ P-1; P-3a → P-3b → {P-
 | 2026-10-02 | Created (BA) | Scoping of S-4a and invite 5c from the SA as-built of the same day: flows F1–F10, findings PF-1 to PF-8, recurring rules, admin monitoring v1 (AM-1 to AM-10), safety SR-1 to SR-17, slices P-1 to P-12 with migrations 20261025–29 proposed, coordination with Credits Boost, eight business questions (BQ-P1 to BQ-P8), SA items SA-P1 to SA-P18, acceptance criteria |
 | 2026-10-02 | SA review: **APPROVED WITH CONDITIONS** | New section "SA Review — 2026-10-02". SA-P1 to SA-P18 ruled: new server-write-only `business_os_billing_accounts` (RD-3 refined), own append-only `business_os_billing_events` (Q-T3 reversed), one SQL apply function with system actor and shared audit/flush/invalidate helper (Q-T2 refined), anchor set only on a new subscription, stale-claim reclaim plus a pluggable reconcile cron, derived grace with no `past_due` write. New findings PF-9 to PF-15 (Basil shapes, monthly grace blip → 24 h margin, audit flush, paying into a denied path, anchor reset by admin, reset/deletion while subscribed, test mode on the shared DB). Slices re-cut: P-0 added, P-3 → P-3a/P-3b, P-6 → P-6a/P-6b, PF-1 moved to P-6a. BQ-P6 struck (MRR included); BQ-P4 narrowed to above a technical floor; BQ-P5 must precede live prices. Conditions C-1 to C-12 |
 | 2026-10-02 | Decisions, SA-P13 result and C-12 corrections (BA) | User decisions recorded in new §10.1 ("go with the defaults for all questions"): BQ-P1 to BQ-P5, BQ-P7 and BQ-P8 decided as the defaults, BQ-P4 as narrowed by SA; BQ-P6 struck by SA. SA-P13 query result recorded in new §10.2: 897 events, all test mode, 2026-08-25 to 2026-10-02, so the P-2 workplan is unblocked; key prefix, TK-1 and the `billing_events` query still owed. C-12 applied: PF-9 to PF-15 added to §4; flow notes (24 h margin in F5/F6/F8/§6, F4 warning, F7 mechanics, F9 receipt emails, PF-6 lookup); §9 re-cut (P-0, P-3a/P-3b, P-6a/P-6b, dependencies, diagram, migrations, coordination, go-live checklist additions); BQ-P6 struck; two "decided without asking" rows. Status line updated |
+| 2026-10-03 | User approval recorded; P-1 notes in §9.4 (Dev) | Status line records the user's approval of 2026-10-02. §9.4 records that P-1 built the Business OS dispatcher and how boost 4a plugs in (P-1 workplan A2), and the SA P1-C8 carry-forwards CF-1 to CF-4 |
