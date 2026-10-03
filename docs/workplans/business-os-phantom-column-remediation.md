@@ -1,6 +1,6 @@
 # Phantom Column Remediation — Workplan
 
-> **Last Updated**: 2026-09-09
+> **Last Updated**: 2026-10-03
 
 ## Overview
 
@@ -240,6 +240,18 @@ A module-level `getInstance()` starts a `setInterval` flush timer that is never 
 - [ ] Triage live paths vs dead code
 - [ ] Assign an owner — platform debt, not Business OS
 
+### P6a — Admin Businesses stats route (resolved by ADMIN_BOS_CLEANUP slice 5a)
+
+`GET /api/admin/users/[id]/stats` (the Businesses detail at `/admin/users`). Measured missing at ref `34d665b4`.
+
+| Column | Measured | Query | Rule 5 shape | Resolution |
+|---|---|---|---|---|
+| `agent_executions.total_tokens_used` | missing (42703), `34d665b4` | `users/[id]/stats` executions read | **Never worked.** PostgREST rejected the whole select, `\|\| []` turned the error into an empty list, and the AgentsPilot fold showed 0 executions every time | Query **deleted** with its only consumer (the fold) |
+| `user_subscriptions.plan_name` | missing (42703), `34d665b4` | `users/[id]/stats` subscription read | **Never worked** | **Retired** with the Subscription card (AP Pilot-Credit table, never rendered), not patched |
+| `user_subscriptions.subscription_status` | missing, `34d665b4` (real column: `status`). **New**: hidden behind `plan_name`, because PostgREST names only the first unknown column | same | **Never worked** | **Retired**, same |
+
+Source: [ADMIN_BOS_CLEANUP_REQUIREMENT.md](/docs/requirements/ADMIN_BOS_CLEANUP_REQUIREMENT.md) SA Review §A. The two P6 "representative" entries above are therefore resolved at this site; other sites selecting them, if any, are not.
+
 ---
 
 ## Sequencing
@@ -289,6 +301,7 @@ The engineering fix and the procedural fix are different, and the engineering on
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-10-03 | **Stats-route phantoms recorded ([P6a](#p6a--admin-businesses-stats-route-resolved-by-admin_bos_cleanup-slice-5a))** | ADMIN_BOS_CLEANUP slice 5a deleted the `users/[id]/stats` executions read and retired its subscription read. Three columns recorded at `34d665b4`, all **Never worked**: `agent_executions.total_tokens_used`, `user_subscriptions.plan_name`, and the newly found `user_subscriptions.subscription_status`. |
 | 2026-09-10 | **`tsc` claim corrected — the 0 was a crash** | Both auditors ran `npx tsc --noEmit \| grep -c "error TS"` and got 0 from a process that had died of heap exhaustion before emitting a diagnostic. Real figure on `7e432f5b`: **exit 2, 5,084 errors across 616 files**; `.next/` accounts for **4** of them, so the earlier "inflated by generated and test files" explanation does not hold either — 1,932 are in real source. Recorded as [C5](#corrections-register). The CI gate returns to being a baseline-and-ratchet job, and "make `tsc` complete without crashing" becomes its first task. |
 | 2026-09-09 | **Revised after independent audit** | Offir re-ran the list against the live schema. Three v1 claims were wrong ([C1–C3](#corrections-register)) and one was measured on the wrong tree ([C4](#the-tree-problem)). Two new live bugs recorded — `.in('email', <uuids>)` and the fabricated `$75` revenue estimate — both producing wrong output rather than errors. `tsc` is clean at 0 errors, which moves the CI gate from a cleanup project to a config change. Added [Prevention](#prevention) and the ref-stating rule. |
 | 2026-09-07 | Created | Live schema sweep: 530 select pairs across 1,761 files, 48 failing. Found unapplied migrations, 11 broken detector selects, and the missing generated types as common root cause. |
