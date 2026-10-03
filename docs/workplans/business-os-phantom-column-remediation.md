@@ -252,6 +252,18 @@ A module-level `getInstance()` starts a `setInterval` flush timer that is never 
 
 Source: [ADMIN_BOS_CLEANUP_REQUIREMENT.md](/docs/requirements/ADMIN_BOS_CLEANUP_REQUIREMENT.md) SA Review §A. The two P6 "representative" entries above are therefore resolved at this site; other sites selecting them, if any, are not.
 
+### P6b — Admin AI cost drill-down execution detail (resolved by ADMIN_BOS_CLEANUP slice 3)
+
+`GET /api/admin/token-usage/drill-down?execution=<id>` (the execution detail on `/admin/analytics`, "All" scope). Measured missing at ref `19566036`.
+
+| Column | Measured | Query | Rule 5 shape | Resolution |
+|---|---|---|---|---|
+| `workflow_executions.input_data` | missing (42703), `19566036` | drill-down execution run read | **Never worked.** The error was discarded, so the run record was always null. That failure was also the only thing keeping the agent read (prompts, steps, schemas) from running | **Retired**, not rebuilt. Rebuilding it from another column would start sending cross-account run payloads (requirement §8). The select is now `agent_id, started_at, completed_at, status` |
+| `workflow_executions.output_data` | missing (42703), `19566036`. **New**: hidden behind `input_data`, because PostgREST names only the first unknown column | same | **Never worked** | **Retired**, same |
+| `workflow_step_executions.execution_id` | missing (42703), `19566036` (real key: `workflow_execution_id`). **New**: a **filter** column, error discarded | drill-down step-name lookup | **Right idea, wrong column; never loaded** | **Retired at this site for privacy.** Step names are written from the owner's own instructions, so fixing the filter would have started showing owner text across accounts (slice 3 SA workplan review, W3-1). Call rows keep their fallback labels ("Step N") |
+
+Source: [ADMIN_BOS_CLEANUP_REQUIREMENT.md](/docs/requirements/ADMIN_BOS_CLEANUP_REQUIREMENT.md) SA Review — slice 3 §A, and the slice 3 workplan's SA review. The P6 "representative" entry `workflow_executions.input_data` is resolved **at this site only**; other sites selecting it, if any, are not.
+
 ---
 
 ## Sequencing
@@ -301,6 +313,7 @@ The engineering fix and the procedural fix are different, and the engineering on
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-10-03 | **AI cost drill-down phantoms recorded ([P6b](#p6b--admin-ai-cost-drill-down-execution-detail-resolved-by-admin_bos_cleanup-slice-3))** | ADMIN_BOS_CLEANUP slice 3 retired the drill-down's two missing `workflow_executions` payload columns (`input_data`, the newly found `output_data`) and its step-name lookup on the missing filter `workflow_step_executions.execution_id`, all measured at `19566036`. None was patched: each fix would have started sending owner text across accounts. |
 | 2026-10-03 | **Stats-route phantoms recorded ([P6a](#p6a--admin-businesses-stats-route-resolved-by-admin_bos_cleanup-slice-5a))** | ADMIN_BOS_CLEANUP slice 5a deleted the `users/[id]/stats` executions read and retired its subscription read. Three columns recorded at `34d665b4`, all **Never worked**: `agent_executions.total_tokens_used`, `user_subscriptions.plan_name`, and the newly found `user_subscriptions.subscription_status`. |
 | 2026-09-10 | **`tsc` claim corrected — the 0 was a crash** | Both auditors ran `npx tsc --noEmit \| grep -c "error TS"` and got 0 from a process that had died of heap exhaustion before emitting a diagnostic. Real figure on `7e432f5b`: **exit 2, 5,084 errors across 616 files**; `.next/` accounts for **4** of them, so the earlier "inflated by generated and test files" explanation does not hold either — 1,932 are in real source. Recorded as [C5](#corrections-register). The CI gate returns to being a baseline-and-ratchet job, and "make `tsc` complete without crashing" becomes its first task. |
 | 2026-09-09 | **Revised after independent audit** | Offir re-ran the list against the live schema. Three v1 claims were wrong ([C1–C3](#corrections-register)) and one was measured on the wrong tree ([C4](#the-tree-problem)). Two new live bugs recorded — `.in('email', <uuids>)` and the fabricated `$75` revenue estimate — both producing wrong output rather than errors. `tsc` is clean at 0 errors, which moves the CI gate from a cleanup project to a config change. Added [Prevention](#prevention) and the ref-stating rule. |

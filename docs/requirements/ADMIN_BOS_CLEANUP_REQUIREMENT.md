@@ -32,7 +32,8 @@ The admin reorganisation put Business OS (BOS) first in the sidebar. It did not 
 15. [Notes on integration points](#15-notes-on-integration-points)
 16. [SA Review — slices 1 and 5a (2026-10-02)](#sa-review--slices-1-and-5a-2026-10-02)
 17. [SA Review — slice 2 (2026-10-03)](#sa-review--slice-2-2026-10-03)
-18. [Change History](#change-history)
+18. [SA Review — slice 3 (2026-10-03)](#sa-review--slice-3-2026-10-03)
+19. [Change History](#change-history)
 
 ---
 
@@ -736,6 +737,154 @@ Counted with `grep -c 'console\.'` on `5061489b`.
 
 ---
 
+## SA Review — slice 3 (2026-10-03)
+
+**Reviewed by SA — 2026-10-03.** **Scope: slice 3 only.** That is §4.1 FR-AC1..FR-AC6; NF-3 and NF-7 (§3); V-1..V-3 (§2); TA-6, TA-7, TA-8 and TA-11 (§10); the slice 3 lines of §5, §6, §9 and §15; and the Privacy NFR (§8) as it applies here.
+**Ref:** `fix/admin-ai-cost-bos-lens` @ `19566036` (origin/main; slices 1, 2 and 5a merged). Code read on that ref. Live schema probed read-only (§A).
+**Status: APPROVED WITH CONDITIONS.** Dev may write the workplan once conditions C3-1..C3-12 are carried into it. Where this section differs from §3, §4.1, §5 or §10, **this section governs**.
+
+### A. Schema check (TA-11), measured live and read-only
+
+**Method:** a one-column-at-a-time `select(col).limit(0)` probe against the live database with the service role, then each of the route's whole selects replayed the same way, plus the step-name read with its `.eq()` filter. No rows returned, nothing written, no DDL. `npm run schema:check` was not used: the execution-detail reads are `select('*')` or have a filter column, and both are its blind spots.
+
+| Table.column | Live | Used by (`drill-down/route.ts`) | Rule 5 shape |
+|---|---|---|---|
+| `workflow_executions.input_data` | ❌ **missing** (42703) | execution detail `:995` | **Never worked.** Its value is rendered (the Input Data section). Retire it (C3-5). Do not rebuild it |
+| `workflow_executions.output_data` | ❌ **missing** (42703). **NEW, not in V-3.** PostgREST names only the first unknown column, so the whole-select check reports only `input_data` | execution detail `:995` | **Never worked.** Retire it (C3-5) |
+| `workflow_step_executions.execution_id` | ❌ **missing** (42703). **NEW.** It is a **filter** column (`.eq('execution_id', …)`, `:1029`), and the error is discarded. The real key is `workflow_execution_id` (live ✅; `lib/pilot/StateManager.ts:1122` writes it) | step-name lookup `:1027-1029` | **Right idea, wrong column name.** The step names have never loaded, so every call row shows a fallback label. Fix the filter (C3-6) |
+| `workflow_executions.id, agent_id, started_at, completed_at, status` | ✅ | execution detail, execution labels | — |
+| `workflow_executions.final_output, execution_results` | ✅ exist | not used | The look-alikes of input/output. **Must not** be substituted (C3-5) |
+| `agents.id, agent_name, user_prompt, system_prompt, pilot_steps, input_schema, output_schema, connected_plugins, mode, status` | ✅ all exist | execution detail `:1004` | The prompt columns are real. See §B, finding S3-1 |
+| `workflow_step_executions.step_id, step_name` | ✅ | step-name lookup | — |
+| `profiles.id, full_name` | ✅ | label lookups | — |
+| `token_usage`: all 22 columns the route reads from its `select('*')` rows | ✅ all exist | both execution-detail paths | `select('*')` is a schema-check blind spot, so these were probed by hand |
+| Whole select `workflow_executions(agent_id, started_at, completed_at, status)` | ✅ runs | — | This is the shape after C3-5 |
+| Whole select `workflow_step_executions(step_id, step_name)` with `.eq('workflow_execution_id', …)` | ✅ runs | — | This is the shape after C3-6 |
+
+### B. As-built findings
+
+| # | Finding | Effect |
+|---|---|---|
+| **S3-1** | **NF-3 is latent today, and FR-AC5 alone would switch it on.** The phantom makes the `workflow_executions` read fail. Its error is discarded, so `executionInfo` is null (`:993-998`). The agent read runs only `if (executionInfo?.agent_id)` (`:1001`), so **no prompt has ever been sent**. Input and output have never been sent either: they are the phantom columns. If FR-AC5 drops the two phantom columns and nothing else changes, the read succeeds, `agent_id` resolves, and **every "All" scope execution detail starts sending that agent's `user_prompt`, `system_prompt` and `pilot_steps`, for any account**. NF-3 says the route "returns" this text. It does not today. It would from the day FR-AC5 ships alone. | **FR-AC5 and TA-8 are one change.** See the ruling in §C. |
+| S3-2 | **The page reads no drill state from its URL.** It reads only `scope`, `user` and the linked window (`page.tsx:223-250`). `breakdownBy`, `agent`, `execution` and `category` live in React state only. So a hand-edited **page** URL already cannot open the hidden views. The only way to ask for them is a direct call to the API, which is admin-only and with `scope=all` returns the same data anyway. | TA-6 is a consistency rule, not a security boundary. It is still confirmed, because it is cheap and makes FR-AC4 testable on the route (C3-3). |
+| S3-3 | **Default scope.** The page defaults to `bos` unless the URL says `scope=all` exactly (`:223`). The **route** defaults to `all` when `scope` is absent (`:209`), and `wire.qa.test.ts:133` pins that. | Both defaults stay. TA-6 applies only when `scope=bos` is sent. |
+| S3-4 | **The execution path ignores `scope` completely.** `if (q.execution) return await getExecutionCalls(…)` (`:228-230`) runs before any scope logic, and the `single-<token_usage id>` path returns any ledger row by id. | Closed by TA-6 (C3-3). |
+| S3-5 | **In BOS scope, the page drills into Agent by itself.** A row click under Activity, Request Type, Feature, Component, Endpoint or User sets `nextBreakdown = 'agent'` (`:394-421`). So hiding the Agent group-by in the menu alone does not keep an operator out of it, and after TA-6 that click would get a 400. | C3-2 replaces those transitions in BOS scope. |
+| S3-6 | **NF-7 confirmed by code reading.** Business OS calls are built by `buildBosCallContext` (`lib/business-os/llm/callCatalog.ts:279-306`). It sets no `category`, so the tracker records `general` (`lib/ai/providers/baseProvider.ts:142`), which the classifier maps to **System**. Business OS embeddings record `category: 'embedding_generation'` and `activity_type: 'embedding'` (`lib/services/EmbeddingService.ts:124-125`). Neither is in any list, so they fall through to **System** too. The only Business OS `activity_type` extra found is `narration`, which is also System. So in BOS scope the System card is the Total card again, apart from any legacy-tagged rows that carry an AgentsPilot category. | TA-7 is **overruled** in form: hide all four cards in BOS scope, without a measure-then-decide branch (C3-1). |
+| S3-7 | **The execution-detail panel renders only when an agent was found** (`page.tsx:1292`, `executionDetails?.agent &&`). Timing and status sit inside that panel. | After C3-5 an "All" scope execution with an agent shows timing and status again (FR-AC5). An execution with no agent still shows none. That is unchanged and accepted. |
+| S3-8 | **The per-call view of Business OS calls.** Business OS ledger rows carry no `execution_id`, so in BOS scope the Execution group-by lists each call as its own `single-<id>` row. That is the only thing the Execution group-by did for BOS. | Hiding it loses little. The Business OS per-call view is the AI activity view on the Audit trail page, and per-area costs are on Business OS AI. |
+| S3-9 | **Error handling on the execution path.** The executions, agent and step reads all discard `error` (`:993`, `:1002`, `:1026`). `getExecutionCalls` and `getAggregatedData` log through the module `logger`, not the request's `requestLogger`, so those lines carry no `correlationId`. The 500 bodies are `{ success: false, error }`, with no detail, which is compliant. | FR-AC6 and C3-7. |
+| S3-10 | **Only one caller.** `/api/admin/token-usage/drill-down` is fetched only by `app/admin/analytics/page.tsx:312`. Nothing else reads `executionDetails`. | Narrowing the response shape (TA-8) breaks no other consumer. |
+
+### C. Technical rulings
+
+| # | Ruling |
+|---|---|
+| **NF-3 / TA-8** | **In slice 3, in the same PR as FR-AC5, and not optional.** S3-1 is the reason: once the phantom is gone, the prompt read starts working. Shipping FR-AC5 first and TA-8 "later" would turn a latent exposure into a live one for the time in between. Two more reasons. Rule 5 classes `input_data` and `output_data` as **never worked**, and its answer is "rebuild or retire". Rebuilding them from `final_output` or `execution_results` would **start** sending cross-account run payloads, which is exactly what the Privacy NFR (§8) forbids. So retiring them is the TA-8 decision itself. And the user's standing order puts privacy items first. The cost is small: one select narrowed, one response object trimmed, and five page sections deleted. **NF-3's wording is corrected by S3-1:** the text has never reached a browser. |
+| **TA-8, exact cut** | The agent block keeps only **`id`, `name`, `mode`, `status` and `connectedPlugins`** (plugin keys are metadata). `pilot_steps` goes as well as the two prompts, because the steps hold the agent's AI instructions as owner text. `input_schema` and `output_schema` go too, because their field descriptions are owner text and cost analysis does not need them. The cut is made **in the `select`**, so the text never leaves the database. Removing keys from the response object alone is not enough. The execution block keeps `executionId`, `startedAt`, `completedAt` and `status`. Per-call metadata is unchanged. |
+| **TA-6** | **Confirmed and extended.** When `scope=bos`, the route refuses, with a 400 in the standard error format: `breakdownBy=agent` or `breakdownBy=execution`; any `execution` value, including `single-…`; any `agent` value; and any `category` other than absent or `all`. Implement it as one refinement on `DrillDownQuerySchema`, so it runs before the execution short-circuit (S3-4). With `scope=all`, or with `scope` absent, nothing changes (S3-3). |
+| **TA-7** | **Overruled in form. Hide all four category cards in BOS scope: Creation, Execution, Memory and System.** Only the Total card stays. The four categories are AgentsPilot's taxonomy, and the classifier knows no Business OS area. In BOS scope the System card is either the Total repeated (S3-6) or a mislabelled mix. No branch depends on a measurement. **Dev still records one observation in the workplan:** the four card values in BOS scope for the 30-day and 90-day periods, read off the current page. That costs nothing and needs no SQL. The user is told in the slice summary (FYI-3). The route keeps returning `categoryTotals`. It is harmless metadata. |
+| **OI-9 (raw `createClient`)** | **Stays recorded debt. Not in scope.** Slice 3 edits two of the inline reads (the executions columns and the step-name filter) and narrows a third (the agents columns). It **adds no inline read**. Moving them would need new admin, all-accounts methods on three AgentsPilot tables (`workflow_executions`, `agents`, `workflow_step_executions`), each with its own source guard. That is the work OI-9 describes, and none of it is BOS-relevant. This is the same ruling as slice 5a. The workplan names the debt. The label lookups' unpaged `auth.admin.listUsers()` (NF-5) and their discarded errors are also left as they are. |
+| **Logging and error format** | `console.*` is counted in §D: **0** in both files. The 400 that TA-6 adds uses `details: process.env.NODE_ENV === 'development' ? … : undefined`, as the existing validation 400 does. The new and changed log lines go through `requestLogger`, so they carry the `correlationId`. |
+| **Guards and register** | **None move.** The route is a gated `GET` (access doc register row 65), it stays gated, and `requireAdmin` stays its first statement. Nothing is a write, so nothing goes into `adminGate.writes`. No R1/R2 cap changes. No sidebar change, so the nav tests are untouched. The access doc's OI-9 text ("the drill-down route's label lookups and execution-detail path" are still inline) stays true. |
+| **Pinned tests** | No test pins `executionDetails`, the prompts, the category cards or the group-by list. `wire.qa.test.ts:133` pins the route default of `all`, and it must pass unedited. `route.test.ts` mocks `@supabase/supabase-js` with a proxy that resolves every chain to `{ data: [] }`. That is enough for the existing tests, but the execution-detail tests in C3-9 need a mock that records the table, the select string and the filters for each call. |
+| **R-20 / §5** | §5 calls the phantom fix "XS, Low, AP cleanup". S3-1 changes that: it is coupled to a privacy change and ships with it. The slice stays **S–M** overall. |
+
+### D. `console.*` counts and the scope ruling
+
+Counted with `grep -c 'console\.'` on `19566036`.
+
+| File | `console.*` | In the slice 3 diff? | Ruling |
+|---|---|---|---|
+| `app/admin/analytics/page.tsx` (1,760 lines) | **0** | Yes | Compliant. If Dev adds a client log line, it uses `clientLogger`. |
+| `app/api/admin/token-usage/drill-down/route.ts` (1,375 lines) | **0** | Yes | Already Pino. C3-7 moves the execution path onto `requestLogger`. |
+| `app/admin/analytics/linkedWindow.ts` | — | No | Not touched. |
+| `lib/repositories/AdminTokenUsageAnalyticsRepository.ts` | — | No | Not touched. Neither of its reads changes. |
+| the four existing test files under `app/admin/analytics/__tests__/` and `drill-down/__tests__/` | — | Extended | Test files only. |
+
+**Scope ruling.** Nothing needs converting. No file outside the two above should be in the diff, apart from the tests and the phantom register (C3-11). **No scope expansion.**
+
+### E. Conditions
+
+1. **C3-1: Category cards in BOS scope (FR-AC1, TA-7).**
+   - In BOS scope, render **only the Total card**. Creation, Execution, Memory and System are not rendered.
+   - In "All" scope, all five render exactly as today.
+   - Keep the existing grid and card classes (D-4). Do not restyle the Total card.
+2. **C3-2: Group-bys, chips, breadcrumbs and drill path in BOS scope (FR-AC2).**
+   - The Group By list omits **Agent** and **Execution**.
+   - The Agent and Execution active-filter chips and breadcrumbs, and the Category chip, are not rendered. They cannot be set in BOS scope after C3-3/C3-4. This is defence in depth.
+   - The `ContextChips` "N agents" and "N executions" chips are not rendered.
+   - **Drill path (S3-5).** Wherever the "All" scope transition in `handleRowClick` would go to `agent` or `execution`, BOS scope goes instead to the first of `feature`, `component`, `user`, `model`, `provider` that is not already filtered and is not the dimension just clicked. If there is none, the group-by stays as it is.
+   - Derive the list with one `scope`-aware helper, for example `breakdownOptionsFor(scope)`, so the menu and the drill path cannot disagree.
+   - In "All" scope, every transition is unchanged.
+3. **C3-3: The route refuses hidden views in BOS scope (FR-AC4, TA-6).** Use one refinement on `DrillDownQuerySchema`, as ruled in §C. The 400 is the existing `'Invalid query parameters'` shape, with the `NODE_ENV` guard on `details`. Log at `warn` with the rejected parameter **names** only, never values. `scope` absent and `scope=all` behave exactly as today.
+4. **C3-4: Switching to BOS scope clears hidden state (FR-AC3).** In the toggle's handler, and **in the same event** as `setScope('bos')`:
+   - clear `filters.agent`, `filters.execution` and `filters.category`, and their labels;
+   - reset `breakdownBy` to `provider` if it is `agent` or `execution`;
+   - clear `selectedCall` and `executionDetails`.
+
+   React 18 batches these updates, so the first BOS request never carries a refused parameter, and a 400 or blank page cannot occur. Switching back to "All" restores nothing.
+5. **C3-5: The execution read, and the TA-8 cut (FR-AC5, NF-3).** These ship as **one change**.
+   - The `workflow_executions` select becomes `agent_id, started_at, completed_at, status`. Do **not** substitute `final_output` or `execution_results`.
+   - The `agents` select becomes `id, agent_name, connected_plugins, mode, status`.
+   - `executionDetails` loses `inputData` and `outputData`. Its `agent` loses `userPrompt`, `systemPrompt`, `pilotSteps`, `inputSchema` and `outputSchema`.
+   - On the page, delete the matching interface fields and the five render sections: Pilot Steps, Input Schema, Output Schema, Input Data, Output Data and User Prompt. Delete any `expandedSections` key that was used only by them, including the `'pilotSteps'` default. No dead UI is left behind.
+6. **C3-6: The step-name lookup.** The filter becomes `.eq('workflow_execution_id', executionId)`. The select stays `step_id, step_name`.
+7. **C3-7: Failed execution-detail reads are logged (FR-AC6).**
+   - Pass `requestLogger` into `getExecutionCalls`.
+   - Bind `error` on the executions, agents and step-name reads. A failure logs at `error` with `{ err, executionId }`. "No rows", which is PostgREST code `PGRST116` from `.single()`, logs at `warn` or `info`, not `error`.
+   - A failure of those three reads does **not** fail the response. The calls are still returned, and the panel is absent, as S3-7 describes.
+   - A failure of the `token_usage` read still returns the existing 500.
+   - Log no prompt, payload or step text.
+8. **C3-8: No other route change.** The aggregate path, `getAvailableFilters`, the label lookups, the comparison read (OI-P2, parked), the classifier and the `single-` path stay as they are, apart from C3-3. The OI-9 inline client stays, and the workplan names it as debt (§C).
+9. **C3-9: Tests.** Every test below is in the same PR.
+   - **Route, BOS refusals.** With `scope=bos`, each of `breakdownBy=agent`, `breakdownBy=execution`, `execution=<uuid>`, `execution=single-<uuid>`, `agent=<uuid>` and `category=memory` returns 400 **before any read**.
+   - **Route, "All" unchanged.** The same parameters with `scope=all` return 200. `wire.qa.test.ts:133` passes unedited.
+   - **Route, execution detail.** With a per-table mock:
+     - the `workflow_executions` select names neither `input_data` nor `output_data`;
+     - the `agents` select names none of `user_prompt`, `system_prompt`, `pilot_steps`, `input_schema` or `output_schema`;
+     - the step read filters on `workflow_execution_id`;
+     - **the serialised response contains none of** `userPrompt`, `systemPrompt`, `pilotSteps`, `inputSchema`, `outputSchema`, `inputData` or `outputData`, even when the mock returns those columns;
+     - `startedAt` and `status` come through;
+     - a failed executions read is logged and still returns 200 with the calls.
+   - **Page, both scopes.** BOS: no Creation, Execution, Memory or System card, and no Agent or Execution group-by. "All": all of them render. Switching from "All" with Agent selected to BOS sends a request whose `breakdownBy` is not `agent` (C3-4). In BOS, a Feature row click does not request `breakdownBy=agent` (C3-2).
+   - **Source guard.** Add one small co-located test. It asserts that `route.ts` contains neither `input_data` nor `user_prompt`, and that `page.tsx` contains neither `userPrompt` nor `inputData`. This stops a later "restore the detail" edit from bringing the text back silently.
+10. **C3-10: Type check and schema re-check.**
+    - Run `tsc` on the two touched files with `NODE_OPTIONS=--max-old-space-size=8192`, and check the tool's own exit code. `ts-jest` does not type-check in this repo.
+    - Re-run the §A probes, or `npm run schema:check`, after the change. Record the ref and the result in the workplan.
+11. **C3-11: Phantom register, in the same PR.** In `docs/workplans/business-os-phantom-column-remediation.md`, record the three live findings with this ref, their classification (§A) and their resolution (C3-5, C3-6). Add a Change History row. No access-doc change is needed (§C, "Guards and register").
+12. **C3-12: Manual QA, as a platform admin.**
+    - **BOS scope (the default):** only the Total card; no Agent or Execution group-by; clicking through Provider → Model → Activity → a row never lands on Agent; the page does not error.
+    - **"All" scope:** all five cards and every group-by are back. Open one execution with an agent, press "Show details", and check that timing and status show and that no prompt, step, schema, input or output section exists.
+    - **Developer tools:** open the same execution-detail response in the Network tab and check that none of the C3-9 keys is present.
+    - **Switching:** with Agent selected in "All", switch to BOS. Check that there is no error banner and that the group-by is Provider.
+
+### F. PR split and effort
+
+**One PR.** C3-5 cannot be split from TA-8 (S3-1). The page and the route also have to land together. TA-6 refuses parameters that today's page still sends in BOS scope (S3-5), so a route-first PR would break the page until the page PR landed. The PR reverts as a unit (D-6).
+
+**Effort: S to M, about 1.5 days.**
+
+| Part | Estimate |
+|---|---|
+| Page: scope-aware cards, menu, chips and drill path (C3-1, C3-2, C3-4), and deleting the five detail sections (C3-5) | ~0.5 day |
+| Route: TA-6 refinement, the three select or filter fixes, the TA-8 cut, logging (C3-3, C3-5..C3-7) | ~0.25 day |
+| Tests (C3-9) | ~0.5 day |
+| Type check, schema re-check, phantom register, QA (C3-10..C3-12) | ~0.25 day |
+
+### G. For the user (business terms)
+
+There is no blocking question. Three things to know, with the default that applies if you say nothing:
+
+- **FYI-1: Agent text will stop being shown in the cost screen.** The cost screen's execution view in "All" mode will show an agent's name, timing, status and plugins. It will no longer show its instructions, steps, inputs or outputs. Today a defect hides them anyway, and fixing that defect without this change would start showing them for every customer. *Default: removed. Say so if you want any of it kept.*
+- **FYI-2: Business OS mode drills by area, not by agent.** In Business OS mode, clicking down through the table moves from feature to component to account. It never moves to agents or runs, because Business OS has none. The per-call Business OS view stays on the Audit trail's AI activity view.
+- **FYI-3: Business OS mode keeps only the Total card in the top row.** The Creation, Execution, Memory and System cards are AgentsPilot categories. In Business OS mode, almost all of the spend lands in "System", so that card just repeats the Total. All five cards come back in "All" mode. *Default: hide all four in Business OS mode.*
+
+### Approval
+- [x] Requirement for slice 3 approved, **with conditions C3-1..C3-12**. TA-8 is **in** slice 3, in the same PR as FR-AC5. TA-6 is confirmed and extended, TA-7 is overruled in form (C3-1), and OI-9 stays debt. Dev writes one workplan for one PR, and SA reviews it before any code.
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -749,3 +898,4 @@ Counted with `grep -c 'console\.'` on `5061489b`.
 | 2026-10-03 | SA review: slice 2 | **APPROVED WITH CONDITIONS (C2-1..C2-12).** FR-PR2 exception resolved: neither the grace period nor the pilot credit cost has a BOS reader. Their readers are the AgentsPilot platform-subscription paths, and the R-21 Stripe reads are phantoms that ignore the setting anyway. Both move. New parked page `/admin/agentspilot-billing`; no route is added or moved. FR-PR4: the PUT audits with before and after, but the row is only queued, so price-change audits must be flushed (C2-7). `console.*` counted: page 20, `boost-packs` 11, `calculator-config` 6, `/api/pricing/config` 22. FR-PR6 binds the files in the diff; converting the two admin routes is Q-SA2-1 (default yes). Sync stays untouched (C2-1), and a note is added to the §9 Sync line. One PR, about 1 to 1.5 days. |
 | 2026-10-03 | UC-6: slice 2 stays BOS-relevant | The user answered SA's slice 2 question **no**: the AgentsPilot `boost-packs` and `calculator-config` routes are not converted to Pino in slice 2. They are recorded as AgentsPilot debt (11 and 6 `console.*` calls; 8 and 2 unguarded error details). C2-8's page-level conversions still apply. |
 | 2026-10-03 | Slice 2 workplan SA-approved (W2-1..W2-9) | §8 Security NFR now names model price writes as a WC-7 flush exception (C2-7). The parked price-source row in §11 gains the three false info-box lines and the `flush()` early-return limit, for the separate pricing session. SA also found that a saved price kept showing its old value (W2-1); it is fixed in slice 2. |
+| 2026-10-03 | SA review: slice 3 | **APPROVED WITH CONDITIONS (C3-1..C3-12).** Live read-only schema probe on `19566036`: `workflow_executions.input_data` is confirmed missing, and `output_data` and `workflow_step_executions.execution_id` (a filter column; the real key is `workflow_execution_id`) are **two more phantoms**. **NF-3 is latent:** because the executions read fails, the agent prompt read never runs, so fixing FR-AC5 alone would **start** sending prompts across accounts. TA-8 is therefore **in** slice 3, in the same PR, and the cut is made in the `select` (prompts, steps, schemas, input and output). TA-6 is confirmed and extended (also `agent` and `category`); TA-7 is overruled in form: all four category cards hide in BOS scope; the BOS drill path no longer lands on Agent. OI-9 stays debt. `console.*`: 0 in both files. No guard, register or nav-test change. One PR, about 1.5 days. No blocking user question; three FYIs. |
