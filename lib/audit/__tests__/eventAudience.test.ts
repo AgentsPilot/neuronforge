@@ -50,9 +50,10 @@ describe('AUDIT_EVENT_AUDIENCE is exhaustive over the catalogue', () => {
   // +3 Business OS (BOS_FRIEND_INVITE_CREATED, _REVOKED, _REFUSED): Slice 5a.
   // +1 Business OS (PAYMENT_PLAN_CANCELLED): registered so its severity has one
   //    owner; it was written only by its call site, hence "Unknown event" rows.
-  it('pins the split: 28 Business OS, 61 shared, 84 AgentsPilot', () => {
-    expect(registered).toHaveLength(173);
-    expect(eventsTagged('bos')).toHaveLength(28);
+  // +2 Business OS (BOS_CREDIT_LOT_GRANTED, BOS_CREDIT_LOT_REDUCED): credit deduction slice 11b.
+  it('pins the split: 30 Business OS, 61 shared, 84 AgentsPilot', () => {
+    expect(registered).toHaveLength(175);
+    expect(eventsTagged('bos')).toHaveLength(30);
     expect(eventsTagged('shared')).toHaveLength(61);
     expect(eventsTagged('agentspilot')).toHaveLength(84);
   });

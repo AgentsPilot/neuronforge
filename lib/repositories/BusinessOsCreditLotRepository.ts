@@ -37,9 +37,11 @@
 // `.eq('user_id', accountId)` (CLAUDE.md rule 4), and the reversal function
 // re-checks the lot's account under its lock.
 //
-// NO CALLER YET: 11b's admin op is the first. A source guard in
-// `lib/business-os/credits/__tests__/creditLots.test.ts` fails if anything
-// but the barrel and the tests names this repository.
+// CALLERS: the slice 11b admin credit ops (`lib/business-os/credits/creditAdminOps.ts`,
+// through an injected dependency) and the entitlements accounts route that
+// wires this singleton in. A source guard in
+// `lib/business-os/credits/__tests__/creditLots.test.ts` holds the exact list
+// of files allowed to name this repository; any other caller fails it.
 //
 // Methods never throw: they return `{ data, error }`.
 
@@ -179,6 +181,8 @@ class CreditLotRepositoryError extends Error {
 /**
  * A `numeric` as PostgREST returns it: a JSON number or a decimal string.
  * Anything else is an error, never a 0 that would read as "nothing left".
+ * A JS number holds these exactly to 6 dp up to about 9 x 10^9 credits (2^53
+ * micro-credits), unreachable behind the 100,000-credit admin ceiling (CR11a-5).
  */
 function toCredits(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
