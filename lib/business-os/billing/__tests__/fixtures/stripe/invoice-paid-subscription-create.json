@@ -1,0 +1,97 @@
+{
+  "_fixture_source": "HAND-BUILT, Basil-shaped (2025-10-29.clover). NOT a captured payload: replace by running scripts/capture-stripe-billing-fixtures.ts with a sk_test_ key (C-8).",
+  "id": "evt_handbuilt_paid_create",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "created": 1790000100,
+  "livemode": false,
+  "pending_webhooks": 1,
+  "request": {
+    "id": null,
+    "idempotency_key": null
+  },
+  "type": "invoice.paid",
+  "data": {
+    "object": {
+      "id": "in_handbuilt_create",
+      "object": "invoice",
+      "account_country": "US",
+      "amount_due": 2000,
+      "amount_paid": 2000,
+      "amount_remaining": 0,
+      "attempt_count": 1,
+      "billing_reason": "subscription_create",
+      "collection_method": "charge_automatically",
+      "created": 1790000000,
+      "currency": "usd",
+      "customer": "cus_probe_1",
+      "customer_email": "fixture@example.invalid",
+      "customer_name": null,
+      "customer_address": null,
+      "customer_phone": null,
+      "customer_shipping": null,
+      "livemode": false,
+      "metadata": {},
+      "number": "PROBE-0001",
+      "status": "paid",
+      "parent": {
+        "type": "subscription_details",
+        "quote_details": null,
+        "subscription_details": {
+          "metadata": {},
+          "subscription": "sub_probe_1"
+        }
+      },
+      "lines": {
+        "object": "list",
+        "data": [
+          {
+            "id": "il_hb_1",
+            "object": "line_item",
+            "amount": 2000,
+            "currency": "usd",
+            "description": "1 × BOS router fixture probe (at $20.00 / month)",
+            "discount_amounts": [],
+            "discountable": true,
+            "discounts": [],
+            "invoice": "in_handbuilt_create",
+            "livemode": false,
+            "metadata": {},
+            "parent": {
+              "type": "subscription_item_details",
+              "invoice_item_details": null,
+              "subscription_item_details": {
+                "invoice_item": null,
+                "proration": false,
+                "proration_details": {
+                  "credited_items": null
+                },
+                "subscription": "sub_probe_1",
+                "subscription_item": "si_probe_1"
+              }
+            },
+            "period": {
+              "start": 1790000000,
+              "end": 1792592000
+            },
+            "pretax_credit_amounts": [],
+            "pricing": {
+              "type": "price_details",
+              "price_details": {
+                "price": "price_probe_a_handbuilt",
+                "product": "prod_probe_1"
+              },
+              "unit_amount_decimal": "2000"
+            },
+            "quantity": 1,
+            "taxes": []
+          }
+        ],
+        "has_more": false,
+        "total_count": 1,
+        "url": "/v1/invoices/in_handbuilt_create/lines"
+      },
+      "total": 2000
+    }
+  }
+}

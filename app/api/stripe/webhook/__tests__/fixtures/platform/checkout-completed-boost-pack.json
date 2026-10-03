@@ -1,0 +1,24 @@
+{
+  "id": "evt_platform_checkout_boost",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "type": "checkout.session.completed",
+  "livemode": false,
+  "created": 1790002000,
+  "data": {
+    "object": {
+      "id": "cs_platform_boost",
+      "object": "checkout.session",
+      "mode": "payment",
+      "customer": "cus_platform_1",
+      "payment_intent": "pi_platform_boost",
+      "amount_total": 1000,
+      "metadata": {
+        "user_id": "buyer-user",
+        "purchase_type": "boost_pack",
+        "credits": "1000",
+        "boost_pack_id": "bp_1"
+      }
+    }
+  }
+}
