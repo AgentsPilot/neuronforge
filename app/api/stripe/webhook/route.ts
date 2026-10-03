@@ -19,10 +19,16 @@ import { resolveProcessorFee, feeColumns } from '@/lib/payments/processorFee';
 import { phaseDurationFor, planPhases, planSchedule, type PlanFrequency } from '@/lib/payments/planSchedule';
 import { paymentPlanSubscriptionRepository } from '@/lib/repositories/PaymentPlanSubscriptionRepository';
 import { describeChargeAccount } from '@/lib/payments/stripeAccountContext';
+import { createLogger, type Logger } from '@/lib/logger';
 import Stripe from 'stripe';
 
 // Disable body parsing for webhook signature verification
 export const runtime = 'nodejs';
+
+// Module logger. POST derives a per-request child carrying the correlation id
+// and the Stripe event id, and passes it to every handler as `log`, so each
+// line a delivery writes can be found from the event id alone.
+const logger = createLogger({ module: 'stripe-webhook', route: '/api/stripe/webhook' });
 
 // Create admin Supabase client (bypasses RLS)
 const supabaseAdmin = createClient(
@@ -42,8 +48,8 @@ const supabaseAdmin = createClient(
  * - Record invoice in database
  * - Create credit transaction
  */
-async function handleInvoicePaid(invoice: Stripe.Invoice) {
-  console.log('🎯 [Webhook] Processing invoice.paid:', invoice.id);
+async function handleInvoicePaid(invoice: Stripe.Invoice, log: Logger) {
+  log.info({ stripeInvoiceId: invoice.id }, 'Processing invoice.paid');
 
   let userId = invoice.metadata?.user_id;
   let pilotCredits = parseInt(invoice.metadata?.credits || '0');
@@ -56,15 +62,18 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
     try {
       // Try to get subscription from invoice.subscription field
       if (invoiceSubscription) {
-        console.log('📋 [Webhook] Fetching metadata from invoice.subscription:', invoiceSubscription);
+        log.info({ subscriptionId: invoiceSubscription }, 'Fetching metadata from invoice.subscription');
         const subscription = await stripe.subscriptions.retrieve(invoiceSubscription as string);
         userId = subscription.metadata?.user_id;
         pilotCredits = parseInt(subscription.metadata?.credits || '0');
-        console.log('✅ [Webhook] Found metadata in subscription:', { userId, pilotCredits });
+        log.info({ userId, pilotCredits }, 'Found metadata in subscription');
       }
       // If still no userId, try getting subscription from customer
       else if (invoice.customer) {
-        console.log('📋 [Webhook] Invoice has no subscription field, looking up by customer:', invoice.customer);
+        log.info(
+          { customerId: typeof invoice.customer === 'string' ? invoice.customer : invoice.customer.id },
+          'Invoice has no subscription field, looking up by customer'
+        );
         const subscriptions = await stripe.subscriptions.list({
           customer: invoice.customer as string,
           limit: 1
@@ -74,20 +83,32 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
           const subscription = subscriptions.data[0];
           userId = subscription.metadata?.user_id;
           pilotCredits = parseInt(subscription.metadata?.credits || subscription.metadata?.pilot_credits || '0');
-          console.log('✅ [Webhook] Found metadata from customer subscription:', { userId, pilotCredits });
+          log.info({ userId, pilotCredits }, 'Found metadata from customer subscription');
         }
       }
     } catch (stripeError: any) {
       // This can happen if the customer/subscription doesn't exist in our platform's Stripe account
       // This is likely a Connect event that wasn't properly identified (missing stripe-account header)
-      console.log('⚠️ [Webhook] Failed to lookup subscription/customer - likely a Connect event without stripe-account header:', stripeError.message);
-      console.log('ℹ️  [Webhook] Invoice details:', { invoiceId: invoice.id, customer: invoice.customer, metadata: invoice.metadata });
+      log.info(
+        { err: stripeError },
+        'Failed to lookup subscription/customer - likely a Connect event without stripe-account header'
+      );
+      // Keys only: invoice metadata is written by whoever created the invoice
+      // and is not logged as values.
+      log.debug(
+        {
+          stripeInvoiceId: invoice.id,
+          customerId: typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id,
+          metadataKeys: Object.keys(invoice.metadata ?? {}),
+        },
+        'Invoice details'
+      );
       return; // Exit early - let the Connect handler process it if it's re-sent
     }
   }
 
   if (!userId) {
-    console.error('❌ [Webhook] No user_id in invoice or subscription metadata');
+    log.error({ stripeInvoiceId: invoice.id }, 'No user_id in invoice or subscription metadata');
     return;
   }
 
@@ -103,8 +124,11 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
   const hasProration = hasMultipleItems && hasProrationDescriptions;
 
   if (hasProration) {
-    console.log('🔄 [Webhook] Prorated invoice detected - calculating prorated credits');
-    console.log('📦 Line items:', invoice.lines.data.map(l => ({ desc: l.description, amount: l.amount })));
+    log.info({ stripeInvoiceId: invoice.id }, 'Prorated invoice detected - calculating prorated credits');
+    log.info(
+      { lineItems: invoice.lines.data.map(l => ({ desc: l.description, amount: l.amount })) },
+      'Line items'
+    );
 
     // For prorated invoices, calculate credits based on amount paid
     // Get pricing config to convert amount to credits
@@ -119,13 +143,16 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
     // Calculate prorated Pilot Credits from amount paid
     pilotCredits = Math.floor(amountPaidUsd / pilotCreditCostUsd);
 
-    console.log(`💰 [Webhook] Prorated calculation: $${amountPaidUsd.toFixed(2)} ÷ $${pilotCreditCostUsd} = ${pilotCredits} Pilot Credits`);
+    log.info(
+      { amountPaidUsd: amountPaidUsd.toFixed(2), pilotCreditCostUsd, pilotCredits },
+      'Prorated calculation'
+    );
   }
 
   // Convert Pilot Credits to tokens for storage (fetched from database)
   const credits = await pilotCreditsToTokens(pilotCredits, supabaseAdmin);
 
-  console.log(`💰 Converting ${pilotCredits} Pilot Credits → ${credits} tokens`);
+  log.info({ pilotCredits, tokens: credits }, 'Converting Pilot Credits to tokens');
 
   // Get current user balance
   const { data: userSub } = await supabaseAdmin
@@ -162,7 +189,10 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
 
   const totalWelcomeCredits = welcomeTransactions?.reduce((sum, tx) => sum + tx.credits_delta, 0) || 0;
 
-  console.log(`🔄 [Webhook] Preserving credits - Boost: ${totalBoostCredits}, Rewards: ${totalRewardCredits}, Welcome: ${totalWelcomeCredits}`);
+  log.info(
+    { boostCredits: totalBoostCredits, rewardCredits: totalRewardCredits, welcomeCredits: totalWelcomeCredits },
+    'Preserving credits'
+  );
 
   // Calculate new balance based on whether this is an upgrade or renewal
   let newBalance;
@@ -170,13 +200,13 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
     // SUBSCRIPTION UPGRADE: Add prorated credits to existing balance
     // User keeps everything they had + gets the upgrade amount
     newBalance = currentBalance + credits;
-    console.log(`📈 [Webhook] Upgrade detected: Adding ${credits.toLocaleString()} to existing balance ${currentBalance.toLocaleString()}`);
+    log.info({ credits, currentBalance }, 'Upgrade detected: adding credits to existing balance');
   } else {
     // SUBSCRIPTION RENEWAL: Replace subscription credits, preserve boost/reward/welcome
     // SUBSCRIPTION CREDITS DO NOT ROLL OVER - replace with new allocation
     // BUT boost, reward, and welcome credits DO roll over - preserve them
     newBalance = credits + totalBoostCredits + totalRewardCredits + totalWelcomeCredits;
-    console.log(`🔄 [Webhook] Renewal detected: New subscription ${credits.toLocaleString()} + rolling credits`);
+    log.info({ credits }, 'Renewal detected: new subscription credits plus rolling credits');
   }
   const newTotalEarned = currentTotalEarned + credits;
 
@@ -225,9 +255,9 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
     });
 
   if (txError) {
-    console.error('❌ [Webhook] Failed to create credit transaction:', txError);
+    log.error({ err: txError, userId }, 'Failed to create credit transaction');
   } else {
-    console.log('✅ [Webhook] Credit transaction created successfully');
+    log.info({ userId }, 'Credit transaction created successfully');
   }
 
   // Record invoice in database
@@ -277,9 +307,9 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
     });
 
   if (billingError) {
-    console.error('❌ [Webhook] Failed to create billing event:', billingError);
+    log.error({ err: billingError, userId }, 'Failed to create billing event');
   } else {
-    console.log('✅ [Webhook] Billing event created successfully');
+    log.info({ userId }, 'Billing event created successfully');
   }
 
   // AUDIT TRAIL: Log payment and credit allocation
@@ -312,16 +342,16 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
       complianceFlags: ['SOC2']
     });
 
-    console.log('✅ [Webhook] Audit trail logged for payment');
+    log.info({ userId }, 'Audit trail logged for payment');
   } catch (auditError) {
-    console.error('⚠️ [Webhook] Audit logging failed (non-critical):', auditError);
+    log.error({ err: auditError, userId }, 'Audit logging failed (non-critical)');
   }
 
-  console.log('✅ [Webhook] Invoice processed successfully:', {
+  log.info({
     userId,
     credits,
     newBalance
-  });
+  }, 'Invoice processed successfully');
 
   // Allocate storage and execution quotas based on new balance
   try {
@@ -329,12 +359,15 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
     const quotaResult = await quotaService.allocateQuotasForUser(userId);
 
     if (quotaResult.success) {
-      console.log(`✅ [Webhook] Quotas allocated: ${quotaResult.storageQuotaMB} MB storage, ${quotaResult.executionQuota ?? 'unlimited'} executions`);
+      log.info(
+        { userId, storageQuotaMB: quotaResult.storageQuotaMB, executionQuota: quotaResult.executionQuota ?? 'unlimited' },
+        'Quotas allocated'
+      );
     } else {
-      console.error('❌ [Webhook] Failed to allocate quotas:', quotaResult.error);
+      log.error({ err: quotaResult.error, userId }, 'Failed to allocate quotas');
     }
   } catch (quotaError: any) {
-    console.error('❌ [Webhook] Error allocating quotas (non-critical):', quotaError.message);
+    log.error({ err: quotaError, userId }, 'Error allocating quotas (non-critical)');
   }
 }
 
@@ -344,13 +377,13 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
  * - Check grace period
  * - Pause agents if grace period exceeded
  */
-async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
-  console.log('⚠️ [Webhook] Processing invoice.payment_failed:', invoice.id);
+async function handleInvoicePaymentFailed(invoice: Stripe.Invoice, log: Logger) {
+  log.info({ stripeInvoiceId: invoice.id }, 'Processing invoice.payment_failed');
 
   const userId = invoice.metadata?.user_id;
 
   if (!userId) {
-    console.error('❌ [Webhook] No user_id in invoice metadata');
+    log.error({ stripeInvoiceId: invoice.id }, 'No user_id in invoice metadata');
     return;
   }
 
@@ -431,18 +464,18 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
       complianceFlags: ['SOC2']
     });
 
-    console.log('✅ [Webhook] Audit trail logged for payment failure');
+    log.info({ userId }, 'Audit trail logged for payment failure');
   } catch (auditError) {
-    console.error('⚠️ [Webhook] Audit logging failed (non-critical):', auditError);
+    log.error({ err: auditError, userId }, 'Audit logging failed (non-critical)');
   }
 
-  console.log('✅ [Webhook] Payment failure processed:', {
+  log.info({
     userId,
     retryCount,
     shouldPauseAgents,
     daysSincePeriodEnd,
     gracePeriodDays
-  });
+  }, 'Payment failure processed');
 
   // TODO: Send email notification to user about payment failure
 }
@@ -452,31 +485,35 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
  * - For boost packs: apply credits immediately
  * - For subscriptions: record subscription details
  */
-async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
-  console.log('🎉 [Webhook] Processing checkout.session.completed:', session.id);
+async function handleCheckoutCompleted(session: Stripe.Checkout.Session, log: Logger) {
+  log.info({ sessionId: session.id }, 'Processing checkout.session.completed');
 
   const userId = session.metadata?.user_id;
   const purchaseType = session.metadata?.purchase_type;
 
   if (!userId) {
-    console.error('❌ [Webhook] No user_id in session metadata');
+    log.error({ sessionId: session.id }, 'No user_id in session metadata');
     return;
   }
 
   if (session.mode === 'payment' && purchaseType === 'boost_pack') {
     // One-time boost pack purchase
-    console.log('🎁 [Webhook] Processing boost pack purchase');
-    console.log('📦 [Webhook] Session metadata:', session.metadata);
+    log.info({ sessionId: session.id, userId }, 'Processing boost pack purchase');
+    // Keys only: session metadata is not logged as values.
+    log.debug(
+      { sessionId: session.id, metadataKeys: Object.keys(session.metadata ?? {}) },
+      'Session metadata'
+    );
 
     const pilotCredits = parseInt(session.metadata?.credits || '0');
     const boostPackId = session.metadata?.boost_pack_id;
 
-    console.log(`💰 [Webhook] Boost pack details: ${pilotCredits} Pilot Credits, boost_pack_id: ${boostPackId}`);
+    log.info({ pilotCredits, boostPackId }, 'Boost pack details');
 
     // Convert Pilot Credits to tokens for storage (fetched from database)
     const credits = await pilotCreditsToTokens(pilotCredits, supabaseAdmin);
 
-    console.log(`💰 Converting ${pilotCredits} Pilot Credits → ${credits} tokens`);
+    log.info({ pilotCredits, tokens: credits }, 'Converting Pilot Credits to tokens');
 
     // Get current balance
     const { data: userSub } = await supabaseAdmin
@@ -526,9 +563,9 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       .single();
 
     if (creditTxError) {
-      console.error('❌ [Webhook] Failed to create credit transaction for boost pack:', creditTxError);
+      log.error({ err: creditTxError, userId }, 'Failed to create credit transaction for boost pack');
     } else {
-      console.log('✅ [Webhook] Credit transaction created:', creditTransaction?.id);
+      log.info({ creditTransactionId: creditTransaction?.id }, 'Credit transaction created');
     }
 
     // Record boost pack purchase with proper schema
@@ -552,19 +589,19 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
         });
 
       if (boostPackError) {
-        console.error('❌ [Webhook] Failed to insert into boost_pack_purchases:', boostPackError);
+        log.error({ err: boostPackError, userId, boostPackId }, 'Failed to insert into boost_pack_purchases');
       } else {
-        console.log('✅ [Webhook] Boost pack purchase recorded in boost_pack_purchases table');
+        log.info({ userId, boostPackId }, 'Boost pack purchase recorded in boost_pack_purchases table');
       }
     } else {
-      console.warn('⚠️  [Webhook] No boostPackId in session metadata - skipping boost_pack_purchases insert');
+      log.warn({ sessionId: session.id }, 'No boostPackId in session metadata - skipping boost_pack_purchases insert');
     }
 
-    console.log('✅ [Webhook] Boost pack processed:', {
+    log.info({
       userId,
       credits,
       newBalance
-    });
+    }, 'Boost pack processed');
 
     // Allocate storage and execution quotas based on new balance
     try {
@@ -572,12 +609,15 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       const quotaResult = await quotaService.allocateQuotasForUser(userId);
 
       if (quotaResult.success) {
-        console.log(`✅ [Webhook] Quotas allocated: ${quotaResult.storageQuotaMB} MB storage, ${quotaResult.executionQuota ?? 'unlimited'} executions`);
+        log.info(
+          { userId, storageQuotaMB: quotaResult.storageQuotaMB, executionQuota: quotaResult.executionQuota ?? 'unlimited' },
+          'Quotas allocated'
+        );
       } else {
-        console.error('❌ [Webhook] Failed to allocate quotas:', quotaResult.error);
+        log.error({ err: quotaResult.error, userId }, 'Failed to allocate quotas');
       }
     } catch (quotaError: any) {
-      console.error('❌ [Webhook] Error allocating quotas (non-critical):', quotaError.message);
+      log.error({ err: quotaError, userId }, 'Error allocating quotas (non-critical)');
     }
 
   } else if (session.mode === 'subscription') {
@@ -585,14 +625,14 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     const pilotCredits = parseInt(session.metadata?.credits || '0');
 
     if (!pilotCredits) {
-      console.error('❌ [Webhook] No credits in session metadata for subscription');
+      log.error({ sessionId: session.id, userId }, 'No credits in session metadata for subscription');
       return;
     }
 
     // Convert Pilot Credits to tokens for storage (fetched from database)
     const credits = await pilotCreditsToTokens(pilotCredits, supabaseAdmin);
 
-    console.log(`💰 Converting ${pilotCredits} Pilot Credits → ${credits} tokens`);
+    log.info({ pilotCredits, tokens: credits }, 'Converting Pilot Credits to tokens');
 
     // Get current balance
     const { data: userSub } = await supabaseAdmin
@@ -621,7 +661,10 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
 
     const totalRewardCredits = rewardTransactions?.reduce((sum, tx) => sum + tx.credits_delta, 0) || 0;
 
-    console.log(`🔄 [Webhook] Initial subscription - Preserving credits - Boost: ${totalBoostCredits}, Rewards: ${totalRewardCredits}`);
+    log.info(
+      { boostCredits: totalBoostCredits, rewardCredits: totalRewardCredits },
+      'Initial subscription - preserving credits'
+    );
 
     // SUBSCRIPTION CREDITS DO NOT ROLL OVER - replace with new allocation
     // This applies to initial subscription purchase (free tier → paid transition)
@@ -656,9 +699,9 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       .eq('user_id', userId);
 
     if (updateError) {
-      console.error('❌ [Webhook] Failed to update subscription:', updateError);
+      log.error({ err: updateError, userId }, 'Failed to update subscription');
     } else {
-      console.log('✅ [Webhook] Subscription updated successfully with monthly_credits:', pilotCredits);
+      log.info({ userId, monthlyCredits: pilotCredits }, 'Subscription updated successfully with monthly_credits');
     }
 
     // Create credit transaction for initial subscription
@@ -680,9 +723,9 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       });
 
     if (txError) {
-      console.error('❌ [Webhook] Failed to create credit transaction:', txError);
+      log.error({ err: txError, userId }, 'Failed to create credit transaction');
     } else {
-      console.log('✅ [Webhook] Credit transaction created successfully');
+      log.info({ userId }, 'Credit transaction created successfully');
     }
 
     // Log billing event
@@ -699,17 +742,17 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       });
 
     if (billingError) {
-      console.error('❌ [Webhook] Failed to create billing event:', billingError);
+      log.error({ err: billingError, userId }, 'Failed to create billing event');
     } else {
-      console.log('✅ [Webhook] Billing event created successfully');
+      log.info({ userId }, 'Billing event created successfully');
     }
 
-    console.log('✅ [Webhook] Subscription checkout completed:', {
+    log.info({
       userId,
       subscriptionId: session.subscription,
       credits,
       newBalance
-    });
+    }, 'Subscription checkout completed');
 
     // Allocate storage and execution quotas based on new balance
     try {
@@ -717,12 +760,15 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       const quotaResult = await quotaService.allocateQuotasForUser(userId);
 
       if (quotaResult.success) {
-        console.log(`✅ [Webhook] Quotas allocated: ${quotaResult.storageQuotaMB} MB storage, ${quotaResult.executionQuota ?? 'unlimited'} executions`);
+        log.info(
+          { userId, storageQuotaMB: quotaResult.storageQuotaMB, executionQuota: quotaResult.executionQuota ?? 'unlimited' },
+          'Quotas allocated'
+        );
       } else {
-        console.error('❌ [Webhook] Failed to allocate quotas:', quotaResult.error);
+        log.error({ err: quotaResult.error, userId }, 'Failed to allocate quotas');
       }
     } catch (quotaError: any) {
-      console.error('❌ [Webhook] Error allocating quotas (non-critical):', quotaError.message);
+      log.error({ err: quotaError, userId }, 'Error allocating quotas (non-critical)');
     }
 
     // Check if this is a NEW subscription (first-time subscriber)
@@ -737,7 +783,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     const isNewUser = !existingTransactions || existingTransactions.length === 0;
 
     if (isNewUser) {
-      console.log('🎁 [Webhook] New subscriber detected! Awarding welcome bonus...');
+      log.info({ userId }, 'New subscriber detected, awarding welcome bonus');
 
       // Award 10,417 Pilot Tokens as welcome bonus (half of 20,834)
       const WELCOME_BONUS_TOKENS = 10417;
@@ -797,8 +843,11 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
           currency: 'usd'
         });
 
-      console.log(`✅ [Webhook] Welcome bonus awarded: ${WELCOME_BONUS_TOKENS} Pilot Tokens (${welcomeBonusCredits} raw tokens)`);
-      console.log(`   New balance: ${balanceAfterBonus.toLocaleString()} tokens`);
+      log.info(
+        { userId, pilotTokens: WELCOME_BONUS_TOKENS, rawTokens: welcomeBonusCredits },
+        'Welcome bonus awarded'
+      );
+      log.info({ userId, newBalance: balanceAfterBonus }, 'New balance after welcome bonus');
 
       // Re-allocate quotas with welcome bonus included
       try {
@@ -806,13 +855,20 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
         const updatedQuotaResult = await quotaService.allocateQuotasForUser(userId);
 
         if (updatedQuotaResult.success) {
-          console.log(`✅ [Webhook] Updated quotas with welcome bonus: ${updatedQuotaResult.storageQuotaMB} MB storage, ${updatedQuotaResult.executionQuota ?? 'unlimited'} executions`);
+          log.info(
+            {
+              userId,
+              storageQuotaMB: updatedQuotaResult.storageQuotaMB,
+              executionQuota: updatedQuotaResult.executionQuota ?? 'unlimited',
+            },
+            'Updated quotas with welcome bonus'
+          );
         }
       } catch (quotaError: any) {
-        console.error('❌ [Webhook] Error re-allocating quotas with welcome bonus:', quotaError.message);
+        log.error({ err: quotaError, userId }, 'Error re-allocating quotas with welcome bonus');
       }
     } else {
-      console.log('ℹ️  [Webhook] Existing subscriber - no welcome bonus awarded');
+      log.info({ userId }, 'Existing subscriber - no welcome bonus awarded');
     }
   }
 }
@@ -822,13 +878,13 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
  * - Sync subscription amount and credits when changed in Stripe
  * - Update monthly_credits and monthly_amount_usd in database
  */
-async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
-  console.log('🔄 [Webhook] Processing customer.subscription.updated:', subscription.id);
+async function handleSubscriptionUpdated(subscription: Stripe.Subscription, log: Logger) {
+  log.info({ subscriptionId: subscription.id }, 'Processing customer.subscription.updated');
 
   const userId = subscription.metadata?.user_id;
 
   if (!userId) {
-    console.error('❌ [Webhook] No user_id in subscription metadata');
+    log.error({ subscriptionId: subscription.id }, 'No user_id in subscription metadata');
     return;
   }
 
@@ -836,7 +892,7 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
   const pilotCredits = parseInt(subscription.metadata?.credits || subscription.metadata?.pilot_credits || '0');
 
   if (!pilotCredits) {
-    console.error('❌ [Webhook] No credits in subscription metadata');
+    log.error({ subscriptionId: subscription.id, userId }, 'No credits in subscription metadata');
     return;
   }
 
@@ -844,7 +900,7 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
   const stripeAmountCents = subscription.items.data[0]?.price?.unit_amount || 0;
   const stripeAmountUsd = stripeAmountCents / 100;
 
-  console.log(`💰 [Webhook] Syncing subscription: ${pilotCredits.toLocaleString()} Pilot Credits, $${stripeAmountUsd.toFixed(2)}`);
+  log.info({ userId, pilotCredits, amountUsd: stripeAmountUsd.toFixed(2) }, 'Syncing subscription');
 
   // Update database including cancellation status
   await supabaseAdmin
@@ -872,24 +928,25 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
 
   // Recalculate storage and execution quotas based on new subscription tier
   try {
-    console.log('📊 [Webhook] Recalculating quotas after subscription update');
+    log.info({ userId }, 'Recalculating quotas after subscription update');
     const quotaService = new QuotaAllocationService(supabaseAdmin);
     const quotaResult = await quotaService.allocateQuotasForUser(userId);
 
     if (quotaResult.success) {
-      console.log('✅ [Webhook] Quotas allocated after subscription update:', {
-        storage: quotaResult.storageQuotaMB,
-        executions: quotaResult.executionQuota
-      });
+      log.info({
+        userId,
+        storageQuotaMB: quotaResult.storageQuotaMB,
+        executionQuota: quotaResult.executionQuota
+      }, 'Quotas allocated after subscription update');
     } else {
-      console.error('❌ [Webhook] Quota allocation returned failure:', quotaResult.error);
+      log.error({ err: quotaResult.error, userId }, 'Quota allocation returned failure');
     }
   } catch (error) {
-    console.error('❌ [Webhook] Error allocating quotas after subscription update:', error);
+    log.error({ err: error, userId }, 'Error allocating quotas after subscription update');
     // Don't fail the webhook if quota allocation fails
   }
 
-  console.log('✅ [Webhook] Subscription updated:', { userId, pilotCredits, stripeAmountUsd });
+  log.info({ userId, pilotCredits, amountUsd: stripeAmountUsd }, 'Subscription updated');
 }
 
 /**
@@ -933,7 +990,8 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
  */
 async function handleDispute(
   dispute: Stripe.Dispute,
-  phase: 'opened' | 'closed' | 'reinstated'
+  phase: 'opened' | 'closed' | 'reinstated',
+  log: Logger
 ) {
   const chargeId = typeof dispute.charge === 'string' ? dispute.charge : dispute.charge?.id;
   const paymentIntentId =
@@ -954,7 +1012,7 @@ async function handleDispute(
   if (!transaction) {
     // Money disputed against a payment this app never recorded. Loud, not
     // dropped: it means the books are wrong in a way only Stripe can see.
-    console.error('❌ [Webhook] dispute for an unknown payment:', { chargeId, paymentIntentId });
+    log.error({ disputeId: dispute.id, chargeId, paymentIntentId }, 'Dispute for an unknown payment');
     return;
   }
 
@@ -994,12 +1052,19 @@ async function handleDispute(
     .eq('id', transaction.id);
 
   if (error) {
-    console.error('❌ [Webhook] Failed to record dispute:', error);
+    log.error({ err: error, disputeId: dispute.id, transactionId: transaction.id }, 'Failed to record dispute');
     return;
   }
 
-  console.log(
-    `⚖️  [Webhook] Dispute ${phase} on ${transaction.id}: status ${transaction.status} → ${nextStatus}`
+  log.info(
+    {
+      disputeId: dispute.id,
+      phase,
+      transactionId: transaction.id,
+      previousStatus: transaction.status,
+      nextStatus,
+    },
+    'Dispute recorded'
   );
 
   /*
@@ -1018,12 +1083,12 @@ async function handleDispute(
       currency: transaction.currency || '',
       reason: dispute.reason || '',
       evidenceDueBy: dispute.evidence_details?.due_by ?? null,
-    }).catch(err => console.error('❌ [Webhook] Dispute alert failed (non-blocking):', err));
+    }).catch(err => log.error({ err, disputeId: dispute.id }, 'Dispute alert failed (non-blocking)'));
   }
 }
 
-async function handleChargeRefunded(charge: Stripe.Charge, connectAccountId: string | null) {
-  console.log('💸 [Webhook] Processing charge.refunded:', charge.id);
+async function handleChargeRefunded(charge: Stripe.Charge, connectAccountId: string | null, log: Logger) {
+  log.info({ chargeId: charge.id }, 'Processing charge.refunded');
 
   const paymentIntentId =
     typeof charge.payment_intent === 'string' ? charge.payment_intent : charge.payment_intent?.id;
@@ -1045,10 +1110,10 @@ async function handleChargeRefunded(charge: Stripe.Charge, connectAccountId: str
   if (!transaction) {
     // Refunded money against a payment this app never recorded. Not droppable —
     // it means the books are wrong in a way only Stripe can see.
-    console.error('❌ [Webhook] charge.refunded for an unknown payment:', {
+    log.error({
       chargeId: charge.id,
       paymentIntentId
-    });
+    }, 'charge.refunded for an unknown payment');
     return;
   }
 
@@ -1096,7 +1161,7 @@ async function handleChargeRefunded(charge: Stripe.Charge, connectAccountId: str
     );
 
     if (error) {
-      console.error('❌ [Webhook] Failed to record refund:', error);
+      log.error({ err: error, refundId: stripeRefund.id, chargeId: charge.id }, 'Failed to record refund');
       throw new Error(`Failed to record refund ${stripeRefund.id}: ${error.message}`);
     }
   }
@@ -1113,7 +1178,7 @@ async function handleChargeRefunded(charge: Stripe.Charge, connectAccountId: str
    */
   await syncBookingsForTransactions([transaction.id], transaction.user_id);
 
-  console.log('✅ [Webhook] Recorded', charge.refunds?.data?.length ?? 0, 'refund(s) for', charge.id);
+  log.info({ refundCount: charge.refunds?.data?.length ?? 0, chargeId: charge.id }, 'Recorded refunds');
 }
 
 /**
@@ -1128,7 +1193,8 @@ async function handleChargeRefunded(charge: Stripe.Charge, connectAccountId: str
  */
 async function handleConnectPaymentIntentSucceeded(
   intent: Stripe.PaymentIntent,
-  connectAccountId: string
+  connectAccountId: string,
+  log: Logger
 ) {
   /*
    * `intent.invoice` is GONE on this API version — Stripe removed the
@@ -1152,24 +1218,24 @@ async function handleConnectPaymentIntentSucceeded(
 
     if (looksStripeGenerated) {
       // An invoice or subscription period. `invoice.paid` owns it.
-      console.log('ℹ️  [Webhook] Untagged payment_intent (invoice-backed); invoice.paid owns it:', intent.id);
+      log.info({ paymentIntentId: intent.id }, 'Untagged payment_intent (invoice-backed); invoice.paid owns it');
     } else {
       // Tagged by one of our surfaces, but not with an owner — a charge path is
       // not identifying the business it belongs to, and the money cannot be
       // attributed. That is a fault.
-      console.error('❌ [Webhook] payment_intent.succeeded with no owner_id in metadata:', intent.id);
+      log.error({ paymentIntentId: intent.id }, 'payment_intent.succeeded with no owner_id in metadata');
     }
     return;
   }
 
-  if (!(await accountOwns(connectAccountId, ownerId))) {
+  if (!(await accountOwns(connectAccountId, ownerId, log))) {
     // `owner_id` is metadata on the connected account's own object, so the
     // account writes it. Inserted unchecked it becomes a payment row under any
     // user_id the account chooses — money in the attacker's balance, revenue on
     // the victim's books.
-    console.error(
-      '🚨 [Webhook] payment_intent.succeeded claims an owner that does not own this account — refusing',
-      { connectAccountId, claimedOwnerId: ownerId, intentId: intent.id }
+    log.error(
+      { connectAccountId, claimedOwnerId: ownerId, paymentIntentId: intent.id },
+      'payment_intent.succeeded claims an owner that does not own this account - refusing'
     );
     return;
   }
@@ -1182,7 +1248,7 @@ async function handleConnectPaymentIntentSucceeded(
     .maybeSingle();
 
   if (existing) {
-    console.log('ℹ️  [Webhook] Payment already recorded:', intent.id);
+    log.info({ paymentIntentId: intent.id }, 'Payment already recorded');
     return;
   }
 
@@ -1234,11 +1300,11 @@ async function handleConnectPaymentIntentSucceeded(
   });
 
   if (error) {
-    console.error('❌ [Webhook] Failed to record payment:', error);
+    log.error({ err: error, paymentIntentId: intent.id }, 'Failed to record payment');
     throw new Error(`Failed to record payment ${intent.id}: ${error.message}`);
   }
 
-  console.log('✅ [Webhook] Recorded standalone payment:', intent.id);
+  log.info({ paymentIntentId: intent.id, userId: ownerId }, 'Recorded standalone payment');
 }
 
 /**
@@ -1252,17 +1318,18 @@ async function handleConnectPaymentIntentSucceeded(
 async function recordPlanPeriodPaid(
   invoice: Stripe.Invoice,
   subscriptionId: string,
-  connectAccountId: string
+  connectAccountId: string,
+  log: Logger
 ): Promise<boolean> {
   const plan = await paymentPlanSubscriptionRepository.findBySubscriptionId(subscriptionId);
   if (!plan.data) return false;
 
   // The plan is found by a globally unique Stripe id, so ownership still has to
   // be proved against the account the event came from.
-  if (!(await accountOwns(connectAccountId, plan.data.user_id))) {
-    console.error(
-      '🚨 [Webhook] Plan period from an account that does not own the plan — refusing',
-      { connectAccountId, subscriptionId }
+  if (!(await accountOwns(connectAccountId, plan.data.user_id, log))) {
+    log.error(
+      { connectAccountId, subscriptionId },
+      'Plan period from an account that does not own the plan - refusing'
     );
     return true;
   }
@@ -1286,10 +1353,9 @@ async function recordPlanPeriodPaid(
   const collected = invoice.amount_paid ?? 0;
 
   if (collected <= 0) {
-    console.log(
-      'ℹ️  [Webhook] Plan invoice collected nothing (credit or zero-value); not a period payment:',
-      invoice.id,
-      'total=' + String(invoice.total)
+    log.info(
+      { stripeInvoiceId: invoice.id, total: String(invoice.total) },
+      'Plan invoice collected nothing (credit or zero-value); not a period payment'
     );
     return true;
   }
@@ -1301,7 +1367,7 @@ async function recordPlanPeriodPaid(
     .maybeSingle();
 
   if (alreadyRecorded) {
-    console.log('ℹ️  [Webhook] Plan period already recorded:', invoice.id);
+    log.info({ stripeInvoiceId: invoice.id }, 'Plan period already recorded');
     return true;
   }
 
@@ -1323,14 +1389,14 @@ async function recordPlanPeriodPaid(
    * so both read the same way in the logs.
    */
   const planPaymentIntent = await resolveInvoicePaymentIntent(invoice, new Stripe(process.env.STRIPE_SECRET_KEY!), connectAccountId).catch(err => {
-    console.warn('⚠️  [Webhook] Could not resolve the payment intent for a plan period:', err);
+    log.warn({ err, stripeInvoiceId: invoice.id }, 'Could not resolve the payment intent for a plan period');
     return null;
   });
 
   if (!planPaymentIntent) {
-    console.warn(
-      '⚠️  [Webhook] Plan period recorded with no payment intent — this payment will not be refundable:',
-      invoice.id
+    log.warn(
+      { stripeInvoiceId: invoice.id },
+      'Plan period recorded with no payment intent - this payment will not be refundable'
     );
   }
 
@@ -1394,7 +1460,7 @@ async function recordPlanPeriodPaid(
     .single();
 
   if (txError) {
-    console.error('❌ [Webhook] Could not record a plan period:', txError);
+    log.error({ err: txError, stripeInvoiceId: invoice.id, subscriptionId }, 'Could not record a plan period');
     throw txError;
   }
 
@@ -1454,7 +1520,10 @@ async function recordPlanPeriodPaid(
     await paymentPlanSubscriptionRepository.close(plan.data.id, 'completed');
   }
 
-  console.log('✅ [Webhook] Plan period recorded:', periodsPaid, 'of', plan.data.installment_count);
+  log.info(
+    { subscriptionId, periodsPaid, installmentCount: plan.data.installment_count },
+    'Plan period recorded'
+  );
   return true;
 }
 
@@ -1466,7 +1535,11 @@ async function recordPlanPeriodPaid(
  */
 const accountOwnerCache = new Map<string, string | null>();
 
-async function accountOwns(connectAccountId: string, ownerId: string | null | undefined): Promise<boolean> {
+async function accountOwns(
+  connectAccountId: string,
+  ownerId: string | null | undefined,
+  log: Logger
+): Promise<boolean> {
   if (!ownerId) return false;
 
   if (!accountOwnerCache.has(connectAccountId)) {
@@ -1482,16 +1555,21 @@ async function accountOwns(connectAccountId: string, ownerId: string | null | un
   // also not necessarily an attack — a newly connected account whose row has
   // not landed yet reads the same way — so it is logged rather than silent.
   if (!owner) {
-    console.warn('⚠️  [Webhook] Connect account maps to no known business:', connectAccountId);
+    log.warn({ connectAccountId }, 'Connect account maps to no known business');
     return false;
   }
 
   return owner === ownerId;
 }
 
-async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountId: string) {
-  console.log('💳 [Webhook] Processing Connect invoice.paid:', invoice.id, 'Account:', connectAccountId);
-  console.log('💳 [Webhook] Invoice metadata:', JSON.stringify(invoice.metadata || {}));
+async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountId: string, log: Logger) {
+  log.info({ stripeInvoiceId: invoice.id, connectAccountId }, 'Processing Connect invoice.paid');
+  // Keys only: Connect invoice metadata is written by the connected business
+  // and may carry client details, so its values are never logged.
+  log.debug(
+    { stripeInvoiceId: invoice.id, metadataKeys: Object.keys(invoice.metadata || {}) },
+    'Invoice metadata'
+  );
 
   /**
    * A payment plan period.
@@ -1528,7 +1606,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
     const planMeta = subscriptionMetadataFromInvoice(invoice);
 
     if (planMeta.plan_count && planMeta.owner_id) {
-      if (await accountOwns(connectAccountId, planMeta.owner_id)) {
+      if (await accountOwns(connectAccountId, planMeta.owner_id, log)) {
         try {
           const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
@@ -1551,18 +1629,18 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
           // Loud, and deliberately rethrown: an unbounded subscription charges a
           // client indefinitely. Failing the webhook makes Stripe retry, which
           // is the behaviour that protects the client.
-          console.error('🚨 [Webhook] Could not bound a plan subscription:', subscriptionId, bindError);
+          log.error({ err: bindError, subscriptionId }, 'Could not bound a plan subscription');
           throw bindError;
         }
       } else {
-        console.error(
-          '🚨 [Webhook] Plan metadata claims an owner this account does not own — refusing',
-          { connectAccountId, subscriptionId }
+        log.error(
+          { connectAccountId, subscriptionId },
+          'Plan metadata claims an owner this account does not own - refusing'
         );
       }
     }
 
-    const handled = await recordPlanPeriodPaid(invoice, subscriptionId, connectAccountId);
+    const handled = await recordPlanPeriodPaid(invoice, subscriptionId, connectAccountId, log);
     // A period belongs to its plan, not to a platform invoice. Returning here
     // stops the ordinary invoice path treating it as an unmatched Stripe
     // invoice and doing nothing with it twice.
@@ -1587,9 +1665,9 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
 
   if (invoiceByStripeId) {
     platformInvoice = invoiceByStripeId;
-    console.log('✅ [Webhook] Found platform invoice by stripe_invoice_id:', invoiceByStripeId.id);
+    log.info({ invoiceId: invoiceByStripeId.id }, 'Found platform invoice by stripe_invoice_id');
   } else {
-    console.log('ℹ️  [Webhook] No platform invoice found by stripe_invoice_id, checking metadata...');
+    log.info({ stripeInvoiceId: invoice.id }, 'No platform invoice found by stripe_invoice_id, checking metadata');
 
     /*
      * Fallback: find our own invoice id in the Stripe invoice's metadata.
@@ -1608,7 +1686,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
       invoice.metadata?.neuronforge_invoice_id || invoice.metadata?.invoice_id;
 
     if (metadataInvoiceId) {
-      console.log('🔍 [Webhook] Looking up platform invoice by metadata:', metadataInvoiceId);
+      log.info({ invoiceId: metadataInvoiceId }, 'Looking up platform invoice by metadata');
       const { data: invoiceByMetadata, error: metadataLookupError } = await supabaseAdmin
         .from('payment_invoices')
         .select('*')
@@ -1617,7 +1695,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
 
       if (invoiceByMetadata && !metadataLookupError) {
         platformInvoice = invoiceByMetadata;
-        console.log('✅ [Webhook] Found platform invoice by metadata.invoice_id:', invoiceByMetadata.id);
+        log.info({ invoiceId: invoiceByMetadata.id }, 'Found platform invoice by metadata invoice id');
 
         // Update the invoice with stripe_invoice_id for future lookups
         await supabaseAdmin
@@ -1627,12 +1705,12 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
             updated_at: new Date().toISOString()
           })
           .eq('id', invoiceByMetadata.id);
-        console.log('✅ [Webhook] Updated invoice with stripe_invoice_id');
+        log.info({ invoiceId: invoiceByMetadata.id, stripeInvoiceId: invoice.id }, 'Updated invoice with stripe_invoice_id');
       }
     }
   }
 
-  if (platformInvoice && !(await accountOwns(connectAccountId, platformInvoice.user_id))) {
+  if (platformInvoice && !(await accountOwns(connectAccountId, platformInvoice.user_id, log))) {
     // The event came from one business's account, but names another business's
     // invoice. Both lookups above resolve by ID ALONE — a stripe_invoice_id or a
     // UUID in metadata — and metadata on a connected account is written by that
@@ -1642,20 +1720,23 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
     // while the money sat in the attacker's balance.
     //
     // Refused rather than repaired: there is no benign reading of it.
-    console.error(
-      '🚨 [Webhook] Connect invoice.paid names an invoice owned by a different business — refusing',
-      { connectAccountId, invoiceId: platformInvoice.id }
+    log.error(
+      { connectAccountId, invoiceId: platformInvoice.id },
+      'Connect invoice.paid names an invoice owned by a different business - refusing'
     );
     return;
   }
 
   if (!platformInvoice) {
-    console.log('ℹ️  [Webhook] No platform invoice found for Stripe invoice:', invoice.id);
+    log.info({ stripeInvoiceId: invoice.id }, 'No platform invoice found for Stripe invoice');
     // This might be a Stripe invoice created directly in Stripe, not through our platform
     return;
   }
 
-  console.log('✅ [Webhook] Found platform invoice:', platformInvoice.id, platformInvoice.invoice_number);
+  log.info(
+    { invoiceId: platformInvoice.id, invoiceNumber: platformInvoice.invoice_number },
+    'Found platform invoice'
+  );
 
   const paidAt = new Date().toISOString();
 
@@ -1672,7 +1753,10 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
     .maybeSingle();
 
   if (existingTx) {
-    console.log('ℹ️  [Webhook] Payment already recorded for invoice:', platformInvoice.invoice_number);
+    log.info(
+      { invoiceId: platformInvoice.id, invoiceNumber: platformInvoice.invoice_number },
+      'Payment already recorded for invoice'
+    );
     return;
   }
 
@@ -1691,9 +1775,9 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
   const paymentIntentId = await resolveInvoicePaymentIntent(invoice, new Stripe(process.env.STRIPE_SECRET_KEY!), connectAccountId);
 
   if (!paymentIntentId) {
-    console.warn(
-      '⚠️  [Webhook] invoice.paid carried no payment intent in either shape — this payment will not be refundable:',
-      { invoiceId: platformInvoice.id, stripeInvoiceId: invoice.id }
+    log.warn(
+      { invoiceId: platformInvoice.id, stripeInvoiceId: invoice.id },
+      'invoice.paid carried no payment intent in either shape - this payment will not be refundable'
     );
   }
 
@@ -1750,13 +1834,16 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
     });
 
   if (txError) {
-    console.error('❌ [Webhook] Failed to create payment transaction:', txError);
+    log.error({ err: txError, invoiceId: platformInvoice.id }, 'Failed to create payment transaction');
     throw new Error(
       `Failed to record payment for invoice ${platformInvoice.id}: ${txError.message}`
     );
   }
 
-  console.log('✅ [Webhook] Payment transaction created for invoice:', platformInvoice.invoice_number);
+  log.info(
+    { invoiceId: platformInvoice.id, invoiceNumber: platformInvoice.invoice_number },
+    'Payment transaction created for invoice'
+  );
 
   // Then the invoice. The update_invoice_on_payment trigger also does this when
   // the transaction lands; this is idempotent and covers databases without it.
@@ -1772,7 +1859,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
     .eq('id', platformInvoice.id);
 
   if (updateError) {
-    console.error('❌ [Webhook] Failed to update platform invoice:', updateError);
+    log.error({ err: updateError, invoiceId: platformInvoice.id }, 'Failed to update platform invoice');
     throw new Error(
       `Failed to mark invoice ${platformInvoice.id} paid: ${updateError.message}`
     );
@@ -1780,7 +1867,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
 
   // Update linked booking's payment_status if invoice has a booking_id
   if (platformInvoice.booking_id) {
-    console.log('🔄 [Webhook] Updating booking payment_status:', platformInvoice.booking_id);
+    log.info({ bookingId: platformInvoice.booking_id }, 'Updating booking payment_status');
     const { error: bookingUpdateError } = await supabaseAdmin
       .from('scheduling_bookings')
       .update({
@@ -1790,13 +1877,16 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
       .eq('id', platformInvoice.booking_id);
 
     if (bookingUpdateError) {
-      console.error('❌ [Webhook] Failed to update booking payment status:', bookingUpdateError);
+      log.error(
+        { err: bookingUpdateError, bookingId: platformInvoice.booking_id },
+        'Failed to update booking payment status'
+      );
     } else {
-      console.log('✅ [Webhook] Booking payment status updated to paid');
+      log.info({ bookingId: platformInvoice.booking_id }, 'Booking payment status updated to paid');
     }
   } else {
     // Fallback: Try to find booking by contact_id, user_id, and matching amount
-    console.log('⚠️ [Webhook] Invoice has no booking_id, attempting to find matching booking');
+    log.info({ invoiceId: platformInvoice.id }, 'Invoice has no booking_id, attempting to find matching booking');
 
     /*
      * Guessing which booking a payment belongs to — and never guessing a
@@ -1854,12 +1944,12 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
           })
           .eq('id', platformInvoice.id);
 
-        console.log('✅ [Webhook] Found and updated matching booking:', matchingBooking.id);
+        log.info({ bookingId: matchingBooking.id, invoiceId: platformInvoice.id }, 'Found and updated matching booking');
       } else {
-        console.log('ℹ️  [Webhook] Found booking but amount mismatch:', { servicePrice, invoiceAmount });
+        log.info({ servicePrice, invoiceAmount }, 'Found booking but amount mismatch');
       }
     } else {
-      console.log('ℹ️  [Webhook] No matching pending booking found for invoice');
+      log.info({ invoiceId: platformInvoice.id }, 'No matching pending booking found for invoice');
     }
   }
 
@@ -1881,10 +1971,13 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
       severity: 'info'
     });
   } catch (auditError) {
-    console.warn('⚠️ [Webhook] Audit logging failed:', auditError);
+    log.warn({ err: auditError, invoiceId: platformInvoice.id }, 'Audit logging failed');
   }
 
-  console.log('✅ [Webhook] Connect invoice paid processed:', platformInvoice.invoice_number);
+  log.info(
+    { invoiceId: platformInvoice.id, invoiceNumber: platformInvoice.invoice_number },
+    'Connect invoice paid processed'
+  );
 }
 
 /**
@@ -1892,8 +1985,12 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
  * - For invoice payments: Update payment_invoices status to 'paid'
  * - For booking payments: Update booking payment status
  */
-async function handleConnectCheckoutCompleted(session: Stripe.Checkout.Session, connectAccountId: string) {
-  console.log('💳 [Webhook] Processing Connect checkout.session.completed:', session.id, 'Account:', connectAccountId);
+async function handleConnectCheckoutCompleted(
+  session: Stripe.Checkout.Session,
+  connectAccountId: string,
+  log: Logger
+) {
+  log.info({ sessionId: session.id, connectAccountId }, 'Processing Connect checkout.session.completed');
 
   const invoiceId = session.metadata?.invoice_id;
   const bookingId = session.metadata?.booking_id;
@@ -1921,7 +2018,7 @@ async function handleConnectCheckoutCompleted(session: Stripe.Checkout.Session, 
       // is function-scoped. Constructed here for the same reason.
       const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
-      if (ownerId && (await accountOwns(connectAccountId, ownerId))) {
+      if (ownerId && (await accountOwns(connectAccountId, ownerId, log))) {
         await bindPlanSubscription({
           stripe: stripeClient,
           connectAccountId,
@@ -1937,17 +2034,17 @@ async function handleConnectCheckoutCompleted(session: Stripe.Checkout.Session, 
           planFrequency: (session.metadata?.plan_frequency || 'monthly') as PlanFrequency,
         });
       } else {
-        console.error(
-          '🚨 [Webhook] Plan checkout names an owner this account does not own — refusing',
-          { connectAccountId, subscriptionId }
+        log.error(
+          { connectAccountId, subscriptionId },
+          'Plan checkout names an owner this account does not own - refusing'
         );
       }
     } catch (scheduleError) {
       // Loud, and deliberately not swallowed: an unbounded subscription charges
       // a client indefinitely, so this needs a human, not a log line.
-      console.error(
-        '🚨 [Webhook] Could not bound a payment plan — subscription may bill indefinitely:',
-        { subscriptionId, connectAccountId, error: scheduleError }
+      log.error(
+        { err: scheduleError, subscriptionId, connectAccountId },
+        'Could not bound a payment plan - subscription may bill indefinitely'
       );
       throw scheduleError;
     }
@@ -1955,7 +2052,7 @@ async function handleConnectCheckoutCompleted(session: Stripe.Checkout.Session, 
 
   // Handle invoice payment via Checkout Session
   if (invoiceId) {
-    console.log('📄 [Webhook] Checkout session for invoice:', invoiceId);
+    log.info({ invoiceId, sessionId: session.id }, 'Checkout session for invoice');
 
     // Look up the platform invoice
     const { data: platformInvoice, error: lookupError } = await supabaseAdmin
@@ -1965,22 +2062,22 @@ async function handleConnectCheckoutCompleted(session: Stripe.Checkout.Session, 
       .single();
 
     if (lookupError || !platformInvoice) {
-      console.error('❌ [Webhook] Platform invoice not found:', invoiceId, lookupError);
+      log.error({ err: lookupError, invoiceId }, 'Platform invoice not found');
       return;
     }
 
-    if (!(await accountOwns(connectAccountId, platformInvoice.user_id))) {
+    if (!(await accountOwns(connectAccountId, platformInvoice.user_id, log))) {
       // Same hole as the invoice.paid path: the invoice is found by a UUID that
       // travelled in metadata written by the connected account.
-      console.error(
-        '🚨 [Webhook] Connect checkout names an invoice owned by a different business — refusing',
-        { connectAccountId, invoiceId }
+      log.error(
+        { connectAccountId, invoiceId },
+        'Connect checkout names an invoice owned by a different business - refusing'
       );
       return;
     }
 
     if (platformInvoice.status === 'paid') {
-      console.log('ℹ️  [Webhook] Invoice already marked as paid:', invoiceId);
+      log.info({ invoiceId }, 'Invoice already marked as paid');
       return;
     }
 
@@ -2025,11 +2122,14 @@ async function handleConnectCheckoutCompleted(session: Stripe.Checkout.Session, 
       // Thrown, not logged and swallowed. The caller turns this into a non-2xx
       // so Stripe retries; swallowing it is what produced paid-looking invoices
       // with no payment behind them.
-      console.error('❌ [Webhook] Failed to create payment transaction:', txError);
+      log.error({ err: txError, invoiceId }, 'Failed to create payment transaction');
       throw new Error(`Failed to record payment for invoice ${invoiceId}: ${txError.message}`);
     }
 
-    console.log('✅ [Webhook] Payment transaction created for invoice:', platformInvoice.invoice_number);
+    log.info(
+      { invoiceId, invoiceNumber: platformInvoice.invoice_number },
+      'Payment transaction created for invoice'
+    );
 
     // Now the invoice. The update_invoice_on_payment trigger already does this
     // when the transaction lands, so this is belt-and-braces for databases where
@@ -2044,11 +2144,11 @@ async function handleConnectCheckoutCompleted(session: Stripe.Checkout.Session, 
       .eq('id', invoiceId);
 
     if (updateError) {
-      console.error('❌ [Webhook] Failed to update invoice status:', updateError);
+      log.error({ err: updateError, invoiceId }, 'Failed to update invoice status');
       throw new Error(`Failed to mark invoice ${invoiceId} paid: ${updateError.message}`);
     }
 
-    console.log('✅ [Webhook] Invoice marked as paid:', platformInvoice.invoice_number);
+    log.info({ invoiceId, invoiceNumber: platformInvoice.invoice_number }, 'Invoice marked as paid');
 
     /*
      * The pipeline is not moved from here any more.
@@ -2067,7 +2167,7 @@ async function handleConnectCheckoutCompleted(session: Stripe.Checkout.Session, 
 
     // Update linked booking's payment_status if invoice has a booking_id
     if (platformInvoice.booking_id) {
-      console.log('📅 [Webhook] Updating booking payment status for invoice booking:', platformInvoice.booking_id);
+      log.info({ bookingId: platformInvoice.booking_id, invoiceId }, 'Updating booking payment status for invoice booking');
       const { error: bookingError } = await supabaseAdmin
         .from('scheduling_bookings')
         .update({
@@ -2090,9 +2190,9 @@ async function handleConnectCheckoutCompleted(session: Stripe.Checkout.Session, 
         .eq('status', 'pending');
 
       if (bookingError) {
-        console.error('❌ [Webhook] Failed to update booking payment status:', bookingError);
+        log.error({ err: bookingError, bookingId: platformInvoice.booking_id }, 'Failed to update booking payment status');
       } else {
-        console.log('✅ [Webhook] Booking payment status updated for invoice:', platformInvoice.booking_id);
+        log.info({ bookingId: platformInvoice.booking_id, invoiceId }, 'Booking payment status updated for invoice');
       }
     }
 
@@ -2101,7 +2201,7 @@ async function handleConnectCheckoutCompleted(session: Stripe.Checkout.Session, 
 
   // Handle booking payment via Checkout Session
   if (bookingId) {
-    console.log('📅 [Webhook] Checkout session for booking:', bookingId);
+    log.info({ bookingId, sessionId: session.id }, 'Checkout session for booking');
 
     // Update booking payment status
     const { error: bookingError } = await supabaseAdmin
@@ -2113,23 +2213,23 @@ async function handleConnectCheckoutCompleted(session: Stripe.Checkout.Session, 
       .eq('id', bookingId);
 
     if (bookingError) {
-      console.error('❌ [Webhook] Failed to update booking payment status:', bookingError);
+      log.error({ err: bookingError, bookingId }, 'Failed to update booking payment status');
     } else {
-      console.log('✅ [Webhook] Booking payment status updated:', bookingId);
+      log.info({ bookingId }, 'Booking payment status updated');
     }
 
     return;
   }
 
-  console.log('ℹ️  [Webhook] Connect checkout session with no invoice_id or booking_id - skipping');
+  log.info({ sessionId: session.id }, 'Connect checkout session with no invoice_id or booking_id - skipping');
 }
 
 /**
  * Handle business invoice.payment_failed event (from Connect accounts)
  * - Update payment_invoices status to 'overdue'
  */
-async function handleConnectInvoicePaymentFailed(invoice: Stripe.Invoice, connectAccountId: string) {
-  console.log('⚠️ [Webhook] Processing Connect invoice.payment_failed:', invoice.id, 'Account:', connectAccountId);
+async function handleConnectInvoicePaymentFailed(invoice: Stripe.Invoice, connectAccountId: string, log: Logger) {
+  log.info({ stripeInvoiceId: invoice.id, connectAccountId }, 'Processing Connect invoice.payment_failed');
 
   /**
    * A plan period that did not go through.
@@ -2144,13 +2244,13 @@ async function handleConnectInvoicePaymentFailed(invoice: Stripe.Invoice, connec
   if (failedSubscriptionId) {
     const plan = await paymentPlanSubscriptionRepository.findBySubscriptionId(failedSubscriptionId);
 
-    if (plan.data && (await accountOwns(connectAccountId, plan.data.user_id))) {
+    if (plan.data && (await accountOwns(connectAccountId, plan.data.user_id, log))) {
       await paymentPlanSubscriptionRepository.recordFailure(
         plan.data.id,
         (invoice as unknown as { last_finalization_error?: { code?: string } }).last_finalization_error?.code ?? null
       );
 
-      console.log('⚠️ [Webhook] Plan marked past_due:', plan.data.id);
+      log.info({ planId: plan.data.id, subscriptionId: failedSubscriptionId }, 'Plan marked past_due');
       return;
     }
   }
@@ -2163,7 +2263,7 @@ async function handleConnectInvoicePaymentFailed(invoice: Stripe.Invoice, connec
     .single();
 
   if (lookupError || !platformInvoice) {
-    console.log('ℹ️  [Webhook] No platform invoice found for Stripe invoice:', invoice.id);
+    log.info({ stripeInvoiceId: invoice.id }, 'No platform invoice found for Stripe invoice');
     return;
   }
 
@@ -2177,7 +2277,7 @@ async function handleConnectInvoicePaymentFailed(invoice: Stripe.Invoice, connec
     .eq('id', platformInvoice.id);
 
   if (updateError) {
-    console.error('❌ [Webhook] Failed to update platform invoice:', updateError);
+    log.error({ err: updateError, invoiceId: platformInvoice.id }, 'Failed to update platform invoice');
     return;
   }
 
@@ -2222,18 +2322,21 @@ async function handleConnectInvoicePaymentFailed(invoice: Stripe.Invoice, connec
       auto_logged: true,
       source_capability: 'payments',
       source_entity_id: platformInvoice.id,
-    }).catch(err => console.warn('[Webhook] Payment-failed activity logging failed (non-blocking)', err));
+    }).catch(err => log.warn({ err, invoiceId: platformInvoice.id }, 'Payment-failed activity logging failed (non-blocking)'));
   }
 
-  console.log('✅ [Webhook] Connect invoice payment failed processed:', platformInvoice.invoice_number);
+  log.info(
+    { invoiceId: platformInvoice.id, invoiceNumber: platformInvoice.invoice_number },
+    'Connect invoice payment failed processed'
+  );
 }
 
 /**
  * Handle business invoice.finalized event (from Connect accounts)
  * - Update stripe_hosted_invoice_url and stripe_invoice_pdf
  */
-async function handleConnectInvoiceFinalized(invoice: Stripe.Invoice, connectAccountId: string) {
-  console.log('📋 [Webhook] Processing Connect invoice.finalized:', invoice.id, 'Account:', connectAccountId);
+async function handleConnectInvoiceFinalized(invoice: Stripe.Invoice, connectAccountId: string, log: Logger) {
+  log.info({ stripeInvoiceId: invoice.id, connectAccountId }, 'Processing Connect invoice.finalized');
 
   // Look up the platform invoice by Stripe invoice ID
   const { data: platformInvoice, error: lookupError } = await supabaseAdmin
@@ -2243,7 +2346,7 @@ async function handleConnectInvoiceFinalized(invoice: Stripe.Invoice, connectAcc
     .single();
 
   if (lookupError || !platformInvoice) {
-    console.log('ℹ️  [Webhook] No platform invoice found for Stripe invoice:', invoice.id);
+    log.info({ stripeInvoiceId: invoice.id }, 'No platform invoice found for Stripe invoice');
     return;
   }
 
@@ -2258,19 +2361,22 @@ async function handleConnectInvoiceFinalized(invoice: Stripe.Invoice, connectAcc
     .eq('id', platformInvoice.id);
 
   if (updateError) {
-    console.error('❌ [Webhook] Failed to update platform invoice:', updateError);
+    log.error({ err: updateError, invoiceId: platformInvoice.id }, 'Failed to update platform invoice');
     return;
   }
 
-  console.log('✅ [Webhook] Connect invoice finalized processed:', platformInvoice.invoice_number);
+  log.info(
+    { invoiceId: platformInvoice.id, invoiceNumber: platformInvoice.invoice_number },
+    'Connect invoice finalized processed'
+  );
 }
 
 /**
  * Handle business invoice.marked_uncollectible event (from Connect accounts)
  * - Update payment_invoices status to 'cancelled'
  */
-async function handleConnectInvoiceUncollectible(invoice: Stripe.Invoice, connectAccountId: string) {
-  console.log('❌ [Webhook] Processing Connect invoice.marked_uncollectible:', invoice.id, 'Account:', connectAccountId);
+async function handleConnectInvoiceUncollectible(invoice: Stripe.Invoice, connectAccountId: string, log: Logger) {
+  log.info({ stripeInvoiceId: invoice.id, connectAccountId }, 'Processing Connect invoice.marked_uncollectible');
 
   // Look up the platform invoice by Stripe invoice ID
   const { data: platformInvoice, error: lookupError } = await supabaseAdmin
@@ -2280,7 +2386,7 @@ async function handleConnectInvoiceUncollectible(invoice: Stripe.Invoice, connec
     .single();
 
   if (lookupError || !platformInvoice) {
-    console.log('ℹ️  [Webhook] No platform invoice found for Stripe invoice:', invoice.id);
+    log.info({ stripeInvoiceId: invoice.id }, 'No platform invoice found for Stripe invoice');
     return;
   }
 
@@ -2294,11 +2400,14 @@ async function handleConnectInvoiceUncollectible(invoice: Stripe.Invoice, connec
     .eq('id', platformInvoice.id);
 
   if (updateError) {
-    console.error('❌ [Webhook] Failed to update platform invoice:', updateError);
+    log.error({ err: updateError, invoiceId: platformInvoice.id }, 'Failed to update platform invoice');
     return;
   }
 
-  console.log('✅ [Webhook] Connect invoice marked uncollectible:', platformInvoice.invoice_number);
+  log.info(
+    { invoiceId: platformInvoice.id, invoiceNumber: platformInvoice.invoice_number },
+    'Connect invoice marked uncollectible'
+  );
 }
 
 
@@ -2324,7 +2433,8 @@ async function handleConnectInvoiceUncollectible(invoice: Stripe.Invoice, connec
  */
 async function handlePlanSubscriptionEnded(
   subscription: Stripe.Subscription,
-  connectAccountId: string
+  connectAccountId: string,
+  log: Logger
 ) {
   const { data: plan } = await supabaseAdmin
     .from('payment_plan_subscriptions')
@@ -2336,10 +2446,10 @@ async function handlePlanSubscriptionEnded(
   // their own and they are none of our business.
   if (!plan) return;
 
-  if (!(await accountOwns(connectAccountId, plan.user_id))) {
-    console.error(
-      '🚫 [Webhook] Subscription ended on an account that does not own the plan it names:',
-      subscription.id
+  if (!(await accountOwns(connectAccountId, plan.user_id, log))) {
+    log.error(
+      { subscriptionId: subscription.id, connectAccountId },
+      'Subscription ended on an account that does not own the plan it names'
     );
     return;
   }
@@ -2368,9 +2478,9 @@ async function handlePlanSubscriptionEnded(
       .eq('status', 'pending');
   }
 
-  console.log(
-    `${completed ? '✅' : '🛑'} [Webhook] Payment plan ${completed ? 'completed' : 'cancelled'}:`,
-    subscription.id
+  log.info(
+    { subscriptionId: subscription.id, planId: plan.id, outcome: completed ? 'completed' : 'cancelled' },
+    'Payment plan ended'
   );
 }
 
@@ -2378,13 +2488,13 @@ async function handlePlanSubscriptionEnded(
  * Handle customer.subscription.deleted event
  * - Mark subscription as canceled
  */
-async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
-  console.log('❌ [Webhook] Processing customer.subscription.deleted:', subscription.id);
+async function handleSubscriptionDeleted(subscription: Stripe.Subscription, log: Logger) {
+  log.info({ subscriptionId: subscription.id }, 'Processing customer.subscription.deleted');
 
   const userId = subscription.metadata?.user_id;
 
   if (!userId) {
-    console.error('❌ [Webhook] No user_id in subscription metadata');
+    log.error({ subscriptionId: subscription.id }, 'No user_id in subscription metadata');
     return;
   }
 
@@ -2407,13 +2517,21 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
       description: 'Subscription canceled'
     });
 
-  console.log('✅ [Webhook] Subscription canceled:', { userId });
+  log.info({ userId, subscriptionId: subscription.id }, 'Subscription canceled');
 }
 
 /**
  * Main webhook handler
  */
 export async function POST(request: NextRequest) {
+  // Stripe sends no correlation header, so one is generated per delivery unless
+  // a caller supplied it. The Stripe event id is bound once the event is
+  // verified (below), and is the id to search by. Declared outside the try so
+  // the catch can log with it.
+  let log: Logger = logger.child({
+    correlationId: request.headers.get('x-correlation-id') || crypto.randomUUID(),
+  });
+
   // Set once this request has claimed the event. The catch needs it to release
   // the claim, and it must survive out of the try block to do so.
   let processedEventId: string | null = null;
@@ -2439,11 +2557,11 @@ export async function POST(request: NextRequest) {
     // already gone and reads ''. Still a 400: Stripe retries on it, and the CLI,
     // which does not retry, has nothing to resend anyway.
     if (!body) {
-      console.error(
-        '❌ [Webhook] Empty request body with a stripe-signature header present — ' +
+      log.error(
+        { signatureTimestamp: signature.split(',')[0] },
+        'Empty request body with a stripe-signature header present - ' +
         'the request was aborted before the body arrived (check the server is up ' +
-        'and the route is warm). Signature timestamp:',
-        signature.split(',')[0]
+        'and the route is warm)'
       );
       return NextResponse.json({ error: 'Empty request body' }, { status: 400 });
     }
@@ -2461,7 +2579,7 @@ export async function POST(request: NextRequest) {
     ].filter(Boolean) as string[];
 
     if (secrets.length === 0) {
-      console.error('❌ No Stripe webhook secret configured');
+      log.error('No Stripe webhook secret configured');
       return NextResponse.json(
         { error: 'Webhook secret not configured' },
         { status: 500 }
@@ -2484,11 +2602,15 @@ export async function POST(request: NextRequest) {
     if (!event) {
       // A signature that matches no configured secret is not ours. 400 is
       // correct here — unlike a handler failure, retrying will not help.
-      console.error('❌ [Webhook] Signature verification failed:', verificationError);
+      log.error({ err: verificationError }, 'Signature verification failed');
       return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
     }
 
-    console.log('📥 [Webhook] Received event:', event.type, 'ID:', event.id);
+    // Every line from here on carries the Stripe event, so one delivery can be
+    // traced end to end from the event id alone.
+    log = log.child({ stripeEventId: event.id, eventType: event.type, livemode: event.livemode });
+
+    log.info('Received event');
 
     // ============================================================================
     // IDEMPOTENCY CHECK: Prevent duplicate processing of the same webhook event
@@ -2510,24 +2632,24 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
 
     if (checkError) {
-      console.error('❌ [Webhook] Error checking for duplicate event:', checkError);
+      log.error({ err: checkError }, 'Error checking for duplicate event');
       // Continue processing - don't fail webhook if check fails
     }
 
     if (existingEvent?.status === 'completed') {
-      console.log(`⏭️  [Webhook] Event ${event.id} already processed, skipping duplicate`);
+      log.info('Event already processed, skipping duplicate');
       return NextResponse.json({ received: true, duplicate: true });
     }
 
     if (existingEvent?.status === 'processing') {
       // Another delivery of the same event is in flight right now.
-      console.log(`⏭️  [Webhook] Event ${event.id} is being processed by another request, skipping`);
+      log.info('Event is being processed by another request, skipping');
       return NextResponse.json({ received: true, duplicate: true });
     }
 
     if (existingEvent) {
       // A previous attempt failed. Claim it for this attempt.
-      console.log(`🔁 [Webhook] Retrying previously failed event ${event.id}`);
+      log.info('Retrying previously failed event');
       await supabaseAdmin
         .from('processed_webhook_events')
         .update({ status: 'processing', failure_message: null, processed_at: new Date().toISOString() })
@@ -2551,17 +2673,17 @@ export async function POST(request: NextRequest) {
         // Unique violation means another request claimed it between our SELECT
         // and this INSERT. Theirs wins.
         if (insertError.code === '23505') {
-          console.log(`⏭️  [Webhook] Event ${event.id} is being processed by another request, skipping`);
+          log.info('Event is being processed by another request, skipping');
           return NextResponse.json({ received: true, duplicate: true });
         }
-        console.error('❌ [Webhook] Error recording event:', insertError);
+        log.error({ err: insertError }, 'Error recording event');
         // Continue processing even if we couldn't record the event
       } else {
         processedEventId = event.id;
       }
     }
 
-    console.log(`✅ [Webhook] Event ${event.id} recorded, processing...`);
+    log.info('Event recorded, processing');
 
     // Which account this event belongs to — a business's connected account, or
     // the platform.
@@ -2578,7 +2700,8 @@ export async function POST(request: NextRequest) {
     const isConnectEvent = !!connectAccountId;
 
     if (isConnectEvent) {
-      console.log(`🔗 [Webhook] Connect event from account: ${connectAccountId}`);
+      log = log.child({ connectAccountId });
+      log.info('Connect event from account');
     }
 
     // Process event based on type
@@ -2586,27 +2709,27 @@ export async function POST(request: NextRequest) {
       case 'invoice.paid':
         if (isConnectEvent) {
           // Business user's client paid an invoice
-          await handleConnectInvoicePaid(event.data.object as Stripe.Invoice, connectAccountId!);
+          await handleConnectInvoicePaid(event.data.object as Stripe.Invoice, connectAccountId!, log);
         } else {
           // Platform subscription invoice paid
-          await handleInvoicePaid(event.data.object as Stripe.Invoice);
+          await handleInvoicePaid(event.data.object as Stripe.Invoice, log);
         }
         break;
 
       case 'invoice.payment_failed':
         if (isConnectEvent) {
           // Business user's client failed to pay
-          await handleConnectInvoicePaymentFailed(event.data.object as Stripe.Invoice, connectAccountId!);
+          await handleConnectInvoicePaymentFailed(event.data.object as Stripe.Invoice, connectAccountId!, log);
         } else {
           // Platform subscription payment failed
-          await handleInvoicePaymentFailed(event.data.object as Stripe.Invoice);
+          await handleInvoicePaymentFailed(event.data.object as Stripe.Invoice, log);
         }
         break;
 
       case 'invoice.finalized':
         if (isConnectEvent) {
           // Business user's invoice was finalized (ready for payment)
-          await handleConnectInvoiceFinalized(event.data.object as Stripe.Invoice, connectAccountId!);
+          await handleConnectInvoiceFinalized(event.data.object as Stripe.Invoice, connectAccountId!, log);
         }
         // No platform handler for finalized - platform uses Stripe's automatic invoicing
         break;
@@ -2614,7 +2737,7 @@ export async function POST(request: NextRequest) {
       case 'invoice.marked_uncollectible':
         if (isConnectEvent) {
           // Business user's invoice marked as uncollectible
-          await handleConnectInvoiceUncollectible(event.data.object as Stripe.Invoice, connectAccountId!);
+          await handleConnectInvoiceUncollectible(event.data.object as Stripe.Invoice, connectAccountId!, log);
         }
         // No platform handler - not applicable to subscription invoices
         break;
@@ -2622,10 +2745,10 @@ export async function POST(request: NextRequest) {
       case 'checkout.session.completed':
         if (isConnectEvent) {
           // Business user's client completed a checkout (invoice payment, booking payment, etc.)
-          await handleConnectCheckoutCompleted(event.data.object as Stripe.Checkout.Session, connectAccountId!);
+          await handleConnectCheckoutCompleted(event.data.object as Stripe.Checkout.Session, connectAccountId!, log);
         } else {
           // Platform checkout (boost packs, subscriptions)
-          await handleCheckoutCompleted(event.data.object as Stripe.Checkout.Session);
+          await handleCheckoutCompleted(event.data.object as Stripe.Checkout.Session, log);
         }
         break;
 
@@ -2642,7 +2765,7 @@ export async function POST(request: NextRequest) {
       // A connected account's own subscriptions are its business, not ours.
       case 'customer.subscription.updated':
         if (isConnectEvent) break;
-        await handleSubscriptionUpdated(event.data.object as Stripe.Subscription);
+        await handleSubscriptionUpdated(event.data.object as Stripe.Subscription, log);
         break;
 
       case 'customer.subscription.deleted':
@@ -2653,18 +2776,19 @@ export async function POST(request: NextRequest) {
           // charged, and so its remaining periods leave the books.
           await handlePlanSubscriptionEnded(
             event.data.object as Stripe.Subscription,
-            connectAccountId!
+            connectAccountId!,
+            log
           );
           break;
         }
-        await handleSubscriptionDeleted(event.data.object as Stripe.Subscription);
+        await handleSubscriptionDeleted(event.data.object as Stripe.Subscription, log);
         break;
 
       // Refunds issued outside this app — from the Stripe dashboard, or by
       // Stripe itself. Handled for both platform and connected accounts:
       // wherever the charge lives, the ledger has to learn about it.
       case 'charge.refunded':
-        await handleChargeRefunded(event.data.object as Stripe.Charge, connectAccountId);
+        await handleChargeRefunded(event.data.object as Stripe.Charge, connectAccountId, log);
         break;
 
       /*
@@ -2673,15 +2797,15 @@ export async function POST(request: NextRequest) {
        * and never recording a recovery would be its own kind of wrong.
        */
       case 'charge.dispute.created':
-        await handleDispute(event.data.object as Stripe.Dispute, 'opened');
+        await handleDispute(event.data.object as Stripe.Dispute, 'opened', log);
         break;
 
       case 'charge.dispute.closed':
-        await handleDispute(event.data.object as Stripe.Dispute, 'closed');
+        await handleDispute(event.data.object as Stripe.Dispute, 'closed', log);
         break;
 
       case 'charge.dispute.funds_reinstated':
-        await handleDispute(event.data.object as Stripe.Dispute, 'reinstated');
+        await handleDispute(event.data.object as Stripe.Dispute, 'reinstated', log);
         break;
 
       // A payment that succeeded without any invoice behind it — a website or
@@ -2695,13 +2819,14 @@ export async function POST(request: NextRequest) {
         if (isConnectEvent) {
           await handleConnectPaymentIntentSucceeded(
             event.data.object as Stripe.PaymentIntent,
-            connectAccountId!
+            connectAccountId!,
+            log
           );
         }
         break;
 
       default:
-        console.log('ℹ️ [Webhook] Unhandled event type:', event.type);
+        log.info('Unhandled event type');
     }
 
     // Only now is it safe to suppress future deliveries of this event.
@@ -2713,7 +2838,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ received: true });
 
   } catch (error: any) {
-    console.error('❌ [Webhook] Error:', error);
+    log.error({ err: error }, 'Webhook processing failed');
 
     // Release the event so Stripe's retry can reprocess it. Without this the id
     // stays claimed and every retry is discarded as a duplicate — the failure
@@ -2733,7 +2858,7 @@ export async function POST(request: NextRequest) {
       } catch (releaseError) {
         // Nothing further to do — the original failure is the one that matters,
         // and swallowing this keeps it from masking the real error.
-        console.error('❌ [Webhook] Could not release failed event:', releaseError);
+        log.error({ err: releaseError, processedEventId }, 'Could not release failed event');
       }
     }
 

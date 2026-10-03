@@ -990,6 +990,28 @@ logger.error({ err: error }, 'Authentication failed');
 logger.debug({ userId, filters }, 'Fetching data');
 ```
 
+#### Converting a `console.*` file: prove only logging changed
+
+CLAUDE.md rule 3 makes every touched file that still uses `console.*` a conversion. For a large file, or any file that moves money, attach machine-checked evidence that the conversion changed logging and nothing else:
+
+**File:** `scripts/check-logging-only-diff.ts`
+
+```bash
+# Whole file: every token outside logging must be identical to the base ref
+npx tsx scripts/check-logging-only-diff.ts --base origin/main --file app/api/stripe/webhook/route.ts
+
+# Named functions only: one verdict each (for a later slice that edits the same file)
+npx tsx scripts/check-logging-only-diff.ts --base origin/main --file <path> --functions handleA,handleB
+```
+
+- Both versions are parsed; `console.*` and `log`/`logger` level calls become a placeholder, a `log` parameter and `log` arguments are dropped, logger setup (`@/lib/logger` import, `logger`/`log` declarations and reassignments) is removed, and the rest must print identically. Exit `0` identical, `1` differs, `2` refused.
+- It refuses (exit `2`) if the **base** already uses `log` or `logger` outside logging, because normalising them away could hide a real edit.
+- It lists every call found inside log arguments, marking anything outside a small pure allow-list `REVIEW`. Read those: the AST check cannot prove a log argument has no side effects.
+- Pass the request logger as an explicit last `log: Logger` parameter rather than inventing a context mechanism; the check normalises it away.
+- Log ids and `Object.keys(metadata)`, never payloads: redaction is a backstop for exact key names only (see [Sensitive Data Redaction](#sensitive-data-redaction)).
+
+First used for the Stripe webhook ([BUSINESS_OS_PLAN_PAYMENTS_P0_WORKPLAN.md](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P0_WORKPLAN.md)).
+
 ### Step 4: Migrate Service Classes
 
 #### Before
@@ -1481,4 +1503,5 @@ Refer to the [Pino documentation](https://getpino.io/) for advanced usage and co
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-09-18 | Redaction marked not active (OI-9); owner-text rule added | `@/lib/logger` resolves to `lib/logger.ts`, which has no `redact` list, so the Sensitive Data Redaction section now states that nothing is redacted automatically and describes the intended configuration only. Added the rule: raw user text is never logged, and model-derived text is logged at `debug` only. See [BUSINESS_OS_LLM_LOGGING_CLEANUP_WORKPLAN.md](/docs/workplans/BUSINESS_OS_LLM_LOGGING_CLEANUP_WORKPLAN.md) |
+| 2026-10-02 | Added "Converting a `console.*` file: prove only logging changed" | Points to `scripts/check-logging-only-diff.ts` (whole-file and `--functions` modes, base-side refusal, log-argument call listing). Added with plan payments P-0, the Stripe webhook conversion |
 | 2026-10-03 | Redaction active (OI-9 closed) | `lib/logger.ts` now passes `loggerConfig.redact` to Pino; the shadowed `lib/logger/index.ts` is deleted (its four `scripts/` importers now import `../lib/logger`). Project Setup shows the real `lib/logger.ts` and the current redact list; Sensitive Data Redaction lists what is and is not covered |

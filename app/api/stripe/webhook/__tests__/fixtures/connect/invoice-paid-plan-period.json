@@ -1,0 +1,39 @@
+{
+  "id": "evt_connect_plan_period",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "type": "invoice.paid",
+  "account": "acct_owner_a",
+  "livemode": false,
+  "created": 1790000100,
+  "data": {
+    "object": {
+      "id": "in_plan_period_1",
+      "object": "invoice",
+      "customer": { "id": "cus_client_2" },
+      "currency": "ils",
+      "amount_paid": 33333,
+      "amount_due": 33333,
+      "total": 33333,
+      "hosted_invoice_url": null,
+      "invoice_pdf": null,
+      "metadata": {},
+      "parent": {
+        "type": "subscription_details",
+        "subscription_details": {
+          "subscription": "sub_plan_1",
+          "metadata": {
+            "plan_count": "3",
+            "plan_total": "1000",
+            "plan_currency": "ILS",
+            "plan_frequency": "monthly",
+            "owner_id": "owner-a",
+            "booking_id": "bk-plan-1",
+            "service_id": "svc-1",
+            "payment_plan_id": "pp-1"
+          }
+        }
+      }
+    }
+  }
+}
