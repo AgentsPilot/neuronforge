@@ -1,6 +1,6 @@
 # Requirement: Admin Cleanup for Business OS
 
-> **Last Updated**: 2026-10-02
+> **Last Updated**: 2026-10-03
 
 **Created by:** BA
 **Date:** 2026-10-02
@@ -31,7 +31,8 @@ The admin reorganisation put Business OS (BOS) first in the sidebar. It did not 
 14. [Open questions](#14-open-questions)
 15. [Notes on integration points](#15-notes-on-integration-points)
 16. [SA Review — slices 1 and 5a (2026-10-02)](#sa-review--slices-1-and-5a-2026-10-02)
-17. [Change History](#change-history)
+17. [SA Review — slice 2 (2026-10-03)](#sa-review--slice-2-2026-10-03)
+18. [Change History](#change-history)
 
 ---
 
@@ -216,7 +217,7 @@ Scoped as numbered sub-slices. **5a is the cleanup. 5b onward are proposals the 
 |---|---|
 | FR-PR1 | `/admin/system-config` keeps **only the AI model pricing table** (`ai_model_pricing`). Sidebar label: **"Model pricing"**. Description: something like "AI cost per model; sets Business OS charges" (wording is Dev's, within the sidebar's length). |
 | FR-PR2 | **Pilot credit cost, boost packs (`boost_packs`), the calculator config (`ais_system_config`) and the billing grace period** move, unchanged in behaviour, to one new page in the **hidden AgentsPilot (parked)** group. It is reachable by URL and has one hidden sidebar entry (TA-2). **Exception:** if Dev finds that any BOS code reads the grace period or the pilot credit cost (V-18), that setting stays on the pricing page and the finding is reported. |
-| FR-PR3 | **Sync tells the truth.** Its label, helper text and success message say that it **replaces prices with the list built into the app (dated June 2026), and that this changes what Business OS customers are charged.** It asks for confirmation first. The false comment at `page.tsx:350` is corrected. Whether the button stays at all is OQ-2. |
+| FR-PR3 | **⏸ PARKED 2026-10-03 (user decision UC-5): not in slice 2.** The Sync button and its wording stay exactly as they are in slice 2; the whole pricing-source question moves to its own session (§11, "Model price source and Sync"). Original text, kept for that session: **Sync tells the truth.** Its label, helper text and success message say that it **replaces prices with the list built into the app (dated June 2026), and that this changes what Business OS customers are charged.** It asks for confirmation first. The false comment at `page.tsx:350` is corrected. Whether the button stays at all is OQ-2. |
 | FR-PR4 | Every price change (single edit or Sync) is audited with who, when, before and after. The sync already audits (`logAIPricingSynced`). **To verify (Dev):** that the single-price PUT audits too. If it does not, it starts to. |
 | FR-PR5 | The moved boost-pack section is labelled **"AgentsPilot boost packs"**, so nobody confuses it with the BOS top-up packages. Those packages are configured in code with no admin UI in v1 (credits boost requirement §3). |
 | FR-PR6 | **CLAUDE.md rule 3:** every `console.*` call in the files this slice touches is converted to the Pino standard (at least 19 on the pricing page, V-17). The moved sections carry their converted logging with them. |
@@ -317,7 +318,7 @@ Scoped as numbered sub-slices. **5a is the cleanup. 5b onward are proposals the 
 
 | Area | Requirement |
 |---|---|
-| **Security** | Any new admin route calls `requireAdmin` as its first statement (the required CI guard applies). Every **write** in this document (queue actions, entitlement ops, option A admin changes, price changes) needs a reason where stated, writes an audit row with the actor, and does not let an audit failure fail the request. Exception: entitlement and admin-access writes flush the audit before responding, the existing WC-7 pattern. Never `profiles.role`. Any write to `admin_users` is SA-reviewed. |
+| **Security** | Any new admin route calls `requireAdmin` as its first statement (the required CI guard applies). Every **write** in this document (queue actions, entitlement ops, option A admin changes, price changes) needs a reason where stated, writes an audit row with the actor, and does not let an audit failure fail the request. Exception: entitlement, admin-access **and model price** writes flush the audit before responding, the existing WC-7 pattern (price writes added by slice 2, C2-7). Never `profiles.role`. Any write to `admin_users` is SA-reviewed. |
 | **Privacy** | Cross-account admin views show **metadata only**: never message text, prompts, payloads, error messages or client contact details (reorganisation §9). NF-3 is the known exception, and TA-8 addresses it. |
 | **Honesty** | No label, comment or success message claims something the code does not do (Sync, Admin users, archiving, Businesses). |
 | **Look (D-4)** | No new colours, fonts or component library. Reuse the admin shell's existing dialog, table and button styles (for example, the archiving confirm dialog). |
@@ -340,6 +341,7 @@ Scoped as numbered sub-slices. **5a is the cleanup. 5b onward are proposals the 
 - ☐ `/admin/system-config` shows only the model pricing table. Editing a price still works and is audited with before and after.
 - ☐ The four AP sections load and save unchanged at their new URL-only page, which has one hidden sidebar entry.
 - ☐ The Sync control's wording says it replaces prices with the built-in June 2026 list and affects BOS charges, and it asks for confirmation (or it is gone, per OQ-2).
+  - *SA note, 2026-10-03: **out of scope for slice 2.** FR-PR3 and OQ-2 are parked (UC-5). The line above belongs to the separate price-source session (§11). In slice 2 the Sync control, its wording and its route stay exactly as they are (SA Review — slice 2, C2-1).*
 - ☐ The page and the moved sections contain no `console.*`.
 - ☐ "Free tier & onboarding" is in the hidden parked group, and its route still loads.
 - ☐ The sidebar tests are updated in the same change and pass.
@@ -404,6 +406,7 @@ These are technical forks I have decided as BA, so that the user is not asked th
 | **Messages defects** | User decision UC-2: keep the page as it is for now | (1) Reply probably posts to `.../reply` while the route is `.../replay`, so replies may 404 silently (V-12). (2) Email sending is a TODO, but `email_sent` is still recorded as true when requested (NF-6). (3) The reply route logs the customer's email and reply text with `console.log`, and saves a placeholder `admin_id` (NF-6). (4) Whether anything posts to `/api/contact` is unknown (V-14). If nothing does, the inbox can never receive a message. **Item (3) writes customer data to logs today**, so it is the first to fix if the page is kept long-term. |
 | **Admin users option A** (real management) | Recommended after option B (OQ-1) | See §4.10. M, security path. |
 | **Businesses 5b–5e** | One at a time, in the user's order | §4.5 |
+| **⏸ Model price source and Sync** (was FR-PR3 / OQ-2 / NF-2) | **Parked 2026-10-03, user decision UC-5.** The user will handle it in a separate session as its own fix: look up the providers' real current prices, update the database **and** the code, and decide what Sync should become. | **As-built (verified 2026-10-03 on main):** (1) Sync copies **code → database**: a 42-model list typed into `app/api/admin/system-config/pricing/sync/route.ts` (20 OpenAI, 13 Anthropic, 6 Kimi, 3 Google, dated June 2026) overwrites the matching rows of `ai_model_pricing` via `aiModelPricingRepository.syncMany`; it contacts no provider, although the page says it "automatically fetches current rates". (2) A **second** in-code list, `FALLBACK_PRICING` in `lib/ai/pricing.ts`, holds the same prices and is used when a model is missing from the table or the table cannot be read. (3) Runtime cost lookup order: the table (cached in memory for 1 hour) → `FALLBACK_PRICING` → a flagged conservative charge for an unpriced model (credit deduction FR-12). Every BOS credit charge is computed from this. Slice 2 still does the page split (FR-PR1, FR-PR2, FR-PR4–FR-PR6) and leaves Sync untouched. **Also for that session (SA slice 2 workplan review, 2026-10-03):** the pricing page's info box is false in three places and is frozen with Sync: "Changes affect cost calculations immediately" (the price cache is 1 hour), "per 1,000 tokens" (columns are per token), and an "Intelligent Routing" paragraph that is about AgentsPilot. And a project-wide WC-7 limit: `AuditTrailService.flush()` returns early while another flush runs (`isFlushing`), so an awaited flush can return before this request's row is written. |
 
 ---
 
@@ -439,7 +442,7 @@ Recorded so they are not lost. **Each needs a user decision before any work.** T
 Business questions only. Technical forks are in §10, for SA.
 
 - [x] **OQ-1: Admin users. Read-only truth now, or full management?** **Answered by the user, 2026-10-02: option B, read-only now.** Option B shows the real admins and explains how to change them. You keep adding admins by script, which is rare with two admins. Option A lets you add and remove admins from the page, but it is a new way to become an admin and needs security review. *Suggested:* B now, A later when a third admin is needed. (raised by: BA | status: answered — B)
-- [ ] **OQ-2: The pricing "Sync" button.** It replaces every model price with a list built into the app (June 2026), which changes what Business OS customers are charged. Should it (a) stay, clearly worded and with a confirmation, or (b) be removed, so prices change only by editing one model at a time? *Suggested:* (a) stay, reworded and with a confirmation. It is the quickest way to restore known-good prices after a bad edit. (raised by: BA | status: pending user input)
+- [x] **OQ-2: PARKED 2026-10-03 (UC-5)** — moved to its own session; see §11 "Model price source and Sync". Original question: **The pricing "Sync" button.** It replaces every model price with a list built into the app (June 2026), which changes what Business OS customers are charged. Should it (a) stay, clearly worded and with a confirmation, or (b) be removed, so prices change only by editing one model at a time? *Suggested:* (a) stay, reworded and with a confirmation. It is the quickest way to restore known-good prices after a bad edit. (raised by: BA | status: pending user input)
 - [ ] **OQ-3: Re-sending old client messages.** When a reminder, lead reply or briefing failed days ago, a late send may confuse the client: a payment reminder for an invoice already paid, or a "thanks for your enquiry" three days late. May an admin retry such an item at any age? *Suggested:* retry allowed up to **72 hours** after the item was due. After that, cancel only. (raised by: BA | status: pending user input)
 - [ ] **OQ-4: "Drain now" before launch?** Without it, after a fix you wait for the next scheduled run. That is up to 24 hours for daily payment reminders. *Suggested:* include it in slice 7. (raised by: BA | status: pending user input)
 - [ ] **OQ-5: Businesses list default.** Should the list open on businesses only, or on every login? *Suggested:* businesses only, with a toggle to show all logins. (raised by: BA | status: pending user input)
@@ -592,6 +595,147 @@ Related: [ADMIN_MODULE_BOS_REORGANISATION_REQUIREMENT.md](/docs/requirements/ADM
 
 ---
 
+## SA Review — slice 2 (2026-10-03)
+
+**Reviewed by SA — 2026-10-03.** **Scope: slice 2 only.** That is §4.8 FR-PR1, FR-PR2, FR-PR4, FR-PR5 and FR-PR6; §4.9 FR-FT1 and FR-FT2; the slice 2 lines of §9; TA-2, TA-3 and TA-13; and V-17, V-18, V-19 and NF-2. FR-PR3 and OQ-2 are **parked** (UC-5) and are not reviewed.
+**Ref:** `fix/admin-pricing-split` @ `5061489b`. Code was read; the live database was not (§C, "Schema").
+**Status: APPROVED WITH CONDITIONS.** Dev may write the workplan once conditions C2-1..C2-12 are carried into it. The conditions are numbered C2- so they do not collide with slice 1's C-1..C-15.
+
+### A. As-built findings
+
+| # | Finding | Effect |
+|---|---|---|
+| S2-1 | The page (`app/admin/system-config/page.tsx`, 1,989 lines) has **four** collapsible sections: AI Model Pricing (`:600-830`), Billing Configuration (grace period and boost packs, `:832-~1425`), Calculator Configuration (`:1430-~1925`), and a read-only **Advanced Configuration** JSON dump (`:1929-1985`). The dump prints the calculator config **and** the pricing table. | The requirement does not say where the dump goes. Ruled in C2-3. |
+| S2-2 | **"Pilot credit cost" is not an editable control on this page.** The page reads `pilot_credit_cost_usd` from the `billing` rows of `system_settings_config` (`:169-171`). It uses the value only to work out a boost pack's credits in the browser (`calculateBoostPackCredits`, `:441-445`). The pilot credit cost an admin **can** edit is the calculator's `creditCostUsd`, which `calculator-config` writes to the `ais_system_config` key `pilot_credit_cost_usd` (`calculator-config/route.ts:51`). So the same name lives in two stores. | Both move, with the boost-pack and calculator sections. Nothing called "pilot credit cost" stays on the pricing page. The two-store drift is AgentsPilot debt: recorded here, not fixed (D-3). |
+| S2-3 | **FR-PR2 exception: who reads the grace period.** Outside the page, `payment_grace_period_days` is read in one place only: `handleInvoicePaymentFailed` in `app/api/stripe/webhook/route.ts:347-445`. That handler updates `user_subscriptions` and sets `agents_paused`, so it is the AgentsPilot platform subscription (Pilot Credits). The BOS grace period is a different thing: it is configured in code (`lib/business-os/entitlements/config/lifecycle.ts` `subscriptionGraceHistory`, `cohorts.ts` `graceHistory`) and stored per account as `grace_ends_at`. Nothing under `lib/business-os`, `app/business-os` or `app/api/business-os` reads the key. | **No BOS reader. The grace period moves.** |
+| S2-4 | **FR-PR2 exception: who reads the pilot credit cost (R-21).** The readers are: the Stripe webhook (`webhook/route.ts:113` proration in `handleInvoicePaid`, and `:635` in `handleCheckoutCompleted`; both are Pilot-Credit paths on the platform Stripe account), `stripe/invoices/route.ts:76`, `stripe/sync-subscription/route.ts:124`, `stripe/update-subscription/route.ts:69`, and the AgentsPilot billing UIs (`components/settings/BillingSettings.tsx`, `components/v2/settings/BillingSettingsV2_NEW.tsx`), which are mounted only at `app/(protected)/settings` and `app/v2/billing`. The webhook **file** is shared with BOS. BOS's handlers in it are the Connect ones (`handleConnect*`, `:1129` onward), and none of them reads the key. `lib/business-os/credits/__tests__/ownerCreditSurface.guard.test.ts:69-74` already pins that the BOS owner credit surface never names `pilot_credit_cost_usd`. Also, the webhook and invoices reads select `pilot_credit_cost_usd` as a **column** of the key/value `ais_system_config` table. That is the R-21 phantom, so those reads always fall back to `0.00048` and **ignore the admin setting today**. | **No BOS reader. The pilot credit cost moves.** R-21 stays a separate task (§13). Moving the admin control neither fixes it nor makes it worse. |
+| S2-5 | **FR-PR4 verified, with a durability gap.** `PUT /api/admin/system-config/pricing` reads the row first and calls `logAIPricingUpdated(adminId, id, model, { before, after })` (`pricing/route.ts:210-243`), and `pricing/__tests__/route.test.ts:272` tests it. POST and DELETE audit as well. **But** `auditLog` only **queues** the row: `AuditTrailService` writes in batches, every 5 s or at 100 rows, and the route never flushes. A serverless instance frozen after the response can lose the row. The entitlements, invites and archiving routes flush before responding (WC-7). | The audit exists. C2-7 makes it durable. |
+| S2-6 | **FR-FT1 and V-19 verified.** Only two places read the `free_tier_*` keys: `app/api/admin/onboarding-config` and `lib/services/FreeTierGrantService.ts`. The service is called only by `POST /api/onboarding/allocate-free-tier`. That route's callers are the AgentsPilot onboarding hook (`components/onboarding/hooks/useOnboarding.ts`, which no page imports) and the `/test-plugins-v2` harness. BOS onboarding is `app/onboarding-chat`, which does not call it. The BOS free plan is the entitlements trial, shown at `/admin/business-os-tiers`. | Safe to park. |
+| S2-7 | **FR-PR5 and the exclusions verified.** Only `app/api/admin/boost-packs`, `lib/stripe/StripeService.ts` and the two AgentsPilot billing components read `boost_packs`. A BOS top-up is a `credit_lots` row with `source = 'boost_purchase'` (`lib/business-os/credits/creditAdminOps.ts:315`), and its packages are configured in code. No BOS file reads `boost_packs`. The calculator config (`/api/pricing/config`) is read by `components/billing/PilotCreditCalculator.tsx` and `components/marketing/DevelopmentVsAgentsPilotCalculator.tsx`. Both are AgentsPilot. | Every moved section is AgentsPilot-only. |
+| S2-8 | Today, if `GET /api/admin/system-config` fails, `fetchData` throws and blanks the **whole** page, pricing included. If the pricing read fails, the error is swallowed (`:213-215`, "supplementary data") and the table shows empty with no message. | After the split, the pricing page no longer depends on the settings read. C2-4 fixes the empty table on error. |
+| S2-9 | **No new route is needed.** The moved sections already call `GET/PUT /api/admin/system-config`, `GET/POST/PUT/DELETE /api/admin/boost-packs`, `PUT /api/admin/calculator-config` and `GET /api/pricing/config`. The pricing table calls `GET/PUT /api/admin/system-config/pricing` and `POST .../pricing/sync`. Every admin route here is gated (access doc register rows 17-21 and 55-61). | No `adminGate.writes` change, no new register row, and no guard cap moves. |
+| S2-10 | What the tests pin today. `AdminSidebar.nav.test.ts` pins: Settings as an exact list; the parked section at 13 items (in two assertions); `allHrefs` at 26; at least 27 pages in the disk scan; "AgentsPilot" in every parked description; and unique names. Its parser regex cannot read an apostrophe in a name or description. `business-os-llm/__tests__/nav.test.ts` needs `/admin/system-config` to stay in Settings, after Business OS AI, and needs the pricing page never to contain the string `business-os-llm`. `AdminHeader.tsx` maps only five routes. Every other page shows "Admin Console" in the header and has its own `<h1>`. | See C2-6 and §C, "AdminHeader". |
+
+### B. `console.*` counts (FR-PR6, TA-13) and the scope ruling
+
+Counted with `grep -c 'console\.'` on `5061489b`.
+
+| File | `console.*` | In the slice 2 diff? | Ruling |
+|---|---|---|---|
+| `app/admin/system-config/page.tsx` | **20** | Yes (split) | Converted. About 9 stay with the pricing page (`:199-214`, `:264`, `:321`, `:356`); the rest go to the parked page. `:264` sits in the shared `fetchData`, so it ends up on both pages. |
+| new parked page | inherits ~12 | Yes (new) | Created already converted. |
+| `app/admin/components/AdminSidebar.tsx` | 0 | Yes | — |
+| `app/api/admin/system-config/pricing/route.ts` | 0 | Yes (C2-7) | Already Pino. |
+| `app/api/admin/system-config/route.ts` | 0 | Header comment only (C2-9) | Already Pino. |
+| `app/api/admin/boost-packs/route.ts` | **11**, plus 8 responses that return `error.message` without the `NODE_ENV` guard | Only if Q-SA2-1 = yes | See the ruling below. |
+| `app/api/admin/calculator-config/route.ts` | **6**, plus 2 unguarded `error.message`. One call logs the whole `updates` body | Only if Q-SA2-1 = yes | See the ruling below. |
+| `app/api/pricing/config/route.ts` | **22**, and no `createLogger` at all | No | Recorded as debt (below). |
+| `app/api/admin/system-config/pricing/sync/route.ts` | 0 | No (Sync is parked) | — |
+| `app/admin/onboarding/page.tsx` | 3 | No (the move is a sidebar change) | TA-13 confirmed: not touched. |
+| `app/api/admin/onboarding-config/route.ts` | 3 | No | Not touched. |
+| `app/admin/components/AdminHeader.tsx` | 0 | No | — |
+
+**Ruling.**
+
+- **"Touched" means a file in the slice's diff.** FR-PR6 is **mandatory** for the page split and for every file the diff edits.
+- **The two admin routes behind the moved sections** (`boost-packs`, 11; `calculator-config`, 6) are reused unchanged in path and contract, so FR-PR6 does not reach them by itself. Dev will still open them to check that the moved sections work, and that brings them under CLAUDE.md § Logging (flag, propose, convert unless the user declines). They are flagged here.
+  - **SA recommends converting them in the same PR.** The conversion is logging only, plus the `NODE_ENV` guard on the error details they return. Nothing else in their contract changes.
+  - This is asked as Q-SA2-1. CLAUDE.md's default applies: **convert unless the user says no.**
+- **`/api/pricing/config`** (22 calls) is a **public**, non-admin AgentsPilot route that builds its own Supabase client inline (a rule 1 debt). A logging pass alone would leave its real defect in place, and it is not part of the admin surface. It is **recorded as debt**, not converted in slice 2.
+
+### C. Technical rulings
+
+| # | Ruling |
+|---|---|
+| **TA-2** | **Confirmed: a new page, not hidden sections.** If the sections were hidden in place, the BOS pricing page would keep three AgentsPilot fetches, an AgentsPilot save path, and the settings-read failure mode (S2-8). It would also keep one sidebar entry whose label is wrong for half the page. **Route: `/admin/agentspilot-billing`** (`app/admin/agentspilot-billing/page.tsx`). The name puts the product first, as the parked descriptions do, so it cannot be mistaken for future Business OS billing work. **Sidebar name: "AgentsPilot billing".** The description should read something like "AgentsPilot boost packs, grace, calculator". It must contain "AgentsPilot" and no apostrophe. |
+| **How to split** | **Cut, do not copy.** Each section's JSX, state, handlers and fetch move to exactly one page. The parked page is the old page minus the pricing section. The pricing page is the pricing section plus the header, the success and error banners, the refresh button and `formatCost`. No shared component is extracted (D-4, proportionality). Every moved control behaves as before, including the boost-pack credit calculation from the `billing`-category `pilot_credit_cost_usd` (S2-2). |
+| **Reuse** | Every existing route is reused with its path and contract unchanged. No route moves and none is added. The only route edits are C2-7 (the flush), C2-9 (one header comment) and, if Q-SA2-1 = yes, the logging conversion of the two admin routes. |
+| **AdminHeader** | **Not touched.** It maps five routes. The pricing page and the new page fall through to the default, and each carries its own `<h1>`, as every other unmapped admin page does. |
+| **Authz** | The new page inherits `requireAdminPage()` from `app/admin/layout.tsx`. It must be `'use client'` with no server props (R8). No route is added, so nothing is registered in `adminGate.writes` and no guard cap moves. |
+| **Schema** | Slice 2 rests on no column claim: no select changes, and the moved code is verbatim. The `business-os-schema-check` skill is **not** required. The R-21 phantom (S2-4) is already in the phantom register. |
+
+### D. Conditions
+
+1. **C2-1: Sync stays untouched (UC-5).** On the pricing page, the following stay byte-for-byte the same: the Sync button and its label; its helper text ("Sync to get latest pricing from providers."); the info-box paragraph "Sync Latest Pricing: Automatically fetches…"; `handleSyncPricing`; the comment at `:350`; and `app/api/admin/system-config/pricing/sync/route.ts`.
+   - **The one exception:** the single `console.error` in `handleSyncPricing` becomes a `clientLogger` call. That is rule 3, and it changes logging only.
+   - The workplan lists these strings, and the code review checks the diff against them.
+   - The §9 Sync acceptance line is out of scope (note added in §9).
+   - **For the parked Sync session:** the Sync route's audit (`logAIPricingSynced`) is also queued, not flushed (S2-5). Slice 2 leaves it as it is.
+2. **C2-2: The pricing page (FR-PR1).** `/admin/system-config` keeps only the AI Model Pricing section.
+   - Its `<h1>` becomes "Model pricing". The "System Config" badge goes, and so does the subtitle that names billing, boost packs and the calculator.
+   - The new subtitle says that every Business OS credit charge is computed from these per-model costs. It does not describe Sync.
+   - The page fetches only `/api/admin/system-config/pricing`, plus `/sync` when the button is clicked. It no longer calls `/api/admin/system-config`, `/api/admin/boost-packs`, `/api/admin/calculator-config` or `/api/pricing/config`.
+   - Sidebar: name "Model pricing", description per FR-PR1. It stays in Settings, directly after Business OS AI.
+3. **C2-3: The Advanced Configuration dump.** It moves to the parked page and prints only the calculator config. The `pricing_models` half is dropped, because the parked page must not fetch BOS prices only to repeat a table that has its own page. It stays read-only.
+4. **C2-4: A failed pricing read is visible.** On the pricing page, a failed or unsuccessful pricing read shows the page's existing error banner (for example, "Could not load model prices"). The table must not render as an empty list. This is the same rule as slice 1's C-3: an empty list never stands in for a failed read. Nothing else on the pricing page changes behaviour.
+5. **C2-5: The parked page (FR-PR2, FR-PR5, TA-2).** Create `app/admin/agentspilot-billing/page.tsx` as a `'use client'` page.
+   - It holds the Billing section (grace period and boost packs), the Calculator section and the Advanced section, verbatim except for C2-3 and the logging.
+   - Its `<h1>` names AgentsPilot. The boost-pack heading becomes **"AgentsPilot boost packs"**, and the add button keeps working.
+   - The grace period and the pilot credit cost both move here (S2-3, S2-4: neither has a BOS reader).
+6. **C2-6: Sidebar and tests in one change (FR-FT1, FR-FT2).**
+   - **`AdminSidebar.tsx`:**
+     - Settings becomes `[business-os-llm, system-config, settings]`.
+     - The parked section gains `/admin/onboarding` and `/admin/agentspilot-billing`, for 15 items. The onboarding entry's description gains "AgentsPilot" (for example, "AgentsPilot free-tier grant").
+     - The Plans & entitlements description says that the BOS free trial lives there (for example, "Business OS plans & trial, read-only").
+   - **`AdminSidebar.nav.test.ts`:**
+     - Update the Settings list.
+     - Change both "thirteen" assertions to 15, and name both new hrefs.
+     - Change `allHrefs` from 26 to 27.
+     - Raise the disk-scan floor from 27 to 28, with `toContain('/admin/agentspilot-billing')`.
+     - Re-count the numbers in the comments.
+     - Add a pin that `/admin/system-config` is named "Model pricing".
+   - **`business-os-llm/__tests__/nav.test.ts`** must pass unedited.
+7. **C2-7: Price-change audits are flushed (FR-PR4).** In `app/api/admin/system-config/pricing/route.ts`, PUT, POST and DELETE flush the audit trail after `logAIPricing*` and before responding. Use the WC-7 line: `await auditTrail.flush().catch(err => requestLogger.error({ err }, 'Audit flush failed'))`.
+   - The non-blocking rule stays: a failed audit or flush never fails a write that succeeded.
+   - **Route tests:** PUT calls flush after the audit, and a rejected flush still returns 200.
+8. **C2-8: Logging (FR-PR6, TA-3).** Both pages log through `clientLogger` from `@/lib/logger/client`: context first, errors as `{ err }`.
+   - **No payloads in logs.** Six calls print a whole response or error body: `Settings result`, `Pricing API result`, `Calculator config result`, `Loaded calculator config`, and the two error-text dumps. Each becomes status and count only.
+   - Neither page contains `console.`.
+   - If Q-SA2-1 = yes, the two admin routes use their existing `requestLogger`, and their 500 responses put `error.message` behind the `NODE_ENV === 'development'` guard.
+9. **C2-9: Comments that name the old page.** The header of `app/api/admin/system-config/route.ts` names `app/admin/system-config/page.tsx` as its caller. Change it to the parked page. No code changes in that file.
+10. **C2-10: Source guard and type check.** Add one small co-located Jest source test. It asserts that:
+    - the pricing page makes no `boost-packs`, `calculator-config`, `/api/pricing/config` or settings (`/api/admin/system-config'`) fetch, and does not contain `payment_grace_period_days`;
+    - neither page contains `console.`;
+    - the parked page contains "AgentsPilot boost packs";
+    - the C2-1 Sync strings are still on the pricing page, verbatim.
+
+    Then run `tsc` on the touched files with `NODE_OPTIONS=--max-old-space-size=8192`, and check the exit code. `ts-jest` does not type-check in this repo.
+11. **C2-11: Access doc, in the same PR.** In `ADMIN_IDENTIFICATION_AND_ACCESS.md`:
+    - re-count the `/admin` pages **from disk**: 27 on `5061489b` (the doc says 26), and 28 after this slice;
+    - add `agentspilot-billing` to the list of pages that "inherited it without an edit";
+    - add a Change History row.
+
+    No handler register row, census change or cap change is needed (S2-9). In `docs/BOOST_PACK_ADMIN_INTERFACE.md`, a one-line pointer to the new URL is optional.
+12. **C2-12: Manual QA, as a platform admin.**
+    - Edit one model price, and check that an `AI_PRICING_UPDATED` audit row appears with before and after.
+    - On `/admin/agentspilot-billing`, load and save the grace period, a boost pack and the calculator config.
+    - Check that `/admin/onboarding` still loads by URL.
+    - Check that neither parked entry appears in the sidebar.
+    - Check that Sync looks and behaves exactly as before. Do not press it on production.
+
+### E. PR split and effort
+
+**One PR.** The page split and the free tier move are both sidebar data changes pinned by the same test, so C2-6 updates that test once. The pricing page and the parked page are two halves of one file. Shipping them separately would leave a window in which the AgentsPilot sections exist on neither page, or on both. The PR reverts as a unit (D-6).
+
+**Effort: S to M, about 1 to 1.5 days.**
+
+| Part | Estimate |
+|---|---|
+| Page split of a 1,989-line file, mostly cut and paste, with the 20 logging conversions | ~0.5 day |
+| Sidebar and its tests | ~0.25 day |
+| Audit flush and its tests | ~0.1 day |
+| Source guard, docs and QA | ~0.5 day |
+| Q-SA2-1 = yes (two admin routes converted) | adds ~0.25 to 0.5 day |
+
+### F. Question for the user (business terms)
+
+- **Q-SA2-1: Should this slice also tidy the two AgentsPilot boost-pack and calculator save routes?** They sit behind the page being moved. They still log the old way, and when something fails they can show the admin raw database error text. Fixing them changes nothing anyone sees in normal use, and adds about half a day to this slice. *Recommended: yes, it is the project's standing rule for files we open. **Default if you say nothing: yes.*** Say no to leave them as recorded debt, since they serve the parked AgentsPilot product.
+
+### Approval
+- [x] Requirement for slice 2 approved, **with conditions C2-1..C2-12**. FR-PR3 and the §9 Sync line are out of scope (UC-5). Dev writes one workplan for one PR, and SA reviews it before any code.
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -601,3 +745,7 @@ Related: [ADMIN_MODULE_BOS_REORGANISATION_REQUIREMENT.md](/docs/requirements/ADM
 | 2026-10-02 | SA review: slices 1 and 5a | **APPROVED WITH CONDITIONS (C-1..C-15).** Live read-only schema check on `34d665b4`: `agent_executions.total_tokens_used` and `user_subscriptions.plan_name` are confirmed missing, and `user_subscriptions.subscription_status` is a **third phantom** (the Subscription card has never rendered). FR-BU1 is corrected: the fold holds only agents and executions; Plugins and AI spend stay, and the AP Subscription card is retired. TA-4 is overruled in part: the new `GET /api/admin/admins` reads the repository, because guard R2 forbids importing `AdminAccessService` in a route. Slice 7's two routes are folded in and R4 goes to 0/0. Two PRs. Other slices not reviewed. |
 | 2026-10-02 | Q-SA-1 answered | The user keeps the Plugins and AI spend cards on the Businesses detail (SA's recommendation). Slice 1 workplan requested. |
 | 2026-10-02 | SA note: C-13 FR-BU6 superseded | The 5a workplan review found that the detail's "Role" is the Supabase auth role, not `profiles.role`. Ruling: remove the row and its Shield rather than relabel it. |
+| 2026-10-03 | Sync parked (UC-5); slice 1 and 5a shipped | The user parked the pricing Sync question (FR-PR3, OQ-2) for a separate session that will look up real provider prices and update the database and the code; as-built facts recorded in §11. Slice 2 keeps the page split without touching Sync. Slice 1 merged as PR #176, slice 5a as PR #177. |
+| 2026-10-03 | SA review: slice 2 | **APPROVED WITH CONDITIONS (C2-1..C2-12).** FR-PR2 exception resolved: neither the grace period nor the pilot credit cost has a BOS reader. Their readers are the AgentsPilot platform-subscription paths, and the R-21 Stripe reads are phantoms that ignore the setting anyway. Both move. New parked page `/admin/agentspilot-billing`; no route is added or moved. FR-PR4: the PUT audits with before and after, but the row is only queued, so price-change audits must be flushed (C2-7). `console.*` counted: page 20, `boost-packs` 11, `calculator-config` 6, `/api/pricing/config` 22. FR-PR6 binds the files in the diff; converting the two admin routes is Q-SA2-1 (default yes). Sync stays untouched (C2-1), and a note is added to the §9 Sync line. One PR, about 1 to 1.5 days. |
+| 2026-10-03 | UC-6: slice 2 stays BOS-relevant | The user answered SA's slice 2 question **no**: the AgentsPilot `boost-packs` and `calculator-config` routes are not converted to Pino in slice 2. They are recorded as AgentsPilot debt (11 and 6 `console.*` calls; 8 and 2 unguarded error details). C2-8's page-level conversions still apply. |
+| 2026-10-03 | Slice 2 workplan SA-approved (W2-1..W2-9) | §8 Security NFR now names model price writes as a WC-7 flush exception (C2-7). The parked price-source row in §11 gains the three false info-box lines and the `flush()` early-return limit, for the separate pricing session. SA also found that a saved price kept showing its old value (W2-1); it is fixed in slice 2. |

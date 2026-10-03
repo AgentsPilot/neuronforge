@@ -1,6 +1,6 @@
 # Business OS Plan Payments: As-Built Inventory
 
-> **Last Updated**: 2026-10-02
+> **Last Updated**: 2026-10-03
 
 **Written by:** SA (read-only investigation, no code changed)
 **Checked against:** `origin/main` `03b62c3c`, worktree `neuronforge-invite-s1`. In-flight worktrees were read as well: credit deduction slice 11 (`neuronforge-llm-layer2-step4`, uncommitted) and the Credits Boost requirement, which is untracked in the main checkout.
@@ -171,7 +171,7 @@ The 5c work also has these jobs:
 | Billing audit events | Agent-platform only: `INVOICE_PAID`, `PAYMENT_FAILED`, `SUBSCRIPTION_CANCELED`, `SUBSCRIPTION_CHECKOUT_INITIATED`, `SUBSCRIPTION_REACTIVATED`. Entitlement ops audit `BOS_ENTITLEMENT_*` from the admin route | grep `app/api/stripe` |
 | Alerts | Only a Connect **owner** dispute email (`route.ts:1013-1021`). There is no admin alert channel for billing | |
 | Cron health | `/admin/jobs-queues` plus `admin_bos_cron_run_summary`. Covers crons, not webhooks | `20261011_bos_cron_runs.sql:391` |
-| `system-config` billing panel | Describes Pilot-Credit billing and grace days (agent platform) | `app/admin/system-config/page.tsx:848-976` |
+| `system-config` billing panel | Describes Pilot-Credit billing and grace days (agent platform) | `app/admin/agentspilot-billing/page.tsx` (moved off `/admin/system-config` 2026-10-03, ADMIN_BOS_CLEANUP slice 2) |
 
 ---
 
@@ -242,3 +242,4 @@ The 5c work also has these jobs:
 | Date | Change | Details |
 |---|---|---|
 | 2026-10-02 | Created (SA) | Read-only as-built inventory for S-4a, invite 5c, recurring billing and admin monitoring, against `origin/main` 03b62c3c |
+| 2026-10-03 | Billing panel row repointed (ADMIN_BOS_CLEANUP slice 2) | The `system-config` billing panel row now cites `app/admin/agentspilot-billing/page.tsx`. The grace period, boost packs and calculator moved there; `/admin/system-config` holds only model pricing |

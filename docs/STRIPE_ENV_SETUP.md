@@ -236,6 +236,8 @@ If a key is exposed:
 
 To allow admins to change grace period without database access:
 
+> Moved 2026-10-03 (ADMIN_BOS_CLEANUP slice 2): the grace period is now on `/admin/agentspilot-billing` (AgentsPilot, parked, URL-only). `/admin/system-config` holds only model pricing.
+
 1. Go to `/admin/system-config` (admin UI)
 2. Find "Payment Grace Period Days"
 3. Update value (e.g., from 3 to 5)
