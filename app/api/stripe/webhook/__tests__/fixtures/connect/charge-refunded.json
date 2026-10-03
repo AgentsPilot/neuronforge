@@ -1,0 +1,24 @@
+{
+  "id": "evt_connect_charge_refunded",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "type": "charge.refunded",
+  "account": "acct_owner_a",
+  "livemode": false,
+  "created": 1790000800,
+  "data": {
+    "object": {
+      "id": "ch_connect_1",
+      "object": "charge",
+      "payment_intent": "pi_website_1",
+      "currency": "usd",
+      "refunds": {
+        "object": "list",
+        "data": [
+          { "id": "re_1", "object": "refund", "amount": 2500, "currency": "usd", "status": "succeeded", "created": 1790000790 },
+          { "id": "re_2", "object": "refund", "amount": 1000, "currency": "usd", "status": "pending", "created": 1790000795 }
+        ]
+      }
+    }
+  }
+}
