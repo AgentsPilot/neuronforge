@@ -42,6 +42,9 @@ const dimension = optional(
   z.string().min(1).max(200).refine((v) => !CONTROL_CHARS.test(v), 'Control characters are not allowed')
 );
 
+type BosRefusedParam = 'breakdownBy' | 'execution' | 'agent' | 'category';
+const BOS_REFUSAL_MESSAGE = 'Not available in Business OS scope';
+
 const DrillDownQuerySchema = z
   .object({
     breakdownBy: z
@@ -72,7 +75,26 @@ const DrillDownQuerySchema = z
   .refine((q) => !q.dateFrom || !q.dateTo || Date.parse(q.dateFrom) <= Date.parse(q.dateTo), {
     message: 'dateFrom must not be after dateTo',
     path: ['dateFrom'],
+  })
+  // Business OS scope has no agents, executions or AgentsPilot categories
+  // (ADMIN_BOS_CLEANUP C3-3). Refusing them here, inside the parse, means a
+  // refused request never reaches the execution short-circuit or any read.
+  .superRefine((q, ctx) => {
+    if (q.scope !== 'bos') return;
+    const refuse = (name: BosRefusedParam) =>
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [name], message: BOS_REFUSAL_MESSAGE, params: { bosScope: true } });
+    if (q.breakdownBy === 'agent' || q.breakdownBy === 'execution') refuse('breakdownBy');
+    if (q.execution !== undefined) refuse('execution');
+    if (q.agent !== undefined) refuse('agent');
+    if (q.category !== undefined && q.category !== 'all') refuse('category');
   });
+
+/** The names (never the values) of the parameters refused for Business OS scope. */
+function bosRefusedParams(issues: z.ZodIssue[]): string[] {
+  return issues
+    .filter((i) => i.code === z.ZodIssueCode.custom && i.params?.bosScope === true)
+    .map((i) => String(i.path[0]));
+}
 
 /** numeric arrives as number or string; anything unparsable counts as 0 (as before). */
 function toCostUsd(value: number | string | null): number {
@@ -192,7 +214,14 @@ export async function GET(request: NextRequest) {
 
     const parsed = DrillDownQuerySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
     if (!parsed.success) {
-      requestLogger.warn({ issues: parsed.error.issues.length }, 'Rejected an invalid drill-down query');
+      const rejectedForBosScope = bosRefusedParams(parsed.error.issues);
+      requestLogger.warn(
+        {
+          issues: parsed.error.issues.length,
+          ...(rejectedForBosScope.length > 0 ? { rejectedForBosScope } : {}),
+        },
+        'Rejected an invalid drill-down query'
+      );
       return NextResponse.json(
         {
           success: false,
@@ -226,7 +255,7 @@ export async function GET(request: NextRequest) {
 
     // If execution is provided, return individual calls
     if (q.execution) {
-      return await getExecutionCalls(q.execution);
+      return await getExecutionCalls(q.execution, requestLogger);
     }
 
     // Build filters object
@@ -905,7 +934,24 @@ function formatStepLabel(stepId: string): string {
     .join(' ');
 }
 
-async function getExecutionCalls(executionId: string): Promise<NextResponse> {
+/**
+ * The agent summary an execution detail may carry. Cross-account admin views
+ * are metadata only (requirement §8, NF-3): this type and the select that
+ * feeds it name no prompt, step, schema or run payload, so widening either
+ * needs a deliberate type change (ADMIN_BOS_CLEANUP C3-5).
+ */
+interface ExecutionAgentSummary {
+  id: string;
+  name: string;
+  connectedPlugins: string[] | null;
+  mode: string | null;
+  status: string | null;
+}
+
+/** PostgREST's "no row" from .single(): an execution without a run record, not a failure. */
+const NO_ROW = 'PGRST116';
+
+async function getExecutionCalls(executionId: string, requestLogger: typeof logger): Promise<NextResponse> {
   // Handle synthetic single-call execution IDs (format: "single-{token_usage_id}")
   // These are generated when a token_usage record has no execution_id
   if (executionId.startsWith('single-')) {
@@ -917,7 +963,7 @@ async function getExecutionCalls(executionId: string): Promise<NextResponse> {
       .single();
 
     if (error || !record) {
-      logger.error({ err: error }, 'Failed to fetch single call');
+      requestLogger.error({ err: error, executionId }, 'Failed to fetch single call');
       return NextResponse.json({ success: false, error: 'Failed to fetch data' }, { status: 500 });
     }
 
@@ -985,56 +1031,60 @@ async function getExecutionCalls(executionId: string): Promise<NextResponse> {
     .order('created_at', { ascending: true });
 
   if (error) {
-    logger.error({ err: error }, 'Failed to fetch execution calls');
+    requestLogger.error({ err: error, executionId }, 'Failed to fetch execution calls');
     return NextResponse.json({ success: false, error: 'Failed to fetch data' }, { status: 500 });
   }
 
-  // Fetch execution info to get agent_id
-  const { data: executionInfo } = await supabase
+  // Run metadata only: timing and status. The run's own payload is owner data
+  // and is deliberately not read (ADMIN_BOS_CLEANUP C3-5; never restore it
+  // without the owner-text review that slice recorded).
+  const { data: executionInfo, error: executionError } = await supabase
     .from('workflow_executions')
-    .select('agent_id, started_at, completed_at, status, input_data, output_data')
+    .select('agent_id, started_at, completed_at, status')
     .eq('id', executionId)
     .single();
 
-  // Fetch agent data if we have an agent_id
-  let agentData = null;
+  if (executionError) {
+    if (executionError.code === NO_ROW) {
+      requestLogger.info({ executionId }, 'No run record for this execution; showing its calls only');
+    } else {
+      requestLogger.error({ err: executionError, executionId }, 'Failed to fetch execution run record');
+    }
+  }
+
+  // Agent summary only: name, mode, status and plugins. Prompts, steps and
+  // schemas are owner text and are not read (C3-5).
+  let agentData: ExecutionAgentSummary | null = null;
   if (executionInfo?.agent_id) {
-    const { data: agent } = await supabase
+    const { data: agent, error: agentError } = await supabase
       .from('agents')
-      .select('id, agent_name, user_prompt, system_prompt, pilot_steps, input_schema, output_schema, connected_plugins, mode, status')
+      .select('id, agent_name, connected_plugins, mode, status')
       .eq('id', executionInfo.agent_id)
       .single();
+
+    if (agentError) {
+      if (agentError.code === NO_ROW) {
+        requestLogger.info({ executionId }, 'The execution names an agent that no longer exists');
+      } else {
+        requestLogger.error({ err: agentError, executionId }, 'Failed to fetch execution agent summary');
+      }
+    }
 
     if (agent) {
       agentData = {
         id: agent.id,
         name: agent.agent_name,
-        userPrompt: agent.user_prompt,
-        systemPrompt: agent.system_prompt,
-        pilotSteps: agent.pilot_steps,
-        inputSchema: agent.input_schema,
-        outputSchema: agent.output_schema,
-        connectedPlugins: agent.connected_plugins,
-        mode: agent.mode,
-        status: agent.status
+        connectedPlugins: agent.connected_plugins ?? null,
+        mode: agent.mode ?? null,
+        status: agent.status ?? null,
       };
     }
   }
 
-  // Try to fetch step names from workflow_step_executions table
-  const stepNameMap = new Map<string, string>();
-  const { data: stepExecutions } = await supabase
-    .from('workflow_step_executions')
-    .select('step_id, step_name')
-    .eq('execution_id', executionId);
-
-  if (stepExecutions) {
-    stepExecutions.forEach(se => {
-      if (se.step_id && se.step_name) {
-        stepNameMap.set(se.step_id, se.step_name);
-      }
-    });
-  }
+  // There is deliberately no step-name lookup here. Step names are written
+  // from the owner's own instructions, so they are owner text too; call rows
+  // use the ledger's own labels and fall back to "Step N" (ADMIN_BOS_CLEANUP
+  // W3-1, which retired the lookup rather than fixing its filter).
 
   // Calculate totals and category breakdowns
   const categoryTotals: CategoryBreakdown = {
@@ -1068,16 +1118,10 @@ async function getExecutionCalls(executionId: string): Promise<NextResponse> {
   const mostExpensiveId = sortedByCost[0]?.id;
 
   const items: DrillDownItem[] = (records || []).map((record, index) => {
-    // First try to get human-readable step name from workflow_step_executions
-    let label = record.workflow_step ? stepNameMap.get(record.workflow_step) : undefined;
-
-    // If not found, try other fields
-    if (!label) {
-      label = record.activity_name
-        || record.activity_step
-        || record.feature
-        || record.component;
-    }
+    let label = record.activity_name
+      || record.activity_step
+      || record.feature
+      || record.component;
 
     // Try workflow_step but format it nicely
     if (!label && record.workflow_step) {
@@ -1138,14 +1182,12 @@ async function getExecutionCalls(executionId: string): Promise<NextResponse> {
     items,
     filters: { execution: executionId },
     availableFilters: { providers: [], models: [], activities: [], users: [], agents: [] },
-    // Include agent and execution details for the execution view
+    // Metadata only (C3-5): run timing and status, plus the agent summary.
     executionDetails: {
       executionId,
       startedAt: executionInfo?.started_at,
       completedAt: executionInfo?.completed_at,
       status: executionInfo?.status,
-      inputData: executionInfo?.input_data,
-      outputData: executionInfo?.output_data,
       agent: agentData
     },
     // Cost breakdown by category (creation vs execution vs memory)

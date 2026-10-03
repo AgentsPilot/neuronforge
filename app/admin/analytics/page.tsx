@@ -102,17 +102,16 @@ interface AvailableFilters {
   agents: Array<{ id: string; label: string }>;
 }
 
+/**
+ * Metadata only (ADMIN_BOS_CLEANUP C3-5, FYI-1): this is a cross-account admin
+ * view, so it carries no prompt, step, schema or run payload.
+ */
 interface AgentData {
   id: string;
   name: string;
-  userPrompt?: string;
-  systemPrompt?: string;
-  pilotSteps?: unknown;
-  inputSchema?: unknown;
-  outputSchema?: unknown;
-  connectedPlugins?: string[];
-  mode?: string;
-  status?: string;
+  connectedPlugins?: string[] | null;
+  mode?: string | null;
+  status?: string | null;
 }
 
 interface ExecutionDetails {
@@ -120,8 +119,6 @@ interface ExecutionDetails {
   startedAt?: string;
   completedAt?: string;
   status?: string;
-  inputData?: unknown;
-  outputData?: unknown;
   agent?: AgentData | null;
 }
 
@@ -172,9 +169,33 @@ const BREAKDOWN_OPTIONS: Array<{ value: BreakdownDimension; label: string; icon:
 ];
 
 /**
+ * Views that exist only for AgentsPilot agents. Business OS scope has no agents
+ * or executions, and the route refuses these views there (ADMIN_BOS_CLEANUP
+ * C3-2, C3-3). The Group By menu, the row-click drill path and the scope toggle
+ * all read this one set, so they cannot disagree.
+ */
+const BOS_HIDDEN_DIMENSIONS: ReadonlySet<BreakdownDimension> = new Set<BreakdownDimension>(['agent', 'execution']);
+
+/** Business OS drill order: feature, then component, then account (FYI-2). */
+const BOS_DRILL_ORDER: readonly BreakdownDimension[] = ['feature', 'component', 'user', 'model', 'provider'];
+
+function breakdownOptionsFor(scope: Scope) {
+  return scope === 'bos' ? BREAKDOWN_OPTIONS.filter((o) => !BOS_HIDDEN_DIMENSIONS.has(o.value)) : BREAKDOWN_OPTIONS;
+}
+
+/**
+ * Where a Business OS row click goes when the "All" path would reach a hidden
+ * view: the first drill dimension not already filtered and not the one just
+ * clicked. Null when every one is taken, in which case the view stays put.
+ */
+function bosDrillTarget(nextFilters: Filters, clicked: BreakdownDimension): BreakdownDimension | null {
+  return BOS_DRILL_ORDER.find((d) => d !== clicked && !nextFilters[d]) ?? null;
+}
+
+/**
  * Context chips showing related dimensions
  */
-function ContextChips({ item, breakdownBy }: { item: DrillDownItem; breakdownBy: BreakdownDimension }) {
+function ContextChips({ item, breakdownBy, scope }: { item: DrillDownItem; breakdownBy: BreakdownDimension; scope: Scope }) {
   const chips: React.ReactNode[] = [];
   const meta = item.metadata || {};
 
@@ -186,7 +207,8 @@ function ContextChips({ item, breakdownBy }: { item: DrillDownItem; breakdownBy:
     );
   }
 
-  if (breakdownBy !== 'agent' && meta.agentCount && (meta.agentCount as number) > 0) {
+  // Agents and executions are AgentsPilot counts: not shown in Business OS scope (C3-2).
+  if (scope === 'all' && breakdownBy !== 'agent' && meta.agentCount && (meta.agentCount as number) > 0) {
     chips.push(
       <span key="agents" className="text-xs px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400">
         {meta.agentCount} agents
@@ -194,7 +216,7 @@ function ContextChips({ item, breakdownBy }: { item: DrillDownItem; breakdownBy:
     );
   }
 
-  if (breakdownBy !== 'execution' && meta.executionCount && (meta.executionCount as number) > 0) {
+  if (scope === 'all' && breakdownBy !== 'execution' && meta.executionCount && (meta.executionCount as number) > 0) {
     chips.push(
       <span key="executions" className="text-xs px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400">
         {meta.executionCount} executions
@@ -264,20 +286,7 @@ function AdminCostAnalyticsContent() {
   const [executionDetails, setExecutionDetails] = useState<ExecutionDetails | null>(null);
   const [categoryTotals, setCategoryTotals] = useState<CategoryTotals | null>(null);
   const [showAgentJson, setShowAgentJson] = useState(false);
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['pilotSteps']));
   const [comparison, setComparison] = useState<PeriodComparison | null>(null);
-
-  const toggleSection = (section: string) => {
-    setExpandedSections(prev => {
-      const next = new Set(prev);
-      if (next.has(section)) {
-        next.delete(section);
-      } else {
-        next.add(section);
-      }
-      return next;
-    });
-  };
 
   const fetchData = useCallback(async () => {
     try {
@@ -431,9 +440,39 @@ function AdminCostAnalyticsContent() {
         break;
     }
 
+    // Business OS scope never drills into agents (C3-2, FYI-2): go to the next
+    // Business OS dimension instead, or stay put when none is left.
+    if (scope === 'bos' && BOS_HIDDEN_DIMENSIONS.has(nextBreakdown)) {
+      nextBreakdown = bosDrillTarget(newFilters, breakdownBy) ?? breakdownBy;
+    }
+
     setFilters(newFilters);
     setFilterLabels(newLabels);
     setBreakdownBy(nextBreakdown);
+  };
+
+  /**
+   * Switch scope. Entering Business OS clears every selection that does not
+   * exist there, in the same event, so the very next request is already valid
+   * for the route (C3-4). Switching back to "All" restores nothing.
+   */
+  const handleScopeToggle = () => {
+    const next: Scope = scope === 'bos' ? 'all' : 'bos';
+    setScope(next);
+    if (next === 'bos') {
+      const withoutHidden = <T extends Filters | FilterLabels>(prev: T): T => {
+        const rest = { ...prev };
+        delete rest.agent;
+        delete rest.execution;
+        delete rest.category;
+        return rest;
+      };
+      setFilters(withoutHidden);
+      setFilterLabels(withoutHidden);
+      setBreakdownBy((b) => (BOS_HIDDEN_DIMENSIONS.has(b) ? 'provider' : b));
+      setSelectedCall(null);
+      setExecutionDetails(null);
+    }
   };
 
   const removeFilter = (key: keyof Filters) => {
@@ -561,7 +600,7 @@ function AdminCostAnalyticsContent() {
             role="switch"
             aria-checked={scope === 'bos'}
             data-testid="scope-toggle"
-            onClick={() => setScope((prev) => (prev === 'bos' ? 'all' : 'bos'))}
+            onClick={handleScopeToggle}
             className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
               scope === 'bos'
                 ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-200'
@@ -673,7 +712,7 @@ function AdminCostAnalyticsContent() {
       {/* TOP SECTION: Category Summary Cards - 5 cards in a row */}
       <section className="grid grid-cols-5 gap-4">
         {/* Total */}
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+        <div data-testid="category-card-total" className="bg-slate-800 border border-slate-700 rounded-xl p-5">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm text-slate-400">Total Spend</span>
             <span className="text-xs px-2 py-0.5 rounded bg-slate-600/50 text-slate-400">
@@ -692,8 +731,14 @@ function AdminCostAnalyticsContent() {
           )}
         </div>
 
+        {/* The four category cards are the AgentsPilot taxonomy. In Business OS
+            scope every row lands in one of them, which would only repeat the
+            Total, so only the Total shows there (C3-1, FYI-3). */}
+        {scope === 'all' && (
+        <>
         {/* Creation */}
         <button
+          data-testid="category-card-creation"
           onClick={() => {
             if (filters.category === 'creation') {
               removeFilter('category');
@@ -723,6 +768,7 @@ function AdminCostAnalyticsContent() {
 
         {/* Execution */}
         <button
+          data-testid="category-card-execution"
           onClick={() => {
             if (filters.category === 'execution') {
               removeFilter('category');
@@ -752,6 +798,7 @@ function AdminCostAnalyticsContent() {
 
         {/* Memory */}
         <button
+          data-testid="category-card-memory"
           onClick={() => {
             if (filters.category === 'memory') {
               removeFilter('category');
@@ -781,6 +828,7 @@ function AdminCostAnalyticsContent() {
 
         {/* System */}
         <button
+          data-testid="category-card-system"
           onClick={() => {
             if (filters.category === 'system') {
               removeFilter('category');
@@ -807,6 +855,8 @@ function AdminCostAnalyticsContent() {
           <div className="text-sm text-slate-400">{formatNumber(categoryTotals?.system.tokens || 0)} tokens</div>
           <div className="text-xs text-slate-500 mt-2">Platform, calibration</div>
         </button>
+        </>
+        )}
       </section>
 
       {/* MAIN CONTENT: Two Panels (3 cols left + 9 cols right) */}
@@ -830,7 +880,8 @@ function AdminCostAnalyticsContent() {
                 <div className="text-xs text-slate-500 text-center py-2">Click any dimension to filter</div>
               ) : (
                 <>
-                  {filters.category && filters.category !== 'all' && (
+                  {/* Category, Agent and Execution chips are AgentsPilot-only (C3-2). */}
+                  {scope === 'all' && filters.category && filters.category !== 'all' && (
                     <div className={`flex items-center justify-between rounded-lg px-3 py-2 ${
                       filters.category === 'creation' ? 'bg-purple-500/10 border border-purple-500/30' :
                       filters.category === 'execution' ? 'bg-emerald-500/10 border border-emerald-500/30' :
@@ -875,7 +926,7 @@ function AdminCostAnalyticsContent() {
                       </button>
                     </div>
                   )}
-                  {filters.agent && (
+                  {scope === 'all' && filters.agent && (
                     <div className="flex items-center justify-between bg-violet-500/10 border border-violet-500/30 rounded-lg px-3 py-2">
                       <span className="text-sm text-white truncate">Agent: {filterLabels.agent}</span>
                       <button onClick={() => removeFilter('agent')} className="text-slate-400 hover:text-white flex-shrink-0">
@@ -883,7 +934,7 @@ function AdminCostAnalyticsContent() {
                       </button>
                     </div>
                   )}
-                  {filters.execution && (
+                  {scope === 'all' && filters.execution && (
                     <div className="flex items-center justify-between bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-2">
                       <span className="text-sm text-white truncate">Execution: {filterLabels.execution?.slice(0, 12)}...</span>
                       <button onClick={() => removeFilter('execution')} className="text-slate-400 hover:text-white flex-shrink-0">
@@ -900,12 +951,13 @@ function AdminCostAnalyticsContent() {
           <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
             <h3 className="text-sm font-medium text-white mb-3">Group By</h3>
             <div className="space-y-2">
-              {BREAKDOWN_OPTIONS.map((option) => {
+              {breakdownOptionsFor(scope).map((option) => {
                 const Icon = option.icon;
                 const isSelected = breakdownBy === option.value;
                 return (
                   <button
                     key={option.value}
+                    data-testid={`group-by-${option.value}`}
                     onClick={() => setBreakdownBy(option.value)}
                     className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center justify-between transition-colors ${
                       isSelected
@@ -1095,7 +1147,7 @@ function AdminCostAnalyticsContent() {
                 </button>
               </>
             )}
-            {filters.agent && (
+            {scope === 'all' && filters.agent && (
               <>
                 <ChevronRight className="w-4 h-4 text-slate-500" />
                 <button
@@ -1109,7 +1161,7 @@ function AdminCostAnalyticsContent() {
                 </button>
               </>
             )}
-            {filters.execution && (
+            {scope === 'all' && filters.execution && (
               <>
                 <ChevronRight className="w-4 h-4 text-slate-500" />
                 <span className="text-white" title={`Execution: ${filters.execution}`}>
@@ -1139,9 +1191,15 @@ function AdminCostAnalyticsContent() {
                     <>
                       <th className="px-4 py-3 font-medium text-right">Tokens</th>
                       <th className="px-4 py-3 font-medium text-right">Calls</th>
-                      <th className="px-4 py-3 font-medium text-right text-purple-400">Creation</th>
-                      <th className="px-4 py-3 font-medium text-right text-emerald-400">Execution</th>
-                      <th className="px-4 py-3 font-medium text-right text-blue-400">Memory</th>
+                      {/* AgentsPilot taxonomy: in Business OS scope these would read
+                          "-" on every row while the cost sits in System (W3-7). */}
+                      {scope === 'all' && (
+                        <>
+                          <th data-testid="table-col-creation" className="px-4 py-3 font-medium text-right text-purple-400">Creation</th>
+                          <th data-testid="table-col-execution" className="px-4 py-3 font-medium text-right text-emerald-400">Execution</th>
+                          <th data-testid="table-col-memory" className="px-4 py-3 font-medium text-right text-blue-400">Memory</th>
+                        </>
+                      )}
                       <th className="px-4 py-3 font-medium text-right">Trend</th>
                       <th className="px-4 py-3 font-medium w-8"></th>
                     </>
@@ -1151,7 +1209,7 @@ function AdminCostAnalyticsContent() {
               <tbody className="divide-y divide-slate-700">
                 {items.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-6 py-12 text-center">
+                    <td colSpan={scope === 'all' ? 9 : 6} className="px-6 py-12 text-center">
                       <Cpu className="w-12 h-12 mx-auto mb-4 text-slate-600" />
                       <p className="text-lg font-medium text-slate-400">No data found</p>
                       <p className="text-sm text-slate-500">Try adjusting your filters or time period</p>
@@ -1188,7 +1246,7 @@ function AdminCostAnalyticsContent() {
                             <div>
                               <div className="font-medium text-white">{item.label}</div>
                               {/* Context chips */}
-                              <ContextChips item={item} breakdownBy={breakdownBy} />
+                              <ContextChips item={item} breakdownBy={breakdownBy} scope={scope} />
                               {/* Category badge for activity type */}
                               {item.type === 'activity' && category && (
                                 <span className={`inline-block mt-1 px-2 py-0.5 rounded text-xs ${
@@ -1225,15 +1283,19 @@ function AdminCostAnalyticsContent() {
                           <>
                             <td className="px-4 py-4 text-right text-slate-400">{formatNumber(item.tokens)}</td>
                             <td className="px-4 py-4 text-right text-slate-400">{formatNumber(item.calls)}</td>
-                            <td className="px-4 py-4 text-right text-purple-400">
-                              {item.category_breakdown?.creation.cost ? formatCost(item.category_breakdown.creation.cost) : '-'}
-                            </td>
-                            <td className="px-4 py-4 text-right text-emerald-400">
-                              {item.category_breakdown?.execution.cost ? formatCost(item.category_breakdown.execution.cost) : '-'}
-                            </td>
-                            <td className="px-4 py-4 text-right text-blue-400">
-                              {item.category_breakdown?.memory.cost ? formatCost(item.category_breakdown.memory.cost) : '-'}
-                            </td>
+                            {scope === 'all' && (
+                              <>
+                                <td className="px-4 py-4 text-right text-purple-400">
+                                  {item.category_breakdown?.creation.cost ? formatCost(item.category_breakdown.creation.cost) : '-'}
+                                </td>
+                                <td className="px-4 py-4 text-right text-emerald-400">
+                                  {item.category_breakdown?.execution.cost ? formatCost(item.category_breakdown.execution.cost) : '-'}
+                                </td>
+                                <td className="px-4 py-4 text-right text-blue-400">
+                                  {item.category_breakdown?.memory.cost ? formatCost(item.category_breakdown.memory.cost) : '-'}
+                                </td>
+                              </>
+                            )}
                             <td className="px-4 py-4 text-right">
                               {/* Trend placeholder - would need per-item comparison data */}
                               <span className="text-slate-500 text-sm">-</span>
@@ -1258,15 +1320,19 @@ function AdminCostAnalyticsContent() {
                     <td className="px-4 py-3 text-right font-bold text-white">{formatCost(totals.cost)}</td>
                     <td className="px-4 py-3 text-right text-slate-400">{formatNumber(totals.tokens)}</td>
                     <td className="px-4 py-3 text-right text-slate-400">{formatNumber(totals.calls)}</td>
-                    <td className="px-4 py-3 text-right text-purple-400 font-medium">
-                      {formatCost(categoryTotals?.creation.cost || 0)}
-                    </td>
-                    <td className="px-4 py-3 text-right text-emerald-400 font-medium">
-                      {formatCost(categoryTotals?.execution.cost || 0)}
-                    </td>
-                    <td className="px-4 py-3 text-right text-blue-400 font-medium">
-                      {formatCost(categoryTotals?.memory.cost || 0)}
-                    </td>
+                    {scope === 'all' && (
+                      <>
+                        <td className="px-4 py-3 text-right text-purple-400 font-medium">
+                          {formatCost(categoryTotals?.creation.cost || 0)}
+                        </td>
+                        <td className="px-4 py-3 text-right text-emerald-400 font-medium">
+                          {formatCost(categoryTotals?.execution.cost || 0)}
+                        </td>
+                        <td className="px-4 py-3 text-right text-blue-400 font-medium">
+                          {formatCost(categoryTotals?.memory.cost || 0)}
+                        </td>
+                      </>
+                    )}
                     <td colSpan={2}></td>
                   </tr>
                 </tfoot>
@@ -1289,7 +1355,9 @@ function AdminCostAnalyticsContent() {
       </div>
 
       {/* Agent Details Panel - shown when viewing execution calls */}
-      {executionDetails?.agent && (
+      {/* QA E-QA-1: a slow "All" response must not redraw this panel after a
+          switch to Business OS scope. */}
+      {scope === 'all' && executionDetails?.agent && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1375,144 +1443,6 @@ function AdminCostAnalyticsContent() {
                           </span>
                         ))}
                       </div>
-                    </div>
-                  )}
-
-                  {/* Collapsible JSON Sections */}
-                  {executionDetails.agent.pilotSteps && (
-                    <div className="border border-slate-700 rounded-lg overflow-hidden">
-                      <button
-                        onClick={() => toggleSection('pilotSteps')}
-                        className="w-full px-4 py-3 flex items-center justify-between bg-slate-700/30 hover:bg-slate-700/50 transition-colors"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Code className="w-4 h-4 text-emerald-400" />
-                          <span className="text-sm font-medium text-white">Pilot Steps (Workflow DSL)</span>
-                          <span className="text-xs text-slate-500">
-                            {Array.isArray(executionDetails.agent.pilotSteps)
-                              ? `${executionDetails.agent.pilotSteps.length} steps`
-                              : ''}
-                          </span>
-                        </div>
-                        <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${expandedSections.has('pilotSteps') ? 'rotate-90' : ''}`} />
-                      </button>
-                      {expandedSections.has('pilotSteps') && (
-                        <div className="p-4 bg-slate-900/50 overflow-x-auto">
-                          <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap">
-                            {JSON.stringify(executionDetails.agent.pilotSteps, null, 2)}
-                          </pre>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {executionDetails.agent.inputSchema && (
-                    <div className="border border-slate-700 rounded-lg overflow-hidden">
-                      <button
-                        onClick={() => toggleSection('inputSchema')}
-                        className="w-full px-4 py-3 flex items-center justify-between bg-slate-700/30 hover:bg-slate-700/50 transition-colors"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Code className="w-4 h-4 text-blue-400" />
-                          <span className="text-sm font-medium text-white">Input Schema</span>
-                        </div>
-                        <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${expandedSections.has('inputSchema') ? 'rotate-90' : ''}`} />
-                      </button>
-                      {expandedSections.has('inputSchema') && (
-                        <div className="p-4 bg-slate-900/50 overflow-x-auto">
-                          <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap">
-                            {JSON.stringify(executionDetails.agent.inputSchema, null, 2)}
-                          </pre>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {executionDetails.agent.outputSchema && (
-                    <div className="border border-slate-700 rounded-lg overflow-hidden">
-                      <button
-                        onClick={() => toggleSection('outputSchema')}
-                        className="w-full px-4 py-3 flex items-center justify-between bg-slate-700/30 hover:bg-slate-700/50 transition-colors"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Code className="w-4 h-4 text-amber-400" />
-                          <span className="text-sm font-medium text-white">Output Schema</span>
-                        </div>
-                        <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${expandedSections.has('outputSchema') ? 'rotate-90' : ''}`} />
-                      </button>
-                      {expandedSections.has('outputSchema') && (
-                        <div className="p-4 bg-slate-900/50 overflow-x-auto">
-                          <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap">
-                            {JSON.stringify(executionDetails.agent.outputSchema, null, 2)}
-                          </pre>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {executionDetails.inputData && (
-                    <div className="border border-slate-700 rounded-lg overflow-hidden">
-                      <button
-                        onClick={() => toggleSection('inputData')}
-                        className="w-full px-4 py-3 flex items-center justify-between bg-slate-700/30 hover:bg-slate-700/50 transition-colors"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Code className="w-4 h-4 text-cyan-400" />
-                          <span className="text-sm font-medium text-white">Execution Input</span>
-                        </div>
-                        <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${expandedSections.has('inputData') ? 'rotate-90' : ''}`} />
-                      </button>
-                      {expandedSections.has('inputData') && (
-                        <div className="p-4 bg-slate-900/50 overflow-x-auto">
-                          <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap">
-                            {JSON.stringify(executionDetails.inputData, null, 2)}
-                          </pre>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {executionDetails.outputData && (
-                    <div className="border border-slate-700 rounded-lg overflow-hidden">
-                      <button
-                        onClick={() => toggleSection('outputData')}
-                        className="w-full px-4 py-3 flex items-center justify-between bg-slate-700/30 hover:bg-slate-700/50 transition-colors"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Code className="w-4 h-4 text-pink-400" />
-                          <span className="text-sm font-medium text-white">Execution Output</span>
-                        </div>
-                        <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${expandedSections.has('outputData') ? 'rotate-90' : ''}`} />
-                      </button>
-                      {expandedSections.has('outputData') && (
-                        <div className="p-4 bg-slate-900/50 overflow-x-auto">
-                          <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap">
-                            {JSON.stringify(executionDetails.outputData, null, 2)}
-                          </pre>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {executionDetails.agent.userPrompt && (
-                    <div className="border border-slate-700 rounded-lg overflow-hidden">
-                      <button
-                        onClick={() => toggleSection('userPrompt')}
-                        className="w-full px-4 py-3 flex items-center justify-between bg-slate-700/30 hover:bg-slate-700/50 transition-colors"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Users className="w-4 h-4 text-slate-400" />
-                          <span className="text-sm font-medium text-white">User Prompt</span>
-                        </div>
-                        <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${expandedSections.has('userPrompt') ? 'rotate-90' : ''}`} />
-                      </button>
-                      {expandedSections.has('userPrompt') && (
-                        <div className="p-4 bg-slate-900/50 overflow-x-auto">
-                          <pre className="text-sm text-slate-300 whitespace-pre-wrap">
-                            {executionDetails.agent.userPrompt}
-                          </pre>
-                        </div>
-                      )}
                     </div>
                   )}
                 </div>
