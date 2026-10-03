@@ -1,6 +1,6 @@
 # Workplan: Business OS credit deduction — slice 11, credit lots (11a in full; 11b detailed; 11c–11d outlined)
 
-> **Last Updated**: 2026-10-02
+> **Last Updated**: 2026-10-03
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_LLM_DEDUCTION_LAYER_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_DEDUCTION_LAYER_REQUIREMENT.md): §12 "Slice 11 — Admin grant / reduce credits and per-account view", "Slice 11 scoping (BA, 2026-10-02)" including "Folded in after the SA review", §13 "Slice 11 decisions for the user (2026-10-02)" (all accepted by the user 2026-10-02; **S11-D-4 = A**, so no owner-note column; **S11-BQ-1 = Yes**), §14 S11-SQ-1 to S11-SQ-16 with their SA rulings, and **"SA review — slice 11 scoping (2026-10-02)"** (binding; cited below as "SA-11")
@@ -9,7 +9,7 @@
 **Branch:** `feature/business-os-credit-deduction-slice-11` (off `origin/main` `023dde98`; confirmed with `git branch --show-current` on 2026-10-02). 11b, 11c and 11d get their own branches from RM.
 **11b branch:** `feature/business-os-credit-deduction-slice-11b` (off `origin/main` `9a7c4fb3`, which includes merged 11a PR #173; confirmed with `git branch --show-current` on 2026-10-02).
 **Date:** 2026-10-02
-**Status:** **11a merged (PR #173) and applied to PROD 2026-10-02** (§17: checker VERDICT PASS 23/0, probe PROBE PASS, charge checker C7 PASS; gate S11-C-5 met). **11b: Code Complete 2026-10-02** (section "11b — Admin give / take back credits (API)"; SA workplan review approved with conditions W11b-1 to W11b-11, all applied; results in §11b.10). Uncommitted; SA code review and QA pending.
+**Status:** **11a merged (PR #173) and applied to PROD 2026-10-02** (§17: checker VERDICT PASS 23/0, probe PROBE PASS, charge checker C7 PASS; gate S11-C-5 met). **11b: PR #179 open 2026-10-03** (section "11b — Admin give / take back credits (API)"; SA workplan review approved with conditions W11b-1 to W11b-11, all applied; results in §11b.10). SA code review approved, QA pass; no migration.
 
 ## Overview
 

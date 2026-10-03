@@ -1276,7 +1276,7 @@ S11-KI-1 to S11-KI-5, recorded in §17 (Fragment E).
 | SA rulings S11-SQ-1 to S11-SQ-16 (incl. T-2 / R-5 acknowledgement) | ✅ 2026-10-02 | §14; [SA review — slice 11 scoping](#sa-review--slice-11-scoping-2026-10-02): approved with conditions, S11-D-6 ruled technical, S11-BQ-1 raised |
 | 11a Credit lots table + runbook | ✅ Merged PR #173 (2026-10-02) | Migration 20261017 + checker, probe, rollback, repository, `creditLots.ts`; [workplan](/docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_11_WORKPLAN.md) §7.6 |
 | 11a applied to PROD + checker + probe | ✅ 2026-10-02 19:56:27 UTC (PostgreSQL 17.4) | User, by hand: new checker VERDICT PASS 23/0 before and after the probe; charge checker VERDICT PASS 19/0 + C7 PASS; probe PROBE PASS P01–P17; L9 0 lots / 0 draws. Workplan §17. Boost slice 2 must NOT recreate these tables (boost §18.9) |
-| 11b Admin give / take back (API) | 🟡 code complete 2026-10-02, SA code review + QA pending | [Workplan](/docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_11_WORKPLAN.md) § "11b — Admin give / take back credits (API)" (SA workplan review approved with conditions W11b-1 to W11b-11, all applied; results in § 11b.10); branch `feature/business-os-credit-deduction-slice-11b`, uncommitted |
+| 11b Admin give / take back (API) | 🟡 PR open (2026-10-03) — SA approved, QA pass; no migration | [Workplan](/docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_11_WORKPLAN.md) § "11b — Admin give / take back credits (API)" (SA workplan review approved with conditions W11b-1 to W11b-11, all applied; results in § 11b.10); branch `feature/business-os-credit-deduction-slice-11b`, PR #179 |
 | 11c Admin per-account credit view | ⬜ | |
 | 11d Owner sees extra credits | ⬜ | Timing per S11-D-1 |
 
