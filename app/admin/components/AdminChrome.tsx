@@ -20,8 +20,11 @@ import AdminHeader from './AdminHeader';
 
 export default function AdminChrome({
   children,
+  adminName,
 }: {
   children: React.ReactNode;
+  /** The signed-in admin's display name, resolved on the server by the layout. */
+  adminName: string;
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -39,7 +42,7 @@ export default function AdminChrome({
 
         {/* Main content area */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          <AdminHeader onMenuClick={() => setSidebarOpen(true)} />
+          <AdminHeader adminName={adminName} onMenuClick={() => setSidebarOpen(true)} />
 
           <main className="flex-1 overflow-y-auto p-6">
             {children}

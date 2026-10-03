@@ -71,3 +71,37 @@ describe('the sizing classes are literal, and match LOGO_HEIGHT', () => {
     expect(source).toContain(`h-[${px}px]`);
   });
 });
+
+/*
+ * `surface="dark"` exists for surfaces that are dark whatever the theme (the
+ * admin console). Following the theme there would put charcoal ink on
+ * near-black for every light-mode admin, so this branch must show the
+ * dark-background file and carry none of the theme-swap classes.
+ */
+describe('surface="dark" ignores the theme', () => {
+  const raw = readFileSync(join(ROOT, 'components/brand/Logo.tsx'), 'utf8');
+  const source = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const darkBranch = (() => {
+    const start = source.indexOf("if (surface === 'dark')");
+    const end = source.indexOf('const light = WORDMARK.light');
+    if (start < 0 || end < start) throw new Error('surface="dark" branch not found');
+    return source.slice(start, end);
+  })();
+
+  it('defaults to following the theme, so existing call sites are unchanged', () => {
+    expect(source).toContain("surface = 'theme'");
+  });
+
+  it('renders the dark-background asset, falling back to light only if it is missing', () => {
+    expect(darkBranch).toContain('WORDMARK.dark ?? WORDMARK.light');
+  });
+
+  it('carries no theme-swap classes', () => {
+    expect(darkBranch).not.toMatch(/dark:(hidden|block)/);
+    expect(darkBranch).not.toMatch(/\bhidden\b/);
+  });
+
+  it('has a dark-background file to show', () => {
+    expect(WORDMARK.dark).not.toBeNull();
+  });
+});

@@ -55,6 +55,14 @@ interface LogoProps {
   /** Above the fold — the app headers are. */
   priority?: boolean;
   className?: string;
+  /**
+   * What the logo sits on. `'theme'` (default) follows the `dark` class on
+   * `<html>`, which is the user's theme. `'dark'` is for a surface that is dark
+   * WHATEVER the theme — the admin console is always slate-900, so following the
+   * theme there would put charcoal ink on near-black for every light-mode admin.
+   * Named after the background, like `WORDMARK.light` / `WORDMARK.dark`.
+   */
+  surface?: 'theme' | 'dark';
 }
 
 export function Logo({
@@ -62,9 +70,29 @@ export function Logo({
   responsive = true,
   priority = false,
   className = '',
+  surface = 'theme',
 }: LogoProps) {
   const height = LOGO_HEIGHT[placement];
   const sizing = responsive ? SIZING[placement].responsive : SIZING[placement].fixed;
+
+  if (surface === 'dark') {
+    /*
+     * One file, no theme classes: the background never changes, so there is
+     * nothing to swap. Falls back to the light file only if the dark one is
+     * ever removed from the manifest, matching the theme path's fallback.
+     */
+    const asset = WORDMARK.dark ?? WORDMARK.light;
+    return (
+      <Image
+        width={widthForHeight(asset, height)}
+        height={height}
+        src={asset.src}
+        alt="AgentsPilot"
+        priority={priority}
+        className={`${sizing} ${className}`.replace(/\s+/g, ' ').trim()}
+      />
+    );
+  }
 
   const light = WORDMARK.light;
   /*
