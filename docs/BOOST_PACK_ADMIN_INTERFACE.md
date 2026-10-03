@@ -8,6 +8,8 @@ Built a comprehensive admin interface for managing boost packs within the System
 
 ### 1. **Admin Interface** (`/admin/system-config` - Billing Configuration section)
 
+> Moved 2026-10-03 (ADMIN_BOS_CLEANUP slice 2): the boost-pack admin UI is now at `/admin/agentspilot-billing` (AgentsPilot, parked). `/admin/system-config` holds only model pricing.
+
 - **Location**: Integrated within the existing Billing Configuration card
 - **Visual Design**: Consistent with existing admin UI (dark theme, collapsible sections)
 - **Real-time Credit Calculation**: Shows calculated credits as you type price and bonus %
