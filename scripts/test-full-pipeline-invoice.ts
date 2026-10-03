@@ -6,7 +6,7 @@
  */
 
 import { V6PipelineOrchestrator } from '../lib/agentkit/v6/pipeline/V6PipelineOrchestrator.js'
-import { createLogger } from '../lib/logger/index.js'
+import { createLogger } from '../lib/logger'
 import fs from 'fs/promises'
 
 const logger = createLogger({ module: 'TEST', service: 'FullPipelineInvoice' })
