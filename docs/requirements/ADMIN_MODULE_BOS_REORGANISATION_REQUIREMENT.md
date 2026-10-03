@@ -1,6 +1,6 @@
 # Requirement: Admin Module Reorganisation for Business OS
 
-> **Last Updated**: 2026-09-27
+> **Last Updated**: 2026-10-02
 
 **Created by:** BA
 **Date:** 2026-09-24
@@ -222,6 +222,7 @@ Each slice ships alone, needs no later slice to make sense, and deletes no code 
 | 3. Consolidate AgentsPilot (collapse) | ⏭ **Superseded** by hiding the parked section (PR #108, 2026-09-25). Not built as written |
 | 4. Health at a glance | ✅ Shipped (PR #115, 2026-09-26). Live checks L-2 to L-6 passed; L-1 (route timing after deploy) still owed |
 | 5. Scheduled jobs & queues, Health fixes, AP cron retirement | ✅ Shipped (PR #122 and PR #123, 2026-09-27). Migration applied and verified; the next-day proof that all 12 jobs record (L-5.8) is still owed |
+| Next: admin cleanup for Business OS | ⬜ Specified in [ADMIN_BOS_CLEANUP_REQUIREMENT.md](/docs/requirements/ADMIN_BOS_CLEANUP_REQUIREMENT.md) (2026-10-02): R-6, R-18, R-20 and the first R-3 sub-slices, plus the Settings clean-up. Slice order awaits the user |
 
 ### Slice 1: Put BOS up front (navigation only)
 
@@ -722,3 +723,4 @@ Related: [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_A
 | 2026-09-27 | **Slice 5 drafted; OQ-2 and OQ-4 answered; slice states updated** | Re-baselined on main `546f6110` (branch `feature/admin-bos-jobs-queues`). **Slice 5** (roadmap R-2) specified: (A) retire the 3 AgentsPilot cron schedules, code kept (OQ-4, Offir: "sunset them for now"); (B) a minimal run record for the 12 BOS jobs, because **no cron records its runs today** (all 12 routes read), with four options in business terms and option A recommended (one hand-applied database change); (C) a "Scheduled jobs & queues" page under Monitor covering 12 jobs and the **five** §8.1 queues found in migrations (payment reminders, payment automations, daily briefing sends, lead responses, insight actions), read-only; (D) ordered rules for the two Health tiles, with late/stopped thresholds per schedule; (E) user feedback: **RC-5.1 green for healthy** (measured, exact, no rule matched; reverses slice 4 C-10, needs SA re-ruling), **RC-5.2** a clearer entitlements tile (the "0" is not emitted by the tile's code; Dev to identify it), **RC-5.3** correct the docs: production mode is shadow, not unset. **OQ-2** answered (CRON_SECRET set; unverified, slice 5 verifies). New questions OQ-6 to OQ-9. §7: slice states table; slice 3 marked superseded by PR #108; slice 4 marked shipped (PR #115) with its as-shipped amendments (U-1, U-6, link exceptions, U-5) and the replaced acceptance criterion. §8: R-1 done, R-2 = slice 5, new R-18 (queue actions) and R-19 (two crons run unauthenticated without the secret). §2.3, §4.2, §5, §6, §9, §10 and §12 updated to match |
 | 2026-09-27 | OQ-6 to OQ-9 answered | Option A run record with 30-day history approved; starting rules accepted (a dead-letter in 24 h is red); shadow mode confirmed deliberate (collect data first); Shadow is neutral, not green, on the entitlements tile |
 | 2026-09-27 | Slice 5 shipped; R-20 and R-21 added | PR #122 and PR #123 merged, migration applied and verified. The schema check found 32 pre-existing broken reads: the three admin ones become R-20 (next admin slice), the six Business OS / Stripe ones become R-21 (separate fix, money first) |
+| 2026-10-02 | Next slice cross-linked | Added a row to §7 pointing to the admin cleanup requirement, which carries R-6, R-18, R-20, the first R-3 sub-slices and the Settings clean-up |
