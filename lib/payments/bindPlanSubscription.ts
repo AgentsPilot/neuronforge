@@ -145,6 +145,7 @@ export async function bindPlanSubscription({
       planCount,
       contactId: await resolveContactId(bookingId, ownerId),
       planRowId: await resolvePlanRowId(paymentPlanId, serviceId, ownerId),
+      serviceId,
     });
 
     return { scheduleId: existing.data.stripe_schedule_id, planId: existing.data.id, alreadyBound: true };
@@ -297,6 +298,7 @@ export async function bindPlanSubscription({
     planCount,
     contactId,
     planRowId,
+    serviceId,
   });
 
   return { scheduleId: schedule.id, planId: created.data.id, alreadyBound: false };
@@ -324,6 +326,7 @@ async function projectPeriods({
   planCount,
   contactId,
   planRowId,
+  serviceId,
 }: {
   planId: string;
   ownerId: string;
@@ -335,6 +338,8 @@ async function projectPeriods({
   contactId: string | null;
   /** Already resolved by the caller, so the mirror and its periods agree. */
   planRowId: string | null;
+  /** Logged only: the key `resolvePlanRowId` falls back on, so it names the offer that was missing. */
+  serviceId: string | null;
 }): Promise<void> {
   if (!planRowId) {
     // `payment_plan_installments.payment_plan_id` is NOT NULL, so there is
