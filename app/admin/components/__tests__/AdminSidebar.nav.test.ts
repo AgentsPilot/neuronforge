@@ -236,3 +236,15 @@ describe('slice 5: Scheduled jobs & queues', () => {
     expect(page.trimStart().startsWith("'use client'")).toBe(true);
   });
 });
+
+describe('the logo matches the Business OS app (admin header identity)', () => {
+  it('uses the shared Logo on its always-dark surface, not the legacy PNG', () => {
+    expect(sidebar).toContain("import { Logo } from '@/components/brand/Logo'");
+    expect(sidebar).toMatch(/<Logo\b[^>]*surface="dark"/);
+    expect(sidebar).not.toContain('AgentPilot_Logo.png');
+  });
+
+  it('keeps the Admin badge beside the logo', () => {
+    expect(sidebar).toMatch(/<Logo\b[^>]*\/>\s*<span[^>]*>\s*Admin\s*<\/span>/);
+  });
+});

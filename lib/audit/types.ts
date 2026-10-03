@@ -79,6 +79,10 @@ export const AUDIT_ENTITY_TYPES = [
   // admin invite routes under /api/admin/business-os/invites; the entity id is
   // the invite id.
   'business_os_invite',
+  // One Business OS credit lot (a row in business_os_credit_lots). Written only
+  // by the admin give / take back credit ops on the entitlements accounts route
+  // (credit deduction slice 11b); the entity id is the lot id.
+  'business_os_credit_lot',
 ] as const;
 
 export type EntityType = (typeof AUDIT_ENTITY_TYPES)[number];

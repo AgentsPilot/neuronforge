@@ -1,6 +1,6 @@
 # System Logging Guidelines
 
-> **Last Updated**: 2026-10-02
+> **Last Updated**: 2026-10-03
 
 ## Table of Contents
 - [Overview](#overview)
@@ -146,6 +146,22 @@ export const loggerConfig: pino.LoggerOptions = {
       'secret',
       '*.password',
       '*.token',
+      // Invite-only signup, Slice 1b (R-3): the emailed sign-up code. Not
+      // `code`/`*.code`, which would censor every `dbError.code` and `err.code`.
+      'signupCode',
+      '*.signupCode',
+      'otp',
+      '*.otp',
+      // Invite-only signup, Slice 3b: the Google ID token (a bearer assertion
+      // carrying the email and `sub`), the Google Identity Services `credential`
+      // that carries it, and the sign-in nonce. None is logged on purpose; this
+      // is the backstop.
+      'idToken',
+      '*.idToken',
+      'credential',
+      '*.credential',
+      'nonce',
+      '*.nonce',
       '*.apiKey',
       'req.headers.authorization',
       'req.headers.cookie',
@@ -157,26 +173,30 @@ export const loggerConfig: pino.LoggerOptions = {
 
 ### 2. Create Base Logger
 
-**File: `lib/logger/index.ts`**
+**File: `lib/logger.ts`**
+
+`@/lib/logger` resolves to this file, not to a `lib/logger/` directory index: a file wins over a directory. Do not add a `lib/logger/index.ts` — it would be shadowed and never run, which is exactly how redaction stayed off until 2026-10-03 (OI-9).
 
 ```typescript
 import pino from 'pino';
-import { loggerConfig } from './config';
 
-// Create base logger
-export const logger = pino(loggerConfig);
+import { loggerConfig } from './logger/config';
 
-// Create child logger with context
-export function createLogger(context: {
-  module?: string;
-  service?: string;
-  [key: string]: any;
-}) {
-  return logger.child(context);
+export type Logger = pino.Logger;
+
+const baseLogger = pino({
+  // Not `loggerConfig.level`: production stays at `info` (D-OI8).
+  level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+  // Only the redaction list comes from the shared config.
+  redact: loggerConfig.redact,
+  browser: { asObject: true },
+});
+
+export function createLogger(options: { module?: string; service?: string; route?: string } = {}): Logger {
+  return baseLogger.child({ module: options.module, service: options.service, route: options.route });
 }
 
-// Export types
-export type Logger = pino.Logger;
+export const clientLogger = createLogger({ service: 'client' });
 ```
 
 ### 3. Create Client-Side Logger
@@ -797,11 +817,27 @@ function logMemoryUsage() {
 
 ## Sensitive Data Redaction
 
-> **Warning: not active today (verified 2026-09-18, open item OI-9).** Server code imports `@/lib/logger`, which resolves to `lib/logger.ts`, a bare `pino({ level, browser })` with **no `redact` list**. The list in `lib/logger/config.ts` is applied by no server logger, because `lib/logger.ts` shadows `lib/logger/index.ts`. **Nothing below is redacted automatically**, and no code may rely on it. Keep secrets, prompts, payloads and owners' raw text out of log calls yourself: log lengths, counts, ids and labels instead. **Owner text rule:** what a user typed is never logged at any level; text a model derived from it (summaries, extractions, a JSON `SyntaxError`'s message, which quotes its input) is logged at `debug` only, which production (`info`, `lib/logger.ts:16`) does not print. The examples below describe the **intended** configuration, which OI-9 will restore. Tracked in [BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md) § Known Issues and Open Items.
+Every server logger created with `createLogger` (and `clientLogger` when it runs on the server) applies the `redact` list in `lib/logger/config.ts`; matching values are written as `[REDACTED]`. Active from the deploy of the OI-9 fix (2026-10-03); `lib/logger/__tests__/redaction.liveLogger.test.ts` writes through the real exported logger to prove it.
 
-The intended configuration lives in `lib/logger/config.ts`.
+What is covered — **exact key names only**, at the top level of the log object and, for the names marked *, one level down (`body.password`):
 
-### Automatic Redaction (intended; not active, OI-9)
+| Field | Nested (`*.x`) too |
+|-------|--------------------|
+| `password`, `token`, `apiKey`, `signupCode`, `otp`, `idToken`, `credential`, `nonce` | ✅ |
+| `api_key`, `authorization`, `cookie`, `accessToken`, `refreshToken`, `secret` | ⬜ top level only |
+| `req.headers.authorization`, `req.headers.cookie` | — |
+
+Limits — redaction is a **backstop**, not a licence to log secrets:
+
+- `code` is deliberately **not** redacted, so `dbError.code` / `err.code` stay readable. Name an emailed code `signupCode` or `otp` so it is caught.
+- Two levels down (`a.b.password`), other spellings (`access_token`, `clientSecret`, `Authorization` with a capital A) and secrets inside strings (an error message, a URL query) are **not** caught.
+- In the browser Pino ignores `redact`; client logs go only to the user's own devtools console.
+
+Keep secrets, prompts, payloads and owners' raw text out of log calls yourself: log lengths, counts, ids and labels instead. **Owner text rule:** what a user typed is never logged at any level; text a model derived from it (summaries, extractions, a JSON `SyntaxError`'s message, which quotes its input) is logged at `debug` only, which production (`info`, set in `lib/logger.ts`) does not print. Tracked in [BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md) § Known Issues and Open Items.
+
+### Automatic Redaction
+
+Only the key names in the table above are caught, and only at the depths it shows.
 
 ```typescript
 // These fields are automatically redacted:
@@ -833,7 +869,7 @@ function sanitizeUserData(user: any) {
 logger.info(sanitizeUserData(userData), 'User data processed');
 ```
 
-### Request Header Redaction (intended; not active, OI-9)
+### Request Header Redaction
 
 ```typescript
 // Authorization and Cookie headers are automatically redacted
@@ -927,7 +963,7 @@ npm install pino pino-pretty
 
 Create the files described in [Project Setup](#project-setup):
 1. `lib/logger/config.ts`
-2. `lib/logger/index.ts`
+2. `lib/logger.ts`
 3. `lib/logger/client.ts`
 
 ### Step 3: Migrate Console Logs
@@ -972,7 +1008,7 @@ npx tsx scripts/check-logging-only-diff.ts --base origin/main --file <path> --fu
 - It refuses (exit `2`) if the **base** already uses `log` or `logger` outside logging, because normalising them away could hide a real edit.
 - It lists every call found inside log arguments, marking anything outside a small pure allow-list `REVIEW`. Read those: the AST check cannot prove a log argument has no side effects.
 - Pass the request logger as an explicit last `log: Logger` parameter rather than inventing a context mechanism; the check normalises it away.
-- Log ids and `Object.keys(metadata)`, never payloads: `@/lib/logger` redacts nothing today (see [Sensitive Data Redaction](#sensitive-data-redaction)).
+- Log ids and `Object.keys(metadata)`, never payloads: redaction is a backstop for exact key names only (see [Sensitive Data Redaction](#sensitive-data-redaction)).
 
 First used for the Stripe webhook ([BUSINESS_OS_PLAN_PAYMENTS_P0_WORKPLAN.md](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P0_WORKPLAN.md)).
 
@@ -1468,3 +1504,4 @@ Refer to the [Pino documentation](https://getpino.io/) for advanced usage and co
 |------|--------|---------|
 | 2026-09-18 | Redaction marked not active (OI-9); owner-text rule added | `@/lib/logger` resolves to `lib/logger.ts`, which has no `redact` list, so the Sensitive Data Redaction section now states that nothing is redacted automatically and describes the intended configuration only. Added the rule: raw user text is never logged, and model-derived text is logged at `debug` only. See [BUSINESS_OS_LLM_LOGGING_CLEANUP_WORKPLAN.md](/docs/workplans/BUSINESS_OS_LLM_LOGGING_CLEANUP_WORKPLAN.md) |
 | 2026-10-02 | Added "Converting a `console.*` file: prove only logging changed" | Points to `scripts/check-logging-only-diff.ts` (whole-file and `--functions` modes, base-side refusal, log-argument call listing). Added with plan payments P-0, the Stripe webhook conversion |
+| 2026-10-03 | Redaction active (OI-9 closed) | `lib/logger.ts` now passes `loggerConfig.redact` to Pino; the shadowed `lib/logger/index.ts` is deleted (its four `scripts/` importers now import `../lib/logger`). Project Setup shows the real `lib/logger.ts` and the current redact list; Sensitive Data Redaction lists what is and is not covered |

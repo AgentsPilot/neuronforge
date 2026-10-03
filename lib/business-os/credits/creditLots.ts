@@ -27,7 +27,8 @@
  * 0 and reported through `hasInconsistentLot`, so a caller can show it.
  *
  * Pure: no I/O, no repository, nothing from the entitlements module.
- * Not called by anything yet; 11c and 11d are the first callers.
+ * Called by the slice 11b admin credit ops (`creditAdminOps.ts`) for the
+ * audit's before / after figures; 11c and 11d will read it too.
  *
  * @module lib/business-os/credits/creditLots
  */
@@ -66,6 +67,8 @@ export interface ExtraCreditsAt {
   hasInconsistentLot: boolean;
 }
 
+// Exact to 6 dp up to about 9 x 10^9 credits (2^53 micro-credits), unreachable
+// behind the 100,000-credit admin ceiling (CR11a-5).
 const MICRO = 1e6;
 
 function toMicro(value: number): number | null {

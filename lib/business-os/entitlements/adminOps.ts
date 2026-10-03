@@ -19,10 +19,15 @@
 //
 // ── THE ORDER OF CHECKS IS THE DESIGN ───────────────────────────────────────
 //   1. Is the body valid?                    400, from Zod
+//   1a. Is it the admin's OWN account?       403 `own_account`, all nine ops,
+//                                            before any read (slice 11b, S11-BQ-1)
+//   1b. Is it the platform account?          409 `platform_account`, credit ops
+//                                            only (slice 11b, S11-CR-1)
 //   2. Is this even a Business OS tenant?    404 — RC-10
 //   3. Does it have a plan row?              409 `plan_row_missing` — Q-15
 //   4. Would this leave it with no basis?    409 `would_leave_no_basis` — R2-3
-//   5. Write, then invalidate.
+//      (credit ops: their own checks, in `lib/business-os/credits/creditAdminOps.ts`)
+//   5. Write, then invalidate (credit ops leave the cache alone).
 //
 // Every refusal is an explicit status with a machine-readable code. **A database
 // constraint must never be how an admin learns they made a mistake** (M-3): the
@@ -37,6 +42,18 @@ import type {
 } from '@/lib/repositories/BusinessOsAccountPlanRepository';
 import type { BusinessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import type { OnboardingConversationRepository } from '@/lib/repositories/OnboardingConversationRepository';
+import {
+  CREDIT_ADMIN_OP_NAMES,
+  executeCreditAdminOp,
+  grantCreditsSchema,
+  isCreditAdminOp,
+  reduceCreditLotSchema,
+  refuseCreditOpForPlatformAccount,
+  type CreditAdminDependencies,
+  type CreditLotAudit,
+} from '@/lib/business-os/credits/creditAdminOps';
+import { resolveAccountId } from './account';
+import { currentCreditValue } from './config/creditValue';
 import { championEndDecisionMissing } from './grantRules';
 import { isGrantingValue, valueSchemaFor } from './schema';
 import type { CatalogLike } from './schema';
@@ -143,10 +160,32 @@ export function adminOpSchema(config: EntitlementConfig) {
         reason,
       })
       .strict(),
+    // Slice 11b (S11-SQ-5): give / take back credits. Defined in the credits
+    // module, which imports nothing from this one; constants, because nothing
+    // in them depends on the catalog or the tiers.
+    grantCreditsSchema,
+    reduceCreditLotSchema,
   ]);
 }
 
 export type AdminOp = z.infer<ReturnType<typeof adminOpSchema>>;
+
+/**
+ * S11-BQ-1 = Yes: an admin may not run ANY op on their own account (no
+ * self-granted credits, no self-assigned plan). Every op of the union is listed
+ * by name, and a test asserts this set equals the union's `op` literals, so a
+ * tenth op cannot be added without deciding.
+ */
+export const OWN_ACCOUNT_GUARDED_OPS: ReadonlySet<AdminOp['op']> = new Set<AdminOp['op']>([
+  'ensure_plan_row',
+  'set_cohort',
+  'set_expiry',
+  'assign_tier',
+  'add_override',
+  'end_override',
+  'reset_plan_state',
+  ...CREDIT_ADMIN_OP_NAMES,
+]);
 
 /** What the executor gives back to the route. */
 export type AdminOpOutcome =
@@ -158,8 +197,18 @@ export type AdminOpOutcome =
       after: BusinessOsAccountPlan | null;
       /** Extra body fields for the response. */
       data: Record<string, unknown>;
+      /**
+       * Slice 11b (S11-SQ-5): replaces the plan-row defaults in the audit entry.
+       * Set only by the credit ops; the seven plan ops never set it, so their
+       * audit rows are unchanged (S11-C-7).
+       */
+      audit?: CreditLotAudit;
+      /** S11-CR-2: an idempotent replay. The route writes no audit entry and logs at info. */
+      replayed?: true;
+      /** Credit ops change no entitlement input, so the route leaves the cache alone. */
+      invalidatesEntitlements?: false;
     }
-  | { ok: false; status: 400 | 404 | 409 | 500; error: string; details?: Record<string, unknown> };
+  | { ok: false; status: 400 | 403 | 404 | 409 | 500; error: string; details?: Record<string, unknown> };
 
 export interface AdminOpContext {
   accountId: string;
@@ -178,6 +227,8 @@ export interface AdminOpContext {
   >;
   profileRepository: Pick<BusinessProfileRepository, 'findByUserId'>;
   onboardingRepository: Pick<OnboardingConversationRepository, 'getFirstMessageAt' | 'getLatestMessageAt'>;
+  /** Slice 11b: the lot repository and the payment-hold readers the credit ops use. */
+  credit: CreditAdminDependencies;
 }
 
 /** Is a tier assignment in force at `now`? (A-1) */
@@ -212,6 +263,25 @@ function wouldLeaveNoBasis(plan: BusinessOsAccountPlan, patch: BusinessOsAccount
  */
 export async function executeAdminOp(op: AdminOp, ctx: AdminOpContext): Promise<AdminOpOutcome> {
   const { accountId, planRepository } = ctx;
+
+  // ── 1a. The admin's own account: refused for every op, before any read ────
+  // (slice 11b, S11-BQ-1, closes S11-KI-4). Both sides lower-cased (OP-15):
+  // Postgres matches uuids case-insensitively, so an upper-cased spelling of
+  // the admin's own id would reach their own rows. The route already
+  // normalises the path id (W11b-1); this stays as defence in depth, because
+  // this function is exported and called directly.
+  if (
+    OWN_ACCOUNT_GUARDED_OPS.has(op.op) &&
+    resolveAccountId(ctx.adminId).toLowerCase() === accountId.toLowerCase()
+  ) {
+    return { ok: false, status: 403, error: 'own_account' };
+  }
+
+  // ── 1b. The platform account: credit ops only (S11-CR-1, OP-21) ──────────
+  if (isCreditAdminOp(op)) {
+    const refused = refuseCreditOpForPlatformAccount(accountId);
+    if (refused) return refused;
+  }
 
   // ── 2. Is this a Business OS tenant at all? (RC-10) ───────────────────────
   const isTenant = await isBusinessOsTenant({
@@ -248,6 +318,9 @@ export async function executeAdminOp(op: AdminOp, ctx: AdminOpContext): Promise<
       return endOverride(op, ctx, plan as BusinessOsAccountPlan, inputs.data.overrides);
     case 'reset_plan_state':
       return resetPlanState(op, ctx, plan as BusinessOsAccountPlan, inputs.data.overrides);
+    case 'grant_credits':
+    case 'reduce_credit_lot':
+      return creditOp(op, ctx, plan as BusinessOsAccountPlan);
     default:
       // Unreachable through Zod; a `never` here means a variant was added
       // without a branch.
@@ -565,6 +638,41 @@ async function resetPlanState(
         endedAt: row.ended_at,
       })),
     },
+  };
+}
+
+/**
+ * Slice 11b: the credit ops, after the shared checks above. The credit value
+ * version is read HERE, inside the module, and passed in as a plain number
+ * (OP-9), so the credits module never imports this one. The plan row is
+ * neither read again nor written: `before` / `after` are the unchanged row,
+ * and the route uses `audit` instead of them.
+ */
+async function creditOp(
+  op: Extract<AdminOp, { op: 'grant_credits' | 'reduce_credit_lot' }>,
+  ctx: AdminOpContext,
+  plan: BusinessOsAccountPlan
+): Promise<AdminOpOutcome> {
+  const outcome = await executeCreditAdminOp(op, {
+    accountId: ctx.accountId,
+    adminId: ctx.adminId,
+    now: ctx.now,
+    creditValueVersion: currentCreditValue().version,
+    lotRepository: ctx.credit.lotRepository,
+    holdReaders: ctx.credit.holdReaders,
+  });
+
+  if (!outcome.ok) return outcome;
+
+  return {
+    ok: true,
+    action: outcome.action,
+    before: plan,
+    after: plan,
+    data: outcome.data,
+    ...(outcome.audit ? { audit: outcome.audit } : {}),
+    ...(outcome.replayed ? { replayed: true as const } : {}),
+    invalidatesEntitlements: false,
   };
 }
 

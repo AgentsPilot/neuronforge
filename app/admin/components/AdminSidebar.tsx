@@ -2,7 +2,7 @@
 
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import Image from 'next/image';
+import { Logo } from '@/components/brand/Logo';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard,
@@ -311,14 +311,13 @@ export default function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
           <div className="p-4 border-b border-white/10">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <Image
-                  src="/images/AgentPilot_Logo.png"
-                  alt="AgentPilot"
-                  width={100}
-                  height={100}
-                  className="transition-transform duration-200"
-                  priority
-                />
+                {/*
+                  The shared logo, so admin matches the Business OS header.
+                  `surface="dark"`: this sidebar is dark in every theme.
+                  `compact`, fixed: the header-size lockup, the badge and the
+                  mobile close button do not fit the 256px sidebar together.
+                */}
+                <Logo surface="dark" placement="compact" responsive={false} priority />
                 <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400 font-medium">
                   Admin
                 </span>

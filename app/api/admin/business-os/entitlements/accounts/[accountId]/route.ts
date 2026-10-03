@@ -15,8 +15,14 @@
  * they are worth testing without a request and must not be re-implemented by
  * the next route.
  *
- * Order, and nothing before it: 401 → 403 → 400 (Zod) → 404/409 (pre-checks) →
- * write → cache invalidation → audit (flushed before the response, WC-7).
+ * Order, and nothing before it: 401 → 403 → 400 (Zod) → 403 `own_account` (any
+ * op on the admin's own account, slice 11b) → 409 `platform_account` (credit
+ * ops) → 404/409 (pre-checks) → write → cache invalidation (not for the credit
+ * ops) → audit (flushed before the response, WC-7; none for a replay).
+ *
+ * The path id is lower-cased after Zod (slice 11b, SA W11b-1): Postgres matches
+ * uuids case-insensitively, so the cache key, the audit ids and the own-account
+ * check all use the canonical form.
  *
  * @module app/api/admin/business-os/entitlements/accounts/[accountId]
  */
@@ -33,6 +39,12 @@ import {
 } from '@/lib/repositories/BusinessOsAccountPlanRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { onboardingConversationRepository } from '@/lib/repositories/OnboardingConversationRepository';
+// Slice 11b: the credit ops' dependencies. Service role by design (the lot
+// repository's header explains why); the account id they receive is the path
+// id, after the gate, Zod and the tenant check, never a body value.
+import { businessOsCreditLotRepository } from '@/lib/repositories/BusinessOsCreditLotRepository';
+import { businessOsAccountLineageRepository } from '@/lib/repositories/BusinessOsAccountLineageRepository';
+import { businessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
 import {
   adminOpSchema,
   executeAdminOp,
@@ -68,7 +80,7 @@ export async function GET(request: NextRequest, context: { params: { accountId: 
       return NextResponse.json({ success: false, error: 'invalid_account_id' }, { status: 400 });
     }
 
-    const accountId = resolveAccountId(parsedId.data);
+    const accountId = resolveAccountId(parsedId.data.toLowerCase());
 
     // ── Is this a Business OS account at all? (QA, 2026-09-24) ──────────────
     //
@@ -187,7 +199,7 @@ export async function POST(request: NextRequest, context: { params: { accountId:
       return NextResponse.json({ success: false, error: 'invalid_account_id' }, { status: 400 });
     }
 
-    const accountId = resolveAccountId(parsedId.data);
+    const accountId = resolveAccountId(parsedId.data.toLowerCase());
     const config = getEntitlementConfig();
 
     const body = await request.json().catch(() => null);
@@ -215,6 +227,11 @@ export async function POST(request: NextRequest, context: { params: { accountId:
       planRepository: businessOsAccountPlanRepository,
       profileRepository: businessProfileRepository,
       onboardingRepository: onboardingConversationRepository,
+      // The same two readers the payment-hold page gate uses (paymentHoldGate.ts).
+      credit: {
+        lotRepository: businessOsCreditLotRepository,
+        holdReaders: { lineage: businessOsAccountLineageRepository, invites: businessOsInviteRepository },
+      },
     });
 
     if (!outcome.ok) {
@@ -225,9 +242,25 @@ export async function POST(request: NextRequest, context: { params: { accountId:
       );
     }
 
+    if (outcome.replayed) {
+      // Slice 11b (S11-CR-2, SA W11b-5): the same request id again. Nothing was
+      // written, so there is nothing to invalidate and no audit entry; the
+      // first attempt's lot or draw row is the record. The log carries ids
+      // only, never the reason or the idempotency key.
+      requestLogger.info(
+        { accountId, op: parsed.data.op, action: outcome.action, lotId: outcome.data.lotId, drawId: outcome.data.drawId },
+        'Admin op replayed; nothing written, no audit entry'
+      );
+      return NextResponse.json({ success: true, data: { accountId, op: parsed.data.op, ...outcome.data } });
+    }
+
     // Local-instance invalidation. Other instances are bounded by the 30 s TTL,
     // which every decision already carries as `effectiveWithinSeconds`.
-    getEntitlementService().invalidate(accountId);
+    //
+    // Skipped for the credit ops (SA W11b-7): credit lots are not an
+    // `EntitlementService` input. If slice 9 / 10 makes extra credits an input
+    // to a cached decision, the credit ops must invalidate again.
+    if (outcome.invalidatesEntitlements !== false) getEntitlementService().invalidate(accountId);
 
     requestLogger.info({ accountId, op: parsed.data.op, action: outcome.action }, 'Admin entitlement op applied');
 
@@ -239,12 +272,23 @@ export async function POST(request: NextRequest, context: { params: { accountId:
         // because an unregistered action should still produce an audit row
         // rather than `undefined` — a row named oddly beats no row at all.
         action: AUDIT_EVENTS[outcome.action as keyof typeof AUDIT_EVENTS] ?? outcome.action,
-        entityType: 'business_os_account_plan',
-        entityId: accountId,
+        // Slice 11b (S11-SQ-5): a credit op names its lot instead of the plan
+        // row. The seven plan ops set no `audit`, so their entries are exactly
+        // what they were (pinned byte for byte in routes.test.ts, T11b.1).
+        entityType: outcome.audit?.entityType ?? 'business_os_account_plan',
+        entityId: outcome.audit?.entityId ?? accountId,
         userId: accountId,
         actorId: gate.user.id,
-        changes: { before: outcome.before, after: outcome.after } as unknown as Record<string, unknown>,
-        details: { reason: parsed.data.reason, op: parsed.data.op, correlationId, ...outcome.data },
+        changes: outcome.audit
+          ? outcome.audit.changes
+          : ({ before: outcome.before, after: outcome.after } as unknown as Record<string, unknown>),
+        details: {
+          reason: parsed.data.reason,
+          op: parsed.data.op,
+          correlationId,
+          ...outcome.data,
+          ...(outcome.audit?.details ?? {}),
+        },
         severity: 'warning',
         request,
       })
