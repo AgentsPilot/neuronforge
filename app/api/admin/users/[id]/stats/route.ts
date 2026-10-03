@@ -1,18 +1,118 @@
 // app/api/admin/users/[id]/stats/route.ts
-// Fetch comprehensive user statistics: agents, token usage, executions, subscription
+//
+// Serves the "Connected Plugins" and "AI spend, all products" cards of the
+// Businesses detail (`app/admin/users/page.tsx`, its only caller).
+//
+// The agents, agent-executions and subscription reads were removed in
+// ADMIN_BOS_CLEANUP slice 5a: the executions read named a column that does not
+// exist (`agent_executions.total_tokens_used`) and the subscription read named
+// two (`user_subscriptions.plan_name`, `subscription_status`), so neither ever
+// returned data (requirement SA Review §A). Their cards are gone with them.
+//
+// A failed read comes back as `null` for its section, never as zeros: a zero
+// spend or "0 plugins" reads as a real answer.
+//
+// Known debt (OI-9, docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md): the two
+// reads below are inline service-role reads, not repository calls.
+// `PluginConnectionRepository` selects `*` on a table that holds OAuth tokens,
+// and no token-usage repository method returns one account's all-feature
+// 30-day rows, so neither is a drop-in swap. The fix follows the
+// `AdminTokenUsageAnalyticsRepository` template (admin-only methods,
+// allow-listed columns, `{ data, error }`).
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { z } from 'zod';
 import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ module: 'UsersIdStatsAdminAPI' });
 
+// Service role on purpose: an admin reads another account's rows, which RLS
+// would refuse. Every read below is still scoped with `.eq('user_id', userId)`.
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
 export const dynamic = 'force-dynamic';
+
+const userIdSchema = z.string().uuid();
+
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+interface TokenStats {
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost_usd: number;
+  total_calls: number;
+  by_model: Array<{ model: string; input: number; output: number; cost: number; calls: number }>;
+}
+
+interface PluginStats {
+  total: number;
+  active: number;
+  list: Array<{ plugin: string; connected_at: string; is_active: boolean }>;
+}
+
+interface TokenUsageRow {
+  model_name: string | null;
+  provider: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cost_usd: number | string | null;
+  created_at: string;
+}
+
+interface PluginConnectionRow {
+  plugin_key: string;
+  connected_at: string;
+  status: string | null;
+}
+
+/** `cost_usd` is numeric in Postgres, which PostgREST may return as a string. */
+function toNumber(value: number | string | null): number {
+  if (value === null) return 0;
+  const n = typeof value === 'number' ? value : parseFloat(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function buildTokenStats(rows: TokenUsageRow[]): TokenStats {
+  const modelUsage: Record<string, { input: number; output: number; cost: number; calls: number }> = {};
+
+  rows.forEach(t => {
+    const key = `${t.provider}/${t.model_name}`;
+    if (!modelUsage[key]) {
+      modelUsage[key] = { input: 0, output: 0, cost: 0, calls: 0 };
+    }
+    modelUsage[key].input += t.input_tokens || 0;
+    modelUsage[key].output += t.output_tokens || 0;
+    modelUsage[key].cost += toNumber(t.cost_usd);
+    modelUsage[key].calls += 1;
+  });
+
+  return {
+    total_input_tokens: rows.reduce((sum, t) => sum + (t.input_tokens || 0), 0),
+    total_output_tokens: rows.reduce((sum, t) => sum + (t.output_tokens || 0), 0),
+    total_cost_usd: rows.reduce((sum, t) => sum + toNumber(t.cost_usd), 0),
+    total_calls: rows.length,
+    by_model: Object.entries(modelUsage)
+      .map(([model, stats]) => ({ model, ...stats }))
+      .sort((a, b) => b.cost - a.cost)
+      .slice(0, 10)
+  };
+}
+
+function buildPluginStats(rows: PluginConnectionRow[]): PluginStats {
+  return {
+    total: rows.length,
+    active: rows.filter(p => p.status === 'active').length,
+    list: rows.map(p => ({
+      plugin: p.plugin_key,
+      connected_at: p.connected_at,
+      is_active: p.status === 'active'
+    }))
+  };
+}
 
 export async function GET(
   request: NextRequest,
@@ -27,53 +127,21 @@ export async function GET(
     const gate = await requireAdmin(requestLogger);
     if (gate instanceof NextResponse) return gate;
 
-    const { id: userId } = await params;
-
-    if (!userId) {
-      return NextResponse.json({ error: 'User ID is required' }, { status: 400 });
+    const parsedId = userIdSchema.safeParse((await params).id);
+    if (!parsedId.success) {
+      return NextResponse.json({ success: false, error: 'Invalid user id' }, { status: 400 });
     }
+    const userId = parsedId.data;
 
-    // Fetch all user stats in parallel
-    const [
-      agentsResult,
-      executionsResult,
-      tokenUsageResult,
-      subscriptionResult,
-      pluginConnectionsResult
-    ] = await Promise.all([
-      // User's agents
-      supabase
-        .from('agents')
-        .select('id, agent_name, status, created_at, mode')
-        .eq('user_id', userId)
-        .neq('status', 'deleted')
-        .order('created_at', { ascending: false })
-        .limit(20),
+    const since = new Date(Date.now() - THIRTY_DAYS_MS).toISOString();
 
-      // User's executions (last 30 days)
-      supabase
-        .from('agent_executions')
-        .select('id, status, execution_duration_ms, total_tokens_used, total_cost_usd, created_at, agent_id')
-        .eq('user_id', userId)
-        .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
-        .order('created_at', { ascending: false })
-        .limit(100),
-
-      // User's token usage (aggregated by model, last 30 days)
+    const [tokenUsageResult, pluginConnectionsResult] = await Promise.all([
       supabase
         .from('token_usage')
         .select('model_name, provider, input_tokens, output_tokens, cost_usd, created_at')
         .eq('user_id', userId)
-        .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()),
+        .gte('created_at', since),
 
-      // User's subscription
-      supabase
-        .from('user_subscriptions')
-        .select('balance, total_spent, executions_quota, executions_used, plan_name, subscription_status')
-        .eq('user_id', userId)
-        .single(),
-
-      // User's plugin connections
       supabase
         .from('plugin_connections')
         .select('plugin_key, connected_at, status')
@@ -81,102 +149,41 @@ export async function GET(
         .neq('status', 'disconnected')
     ]);
 
-    // Process agents data
-    const agents = agentsResult.data || [];
-    const agentStats = {
-      total: agents.length,
-      active: agents.filter(a => a.status === 'active').length,
-      inactive: agents.filter(a => a.status === 'inactive').length,
-      draft: agents.filter(a => a.status === 'draft').length,
-      scheduled: agents.filter(a => a.mode === 'scheduled').length,
-      list: agents.map(a => ({
-        id: a.id,
-        name: a.agent_name,
-        status: a.status,
-        mode: a.mode,
-        created_at: a.created_at
-      }))
-    };
+    // Each section is built only from a read that succeeded; a failed read is
+    // `null`, so the card says it could not be read instead of showing zeros.
+    let tokens: TokenStats | null = null;
+    if (tokenUsageResult.error) {
+      requestLogger.error(
+        { err: tokenUsageResult.error, section: 'tokens', targetUserId: userId },
+        'User stats read failed'
+      );
+    } else {
+      tokens = buildTokenStats((tokenUsageResult.data ?? []) as TokenUsageRow[]);
+    }
 
-    // Process executions data
-    const executions = executionsResult.data || [];
-    const executionStats = {
-      total_30d: executions.length,
-      successful: executions.filter(e => e.status === 'completed' || e.status === 'success').length,
-      failed: executions.filter(e => e.status === 'failed' || e.status === 'error').length,
-      total_duration_ms: executions.reduce((sum, e) => sum + (e.execution_duration_ms || 0), 0),
-      total_tokens: executions.reduce((sum, e) => sum + (e.total_tokens_used || 0), 0),
-      total_cost_usd: executions.reduce((sum, e) => sum + (parseFloat(e.total_cost_usd) || 0), 0),
-      success_rate: executions.length > 0
-        ? Math.round((executions.filter(e => e.status === 'completed' || e.status === 'success').length / executions.length) * 100)
-        : 0
-    };
+    let plugins: PluginStats | null = null;
+    if (pluginConnectionsResult.error) {
+      requestLogger.error(
+        { err: pluginConnectionsResult.error, section: 'plugins', targetUserId: userId },
+        'User stats read failed'
+      );
+    } else {
+      plugins = buildPluginStats((pluginConnectionsResult.data ?? []) as PluginConnectionRow[]);
+    }
 
-    // Process token usage by model
-    const tokenUsage = tokenUsageResult.data || [];
-    const modelUsage: Record<string, { input: number; output: number; cost: number; calls: number }> = {};
-
-    tokenUsage.forEach(t => {
-      const key = `${t.provider}/${t.model_name}`;
-      if (!modelUsage[key]) {
-        modelUsage[key] = { input: 0, output: 0, cost: 0, calls: 0 };
-      }
-      modelUsage[key].input += t.input_tokens || 0;
-      modelUsage[key].output += t.output_tokens || 0;
-      modelUsage[key].cost += parseFloat(t.cost_usd) || 0;
-      modelUsage[key].calls += 1;
-    });
-
-    const tokenStats = {
-      total_input_tokens: tokenUsage.reduce((sum, t) => sum + (t.input_tokens || 0), 0),
-      total_output_tokens: tokenUsage.reduce((sum, t) => sum + (t.output_tokens || 0), 0),
-      total_cost_usd: tokenUsage.reduce((sum, t) => sum + (parseFloat(t.cost_usd) || 0), 0),
-      total_calls: tokenUsage.length,
-      by_model: Object.entries(modelUsage)
-        .map(([model, stats]) => ({ model, ...stats }))
-        .sort((a, b) => b.cost - a.cost)
-        .slice(0, 10)
-    };
-
-    // Process subscription data
-    const subscription = subscriptionResult.data;
-    const subscriptionStats = subscription ? {
-      balance: subscription.balance || 0,
-      total_spent: subscription.total_spent || 0,
-      executions_quota: subscription.executions_quota,
-      executions_used: subscription.executions_used || 0,
-      plan_name: subscription.plan_name || 'free',
-      status: subscription.subscription_status || 'active'
-    } : null;
-
-    // Process plugin connections
-    const pluginConnections = pluginConnectionsResult.data || [];
-    const pluginStats = {
-      total: pluginConnections.length,
-      active: pluginConnections.filter(p => p.status === 'active').length,
-      list: pluginConnections.map(p => ({
-        plugin: p.plugin_key,
-        connected_at: p.connected_at,
-        is_active: p.status === 'active'
-      }))
-    };
-
-    return NextResponse.json({
-      success: true,
-      data: {
-        agents: agentStats,
-        executions: executionStats,
-        tokens: tokenStats,
-        subscription: subscriptionStats,
-        plugins: pluginStats
-      }
-    });
+    return NextResponse.json({ success: true, data: { tokens, plugins } });
 
   } catch (error) {
-    console.error('Error fetching user stats:', error);
-    return NextResponse.json({
-      error: 'Failed to fetch user statistics',
-      message: error instanceof Error ? error.message : 'Unknown error'
-    }, { status: 500 });
+    requestLogger.error({ err: error }, 'User stats request failed');
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Failed to fetch user statistics',
+        details: process.env.NODE_ENV === 'development'
+          ? (error instanceof Error ? error.message : String(error))
+          : undefined
+      },
+      { status: 500 }
+    );
   }
 }
