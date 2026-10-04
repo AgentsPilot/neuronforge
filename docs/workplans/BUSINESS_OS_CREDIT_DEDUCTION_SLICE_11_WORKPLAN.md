@@ -1,4 +1,4 @@
-# Workplan: Business OS credit deduction — slice 11, credit lots (11a in full; 11b detailed; 11c–11d outlined)
+# Workplan: Business OS credit deduction — slice 11, credit lots (11a in full; 11b and 11c detailed; 11d outlined)
 
 > **Last Updated**: 2026-10-03
 
@@ -8,8 +8,9 @@
 **Worktree:** `neuronforge-llm-layer2-step4`
 **Branch:** `feature/business-os-credit-deduction-slice-11` (off `origin/main` `023dde98`; confirmed with `git branch --show-current` on 2026-10-02). 11b, 11c and 11d get their own branches from RM.
 **11b branch:** `feature/business-os-credit-deduction-slice-11b` (off `origin/main` `9a7c4fb3`, which includes merged 11a PR #173; confirmed with `git branch --show-current` on 2026-10-02).
+**11c branch:** `feature/business-os-credit-deduction-slice-11c` (off `origin/main` `5061489b`, which includes 11a #173, 11b #179 and #180; confirmed with `git branch --show-current` on 2026-10-03).
 **Date:** 2026-10-02
-**Status:** **11a merged (PR #173) and applied to PROD 2026-10-02** (§17: checker VERDICT PASS 23/0, probe PROBE PASS, charge checker C7 PASS; gate S11-C-5 met). **11b: PR #179 open 2026-10-03** (section "11b — Admin give / take back credits (API)"; SA workplan review approved with conditions W11b-1 to W11b-11, all applied; results in §11b.10). SA code review approved, QA pass; no migration.
+**Status:** **11a merged (PR #173) and applied to PROD 2026-10-02** (§17: checker VERDICT PASS 23/0, probe PROBE PASS, charge checker C7 PASS; gate S11-C-5 met). **11b merged (PR #179, 2026-10-03)** (section "11b — Admin give / take back credits (API)"; SA code review approved, QA pass; no migration). **11c: Code Complete (11c) 2026-10-03 — SA workplan review approved with conditions (W11c-1 to W11c-17, OP-30 cut), implemented and uncommitted; awaiting SA code review, then QA** (section "11c — Admin per-account credit view", results in §11c.10; no migration).
 
 ## Overview
 
@@ -29,9 +30,10 @@ Slice 11 lets an admin give an account extra credits and take them back, shows a
 10. [Open points for SA](#10-open-points-for-sa)
 11. [Flagged items](#11-flagged-items)
 12. [Outline: 11b — admin give / take back (API)](#12-outline-11b--admin-give--take-back-api) *(superseded by the 11b section)*
-13. [Outline: 11c — admin per-account credit view](#13-outline-11c--admin-per-account-credit-view)
+13. [Outline: 11c — admin per-account credit view](#13-outline-11c--admin-per-account-credit-view) *(superseded by the 11c section)*
 14. [Outline: 11d — owner sees extra credits](#14-outline-11d--owner-sees-extra-credits)
 - [11b — Admin give / take back credits (API)](#11b--admin-give--take-back-credits-api) (detailed 11b workplan, 2026-10-02)
+- [11c — Admin per-account credit view](#11c--admin-per-account-credit-view) (detailed 11c workplan, 2026-10-03)
 15. [SA Review Notes](#15-sa-review-notes)
 16. [QA Testing Report](#16-qa-testing-report)
 17. [PROD apply record (the user pastes here)](#17-prod-apply-record-the-user-pastes-here)
@@ -381,6 +383,8 @@ Expected: an error starting `PROBE PASS  this error is expected and rolls everyt
 
 ### 6.5 Rollback — `supabase/SQL Scripts/20261017_business_os_credit_lots_rollback.sql`
 
+> **⛔ RETIRED 2026-10-03 (slice 7/8 audit follow-up L3).** Do not run this script. It refuses only when either table holds rows; on PROD's tables, empty today, it would succeed and drop the tables and functions that 11b's admin ops depend on. Any future rollback needs its own reviewed script. The text below is kept as the record of what was built.
+
 ```sql
 BEGIN;
 SET LOCAL lock_timeout = '5s';
@@ -642,6 +646,8 @@ The spec is followed as written until SA rules on each of these.
 *(Detailed in a later revision. ≈ 2.25 d including S11-BQ-1 = Yes.)* Gate: 11a merged **and applied to PROD with §17 filled in**. New `lib/business-os/credits/creditAdminOps.ts` (schemas, pre-checks, executor; imports nothing from the entitlements module) defines `grant_credits` (whole credits, `.int().positive().max(100_000)` from one exported constant, `reason`, `expiresAt` required as ISO or `null` per S11-D-2 C, `requestId` uuid) and `reduce_credit_lot` (`lotId`, `amount` integer or `'rest'`, `reason`, `requestId`); both composed into `adminOpSchema` and dispatched from `executeAdminOp`. Guard order (S11-C-6): Zod → own account 403 `own_account` **for all nine ops** (S11-BQ-1 = Yes) → platform account 409 → tenant 404 → plan row 409 → payment hold 409 `awaiting_payment` (fail closed) → expiry in the past 400 → write; reductions: lot within the account 404 → `boost_purchase` lot 409 `paid_credits_locked` (D-7 until answered) → function status mapped. `AdminOpOutcome` gains 403, an `audit` override, `replayed: true` (no audit row), `invalidatesEntitlements: false`. Audit keys `BOS_CREDIT_LOT_GRANTED` / `BOS_CREDIT_LOT_REDUCED`, severity `warning`. Credit value version passed in by `adminOps.ts` (OP-9). Route test pins one existing op's audit call byte-for-byte. `npm run test:bos-entitlements` green.
 
 ## 13. Outline: 11c — admin per-account credit view
+
+> **Superseded 2026-10-03** by [11c — Admin per-account credit view](#11c--admin-per-account-credit-view) below, the detailed 11c workplan. Kept as written for the record.
 
 *(Detailed later. ≈ 2 d.)* `GET /api/admin/business-os/credits/accounts/[accountId]` (`requireAdmin` first, uuid path, 409 `platform_account`, 404 tenant, `force-dynamic`, correlationId); `readCreditPosition(accountId, deps, log)` extracted from `readOwnerCreditUsage` (its tests green unedited); `adminCreditPositionDeps.ts` builds the owner read repository on the service-role client, documented; allowance and deciding layer from a helper inside the entitlements module; the route registered in `KNOWN_NON_GATE_IMPORTERS`; lots through `listLotsWithDraws` and extra credits through `extraCreditsAt`. Figures: plan left, extra credits, "over the plan this period" when above 0 — **no combined remaining** (S11-CR-3). Credits block with Give / Take back forms in `BusinessOsPanel.tsx` (S11-D-8 B; request id minted per form opening; confirm names the business; refusal copy map with a completeness test). Admin register row, census and authz guard caps +1 in the same PR.
 
@@ -1046,6 +1052,476 @@ The SA-11 rulings are followed as written until SA rules on each of these.
 
 ---
 
+## 11c — Admin per-account credit view
+
+*(Written by Dev 2026-10-03 on `feature/business-os-credit-deduction-slice-11c` (off `origin/main` `5061489b`, which includes 11a #173, 11b #179 and the Tailwind exclusions #180; confirmed with `git branch --show-current`). Supersedes the §13 outline. No code yet; awaiting SA workplan review. Sources: requirement "Slice 11 scoping" incl. "Folded in after the SA review" (S11-CR-1, S11-CR-3); S11-AC-6 as corrected by S11-CR-3; §13 S11-D-4 A (reason internal: never shown to owners, admins see it), S11-D-5 B (100,000), S11-D-7 A, S11-D-8 B; §14 S11-SQ-1 (e), S11-SQ-4, S11-SQ-9, S11-SQ-15, S11-SQ-16 with their rulings; "SA review — slice 11 scoping" (SA-11) incl. S11-C-8, S11-C-9, S11-C-11; the 11b notes CR11b-2, QA11b-N2, R11b-6; QA11a-4.)*
+
+### 11c.1 Analysis summary
+
+**Collision check (done first, 2026-10-03).**
+
+| What | Found | Collides? |
+|---|---|---|
+| `app/admin/users/components/BusinessOsPanel.tsx` on main | Last changed by slice 5a (`5fe6b49d`, PR #177). `'use client'`; two reads in one `Promise.all` (the entitlements GET, rendered by the shared `EntitlementSnapshot`; the summary route); sections in order: header (business name + login name), vertical, **Plan & entitlements**, summary error, **Business OS AI spend (30 days, USD)**, **Recent Business OS AI failures**. `SUMMARY_ERROR_COPY` kept complete by `summaryErrors.contract.test.ts`. Imports `AUDIT_EVENTS`, `EntitlementSnapshot` + `ENTITLEMENT_ERROR_COPY`, two types. 0 `console.*` | 11c adds one element (the Credits block) after Plan & entitlements and passes it the header's business label. No other line changes |
+| The Businesses detail (`app/admin/users/page.tsx`, 1,175 lines, `'use client'`) | After 5a: the AgentsPilot fold, the Subscription card and the Role row are gone; the Plugins and AI spend cards stay (Q-SA-1); `BusinessOsPanel` is rendered at `:808` for each expanded row. 0 `console.*` | **Not touched** by 11c |
+| `app/admin/users/__tests__/source.guard.test.ts` | Every screen file imports nothing from `@/lib/business-os`, no repository, no `callCatalog`, no `console.*`; `BusinessOsPanel.tsx` must not contain `decidedBy`; `USD` is the only currency | Binding on 11c's client files (§11c.3.5); the new files join `SCREEN_FILES` |
+| Admin BOS cleanup (`ADMIN_BOS_CLEANUP_REQUIREMENT.md` on main) | Slices 1 and 5a merged (#176, #177); slice 2 (pricing split) in progress in `neuronforge-admin-docs` (one uncommitted requirement edit, nothing under `app/admin/users`); 5b–5e, 6 and 7 not started (no branch). Its §4.5 still describes **5e** as "plan allowance, balance and a link to the credit diary … read-only, depends on the diary" and does **not** yet record S11-D-8 B | No code collision. **Doc gap:** under S11-D-8 B, 11c delivers 5e's allowance / balance part and 5e keeps only the diary link (the diary is parked, BD-17). BA should annotate 5e (not a Dev edit; OP-37). Cleanup slice 6 (Plans page write UI for the 7 ops) must show `own_account` in plain words (S11-C-11, R11b-6); 11c's copy map can be reused there |
+| Other branches | Unmerged remote and local branches touching `app/admin/users`, `app/api/admin/business-os/**`, the credit builders or the owner read repository: only the September `llm-settings` branches (disjoint files). Slice 7a (#174) is merged. **Credit deduction slice 8** (warnings) is in progress in `neuronforge-llm-deduction` (not inspected, per instruction) and may touch `ownerCreditUsage.ts` | Possible overlap on `ownerCreditUsage.ts` only. Whoever merges second rebases (S11-C-11); the extraction is kept small for that reason |
+
+**What 11c touches (as-built on `5061489b`).**
+
+| Area | Today | 11c |
+|---|---|---|
+| Owner credit builder | `lib/business-os/credits/ownerCreditUsage.ts`: slice 7a already split the work into a private `computeOwnerCreditWindow(accountId, now, deps, log)` (throws), used by two public wrappers that each do `resolveAccountId(userId)` and their own try / catch + log: `resolveOwnerCreditWindow` (history) and `readOwnerCreditUsage` (card). Allowance via the injected `readAllowance` ("Tests only") or `getSnapshot(accountId)` + `creditAllowanceForDisplay`. Registered importer (`creditAllowanceForDisplay`, `getEntitlementService`, `resolveAccountId`) | New exported `readCreditPosition(accountId, deps, log, failureMessage?)`: the try / catch around `computeOwnerCreditWindow`, keyed by an account id the caller has already resolved and authorised. Both wrappers become thin (seam → `readCreditPosition`) and pass their own log messages, so every existing test stays green **unedited** (S11-C-8). Its imports from the module do not change |
+| Allowance and layer | `creditAllowanceView.ts` (inside the module) returns `{ amount, per } \| null`. The layer (`decidedBy`: `basis`, `lifecycle_gate`, `grandfather`, `addon`, `cohort_values`, `override`) is on `resolution.values['credits.allowance']`, but no helper returns it | New pure `creditAllowanceDecision(snapshot)` in the same file: `{ allowance: creditAllowanceForDisplay(snapshot), layer }`, so the figure is identical by construction and the capability literal stays inside the module (S11-SQ-9) |
+| Lots | `BusinessOsCreditLotRepository.listLotsWithDraws(accountId)` (service role, `.eq('user_id')`, a 1,000-row ceiling answers an error); `creditLots.extraCreditsAt(lots, at)`; the G3 guard holds the exact list of files allowed to name the repository | Read by the new route's wiring; the G3 list gains the wiring file |
+| Admin read routes | Credits report, leak check, account summary: `requireAdmin` first, Zod uuid, 409 `platform_account` (pure, before any read), tenant via `isBusinessOsTenant` (500 / 404), `force-dynamic`, Pino child with `correlationId`; one failed read becomes `{ status: 'error' }` for its block (summary route) | New `GET /api/admin/business-os/credits/accounts/[accountId]` in exactly that shape |
+| Admin write path | 11b: `POST /api/admin/business-os/entitlements/accounts/[accountId]` with `grant_credits` / `reduce_credit_lot`; response `data` for a grant `{ accountId, op, lotId, credits, expiresAt, replayed }`, for a reduction `{ …, lotId, drawId, credits, lotRemainingAfter, replayed }`; refusals `{ success: false, error, details? }` | **Unchanged.** The forms call it as it is |
+| Admin register / census | `docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md`: rows up to 90; measured today **87 handlers in 58 `route.ts` files** under `app/api/admin/` | Row 91; census 88 / 59, re-measured in the PR (OP-34 on "caps") |
+
+**Skills read and how they apply.**
+
+| Skill | Applies because | What it requires in 11c |
+|---|---|---|
+| `new-api-route` | New admin GET | `requireAdmin` is the first statement (nothing above it touches the request or a read); Zod uuid on the path; Pino child with `correlationId`; CLAUDE.md error format; no audit for a plain read; tests for 200, 401, 403, 400 |
+| `business-os-entitlements` | The route imports from the module; a new exported helper inside it | Route registered in `KNOWN_NON_GATE_IMPORTERS` with its exact symbols and a `why` (display only, refuses nothing); `ownerCreditUsage.ts`'s entry unchanged (same symbols); no capability or tier literal outside the module; `npm run test:bos-entitlements` on the final diff |
+| `tenant-isolation-guard` | Service-role reads keyed by a caller-supplied account id (the URL path) | Account only from the path, after the gate, Zod, the platform check and the tenant check; every repository read is `.eq('user_id', accountId)` (both repositories already do it); no body or query input at all (a test that the query is ignored); the owner read repository's service-role construction documented in code (S11-C-8) |
+| `new-repository` | Not engaged: no repository is created or changed (the owner read repository is constructed with a different client; its surface is untouched) | — |
+| `business-os-schema-check` | No new column or table claim: every read is an existing, tested repository method | — |
+| `durable-queue-drain`, `bos-llm-call-standards` | Not engaged (no queue, cron or AI call) | — |
+
+**Admin UI language.** English only: nothing under `app/admin/` uses `LanguageContext` (the two hits are source guards asserting exactly that). No he / es strings.
+
+**Root-cause phase (V6 rule):** not applicable.
+
+**`console.*` in the files 11c touches:** **0** in every one: `BusinessOsPanel.tsx`, `app/admin/users/types.ts`, `ownerCreditUsage.ts`, `creditAllowanceView.ts`, `creditAdminOps.ts`, `creditLots.ts`, and the tests and guards to be extended (`enforcementPoints.test.ts`, `businessOsEntitlements.imports.guard.test.ts`, `creditLots.test.ts`, `creditFigures.fromConfig.guard.test.ts`, `creditAdminOps.test.ts`, `businessOsPanel.render.test.tsx`; `source.guard.test.ts` holds one `/console\./` regex, which is the rule, not a call). New files use Pino (server) or nothing (client).
+
+### 11c.2 Scope, out of scope and guardrails
+
+**In scope (SA-11 "The split", 11c row; S11-AC-6 as corrected by S11-CR-3; S11-D-8 B):**
+- `readCreditPosition` extracted in `ownerCreditUsage.ts`; `creditAllowanceDecision` in `creditAllowanceView.ts`.
+- `lib/business-os/credits/adminCreditPositionDeps.ts` (wiring, service role, documented) and `adminCreditPositionTypes.ts` (payload, types only).
+- `GET /api/admin/business-os/credits/accounts/[accountId]` and its tests.
+- The **Credits** block on the Businesses entry, with **Give credits** and **Take back** dialogs calling 11b's ops, a refusal copy map with a completeness test, and the client wire types.
+- Registrations: `KNOWN_NON_GATE_IMPORTERS`, the plan-repository referrer guard, the lot repository's G3 list, the credit-figures source list, the screen source guard, the admin register row and the census.
+- CR11b-2 (the reduction audit's `extraCreditsAfter` made exact).
+- Docs: access register, entitlements doc § Admin operations (one paragraph), this workplan, the requirement status row.
+
+**Out of scope:** the owner's "Extra credits" figure (11d); any combined remaining, to anyone (S11-CR-3, slice 9); the credit diary link (parked, BD-17; stays with cleanup 5e); write buttons on the Plans page (cleanup slice 6); any change to the 11b ops, their schemas, their codes or the POST route; any migration or SQL; `EntitlementSnapshot`'s output; consumption draws (slice 9 / 10); naming admins beyond what OP-30 decides.
+
+**Guardrails (each tested or checked):**
+
+| # | Guardrail | Proven by |
+|---|---|---|
+| G11c-1 | **No combined remaining** in the payload or on screen (S11-CR-3) | The route test pins the payload's exact key set (no `remaining`, `total`, `combined`, `balance`); a source rule on the client files rejects adding the two figures (`planLeft` and `extraCredits` never in one arithmetic expression) |
+| G11c-2 | **The owner's card and history are unchanged** | `ownerCreditUsage.test.ts`, `ownerCreditUsage.payload.test.ts`, `ownerCreditUsage.crossCheck.test.ts` and `ownerCreditHistory.test.ts` green and **unedited** (`git diff` shows no line in them) |
+| G11c-3 | **`requireAdmin` first; nothing read before the gate, the id check, the platform check and the tenant check** | Route tests: 401 / 403 / 400 / 409 call no repository and no snapshot; a tenant 404 calls no ledger, lot or snapshot read |
+| G11c-4 | **Credits only**: no USD, cost, token, model or idempotency key in the payload; no owner text (these tables hold none; the reason is the admin's own, internal, S11-D-4) | Exact key set plus a forbidden-word walk over every key and nested key (`usd`, `cost`, `token`, `model`, `idempotency`, `fallback`) |
+| G11c-5 | **Account only from the path** | No body; a test that query parameters (`?accountId=`, `?userId=`) are ignored; an upper-case path is lower-cased (W11b-1 precedent) |
+| G11c-6 | **The client files import nothing from `lib/business-os`**, no repository, no `console.*` | `app/admin/users/__tests__/source.guard.test.ts` `SCREEN_FILES` extended |
+| G11c-7 | **Every refusal the forms or the block can meet has a sentence** | A contract test reading the codes from the sources (§11c.6.4) |
+| G11c-8 | **A replay shows the returned figures, never the typed ones** (QA11b-N2) | Render test: the server answers `replayed: true` with a different expiry and amount from those typed; the success line shows the server's |
+| G11c-9 | **No new CI job, step or workflow; no added CI time** | Tests go into suites that already run (`npm test`, `test:bos-entitlements`, `test:authz-guard`); no workflow file in the diff |
+| G11c-10 | **No agent touches a database; nothing committed before the user has seen the diff**; QA submits no grant on a real account without the user's explicit approval | This workplan; §11c.6.6 |
+
+### 11c.3 Implementation approach
+
+#### 11c.3.1 `readCreditPosition` (the extraction, S11-SQ-9, S11-C-8)
+
+```typescript
+/**
+ * The credit position of ONE account the CALLER has already resolved and
+ * authorised: the owner surfaces through the account seam, the admin view
+ * after requireAdmin, the platform check and the tenant check. Never throws.
+ */
+export async function readCreditPosition(
+  accountId: string,
+  deps: OwnerCreditUsageDeps,
+  log: OwnerCreditUsageLogger,
+  failureMessage = 'Credit position read failed'
+): Promise<Result<OwnerCreditWindow>>;
+```
+
+- Body: `now` from `deps.now`, then today's try / catch around `computeOwnerCreditWindow`, logging through `logReadFailure` with `failureMessage`.
+- `readOwnerCreditUsage(userId, …)`: `resolveAccountId(userId)` → `readCreditPosition(accountId, deps, log, 'Owner credit usage read failed')` → today's payload mapping (unchanged, `granted = 0`). `resolveOwnerCreditWindow(userId, …)`: seam → `readCreditPosition(…, 'Owner credit window read failed')`. Same log messages, same error objects, same payloads, so the four owner suites stay unedited.
+- `OwnerCreditWindow` (already exported) is the position type; an alias `CreditPosition = OwnerCreditWindow` is added for the admin side's readability. The `readAllowance` comment changes from "Tests only" to "Tests, and the admin view (which reads the snapshot itself to get the deciding layer as well)".
+- `ownerCreditSurface.guard` rule 4 still holds: the builder still names `.getSnapshot(accountId)` (the default reader) and imports no service client and no repository singleton.
+
+#### 11c.3.2 `creditAllowanceDecision` (inside the module)
+
+```typescript
+export interface CreditAllowanceDecision {
+  allowance: CreditAllowanceForDisplay | null;
+  /** The resolver's layer for the credit allowance; null whenever allowance is null. */
+  layer: TraceEntry['layer'] | null;
+}
+export function creditAllowanceDecision(snapshot: SnapshotResult): CreditAllowanceDecision;
+```
+
+`allowance` is `creditAllowanceForDisplay(snapshot)` itself (one rule, not two); `layer` is `resolution.values['credits.allowance'].decidedBy` when `allowance` is not null. A property test runs both functions over every existing `creditAllowanceView.test.ts` fixture and asserts the allowances are equal.
+
+#### 11c.3.3 The route — `app/api/admin/business-os/credits/accounts/[accountId]/route.ts`
+
+Order (the summary route's shape): `requireAdmin` (401 / 403) → Zod uuid (400 `invalid_account_id`) → lower-case + `resolveAccountId` → `isPlatformAccount` (409 `platform_account`, pure) → `isBusinessOsTenant` (500 `tenant_check_failed` / 404 `not_a_business_os_account`) → the reads:
+
+1. `getEntitlementService().getSnapshot(accountId, { bypassCache: true })` → `creditAllowanceDecision` (fresh, as the entitlements GET does). A throw or `unavailable` → `allowanceStatus: 'unavailable'`, allowance and layer null — never shown as "no allowance".
+2. `readCreditPosition(accountId, { ...deps, readAllowance: async () => decision.allowance }, requestLogger)`, chained after (1) so the snapshot is read once. "No plan row → no allowance" is still decided inside the builder; the route nulls `layer` when the position's allowance is null.
+3. In parallel with (1)–(2): `deps.lots.listLotsWithDraws(accountId)` → `extraCreditsAt(rows, now)`.
+
+A failed (2) makes the `usage` block `{ status: 'error' }`; a failed (3), or a null `extraCreditsAt` (an unreadable figure, or the 1,000-row ceiling), makes the `extra` block `{ status: 'error' }`. The request fails as a whole only before the reads, or on an unexpected throw (500 `Internal server error`).
+
+**Payload** (`data`): credits only, exact to 6 dp, no combined figure.
+
+```typescript
+{
+  accountId: string;
+  isOwnAccount: boolean;   // gate.user.id === accountId (lower-cased): the forms hide; the server still refuses (OP-28)
+  limits: { grantCeiling: number; reasonMin: number; reasonMax: number };  // from ADMIN_CREDIT_GRANT_CEILING and the 11b reason bounds (OP-27)
+  usage:
+    | { status: 'error' }
+    | {
+        status: 'ok';
+        period: { kind: 'monthly' | 'trial_total' | 'calendar_month'; key: string; resetsOn: string | null };
+        allowanceStatus: 'ok' | 'unavailable';
+        allowance: { amount: number; per: 'month' | 'total' } | null;
+        allowanceLayer: 'basis' | 'lifecycle_gate' | 'grandfather' | 'addon' | 'cohort_values' | 'override' | null;
+        used: number; usedByOwner: number; usedAutomatic: number;
+        planLeft: number | null;   // max(0, allowance − used): computeCreditBalance with granted 0; null without an allowance
+        overPlan: number | null;   // max(0, used − allowance); null without an allowance; shown only when > 0
+      };
+  extra:
+    | { status: 'error' }
+    | {
+        status: 'ok';
+        extraCredits: number;      // extraCreditsAt(lots, now).extraCredits: the one function (S11-SQ-4)
+        hasInconsistentLot: boolean;
+        lots: Array<{              // newest first, for display
+          id: string; source: 'admin_grant' | 'boost_purchase';
+          credits: number; remaining: number; expired: boolean;
+          expiresAt: string | null; reason: string | null;
+          actorKind: 'admin' | 'stripe_webhook'; actorAdminId: string | null; actorLabel: string | null;  // OP-30
+          createdAt: string;
+          takeBacks: Array<{ id: string; credits: number; reason: string | null; actorAdminId: string | null; actorLabel: string | null; createdAt: string }>;
+        }>;
+      };
+}
+```
+
+Built field by field, never a spread of a repository row: `idempotencyKey`, `sourceRef`, `creditValueVersion`, `creditsBase` / `creditsBonus` never reach the payload. `remaining` and `expired` come from `extraCreditsAt`'s positions, never recomputed in the route.
+
+**Logging.** One `info` with `accountId`, `usageStatus`, `extraStatus` and the lot count; never a reason, never a figure. Failures at `error` with `{ err }` and codes (the builder already logs its own). **No audit row** (OP-36).
+
+**`adminCreditPositionDeps.ts`** (server-only): `findPeriodAnchor` (plan repository), `periodStartFor` (period repository), `owner: new BusinessOsCreditOwnerReadRepository(supabaseServer)` and `lots: businessOsCreditLotRepository`. Its header states the intentional RLS bypass: an admin-only read, the account from the path after `requireAdmin`, the platform check and the tenant check; the owner repository selects owner-granted columns only, so no cost column can reach the admin payload this way (S11-SQ-9). It imports nothing from the entitlements module (only a type from `ownerCreditUsage.ts`), so it is not an entitlements importer.
+
+#### 11c.3.4 Registrations (all equality-checked lists, same PR)
+
+| List | Change |
+|---|---|
+| `enforcementPoints.test.ts` `KNOWN_NON_GATE_IMPORTERS` | New entry for the route, symbols exactly `creditAllowanceDecision`, `getEntitlementService`, `isBusinessOsTenant`, `resolveAccountId` (the last is required by `accountSeam.guard` for any file that reaches the service); `why`: the admin read-only credit view, `getSnapshot` for display, never `check()` / `decide()`, refuses nothing |
+| `businessOsEntitlements.imports.guard.test.ts` | `adminCreditPositionDeps.ts` in `ALLOWED` and `NO_STATE_WRITE_REFERRERS`, plus a one-method pin like the 6a wiring's (`findPeriodAnchor` only) |
+| `creditLots.test.ts` G3 | `adminCreditPositionDeps.ts` added to the exact allowed list (it names the singleton); the non-vacuity check covers it |
+| `creditFigures.fromConfig.guard.test.ts` `SOURCES` | The route and `adminCreditPositionDeps.ts` (both match the builder completeness regex `\bownerCreditUsage\b` through their import path, so the suite would otherwise fail by name), and `CreditsBlock.tsx` (it renders an allowance; voluntary, per that list's header) |
+| `app/admin/users/__tests__/source.guard.test.ts` `SCREEN_FILES` | The new client files |
+| Admin register | Row 91 `business-os/credits/accounts/[accountId]` `GET` ✅ gated; census re-measured (expected 88 handlers / 59 files) with a Change History row |
+
+#### 11c.3.5 The Credits block and the two dialogs (client)
+
+Files: `app/admin/users/components/CreditsBlock.tsx` (read, figures, lot list, buttons), `app/admin/users/components/CreditFormDialog.tsx` (one dialog, `mode: 'give' | 'take_back'`), `app/admin/users/creditCopy.ts` (the refusal copy map and the form strings, no JSX, so the contract test imports it without rendering). Wire types `AccountCreditPositionPayload` in `app/admin/users/types.ts`. The shared Radix `Dialog` from `components/ui/dialog` with the dark-override classes of `app/admin/archiving/components/ArchiveConfirmDialog.tsx` (the admin shell does not load the `--v2-*` tokens; same precedent).
+
+`BusinessOsPanel.tsx` change: render `<CreditsBlock accountId={accountId} businessLabel={…} />` after Plan & entitlements, inside the existing "is a Business OS account" branch. `businessLabel` is the header's title when the summary named the business, otherwise the account id (the confirm step must name something real, never "Business OS"). The block fetches its own GET (independent loading and error line), so the panel's existing reads and tests are untouched.
+
+**What the block shows** (credits whole when integral, otherwise up to 2 dp with the exact figure in the `title`, OP-29):
+- **Plan allowance**: "N per month" or "N in total (trial)", with "Set by: `layer`" (the raw resolver layer, the vocabulary the Plan & entitlements table above already uses, OP-31); "No allowance" when null; "The plan could not be read; figures shown without an allowance" when `allowanceStatus: 'unavailable'`.
+- **Used this period** (period label from `kind` / `key`, "resets on" when given), split into by the owner / automatic.
+- **Plan left**: shown when an allowance exists.
+- **Over the plan this period**: shown only when `overPlan > 0`, with one line: "Nothing is blocked yet (shadow mode)."
+- **Extra credits**: `extraCredits`, with "Extra credits are not part of the plan figure", and **no** total of the two (G11c-1). A warning line when `hasInconsistentLot`.
+- **Lot list** (S11-AC-6): source ("Given by an admin" / "Bought"), credits, left, end ("No end date" / a date, an "Expired" badge), reason, who (OP-30), when; each take-back underneath. Empty: "No extra credits given yet."
+- **Buttons**: "Give credits"; "Take back" on each lot with `remaining > 0` that is not expired. Both hidden when `isOwnAccount`, replaced by the `own_account` sentence. A block with `{ status: 'error' }` says it could not be read, never zeros (5a's rule).
+
+**Give dialog** (S11-D-2 C, S11-D-5, S11-SQ-1 (e)):
+- Fields: amount (whole credits, 1 to `limits.grantCeiling`); end (radio, **no default**: "End date" with a `datetime-local` input, or "No end date"); reason (required, `reasonMin` to `reasonMax` trimmed). Submit stays disabled until all three are valid; the server is still the authority.
+- **Request id**: minted with `crypto.randomUUID()` when the dialog opens, kept across every retry (network error, 5xx, any refusal), renewed only after a success or when the dialog is closed and reopened (OP-32).
+- **Confirm step**: names the business (`businessLabel`) and restates the amount, the end (local time and the UTC instant that will be sent) and the reason: "Give N credits to <business>".
+- Body: `{ op: 'grant_credits', amount, expiresAt: <ISO instant with Z> | null, requestId, reason }`, POSTed to the existing entitlements route.
+- **Result**: from the **response** (`credits`, `expiresAt`, `replayed`), never from the form (QA11b-N2). On `replayed: true`: "This gift had already been recorded; showing what was recorded." Then the block re-reads its GET.
+
+**Take back dialog** (S11-D-6 A, S11-D-7 A):
+- Fields: amount (whole credits, up to the ceiling) or "Everything left" (sends `'rest'`); reason. Shows "N left on this gift" from the payload.
+- A `boost_purchase` lot adds a required checkbox ("These credits were paid for. Taking them back does not refund the payment.") that sends `confirmPaidCredits: true`; without it, submit stays disabled. Boost lots do not exist yet, so this is render-tested with a fixture.
+- The same request-id rule; a confirm step naming the business and the gift; the result from the response (`credits`, `lotRemainingAfter`, `replayed`).
+- `exceeds_remaining` shows `details.remaining` ("Only N are left on this gift").
+
+**Refusal copy** (`CREDIT_ERROR_COPY` in `creditCopy.ts`): one sentence for every code the GET or the two ops can return (§11c.6.4); an unknown code falls back to "Something failed on the server. The correlation id is in the logs.", never the raw code. For example `idempotency_key_conflict`: "This form already recorded a different change. Reload the credits to see it, then close and reopen the form to make another." `own_account`: "You cannot change credits on your own account. Another admin has to do it."
+
+#### 11c.3.6 CR11b-2 (folded in, `creditAdminOps.ts`)
+
+The reduction audit's `extraCreditsAfter` becomes `extraCreditsAt` over the same lot list with the returned draw appended to that lot (no second database read), so it is exact even for a lot that `extraCreditsAt` clamps to 0. The grant is unchanged. One test with an inconsistent lot. No change to the response, the codes or the import list.
+
+### 11c.4 Files to create / modify
+
+| File | Action | Reason |
+|---|---|---|
+| `app/api/admin/business-os/credits/accounts/[accountId]/route.ts` | create | The admin GET (§11c.3.3) |
+| `app/api/admin/business-os/credits/accounts/[accountId]/__tests__/route.test.ts` | create | Route tests (§11c.6.2) |
+| `lib/business-os/credits/adminCreditPositionDeps.ts` | create | Wiring on the service role, documented |
+| `lib/business-os/credits/adminCreditPositionTypes.ts` | create | Payload types (types only) |
+| `lib/business-os/credits/__tests__/creditPosition.test.ts` | create | `readCreditPosition` direct tests and a cross-check with the credits report (a new file, so the owner suites stay unedited) |
+| `lib/business-os/credits/__tests__/adminCreditPosition.wireTypes.test.ts` | create | Server ↔ client payload assignability (enforced by `typecheck:bos-llm`; the `creditReport.wireTypes` precedent) |
+| `lib/business-os/credits/ownerCreditUsage.ts` | modify | Extract `readCreditPosition`; two thin wrappers; `readAllowance` comment |
+| `lib/business-os/entitlements/creditAllowanceView.ts` | modify | `creditAllowanceDecision` |
+| `lib/business-os/entitlements/__tests__/creditAllowanceView.test.ts` | modify | Decision cases and the equality property |
+| `lib/business-os/entitlements/__tests__/enforcementPoints.test.ts` | modify | Register the route |
+| `lib/repositories/__tests__/businessOsEntitlements.imports.guard.test.ts` | modify | Register the wiring as a read-only referrer |
+| `lib/business-os/credits/__tests__/creditLots.test.ts` | modify | G3 list + 1 |
+| `lib/business-os/entitlements/__tests__/creditFigures.fromConfig.guard.test.ts` | modify | `SOURCES` + 3 |
+| `lib/business-os/credits/creditAdminOps.ts` | modify | CR11b-2 |
+| `lib/business-os/credits/__tests__/creditAdminOps.test.ts` | modify | The CR11b-2 case |
+| `app/admin/users/components/CreditsBlock.tsx` | create | The block |
+| `app/admin/users/components/CreditFormDialog.tsx` | create | Give / Take back |
+| `app/admin/users/creditCopy.ts` | create | Copy map and form strings |
+| `app/admin/users/components/BusinessOsPanel.tsx` | modify | Render the block (one element and its label) |
+| `app/admin/users/types.ts` | modify | Client wire types |
+| `app/admin/users/__tests__/creditsBlock.render.test.tsx` | create | Render tests (§11c.6.3) |
+| `app/admin/users/__tests__/creditErrors.contract.test.ts` | create | Copy completeness (§11c.6.4) |
+| `app/admin/users/__tests__/source.guard.test.ts` | modify | `SCREEN_FILES` + 3; the no-combined-figure rule |
+| `app/admin/users/__tests__/businessOsPanel.render.test.tsx` | modify | Fetch stub extended with the new URL; one case that the block renders under Plan & entitlements |
+| `docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md` | modify | Row 91, census, Change History |
+| `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md` | modify | § Admin operations: one paragraph on the view and where the forms live; Change History |
+| `docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_11_WORKPLAN.md` | modify | Ticks and evidence |
+| `docs/requirements/BUSINESS_OS_LLM_DEDUCTION_LAYER_REQUIREMENT.md` | modify | Slice 11 status row at hand-over |
+
+**Not touched:** every migration and SQL script; the 11b POST route, `adminOps.ts` and the op schemas; the code of both the lot and the owner repositories; `EntitlementSnapshot.tsx`; `app/admin/users/page.tsx`; the Plans page; the owner card, the history and their suites; any workflow file.
+
+### 11c.5 Task list
+
+- [x] ✅ **T11c.0 Pre-flight.** `git branch --show-current` = `feature/business-os-credit-deduction-slice-11c`; `git status` recorded; `console.*` re-counted in every file of §11c.4.
+- [x] ✅ **T11c.1 Owner suites baseline.** Run the four owner suites on unmodified code and record the counts (G11c-2).
+- [x] ✅ **T11c.2 Extraction.** `readCreditPosition` and the thin wrappers; the four owner suites green **unedited**; `creditPosition.test.ts`.
+- [x] ✅ **T11c.3 Allowance decision.** `creditAllowanceDecision` and its tests.
+- [x] ✅ **T11c.4 Types and wiring.** `adminCreditPositionTypes.ts`, `adminCreditPositionDeps.ts` (header comment on the bypass).
+- [x] ✅ **T11c.5 Route** and `route.test.ts` (§11c.6.2).
+- [x] ✅ **T11c.6 Registrations.** `KNOWN_NON_GATE_IMPORTERS`, the imports guard, G3, the credit-figures `SOURCES`; `npm run test:bos-entitlements` green.
+- [x] ✅ **T11c.7 CR11b-2** and its test; the 11b suites green.
+- [x] ✅ **T11c.8 Client.** Wire types, `creditCopy.ts`, `CreditsBlock.tsx`, `CreditFormDialog.tsx`, the panel line.
+- [x] ✅ **T11c.9 Client tests.** Render tests, the copy contract, the source guard, the wire-types test.
+- [x] ✅ **T11c.10 Docs.** Access register row and census; the entitlements doc paragraph.
+- [x] ✅ **T11c.11 Gates and hand-over.** The §11c.6.5 commands; `git diff --numstat` (no deletion without insertion); backslash-hex scan of every changed file; evidence in §11c.10; requirement row; status → Code Complete (11c); uncommitted; hand to TL for SA code review, then QA (§11c.6.6).
+
+### 11c.6 Test plan and commands
+
+All in existing Jest locations, run by `npm test`, and for the registrations by `npm run test:bos-entitlements` and `npm run test:authz-guard`. No database, no new CI job or step.
+
+#### 11c.6.1 Builder and helper
+
+| Suite | Cases |
+|---|---|
+| `creditPosition.test.ts` (new) | The same figures as the card for the same deps (period, trial total, calendar month, corrections); never calls `resolveAccountId` (the account is taken as given); a read failure returns `{ error }` and logs with the message passed in; the injected `readAllowance` is honoured, and "no plan row → no allowance" still wins over it; **cross-check**: `used` equals `buildCreditReport`'s credits for the same rows and period (S11-AC-6) |
+| `creditAllowanceView.test.ts` | `creditAllowanceDecision`: the layer for each `decidedBy` (all six layers); a null layer whenever the allowance is null (unavailable, anomaly, `basis.kind 'none'`, the withheld floor, a paused or unknown state); `decision.allowance` deep-equals `creditAllowanceForDisplay` on every fixture |
+| The four owner suites | Unedited, green (G11c-2) |
+
+#### 11c.6.2 `route.test.ts`
+
+- 401 (signed out) and 403 (not an admin): no repository, snapshot or builder call.
+- 400 for a malformed id; query parameters ignored (the same answer with `?accountId=<other>`).
+- 409 `platform_account` (the env id, also upper-cased): no tenant read.
+- 500 `tenant_check_failed`; 404 `not_a_business_os_account`: no ledger, lot or snapshot read.
+- 200 happy path: the exact key set at every level; figures from the mocks; `extraCredits` equals `extraCreditsAt` on the same rows (QA11a-4, per account); the lot list newest first; reason and actor present; no idempotency key, source reference, credit value version or base / bonus split.
+- Allowance cases: monthly; trial total (`per: 'total'`); no allowance (`planLeft` / `overPlan` null); snapshot unavailable or throwing → `allowanceStatus: 'unavailable'` with the usage still returned; no plan row → allowance and layer null.
+- `overPlan`: 0 when under, the exact difference when over; `planLeft` never negative.
+- Partial failures: a usage read error → `usage.status 'error'` with `extra` still ok; a lot read error, the ceiling, or a null `extraCreditsAt` → `extra.status 'error'` with `usage` still ok.
+- An upper-case path → the lower-case `accountId` in the reads and the payload; `isOwnAccount` true for the admin's own id (any case).
+- Forbidden-word walk over all keys; the `info` log carries no reason and no figure.
+- `limits.grantCeiling` equals `ADMIN_CREDIT_GRANT_CEILING`.
+- Source: `requireAdmin` is the first statement of `GET`; `dynamic = 'force-dynamic'`; no `supabaseServer` in the route (it lives in the wiring file).
+
+#### 11c.6.3 `creditsBlock.render.test.tsx` (jsdom; fetch stubbed per URL, as `businessOsPanel.render.test.tsx` does)
+
+- Figures: allowance with its layer, used, plan left, extra credits; **no element shows their sum**; "Over the plan" only when > 0; trial wording; the no-allowance and unavailable wording; error blocks say "could not be read", never 0.
+- Lot list: source, credits, left, end / "No end date" / "Expired", reason, who, when, take-backs; the empty state; Take back hidden on expired or empty lots.
+- Own account: no buttons, the `own_account` sentence.
+- Give: submit disabled until amount, end choice and reason are valid (amount 0, 1.5 and ceiling + 1, and a 2-character reason refused on the client); the confirm step names the business; the POST body is exactly `{ op, amount, expiresAt, requestId, reason }` with `expiresAt` an ISO instant or `null`; the request id is a uuid, **the same** on a retry after a network error, a 500 and a 409, **new** after a success and after close / reopen.
+- Replay (QA11b-N2): the server answers `replayed: true` with figures different from those typed; the success line shows the server's figures and the "already recorded" note.
+- After a success the GET is read again.
+- Take back: `'rest'` sent for "Everything left"; a boost fixture lot requires the checkbox and then sends `confirmPaidCredits: true`; `exceeds_remaining` shows `details.remaining`.
+- Every refusal shows its sentence; an unknown code shows the generic sentence, never the code.
+- `businessOsPanel.render.test.tsx`: the existing cases green; the panel renders the block under Plan & entitlements.
+
+#### 11c.6.4 `creditErrors.contract.test.ts` (modelled on `summaryErrors.contract.test.ts`)
+
+Codes read from source, quote-agnostic: **every** `error: '…'` in `creditAdminOps.ts` and in the new route; plus an explicit list of the shared codes the two ops can reach through `adminOps.ts` and the POST route (`own_account`, `not_a_business_os_account`, `tenant_check_failed`, `plan_read_failed`, `plan_row_missing`, `invalid_body`, `invalid_account_id`, `Internal server error`) and through `requireAdmin` (`Unauthorized`, `Forbidden`), each asserted to occur in its source file (so a stale entry fails). Every code has a sentence that does not contain the code and is longer than 20 characters. Non-vacuity: the scan finds at least the 13 credit-op codes of §11b.3.2 / §11b.3.6.
+
+#### 11c.6.5 Commands Dev will run before hand-over
+
+```bash
+npx jest lib/business-os/credits app/api/admin/business-os/credits app/api/admin/business-os/entitlements app/admin/users lib/business-os/entitlements/__tests__/creditAllowanceView.test.ts
+npm run test:bos-entitlements
+npm run test:authz-guard
+npm run typecheck:bos-llm
+npm run check:bos-llm-literals
+NODE_OPTIONS=--max-old-space-size=6144 npx tsc --noEmit -p <scratchpad>/tsconfig.slice11c.json
+npx eslint <every touched .ts / .tsx file>
+git diff --numstat
+```
+
+The scoped `tsc` (scratchpad; `files` = the touched `.ts` / `.tsx` files + `next-env.d.ts`) is the type gate, as in 11a / 11b; ts-jest does not type-check here, so it is also what proves the wire types. `next build` is not run locally (the CI `Build` job covers the new route and the client files); if SA asks for it, it runs only in a way that never removes or rewrites the shared `node_modules` junction. The two pre-existing `creditPeriod.test.ts` failures are expected and re-confirmed, not fixed.
+
+#### 11c.6.6 QA's manual check of the critical path (CLAUDE.md "New UI flows")
+
+Local dev in this folder talks to the **real** Supabase (git-ignored `.env.local`), so:
+
+1. `npx next dev -p 3000` from `neuronforge-llm-layer2-step4`; sign in as an admin; open `/admin/users`.
+2. **Read-only checks (no approval needed):** expand a business the user names; the Credits block loads; the allowance and layer match the Plan & entitlements table above it; **used** matches the Costs & credits tab (`/admin/business-os-llm`) for the same account and period (S11-AC-6); extra credits read 0 with "No extra credits given yet" (PROD has no lots, §17 L9); no combined figure anywhere; the admin's own row shows no buttons and the own-account sentence; a login with no business shows the panel's existing "Not a Business OS account" and no Credits block.
+3. **Form checks without submitting:** open Give, check the disabled states, reach the confirm step, check the business name and the UTC instant, then **Cancel**. The same for Take back only if a lot exists.
+4. **A real grant or take-back only with the user's explicit approval, on an account the user names.** Lots and take-backs are append-only and can never be deleted, so a test grant stays on that account's record for good (a take-back of `'rest'` zeroes it but leaves both rows). If the first live grant answers 500 `lot_write_failed` and the server log shows `PGRST202`, the user runs `NOTIFY pgrst, 'reload schema';` (the 11b hand-over line).
+5. Everything the browser check cannot safely do (refusals, replays, request-id reuse, the paid-lot confirmation) is covered by §11c.6.3.
+
+### 11c.7 Estimate
+
+| Part | Days |
+|---|---|
+| Extraction and `creditPosition.test.ts` (incl. the report cross-check) | 0.25 |
+| `creditAllowanceDecision` and tests | 0.1 |
+| Types, wiring, route | 0.3 |
+| `route.test.ts` | 0.3 |
+| Registrations (four guard lists) and `test:bos-entitlements` | 0.1 |
+| `CreditsBlock.tsx`, `CreditFormDialog.tsx`, `creditCopy.ts`, the panel line, client types | 0.5 |
+| Render tests, copy contract, source guard, wire types | 0.4 |
+| CR11b-2 | 0.05 |
+| Docs (register, census, entitlements paragraph), gates, evidence | 0.15 |
+| **Total** | **≈ 2.15 d** (≈ 2.05 d without OP-30's actor names) |
+
+SA-11 sized 11c at ≈ 2 d. The ≈ 0.15 d difference is the guard registrations SA-11 did not list (the plan-repository referrer guard and the credit-figures source list, both of which would fail otherwise), CR11b-2 and OP-30.
+
+### 11c.8 Risks
+
+| # | Risk | Mitigation |
+|---|---|---|
+| R11c-1 | An admin reads "plan left" and "extra credits" as one balance, or asks for the sum | Two separate figures with a line under extra credits; the combined figure is slice 9's (S11-CR-3); G11c-1 tests |
+| R11c-2 | The extraction changes owner behaviour or log lines | The wrappers keep their messages; the four owner suites unedited and green (G11c-2) |
+| R11c-3 | Overlap with credit deduction slice 8 on `ownerCreditUsage.ts` | The change is a small move of one try / catch; whoever merges second rebases (S11-C-11) |
+| R11c-4 | A QA or user test grant on PROD leaves permanent rows | §11c.6.6 step 4: only with explicit approval, on a named account, stated in the hand-over |
+| R11c-5 | The admin's browser time zone shifts an end date | The confirm step shows both the local time and the UTC instant sent; the server requires an offset (11b OP-17) |
+| R11c-6 | `isOwnAccount` hides the forms, but a stale page could still submit | The server refuses with 403 `own_account` regardless (11b); the copy map covers it |
+| R11c-7 | A lot list at the 1,000-row ceiling | The `extra` block says it could not be read; unreachable at admin volumes |
+| R11c-8 | A subagent write truncating a large file | `git diff --numstat` before reading any diff; deletion without insertion is a stop |
+| R11c-9 | A Windows path with a backslash and hex digits in a file Tailwind scans | Forward slashes only; the backslash-hex scan at T11c.11 |
+
+### 11c.9 Open points for SA
+
+The SA-11 rulings are followed as written until SA rules on each of these.
+
+| # | Point | Dev proposal |
+|---|---|---|
+| **OP-23** | The extraction's shape: 7a already split the builder, so "extract the body" has two readings | Export `readCreditPosition(accountId, deps, log, failureMessage?)` around the existing private `computeOwnerCreditWindow`; **both** owner wrappers delegate to it with their current log messages; the four owner suites unedited |
+| **OP-24** | How the route gets the allowance **and** its layer without reading the snapshot twice | A pure `creditAllowanceDecision(snapshot)` in `creditAllowanceView.ts` (its allowance is `creditAllowanceForDisplay`, by construction); the route reads the snapshot once with `bypassCache: true` and passes `readAllowance` into `readCreditPosition`. Route symbols: `creditAllowanceDecision`, `getEntitlementService`, `isBusinessOsTenant`, `resolveAccountId` (`accountSeam.guard` requires the seam in any file that reaches the service) |
+| **OP-25** | The wiring names the plan repository (`findPeriodAnchor`) and the lot repository | Explicit construction in `adminCreditPositionDeps.ts`, registered in the plan-repository referrer guard (read-only, one method pinned) and in the lot G3 list. Rejected alternative: calling `ownerCreditUsageDeps(supabaseServer)`, because that file's header promises the caller's RLS client |
+| **OP-26** | Partial failure | Two blocks (`usage`, `extra`), each `{ status: 'error' }` on its own failure (the summary route's precedent; 5a's "failed reads say so"); an unavailable snapshot is `allowanceStatus: 'unavailable'`, never "no allowance" |
+| **OP-27** | The client cannot import `ADMIN_CREDIT_GRANT_CEILING` (the screen source guard) | The GET sends `limits` (the ceiling and the reason bounds) built from the server constants: the summary route's "send the number, not a copy" precedent (`readCeiling`, SA N-6) |
+| **OP-28** | Own account in the UI | `isOwnAccount` in the payload; the forms hidden with the sentence; the server's 403 stays the rule |
+| **OP-29** | Display rounding of 6-dp credits | Whole when integral, otherwise up to 2 dp, with the exact figure in the `title` attribute |
+| **OP-30** | S11-AC-6 asks for the "actor"; the rows hold an admin user id only | Resolve it to the admin's email with `adminUserRepository.listActive()` (one read in the wiring; on a failure, or for an admin no longer active, `actorLabel` is null and the UI shows the short id). Offered as cuttable (−0.1 d): id only |
+| **OP-31** | How the deciding layer is shown | The raw resolver layer, as the Plan & entitlements table above it shows it: no second vocabulary. Plain labels can come with cleanup slice 6 |
+| **OP-32** | The request id's lifetime across refusals | Kept across every failed attempt, refusals included (a refusal wrote nothing, so the key is unused), renewed after a success or on reopen (S11-SQ-1 (e)); `idempotency_key_conflict` gets the "reload, then reopen" sentence |
+| **OP-33** | The end-date input | `datetime-local` in the admin's browser zone, sent as an ISO instant with `Z`; the confirm step shows both; "No end date" is an explicit radio; no default |
+| **OP-34** | S11-SQ-16 says the `Admin authz surface guard` caps move by one handler | As built, every cap counts **exemptions**, not handlers, and a handler gated from birth moves none. Dev updates the register (row 91) and the census in the doc (87 → 88 handlers, 58 → 59 files, re-measured) and leaves the caps alone. Confirm |
+| **OP-35** | CR11b-2 | Recompute `extraCreditsAfter` with `extraCreditsAt` over the list with the returned draw applied (exact), rather than a clamp at 0 |
+| **OP-36** | Audit for the GET | None: a read-only admin view (the summary / report precedent); the log carries ids and counts, never a reason |
+| **OP-37** | Cleanup 5e still reads as building the allowance and balance itself | BA annotates `ADMIN_BOS_CLEANUP_REQUIREMENT.md` §4.5 5e: allowance and balance delivered by credit deduction 11c (S11-D-8 B); 5e keeps the diary link only, parked with the diary (BD-17). Not a Dev edit |
+
+**Business decisions for the user:** none expected. Every point above is technical.
+
+### 11c.10 Results (Dev)
+
+*(Filled by Dev at T11c.11, 2026-10-03, on `feature/business-os-credit-deduction-slice-11c`. Everything uncommitted. No database touched, no `next build`, no `npm install`, the shared `node_modules` junction untouched.)*
+
+**Pre-flight (T11c.0 / T11c.1).** Branch confirmed with `git branch --show-current`. `console.*` re-counted in every touched file: **0 calls** (the only hit is the `/console\./` rule in `app/admin/users/__tests__/source.guard.test.ts`, which is the rule, not a call). Owner suites baseline on unmodified code: **4 suites, 84 tests, all green**.
+
+**Files created (line counts).**
+
+| File | Lines |
+|---|---|
+| `app/api/admin/business-os/credits/accounts/[accountId]/route.ts` | 249 |
+| `app/api/admin/business-os/credits/accounts/[accountId]/__tests__/route.test.ts` | 613 |
+| `lib/business-os/credits/adminCreditPositionDeps.ts` | 60 |
+| `lib/business-os/credits/adminCreditPositionTypes.ts` | 92 |
+| `lib/business-os/credits/__tests__/creditPosition.test.ts` | 311 |
+| `lib/business-os/credits/__tests__/adminCreditPosition.wireTypes.test.ts` | 46 |
+| `app/admin/users/components/CreditsBlock.tsx` | 315 |
+| `app/admin/users/components/CreditFormDialog.tsx` | 432 |
+| `app/admin/users/creditCopy.ts` | 101 |
+| `app/admin/users/__tests__/creditsBlock.render.test.tsx` | 596 |
+| `app/admin/users/__tests__/creditErrors.contract.test.ts` | 92 |
+
+**Files changed (`git diff --numstat`, insertions / deletions).** `ownerCreditUsage.ts` 75 / 32 (the two wrapper bodies rewritten, the new function, comments: the only hunks are the header, the deps comments, the `OwnerCreditWindow.accountId` comment, `readCreditPosition` and the two wrappers; nothing inside `computeOwnerCreditWindow`, `sumTotals`, `attributeCorrections` or `readAllowanceFromEntitlements`, W11c-13); `creditAllowanceView.ts` 27 / 3 (header, one import, the new function); `creditAdminOps.ts` 43 / 2; `BusinessOsCreditOwnerReadRepository.ts` 11 / 0 (header only, W11c-1); `BusinessOsPanel.tsx` 10 / 0; `app/admin/users/types.ts` 61 / 0 (additive); tests and guards: `creditAllowanceView.test.ts` 71 / 2 (two import lines), `creditAdminOps.test.ts` 64 / 0, `creditLots.test.ts` 6 / 0, `enforcementPoints.test.ts` 6 / 0, `creditFigures.fromConfig.guard.test.ts` 6 / 0, `businessOsEntitlements.imports.guard.test.ts` 21 / 0, `BusinessOsCreditOwnerReadRepository.test.ts` 51 / 0, `source.guard.test.ts` 56 / 0 (additive), `businessOsPanel.render.test.tsx` 60 / 0; docs: access register 13 / 5, entitlements doc 5 / 2, requirement (11c row and the S11-SQ-16 annotations only). No deletion without insertion anywhere.
+
+**Conditions, where each is met.**
+
+| # | Met by |
+|---|---|
+| W11c-1 | Comment-only updates: `ownerCreditUsage.ts` TENANT ISOLATION block, `OwnerCreditWindow.accountId`, `owner` and `readAllowance` comments; `creditAllowanceView.ts` header names the admin route; `BusinessOsCreditOwnerReadRepository.ts` header names `adminCreditPositionDeps.ts` and why (its existing pins stay green: no default client, no service-client import in code) |
+| W11c-2 | `creditPosition.test.ts` source guard (comments stripped, planted violation first): exactly `ownerCreditUsage.ts` and the admin route name `readCreditPosition`; only the admin route names `adminCreditPositionDeps`. The route test asserts the route names no `supabaseServer` |
+| W11c-3 | G3 `ALLOWED_LIST` + the route, its test and the wiring; non-vacuity green. The types file was reworded so it names no G3 symbol |
+| W11c-4 | `adminCreditPositionTypes.ts` imports nothing; the wiring imports only a type from `ownerCreditUsage.ts`; `app/admin/users/types.ts` imports nothing. The layer union is literal; `adminCreditPosition.wireTypes.test.ts` asserts server ⇄ client and both unions ⇄ `TraceEntry['layer']` |
+| W11c-5 | Route test: every call to the tenant check, the snapshot, the anchor, every owner-repository method and the lot read receives exactly the canonical path id (all recorded calls); upper-case path → lower-case everywhere; the query string is ignored; the owner repository is constructed on the service client. The wiring starts with `import 'server-only'` and exports the factory `adminCreditPositionDeps()` |
+| W11c-6 | `CREDIT_REASON_MIN = 3` / `CREDIT_REASON_MAX = 500` exported and used by `creditReason`; the route sends them in `limits`; `creditAdminOps.test.ts` pins 3 and 500 and that the schema enforces them |
+| W11c-7 | `CREDIT_ERROR_COPY` covers every scanned and shared code; `postJson` / `readPosition` never throw; render tests: non-JSON 502, unknown code, a 200 without `success` each show the generic sentence |
+| W11c-8 | Confirm disabled in flight plus an in-flight ref; double-click sends one POST (render test); `crypto.randomUUID` stubbed with a counter; same id after a network error, a 500 and a 409; new id after a success and after close / reopen |
+| W11c-9 | `extraCreditsAfterReduction`: synthetic `reversal` draw stamped `now.toISOString()`, read with `extraCreditsAt` at the same `now`; tests: healthy partial (113.75 → 73.75, unchanged), inconsistent clamped lot (13.75 → 13.75, the old arithmetic said 3.75), and a reduction of the other lot of an inconsistent account |
+| W11c-10 | Shared `Dialog`, `Checkbox`, `Label`, `Input`, `Button`; the `ArchiveConfirmDialog` dark overrides; native radios; no package added; no `dangerouslySetInnerHTML` (screen guard + a markup-in-reason render test); "Dates are shown in UTC." stated once; `CreditsBlock.tsx` in the `decidedBy` ban |
+| W11c-11 | Positions joined to rows by `id`; a lot created after `now` is listed with its granted credits, `expired: false`, `counted: false`, no Take back, not in `extraCredits` (route test and render test) |
+| W11c-12 | Register row 91 and the census re-measured from disk: **88 handlers / 82 `requireAdmin` + 6 inline + 0 open / 59 `route.ts` files**; `CAPS` untouched. Requirement: the 11c status row and dated S11-SQ-16 annotations only. OP-37 (cleanup 5e annotation) is TL → BA, not done here |
+| W11c-13 | See the `ownerCreditUsage.ts` hunks above; the route takes `period` only from the position |
+| W11c-14 | No percentage, band or "running low" line; screen guard: `CreditsBlock.tsx` holds no `%`, does not name `creditBands` |
+| W11c-15 | `git diff` shows no line in `aiChargeRecorder.ts`, `creditBands.ts`, the 11a SQL scripts, or §6.5 / §6.6 / §18 of this workplan; `creditWindowRule.ts` not created |
+| W11c-16 | No `.rpc(`, no lot write, no plan-state write in the route or the wiring; the route test asserts after every test that `recordLot`, `reverseLot`, `updatePlan` and `ensurePlanRow` were never called; the imports guard pins `findPeriodAnchor` as the wiring's one plan-repository method |
+| W11c-17 | No CI file changed. The CI-side pin lives in `BusinessOsCreditOwnerReadRepository.test.ts` (runs in `test:bos-entitlements`): exactly two product files construct the owner read repository, and only the admin wiring names `supabaseServer`; proved on planted strings first |
+
+**Commands and results (2026-10-03).**
+
+| Command | Result |
+|---|---|
+| Scoped Jest (the §11c.6.5 set: `lib/business-os/credits`, `app/api/admin/business-os/credits`, `app/api/admin/business-os/entitlements`, `app/admin/users`, `creditAllowanceView.test.ts`, plus the owner read repository test) | **36 suites: 35 passed, 1 failed; 879 / 881 tests.** The 2 failures are the known pre-existing `creditPeriod.test.ts` source-guard cases (`creditPeriod.ts` and its test untouched) |
+| Named 11c suites (route 35, `creditPosition` 18, `creditAllowanceView` 25, owner read repository 31, `creditLots` 36, `creditAdminOps` 68, wire types 1, render 52, copy contract 35, screen guard 33, panel render 19, entitlements `routes.test.ts` 88, the four owner suites 21 + 29 + 2 + 32, `ownerCreditSurface.guard` 46, `enforcementPoints` 65, credit figures 32, imports guard 20, `accountSeam.guard` 13, plus `summaryErrors` 6, `userNameLine` 28, `defaultFilter` 10) | **24 suites, 745 / 745 passed** |
+| Four owner suites (G11c-2) | **84 / 84, unedited** (`git diff` shows no line in them) |
+| `npm run test:bos-entitlements` | **105 suites, 2,404 / 2,404 passed** |
+| `npm run test:authz-guard` | **119 / 119 passed** (the new GET is gated first) |
+| `npm run typecheck:bos-llm` | **passed: 386 files in scope, 28 errors, 0 new.** It also reports one baseline entry now fixed (`app/api/onboarding/build/route.ts` TS18047), not touched by 11c; baseline left alone |
+| `npm run check:bos-llm-literals` | **passed: 55 files, 0 violations** |
+| Scoped `tsc` (6 GB heap, `files` = the 26 touched `.ts` / `.tsx` files + `next-env.d.ts`) | **0 errors in touched files.** 6 pre-existing errors in `lib/analytics/aiAnalytics.ts` (TS7006 × 5, TS2538 × 1), reached through imports, not touched |
+| `npx eslint` on the 26 touched `.ts` / `.tsx` files | **clean** |
+| `app/__tests__/tailwind-css-escape.guard.test.ts` | **6 / 6 passed** |
+| Backslash-hex scan (every added line under `app/`, `lib/`, `components/`, plus the new files) | **none**, and no control characters. Regexes were written without `\b`, `\d` or back-references for that reason |
+| `git diff --numstat` | no deletion without insertion (above) |
+
+**CI coverage (W11c-17).**
+
+- **Runs in CI** (`test:bos-entitlements`, `test:authz-guard`, `typecheck:bos-llm`): the `KNOWN_NON_GATE_IMPORTERS` entry (`enforcementPoints.test.ts`); `creditAllowanceView.test.ts` (the decision and the equality property); the credit-figures `SOURCES` (`creditFigures.fromConfig.guard.test.ts`); the imports guard (the wiring as a read-only referrer, the route and its test as declared referrers, the `findPeriodAnchor` pin); `accountSeam.guard`; the new constructor pin in `BusinessOsCreditOwnerReadRepository.test.ts`; the authz guard (the new GET, automatically); the wire types (`adminCreditPosition.wireTypes.test.ts` sits in `lib/business-os/credits/`, inside `typecheck:bos-llm`'s scope).
+- **Runs in no CI job (uncovered, tied to the parked CI-Jest item):** `app/api/admin/business-os/credits/accounts/[accountId]/__tests__/route.test.ts`, `creditPosition.test.ts` (incl. the W11c-2 caller guard), `creditLots.test.ts` (G3), `creditAdminOps.test.ts` (CR11b-2, W11c-6), the four owner suites and `ownerCreditSurface.guard`, and everything under `app/admin/users/__tests__` (render, copy contract, screen guard, panel render). Dev ran them above; QA re-runs them. Not CI-covered.
+
+**Deviations from the plan, with reasons.**
+
+1. **`counted: boolean` added to each lot in the payload** (and the client type). W11c-11 asks that a lot created after `now` show no Take back; without a flag the client cannot tell it from a counted lot. Pinned in the route test's key set and the wire types.
+2. **The route and its test join `ALLOWED` in the plan-repository imports guard**, not only the wiring: the route passes `businessOsAccountPlanRepository` to `isBusinessOsTenant` exactly as the summary route does (the test mocks its path). Categorised `admin_route` / `test`; no write.
+3. **Two more "Change History"-style annotations:** the S11-SQ-16 annotation was added to both S11-SQ-16 lines of the requirement (the §14 entry and the SA-11 table row), so neither keeps saying "caps moved by one handler".
+4. **CR11b-2 fallback:** if the recomputed figure were unreadable (impossible for a list `readLots` just read at the same `now`), the old subtraction is used rather than failing the audit.
+5. **`creditCopy.ts` also holds the number and date formats** (`formatCredits`, `formatUtc`, `shortId`), so the dialog and the block share them; still no JSX.
+6. **Close button test id** (`credit-form-close`): the Radix dialog has its own close (X) with the same accessible name.
+
+**Review fixes (Dev, 2026-10-03, uncommitted).** Fixes for the SA code review and QA findings, in `CreditFormDialog.tsx`, `CreditsBlock.tsx` and `creditsBlock.render.test.tsx` only; no shared or server file touched.
+
+- **CR11c-1 / QA11c-1 (Medium), fixed.** Every close path (Esc, overlay, the Radix X, the Close button) goes through `handleOpenChange`, which ignores a close while the in-flight ref is set. Close and Back are disabled while busy. New render test: Confirm with the POST pending, then Esc and the X both leave the dialog open on the busy confirm step; exactly one POST, with request id 1; after the answer Close is enabled and Esc closes. Proven non-vacuous: with the guard disabled the test fails (the dialog closes).
+- **CR11c-2 / QA11c-3 (Low), fixed.** After a take-back the description comes from the response's `lotRemainingAfter` (kept per lot id for this opening, reset on open). If the answer has no readable figure, the description says "What is left on this gift is shown in the Credits block." rather than the stale number. Two render tests (200 → 150; no figure).
+- **CR11c-3 / QA11c-4 (Low), fixed.** "Everything left" now confirms as "Take back everything left on this gift from …" (SA's wording); a number reads "Take back N credits from …". The existing test updated and one added. No copy-contract entry covers this line (`creditCopy.ts` unchanged).
+- **QA11c-2 (Low), fixed.** The block keeps the limits from the last good read and renders the dialog outside the `ok` branch, so a failed re-read after a success no longer unmounts the dialog: its success message stays, and the block shows its "could not be read" line. Render test added.
+- **Results.** `app/admin/users/__tests__` 7 suites, **188 / 188** (render suite 52 → 57); with the credits routes (incl. `credits/accounts/[accountId]/__tests__/route.test.ts`): 10 suites, **268 / 268**. `npx eslint` on the 3 files clean; scoped `tsc` (6 GB heap, the 3 files + `next-env.d.ts`) 0 errors; backslash-hex scan none; Tailwind escape guard 6 / 6. `test:bos-entitlements` not re-run: no shared file changed. Still not CI-covered (W11c-17).
+
+**User UI fixes (Dev, 2026-10-04, uncommitted).** Four changes the user asked for after trying 11c in the browser; panel files only (`app/admin/users/`), no server file, no shared component. (1) The first step's button reads **"Continue"** (test id `credit-form-continue`); the second stays "Confirm". (2) **A success closes the dialog**: the dialog hands its result sentences (built from the RETURNED figures, replay note included) to the block, which closes it, shows them as a green status line (`credits-success`, `role="status"`, dismissable) and re-reads. The line sits outside the block's `ok` branch, so a failed re-read shows it beside "could not be read" (QA11c-2 kept); it is cleared on dismiss or when a dialog opens. The close-while-busy guard (CR11c-1) is unchanged; a new request id is minted on every opening. CR11c-2 now lives in the success line ("…; 150 left on this gift."); the in-dialog `remainingAfter` state and the "shown in the Credits block" fallback are gone. (3) **Panel order** header → Credits → Plan & entitlements → AI spend → AI failures; the plan is wrapped in a native `<details>` in the panel only, collapsed by default, summary "Plan & entitlements · tier [· cohort …] · Show all capabilities" from the entitlements read already made; `EntitlementSnapshot` (and so the Plans page) unchanged, its 30-second note inside the fold; a plan read failure is shown outside the fold. (4) **"Set by" in plain words** via `ALLOWANCE_LAYER_COPY` / `allowanceLayerLabel` in `creditCopy.ts` (unknown layer → raw value); the raw layer is the element's `title`. New `creditLayerCopy.contract.test.ts` reads the `AdminCreditAllowanceLayer` union from the server types (and the client union) and requires exactly those keys. Results: `app/admin/users/__tests__` **8 suites, 204 / 204**; credits accounts route + Tailwind escape guard **2 suites, 41 / 41**; eslint clean on the 8 touched files; scoped `tsc` (6 GB heap, touched files + wire types) 0 errors; backslash-hex scan none in touched files; W11c-14 and the screen guard hold (guard's order assertion flipped to Credits-before-plan, plus a pin that the fold is in the panel and not in `EntitlementSnapshot`). Still not CI-covered (W11c-17).
+
+**Left for others.** SA code review, then QA (§11c.6.6: read-only browser checks; any real grant only with the user's explicit approval on a named account). TL → BA: OP-37 (cleanup §4.5 5e annotation). RM: commit and PR after the user has seen the diff.
+
+---
+
 ## 15. SA Review Notes
 
 *(SA populates.)*
@@ -1286,6 +1762,139 @@ Low real risk. Supabase installs PostgREST's DDL event trigger, which reloads th
 
 ### Code Approved for QA: Yes
 
+---
+
+## SA Workplan Review — 11c (2026-10-03)
+
+**Reviewed by SA, 2026-10-03**, on `feature/business-os-credit-deduction-slice-11c` (off `5061489b`). Checked against SA-11 (S11-SQ-9, S11-SQ-16, S11-CR-3, the S11-D-8 B forms rules, S11-C-8, -9, -11), §13 (S11-D-2, -4, -5, -7, -8), CR11b-2 and QA11b-N2. Code read: `ownerCreditUsage.ts` (7a's private `computeOwnerCreditWindow`, both wrappers, `readAllowanceFromEntitlements`), `ownerCreditUsageDeps.ts`, `creditAllowanceView.ts`, `creditLots.ts` (`extraCreditsAt` skips lots created after `at`), `creditAdminOps.ts` (ceiling, reason bounds as Zod literals, every refusal code), `creditBalance.ts`, `BusinessOsCreditLotRepository.listLotsWithDraws` (`.eq('user_id')` on both reads, oldest first, ceiling), `BusinessOsCreditOwnerReadRepository` (client required, `.eq('user_id')` on every method, header promises the caller's RLS client), migration `20261015` grants (service_role SELECT on both ledger tables), the summary route, `requireAdminRoute.ts` codes, `admin-authz-surface.guard.test.ts` (`CAPS`, `CORPUS_FLOORS`), `enforcementPoints.test.ts` entries, `accountSeam.guard.test.ts` (external callers of the service), `creditLots.test.ts` G3 (`SYMBOLS`, `ALLOWED_LIST`), `creditFigures.fromConfig.guard.test.ts` (`BUILDERS`, `SOURCES`), `businessOsEntitlements.imports.guard.test.ts`, `ownerCreditSurface.guard.test.ts`, `app/admin/users/**` (panel, screen guard), `components/ui` and the Radix packages in `package.json`. Measured: 58 `route.ts` files under `app/api/admin/`. Skills: `new-api-route`, `business-os-entitlements`, `tenant-isolation-guard`. Review only: no code, no database.
+
+**Status: ✅ APPROVED WITH CONDITIONS.** The plan follows S11-SQ-9 as ruled: the extraction is a reuse, not a copy, and keeps the owner suites unedited; the allowance and its layer come from one helper inside the module, so the figure matches the owner's by construction; the route has the summary route's shape and order; the payload is credits only, with no combined figure (S11-CR-3); the forms follow S11-D-8 B (request id per opening, reason required, confirm naming the business, a sentence for every refusal) and show returned figures on a replay (QA11b-N2). No migration, no new CI job, no change to the 11b POST. Two gaps must be closed during implementation: the route is missing from the G3 list (W11c-3), and nothing yet stops a future caller from passing an arbitrary id to the newly exported `readCreditPosition` (W11c-2). **OP-30 is cut.** Apply W11c-1 to W11c-17 during implementation (W11c-13 to -17 fold in the TL inputs from the slice 7 / 8 audit); SA checks them at code review. No resubmission needed.
+
+### OP rulings
+
+| # | Ruling | Reason |
+|---|---|---|
+| OP-23 | **Accepted, with W11c-1 and W11c-2** | 7a already split the work, so wrapping the private `computeOwnerCreditWindow` in an exported `readCreditPosition`, with both wrappers delegating and keeping their log messages, is the smallest extraction that meets S11-C-8. It also keeps the overlap with slice 8 small. But exporting a reader keyed by any account id, from the module the owner routes import, creates a new way to pass the wrong id. W11c-2 pins its callers |
+| OP-24 | **Accepted** (exactly 4 symbols) | `creditAllowanceDecision`, `getEntitlementService`, `isBusinessOsTenant`, `resolveAccountId` follow the existing `ownerCreditUsage.ts` and entitlements-route entries. `resolveAccountId` is required anyway: `accountSeam.guard` requires it in any file that names the service. Moving the snapshot read into the wiring would only move the importer. The surface is minimal **provided** `adminCreditPositionTypes.ts` and `adminCreditPositionDeps.ts` import nothing from the module, type-only included (W11c-4) |
+| OP-25 | **Accepted, with W11c-1 and W11c-5** | This is the explicit, documented service-role construction S11-SQ-9 asked for. Rejecting `ownerCreditUsageDeps(supabaseServer)` is right: that file's header promises the caller's RLS client. Isolation holds because every owner-repository method requires the account id, refuses a non-UUID and adds `.eq('user_id', accountId)`; the lot repository does the same on both its reads; and the anchor read is keyed by the same id. On this path RLS is no longer defence in depth, so the `.eq` is the only line. W11c-5 makes a test prove it on every call. Service-role column grants (`20261015:134-136`) cover the owner columns, and the owner column lists contain no cost column |
+| OP-26 | **Accepted** | Two blocks, each failing on its own, follows the summary route and 5a's "failed reads say so". `allowanceStatus: 'unavailable'` must never be shown as "no allowance". Note: with an unavailable snapshot the builder cannot detect a trial, so `used` is read over the current period, not the trial total. The UI must label the window from `period.kind` and must not imply a trial total (render test) |
+| OP-27 | **Accepted, with W11c-6** | "Send the number, not a copy" (SA N-6). Today the reason bounds are Zod literals (`creditAdminOps.ts:80`), so they must become exported constants that the schema itself uses. That is a refactor with identical behaviour, not a schema change |
+| OP-28 | **Accepted** | Hiding the forms is a convenience; the server's 403 `own_account` stays the rule. Compare `gate.user.id.toLowerCase()` with the canonical path id |
+| OP-29 | **Accepted** (suggestion below) | Whole when integral, else up to 2 dp, with the exact figure in `title` |
+| OP-30 | **Cut** | Scope creep against the user's small-slice preference. It adds a third read, a new repository dependency (and its guard entries) and admin emails in a payload, all to save reading a short id. S11-AC-6's "actor" is met by `actorKind` plus `actorAdminId`. Show the first 8 characters with the full id in `title`. Admin names can come with admin BOS cleanup (its admin users screen already lists admins). Drop `actorLabel` from the payload and the key-set pins; estimate −0.1 d |
+| OP-31 | **Accepted** | One vocabulary with the Plan & entitlements table directly above. Plain labels belong to cleanup slice 6 |
+| OP-32 | **Accepted, with W11c-8** | Correct, and safe in every case. A refusal wrote nothing, so reusing the key is harmless. After a network error or a 5xx the first write may have committed. A retry with the same key then either replays (unchanged amount: the server's figures are shown, G11c-8) or answers `idempotency_key_conflict` (changed amount: the "reload, then reopen" sentence). Either way it can never record twice. Renew only after a success or on reopen |
+| OP-33 | **Accepted** | `datetime-local` read as local time and sent as an ISO instant with `Z`; both shown on the confirm step; "No end date" an explicit choice with no default (S11-D-2 C). The client may also refuse a past instant early; the server stays the authority |
+| OP-34 | **Confirmed: the caps do not move.** SA-11's S11-SQ-16 text ("caps moved by exactly one handler") was wrong and is superseded here | `CAPS` (`admin-authz-surface.guard.test.ts:411`) counts **exemptions** per rule (R1 6/0, R2 6/1, the rest 0), with equality against the lists. `CORPUS_FLOORS` are `>=` floors. A handler gated from birth enters no list, so it moves nothing, exactly as the summary route did in slice 2b. Measured: 58 `route.ts` files today, so 59 after this change. Do the register row 91 and the census in the doc; leave `CAPS` and the guard's header prose alone. The requirement's S11-SQ-16 line gets an annotation at hand-over (W11c-12) |
+| OP-35 | **Accepted, with W11c-9** | An exact recompute beats a clamp. It needs no second read |
+| OP-36 | **Accepted** | A read-only admin view with no audit row follows the summary and report precedent. The log carries ids, statuses and counts, never a reason or a figure |
+| OP-37 | **Accepted** | Not a Dev edit. TL routes it to BA so that cleanup §4.5 5e records S11-D-8 B before the 11c PR opens (W11c-12) |
+
+### Answers to the specific checks
+
+- **Service role (OP-25):** justified and isolation-safe under W11c-1, -2 and -5. The account comes only from the path, after `requireAdmin`, Zod, lower-casing, the platform check and the tenant check. Every query is scoped to that id. No body is read and the query string is ignored.
+- **Entitlements registration (OP-24):** one new `KNOWN_NON_GATE_IMPORTERS` entry with 4 symbols. `ownerCreditUsage.ts`'s entry does not change (same imports). `creditAllowanceView.ts` is inside the module. Tests are exempt. Not a gate: `getSnapshot` only, and nothing is refused.
+- **Secrets in the payload:** none. Built field by field; no idempotency key, `source_ref`, credit value version or base / bonus split, and no USD. The reason is the admin's own internal text, and admins may see it (S11-D-4 A). `actorAdminId` is an internal admin uuid, served to admins only. Repository failures already strip PostgREST `details` (CR11a-1), so a reason cannot leak through a log.
+- **Owner suites green unedited (OP-23):** credible. The wrappers keep their seam call, their messages and their payload mapping. One small behavioural difference: the card's payload mapping moves outside the `try`. It cannot throw today (`computeCreditBalance` returns null rather than throwing), so there is no observable change. Keep it that way.
+- **UI:** both new components must be `'use client'` (state, fetch, dialogs), like the panel. Use the shared Radix `Dialog` and `Checkbox` from `components/ui`. There is **no RadioGroup** primitive and no `@radix-ui/react-radio-group` package, so use native radio inputs with the shared `Label`, and add no dependency (W11c-10). The screen guard covers the new files once they join `SCREEN_FILES`. Its `decidedBy` ban should cover `CreditsBlock.tsx` too.
+- **Replay and refusal copy:** covered by G11c-8 and §11c.6.4. W11c-7 adds the cases that are missing.
+- **Estimate:** ≈ 2.15 d accepted. That is Dev's 2.15 d, −0.1 d for OP-30, +0.1 d for W11c-2, -3, -5 and -8.
+- **QA plan:** accepted. The read-only browser check needs no approval. Any real grant or take-back happens only on an account the user names, with the user's explicit approval recorded in the hand-over, because lots and draws are append-only and permanent.
+
+### Conditions
+
+- **W11c-1 (comments that become false).** Update in the same change, as comments only: `OwnerCreditWindow.accountId` ("From `resolveAccountId(userId)` only") and the "TENANT ISOLATION" header block of `ownerCreditUsage.ts`, which must now name the admin caller of `readCreditPosition`; the `readAllowance` comment (as planned); the header of `creditAllowanceView.ts` ("The one caller outside…"), which must also name the admin route; the header of `BusinessOsCreditOwnerReadRepository.ts` ("the caller passes the session's RLS client"), which must name the one sanctioned service-role caller, `adminCreditPositionDeps.ts`, and why (the repository still holds no default client and imports no service client, so its pins stay green). This is the only change to that file.
+- **W11c-2 (who may call `readCreditPosition` and the wiring).** Add a source guard (in `creditPosition.test.ts`, comments stripped, proved on a planted violation first) that pins the exact list of product files that name `readCreditPosition`: `ownerCreditUsage.ts` and the new admin route. A second list does the same for `adminCreditPositionDeps`: the admin route only. A new caller then has to show up in a reviewable diff, as with G3. Add the route to `ownerCreditSurface.guard` rule 4's style check, or assert it directly in `route.test.ts`: the route imports no `supabaseServer` (already planned).
+- **W11c-3 (G3 list, a gap in the plan).** The route calls `extraCreditsAt`, and `route.test.ts` will name it. Both are G3 `SYMBOLS`, so `app/api/admin/business-os/credits/accounts/[accountId]/route.ts` and its `__tests__/route.test.ts` join `ALLOWED_LIST`, together with `adminCreditPositionDeps.ts`. Add any other new test that names a G3 symbol (for example `creditPosition.test.ts` if it uses `extraCreditsAt`). The non-vacuity check must stay green.
+- **W11c-4 (no hidden importers).** `adminCreditPositionTypes.ts`, `adminCreditPositionDeps.ts` and `app/admin/users/types.ts` import nothing from `lib/business-os/entitlements/`, type-only included. Declare the layer union literally. The wire-types test (in `__tests__`, so exempt) asserts in both directions that it equals `TraceEntry['layer']`, so a new resolver layer fails the build there and not silently on screen.
+- **W11c-5 (isolation proof on the service-role path).** In `route.test.ts`: on the 200 path, every call to every owner-repository, lot-repository and anchor method receives exactly the canonical path `accountId` as its account argument. Assert this over all recorded calls, not one. An upper-case path gives the lower-case id in every call. `adminCreditPositionDeps.ts` starts with `import 'server-only'` and exports a factory function in the `ownerCreditUsageDeps` style.
+- **W11c-6 (limits from the source).** Export `CREDIT_REASON_MIN = 3` and `CREDIT_REASON_MAX = 500` from `creditAdminOps.ts` and use them in `creditReason`. The route sends them in `limits`. One `creditAdminOps.test.ts` case pins 3 and 500 (they must still match the table CHECKs). No other change to the 11b schemas or codes.
+- **W11c-7 (copy and client robustness).** `CREDIT_ERROR_COPY` covers every code in §11c.6.4, including `credit_lots_unreadable`, `payment_hold_check_failed`, `awaiting_payment`, `expires_at_in_past`, `platform_account`, `lot_read_failed` and `lot_write_failed`, which the scan of `creditAdminOps.ts` finds. A response that is not JSON (a proxy 502 / 504 HTML page) or has no `error` string shows the generic sentence. Each form's POST goes through a `readJson`-style helper that never throws. Render tests: a non-JSON 502, and an unknown code, each show the generic sentence and not the code.
+- **W11c-8 (request id and submit).** Submit is disabled while a POST is in flight. A double-click sends exactly one POST (render test). In jsdom, stub `crypto.randomUUID` in the test rather than relying on the environment. The same id after a network error, a 500 and a 409, and a new id after a success and after close / reopen (as planned).
+- **W11c-9 (CR11b-2 exactness).** Recompute from one `now`: the appended synthetic draw carries `createdAt = now.toISOString()` and `kind: 'reversal'`, and `extraCreditsAt(lotsWithDraw, now)` uses that same `now`, so the draw is never dropped as "after `at`". Test the inconsistent-lot case (as planned) and a healthy partial reduction, where the figure is unchanged from today's arithmetic.
+- **W11c-10 (UI primitives).** The shared `Dialog`, `Checkbox`, `Label`, `Input` and `Button` from `components/ui`, with the dark overrides of `ArchiveConfirmDialog.tsx`. Native radio inputs for the end choice; no new package, no `npm install`. No `dangerouslySetInnerHTML` (the reason is free text: render it as text). Dates in the lot list carry their zone (UTC, or local time labelled as such), stated once in the block. `CreditsBlock.tsx` joins the screen guard's `decidedBy` ban.
+- **W11c-11 (lots versus positions).** `extraCreditsAt` drops a lot whose `createdAt` is after the route's `now`. That happens on a clock skew between the server and the database, typically on the re-read straight after a gift. The route must neither crash on that row nor silently lose it from the list. List it with `remaining` = its granted credits, `expired: false` and no Take back, not counted in `extraCredits` (as the one function decides). Write a test for it. Join positions to rows by `id`, never by index.
+- **W11c-12 (docs and hand-over).** Register row 91 and the census, 88 handlers in 59 files, re-measured in the PR. `CAPS` untouched. At hand-over, the requirement's slice 11 status row, plus a dated annotation on S11-SQ-16 that the caps count exemptions and a gated-from-birth handler moves none (this review, OP-34). TL routes OP-37 to BA before the PR opens. The backslash-hex scan and `git diff --numstat` run as planned. No local `next build` is needed: the scoped `tsc` (route, wiring, types, the three client files, `creditAdminOps.ts`, `ownerCreditUsage.ts`, `creditAllowanceView.ts`) is the type gate, and CI `Build` covers the new route. Nothing may touch the shared `node_modules` junction.
+
+### TL inputs from the slice 7 / 8 audit (folded in 2026-10-03)
+
+- **W11c-13 (one window computation; trivial rebase against slice 8a).** `readCreditPosition` only wraps `computeOwnerCreditWindow`. It must never re-derive a period, a trial window or a reset date, and the route takes `period` only from the position it returns. 11c's diff in `ownerCreditUsage.ts` is limited to three things: the new exported function, the two wrapper bodies (seam → `readCreditPosition`), and comments (W11c-1). No line changes inside `computeOwnerCreditWindow`, `sumTotals`, `attributeCorrections` or `readAllowanceFromEntitlements`. After 8a, those delegate to `creditWindowRule.ts`, and 11c inherits that unchanged. If 8a merges first and moves `OwnerCreditWindow` or its comment, apply W11c-1's comment edit where the type now lives. The admin view reads one account, so it uses none of 8a's batched reads (`findPeriodAnchorsBatch`, `listTotalsForAccountsInRange`). Whoever merges second rebases (S11-C-11). On `app/admin/users/types.ts` and `source.guard.test.ts` (8a's "Credits left" column touches the same screen), 11c's edits are additive only (new types, new `SCREEN_FILES` lines), with no reordering or reformatting.
+- **W11c-14 (no percentage, no band, no low line).** The Credits block shows **no percentage, no band and no "running low" line**. It shows plan left, used, "over the plan this period" and extra credits as separate figures, and lots never enter any plan figure. If a percentage is ever added there, it is of the plan allowance only, through `creditBands.ts` (slice 8, BD-25), and is not in 11c. Source rule in the screen guard: `CreditsBlock.tsx` contains no `%` figure and does not name `creditBands`.
+- **W11c-15 (files 11c must not touch).** `aiChargeRecorder.ts` (slice 8b hooks there), `creditWindowRule.ts` (8a), `creditBands.ts`, and both 11a scripts (`supabase/SQL Scripts/20261017_*`). The 11a rollback script is retired, and TL records that in §6.6 / §18. Dev and SA do not edit those sections.
+- **W11c-16 (no new draw path; advisory lock).** Confirmed: 11c creates no draw. The only draw path stays 11b's `reduce_credit_lot` → `reverseLot` → `business_os_reverse_credit_lot`, which takes `pg_advisory_xact_lock(hashtextextended('business_os_credit_lots' || ':' || user_id, 0))` (`20261017:239`). The new route and `adminCreditPositionDeps.ts` call no `.rpc(`, no `recordLot` / `reverseLot` and no plan-state write. `route.test.ts` asserts that no lot-repository write method is called on any path, and the imports-guard pin (`findPeriodAnchor` only) covers the plan repository. CR11b-2 (W11c-9) is arithmetic on an already-written draw and adds no write.
+- **W11c-17 (CI coverage; ruled).** No CI script, job or workflow changes in 11c (the user's no-added-CI-time rule; widening `test:bos-entitlements` to `lib/business-os/credits` would also pull in the two pre-existing `creditPeriod.test.ts` failures). Where each test lives:
+  - **Runs in CI** (`test:bos-entitlements`, `test:authz-guard`, `typecheck:bos-llm`): the `KNOWN_NON_GATE_IMPORTERS` entry; `creditAllowanceView.test.ts` (the decision and the equality property); the credit-figures `SOURCES`; the imports guard (wiring as a read-only referrer); the authz guard (the new GET gated first, automatically); the wire types (`typecheck:bos-llm`, if the test sits in its scope as the `creditReport.wireTypes` precedent does, otherwise the scoped `tsc`). **Plus one new isolation pin placed where CI runs it:** in `lib/repositories/__tests__/BusinessOsCreditOwnerReadRepository.test.ts`, a comments-stripped source scan over `app`, `lib`, `components`. Exactly two product files construct `new BusinessOsCreditOwnerReadRepository(`: `ownerCreditUsageDeps.ts` and `adminCreditPositionDeps.ts`. Only the latter names `supabaseServer`. Prove it on a planted violation first. This is the CI-side guard on the one service-role path. W11c-2's caller list for `readCreditPosition` stays in `creditPosition.test.ts`.
+  - **Runs in no CI job; listed as uncovered** in §11c.10 and the hand-over, tied to the parked CI-Jest item: `route.test.ts`, `creditPosition.test.ts`, `creditLots.test.ts` (G3), `creditAdminOps.test.ts` (CR11b-2, W11c-6), the four owner suites, and everything under `app/admin/users/__tests__` (render, copy contract, screen guard). Dev runs them before hand-over and QA re-runs them. Neither may report them as "CI-covered".
+- **W11c-12 addendum (requirement edits).** In the requirement, 11c edits **only** the slice 11 delivery-status row and S11-* lines (S11-AC-6 when delivered, the S11-SQ-16 annotation). It edits no 11a / 11b row, no S11-AC-1 / -8 / -10 tick, and no rollback row (slice 8's branch owns those), which keeps the conflict small.
+
+Estimate unchanged at ≈ 2.15 d (the CI-side pin is about 0.05 d, absorbed).
+
+### Optimisation Suggestions
+
+- OP-29: never render a non-zero figure as "0". Show "< 0.01", with the exact figure in `title`.
+- The no-combined-figure rule (G11c-1) is a regex. Also pick render-test fixtures whose sum is a distinctive number and assert that number appears nowhere in the block's text. That is the stronger proof.
+
+### Business decisions for the user
+
+None. Every point is technical. For the user's information only: under OP-30's cut, the lot list shows who gave or took back credits as a short admin id, not a name. Names can come with the admin BOS cleanup.
+
+### Approval
+
+- [x] 11c workplan approved, with OP-30 cut and W11c-1 to W11c-17 applied during implementation; proceed to implementation (11c only).
+
+## SA Code Review — 11c (2026-10-03)
+
+**Code Review by SA, 2026-10-03**, on `feature/business-os-credit-deduction-slice-11c` (uncommitted, base `5061489b`). Read in full: the new route, `adminCreditPositionDeps.ts`, `adminCreditPositionTypes.ts`, `CreditsBlock.tsx`, `CreditFormDialog.tsx`, `creditCopy.ts`, the copy-contract and wire-types tests. Read as diffs: `ownerCreditUsage.ts`, `creditAllowanceView.ts`, `creditAdminOps.ts`, the owner read repository header, `BusinessOsPanel.tsx`, `app/admin/users/types.ts`, the five guard lists, the owner read repository constructor pin, the access register and the entitlements doc. Outlined: `route.test.ts`, `creditPosition.test.ts`, `creditsBlock.render.test.tsx`. Re-ran 18 suites (the route, `creditPosition`, `creditAdminOps`, `creditLots`, everything under `app/admin/users/__tests__`, `creditAllowanceView`, `enforcementPoints`, the owner read repository, the imports guard, credit figures, plus the two sibling credits routes): **558 / 558 passed**. Backslash-hex scan of every new file under `app/` and `lib/`: none. `console.*` in the new and changed product files: 0. Measured: 59 `route.ts` files under `app/api/admin/`. Review only: no code, no database.
+
+**Status: ✅ CODE APPROVED.** Every condition W11c-1 to W11c-17 is met in code, and OP-30 is cut as ruled. No High or Medium finding. Three Low notes on the dialog and two informational notes for TL / RM follow. None blocks QA. CR11c-1 is recommended before the PR because it is a one-line guard.
+
+### Security and correctness (verified, no finding)
+
+- **Gate and order (G11c-3).** `requireAdmin` is the first statement of `GET`. Then Zod uuid (400), lower-casing through `resolveAccountId`, `isPlatformAccount` (409, pure), and `isBusinessOsTenant` (500 / 404). Only then does anything read. `force-dynamic`, `runtime = 'nodejs'`, Pino child with `correlationId` and `adminId`. The catch-all answers 500 with `details` behind the `development` guard.
+- **Isolation on the service-role path (W11c-5, W11c-17).** The account comes only from the path. No body is read and the query string is ignored (tested). `route.test.ts` collects every call to the tenant check, the snapshot, `findPeriodAnchor`, all four owner-repository methods and `listLotsWithDraws`, and asserts each one received exactly the canonical path id, upper-case path included. The wiring starts with `import 'server-only'`, exports a factory and documents the bypass. The route names no `supabaseServer`. The CI-side pin in `BusinessOsCreditOwnerReadRepository.test.ts` (exactly two constructing files, only the admin wiring names the service client) is proven on a planted violation first and runs in `test:bos-entitlements`.
+- **Callers pinned (W11c-2).** `creditPosition.test.ts` pins `readCreditPosition` to `ownerCreditUsage.ts` and the route, and `adminCreditPositionDeps` to the route only. Comments are stripped and the rule is proven on planted strings.
+- **Payload (G11c-1, G11c-4).** Built field by field. No idempotency key, `source_ref`, credit value version, base / bonus split, USD, token or model. The exact key set is pinned at every level, and a forbidden-word walk covers every key. No `remaining`, `total` or `combined` key. The reason and `actorAdminId` reach admins only, as S11-D-4 A and OP-30's cut allow. The info log carries ids, statuses and a lot count, and its test asserts no reason and no figure.
+- **No write path (W11c-16).** No `.rpc(`, `recordLot`, `reverseLot`, `check(` or `decide(` in the route (source test). After every test, `recordLot`, `reverseLot`, `updatePlan` and `ensurePlanRow` are asserted never called. The imports guard pins `findPeriodAnchor` as the wiring's one plan-repository method. No audit row (OP-36).
+- **One window computation (W11c-13).** In `ownerCreditUsage.ts` the diff is exactly the header and deps comments, the `OwnerCreditWindow.accountId` comment, the new `readCreditPosition` plus the `CreditPosition` alias, and the two wrapper bodies. There is no line inside `computeOwnerCreditWindow`, `sumTotals`, `attributeCorrections` or `readAllowanceFromEntitlements`. The wrappers keep their log messages, and `readOwnerCreditUsage` returns the same error object it logged before. The four owner suites are unedited. The route takes `period` only from the position. Slice 8a's rebase on this file stays trivial.
+- **Allowance and layer (OP-24, W11c-4).** `creditAllowanceDecision` returns `creditAllowanceForDisplay(snapshot)` itself and a null layer whenever that is null. The snapshot is read once with `bypassCache: true`. A throw or `unavailable` gives `allowanceStatus: 'unavailable'` with usage still returned, never "no allowance". "No plan row → no allowance" is still decided in the builder, and the route nulls the layer to match. The layer union is declared literally in both type files. The wire-types test asserts server ⇄ client and both unions ⇄ `TraceEntry['layer']`, and sits in `typecheck:bos-llm`'s scope. `adminCreditPositionTypes.ts`, the wiring and `app/admin/users/types.ts` import nothing from the module.
+- **Entitlements registration.** One `KNOWN_NON_GATE_IMPORTERS` entry with exactly the 4 ruled symbols and a `why`. `ownerCreditUsage.ts`'s entry is unchanged.
+- **Independent failure (OP-26).** `readCreditPosition` and the repository never throw, and the snapshot throw is caught, so `Promise.all` cannot reject on a read. Each block falls to `{ status: 'error' }` on its own (tested both ways, including the ceiling and a null `extraCreditsAt`).
+- **No combined figure, no band (W11c-14).** There is no `%`, no `creditBands` and no low line. A source rule rejects `planLeft` and `extraCredits` on one line. The render fixture's distinctive sum (4,036.75) appears nowhere, which was the optimisation suggestion, now done.
+- **Lots after `now` (W11c-11).** Positions are joined by `id`. A missing position gives `counted: false`, granted credits, `expired: false`, no Take back, and the lot is excluded from `extraCredits` by the one function. Tested in both the route and the render.
+- **CR11b-2 (W11c-9).** The synthetic `reversal` draw is stamped `ctx.now` and read at the same `now`. Tests cover a healthy partial (unchanged), an inconsistent clamped lot, and the other lot of an inconsistent account. The reason bounds are exported constants used by the schema itself and pinned at 3 / 500 (W11c-6).
+- **UI.** Both components are `'use client'`. The shared `Dialog`, `Checkbox`, `Label`, `Input` and `Button` are used with the `ArchiveConfirmDialog` dark overrides. The radios are native, no package was added, and there is no `dangerouslySetInnerHTML` (screen guard plus a markup-in-reason render test). The request id is minted on open, kept across a network error, a 500 and a 409, and renewed after a success and on reopen. Confirm is disabled in flight behind a ref, and a double-click sends one POST. The confirm step names the business (the company name, else the account id) and shows the local time and the UTC instant sent. A replay shows the server's figures. Every code reachable from the GET, the two ops, the shared checks and the gate has a sentence. An unknown code, a non-JSON 502 and a 200 without `success` all show the generic sentence (`hasOwnProperty`, so `constructor` is safe too). The forms are hidden on the admin's own account. `formatUtc` labels every date "UTC". The screen source guard covers the three new files, including the `decidedBy` ban on `CreditsBlock.tsx`.
+- **Register.** Row 91 and census 88 / 82 + 6 / 59 (59 files re-measured by SA). `CAPS` untouched (OP-34).
+
+### §11c.10 deviations
+
+| # | Ruling |
+|---|---|
+| 1 `counted` on each lot | **Accepted.** It is the only way the client can honour W11c-11's "no Take back". It is pinned in the key set and the wire types |
+| 2 Route and test in the plan-repository `ALLOWED` | **Accepted.** Identical to the summary route's entry (it passes the repository to `isBusinessOsTenant`). Like the summary route it is not in `NO_STATE_WRITE_REFERRERS`. Its no-write property is proven at runtime in `route.test.ts` instead (optional suggestion below) |
+| 3 S11-SQ-16 annotation on both lines | **Accepted.** Neither line keeps the superseded "caps moved by one handler" claim |
+| 4 CR11b-2 subtraction fallback | **Accepted.** The fallback is unreachable for a list read at the same `now`, and falling back beats failing an audit for a write that already committed |
+| 5 Formatters in `creditCopy.ts` | **Accepted.** No JSX. They are shared by the block and the dialog and covered by the screen guard |
+| 6 `credit-form-close` test id | **Accepted** |
+
+### Code Review Comments
+
+1. `app/admin/users/components/CreditFormDialog.tsx:237` (`onOpenChange`) — **Low (recommended before the PR).** While a POST is in flight, the admin can still close the dialog with Esc, an overlay click or the Radix X. Reopening mints a new request id. If the first write commits and the admin confirms again before the block re-reads, that records a **second** gift, because the server sees a new key. The background POST still finishes and `onSuccess` re-reads the block, so the window is small, but it is exactly what the per-opening request id is meant to rule out. Fix: ignore `onOpenChange(false)` while `busy` (or disable the close controls in flight). Add one render test.
+2. `CreditFormDialog.tsx:244` — **Low.** After a take-back succeeds, the dialog stays open on the same lot, and its description still shows the pre-change "N left on this gift" from the old payload. The server's figure is only in the success line. Either close the dialog after showing the result, or describe the lot from `lotRemainingAfter`. Cosmetic. The server stays the authority on `exceeds_remaining`.
+3. `CreditFormDialog.tsx:392-393` — **Low (copy).** With "Everything left" chosen, the confirm line reads "Take back everything left credits from …". Suggest "Take back everything left on this gift from …".
+4. `docs/requirements/BUSINESS_OS_LLM_DEDUCTION_LAYER_REQUIREMENT.md` — **Info (TL).** The diff also flips the **11b** delivery-status row to "Merged PR #179". The W11c-12 addendum limits 11c's requirement edits to the 11c row and S11-* lines, because slice 8's branch owns the neighbouring rows. If TL made this edit as a status update, keep it, but expect a one-line conflict with slice 8 and resolve it at merge.
+5. Branch base — **Info (RM).** `origin/main` has moved past `5061489b` (#181 to #183: the Stripe webhook, `lib/logger/index.ts` and plan payments P0), so `git diff origin/main` currently shows those as deletions. None of them overlaps 11c's files. Merge `main` before opening the PR, then re-run the 11c suites and `test:bos-entitlements`.
+
+### Optimisation Suggestions
+
+- Optionally add the new route to `NO_STATE_WRITE_REFERRERS`, so its no-write property is also a source pin that runs in CI and not only a runtime assertion in a suite no CI job runs. The summary route sets the precedent for leaving it out, so this is not required.
+- The CI-coverage list in §11c.10 (W11c-17) is honest and matches the ruling. The route, render, contract, screen-guard, `creditPosition` (W11c-2), G3 and CR11b-2 suites run in no CI job. QA re-runs them, and the hand-over must say "not CI-covered".
+
+### Code Approved for QA: Yes
+
+QA may proceed in parallel. CR11c-1 is recommended before the PR; if fixed, SA re-checks only that hunk. CR11c-2 and -3 are optional. CR11c-4 and -5 are for TL and RM at merge.
+
+**User UI fixes checked (2026-10-04)** — OK. CR11c-1 holds (`inFlight` ref blocks every close and a second submit; Close/Back disabled while busy; one POST per request id). The status line is built from the response (`credits`, `expiresAt`, `lotRemainingAfter`, `replayed`), rendered outside the `ok` branch so a failed re-read keeps it, and the dialog unmounts on success so the next opening mints a new id. `EntitlementSnapshot.tsx` unchanged; the `<details>` fold is panel-only, its summary uses the already-read `plan.tier`/`cohort`, no new read, and a plan read error stays outside the fold. `ALLOWANCE_LAYER_COPY` matches the server union (contract test), raw layer on `title`, unknown layer falls back to raw. Screen guard green; no `lib/business-os` import, `decidedBy`, share, band or combined figure. `app/admin/users/__tests__` 204/204.
+
 ## 16. QA Testing Report
 
 See "QA Report — 11a (2026-10-02)" below.
@@ -1443,6 +2052,118 @@ git diff HEAD --numstat: deletions only in adminOps.test.ts (3: import line, the
 - [x] All acceptance criteria pass — ready for commit, after the user has seen the diff. RM must bring the branch up to date with main first (N1).
 - [ ] Issues found — Dev must address before commit
 
+## QA Report — 11c (2026-10-03)
+
+**QA — 2026-10-03**
+**Verdict:** PASS WITH NOTES. One Medium bug, QA11c-1, which is the same defect as SA CR11c-1. QA reproduced it independently. It is a one-line fix and should land before commit. Three Low notes and three Info notes. Every acceptance criterion and guardrail QA could test passes.
+**Test mode:** full
+**Strategy used:** A + B. First, independent re-runs of the named suites and gates. Second, two QA suites of QA's own, kept in the session scratchpad and not in the repo, run with a scratch Jest config on top of the repo config:
+- `qa11c.render.test.tsx`: 32 jsdom cases, with fetch stubbed per URL and method and `crypto.randomUUID` replaced by a counter.
+- `qa11c.route.test.ts`: 23 black-box cases. Every repository, the gate and the entitlement service are mocked. The builder, `creditAllowanceDecision`, `extraCreditsAt` and the resolver are real.
+
+No database was touched, no dev server or browser was used, and nothing was installed, committed or stashed.
+**Focus:** api, ui, security
+**Skipped:** the browser check. TL does it separately, read-only; the checklist is below. Live grants were not attempted (§11c.6.6 step 4 needs the user's explicit approval).
+**Input source:** prompt keywords (TL)
+
+### Test Coverage
+
+| Acceptance criterion / case | Tested? | Result | Notes |
+|---|---|---|---|
+| Re-run: route 35, `creditPosition` 18, wire types 1, `creditAllowanceView` 25, owner read repository 31, `creditLots` 36, `creditAdminOps` 68, `app/admin/users/__tests__` (7 suites: render 52, copy contract 35, screen guard 33, panel 19, summaryErrors 6, userNameLine 28, defaultFilter 10), tailwind escape guard 6 | ✅ | Pass | Exactly Dev's counts |
+| Four owner suites (G11c-2) green **and unedited** | ✅ | Pass | 21 + 29 + 2 + 32 = 84/84. `git diff origin/main` on all four is empty. `ownerCreditSurface.guard` 46/46 |
+| `creditPeriod.test.ts`: the 2 failures are the known pre-existing ones | ✅ | Confirmed | 25/27. The same two "period keys never pass through Date (SQ-20, R-1)" source-guard tests fail. `creditPeriod.ts` and its test have no diff against `origin/main` |
+| `npm run test:bos-entitlements` | ✅ | Pass | 105 suites, 2,404/2,404 |
+| `npm run test:authz-guard` | ✅ | Pass | 119/119 |
+| `npm run typecheck:bos-llm` | ✅ | Pass | 386 files, 28 errors, 0 new. The stale baseline entry (`app/api/onboarding/build/route.ts`) is pre-existing (CR11b-1) |
+| Scoped `tsc` of QA's own: the 3 client files, the panel, `types.ts`, the route, the wiring, the types, `ownerCreditUsage.ts`, `creditAllowanceView.ts`, `creditAdminOps.ts` | ✅ | Pass | 0 errors in those files. The only errors are the 6 pre-existing ones in `lib/analytics/aiAnalytics.ts`, as Dev reported |
+| Block: plan left / extra credits / "over the plan" only when > 0; no combined figure; no `%` | ✅ | Pass | QA fixture: 2,111.5 + 777.25. The sum 2,888.75 appears nowhere; there is no `%` and no "remaining", "balance" or "combined". Over the plan shows when > 0 (with the shadow-mode line) and is hidden at 0 and at null |
+| Lot list: source, credits, left, end date with zone, reason, short admin id with the full id in `title`, take-backs | ✅ | Pass | `ends 2026-12-31 22:00 UTC`, "admin fedcba98" with the full id only in `title`, "Took back 150 on … UTC: over-gift", and "Dates are shown in UTC.". A bought lot reads "Bought … by a payment" |
+| `counted: false` lot: no Take back. An expired lot with credits left: no Take back | ✅ | Pass | The "Not counted yet" note shows |
+| Usage block fails while extra credits render, and the reverse: "could not be read", never "No allowance", never 0 | ✅ | Pass | An unavailable plan reads "could not be read", not "No allowance", and makes no trial claim. A refused GET (409 platform) shows its sentence; a non-JSON 502 shows the generic one |
+| Own account: no Give, no Take back, the own-account sentence | ✅ | Pass | |
+| Give: amount `0`, `100001`, `1.5`, `-5`, `1e3`, empty, blank and `12abc` are refused on the client; `1`, `100000` and ` 42 ` are accepted | ✅ | Pass | |
+| Give: "No end date" must be chosen explicitly (no default). An empty or past date is refused; a future date is sent with `Z` | ✅ | Pass | The confirm step shows "sent as <instant>" |
+| Give: reason 3 to 500 characters after trimming | ✅ | Pass | `ab` and `"   ab   "` are refused; `abc`, 500 characters and 500 characters with padding are accepted; 501 is refused |
+| Confirm step names the business. The body has exactly `{op, amount, expiresAt, requestId, reason}`, with the reason trimmed | ✅ | Pass | "Give 7 credits to Zeta Clinic" |
+| Submit disabled while in flight; a double-click sends one POST | ✅ | Pass | The button reads "Saving…" |
+| Request id: the same across retries after a 409 refusal, a 500 and a network error; new after a success; new on reopen, including a reopen after a refusal with no success | ✅ | Pass | But see QA11c-1: closing **while a POST is in flight** also gives a new id |
+| A replay shows the RETURNED figures, not the typed ones | ✅ | Pass | 9 typed; the server answered 321 with an expiry. The success line says "Gave 321 credits … ending 2030-05-05 05:05 UTC" plus the "already been recorded" note |
+| Every refusal code shows its sentence, never the code. A non-JSON 502 and an unknown code show the generic sentence | ✅ | Pass | All 23 keys of `CREDIT_ERROR_COPY` were covered: 22 driven through the Give form one by one (followed by a 502 HTML page and `some_new_code`), and `exceeds_remaining` in the Take back cases |
+| Take back: a number, or `'rest'` ("Everything left", with no amount field). A bought lot needs the paid checkbox, which sends `confirmPaidCredits: true`. A non-paid lot sends no such key | ✅ | Pass | |
+| `exceeds_remaining` shows `details.remaining`, and falls back to its sentence without details | ✅ | Pass | "Only 12.5 are left on this gift." |
+| After a success the block re-reads and shows the new figures. A refusal does not re-read | ✅ | Pass | The second GET's 782.25 replaces 777.25 |
+| Route: 401 (signed out, and `getUser` throwing); 403 (non-admin, with the refusal recorded, and the admin check throwing); nothing read in any of these | ✅ | Pass | |
+| Route: 400 for `not-a-uuid`, `1234`, an id one character too long, one too short, `x' or 1=1--` and `%20`, with nothing read | ✅ | Pass | |
+| Route: 409 platform (the all-zero id, and the env id in upper case) with no tenant read; 404 non-tenant and 500 `tenant_check_failed` with no further read; a thrown tenant check gives a generic 500 with no message leak | ✅ | Pass | |
+| Route: an upper-case id works and is lower-cased in the payload and in **every** tenant, snapshot, anchor, owner-repository and lot call. The query string (`?accountId=`, `?userId=`) is ignored | ✅ | Pass | |
+| Route: exact keys at every level (top, `data`, `limits`, `usage`, `extra`, lot, take-back). No idempotency key, `source_ref`, credit value version, base / bonus split, USD, cost, token, balance or combined figure | ✅ | Pass | `limits` = 100000 / 3 / 500. The info log has no reason and no figure |
+| Route: no write method is ever called (`recordLot`, `reverseLot`, `updatePlan`, `ensurePlanRow`, `updateState`, service-client `rpc` / `from`); `check()` / `decide()` are never called | ✅ | Pass | Asserted after every one of the 23 cases |
+| Route: `isOwnAccount` holds when the ids differ only in case; over the plan = used − allowance with plan left 0; an unavailable snapshot gives `allowanceStatus: 'unavailable'` with usage still ok; the snapshot is read once with `bypassCache: true`; each block fails on its own; a future-dated lot is listed first, not counted, with remaining = granted; an expired lot is excluded; no lots gives 0 and an empty list | ✅ | Pass | |
+| Diff hygiene | ✅ | Pass | See Test Outputs. Owner suites, `aiChargeRecorder.ts`, `creditBands.ts` and the 11a SQL scripts have no diff; `creditWindowRule.ts` does not exist. No `console.*`, backslash-hex or control character in the 26 changed or new files under `app/` and `lib/`. No backslash-hex in the added doc lines |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+1. **QA11c-1 (= SA CR11c-1): the dialog can be closed while a POST is in flight, and the reopened form can record a second gift.** File: `app/admin/users/components/CreditFormDialog.tsx` (`<Dialog open onOpenChange={onOpenChange}>`). Severity: **Medium.** It defeats the per-opening request id on a credit write, and a slow network invites exactly this ("it's stuck, try again").
+   - Steps to reproduce (QA render probe): open Give, fill a valid form, Review, Confirm, and keep the POST pending. Press Escape (an overlay click or the Radix X does the same). The dialog unmounts. Open Give again, fill the form, Review, Confirm.
+   - Expected: the dialog cannot be closed while a POST is in flight, or a reopen reuses the pending id.
+   - Actual: two POSTs go out, with request ids `…0001` and `…0002`. If both commit, the account gets two lots. The "Back" button is disabled in flight, but Escape, the overlay and the X are not.
+   - Fix (SA's): ignore `onOpenChange(false)` while `busy`, or disable the close controls in flight. Add one render test. QA then re-runs the render suite only.
+
+#### Performance Issues (should fix)
+None. The GET makes one snapshot read, one builder read set and one lot read, in parallel where possible.
+
+#### Edge Cases / Notes (nice to fix or by design)
+1. **QA11c-2 (Low, new): a failed re-read after a successful write hides the success.** The dialog is rendered inside the block's `ok` branch. If the GET straight after a success fails, the block switches to the error line and unmounts the dialog, so the "Gave N credits" confirmation disappears (QA probe: dialog present after the failed re-read = `false`). It cannot cause a double write: Give is hidden while the block is in error, and a page reload shows the new lot. Fix: keep the last good payload while re-reading, or render the dialog outside the `ok` branch.
+2. **QA11c-3 (= SA CR11c-2, Low): the take-back dialog keeps the old figure.** After a successful take-back of 50 from 250, the open dialog still says "250 left on this gift" (QA probe). Only the success line ("200 left on this gift") is current. The server stays the authority.
+3. **QA11c-4 (= SA CR11c-3, Low, copy):** with "Everything left" chosen, the confirm line reads "Take back everything left credits from …".
+4. **QA11c-I1 (Info): a lot read that throws would fail the whole request.** If `listLotsWithDraws` threw instead of returning an error, the request would answer 500 rather than `extra: { status: 'error' }` (QA probe: 500). This cannot happen today: the repository wraps everything in try / catch and returns `fail()`. Recorded only so that a future repository change keeps that contract.
+5. **QA11c-I2 (Info, RM; = SA CR11c-5): the branch is 10 commits behind `origin/main`.** `origin/main` now has #181 to #183, so `git diff origin/main --numstat` shows unrelated deletions (the Stripe webhook characterisation fixtures, `scripts/check-logging-only-diff.ts`, `lib/logger.ts`, the P0 / P1 workplans). None of them overlaps 11c's files: the intersection of main's changed files with 11c's changed and new files is empty. Against HEAD (`5061489b`) the diff is clean, with no deletion without insertion. Merge main before the PR, then re-run the 11c suites and `test:bos-entitlements`.
+6. **QA11c-I3 (Info): not CI-covered.** As §11c.10 states, the route, render, copy-contract, screen-guard, `creditPosition`, G3 and CR11b-2 suites run in no CI job. QA re-ran them here; the hand-over must keep saying "not CI-covered". The `window.scrollTo` "not implemented" jsdom noise in `businessOsPanel.render.test.tsx` comes from the page-level (5a) cases, not from 11c.
+
+### Manual browser check for TL (read-only, nothing submitted)
+
+1. On `/admin/users`, expand a business the user names. A **Credits** block appears directly under Plan & entitlements, with its own "Loading credits…" line.
+2. **Plan allowance** reads "N per month" (or "N in total (trial)"), and "Set by: <layer>" matches the deciding layer in the Plan & entitlements table above it.
+3. **Used this billing period** (or the trial / calendar-month label) shows the owner / automatic split and "resets on … UTC". The figure matches Costs & credits (`/admin/business-os-llm`) for the same account and period (S11-AC-6).
+4. **Plan left** shows. **Over the plan this period** appears only if usage exceeds the allowance.
+5. **Extra credits** reads 0 with "Extra credits are not part of the plan figure" and "No extra credits given yet." (PROD has no lots, §17 L9).
+6. No figure anywhere adds plan left and extra credits; there is no `%`, no "remaining" or "balance" total, and no USD inside the block.
+7. Your own admin row shows no Give button and the sentence "You cannot change credits on your own account…".
+8. A login with no business shows "Not a Business OS account" and **no** Credits block.
+9. **Give credits → form only, then Cancel:** Review stays disabled until the amount, an explicit end choice and a reason of 3 or more characters are all set; `0`, `1.5` and `100001` keep it disabled. Pick "End date", enter a future time, and press Review. The confirm line names the business ("Give N credits to <business name>"), and the end shows your local time plus "sent as …Z". Then press **Back → Close. Do not press Confirm.**
+10. Optional: press Esc on the open form. It should close, and the block should be unchanged.
+11. In DevTools Network, the block's GET to `/api/admin/business-os/credits/accounts/<id>` answers 200, and its `data` has only `accountId, isOwnAccount, limits, usage, extra`.
+
+### Test Outputs / Logs
+
+```text
+Named suites (independent re-run, 21 suites incl. creditPeriod):  558 passed, 2 failed
+  failed = creditPeriod.test.ts "period keys never pass through Date (SQ-20, R-1)" x2 (pre-existing; files identical to origin/main)
+  route 35 · creditPosition 18 · wireTypes 1 · creditAllowanceView 25 · OwnerReadRepo 31 · creditLots 36 · creditAdminOps 68
+  owner suites 21+29+2+32 (unedited) · ownerCreditSurface.guard 46 · tailwind escape 6
+  app/admin/users: render 52 · copy contract 35 · screen guard 33 · panel 19 · summaryErrors 6 · userNameLine 28 · defaultFilter 10
+npm run test:bos-entitlements   Test Suites: 105 passed   Tests: 2404 passed
+npm run test:authz-guard        Test Suites: 1 passed     Tests: 119 passed
+npm run typecheck:bos-llm       386 files in scope, 28 errors, 0 new, passed
+scoped tsc (QA, 11 files)       only lib/analytics/aiAnalytics.ts x6 (pre-existing)
+QA render suite (scratchpad)    Tests: 32 passed (incl. 3 probes)
+  PROBE description after success: 250 left on this gift. ...           -> QA11c-3
+  PROBE dialog present after failed reload: false                        -> QA11c-2
+  PROBE CR11c-1 request ids: ...0001 , ...0002                           -> QA11c-1
+QA route suite (scratchpad)     Tests: 23 passed
+  PROBE lots throw status 500                                             -> QA11c-I1
+git diff HEAD --numstat: no deletion without insertion (ownerCreditUsage 75/32, creditAllowanceView 27/3,
+  creditAdminOps 43/2, creditAllowanceView.test 71/2, docs 13/5, 5/2, 1/1, 8/5; all others +N/0)
+git diff origin/main --stat on the 4 owner suites, creditPeriod.*, aiChargeRecorder.ts, creditBands.ts, supabase/SQL Scripts/: empty
+creditWindowRule.ts: absent · console.* in 26 changed app/lib files: 0 · backslash-hex: none · control chars: none
+```
+
+### Final Status
+- [ ] All acceptance criteria pass — ready for commit
+- [x] Issues found — Dev must fix QA11c-1 (= CR11c-1, Medium, one guard plus one render test) before commit. QA then re-runs `creditsBlock.render.test.tsx` and QA's in-flight close probe only. QA11c-2 to -4 are optional. RM merges main first (QA11c-I2).
+
 ## 17. PROD apply record (the user pastes here)
 
 **Applied to PROD by the user on 2026-10-02. Every check PASS.** Recorded by TL from the outputs the user pasted (production project, Supabase SQL editor).
@@ -1462,7 +2183,13 @@ git diff HEAD --numstat: deletions only in adminOps.test.ts (3: import line, the
 
 ## 18. Commit Info
 
-*(RM populates. Nothing is committed before the user has seen the diff.)*
+*(RM populates. Nothing is committed before the user has seen the diff.)* Filled in 2026-10-03 by TL from the session record (slice 7/8 audit follow-up L6).
+
+| Sub-slice | User saw the diff | User approval | Commits | PR | Merged |
+|---|---|---|---|---|---|
+| 11a | 2026-10-02, after SA code review (CR11a-1 fixed and SA-confirmed) and QA PASS WITH NOTES | 2026-10-02 ("go ahead, commit and open the PR") | `3ffe3e7c` docs, `55f54ce4` feat, `9b737ba1` docs (PR number), `32a5a3be` docs (PROD apply record), `03ff6888` merge of main (slice 7a #174, docs conflicts), `ef17ee8c` fix (Tailwind CSS-escape path in this workplan) | #173 | ✅ `9a7c4fb3`, 2026-10-02 |
+| 11b | 2026-10-03, after SA code review APPROVED and QA PASS WITH NOTES | 2026-10-03 ("approved, commit and create a PR") | `a06c4693` docs, `ae07fec1` feat, `5804b7de` merge of main (#176), `fba3cc51` docs (PR number) | #179 | ✅ `05ca1a55`, 2026-10-03 |
+| 11c | — | — | — | — | — |
 
 ---
 
@@ -1482,3 +2209,11 @@ git diff HEAD --numstat: deletions only in adminOps.test.ts (3: import line, the
 | 2026-10-02 | 11b implemented (Dev): Code Complete | `creditAdminOps.ts` (ceiling, schemas, platform helper, grant / reduce executors, outcome mapping) composed into `adminOps.ts` (own-account 403 first for all nine ops, platform 409 for the credit ops, credit context with the credit value version); route: path id lower-cased, replay branch with no audit, cache invalidation skipped for credit ops, audit override; audit keys, metadata (`SOC2` only), audience, entity type, filter group; G3 guard as an exact list with non-vacuity; CR11a-2, CR11a-5, QA11a-3 folded in; entitlements doc. T11b.1 pin green before and after, unedited. W11b-1 to W11b-11 applied (§11b.10). Jest: new suite 63, `adminOps` 77, routes 88; `test:bos-entitlements` 2,384 passed; authz guard 119; `typecheck:bos-llm` 0 new; scoped `tsc` touched files clean. Six deviations D-1 to D-6 for SA. Uncommitted; no database touched |
 | 2026-10-03 | SA code review (11b): CODE APPROVED | Section "SA Code Review — 11b (2026-10-03)" added. W11b-1 to W11b-11 verified in code; D-1 to D-6 accepted. Re-ran the four 11b suites: 264 passed. Cross-account request-id reuse confirmed to fail as `idempotency_key_conflict` in both lot functions. Two Low notes: CR11b-1 (`callCatalog.ts` import is the established source; the `typecheck:bos-llm` stale baseline entry is pre-existing, baseline file unchanged), CR11b-2 (reduction `extraCreditsAfter` assumes the lot counted in full; optional). PGRST202 kept as a fallback hand-over line. Approved for QA |
 | 2026-10-03 | QA (11b): PASS WITH NOTES | Section "QA Report — 11b (2026-10-03)" added. Named suites re-run: 63 + 77 + 88 + 36 + 55 + 21, all green; `test:bos-entitlements` 2,384/2,384; authz guard 119/119; `typecheck:bos-llm` 0 new. The 2 creditPeriod failures are pre-existing (files identical to main). QA's own black-box route suite: 71/71, covering grant, reduce, replay, conflict, Zod bounds, own account (any case, all op kinds), platform, tenant, plan row, hold (fails closed), paid lot lock, and no side effects on refusal. Existing ops unchanged (`routes.test.ts` +571/-0). No bugs. Notes N1 (branch behind main by PR #176: update before the PR), N2 to N4 by design |
+| 2026-10-03 | 11c workplan written (Dev), awaiting SA | 11b merged (PR #179). New section "11c — Admin per-account credit view" on branch `feature/business-os-credit-deduction-slice-11c` (off `5061489b`); the §13 outline marked superseded; title, ToC and header status updated. Collision check first: `BusinessOsPanel.tsx` and the Businesses detail as left by cleanup 5a (#177); no open branch touches them; cleanup 5e's text still predates S11-D-8 B (BA annotation owed, OP-37); credit deduction slice 8 may touch `ownerCreditUsage.ts`. Plan: `readCreditPosition` exported around 7a's `computeOwnerCreditWindow` (owner suites unedited); pure `creditAllowanceDecision` inside the module; new `GET /api/admin/business-os/credits/accounts/[accountId]` (summary-route shape, two independently failing blocks, plan left / extra credits / over the plan, no combined figure); `adminCreditPositionDeps.ts` on the service role, documented; Credits block with Give / Take back dialogs in the Businesses panel (request id per opening, confirm names the business, returned figures shown on a replay, paid-lot checkbox, refusal copy with a completeness test); four guard lists registered; CR11b-2 folded in; register row 91 and census 87 → 88. ≈ 2.15 d. Open points OP-23 to OP-37. No code; nothing applied |
+| 2026-10-03 | SA workplan review (11c): APPROVED WITH CONDITIONS | Section "SA Workplan Review — 11c (2026-10-03)" added. OP-23 to OP-29 and OP-31 to OP-37 accepted (OP-23, -25, -27, -32, -35 with conditions); **OP-30 cut** (short admin id, no email lookup); OP-34 confirmed: the authz guard `CAPS` count exemptions, so a handler gated from birth moves none, and SA-11's S11-SQ-16 wording is superseded (register row 91, census 88 / 59). Conditions W11c-1 to W11c-12: comments that become false (incl. the owner repository header naming its one service-role caller); exact caller lists for `readCreditPosition` and the wiring; the route and its test in the G3 list (missing from the plan); no type-only importers; every repository call gets the path id (tested); reason bounds exported; copy covers every code plus non-JSON answers; submit disabled in flight; CR11b-2 from one `now`; Radix primitives with native radios, no new package; lots created after `now` listed, not lost; docs / hand-over. TL inputs from the slice 7 / 8 audit folded in as W11c-13 to W11c-17: no edit inside the window computation (trivial rebase against 8a's `creditWindowRule.ts`); no %, band or low line in the block; `aiChargeRecorder.ts`, 8a / 8 files and the retired 11a rollback script untouched; no new draw path (11b's reverse function keeps the advisory lock); CI coverage ruled (no CI change; a CI-run pin on who constructs the owner repository on the service role; the uncovered suites listed); requirement edits limited to slice 11 / S11-* lines. Estimate ≈ 2.15 d. No business decisions |
+| 2026-10-03 | TL: §18 Commit Info filled for 11a and 11b; 11a rollback marked RETIRED in §6.5 | Slice 7/8 audit follow-ups L6 and L3. Rollback script left in the repo unchanged (W11c-15) but marked do-not-run; a future rollback needs its own reviewed script |
+| 2026-10-03 | 11c implemented (Dev): Code Complete (11c), uncommitted | Every condition W11c-1 to W11c-17 applied, OP-30 cut (short admin id, full id on hover). New: the admin GET `credits/accounts/[accountId]` and its test, `adminCreditPositionDeps.ts`, `adminCreditPositionTypes.ts`, the Credits block, the Give / Take back dialog, `creditCopy.ts`, the wire-types, `creditPosition`, copy-contract and render tests. Changed: `readCreditPosition` extracted (owner suites unedited, 84 green), `creditAllowanceDecision`, CR11b-2 and the exported reason bounds, five guard lists, the owner read repository header and its new CI-side constructor pin, the panel line, client types, access register row 91 and census 88 / 82 + 6 / 59, the entitlements doc paragraph, the requirement status row and the S11-SQ-16 annotation. Evidence and the CI-covered / uncovered list in §11c.10 |
+| 2026-10-03 | SA code review (11c): CODE APPROVED | Section "SA Code Review — 11c (2026-10-03)" added. W11c-1 to W11c-17 verified in code, OP-30 cut as ruled; the six §11c.10 deviations accepted. SA re-ran 18 suites (558/558) and re-measured 59 admin `route.ts` files. `ownerCreditUsage.ts` diff confined to the new function, the wrapper bodies and comments (8a rebase stays trivial). Low notes: CR11c-1 the dialog can close mid-POST and reopen with a new request id (guard `onOpenChange` while busy; recommended before the PR), CR11c-2 stale "left on this gift" after a take-back, CR11c-3 the "everything left" confirm wording. Info: CR11c-4 the 11b requirement row edit (TL to confirm; slice 8 conflict), CR11c-5 merge `main` (#181–#183) before the PR. Approved for QA |
+| 2026-10-03 | QA (11c): PASS WITH NOTES, one Medium bug to fix before commit | Section "QA Report — 11c (2026-10-03)" added. Independent re-runs match Dev's counts. Named suites: 558 passed, 2 failed (the two pre-existing `creditPeriod.test.ts` source guards; the files are identical to main). The four owner suites (84) are green and unedited. `test:bos-entitlements` 2,404/2,404; authz guard 119/119; `typecheck:bos-llm` 0 new; QA's scoped `tsc` is clean in the touched files. QA's own scratchpad suites: render 32/32 and route black-box 23/23, covering the figures, the lot list, own account, Give and Take back validation, the request-id lifetime, replay figures, all 23 refusal sentences, the gate order, uuid case, platform / tenant, exact keys and no write. **QA11c-1 (= CR11c-1, Medium):** closing the dialog with Escape while a POST is in flight and confirming again sends a second POST with a new request id (reproduced). Low: QA11c-2 (new: a failed re-read after a success unmounts the dialog and hides the result), QA11c-3 (= CR11c-2) and QA11c-4 (= CR11c-3). Info: a thrown lot read would answer 500 (unreachable today); the branch is 10 commits behind main with no overlap; the suites are not CI-covered. A read-only browser checklist for TL is included |
+| 2026-10-03 | 11c review fixes (Dev), uncommitted | §11c.10 "Review fixes". CR11c-1 / QA11c-1: the dialog ignores every close while a POST is in flight; Close and Back disabled while busy (render test: Esc and X ignored, one POST with one request id, closes after the answer; non-vacuous). CR11c-2 / QA11c-3: the take-back description comes from `lotRemainingAfter`. CR11c-3 / QA11c-4: "Take back everything left on this gift from …". QA11c-2: the dialog renders outside the block's `ok` branch on the last good limits, so a failed re-read keeps the success message. `app/admin/users/__tests__` 188 / 188; with the credits routes 268 / 268; eslint, scoped `tsc` clean. Awaiting SA / QA re-check |
+| 2026-10-04 | 11c user UI fixes (Dev), uncommitted | §11c.10 "User UI fixes". "Review" → "Continue"; a success closes the dialog and shows the server's result as a dismissable status line in the Credits block (QA11c-2 and CR11c-1 kept); panel order Credits → Plan & entitlements (collapsed `<details>`, panel only) → AI spend → AI failures; "Set by" in plain words with the raw layer on hover, plus a layer-copy contract test. `app/admin/users/__tests__` 204 / 204; route + escape guard 41 / 41; eslint, scoped `tsc` clean |
