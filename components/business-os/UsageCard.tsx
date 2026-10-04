@@ -49,6 +49,18 @@
  * Parked (user decision 2026-10-02): the link is drawn only when
  * `isBusinessOsCreditHistoryEnabled()` is on (`NEXT_PUBLIC_BUSINESS_OS_CREDIT_HISTORY`,
  * default off). Off, the card renders exactly as slice 6a built it.
+ *
+ * ── EXTRA CREDITS (credit deduction slice 11d, S11-D-1 A) ───────────────────
+ * Under the ring: "Extra credits" and the payload's `extraCredits`, rounded
+ * DOWN to a whole credit ("less than 1" below one), and the one line on how
+ * they behave. Shown only when the figure is above 0 (user decision
+ * 2026-10-04, BQ-11d-1): not at 0, not while loading, not on the error line.
+ * It is a SEPARATE figure: the percentage, its band, the arc, the tooltip and
+ * the no-allowance state never read it, and nothing adds it to the plan figure
+ * (boost R-5 (c), BD-25; a source rule pins it). No lot list, no source, no
+ * reason (S11-D-4 A). It arrives in the same payload, so it re-reads on the
+ * same triggers as the rest of the card. The admin view formats its own figure,
+ * so the two can differ below one credit by design (SA W11d-11).
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
@@ -58,7 +70,11 @@ import { isBusinessOsCreditHistoryEnabled } from '@/lib/utils/featureFlags';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { onCreditUsageChanged } from '@/lib/business-os/client/creditUsageSignal';
 import { bandColor, creditPercentLeft } from '@/lib/business-os/credits/creditBands';
-import { toDisplayedCredits, type DisplayedCreditFigure } from '@/lib/business-os/credits/creditDisplay';
+import {
+  toDisplayedCredits,
+  toDisplayedExtraCredits,
+  type DisplayedCreditFigure,
+} from '@/lib/business-os/credits/creditDisplay';
 import type { OwnerCreditUsage } from '@/lib/business-os/credits/ownerCreditUsageTypes';
 import { createLogger } from '@/lib/logger';
 
@@ -102,7 +118,9 @@ function isOwnerCreditUsage(value: unknown): value is OwnerCreditUsage {
   if (v.allowance !== null) {
     if (!v.allowance || !isFiniteNumber(v.allowance.amount) || !['month', 'total'].includes(v.allowance.per)) return false;
   }
-  return isFiniteNumber(v.used) && isFiniteNumber(v.usedByOwner) && isFiniteNumber(v.usedAutomatic);
+  if (!isFiniteNumber(v.used) || !isFiniteNumber(v.usedByOwner) || !isFiniteNumber(v.usedAutomatic)) return false;
+  // Slice 11d: required. Missing or negative is an error line, never a hidden figure.
+  return isFiniteNumber(v.extraCredits) && v.extraCredits >= 0;
 }
 
 export function UsageCard() {
@@ -246,6 +264,10 @@ export function UsageCard() {
       }
     }
   }
+
+  // Slice 11d: the extra figure, or null (block hidden). Read here only; never
+  // part of the percentage, the band or any sum (a source rule pins it).
+  const extraShown = usage ? toDisplayedExtraCredits(usage.extraCredits) : null;
 
   const headline = !usage || !shown ? '—' : gauged ? percentText! : figure(shown.used);
   const headlineLabel = gauged ? t('usage.left') : t('usage.used');
@@ -470,6 +492,31 @@ export function UsageCard() {
           )}
         </div>
       </div>
+
+      {/* Extra credits (slice 11d): plain text, not a gauge: no colour, no
+          icon, no band. Hidden at 0 (BQ-11d-1). */}
+      {extraShown && (
+        <div
+          data-testid="credits-extra"
+          style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: 6, textAlign: 'center' }}
+        >
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 6 }}>
+            <span style={{ fontSize: '12px', color: MUTED }}>{t('usage.extra.label')}</span>
+            <span
+              data-testid="credits-extra-figure"
+              style={{ fontSize: '13px', fontWeight: 600, color: INK, fontVariantNumeric: 'tabular-nums' }}
+            >
+              {figure(extraShown)}
+            </span>
+          </div>
+          <p
+            data-testid="credits-extra-explain"
+            style={{ fontSize: '11.5px', lineHeight: 1.4, color: MUTED, marginTop: 2, textAlign: 'center' }}
+          >
+            {t('usage.extra.explain')}
+          </p>
+        </div>
+      )}
 
       {historyEnabled && usage && (
         <div style={{ display: 'flex', justifyContent: 'center', marginTop: 6 }}>

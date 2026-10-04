@@ -40,6 +40,24 @@
 // pins exactly three constructing product files (the owner wiring plus those
 // two), and that only those two name the service client.
 //
+// ── THE OWNER'S CREDIT LOTS (credit deduction slice 11d, SA W11d-5) ──────────
+// `listOwnCreditLots` reads `business_os_credit_lots` and their
+// `business_os_credit_lot_draws` (schema: `20261017_business_os_credit_lots.sql`)
+// for the owner's dashboard card ONLY: the "Extra credits" figure. It mirrors
+// the admin lot repository's read (oldest first, a ceiling that answers an
+// error, no draw query when there are no lots, draws chunked by lot id), with
+// its own parse and map below: nothing is imported from that repository. Its
+// column lists are narrower than the owner GRANT lines of `20261017` (a test
+// parses them): no source, base / bonus split, reason, actor, key, source
+// reference or credit value version can reach the owner card.
+// The two service-role constructors below (low line, admin view) never call
+// it: a source guard in the test pins `ownerCreditUsage.ts` as its only
+// product caller.
+// Slice 9 tripwire (SA W11d-7): a draw `kind` other than `'reversal'` is an
+// error here, so the first consumption draw would fail the owner card for
+// every account with lots. Slice 9 widens this check, the admin repository's,
+// and the balance core's draw kind in the SAME PR as its first writer.
+//
 // `findTotalsForPeriod` and `listTotalsFrom` take an optional abort signal
 // (slice 8b, SA SQ-44) so a time-boxed caller can cancel the request.
 //
@@ -159,7 +177,42 @@ export const OWNER_CREDIT_READ_LIMITS = {
   MAX_PERIODS_PER_REQUEST: 24,
   /** Most lines one credit-history page may ask for (slice 7a). */
   DIARY_PAGE_CEILING: 100,
+  /**
+   * Lots, and draws per chunk of lots, read for the owner card (slice 11d).
+   * Reaching it is an ERROR, never a partial list (the admin read's figure).
+   */
+  LOTS_CEILING: 1000,
 } as const;
+
+/** One draw out of a lot, as the owner may read it (slice 11d). */
+export interface OwnerCreditLotDrawRow {
+  kind: 'reversal';
+  credits: number;
+  createdAt: string;
+}
+
+/**
+ * One lot as the owner may read it (granted columns only), with its draws.
+ * Structurally usable by the balance core (a type-level test asserts it).
+ */
+export interface OwnerCreditLotRow {
+  id: string;
+  creditsGranted: number;
+  /** Null means the lot never expires. */
+  expiresAt: string | null;
+  createdAt: string;
+  draws: OwnerCreditLotDrawRow[];
+}
+
+/**
+ * The only lot and draw columns selected (slice 11d, SA OP-40). Each is in the
+ * `authenticated` GRANT lines of `20261017` (tested), and narrower than them:
+ * no `source`, `credits_base` or `credits_bonus`.
+ */
+export const OWNER_LOT_COLUMNS = 'id, user_id, credits_granted, expires_at, created_at';
+export const OWNER_LOT_DRAW_COLUMNS = 'id, lot_id, user_id, kind, credits, created_at';
+
+const DECIMAL_PATTERN = /^-?\d+(\.\d+)?$/;
 
 export interface OwnerCeilingResult<T> {
   rows: T[];
@@ -188,6 +241,47 @@ function assertPeriodKey(value: unknown): asserts value is string {
   if (typeof value !== 'string' || value.length < 10 || Number.isNaN(Date.parse(value))) {
     throw new OwnerCreditReadGuardError('A period key (timestamptz string) is required');
   }
+}
+
+// ── Lot parsing (slice 11d): anything unreadable is an error, never a 0 ──────
+
+/** A `numeric` as PostgREST returns it: a JSON number or a decimal string. */
+function lotCredits(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && DECIMAL_PATTERN.test(value)) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  throw new Error('unreadable_lot_figure');
+}
+
+function lotTimestamp(value: unknown): string {
+  if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) throw new Error('unreadable_lot_timestamp');
+  return value;
+}
+
+function lotId(value: unknown): string {
+  if (typeof value !== 'string' || !UUID_PATTERN.test(value)) throw new Error('unreadable_lot_id');
+  return value;
+}
+
+function mapOwnerDraw(raw: Record<string, unknown>): { lotId: string; draw: OwnerCreditLotDrawRow } {
+  // The slice 9 tripwire (see the header): only reversals exist today.
+  if (raw.kind !== 'reversal') throw new Error('unknown_lot_draw_kind');
+  return {
+    lotId: lotId(raw.lot_id),
+    draw: { kind: 'reversal', credits: lotCredits(raw.credits), createdAt: lotTimestamp(raw.created_at) },
+  };
+}
+
+function mapOwnerLot(raw: Record<string, unknown>, draws: OwnerCreditLotDrawRow[]): OwnerCreditLotRow {
+  return {
+    id: lotId(raw.id),
+    creditsGranted: lotCredits(raw.credits_granted),
+    expiresAt: raw.expires_at === null ? null : lotTimestamp(raw.expires_at),
+    createdAt: lotTimestamp(raw.created_at),
+    draws,
+  };
 }
 
 export class BusinessOsCreditOwnerReadRepository {
@@ -408,6 +502,58 @@ export class BusinessOsCreditOwnerReadRepository {
         rows.push(...((data ?? []) as unknown as OwnerCreditChargeRow[]));
       }
       return { data: rows, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
+
+  // ============ Credit lots (slice 11d) ============
+
+  /**
+   * Every lot of this account, oldest first, each with its draws: the owner
+   * card's "Extra credits" read (see the header). Reaching the ceiling on the
+   * lots or on any draw chunk, a read error, or an unreadable figure, date or
+   * draw kind is an error, never a partial list. No draw query without lots.
+   */
+  async listOwnCreditLots(accountId: string): Promise<RepositoryResult<OwnerCreditLotRow[]>> {
+    const method = 'listOwnCreditLots';
+    try {
+      this.assertAccount(accountId);
+      const ceiling = OWNER_CREDIT_READ_LIMITS.LOTS_CEILING;
+      const { data: lotData, error: lotError } = await this.supabase
+        .from('business_os_credit_lots')
+        .select(OWNER_LOT_COLUMNS)
+        .eq('user_id', accountId)
+        .order('created_at', { ascending: true })
+        .range(0, ceiling - 1);
+      if (lotError) throw lotError;
+      if (lotData !== null && lotData !== undefined && !Array.isArray(lotData)) throw new Error('unreadable_lot_rows');
+      const rawLots = (lotData ?? []) as unknown as Record<string, unknown>[];
+      if (rawLots.length >= ceiling) throw new Error('too_many_lots');
+      if (rawLots.length === 0) return { data: [], error: null };
+
+      const lotIds = rawLots.map((raw) => lotId(raw.id));
+      const drawsByLot = new Map<string, OwnerCreditLotDrawRow[]>(lotIds.map((id) => [id, []]));
+      for (let i = 0; i < lotIds.length; i += OWNER_CREDIT_READ_LIMITS.MAX_IDS_PER_REQUEST) {
+        const chunk = lotIds.slice(i, i + OWNER_CREDIT_READ_LIMITS.MAX_IDS_PER_REQUEST);
+        const { data: drawData, error: drawError } = await this.supabase
+          .from('business_os_credit_lot_draws')
+          .select(OWNER_LOT_DRAW_COLUMNS)
+          .eq('user_id', accountId)
+          .in('lot_id', chunk)
+          .order('created_at', { ascending: true })
+          .range(0, ceiling - 1);
+        if (drawError) throw drawError;
+        if (drawData !== null && drawData !== undefined && !Array.isArray(drawData)) throw new Error('unreadable_draw_rows');
+        const rawDraws = (drawData ?? []) as unknown as Record<string, unknown>[];
+        if (rawDraws.length >= ceiling) throw new Error('too_many_draws');
+        for (const raw of rawDraws) {
+          const { lotId: owningLot, draw } = mapOwnerDraw(raw);
+          drawsByLot.get(owningLot)?.push(draw);
+        }
+      }
+
+      return { data: rawLots.map((raw) => mapOwnerLot(raw, drawsByLot.get(lotId(raw.id)) ?? [])), error: null };
     } catch (error) {
       return this.fail(method, error);
     }

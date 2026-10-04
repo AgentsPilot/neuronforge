@@ -63,7 +63,7 @@ const FOUNDING_PARTNER: OwnerCreditUsage = {
   used: 62.5,
   usedByOwner: 40.6,
   usedAutomatic: 21.9,
-  granted: 0,
+  extraCredits: 0,
   remaining: 32187.5,
 };
 
@@ -227,7 +227,7 @@ describe('states (English)', () => {
       used: 348,
       usedByOwner: 300,
       usedAutomatic: 48,
-      granted: 0,
+      extraCredits: 0,
       remaining: 1652,
     });
     expect(screen.getByTestId('credits-period')).toHaveTextContent('For your trial');
@@ -245,7 +245,7 @@ describe('states (English)', () => {
       used: 0,
       usedByOwner: 0,
       usedAutomatic: 0,
-      granted: 0,
+      extraCredits: 0,
       remaining: 2000,
     });
     expect(screen.getByTestId('credits-headline')).toHaveTextContent(pct(100));
@@ -317,7 +317,7 @@ describe.each<Lang>(['en', 'he', 'es'])('in %s', (language) => {
       used: 348,
       usedByOwner: 300,
       usedAutomatic: 48,
-      granted: 0,
+      extraCredits: 0,
       remaining: 1652,
     });
     expectExplainOnlyInTooltip(t('usage.explain.trial'));

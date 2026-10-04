@@ -13,7 +13,8 @@
  *     policy by design; the account id is the session's, resolved by the
  *     caller through the account seam;
  *   - the period function: pure date arithmetic that reads no table.
- * The LEDGER is read with the caller's RLS client, never the service role.
+ * The LEDGER, and since slice 11d the owner's credit lots, are read with the
+ * caller's RLS client, never the service role.
  *
  * Server-only. Two callers: `GET /api/business-os/usage` (the card,
  * `ownerCreditUsageDeps`) and `GET /api/business-os/credits/history` (the
@@ -31,9 +32,10 @@ import { businessOsAccountPlanRepository } from '@/lib/repositories/BusinessOsAc
 import { businessOsCreditPeriodRepository } from '@/lib/repositories/BusinessOsCreditPeriodRepository';
 import { BusinessOsCreditOwnerReadRepository } from '@/lib/repositories/BusinessOsCreditOwnerReadRepository';
 import type { OwnerCreditHistoryDeps } from './ownerCreditHistory';
-import type { OwnerCreditUsageDeps } from './ownerCreditUsage';
+import type { OwnerCreditCardDeps } from './ownerCreditUsage';
 
-export function ownerCreditUsageDeps(ownerClient: SupabaseClient): OwnerCreditUsageDeps {
+/** The card's wiring. Since slice 11d its owner repository also serves the lot read (same RLS client). */
+export function ownerCreditUsageDeps(ownerClient: SupabaseClient): OwnerCreditCardDeps {
   return {
     findPeriodAnchor: (accountId) => businessOsAccountPlanRepository.findPeriodAnchor(accountId),
     periodStartFor: (anchor, at) => businessOsCreditPeriodRepository.periodStartFor(anchor, at),

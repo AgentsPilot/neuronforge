@@ -47,6 +47,22 @@
  * tenant check, with the service-role wiring of `adminCreditPositionDeps.ts`
  * (every repository read there is still `.eq('user_id', accountId)`).
  *
+ * ── EXTRA CREDITS (credit deduction slice 11d, S11-SQ-4, S11-SQ-10) ─────────
+ * The card's payload also carries `extraCredits`: what is left of the
+ * account's credit lots (an admin gift now, a purchase later) that are not
+ * expired, from `extraCreditsAt`, the one definition the admin view and the
+ * admin credit ops use too. The lots are read through the SAME owner
+ * repository on the caller's RLS client (`listOwnCreditLots`), in parallel
+ * with the plan figures and at the same `now`. Extra credits never enter
+ * `remaining` (`granted: 0`, literally), the percentage, the band or the low
+ * line (boost R-5 (c), BD-25): two figures, never a combined total. A lot
+ * read that fails, hits its ceiling or holds an unreadable figure is an
+ * ERROR (the card's error line), never a hidden block: the card hides the
+ * block at 0 (BQ-11d-1), so a failure shown as 0 would be invisible (SA OP-38).
+ * Only the card reads lots: `readCreditPosition`, the history, the admin view
+ * and the low line are unchanged and their deps type (`OwnerCreditUsageDeps`)
+ * does not carry the lot read; the card's is `OwnerCreditCardDeps`.
+ *
  * ── FAILURE ──────────────────────────────────────────────────────────────────
  * Any ledger, anchor or period read error, a non-finite figure, or a trial
  * total read that hit its ceiling returns an ERROR — the route answers 500 and
@@ -69,6 +85,7 @@ import type {
   OwnerLedgerWindow,
 } from '@/lib/repositories/BusinessOsCreditOwnerReadRepository';
 import { computeCreditBalance, roundToLedger } from './creditBalance';
+import { extraCreditsAt } from './creditLots';
 import { nextPeriodStartUtc, resolveCreditPeriod, type CreditPeriodDeps } from './creditPeriod';
 import { creditWindowRule, parseLedgerFigure } from './creditWindowRule';
 import { resolveEffectiveFields, type EffectiveFieldsInput } from './effectiveFields';
@@ -99,6 +116,15 @@ export interface OwnerCreditUsageDeps extends CreditPeriodDeps {
   readAllowance?: (accountId: string, log: OwnerCreditUsageLogger) => Promise<OwnerCreditAllowance | null>;
 }
 
+/**
+ * The CARD's wiring (slice 11d, SA OP-39): the shared deps, plus the owner's
+ * own lot read on the same owner repository. Card-only, so the history, the
+ * admin view and the low line keep `OwnerCreditUsageDeps` unchanged.
+ */
+export interface OwnerCreditCardDeps extends OwnerCreditUsageDeps {
+  owner: OwnerCreditUsageDeps['owner'] & Pick<BusinessOsCreditOwnerReadRepository, 'listOwnCreditLots'>;
+}
+
 /** Why a read failed. `code` is for the log; the owner is shown one generic line. */
 export class OwnerCreditUsageError extends Error {
   constructor(
@@ -110,7 +136,10 @@ export class OwnerCreditUsageError extends Error {
       | 'adjustments_read_failed'
       | 'adjustments_ceiling'
       | 'originals_read_failed'
-      | 'unreadable_figure',
+      | 'unreadable_figure'
+      // Slice 11d (SA W11d-2): the owner's credit lots.
+      | 'lots_read_failed'
+      | 'lots_unreadable',
     message: string,
     readonly readError?: unknown
   ) {
@@ -386,20 +415,45 @@ export async function resolveOwnerCreditWindow(
 /** The owner's credit usage for the card. Never throws; `{ data, error }`. */
 export async function readOwnerCreditUsage(
   userId: string,
-  deps: OwnerCreditUsageDeps,
+  deps: OwnerCreditCardDeps,
   log: OwnerCreditUsageLogger
 ): Promise<Result<OwnerCreditUsage>> {
   // The ONLY account this can read: the session user's, through the seam.
   const accountId = resolveAccountId(userId);
-  const position = await readCreditPosition(accountId, deps, log, 'Owner credit usage read failed');
+  // One `now` for both reads (slice 11d, SA W11d-6): the plan figure and the
+  // extra figure describe the same instant.
+  const now = (deps.now ?? (() => new Date()))();
+
+  // In parallel: no added latency on the card. Neither leg throws
+  // (`readCreditPosition` catches; the repository returns `{ data, error }`);
+  // the catch only turns an unexpected rejection into the same error result.
+  const [position, lots] = await Promise.all([
+    readCreditPosition(accountId, { ...deps, now: () => now }, log, 'Owner credit usage read failed'),
+    deps.owner.listOwnCreditLots(accountId).catch((err: unknown) => ({
+      data: null,
+      error: err instanceof Error ? err : new Error(String(err)),
+    })),
+  ]);
   if (position.error || !position.data) {
     return { data: null, error: position.error ?? new Error('Owner credit usage read failed') };
+  }
+  if (lots.error || !lots.data) {
+    const failure = new OwnerCreditUsageError('lots_read_failed', 'Could not read the credit lots', lots.error);
+    return { data: null, error: logReadFailure(log, failure, accountId, 'Owner credit usage read failed') };
+  }
+  const extra = extraCreditsAt(lots.data, now);
+  if (extra === null) {
+    const failure = new OwnerCreditUsageError('lots_unreadable', 'Unreadable credit lot figure or date');
+    return { data: null, error: logReadFailure(log, failure, accountId, 'Owner credit usage read failed') };
+  }
+  if (extra.hasInconsistentLot) {
+    // The owner sees the clamped figure. The account and a count only, never a figure.
+    log.warn({ accountId, lots: lots.data.length }, 'A credit lot has drawn more than it granted; clamped to 0');
   }
 
   // Outside the read's try since slice 11c: nothing here can throw
   // (`computeCreditBalance` returns null rather than throwing). Keep it so.
   const window = position.data;
-  const granted = 0;
   return {
     data: {
       period: { kind: window.kind, resetsOn: window.resetsOn },
@@ -407,8 +461,10 @@ export async function readOwnerCreditUsage(
       used: window.used,
       usedByOwner: window.usedByOwner,
       usedAutomatic: window.usedAutomatic,
-      granted,
-      remaining: computeCreditBalance({ allowance: window.allowance?.amount ?? null, granted, used: window.used }),
+      extraCredits: extra.extraCredits,
+      // The PLAN only (S11-SQ-10, boost R-5 (c)): extra credits are a separate
+      // figure and never enter it, so `granted` stays a literal 0.
+      remaining: computeCreditBalance({ allowance: window.allowance?.amount ?? null, granted: 0, used: window.used }),
     },
     error: null,
   };

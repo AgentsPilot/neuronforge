@@ -53,7 +53,7 @@ const MONTHLY: OwnerCreditUsage = {
   used: 62.5,
   usedByOwner: 40.6,
   usedAutomatic: 21.9,
-  granted: 0,
+  extraCredits: 0,
   remaining: 32187.5,
 };
 

@@ -13,17 +13,42 @@ jest.mock('@/lib/business-os/entitlements/EntitlementService', () => ({
   getEntitlementService: () => ({ getSnapshot: async () => ({ resolution: null, unavailable: true, stale: false }) }),
 }));
 
-import { readOwnerCreditUsage, type OwnerCreditUsageDeps } from '../ownerCreditUsage';
+import type { OwnerCreditLotRow } from '@/lib/repositories/BusinessOsCreditOwnerReadRepository';
+import { readOwnerCreditUsage, type OwnerCreditCardDeps } from '../ownerCreditUsage';
 import type { OwnerCreditAllowance } from '../ownerCreditUsageTypes';
 
 const USER = '11111111-1111-4111-8111-111111111111';
 const ANCHOR = '2026-09-14T09:31:07.123456+00:00';
 
+/**
+ * Slice 11d (S11-AC-7): a lot carrying everything the owner must never see.
+ * The owner repository could not even select these columns; the fake hands
+ * them over anyway, to prove the builder passes on nothing but the figure.
+ */
+const LOT_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const REASON = 'Goodwill after the outage, ticket 4471';
+const ADMIN_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const LEAKY_LOT = {
+  id: LOT_ID,
+  creditsGranted: 200,
+  expiresAt: null,
+  createdAt: '2026-09-20T00:00:00.000Z',
+  draws: [],
+  reason: REASON,
+  actorAdminId: ADMIN_ID,
+  idempotencyKey: `admin_grant:${LOT_ID}`,
+  source: 'admin_grant',
+  sourceRef: LOT_ID,
+  creditsBase: 200,
+  creditsBonus: 0,
+  creditValueVersion: 3,
+} as unknown as OwnerCreditLotRow;
+
 const EXPECTED_KEYS = [
   'allowance',
   'allowance.amount',
   'allowance.per',
-  'granted',
+  'extraCredits',
   'period',
   'period.kind',
   'period.resetsOn',
@@ -44,7 +69,11 @@ function keysOf(value: unknown, prefix = ''): string[] {
   });
 }
 
-function deps(allowance: OwnerCreditAllowance | null, anchor: string | null): OwnerCreditUsageDeps {
+function deps(
+  allowance: OwnerCreditAllowance | null,
+  anchor: string | null,
+  lots: OwnerCreditLotRow[] = [LEAKY_LOT]
+): OwnerCreditCardDeps {
   const row = {
     period_start: ANCHOR,
     credits_total: '5.000000',
@@ -61,6 +90,7 @@ function deps(allowance: OwnerCreditAllowance | null, anchor: string | null): Ow
       listTotalsFrom: async () => ({ data: { rows: [row], reachedCeiling: false }, error: null }),
       listAdjustmentsForPeriods: async () => ({ data: { rows: [], reachedCeiling: false }, error: null }),
       findChargesByActionIds: async () => ({ data: [], error: null }),
+      listOwnCreditLots: async () => ({ data: lots, error: null }),
     },
     now: () => new Date('2026-09-30T12:00:00.000Z'),
     readAllowance: async () => allowance,
@@ -105,5 +135,71 @@ describe.each([
   it('carries no value that is the account id', async () => {
     const result = await readOwnerCreditUsage(USER, deps(allowance, anchor), log);
     expect(JSON.stringify(result.data)).not.toContain(USER);
+  });
+
+  it('no key names a reason, an actor, an admin, a key, a source, a lot, the base / bonus split or a version (S11-AC-7)', async () => {
+    const result = await readOwnerCreditUsage(USER, deps(allowance, anchor), log);
+    const offenders = keysOf(result.data)
+      .flatMap((path) => path.split('.'))
+      .filter(isLotDetailKey);
+    expect(offenders).toEqual([]);
+  });
+
+  it('carries the extra figure only: no lot id, reason, admin, key or source value (S11-D-4 A)', async () => {
+    const result = await readOwnerCreditUsage(USER, deps(allowance, anchor), log);
+    expect(result.data!.extraCredits).toBe(200);
+    const text = JSON.stringify(result.data);
+    for (const value of [LOT_ID, REASON, ADMIN_ID, 'admin_grant', USER]) expect(text).not.toContain(value);
+  });
+
+  it('has the same key set with no lots (extraCredits: 0)', async () => {
+    const result = await readOwnerCreditUsage(USER, deps(allowance, anchor, []), log);
+    expect(result.data!.extraCredits).toBe(0);
+    expect(keysOf(result.data).sort()).toEqual([...expected].sort());
+  });
+});
+
+/** Slice 11d: the key segments that name lot detail (a Set, matched whole). */
+const LOT_DETAIL_SEGMENTS = new Set(['reason', 'actor', 'admin', 'source', 'lot', 'lots', 'base', 'bonus', 'version']);
+
+/** Slice 11d: a key segment naming lot detail (camelCase / snake_case segments). */
+function isLotDetailKey(key: string): boolean {
+  const segments = key.split(/_|(?=[A-Z])/).map((s) => s.toLowerCase()).filter(Boolean);
+  return segments.some((s) => LOT_DETAIL_SEGMENTS.has(s) || s.startsWith('idempot'));
+}
+
+describe('the S11-AC-7 rule (proved on planted keys first)', () => {
+  it.each([
+    'reason',
+    'actorAdminId',
+    'admin_note',
+    'idempotencyKey',
+    'idempotency_key',
+    'source',
+    'sourceRef',
+    'lotId',
+    'lots',
+    'creditsBase',
+    'credits_bonus',
+    'creditValueVersion',
+    // A combined total under a lot name is caught too.
+    'planAndLotsTotal',
+  ])('rejects %s', (key) => {
+    expect(isLotDetailKey(key)).toBe(true);
+  });
+
+  it.each(['allowance', 'remaining', 'extraCredits', 'resetsOn', 'used', 'usedByOwner', 'usedAutomatic', 'period', 'kind', 'amount', 'per'])(
+    'passes %s',
+    (key) => {
+      expect(isLotDetailKey(key)).toBe(false);
+    }
+  );
+});
+
+describe('no combined total (G11d-1, R-5 (c))', () => {
+  it.each(['granted', 'total', 'combined', 'balance'])('the payload has no %s key', async (word) => {
+    const result = await readOwnerCreditUsage(USER, deps({ amount: 32250, per: 'month' }, ANCHOR), log);
+    const segments = keysOf(result.data).flatMap((path) => path.split('.'));
+    expect(segments.filter((k) => k.toLowerCase().includes(word))).toEqual([]);
   });
 });

@@ -108,6 +108,22 @@ export function toDisplayedCredits(input: DisplayedCreditsInput): DisplayedCredi
   return { nothingUsed: used === 0, used: usedFigure, byOwner, automatic: byAutomatic, left };
 }
 
+// ── Extra credits on the owner card (slice 11d, SA OP-43, BQ-11d-1) ─────────
+
+/**
+ * The owner card's "Extra credits" figure, or null when the block is hidden:
+ * 0 (the user's decision 2026-10-04: nothing is shown at 0), or anything not a
+ * finite, positive number. Between 0 and 1 → "less than 1" (never hidden: it is
+ * not 0). Otherwise ROUNDED DOWN to a whole credit, so a remainder is never
+ * shown higher than it is (the used figure above rounds to nearest; this is
+ * what is left, so down).
+ */
+export function toDisplayedExtraCredits(extra: number): DisplayedCreditFigure | null {
+  if (typeof extra !== 'number' || !Number.isFinite(extra) || extra <= 0) return null;
+  if (extra < 1) return { kind: 'less_than_one' };
+  return whole(Math.floor(extra));
+}
+
 // ── The credit history (slice 7a, decision D-m) ─────────────────────────────
 //
 // One decimal; a non-zero line that would show as 0.0 shows "less than 0.1"

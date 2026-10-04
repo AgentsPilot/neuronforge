@@ -42,6 +42,9 @@ const state = {
   anchor: { data: { period_anchor: ANCHOR } as unknown, error: null as unknown },
   period: { data: PERIOD as unknown, error: null as unknown },
   totals: { data: null as unknown, error: null as unknown },
+  // Slice 11d: the owner's credit lots and their draws.
+  lots: { data: [] as unknown, error: null as unknown },
+  draws: { data: [] as unknown, error: null as unknown },
   ownerClientsBuilt: 0,
 };
 
@@ -50,7 +53,14 @@ function fakeClient(kind: 'owner' | 'service') {
     from: (table: string) => {
       const query: Query = { client: kind, table, calls: [] };
       state.queries.push(query);
-      const answer = () => (table === 'business_os_account_plans' ? state.anchor : state.totals);
+      const answer = () =>
+        table === 'business_os_account_plans'
+          ? state.anchor
+          : table === 'business_os_credit_lots'
+            ? state.lots
+            : table === 'business_os_credit_lot_draws'
+              ? state.draws
+              : state.totals;
       const builder: Record<string, unknown> = {};
       for (const method of ['select', 'eq', 'in', 'gte', 'order', 'range']) {
         builder[method] = (...args: unknown[]) => {
@@ -136,6 +146,8 @@ beforeEach(() => {
   state.anchor = { data: { period_anchor: ANCHOR }, error: null };
   state.period = { data: PERIOD, error: null };
   state.totals = { data: totalsRow, error: null };
+  state.lots = { data: [], error: null };
+  state.draws = { data: [], error: null };
   state.ownerClientsBuilt = 0;
 });
 
@@ -156,7 +168,7 @@ describe('GET /api/business-os/usage', () => {
         used: 63,
         usedByOwner: 41,
         usedAutomatic: 22,
-        granted: 0,
+        extraCredits: 0,
         remaining: 32187,
       },
     });
@@ -194,7 +206,8 @@ describe('GET /api/business-os/usage', () => {
     await GET(request());
 
     const byClient = (client: 'owner' | 'service') => state.queries.filter((q) => q.client === client).map((q) => q.table);
-    expect(byClient('owner')).toEqual(['business_os_credit_totals']);
+    // Slice 11d: the lots too, on the same RLS client (no draws read without lots).
+    expect(byClient('owner').sort()).toEqual(['business_os_credit_lots', 'business_os_credit_totals']);
     expect(byClient('service')).toEqual(['business_os_account_plans']);
     expect(state.ownerClientsBuilt).toBe(1);
   });
@@ -246,5 +259,63 @@ describe('the handler source', () => {
   it('is never cached', () => {
     expect(code).toMatch(/export const dynamic = 'force-dynamic'/);
     expect(code).toMatch(/'Cache-Control': 'private, no-store'/);
+  });
+});
+
+/**
+ * Credit deduction slice 11d (workplan §11d.6; SA W11d-2, W11d-8; G11d-1):
+ * the owner's "Extra credits", read with the caller's RLS client.
+ */
+describe('extra credits (slice 11d)', () => {
+  const LOT = 'cccccccc-3333-4333-8333-cccccccccccc';
+  const lotRow = { id: LOT, user_id: CUSTOMER, credits_granted: '200.000000', expires_at: null, created_at: '2026-09-20T00:00:00+00:00' };
+  const routeLogger = () =>
+    (jest.requireMock('@/lib/logger') as { createLogger: () => { info: jest.Mock } }).createLogger();
+
+  beforeEach(() => routeLogger().info.mockClear());
+
+  it('a 200-credit lot: extraCredits 200, remaining unchanged (the plan only), no lot detail in the answer', async () => {
+    state.lots = { data: [lotRow], error: null };
+    state.draws = { data: [{ id: 'eeeeeeee-3333-4333-8333-eeeeeeeeeeee', lot_id: LOT, user_id: CUSTOMER, kind: 'reversal', credits: '50', created_at: '2026-09-21T00:00:00+00:00' }], error: null };
+
+    const response = await GET(request());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data).toMatchObject({ used: 63, extraCredits: 150, remaining: 32187 });
+    expect(JSON.stringify(body)).not.toContain(LOT);
+    // Both lot reads on the caller's RLS client, scoped to the caller.
+    const lotQueries = state.queries.filter((q) => q.table.startsWith('business_os_credit_lot'));
+    expect(lotQueries.map((q) => q.client)).toEqual(['owner', 'owner']);
+    for (const q of lotQueries) expect(q.calls).toContainEqual(['eq', ['user_id', CUSTOMER]]);
+  });
+
+  it('the log says whether there are extra credits, never the figure (W11d-8)', async () => {
+    state.lots = { data: [lotRow], error: null };
+    await GET(request());
+    const info = routeLogger().info.mock.calls.find(([, msg]) => msg === 'Owner credits read');
+    expect(info).toBeDefined();
+    expect(info![0]).toMatchObject({ hasExtra: true });
+    expect(JSON.stringify(info![0])).not.toMatch(/200|extraCredits/);
+
+    routeLogger().info.mockClear();
+    state.lots = { data: [], error: null };
+    await GET(request());
+    expect(routeLogger().info.mock.calls.find(([, msg]) => msg === 'Owner credits read')![0]).toMatchObject({ hasExtra: false });
+  });
+
+  it.each([
+    ['a lots read error', () => (state.lots = { data: null, error: new Error('permission denied for column reason') })],
+    ['a draws read error', () => {
+      state.lots = { data: [lotRow], error: null };
+      state.draws = { data: null, error: new Error('JWT expired') };
+    }],
+    ['an unreadable lot figure', () => (state.lots = { data: [{ ...lotRow, credits_granted: 'NaN' }], error: null })],
+  ])('%s is a 500 with the generic message, never extraCredits: 0 (OP-38)', async (_name, breakIt) => {
+    breakIt();
+    const response = await GET(request());
+    const body = await response.json();
+    expect(response.status).toBe(500);
+    expect(body).toEqual({ success: false, error: 'Could not load your credits' });
   });
 });

@@ -57,7 +57,7 @@ const MONTHLY = (used: number): OwnerCreditUsage => ({
   used,
   usedByOwner: used,
   usedAutomatic: 0,
-  granted: 0,
+  extraCredits: 0,
   remaining: Math.max(0, 32250 - used),
 });
 const TRIAL = (used: number): OwnerCreditUsage => ({
@@ -66,7 +66,7 @@ const TRIAL = (used: number): OwnerCreditUsage => ({
   used,
   usedByOwner: used,
   usedAutomatic: 0,
-  granted: 0,
+  extraCredits: 0,
   remaining: Math.max(0, 2000 - used),
 });
 

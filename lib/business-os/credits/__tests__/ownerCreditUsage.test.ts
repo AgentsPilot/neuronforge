@@ -13,8 +13,13 @@ jest.mock('@/lib/business-os/entitlements/EntitlementService', () => ({
   getEntitlementService: () => ({ getSnapshot: (accountId: string) => mockSnapshot(accountId) }),
 }));
 
-import type { OwnerCreditChargeRow, OwnerCreditTotalsRow } from '@/lib/repositories/BusinessOsCreditOwnerReadRepository';
-import { readOwnerCreditUsage, type OwnerCreditUsageDeps } from '../ownerCreditUsage';
+import type {
+  OwnerCreditChargeRow,
+  OwnerCreditLotRow,
+  OwnerCreditTotalsRow,
+} from '@/lib/repositories/BusinessOsCreditOwnerReadRepository';
+import { extraCreditsAt } from '../creditLots';
+import { readOwnerCreditUsage, type OwnerCreditCardDeps } from '../ownerCreditUsage';
 import type { OwnerCreditAllowance } from '../ownerCreditUsageTypes';
 
 const USER = '11111111-1111-4111-8111-111111111111';
@@ -80,6 +85,9 @@ interface Ledger {
   failTotals?: boolean;
   failAdjustments?: boolean;
   totalsCeiling?: boolean;
+  /** Slice 11d: the owner's credit lots (none by default). */
+  lots?: OwnerCreditLotRow[];
+  failLots?: boolean;
 }
 
 /** An exact-string fake of the owner repository. */
@@ -106,10 +114,14 @@ function fakeOwner(ledger: Ledger) {
       data: (ledger.charges ?? []).filter((c) => c.action_id !== null && ids.includes(c.action_id)),
       error: null,
     })),
+    listOwnCreditLots: jest.fn(async (accountId: string) => {
+      if (ledger.failLots) return { data: null, error: new Error('too_many_lots') };
+      return { data: accountId === USER ? (ledger.lots ?? []) : [], error: null };
+    }),
   };
 }
 
-function makeDeps(ledger: Ledger, over: Partial<OwnerCreditUsageDeps> = {}) {
+function makeDeps(ledger: Ledger, over: Partial<OwnerCreditCardDeps> = {}) {
   const owner = fakeOwner(ledger);
   const deps = {
     findPeriodAnchor: jest.fn(async () => ({ data: ANCHOR as string | null, error: null as Error | null })),
@@ -142,7 +154,7 @@ describe('a monthly plan (Founding Partner)', () => {
       used: 63,
       usedByOwner: 41,
       usedAutomatic: 22,
-      granted: 0,
+      extraCredits: 0,
       remaining: 32187,
     });
     expect(owner.findTotalsForPeriod).toHaveBeenCalledWith(USER, PERIOD);
@@ -198,7 +210,7 @@ describe('no allowance', () => {
       used: 3,
       usedByOwner: 3,
       usedAutomatic: 0,
-      granted: 0,
+      extraCredits: 0,
       remaining: null,
     });
     expect(deps.periodStartFor).not.toHaveBeenCalled();
@@ -258,7 +270,7 @@ describe('a trial (a one-off total)', () => {
       used: 348,
       usedByOwner: 300,
       usedAutomatic: 48,
-      granted: 0,
+      extraCredits: 0,
       remaining: 1652,
     });
   });
@@ -354,5 +366,149 @@ describe('failures are errors, never zero', () => {
     const { deps } = makeDeps({ totals: [] }, { readAllowance: jest.fn(async () => { throw new Error('boom'); }) });
     const result = await readOwnerCreditUsage(USER, deps, makeLog());
     expect(result.error?.message).toBe('boom');
+  });
+});
+
+/**
+ * Credit deduction slice 11d (workplan §11d.6.2; SA W11d-2, W11d-6; G11d-1,
+ * G11d-5, G11d-6): the owner's "Extra credits" figure.
+ */
+describe('extra credits (slice 11d)', () => {
+  const lotId = (n: number) => `bbbbbbbb-bbbb-4bbb-8bbb-${String(n).padStart(12, '0')}`;
+  const lot = (n: number, over: Partial<OwnerCreditLotRow> = {}): OwnerCreditLotRow => ({
+    id: lotId(n),
+    creditsGranted: 200,
+    expiresAt: null,
+    createdAt: '2026-09-01T00:00:00.000Z',
+    draws: [],
+    ...over,
+  });
+  const reversal = (credits: number, createdAt = '2026-09-20T00:00:00.000Z') => ({ kind: 'reversal' as const, credits, createdAt });
+
+  it('no lots: 0, and remaining as before', async () => {
+    const { deps, owner } = makeDeps({ totals: [totalsRow(PERIOD, { owner: 63 })] });
+    const result = await readOwnerCreditUsage(USER, deps, makeLog());
+    expect(result.data).toMatchObject({ extraCredits: 0, remaining: 32187 });
+    expect(owner.listOwnCreditLots).toHaveBeenCalledWith(USER);
+  });
+
+  it.each([
+    ['one 200-credit lot, no expiry', [lot(1)], 200],
+    ['a lot added mid-period counts at once', [lot(1, { createdAt: '2026-09-29T23:59:00.000Z' })], 200],
+    ['a lot expiring exactly now is expired (<=)', [lot(1, { expiresAt: NOW.toISOString() })], 0],
+    ['a lot expiring one millisecond later still counts', [lot(1, { expiresAt: '2026-09-30T12:00:00.001Z' })], 200],
+    ['a reversal of 50 leaves 150', [lot(1, { draws: [reversal(50)] })], 150],
+    ['a fractional remainder is kept exact (6 dp)', [lot(1, { creditsGranted: 100, draws: [reversal(33.333333)] })], 66.666667],
+    ['a lot created after now is ignored', [lot(1), lot(2, { createdAt: '2026-10-01T00:00:00.000Z' })], 200],
+    ['two lots add up', [lot(1), lot(2, { creditsGranted: 50.5 })], 250.5],
+  ])('%s', async (_name, lots, expected) => {
+    const { deps } = makeDeps({ totals: [], lots });
+    const result = await readOwnerCreditUsage(USER, deps, makeLog());
+    expect(result.error).toBeNull();
+    expect(result.data!.extraCredits).toBe(expected);
+  });
+
+  it.each([
+    ['monthly', MONTHLY, [totalsRow(PERIOD, { owner: 63 })]],
+    ['trial', TRIAL, [totalsRow(PERIOD, { owner: 300 })]],
+    ['over the allowance', MONTHLY, [totalsRow(PERIOD, { owner: 32260 })]],
+  ])('remaining is the PLAN only: identical with and without lots (%s, G11d-1)', async (_name, allowance, totals) => {
+    const without = makeDeps({ totals }, { readAllowance: jest.fn(async () => allowance as OwnerCreditAllowance | null) });
+    const withLots = makeDeps(
+      { totals, lots: [lot(1, { creditsGranted: 5000 })] },
+      { readAllowance: jest.fn(async () => allowance as OwnerCreditAllowance | null) }
+    );
+    const a = await readOwnerCreditUsage(USER, without.deps, makeLog());
+    const b = await readOwnerCreditUsage(USER, withLots.deps, makeLog());
+    expect(b.data!.extraCredits).toBe(5000);
+    expect(b.data!.remaining).toBe(a.data!.remaining);
+    expect({ ...b.data, extraCredits: 0 }).toEqual(a.data);
+  });
+
+  it('no plan row and 200 extra: no allowance, no remaining, the extra figure', async () => {
+    const { deps } = makeDeps(
+      { totals: [], lots: [lot(1)] },
+      { findPeriodAnchor: jest.fn(async () => ({ data: null, error: null })), readAllowance: jest.fn(async () => null) }
+    );
+    const result = await readOwnerCreditUsage(USER, deps, makeLog());
+    expect(result.data).toMatchObject({ allowance: null, remaining: null, extraCredits: 200 });
+  });
+
+  it('a lot read error (or its ceiling) is an error with lots_read_failed, never 0 (OP-38)', async () => {
+    const { deps } = makeDeps({ totals: [], failLots: true });
+    const log = makeLog();
+    const result = await readOwnerCreditUsage(USER, deps, log);
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ code: 'lots_read_failed', accountId: USER }), expect.any(String));
+  });
+
+  it('a lot read that rejects is still an error result: the builder never throws', async () => {
+    const { deps, owner } = makeDeps({ totals: [] });
+    owner.listOwnCreditLots.mockImplementation(async () => {
+      throw new Error('boom');
+    });
+    const result = await readOwnerCreditUsage(USER, deps, makeLog());
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+  });
+
+  it('an unreadable lot (the core answers null) is an error with lots_unreadable', async () => {
+    const { deps } = makeDeps({ totals: [], lots: [lot(1, { creditsGranted: Number.NaN })] });
+    const log = makeLog();
+    const result = await readOwnerCreditUsage(USER, deps, log);
+    expect(result.data).toBeNull();
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ code: 'lots_unreadable' }), expect.any(String));
+  });
+
+  it('an inconsistent lot: the clamped figure and one warn with the account and a count, never a figure', async () => {
+    const { deps } = makeDeps({ totals: [], lots: [lot(1, { creditsGranted: 10, draws: [reversal(15)] }), lot(2)] });
+    const log = makeLog();
+    const result = await readOwnerCreditUsage(USER, deps, log);
+    expect(result.data!.extraCredits).toBe(200);
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    const [ctx] = log.warn.mock.calls[0];
+    expect(ctx).toEqual({ accountId: USER, lots: 2 });
+  });
+
+  it('one now for both reads: the clock is called once', async () => {
+    const clock = jest
+      .fn()
+      .mockReturnValueOnce(NOW)
+      // A second call would land after the lot's expiry and change the answer.
+      .mockReturnValue(new Date('2026-12-31T00:00:00.000Z'));
+    const { deps } = makeDeps({ totals: [], lots: [lot(1, { expiresAt: '2026-10-15T00:00:00.000Z' })] }, { now: clock });
+    const result = await readOwnerCreditUsage(USER, deps, makeLog());
+    expect(clock).toHaveBeenCalledTimes(1);
+    expect(result.data!.extraCredits).toBe(200);
+  });
+
+  it('the two reads run in parallel: the lots are asked for before the plan read finishes', async () => {
+    let releaseAnchor: (v: { data: string | null; error: Error | null }) => void = () => {};
+    const heldAnchor = new Promise<{ data: string | null; error: Error | null }>((resolve) => {
+      releaseAnchor = resolve;
+    });
+    const { deps, owner } = makeDeps({ totals: [], lots: [lot(1)] }, { findPeriodAnchor: jest.fn(() => heldAnchor) });
+    const pending = readOwnerCreditUsage(USER, deps, makeLog());
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(deps.findPeriodAnchor).toHaveBeenCalled();
+    expect(owner.listOwnCreditLots).toHaveBeenCalledWith(USER);
+    releaseAnchor({ data: ANCHOR, error: null });
+    expect((await pending).data!.extraCredits).toBe(200);
+  });
+
+  it('one definition (G11d-5): the payload figure equals extraCreditsAt on the same lots', async () => {
+    const lots = [
+      lot(1, { creditsGranted: 120.25, draws: [reversal(20.125)] }),
+      lot(2, { creditsGranted: 80, expiresAt: '2026-09-15T00:00:00.000Z' }),
+      lot(3, { creditsGranted: 9.999999 }),
+    ];
+    const { deps } = makeDeps({ totals: [], lots });
+    const result = await readOwnerCreditUsage(USER, deps, makeLog());
+    expect(result.data!.extraCredits).toBe(extraCreditsAt(lots, NOW)!.extraCredits);
+    // Non-vacuity: the expired lot and the reversal both moved the figure.
+    expect(result.data!.extraCredits).toBeCloseTo(100.125 + 9.999999, 6);
   });
 });

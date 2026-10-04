@@ -6,7 +6,9 @@
  *
  * What is deliberately NOT here: no account id, no tokens, no dollars, no
  * cost, no model, no agent-platform credit unit and no fallback flag. The payload test holds the
- * exact key set and scans every key for those words.
+ * exact key set and scans every key for those words. Since slice 11d, also no
+ * lot list and nothing about where extra credits came from (S11-D-4 A,
+ * S11-AC-7): one figure, `extraCredits`.
  *
  * @module lib/business-os/credits/ownerCreditUsageTypes
  */
@@ -35,8 +37,13 @@ export interface OwnerCreditUsage {
   used: number;
   usedByOwner: number;
   usedAutomatic: number;
-  /** Always 0 until grants exist (slice 11). The card ignores it. */
-  granted: number;
-  /** max(0, allowance + granted - used), unrounded; null without an allowance. */
+  /**
+   * Credits added on top of the plan (an admin gift now, a purchase later), not
+   * expired, exact to 6 dp, never negative (credit deduction slice 11d,
+   * S11-SQ-10). A SEPARATE figure: never added to `remaining`, the percentage
+   * or the low line (boost R-5 (c), BD-25). The card shows it only above 0.
+   */
+  extraCredits: number;
+  /** max(0, allowance - used): the PLAN only, never extra credits. Unrounded; null without an allowance. */
   remaining: number | null;
 }

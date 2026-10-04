@@ -66,6 +66,8 @@ const OWNER_SURFACE = [
   'lib/business-os/credits/effectiveFields.ts',
   'lib/business-os/credits/creditHistoryFlag.ts',
   BANDS,
+  // Slice 11d: the balance core behind the card's "Extra credits" figure.
+  'lib/business-os/credits/creditLots.ts',
 ];
 
 describe('1. FR-36: the agent-platform measure is retired from the owner surface', () => {
@@ -203,5 +205,84 @@ describe('5. no client file imports the server modules behind the labels (slice 
     // Non-vacuity: the panel and the card are client files and are scanned.
     expect(files).toEqual(expect.arrayContaining([CARD, HISTORY_PANEL]));
     expect(files.filter((file) => SERVER_ONLY_MODULES.test(codeOf(read(file))))).toEqual([]);
+  });
+});
+
+/**
+ * 6. Slice 11d (G11d-1, G11d-2; SA W11d-9): on the card, extra credits are a
+ * SEPARATE figure. `extraCredits` is only validated (finite, at least 0) and
+ * handed to `toDisplayedExtraCredits`; the shown figure is only tested for
+ * presence and formatted. Never inside `creditPercentLeft`, `bandColor` or any
+ * arithmetic. `creditPercentLeft` takes `usage.used` and `allowance.amount`
+ * only, and `bandColor` the position's band only.
+ */
+describe('6. extra credits stay a separate figure on the card (slice 11d)', () => {
+  const ALLOWED_EXTRA_USES = [
+    /toDisplayedExtraCredits\(\s*usage\.extraCredits\s*\)/g,
+    /isFiniteNumber\(\s*v\.extraCredits\s*\)/g,
+    /\bv\.extraCredits\s*>=\s*0(?![\d.])/g,
+  ];
+  const ALLOWED_SHOWN_USES = [/\bconst extraShown\s*=/g, /\{extraShown\s*&&\s*\(/g, /\bfigure\(\s*extraShown\s*\)/g];
+
+  const strayCount = (code: string, allowed: RegExp[], word: RegExp) => {
+    let rest = code;
+    for (const re of allowed) rest = rest.replace(re, '');
+    return (rest.match(word) ?? []).length;
+  };
+  const strayExtra = (code: string) => strayCount(code, ALLOWED_EXTRA_USES, /extraCredits/g);
+  const strayShown = (code: string) => strayCount(code, ALLOWED_SHOWN_USES, /\bextraShown\b/g);
+  const percentArgs = (code: string) =>
+    [...code.matchAll(/creditPercentLeft\s*\(([^)]*)\)/g)].map((m) => m[1].replace(/\s+/g, ' ').trim());
+  const bandArgs = (code: string) => [...code.matchAll(/bandColor\s*\(([^)]*)\)/g)].map((m) => m[1].trim());
+  const PERCENT_OK = 'usage.used, allowance.amount';
+  const BAND_OK = /^position!?\.band$/;
+
+  it('the rules match planted violations', () => {
+    for (const sample of [
+      'const total = usage.extraCredits + allowance.amount;',
+      'creditPercentLeft(usage.used - usage.extraCredits, allowance.amount)',
+      "bandColor(usage.extraCredits > 0 ? 'plenty' : position.band)",
+      '{numbers.format(usage.extraCredits)}',
+      'const left = (usage.remaining ?? 0) + usage.extraCredits;',
+    ]) {
+      expect({ sample, stray: strayExtra(sample) > 0 }).toEqual({ sample, stray: true });
+    }
+    expect(strayShown('const n = extraShown.kind === "whole" ? extraShown.value + 1 : 1;')).toBeGreaterThan(0);
+    expect(percentArgs('creditPercentLeft(usage.used + usage.extraCredits, allowance.amount)')).not.toEqual([PERCENT_OK]);
+    expect(percentArgs('creditPercentLeft(usage.used, allowance.amount + usage.extraCredits)')).not.toEqual([PERCENT_OK]);
+    expect(bandArgs('bandColor(extraBand)').every((a) => BAND_OK.test(a))).toBe(false);
+  });
+
+  it('the rules pass the allowed shapes', () => {
+    const clean = [
+      'return isFiniteNumber(v.extraCredits) && v.extraCredits >= 0;',
+      'const extraShown = usage ? toDisplayedExtraCredits(usage.extraCredits) : null;',
+      '{extraShown && (',
+      '{figure(extraShown)}',
+    ].join('\n');
+    expect(strayExtra(clean)).toBe(0);
+    expect(strayShown(clean)).toBe(0);
+    expect(percentArgs('creditPercentLeft(usage.used, allowance.amount)')).toEqual([PERCENT_OK]);
+    expect(bandArgs('bandColor(position!.band) bandColor(position.band)').every((a) => BAND_OK.test(a))).toBe(true);
+  });
+
+  it('the card reads extraCredits only through the validator and the display helper', () => {
+    const code = codeOf(read(CARD));
+    // Non-vacuity: the card does read the figure.
+    expect(code).toMatch(ALLOWED_EXTRA_USES[0]);
+    expect(strayExtra(code)).toBe(0);
+    expect(strayShown(code)).toBe(0);
+  });
+
+  it('the percentage is of the plan only: creditPercentLeft(usage.used, allowance.amount), every call', () => {
+    const args = percentArgs(codeOf(read(CARD)));
+    expect(args.length).toBeGreaterThan(0);
+    expect(args.every((a) => a === PERCENT_OK)).toBe(true);
+  });
+
+  it('the band colour comes from the position only', () => {
+    const args = bandArgs(codeOf(read(CARD)));
+    expect(args.length).toBeGreaterThan(0);
+    expect(args.every((a) => BAND_OK.test(a))).toBe(true);
   });
 });
