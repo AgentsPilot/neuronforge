@@ -120,6 +120,19 @@ jobs:
         if: ${{ !cancelled() && steps.scope.outputs.skip != 'true' }}
         run: npm run check:bos-llm-literals
 
+      # The proof behind the BOS LLM standards: the boundary snapshots record
+      # exactly what each call site sends to the provider. Nothing ran them, so
+      # #151 moved the chat planner prompt, its snapshot went red, and main stayed
+      # red until #185. `--ci` (in the npm script) makes a stale, new, obsolete or
+      # orphaned snapshot FAIL instead of being written; the orphan scan is
+      # repo-wide. No --passWithNoTests: a moved test folder must fail loudly.
+      # Same `!cancelled()` reasoning as the literal check above.
+      # MEASUREMENT PHASE: placement is ruled on CI timings, see
+      # docs/workplans/BOS_LLM_TESTS_IN_CI_WORKPLAN.md §6 and SA condition C-2.
+      - name: Run Business OS LLM test suite
+        if: ${{ !cancelled() && steps.scope.outputs.skip != 'true' }}
+        run: npm run test:bos-llm
+
       - name: Note the skip in the run summary
         if: steps.scope.outputs.skip == 'true'
         run: |
