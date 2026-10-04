@@ -57,7 +57,14 @@ describe('listOwnerEntries', () => {
     expect(result.data).toEqual({ logs: rows, total: 1, page: 1, limit: 1000, hasMore: false });
     expect(calls).toContainEqual(['from', 'audit_trail']);
     expect(calls).toContainEqual(['eq', 'user_id', OWNER]);
-    expect(calls).toContainEqual(['neq', 'entity_type', 'ai_action']);
+    // BD-26: every owner-hidden entity type, in one NOT IN.
+    expect(calls).toContainEqual([
+      'not',
+      'entity_type',
+      'in',
+      '(ai_action,business_os_account_plan,business_os_credit_lot,business_os_credit_period)',
+    ]);
+    expect(calls.some((c) => c[0] === 'neq')).toBe(false);
     expect(calls).toContainEqual(['not', 'action', 'like', 'BUSINESS_AI_ACTION_%']);
     expect(calls).toContainEqual(['order', 'created_at', { ascending: false }]);
     expect(calls).toContainEqual(['range', 0, 999]);
@@ -103,6 +110,44 @@ describe('listOwnerEntries', () => {
       expect(calls).toHaveLength(0);
     }
   );
+
+  // BD-26 (W26-2, W26-5). String literals on purpose, not imports from events.ts
+  // or ownerVisibility.ts, so these hold whether or not slice 8b has landed.
+  it.each([
+    [{ entityType: 'business_os_credit_lot' }],
+    [{ entityType: 'business_os_account_plan' }],
+    [{ entityType: 'business_os_credit_period' }],
+    [{ entityType: 'ai_action' }],
+    [{ action: 'BUSINESS_AI_ACTION_STARTED' }],
+  ])('answers a request for owner-hidden entries with nothing, without querying: %j', async (filter) => {
+    const { client, calls } = fakeClient({ data: [{ id: 'should-not-appear' }], error: null, count: 1 });
+    const result = await new AuditTrailRepository(client).listOwnerEntries(OWNER, { ...filter, page: 1, limit: 50 });
+    expect(result.error).toBeNull();
+    expect(result.data).toEqual({ logs: [], total: 0, page: 1, limit: 50, hasMore: false });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("a hidden event's action filter still queries, and the NOT IN carries the credit-period type (W26-2 b)", async () => {
+    const { client, calls } = fakeClient({ data: [], error: null, count: 0 });
+    const result = await new AuditTrailRepository(client).listOwnerEntries(OWNER, {
+      action: 'BOS_CREDIT_LOW_LINE_CROSSED',
+      page: 1,
+      limit: 50,
+    });
+    expect(result.error).toBeNull();
+    expect(calls).toContainEqual(['eq', 'action', 'BOS_CREDIT_LOW_LINE_CROSSED']);
+    const notIn = calls.find((c) => c[0] === 'not' && c[1] === 'entity_type' && c[2] === 'in');
+    expect(notIn).toBeDefined();
+    const listed = String(notIn![3]).replace(/^\(|\)$/g, '').split(',');
+    expect(listed).toContain('business_os_credit_period');
+    expect(listed).toContain('business_os_credit_lot');
+  });
+
+  it('an ordinary entity type filter still queries (not every filter is short-circuited)', async () => {
+    const { client, calls } = fakeClient({ data: [], error: null, count: 0 });
+    await new AuditTrailRepository(client).listOwnerEntries(OWNER, { entityType: 'settings', page: 1, limit: 50 });
+    expect(calls).toContainEqual(['eq', 'entity_type', 'settings']);
+  });
 
   it('returns the error rather than throwing', async () => {
     const { client } = fakeClient({ data: null, error: new Error('boom'), count: null });

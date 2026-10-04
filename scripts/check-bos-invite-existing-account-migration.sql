@@ -63,9 +63,9 @@ checks AS (
          column_summary.stamp_columns || ' of 1' AS detail
   FROM column_summary
   UNION ALL
-  SELECT 11, 'E02 invite table still has 16 check constraints',
-         CASE WHEN check_summary.all_checks = 16 THEN 'PASS' ELSE 'FAIL' END,
-         check_summary.all_checks || ' of 16'
+  SELECT 11, 'E02 total invite checks for information',
+         'INFO',
+         check_summary.all_checks || ' in total and 16 expected at apply time'
   FROM check_summary
   UNION ALL
   SELECT 12, 'E03 lookup function exists once',
@@ -98,7 +98,8 @@ FROM (
   SELECT 0 AS sort_order, 'VERDICT' AS check_name,
          CASE WHEN EXISTS (SELECT 1 FROM checks WHERE checks.status = 'FAIL') THEN 'FAIL' ELSE 'PASS' END AS status,
          (SELECT count(*) FROM checks WHERE checks.status = 'PASS') || ' pass '
-           || (SELECT count(*) FROM checks WHERE checks.status = 'FAIL') || ' fail' AS detail
+           || (SELECT count(*) FROM checks WHERE checks.status = 'FAIL') || ' fail '
+           || (SELECT count(*) FROM checks WHERE checks.status = 'INFO') || ' info' AS detail
   UNION ALL
   SELECT checks.sort_order, checks.check_name, checks.status, checks.detail FROM checks
 ) AS report

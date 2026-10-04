@@ -21,6 +21,17 @@
 // (`auth.uid() = user_id`) apply to every read. An expired session therefore
 // fails as a read error, never as "no rows".
 //
+// Documented service-role callers (S11-SQ-9 pattern, SA-ruled): a caller with
+// no user session may construct this class on the service-role client in its
+// own deps file, which documents the RLS bypass. This file still imports no
+// service client, and every method still requires the account id and adds
+// `.eq('user_id', accountId)`. Today: `lib/business-os/credits/creditLowLineDeps.ts`
+// (credit deduction slice 8b — the low-line check inside the AI charge
+// recorder; the account is the charge record's, validated by `runAiAction`).
+//
+// `findTotalsForPeriod` and `listTotalsFrom` take an optional abort signal
+// (slice 8b, SA SQ-44) so a time-boxed caller can cancel the request.
+//
 // `new-repository` checklist, singleton item: N/A BY DESIGN. A singleton would
 // need a default client, and the only default that works without a request is
 // the service role, which is exactly what this file must never hold.
@@ -201,18 +212,20 @@ export class BusinessOsCreditOwnerReadRepository {
   /** The totals row of one period, or null when nothing was charged in it yet. */
   async findTotalsForPeriod(
     accountId: string,
-    periodStart: string
+    periodStart: string,
+    options: { signal?: AbortSignal } = {}
   ): Promise<RepositoryResult<OwnerCreditTotalsRow | null>> {
     const method = 'findTotalsForPeriod';
     try {
       this.assertAccount(accountId);
       assertPeriodKey(periodStart);
-      const { data, error } = await this.supabase
+      let query = this.supabase
         .from('business_os_credit_totals')
         .select(OWNER_TOTALS_COLUMNS)
         .eq('user_id', accountId)
-        .eq('period_start', periodStart)
-        .maybeSingle();
+        .eq('period_start', periodStart);
+      if (options.signal) query = query.abortSignal(options.signal);
+      const { data, error } = await query.maybeSingle();
       if (error) throw error;
       return { data: (data ?? null) as unknown as OwnerCreditTotalsRow | null, error: null };
     } catch (error) {
@@ -226,20 +239,23 @@ export class BusinessOsCreditOwnerReadRepository {
    */
   async listTotalsFrom(
     accountId: string,
-    fromPeriodStart: string
+    fromPeriodStart: string,
+    options: { signal?: AbortSignal } = {}
   ): Promise<RepositoryResult<OwnerCeilingResult<OwnerCreditTotalsRow>>> {
     const method = 'listTotalsFrom';
     try {
       this.assertAccount(accountId);
       assertPeriodKey(fromPeriodStart);
       const ceiling = OWNER_CREDIT_READ_LIMITS.TOTALS_CEILING;
-      const { data, error } = await this.supabase
+      let query = this.supabase
         .from('business_os_credit_totals')
         .select(OWNER_TOTALS_COLUMNS)
         .eq('user_id', accountId)
         .gte('period_start', fromPeriodStart)
         .order('period_start', { ascending: true })
         .range(0, ceiling - 1);
+      if (options.signal) query = query.abortSignal(options.signal);
+      const { data, error } = await query;
       if (error) throw error;
       const rows = (data ?? []) as unknown as OwnerCreditTotalsRow[];
       return { data: { rows, reachedCeiling: rows.length >= ceiling }, error: null };

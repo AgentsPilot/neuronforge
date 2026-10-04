@@ -26,6 +26,7 @@
 
 import type { Locale } from '@/lib/i18n/config';
 import { wrapInBrandedTemplate, emailButton, type BrandingData } from './base-template';
+import { escapeHtml } from '@/lib/email/escapeHtml';
 
 export interface ConsentConfirmationEmailData {
   businessName: string;
@@ -122,13 +123,4 @@ export function generateConsentConfirmationEmail(data: ConsentConfirmationEmailD
     subject: t.subject(data.businessName),
     html: wrapInBrandedTemplate(content, data.branding),
   };
-}
-
-/** The statement is tenant-authored text going into markup. */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }

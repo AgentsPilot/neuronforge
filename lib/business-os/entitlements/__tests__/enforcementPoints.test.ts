@@ -371,6 +371,12 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['creditAllowanceForDisplay', 'getEntitlementService', 'resolveAccountId'],
       why: 'Credit deduction slice 8a: the admin Businesses list shows each account\'s percentage of credits left, for DISPLAY only. It maps the list\'s rows through the account seam (`resolveAccountId`), reads `getSnapshots` (never `check()` / `decide()`) and turns each snapshot into a figure with `creditAllowanceForDisplay`, which keeps the capability id inside the module. It refuses nothing: every account is listed whatever its figure. If this file ever calls `check`, it is a gate and belongs in ENFORCEMENT_POINTS.',
     },
+    // ── Credit deduction slice 8b, 2026-10-04 — the low-line audit record ─
+    {
+      file: 'lib/business-os/credits/creditLowLine.ts',
+      symbols: ['creditAllowanceForDisplay', 'getEntitlementService', 'resolveAccountId'],
+      why: 'Credit deduction slice 8b: after an AI charge is RECORDED, reads the account\'s plan allowance through the account seam (`resolveAccountId`, then `getSnapshot` — never `check()` / `decide()`) and `creditAllowanceForDisplay`, to decide whether the shown percentage left crossed the low line, and if so writes one admin audit entry. It refuses nothing: the charge is already written and the action continues whatever the figure. If this file ever calls `check`, it is a gate and belongs in ENFORCEMENT_POINTS.',
+    },
     {
       file: 'lib/business-os/invites/paymentHoldGate.ts',
       symbols: ['resolveAccountId'],

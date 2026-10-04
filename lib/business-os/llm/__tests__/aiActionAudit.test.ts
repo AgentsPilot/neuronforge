@@ -21,6 +21,8 @@ const mockRecordCharge = jest.fn();
 jest.mock('@/lib/repositories/BusinessOsCreditChargeRepository', () => ({
   businessOsCreditChargeRepository: { recordCharge: (...args: unknown[]) => mockRecordCharge(...args) },
 }));
+// Slice 8b (SA condition 4): setup only — the low-line hook is proven in the recorder's suite (NI-6 to NI-8).
+jest.mock('@/lib/business-os/credits/creditLowLine', () => ({ checkCreditLowLine: jest.fn().mockResolvedValue(undefined) }));
 
 const mockLogged: Array<{ level: string; fields: Record<string, unknown>; msg: string }> = [];
 jest.mock('@/lib/logger', () => {

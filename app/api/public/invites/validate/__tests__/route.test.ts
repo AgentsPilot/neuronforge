@@ -350,11 +350,15 @@ describe('T-7: no token and no hash in any log line', () => {
 
 describe('Slices 5a/5b (F5a-10, F5b-3): a champion friend invite', () => {
   const policy = INVITE_ISSUANCE_POLICY as unknown as { accountInvitesAvailable: boolean };
+  // Restore the value the config shipped with, not a hardcoded one: the switch
+  // has been on in production since Slice 5b, and a hook that forced `false`
+  // leaked a state the real config no longer has into every later test.
+  const shippedSwitch = INVITE_ISSUANCE_POLICY.accountInvitesAvailable;
   const friendRow = () =>
     stored({ issuer_kind: 'account', grant_kind: 'tier', grant_id: INVITE_ISSUANCE_POLICY.account.grantId, access_open_ended: null });
 
   afterEach(() => {
-    policy.accountInvitesAvailable = false;
+    policy.accountInvitesAvailable = shippedSwitch;
   });
 
   it('switch on (5b): valid passes through, with the masked email, and the account question is never asked', async () => {
@@ -383,7 +387,8 @@ describe('Slices 5a/5b (F5a-10, F5b-3): a champion friend invite', () => {
     expect(text).not.toContain('invitee@example.com');
   });
 
-  it('switch off (as shipped): unavailable', async () => {
+  it('switch off: unavailable', async () => {
+    policy.accountInvitesAvailable = false;
     state.row = friendRow();
     const body = await (await validate({ token: TOKEN })).json();
     expect(body.data).toEqual({ state: 'unavailable', language: 'en', inviterDisplayName: 'Dana' });

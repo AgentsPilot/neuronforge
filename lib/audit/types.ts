@@ -83,6 +83,12 @@ export const AUDIT_ENTITY_TYPES = [
   // by the admin give / take back credit ops on the entitlements accounts route
   // (credit deduction slice 11b); the entity id is the lot id.
   'business_os_credit_lot',
+  // One account's credit period (a monthly period, or a whole trial). Written
+  // only by the low-line check (credit deduction slice 8b,
+  // lib/business-os/credits/creditLowLine.ts); the entity id is the account id,
+  // the period key is in the details. Hidden from owners (BD-26,
+  // lib/audit/ownerVisibility.ts).
+  'business_os_credit_period',
   // One Business OS queue (one of the five in lib/cron/bosCronJobs.ts
   // BOS_QUEUES). Written only by the admin Drain now route,
   // POST /api/admin/jobs-queues/drain (ADMIN_BOS_CLEANUP slice 7d); the entity

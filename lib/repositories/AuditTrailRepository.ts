@@ -9,7 +9,8 @@
 // the rows, but the audit routes have always read with the service role, and
 // this repository makes the scoping explicit instead of relying on RLS:
 // `.eq('user_id', userId)` on every query. For the owner method `userId` is
-// always the authenticated caller (never a client-supplied value).
+// always the authenticated caller (never a client-supplied value). The same
+// holds for `listOwnerEntriesForExport`, the GDPR data export's audit read.
 //
 // THE FIRST ADMIN EXCEPTION (admin reorganisation slice 2b, SA C-7):
 // `listAdminAiFailures` reads an ADMIN-SELECTED account's failed Business OS AI
@@ -45,16 +46,19 @@
 // its only caller is `app/api/admin/business-os/ai-activity/route.ts`, behind
 // `requireAdmin` (pinned by adminReadMethods.guard.test.ts).
 //
-// AI audit entries (entity type `ai_action`, events `BUSINESS_AI_ACTION_*`) are
-// operator-only until the charging decision (Layer 3 D-6). The OWNER read,
-// `listOwnerEntries`, excludes them IN THE QUERY, so the owner's page, its
-// counts and its CSV export can never see one. Only the admin exceptions above
-// read them.
+// Owner-hidden entries are excluded IN THE QUERY, so the page, its counts and
+// its CSV export can never see one: every entity type in
+// OWNER_HIDDEN_ENTITY_TYPES (lib/audit/ownerVisibility.ts — `ai_action`, the
+// admin plan and credit-lot entries, slice 8b's credit-period entry; BD-26),
+// plus any `BUSINESS_AI_ACTION_*` event whatever its type (Layer 3 D-6). The
+// owner RLS policy (migration 20261018) mirrors the same list.
+// Only the admin exceptions above read AI entries.
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
-import { AI_ACTION_ENTITY_TYPE, AI_ACTION_EVENT_PREFIX, isAiAuditFilter } from '@/lib/audit/requestSchemas';
+import { AI_ACTION_ENTITY_TYPE, AI_ACTION_EVENT_PREFIX } from '@/lib/audit/requestSchemas';
+import { OWNER_HIDDEN_ENTITY_TYPES, isOwnerHiddenFilter } from '@/lib/audit/ownerVisibility';
 import type { AuditSeverity } from '@/lib/audit/types';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import type { AgentRepositoryResult as RepositoryResult } from './types';
@@ -184,13 +188,14 @@ export class AuditTrailRepository {
 
   /**
    * One page of the owner's own audit entries, newest first, never including an
-   * AI audit entry. `total` counts the same filtered rows.
+   * owner-hidden entry (an OWNER_HIDDEN_ENTITY_TYPES type or an AI action
+   * event; BD-26). `total` counts the same filtered rows.
    */
   async listOwnerEntries(userId: string, q: OwnerAuditQuery): Promise<RepositoryResult<OwnerAuditPage>> {
     const empty: OwnerAuditPage = { logs: [], total: 0, page: q.page, limit: q.limit, hasMore: false };
 
-    // Asking for AI entries is answered without a query: there are none for an owner.
-    if (isAiAuditFilter(q)) {
+    // Asking for hidden entries is answered without a query: there are none for an owner.
+    if (isOwnerHiddenFilter(q)) {
       return { data: empty, error: null };
     }
 
@@ -201,8 +206,9 @@ export class AuditTrailRepository {
         .from('audit_trail')
         .select(OWNER_COLUMNS, { count: 'exact' })
         .eq('user_id', userId)
-        // The primary guard. entity_type is NOT NULL, so no ordinary row is lost.
-        .neq('entity_type', AI_ACTION_ENTITY_TYPE)
+        // The primary guard (BD-26). entity_type is NOT NULL, so no ordinary row
+        // is lost. The values are fixed identifiers, so no quoting is needed.
+        .not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`)
         // Defence in depth, should an AI event ever be written under another type.
         .not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`);
 
@@ -229,6 +235,41 @@ export class AuditTrailRepository {
       };
     } catch (error) {
       this.logger.error({ err: error, userId, page: q.page, limit: q.limit }, 'Failed to list owner audit entries');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * GDPR export only (GET /api/user/data-export, Art. 15 / 20). The caller's own
+   * audit entries since `since` (an ISO timestamp the route computes), newest
+   * first, at most 10000, every column, with the same two BD-26 owner exclusions
+   * as listOwnerEntries (a source guard, lib/audit/__tests__/
+   * ownerAuditReads.guard.test.ts, keeps both here). The column set is fixed;
+   * changing it changes what the export holds, which is a privacy decision.
+   *
+   * Known and deliberately unchanged (FU-1 in
+   * BUSINESS_OS_BD26_OWNER_AUDIT_HIDING_WORKPLAN.md): it filters and orders on
+   * `timestamp`, a column that does not exist, so PostgREST answers 42703 and
+   * the export holds no audit rows today. The error is logged on every export
+   * until FU-1 lands. Fixing it changes what the export holds.
+   */
+  async listOwnerEntriesForExport(userId: string, since: string): Promise<RepositoryResult<Record<string, unknown>[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('audit_trail')
+        .select('*')
+        .eq('user_id', userId)
+        // BD-26, written as in listOwnerEntries. The values are fixed identifiers, so no quoting.
+        .not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`)
+        .not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`)
+        .gte('timestamp', since)
+        .order('timestamp', { ascending: false })
+        .limit(10000);
+
+      if (error) throw error;
+      return { data: (data ?? []) as Record<string, unknown>[], error: null };
+    } catch (error) {
+      this.logger.error({ err: error, userId }, 'Failed to list owner audit entries for the data export');
       return { data: null, error: error as Error };
     }
   }

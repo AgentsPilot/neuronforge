@@ -40,8 +40,8 @@ It exists because, before this work, the system had **no trustworthy admin signa
 > version of it described an *intended* end state and a reader would have
 > concluded the system was protected when it was not.
 
-Re-derived **2026-10-04** (ADMIN_BOS_CLEANUP slice 7d, on `5b26c361` plus that slice): **88 handlers across 59
-route files = 82 `requireAdmin` + 6 inline + 0 open.** The split is measured, not
+Re-derived **2026-10-04** (ADMIN_BOS_CLEANUP slice 7a, on `61bda100` plus that slice): **89 handlers across 60
+route files = 83 `requireAdmin` + 6 inline + 0 open.** The split is measured, not
 asserted — re-run the census rather than trusting these figures if much time has
 passed.
 
@@ -90,6 +90,17 @@ passed.
 > before, **88 / 82 + 6 + 0 open / 59 files** after. `adminGate.writes` 57 → 58. No
 > cap moved, no exemption added. The headline above, "What is true" and the register
 > heading were updated to these figures in the same change.
+>
+> **88 → 89 (2026-10-04):** `jobs-queues/items#GET` (ADMIN_BOS_CLEANUP slice 7a, the
+> read-only queue item list on the Scheduled jobs & queues page), gated from birth
+> with `requireAdmin` as its first statement (row 92). Re-measured from disk on
+> `feature/admin-queue-item-list` (base `61bda100`) with the authz guard's **own**
+> `scanHandlers`, `stripComments` and `blankStringLiterals` (a plain `grep` miscounts
+> here because of line endings): 59 / 88 = 82 + 6 before, **89 / 83 + 6 + 0 open /
+> 60 files** after. `adminGate.writes` unchanged at 58: this GET has its own four
+> denial cases in its route test, as `jobs-queues#GET` (row 84) does. No cap moved,
+> no exemption added. The headline above, "What is true" and the register heading
+> were updated to these figures in the same change.
 
 ### What is true
 
@@ -99,7 +110,7 @@ passed.
 | It derives admin identity **only** from `admin_users`, via `AdminAccessService` | ✅ True |
 | It fails closed, answers **401** signed-out / **403** non-admin, and never 500s on an authorization outcome | ✅ True |
 | No app-code access decision reads `profiles.role` — a repo-wide sweep returns **zero** hits | ✅ True, and CI rule R4 keeps it that way |
-| **Every one of the 88 `/api/admin/*` handlers requires an admin.** 82 via `requireAdmin`, 6 via their own equivalent check. **Zero open.** | ✅ **True as of 2026-10-04** (slices 2 + 3 of the unification; re-counted from disk in ADMIN_BOS_CLEANUP slice 1) |
+| **Every one of the 89 `/api/admin/*` handlers requires an admin.** 83 via `requireAdmin`, 6 via their own equivalent check. **Zero open.** | ✅ **True as of 2026-10-04** (slices 2 + 3 of the unification; re-counted from disk in ADMIN_BOS_CLEANUP slice 1) |
 | **All 28 `/admin` pages are protected on the server**, by inheritance from `app/admin/layout.tsx` | ✅ **True as of 2026-09-21** (slice 5), for the 21 pages then. The 7 added since inherited it without an edit: `business-os-tiers`, `business-os-llm`, `platform-dashboard` (the old landing, moved in admin reorganisation slice 4, beside the rewritten `/admin` Health page), `archiving` (Admin Archiving slice 1), `jobs-queues` (admin reorganisation slice 5, a client page), `business-os-invites` (invite-only signup slice 0) and `agentspilot-billing` (ADMIN_BOS_CLEANUP slice 2, a client page). 21 + 7 = 28. Re-counted 2026-09-27: 26 `page.tsx` files under `app/admin/`. Re-counted 2026-10-03 from disk: 27 on `5061489b`, 28 after ADMIN_BOS_CLEANUP slice 2 |
 | A **new** admin route cannot ship ungated | ✅ **True.** `Admin authz surface guard` is a **required status check** on `main` with `enforce_admins` and `strict` — a red guard blocks the merge |
 | A **new** `/admin` page is protected before its author writes a line of it | ✅ True — it renders as `children` of the guarded layout; there is no per-page opt-out |
@@ -119,14 +130,14 @@ the work mostly done, as it was when the work had barely started.
 | ~~"A refused admin access is recorded"~~ | **Only on three surfaces.** Since 2026-10-01 the shared gates write one `audit_trail` row with `action = SECURITY_UNAUTHORIZED_ACCESS` when they answer "no": `requireAdmin` (`lib/admin/requireAdminRoute.ts`), `requireAdminPage` (`lib/admin/requireAdminPage.ts`) and the refused act-as (`lib/server/route-identity.ts`). The **6 hand-rolled handlers above record NOTHING on refusal** — `agents`, `business-os/llm-usage`, `business-os/llm-usage/businesses`, `chat-usage`, `users/[id]/audit-logs`, `users/[id]/login-stats`. So filtering `/admin/audit-trail` by that action shows refusals on the counted surfaces only; an empty result means "nothing was refused on those three", never "nobody probed". Anonymous callers are also not recorded (401, no identity to refuse), and a refusal caused by the admin check **throwing** is deliberately not recorded either. Closing this is part of the **parked slice 4** conversion, which is also the only thing that can shorten the list of six. |
 | ~~"The published counts cannot drift"~~ | The equality caps stop the exemption lists getting **longer**. Nothing forces an entry to be deleted when its handler is gated, so the figures can still drift **conservatively** — understating how much is gated (OI-22). |
 
-### Every admin handler and its state (88)
+### Every admin handler and its state (89)
 
 The unit is the **handler**, not the file: slice 1 gated write verbs and left read
 verbs open in the *same* files, so a file-level table would have been misleading.
 That asymmetry is gone now — every row below is gated — but the handler remains
 the right unit for the register.
 
-**82 `requireAdmin` · 6 correct-but-inline · 0 open.** (Rows 73–80 were added 2026-09-25, rows 81–83 on 2026-09-26, row 84 on 2026-09-27, rows 85–86 on 2026-09-29/30 and rows 87–90 on 2026-10-02 and row 91 on 2026-10-04; the numbering of rows 1–72 is kept so older references still resolve. Rows 47–49 are struck through, not removed: their handlers were deleted on 2026-10-02. **91 rows, 88 live**, equal to the measured handler count.)
+**83 `requireAdmin` · 6 correct-but-inline · 0 open.** (Rows 73–80 were added 2026-09-25, rows 81–83 on 2026-09-26, row 84 on 2026-09-27, rows 85–86 on 2026-09-29/30 and rows 87–90 on 2026-10-02 and rows 91–92 on 2026-10-04; the numbering of rows 1–72 is kept so older references still resolve. Rows 47–49 are struck through, not removed: their handlers were deleted on 2026-10-02. **92 rows, 89 live**, equal to the measured handler count.)
 
 | # | Route | Verb | State | Note |
 |---|---|---|---|---|
@@ -221,6 +232,7 @@ the right unit for the register.
 | 89 | `business-os/invites` | `POST` | ✅ gated | `requireAdmin` first statement (`invites/route.ts:136`). Idem |
 | 90 | `business-os/invites/[inviteId]/revoke` | `POST` | ✅ gated | `requireAdmin` first statement (`revoke/route.ts:34`). Idem |
 | 91 | `jobs-queues/drain` | `POST` | ✅ gated | `requireAdmin` first statement, new in ADMIN_BOS_CLEANUP slice 7d ("Drain now" on `/admin/jobs-queues`). Runs one Business OS queue's drain now, the same function its cron runs, awaited, `maxDuration = 60`. A deliberate cross-account action: it processes, and may send, due items for every account. Strict Zod `{ queue, reason }`; 401/403 before 400, with no body read, no drain and no audit row on any of them (route test G-1..G-6, `adminGate.writes`). One write-ahead `BOS_QUEUE_DRAIN_STARTED` row per press, flushed before the drain. Never calls a cron URL, reads `CRON_SECRET` or records a cron run |
+| 92 | `jobs-queues/items` | `GET` | ✅ gated | `requireAdmin` first statement, new in ADMIN_BOS_CLEANUP slice 7a (the read-only queue item list on `/admin/jobs-queues`). A deliberate cross-account read: one page (50 rows, at most 20 pages) of one queue's items in one state, through `AdminJobsQueuesRepository.listQueueItemsAllAccounts` (service role, exact per-table column list). Metadata only: business name, item id, fixed kind and status labels, due time, attempts, age, and the re-send / cancel marks from the shared `queueItemEligibility`. Never returns an account id, timezone, raw kind, error text, skip reason, payload or any contact, invoice or booking id. Strict Zod `{ queue, state, page }`; 401/403 before 400 with nothing read (route test G-1..G-6). Read-only: no write and no audit row, as `jobs-queues#GET` |
 
 ### CI enforcement
 
@@ -608,3 +620,4 @@ npx eslint app lib components hooks --rule '{"no-console":"error"}'
 | 2026-10-02 | ADMIN_BOS_CLEANUP slice 1: Admin users page read-only, slice 7's routes deleted, R4 → 0, census 87 = 81 + 6 + 0, 58 files | `/admin/settings` ("Admin users") rewritten as a **truthful read-only list** (active `admin_users` rows, `ADMIN_EMAILS`-only addresses, overlap marker); its only request is the new **`GET /api/admin/admins`** (row 87, `requireAdmin` first, repository read, 500 never an empty list, counts-only logs). `settings/admin-users` (GET + POST) and `settings/platform-users` (GET) **deleted**, folding in admin-authz slice 7 (rows 47–49 struck). One `ADMIN_EMAILS` parser for app code, `lib/admin/adminEmailsEnv.ts` (the seed script's copy is OI-12). Guard **R4 parked 2 → 0**, no other cap moved; `adminGate.writes` 59 → 57. Census **re-measured from disk** (method in [As-Built State](#as-built-state--read-this-first)): 89 / 59 files on `023dde98`, **87 / 81 + 6 / 58 files** after; the three gated-but-unregistered invite handlers registered as rows 88–90 (doc only) so live rows = measured handlers. Added "Removing an admin" to [Bootstrapping Admins](#bootstrapping-admins), including the seed re-activation trap and the `is_platform_admin()` asymmetry. OI-2b and OI-3 done; "What is NOT true" Settings row restated |
 | 2026-10-03 | ADMIN_BOS_CLEANUP slice 2: `/admin` pages 27 → 28 | `agentspilot-billing` added (the AgentsPilot grace period, boost packs and calculator, moved off `/admin/system-config`, which is now Model pricing only). It is a client page under the guarded layout and inherits the guard without an edit. The page truth-table row now names all seven pages added since 2026-09-21 (`business-os-llm` was missing from the old list; `business-os-invites` arrived after the 2026-09-27 count). No handler, register row, census or cap changes. The `system-config/pricing` write handlers (PUT, POST, DELETE) now flush their audit entries before responding |
 | 2026-10-04 | ADMIN_BOS_CLEANUP slice 7d: register row 91, census 88 = 82 + 6 + 0, 59 files | Row **91** `jobs-queues/drain#POST` ("Drain now"), gated from birth with `requireAdmin` as its first statement. Census re-measured from disk on `5b26c361` plus this slice: **88 / 82 + 6 + 0 open / 59 files** (was 87 / 81 + 6 / 58). `adminGate.writes` 57 → 58. No cap moved, no exemption. Note added under [As-Built State](#as-built-state--read-this-first) |
+| 2026-10-04 | ADMIN_BOS_CLEANUP slice 7a: register row 92, census 89 = 83 + 6 + 0, 60 files | Row **92** `jobs-queues/items#GET` (the read-only queue item list), gated from birth with `requireAdmin` as its first statement. Census re-measured from disk on `61bda100` plus this slice with the authz guard's own scanner: **89 / 83 + 6 + 0 open / 60 files** (was 88 / 82 + 6 / 59). `adminGate.writes` unchanged at 58 (a GET with its own four denial cases). No cap moved, no exemption. Headline, "What is true", register heading and summary line updated in place (CR7D-1); note added under [As-Built State](#as-built-state--read-this-first) |

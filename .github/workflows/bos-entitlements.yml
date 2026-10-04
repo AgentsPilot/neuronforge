@@ -15,6 +15,19 @@
 #                                          reset never deletes an override row
 #   the purge descriptor + ownership tests so a new table cannot be left
 #   unclassified
+#   app/api/admin/business-os/entitlements/__tests__/**,
+#   lib/business-os/credits/__tests__/**   the admin plan and credit ops and
+#                                          the credit maths (11b audit F2)
+#   lib/audit/__tests__/**, app/api/audit/__tests__/**,
+#   app/api/user/data-export/__tests__/**  the audit registries, the owner
+#                                          visibility rule and its policy
+#                                          mirror, the owner-read guard (BD-26)
+#   app/admin/users/__tests__/**           the admin users screen (11b audit F2)
+#
+# Paths live in the `test:bos-entitlements` script in package.json (one Jest
+# process). If this step grows by more than 45 s or stops finishing at least
+# 30 s before Build, move app/admin/users/__tests__ to `test:authz-guard`
+# (BD-26 workplan, SA ruling 4).
 #
 # ── WHY THIS WORKFLOW HAS TO EXIST ────────────────────────────────────────
 # NOTHING ELSE RUNS THESE. `plugin-tests.yml` is path-filtered to the plugin
@@ -71,9 +84,6 @@ concurrency:
   group: bos-entitlements-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  NODE_VERSION: '18'
-
 jobs:
   # ⚠️ Renaming this job un-gates `main` if it is a required status check.
   bos-entitlements:
@@ -104,7 +114,9 @@ jobs:
         if: steps.scope.outputs.skip != 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          # Node from .nvmrc, as build.yml does. Node 18 has no global `crypto`,
+          # which the admin route suites added to this job by BD-26 need.
+          node-version-file: '.nvmrc'
           cache: 'npm'
 
       - name: Install dependencies

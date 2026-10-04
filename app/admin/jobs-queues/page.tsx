@@ -5,6 +5,7 @@
  * part C). Protected by `app/admin/layout.tsx` (`requireAdminPage`), and its
  * data route by `requireAdmin`. Read-only apart from Drain now
  * (ADMIN_BOS_CLEANUP slice 7d), which lives in the view's per-queue dialog.
+ * The per-queue item list (slice 7a) is read-only.
  */
 
 import { JobsQueuesView } from '../components/jobs/JobsQueuesView';

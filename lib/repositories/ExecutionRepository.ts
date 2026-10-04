@@ -212,6 +212,33 @@ export class ExecutionRepository {
       return { data: null, error: error as Error };
     }
   }
+
+  /**
+   * GDPR export only (GET /api/user/data-export, Art. 15 / 20). The caller's
+   * executions since `since` (an ISO timestamp the route computes), every
+   * column, newest first, at most 1000. The column set and the cap are fixed;
+   * changing them changes what the export holds, which is a privacy decision.
+   *
+   * Construct this repository with `supabaseServer` for this read: the default
+   * client is the browser anon client, which would return nothing under RLS.
+   */
+  async listForUserDataExport(userId: string, since: string): Promise<AgentRepositoryResult<Record<string, unknown>[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('agent_executions')
+        .select('*')
+        .eq('user_id', userId)
+        .gte('created_at', since)
+        .order('created_at', { ascending: false })
+        .limit(1000);
+
+      if (error) throw error;
+      return { data: (data ?? []) as Record<string, unknown>[], error: null };
+    } catch (error) {
+      this.logger.error({ err: error, userId }, 'Failed to list executions for the data export');
+      return { data: null, error: error as Error };
+    }
+  }
 }
 
 // Export singleton instance for convenience

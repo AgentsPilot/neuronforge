@@ -8,7 +8,12 @@
  * READ-ONLY apart from one action: a Refresh button, and per queue the
  * "Drain now" dialog (ADMIN_BOS_CLEANUP slice 7d), which lives in
  * DrainNowDialog.tsx and owns the page's only POST. No retry, requeue or
- * cancel here (roadmap R-18; slices 7a–7c, later). No auto-refresh (A-11).
+ * cancel here (roadmap R-18; slices 7b–7c, later). No auto-refresh (A-11).
+ *
+ * Slice 7a: each queue card has a "View items" toggle that opens the read-only
+ * QueueItemsPanel, which owns the list's only request (a GET). The view bumps
+ * `refreshKey` after every load, so Refresh and a finished drain also reload
+ * an open list (FR-Q7).
  *
  * Green appears only on a job the computation called Healthy (a recorded
  * Vercel cron run and a good read) or a queue called Clear (a good read), and
@@ -21,6 +26,8 @@ import { RefreshCw } from 'lucide-react';
 
 import { createLogger } from '@/lib/logger';
 import { DrainNowDialog, isDrainQueueId } from './DrainNowDialog';
+import { QueueItemsPanel } from './QueueItemsPanel';
+import { ageWords, formatUtc } from './jobsFormat';
 import type {
   JobStatus,
   JobView,
@@ -66,32 +73,15 @@ export const QUEUE_TONE: Record<QueueStatus, Tone> = {
   clear: 'green',
 };
 
-/**
- * "YYYY-MM-DD HH:mm UTC" for any ISO timestamp, whatever its offset (QA-L2).
- * The value is converted to UTC through Date, never sliced as text, so a
- * database that answers in another timezone (e.g. "+02:00") can never show a
- * local time labelled "UTC".
- */
-export function formatUtc(iso: string | null): string {
-  if (!iso) return '—';
-  const time = new Date(iso);
-  if (Number.isNaN(time.getTime())) return '—';
-  const utcIso = time.toISOString();
-  return `${utcIso.slice(0, 10)} ${utcIso.slice(11, 16)} UTC`;
-}
+// formatUtc and ageWords live in jobsFormat.ts (slice 7a, OP-13), shared with
+// the item list; formatUtc is re-exported for the existing render tests.
+export { formatUtc };
 
 const utc = formatUtc;
 
 function duration(msValue: number | null): string {
   if (msValue === null) return '—';
   return msValue < 1000 ? `${msValue} ms` : `${(msValue / 1000).toFixed(1)} s`;
-}
-
-function ageWords(minutes: number | null): string {
-  if (minutes === null) return 'none';
-  if (minutes < 60) return `${minutes} min`;
-  if (minutes < 1440) return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
-  return `${Math.floor(minutes / 1440)} d ${Math.floor((minutes % 1440) / 60)} h`;
 }
 
 function Badge({ tone, children }: { tone: Tone; children: string }) {
@@ -184,7 +174,8 @@ function JobRow({ job }: { job: JobView }) {
   );
 }
 
-function QueueCard({ queue, onDrained }: { queue: QueueView; onDrained: () => void }) {
+function QueueCard({ queue, onDrained, refreshKey }: { queue: QueueView; onDrained: () => void; refreshKey: number }) {
+  const [itemsOpen, setItemsOpen] = useState(false);
   const f = queue.figures;
   const rows: Array<[string, string]> = f
     ? [
@@ -245,6 +236,21 @@ function QueueCard({ queue, onDrained }: { queue: QueueView; onDrained: () => vo
       )}
       <p className="text-xs text-slate-500">Failures are {queue.windowWords}.</p>
       {queue.note && <p className="text-xs text-slate-500">{queue.note}</p>}
+      {/* Shown even when the figures could not be read (slice 7a). */}
+      {isDrainQueueId(queue.id) && (
+        <>
+          <button
+            type="button"
+            aria-expanded={itemsOpen}
+            aria-controls={`queue-items-${queue.id}`}
+            onClick={() => setItemsOpen((open) => !open)}
+            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1 text-xs text-slate-200 transition-colors hover:bg-slate-700"
+          >
+            {itemsOpen ? 'Hide items' : 'View items'}
+          </button>
+          {itemsOpen && <QueueItemsPanel queueId={queue.id} queueLabel={queue.label} refreshKey={refreshKey} />}
+        </>
+      )}
     </section>
   );
 }
@@ -253,6 +259,8 @@ export function JobsQueuesView() {
   const [view, setView] = useState<JobsQueuesViewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Bumped after every load, so an open item list reloads with the figures (FR-Q7).
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -272,6 +280,7 @@ export function JobsQueuesView() {
       setError(err instanceof Error ? err.message : 'The jobs and queues could not be loaded');
     } finally {
       setLoading(false);
+      setRefreshKey((key) => key + 1);
     }
   }, []);
 
@@ -361,7 +370,7 @@ export function JobsQueuesView() {
             </p>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               {view.queues.map((queue) => (
-                <QueueCard key={queue.id} queue={queue} onDrained={() => void load()} />
+                <QueueCard key={queue.id} queue={queue} onDrained={() => void load()} refreshKey={refreshKey} />
               ))}
             </div>
           </section>

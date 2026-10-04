@@ -15,6 +15,7 @@ import {
   type BrandingData,
 } from './base-template';
 import { emailTranslations } from './translations';
+import { escapeHtml } from '@/lib/email/escapeHtml';
 
 export interface DailyBriefingEmailData {
   /** One fact per entry, already narrated in the recipient's language. */
@@ -110,17 +111,4 @@ export function generateDailyBriefingEmail(data: DailyBriefingEmailData): {
     subject: t.subject[locale].replace('{date}', formattedDate),
     html: wrapInBrandedTemplate(content, brandingWithLocale),
   };
-}
-
-/**
- * Narrated lines carry client names and owner notes — arbitrary user text going
- * into an HTML document. Escaped rather than trusted.
- */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
