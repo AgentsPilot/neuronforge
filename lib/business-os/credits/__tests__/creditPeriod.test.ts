@@ -161,6 +161,8 @@ describe('source guard: period keys never pass through Date (SQ-20, R-1)', () =>
     'lib/business-os/credits/creditHistoryCursor.ts',
     // Slice 8a: the admin Businesses column's batch.
     'lib/business-os/credits/adminCreditPercent.ts',
+    // Slice 8b: the low-line check (keys stay strings end to end).
+    'lib/business-os/credits/creditLowLine.ts',
   ])(
     '%s builds no Date from an anchor or a period key outside the display maths',
     (file) => {
