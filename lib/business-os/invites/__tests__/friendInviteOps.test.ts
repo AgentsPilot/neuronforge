@@ -54,11 +54,15 @@ const SESSION_EMAIL = 'Dana.Champion@Example.com';
 const SENDER = 'invites@agentspilot.ai';
 const config = getEntitlementConfig();
 const policy = INVITE_ISSUANCE_POLICY as unknown as { accountInvitesAvailable: boolean };
+// Restore the value the config shipped with, not a hardcoded one: the switch
+// has been on in production since Slice 5b, and a hook that forced `false`
+// leaked a state the real config no longer has into every later test.
+const shippedSwitch = INVITE_ISSUANCE_POLICY.accountInvitesAvailable;
 const COHORT = INVITE_ISSUANCE_POLICY.account.issuerCohort;
 const at = (offsetMs: number) => new Date(NOW.getTime() + offsetMs).toISOString();
 
 afterEach(() => {
-  policy.accountInvitesAvailable = false;
+  policy.accountInvitesAvailable = shippedSwitch;
 });
 
 function row(overrides: Partial<BusinessOsFriendInviteListRow> = {}): BusinessOsFriendInviteListRow {
@@ -221,7 +225,8 @@ describe('getFriendInviteSummary', () => {
     logger: { info: () => undefined, warn: () => undefined },
   });
 
-  it('switch off (as shipped): not eligible, and no database read at all', async () => {
+  it('switch off: not eligible, and no database read at all', async () => {
+    policy.accountInvitesAvailable = false;
     const h = harness();
     const deps = summaryDeps(h);
     expect(await getFriendInviteSummary(deps)).toEqual({ ok: true, summary: { eligible: false } });
@@ -270,6 +275,7 @@ describe('getFriendInviteSummary', () => {
 
 describe('sendFriendInvite', () => {
   it('switch off: 403 not_eligible before ANY read or write', async () => {
+    policy.accountInvitesAvailable = false;
     const h = harness();
     expect(await sendFriendInvite(body(), h.deps)).toEqual({ ok: false, status: 403, refusal: 'not_eligible' });
     expect(h.order).toEqual([]);

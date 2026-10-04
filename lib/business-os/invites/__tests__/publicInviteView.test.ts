@@ -294,6 +294,10 @@ describe('FR-8a / L-3: the invited email already has an account (Slice 1a)', () 
 
 describe('Slices 5a/5b (F5a-10, F5b-3, SA R-5, Q-8): a champion friend invite', () => {
   const policy = INVITE_ISSUANCE_POLICY as unknown as { accountInvitesAvailable: boolean };
+  // Restore the value the config shipped with, not a hardcoded one: the switch
+  // has been on in production since Slice 5b, and a hook that forced `false`
+  // leaked a state the real config no longer has into every later test.
+  const shippedSwitch = INVITE_ISSUANCE_POLICY.accountInvitesAvailable;
   const friendRow = (overrides: Partial<BusinessOsInvitePublicView> = {}) =>
     stored({
       issuer_kind: 'account',
@@ -305,7 +309,7 @@ describe('Slices 5a/5b (F5a-10, F5b-3, SA R-5, Q-8): a champion friend invite', 
     });
 
   afterEach(() => {
-    policy.accountInvitesAvailable = false;
+    policy.accountInvitesAvailable = shippedSwitch;
   });
 
   it('with the switch on (5b): valid, with the offer and the masked email, and NO existing-account check (F5b-3)', async () => {

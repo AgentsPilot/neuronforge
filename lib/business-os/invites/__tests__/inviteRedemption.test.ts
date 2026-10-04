@@ -951,6 +951,10 @@ describe('Slice 3b, SA R-1: a payload-bearing library error reaches no log, audi
 
 const CHAMPION_ID = '44444444-4444-4444-8444-444444444444';
 const switchable = INVITE_ISSUANCE_POLICY as unknown as { accountInvitesAvailable: boolean };
+// Restore the value the config shipped with, not a hardcoded one: the switch
+// has been on in production since Slice 5b, and a hook that forced `false`
+// leaked a state the real config no longer has into every later test.
+const shippedSwitch = INVITE_ISSUANCE_POLICY.accountInvitesAvailable;
 
 /** A friend invite exactly as the 5a send writes it. */
 const friendInvite = (overrides: Partial<BusinessOsInviteRedemptionView> = {}) =>
@@ -1004,7 +1008,7 @@ describe('Slice 5b: switch ON', () => {
     switchable.accountInvitesAvailable = true;
   });
   afterEach(() => {
-    switchable.accountInvitesAvailable = false;
+    switchable.accountInvitesAvailable = shippedSwitch;
   });
 
   describe('the friend branch refuses before any code, email, claim or account (F5b-2)', () => {

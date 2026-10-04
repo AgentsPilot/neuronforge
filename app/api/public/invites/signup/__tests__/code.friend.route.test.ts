@@ -99,6 +99,10 @@ async function ask(hasAccount: boolean): Promise<{ status: number; body: string;
 }
 
 const switchable = INVITE_ISSUANCE_POLICY as unknown as { accountInvitesAvailable: boolean };
+// Restore the value the config shipped with, not a hardcoded one: the switch
+// has been on in production since Slice 5b, and a hook that forced `false`
+// leaked a state the real config no longer has into every later test.
+const shippedSwitch = INVITE_ISSUANCE_POLICY.accountInvitesAvailable;
 const savedMarketing = process.env.NEXT_PUBLIC_MARKETING_URL;
 
 beforeEach(() => {
@@ -109,7 +113,7 @@ beforeEach(() => {
 
 afterEach(() => {
   jest.useRealTimers();
-  switchable.accountInvitesAvailable = false;
+  switchable.accountInvitesAvailable = shippedSwitch;
   if (savedMarketing === undefined) delete process.env.NEXT_PUBLIC_MARKETING_URL;
   else process.env.NEXT_PUBLIC_MARKETING_URL = savedMarketing;
 });
