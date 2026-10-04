@@ -35,6 +35,23 @@ jest.mock('@/lib/repositories/AiModelPricingRepository', () => ({
   aiModelPricingRepository: { listActive: jest.fn().mockResolvedValue({ data: [], error: null }) },
 }));
 
+// Slice 8b (SA DV-B1): setup only. The low-line hook is a no-op stand-in for
+// every existing test; the "low-line hook" block below runs the REAL hook
+// through it with injected reads (NI-6, NI-7), and AuditTrail is faked so no
+// entry can leave the process.
+const mockCheckLowLine = jest.fn();
+jest.mock('@/lib/business-os/credits/creditLowLine', () => ({
+  checkCreditLowLine: (...args: unknown[]) => mockCheckLowLine(...args),
+}));
+const mockAuditLog = jest.fn();
+const mockAuditFlush = jest.fn();
+jest.mock('@/lib/services/AuditTrailService', () => ({
+  AuditTrail: {
+    log: (...args: unknown[]) => mockAuditLog(...args),
+    flush: (...args: unknown[]) => mockAuditFlush(...args),
+  },
+}));
+
 import type { UsageCallRecord } from '@/lib/ai/usageScope';
 import type { AiActionSpec } from '../aiActionAudit';
 import * as chargePricing from '../chargePricing';
@@ -410,5 +427,218 @@ describe('source guards (SA C-5, C-6, D-13, tenant-isolation-guard, AC-11)', () 
     const source = read('lib/business-os/llm/aiChargeRecorder.ts');
     expect(source.match(/businessOsCreditChargeRepository\.recordCharge\(/g)).toHaveLength(1);
     expect(source).not.toMatch(/\bretry\b|\bretries\b/i);
+  });
+});
+
+// ── Slice 8b: the low-line hook (SA SQ-44; NI-6 to NI-8; C-B2, C-B3) ─────────
+
+describe('low-line hook (slice 8b, NI-6 to NI-8)', () => {
+  type LowLine = typeof import('@/lib/business-os/credits/creditLowLine');
+  type HookInput = Parameters<LowLine['checkCreditLowLine']>[0];
+  type HookDeps = NonNullable<Parameters<LowLine['checkCreditLowLine']>[1]>;
+  const actual = jest.requireActual<LowLine>('@/lib/business-os/credits/creditLowLine');
+  const flushModule = jest.requireActual<typeof import('@/lib/audit/boundedAuditFlush')>('@/lib/audit/boundedAuditFlush');
+
+  const hang = () => new Promise<never>(() => undefined);
+  const lowLineLogs = () => mockLogged.filter((l) => l.fields.event === 'bos_credit_low_line_check_failed');
+
+  /** Reads for a charge of 1 credit that takes 1,000 / month from 10% left (899.5 used) to 9% (900.5). */
+  function crossingDeps(overrides: { findTotalsForPeriod?: jest.Mock; readAllowance?: jest.Mock } = {}): HookDeps {
+    return {
+      readAllowance: overrides.readAllowance ?? jest.fn().mockResolvedValue({ amount: 1000, per: 'month' }),
+      findPeriodAnchor: jest.fn().mockResolvedValue({ data: PERIOD, error: null }),
+      owner: {
+        findTotalsForPeriod:
+          overrides.findTotalsForPeriod ??
+          jest.fn().mockResolvedValue({ data: { period_start: PERIOD, credits_total: '900.5' }, error: null }),
+        listTotalsFrom: jest.fn(),
+      },
+    } as unknown as HookDeps;
+  }
+
+  /** Route the stand-in to the REAL hook, with injected reads. */
+  const realHook = (deps: HookDeps) =>
+    mockCheckLowLine.mockImplementation((given: HookInput) => actual.checkCreditLowLine(given, deps));
+
+  beforeEach(() => {
+    mockCheckLowLine.mockReset();
+    mockCheckLowLine.mockResolvedValue(undefined);
+    mockAuditLog.mockReset();
+    mockAuditLog.mockResolvedValue(undefined);
+    mockAuditFlush.mockReset();
+    mockAuditFlush.mockResolvedValue(undefined);
+    flushModule.__resetAuditFlushChainForTests();
+  });
+
+  afterEach(() => {
+    flushModule.__resetAuditFlushChainForTests();
+  });
+
+  describe('NI-8: called once, and only after a recorded charge into a plan period', () => {
+    it("happy path: called exactly once, with the charge's own key and anchor source", async () => {
+      await recordAiCharge(input());
+      expect(mockCheckLowLine).toHaveBeenCalledTimes(1);
+      expect(mockCheckLowLine).toHaveBeenCalledWith({
+        accountId: OWNER,
+        credits: 1,
+        periodStart: PERIOD,
+        anchorSource: 'plan',
+        actionId: ACTION,
+        actionType: 'chat_turn',
+        trigger: 'owner',
+        chargeService: 'ai',
+      });
+    });
+
+    const notCalled: Array<[string, () => Partial<AiChargeInput>]> = [
+      ['recorded: false (a replayed action id)', () => (mockRecordCharge.mockResolvedValue(ok(false)), {})],
+      ['calendar_month (no plan row)', () => (mockRecordCharge.mockResolvedValue(ok(true, 'calendar_month')), {})],
+      ['a DB error', () => (mockRecordCharge.mockResolvedValue({ data: null, error: Object.assign(new Error('x'), { code: '23514' }) }), {})],
+      ['a network-shaped error', () => (mockRecordCharge.mockResolvedValue({ data: null, error: { code: '', message: 'fetch failed' } }), {})],
+      ['a rejecting repository', () => (mockRecordCharge.mockRejectedValue(new Error('rejected')), {})],
+      ['no calls (skipped)', () => ({ calls: [] })],
+      ['a type declared not charged', () => ({ isCharged: false })],
+      ['invalid identities', () => ({ decision: { identities: null, failure: undefined } })],
+      ['no decision', () => ({ decision: undefined })],
+      [
+        'an unpriceable cost',
+        () => (
+          jest
+            .spyOn(chargePricing, 'priceActionForCharge')
+            .mockReturnValue({ costUsd: Number.NaN, isFallbackPriced: false, fallbackCallCount: 0, calls: [] }),
+          {}
+        ),
+      ],
+      [
+        'a charge of zero credits',
+        () => (
+          jest
+            .spyOn(chargePricing, 'priceActionForCharge')
+            .mockReturnValue({ costUsd: 0, isFallbackPriced: false, fallbackCallCount: 0, calls: [] }),
+          {}
+        ),
+      ],
+    ];
+
+    it.each(notCalled)('not called on %s', async (_n, arrange) => {
+      const overrides = arrange();
+      await expect(recordAiCharge(input(overrides))).resolves.toBeUndefined();
+      expect(mockCheckLowLine).not.toHaveBeenCalled();
+    });
+
+    it('not called on a timed-out write', async () => {
+      jest.useFakeTimers();
+      mockRecordCharge.mockImplementation(() => hang());
+      const done = recordAiCharge(input());
+      await jest.advanceTimersByTimeAsync(BOS_AI_CHARGE_WRITE_BUDGET_MS);
+      await done;
+      expect(mockCheckLowLine).not.toHaveBeenCalled();
+      expect(jest.getTimerCount()).toBe(0);
+    });
+  });
+
+  describe("NI-6: the hook's reads hang → the action waits at most the read budget", () => {
+    it.each([
+      ['the allowance read', () => crossingDeps({ readAllowance: jest.fn(() => hang()) })],
+      ['the totals read', () => crossingDeps({ findTotalsForPeriod: jest.fn(() => hang()) })],
+    ])('%s hangs: resolves at the read budget, one log, no entry, no timer left', async (_n, make) => {
+      jest.useFakeTimers();
+      realHook(make());
+      let settled = false;
+      const done = recordAiCharge(input()).then(() => {
+        settled = true;
+      });
+      await jest.advanceTimersByTimeAsync(actual.CREDIT_LOW_LINE_READ_BUDGET_MS - 1);
+      expect(settled).toBe(false);
+      await jest.advanceTimersByTimeAsync(1);
+      await done;
+      expect(settled).toBe(true);
+      expect(lowLineLogs()).toHaveLength(1);
+      expect(lowLineLogs()[0].fields).toMatchObject({ reason: 'timeout' });
+      expect(mockAuditLog).not.toHaveBeenCalled();
+      expect(jest.getTimerCount()).toBe(0);
+    });
+  });
+
+  describe('NI-7: the hook throws, rejects, or its flush hangs → the recorder still resolves, one log, bounded delay', () => {
+    it('the hook throws synchronously → one error, never a throw', async () => {
+      mockCheckLowLine.mockImplementation(() => {
+        throw new RangeError('defect');
+      });
+      await expect(recordAiCharge(input())).resolves.toBeUndefined();
+      expect(lowLineLogs()).toHaveLength(1);
+      expect(lowLineLogs()[0]).toMatchObject({ level: 'error', fields: { reason: 'exception', errCode: 'RangeError', ...FR16_IDS } });
+      expect(JSON.stringify(mockLogged)).not.toContain('defect');
+    });
+
+    it('the hook rejects → one error, never a rejection', async () => {
+      mockCheckLowLine.mockRejectedValue(new TypeError('defect'));
+      await expect(recordAiCharge(input())).resolves.toBeUndefined();
+      expect(lowLineLogs()).toHaveLength(1);
+      expect(lowLineLogs()[0].fields).toMatchObject({ reason: 'exception', errCode: 'TypeError' });
+    });
+
+    it("the real hook's read fails → one warn, no entry, the recorder resolves", async () => {
+      realHook(crossingDeps({ findTotalsForPeriod: jest.fn().mockRejectedValue(new Error('down')) }));
+      await expect(recordAiCharge(input())).resolves.toBeUndefined();
+      expect(lowLineLogs()).toHaveLength(1);
+      expect(lowLineLogs()[0].level).toBe('warn');
+      expect(mockAuditLog).not.toHaveBeenCalled();
+    });
+
+    it('C-B3: on the crossing charge a hanging flush is bounded (≤ read budget + flush bound); no timer left', async () => {
+      jest.useFakeTimers();
+      mockAuditFlush.mockImplementation(() => hang());
+      realHook(crossingDeps());
+      let settled = false;
+      const start = Date.now();
+      const done = recordAiCharge(input()).then(() => {
+        settled = true;
+      });
+      await jest.advanceTimersByTimeAsync(flushModule.AUDIT_FLUSH_TIMEOUT_MS - 1);
+      expect(settled).toBe(false);
+      await jest.advanceTimersByTimeAsync(actual.CREDIT_LOW_LINE_READ_BUDGET_MS + 1);
+      await done;
+      expect(settled).toBe(true);
+      expect(Date.now() - start).toBeLessThanOrEqual(actual.CREDIT_LOW_LINE_READ_BUDGET_MS + flushModule.AUDIT_FLUSH_TIMEOUT_MS);
+      expect(mockAuditLog).toHaveBeenCalledTimes(1);
+      expect(mockAuditLog.mock.calls[0][0]).toMatchObject({ action: 'BOS_CREDIT_LOW_LINE_CROSSED', entityId: OWNER, userId: OWNER });
+      // One line: the flush timed out (the crossing itself is an info line).
+      expect(mockLogged.filter((l) => l.level === 'warn' || l.level === 'error')).toHaveLength(1);
+      expect(jest.getTimerCount()).toBe(0);
+    });
+
+    it('the crossing charge writes one entry, flushed before the recorder returns', async () => {
+      realHook(crossingDeps());
+      await recordAiCharge(input());
+      expect(mockAuditLog).toHaveBeenCalledTimes(1);
+      expect(mockAuditFlush).toHaveBeenCalledTimes(1);
+      expect(mockAuditLog.mock.calls[0][0].details).toMatchObject({ percentBefore: 10, percentAfter: 9, service: 'ai' });
+    });
+  });
+
+  describe('C-B2: the hook point (source)', () => {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'aiChargeRecorder.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    const GATE = "if (data.anchorSource === 'plan' && record.credits > 0) {";
+
+    it('exactly one checkCreditLowLine( call', () => {
+      expect(code.match(/checkCreditLowLine\(/g)).toHaveLength(1);
+    });
+
+    it('placed after the !data.recorded return, inside the plan-and-credits gate', () => {
+      const recordedReturn = code.indexOf('if (!data.recorded)');
+      const gate = code.indexOf(GATE);
+      const call = code.indexOf('checkCreditLowLine(');
+      expect(recordedReturn).toBeGreaterThan(-1);
+      expect(gate).toBeGreaterThan(recordedReturn);
+      expect(call).toBeGreaterThan(gate);
+      // Nothing closes the gate's block between it and the call.
+      expect(code.slice(gate + GATE.length, call)).not.toContain('}');
+    });
+
+    it('the recorder still names no service client, table or rpc', () => {
+      expect(code).not.toMatch(/supabaseServer|supabaseClient|\.from\(|\.rpc\(/);
+    });
   });
 });

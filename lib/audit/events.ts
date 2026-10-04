@@ -177,6 +177,15 @@ export const AUDIT_EVENTS = {
   // draw row is itself the append-only record.
   BOS_CREDIT_LOT_GRANTED: 'BOS_CREDIT_LOT_GRANTED',
   BOS_CREDIT_LOT_REDUCED: 'BOS_CREDIT_LOT_REDUCED',
+  // Credit deduction slice 8b: a recorded AI charge took the account's shown
+  // percentage of PLAN credits left from at or above the low line (10) to
+  // below it. Written only by lib/business-os/credits/creditLowLine.ts, with
+  // `logAndFlush`. Entity type 'business_os_credit_period', id = the account.
+  // The details carry the period key and kind, the plan allowance, the shown
+  // percentage before / after, the line and the crossing action's id, type and
+  // trigger; never owner text, tokens or dollars. "Once per period" is derived,
+  // not stored (KI-21, KI-22): count distinct (account, periodStart).
+  BOS_CREDIT_LOW_LINE_CROSSED: 'BOS_CREDIT_LOW_LINE_CROSSED',
 
   // ==========================================
   // BUSINESS OS INVITES (admin-only, server-written)
@@ -745,6 +754,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'An admin took credits back from a Business OS credit lot (credits, lot remaining and reason recorded)',
+  },
+  // Credit deduction slice 8b (SA SQ-46): 'info', no compliance flags — an
+  // observation for admins, not an operator alert. The writer passes NO
+  // severity, so this registration is the only source (pinned by test).
+  [AUDIT_EVENTS.BOS_CREDIT_LOW_LINE_CROSSED]: {
+    severity: 'info',
+    description: "A Business OS account's plan credits dropped below the low line (percentage before / after recorded)",
   },
   // ADMIN_BOS_CLEANUP slice 7d. 'warning': an admin made the platform process
   // (and possibly send) queued items across every account, outside the schedule.

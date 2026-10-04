@@ -35,3 +35,22 @@ export const ALL_ZERO_UUID = '00000000-0000-0000-0000-000000000000';
 export function platformAccountId(): string {
   return process.env.SYSTEM_ADMIN_USER_ID || ALL_ZERO_UUID;
 }
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The platform as an audit ACTOR (credit deduction slice 8b, SA C-B1):
+ * `SYSTEM_ADMIN_USER_ID` when it is a UUID, otherwise the all-zero id.
+ *
+ * Why not `platformAccountId()`: `audit_trail.actor_id` is a uuid column, and
+ * one non-UUID row fails its WHOLE flushed batch — taking other entries with
+ * it. Why not `null`: `AuditTrailService` turns a null actor into the entry's
+ * `userId`, so a system event would read as the account's own act.
+ *
+ * Pure: no logging, read at call time. `aiActionAudit.ts`'s `platformActorId()`
+ * applies the same rule with a one-time warning and a per-process cache.
+ */
+export function platformActorUuid(): string {
+  const configured = process.env.SYSTEM_ADMIN_USER_ID;
+  return typeof configured === 'string' && UUID_PATTERN.test(configured) ? configured : ALL_ZERO_UUID;
+}

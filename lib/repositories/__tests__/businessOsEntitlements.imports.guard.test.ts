@@ -149,6 +149,13 @@ const ALLOWED = new Set(
     // requireAdmin. Listed in NO_STATE_WRITE_REFERRERS below, and the slice 8a
     // test below pins the one method.
     'lib/business-os/credits/adminCreditPercentDeps.ts',
+    // ── Credit deduction slice 8b, 2026-10-04 — the low-line audit record ─
+    // READ ONLY, `findPeriodAnchor` and nothing else (SA SQ-44). The one file
+    // that wires the plan repository for the low-line check inside the AI
+    // charge recorder (a trial's anchor); the account is the charge record's,
+    // validated by runAiAction. Listed in NO_STATE_WRITE_REFERRERS below, and
+    // the slice 8b test below pins the one method.
+    'lib/business-os/credits/creditLowLineDeps.ts',
   ].map((p) => p.split('/').join(sep))
 );
 
@@ -159,6 +166,10 @@ const OWNER_CREDIT_CARD_METHOD = 'findPeriodAnchor';
 /** Slice 8a: the admin "Credits left" wiring, and the ONE plan-repository method it may call. */
 const ADMIN_CREDITS_LEFT_WIRING = 'lib/business-os/credits/adminCreditPercentDeps.ts';
 const ADMIN_CREDITS_LEFT_METHOD = 'findPeriodAnchorsBatch';
+
+/** Slice 8b: the low-line check's wiring, and the ONE plan-repository method it may call. */
+const LOW_LINE_WIRING = 'lib/business-os/credits/creditLowLineDeps.ts';
+const LOW_LINE_METHOD = 'findPeriodAnchor';
 
 /** The methods that CHANGE entitlement state. Component 5's admin routes own these. */
 const WRITE_METHODS = [
@@ -204,6 +215,8 @@ const NO_STATE_WRITE_REFERRERS = [
   'lib/business-os/credits/ownerCreditUsageDeps.ts',
   // Credit deduction slice 8a: the admin "Credits left" column — READ ONLY, `findPeriodAnchorsBatch` and nothing else.
   'lib/business-os/credits/adminCreditPercentDeps.ts',
+  // Credit deduction slice 8b: the low-line check — READ ONLY, `findPeriodAnchor` and nothing else.
+  'lib/business-os/credits/creditLowLineDeps.ts',
 ].map((p) => p.split('/').join(sep));
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -341,6 +354,18 @@ describe('RC-15 — entitlement repository referrers', () => {
     expect([...planted.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1])).toEqual([
       'findPeriodAnchorsBatch',
       'ensurePlanRow',
+    ]);
+  });
+
+  it('Slice 8b (SQ-44): the low-line check wiring calls findPeriodAnchor on the plan repository and NOTHING else', () => {
+    const source = readFileSync(join(ROOT, ...LOW_LINE_WIRING.split('/')), 'utf8');
+    const calls = [...source.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1]);
+    expect(calls).toEqual([LOW_LINE_METHOD]);
+    // The rule is not vacuous: it would see a second method.
+    const planted = 'businessOsAccountPlanRepository.findPeriodAnchor(a); businessOsAccountPlanRepository.resetPlanState(b)';
+    expect([...planted.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1])).toEqual([
+      'findPeriodAnchor',
+      'resetPlanState',
     ]);
   });
 
