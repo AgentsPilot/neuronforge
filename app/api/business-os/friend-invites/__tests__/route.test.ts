@@ -24,6 +24,10 @@ const CHAMPION = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 const INVITE_ID = '11111111-1111-4111-8111-111111111111';
 const COHORT = INVITE_ISSUANCE_POLICY.account.issuerCohort;
 const policy = INVITE_ISSUANCE_POLICY as unknown as { accountInvitesAvailable: boolean };
+// Restore the value the config shipped with, not a hardcoded one: the switch
+// has been on in production since Slice 5b, and a hook that forced `false`
+// leaked a state the real config no longer has into every later test.
+const shippedSwitch = INVITE_ISSUANCE_POLICY.accountInvitesAvailable;
 
 const state = {
   user: null as { id: string; email?: string } | null,
@@ -124,7 +128,7 @@ beforeEach(() => {
 });
 
 afterAll(() => {
-  policy.accountInvitesAvailable = false;
+  policy.accountInvitesAvailable = shippedSwitch;
 });
 
 describe('GET', () => {

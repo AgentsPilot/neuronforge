@@ -170,4 +170,12 @@ describe('rollback and checker match the migration', () => {
     expect(rows).toEqual(['E01', 'E02', 'E03', 'E04', 'E05', 'E06', 'E07']);
     expect(checker).toContain("'VERDICT'");
   });
+
+  it('E02 reports the table-wide CHECK total as information, never as a FAIL', () => {
+    // Later migrations (20261014, 20261020) add invite CHECKs, so a pinned 16
+    // made this checker FAIL by design on every later schema.
+    expect(checker).toMatch(/'E02 total invite checks for information',\s+'INFO',/);
+    expect(checker).not.toContain('check_summary.all_checks = 16');
+    expect(checker).toContain("checks.status = 'INFO'");
+  });
 });
