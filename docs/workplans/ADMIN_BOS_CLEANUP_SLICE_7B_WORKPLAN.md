@@ -746,7 +746,7 @@ There is one database (production) and no branch database. Dev and QA have no da
 
 ```powershell
 cd "C:\Users\Barak\My Projects\AgentsPilot\neuronforge-admin-queues"
-.\node_modules\.bin\tsx.cmd --tsconfig tsconfig.json "C:\Users\Barak\AppData\Local\Temp\claude\C--Users-Barak-My-Projects-AgentsPilot-neuronforge\13333d69-85f2-4f8a-8578-946d6a876a59\scratchpad\dev7b\probe-cancel-cas.ts"
+.\node_modules\.bin\tsx.cmd --tsconfig tsconfig.json "C:/Users/Barak/AppData/Local/Temp/claude/C--Users-Barak-My-Projects-AgentsPilot-neuronforge/13333d69-85f2-4f8a-8578-946d6a876a59/scratchpad/dev7b/probe-cancel-cas.ts"
 ```
 
 `tsx.cmd` rather than `tsx`: in PowerShell, `node_modules\.bin\tsx` resolves to `tsx.ps1`, which the execution policy may block (CR7B-3).
