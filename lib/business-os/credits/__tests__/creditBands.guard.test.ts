@@ -28,6 +28,8 @@ const CONSUMERS = [
   'components/business-os/UsageCard.tsx',
   'app/admin/users/components/CreditsLeftCell.tsx',
   'lib/business-os/credits/adminCreditPercent.ts',
+  // Slice 8b: the low-line audit record.
+  'lib/business-os/credits/creditLowLine.ts',
 ];
 
 /** Product files under a directory (no tests, no declarations). */

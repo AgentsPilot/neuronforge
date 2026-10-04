@@ -11,8 +11,9 @@
 //
 // CHARGE (deduction layer slice 3b-ii): after the entry is queued, the action's
 // credit charge is written by `recordAiCharge` (aiChargeRecorder.ts). It is the
-// ONE awaited write here, time-boxed at `BOS_AI_CHARGE_WRITE_BUDGET_MS`, and it
-// never throws, so it cannot change the action's value or error. The entry and
+// ONE awaited write here, time-boxed at `BOS_AI_CHARGE_WRITE_BUDGET_MS` (plus,
+// after a recorded charge, the recorder's bounded low-line check — slice 8b),
+// and it never throws, so it cannot change the action's value or error. The entry and
 // the charge take the SAME decision (identities and failure, SA N-7). Charges
 // are recorded in every entitlements mode: a charge measures, it decides
 // nothing (SA Q-4).
@@ -448,7 +449,9 @@ interface AiActionDecision {
  * not wrapped. Writing the entry can never fail, change or delay the action: it
  * is queued without waiting, and any fault in building it is logged and dropped.
  * The charge (slice 3b-ii) is awaited, but can never fail or change the action,
- * and delays it by at most `BOS_AI_CHARGE_WRITE_BUDGET_MS`. An action that made
+ * and delays it by at most `BOS_AI_CHARGE_WRITE_BUDGET_MS`, plus the low-line
+ * check's bound after a recorded charge (slice 8b: ≤ 0.5 s, ≤ 2.5 s on the one
+ * charge per period that crosses the low line). An action that made
  * no LLM call writes no entry and no charge, and awaits nothing (FR-7).
  */
 export async function runAiAction<T>(spec: AiActionSpec, fn: (handle: AiActionHandle) => Promise<T>): Promise<T> {
