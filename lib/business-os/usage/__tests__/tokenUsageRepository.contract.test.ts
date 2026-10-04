@@ -51,6 +51,11 @@ function compileTimeContract(repo: TokenUsageRepository): void {
   // accounts" is a different method name, never an omitted argument.
   // @ts-expect-error there is no account parameter to pass
   void repo.listChatCallsAllAccountsInWindow('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', WINDOW, 'business-os-chat', CHAT_OPTS);
+  // The admin ledger's platform-wide aggregate (bde9ead8) is the same kind of
+  // read: deliberately cross-tenant, requireAdmin-gated at its only caller, and it
+  // returns a row count and the newest row's timestamp, with no tenant data.
+  // @ts-expect-error there is no account parameter to pass
+  void repo.summariseFeatureAllAccountsInWindow('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', WINDOW, 'business-os-chat');
 }
 
 /*
@@ -66,6 +71,7 @@ const EXPECTED_ARITY: Record<string, number> = {
   listLabelsInWindow: 4,
   listChatCallsForAccountInWindow: 4,
   listChatCallsAllAccountsInWindow: 3,
+  summariseFeatureAllAccountsInWindow: 2,
 };
 
 describe('TokenUsageRepository account contract', () => {
