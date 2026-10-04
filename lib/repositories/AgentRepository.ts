@@ -699,6 +699,31 @@ export class AgentRepository {
       return { data: null, error: error as Error };
     }
   }
+
+  // ============ GDPR export ============
+
+  /**
+   * GDPR export only (GET /api/user/data-export, Art. 15 / 20). Every agent row
+   * of the caller, every column, newest first. Deleted and inactive agents are
+   * included ON PURPOSE: they are still personal data the platform holds, so
+   * there is no status filter. The column set is fixed; changing it changes what
+   * the export holds, which is a privacy decision.
+   */
+  async listForUserDataExport(userId: string): Promise<AgentRepositoryResult<Record<string, unknown>[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('agents')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return { data: (data ?? []) as Record<string, unknown>[], error: null };
+    } catch (error) {
+      this.logger.error({ err: error, userId }, 'Failed to list agents for the data export');
+      return { data: null, error: error as Error };
+    }
+  }
 }
 
 // Export singleton instance for convenience

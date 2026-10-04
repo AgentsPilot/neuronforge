@@ -176,6 +176,29 @@ export class UserSubscriptionRepository {
       return { data: null, error: error as Error };
     }
   }
+
+  /**
+   * GDPR export only (GET /api/user/data-export, Art. 15 / 20). A READ: the
+   * caller's whole subscription row, every column. It changes nothing about the
+   * grant writers above. The column set and `.single()` are fixed: changing
+   * either changes what the export holds, which is a privacy decision. No row is
+   * an error here (PGRST116), as it always was; the route exports `[]`.
+   */
+  async findForUserDataExport(userId: string): Promise<RepositoryResult<Record<string, unknown>>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('user_subscriptions')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
+
+      if (error) throw error;
+      return { data: data as Record<string, unknown>, error: null };
+    } catch (error) {
+      this.logger.error({ err: error, userId, method: 'findForUserDataExport' }, 'Failed to read the subscription for the data export');
+      return { data: null, error: error as Error };
+    }
+  }
 }
 
 // Singleton instance for convenience
