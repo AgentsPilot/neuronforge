@@ -48,6 +48,11 @@ beforeAll(() => {
   proto.scrollIntoView ??= () => undefined;
 });
 
+// Slice 7b: every cancellable row now renders a Radix dialog trigger, so the
+// 50-row paging flows exceed Jest's 5 s default (the 7d drain render suite's
+// precedent, SA L-1). Explicit per-test timeouts below still win.
+jest.setTimeout(20000);
+
 function jobsView(): JobsQueuesView {
   return buildJobsQueuesView(
     {
@@ -231,7 +236,8 @@ describe('U-3: rows', () => {
     expect(rows[0]).toContain('4 h 0 min since it was queued');
     expect(rows[0]).toContain('until 2026-10-07 08:00 UTC');
     expect(rows[0]).not.toContain('sending hours');
-    expect(rows[0]).toMatch(/yes$/);
+    // Slice 7b: a cancellable row's Cancellable cell is the "Cancel item" button.
+    expect(rows[0]).toMatch(/Cancel item$/);
     expect(rows[1]).toContain('stuck 25 min (claimed)');
     // CR7A-3: an expired lease on the Stuck tab is not "held" by a run.
     expect(rows[1]).toContain("no: claimed by a run; the queue's own sweep releases it");
@@ -574,24 +580,42 @@ describe('U-8 / U-9 / W7A-10: no leak, no action', () => {
     expect(document.body.innerHTML).not.toMatch(/SENTINEL|sentinel|client\.test/);
   });
 
-  it('W7A-10: the open panel\'s only buttons are the four tabs and Previous / Next', async () => {
+  // Amended by slice 7b (workplan §2.8): the four tabs, then one "Cancel item"
+  // per cancellable row, then Previous / Next. "Cancel item" is the ONE action
+  // word allowed, and only as a button inside a cell.
+  it('W7A-10 / 7b: the open panel\'s buttons are the four tabs, one Cancel item per cancellable row, and Previous / Next', async () => {
+    itemsReply = (params) => ({
+      status: 200,
+      body: {
+        success: true,
+        data: itemsView(params, [
+          item(),
+          item({ id: '22222222-aaaa-4bbb-8ccc-dddddddddddd', cancel: { allowed: false, code: 'not_cancellable_state' } }),
+          item({ id: '33333333-aaaa-4bbb-8ccc-dddddddddddd', cancel: { allowed: true } }),
+        ]),
+      },
+    });
     const panel = await openPanel('lead_responses');
-    await within(panel).findByTestId('queue-item-row');
+    await waitFor(() => expect(within(panel).getAllByTestId('queue-item-row')).toHaveLength(3));
     expect(within(panel).getAllByRole('button').map((b) => b.textContent)).toEqual([
       'Stuck',
       'Failed',
       'Dead-lettered',
       'Waiting',
+      'Cancel item',
+      'Cancel item',
       'Previous',
       'Next',
     ]);
     for (const button of within(panel).getAllByRole('button')) {
+      if (button.textContent === 'Cancel item') continue;
       expect(button.textContent).not.toMatch(/retry|re-send|cancel|requeue|release|drain/i);
     }
     // The column headers are header cells, not buttons.
     expect(within(panel).getByRole('columnheader', { name: 'Re-send' })).toBeInTheDocument();
     expect(within(panel).getByRole('columnheader', { name: 'Cancellable' })).toBeInTheDocument();
-    expect(panel.querySelectorAll('td button, td a, td input')).toHaveLength(0);
+    expect(panel.querySelectorAll('td button')).toHaveLength(2);
+    expect(panel.querySelectorAll('td a, td input')).toHaveLength(0);
   });
 
   it('no green class anywhere in the panel', async () => {

@@ -1,21 +1,21 @@
 # Requirement: Business OS Invite-Only Signup
 
-> **Last Updated**: 2026-10-02
+> **Last Updated**: 2026-10-04
 
 **Created by:** BA
 **Date:** 2026-09-28
-**Status:** **Master document for invite signup and friend invites.** SA approved with conditions (§16, §17); no open business questions (§13). As of 2026-10-02: Slices 0, 1a–1c, 2a, 3a, 3b, 5a and 5b are live in production, and friend invites are switched on (#164). Next is 5c (the friend pays), which is blocked on S-4a and G-1. Slice 4 is parked. Full status and open items: [§0](#0-current-status--open-items).
+**Status:** **Master document for invite signup and friend invites.** SA approved with conditions (§16, §17); no open business questions (§13). As of 2026-10-04: Slices 0, 1a–1c, 2a, 3a, 3b, 5a and 5b are live in production, friend invites are switched on (#164), and the invite emails and sign-up page carry the platform branding (#197). Next is 5c (the friend pays), which is now delivered by the plan-payments work as slices P-5 and P-9 ([BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md)). Real money waits on that document's go-live checklist (§9.5), which includes G-1. Slice 4 is parked (re-confirmed 2026-10-04). Full status and open items: [§0](#0-current-status--open-items).
 **Related:** [BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md), [BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md](/docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md) (plan of record for tiers and billing), [BUSINESS_OS_ENTITLEMENTS.md](/docs/architecture/BUSINESS_OS_ENTITLEMENTS.md), [BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md) (sibling, in flight), [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md).
 
 ## Overview
 
-For now, Business OS signup is by invitation only, and Business OS is a **closed system**. A platform admin invites an email address with one of two invite types. A **Champion** invite is free and admin-only; it makes the person a Founding Partner. A **Paid** invite (Essentials, or Autopilot if the admin picks it) requires payment at signup. The invitee opens a secured signup page, which checks that the invitation is still valid, shows what it offers, and creates their account on that plan. Every invitation is recorded with who sent it, who accepted it, when, and in which **invitation circle** (level): L1 means invited by an admin, L2 means invited by an L1, and so on. Levels exist to measure how far word of mouth spreads. **The next step (Slice 5, scoped 2026-09-29) is the friend-invite loop:** a champion invites up to 5 friends in their lifetime, each to a paid Essentials plan, and a friend who signs up is recorded at L2 under the champion. There are no perks in this loop yet. Still designed for and not built: bonus credits for both sides when a friend first pays, earning or being granted extra invites, a free limited-time invite, and open signup from the marketing site. The work is split into small slices that can each be shipped and demoed on their own (§10). **Paid invites, including every friend invite, can only be completed once the billing work (reuse-plan S-4a) is live, and taking real money is also blocked on the service-role key rotation (G-1).**
+For now, Business OS signup is by invitation only, and Business OS is a **closed system**. A platform admin invites an email address with one of two invite types. A **Champion** invite is free and admin-only; it makes the person a Founding Partner. A **Paid** invite (Essentials, or Autopilot if the admin picks it) requires payment at signup. The invitee opens a secured signup page, which checks that the invitation is still valid, shows what it offers, and creates their account on that plan. Every invitation is recorded with who sent it, who accepted it, when, and in which **invitation circle** (level): L1 means invited by an admin, L2 means invited by an L1, and so on. Levels exist to measure how far word of mouth spreads. **The next step (Slice 5, scoped 2026-09-29) is the friend-invite loop:** a champion invites up to 5 friends in their lifetime, each to a paid Essentials plan, and a friend who signs up is recorded at L2 under the champion. There are no perks in this loop yet. Still designed for and not built: bonus credits for both sides when a friend first pays, earning or being granted extra invites, a free limited-time invite, and open signup from the marketing site. The work is split into small slices that can each be shipped and demoed on their own (§10). **Paid invites, including every friend invite, can only be completed once the billing work (reuse-plan S-4a, now scoped as [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md)) is live. Taking real money also waits on that document's go-live checklist (§9.5), which includes the service-role key rotation (G-1).**
 
 ---
 
 ## 0. Current status & open items
 
-**This requirement is the single source of truth for the overall status of invite signup and friend invites. Per-slice detail (tasks, checks, preconditions, waivers) lives in the workplans:** [Slice 0](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_0_WORKPLAN.md), [Slice 1](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_1_WORKPLAN.md), [Slice 2](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_2_WORKPLAN.md), [Slice 3](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_3_WORKPLAN.md), [Slice 5a](/docs/workplans/BUSINESS_OS_INVITE_FRIENDS_SLICE_5A_WORKPLAN.md), [Slice 5b](/docs/workplans/BUSINESS_OS_INVITE_FRIENDS_SLICE_5B_WORKPLAN.md). Status as of **2026-10-02**.
+**This requirement is the single source of truth for the overall status of invite signup and friend invites. Per-slice detail (tasks, checks, preconditions, waivers) lives in the workplans:** [Slice 0](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_0_WORKPLAN.md), [Slice 1](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_1_WORKPLAN.md), [Slice 2](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_2_WORKPLAN.md), [Slice 3](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_3_WORKPLAN.md), [Slice 5a](/docs/workplans/BUSINESS_OS_INVITE_FRIENDS_SLICE_5A_WORKPLAN.md), [Slice 5b](/docs/workplans/BUSINESS_OS_INVITE_FRIENDS_SLICE_5B_WORKPLAN.md). Status as of **2026-10-04**. Payment for invites (5c) is tracked in [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md) §9.1, not repeated here.
 
 **Priority order:** [§0.8](#08-prioritised-open-items-2026-10-02).
 
@@ -31,6 +31,8 @@ For now, Business OS signup is by invitation only, and Business OS is a **closed
 | 5a | Champion friend invites ("Invite friends" screen) | #154 |
 | 5b-1 / 5b-2 | Friend signs up at L2, held on "payment coming soon" | #162, #163 |
 | Switch-on | **Friend invites switched on** (`accountInvitesAvailable: true`; `paidInvitesAvailable` stays `false`). Merged 2026-10-02 | #164 |
+| Branding | Invite emails and the sign-up page in the platform style (platform email colour indigo; every state of the sign-up page restyled). No behaviour change. Merged 2026-10-04 | #197 |
+| Tidy-ups | The old 1a/1b checkers now report table-wide totals as information instead of failing; invite test hooks restore the shipped friend-invites switch; one shared `escapeHtml` helper for emails, button links escaped, and colours and fonts in email styles checked. Merged 2026-10-04 | #201 |
 | Migrations | 20261012, 20261013, 20261014, 20261020, 20261023, 20261024: all applied to production | — |
 
 ### 0.2 Pending user tests
@@ -39,19 +41,20 @@ For now, Business OS signup is by invitation only, and Business OS is a **closed
 |---|---|---|
 | Friend invite on production (champion sends, friend signs up, lands on "payment coming soon") | User | [Slice 5b workplan](/docs/workplans/BUSINESS_OS_INVITE_FRIENDS_SLICE_5B_WORKPLAN.md) §10.1 |
 | Google sign-up with a second real Gmail (3b-10) | User | [Slice 3 workplan](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_3_WORKPLAN.md) |
+| A test invite, to see the new branded email and sign-up page | User | #197 |
 
 ### 0.3 Next, and what blocks it
 
 | Item | Blocked by | Owner of the blocker |
 |---|---|---|
-| **5c: the friend pays** (also switches on admin Paid invites) | The Stripe buy path, S-4a ([reuse plan](/docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md)); for real money also **G-1**, the Supabase service-role key rotation, **still open** | S-4a: not started. G-1: **the user, together with Offir** |
+| **5c: the friend pays** (also switches on admin Paid invites). Delivered by the plan-payments work, which is what S-4a ([reuse plan](/docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md)) became: [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md) (PR #175, approved 2026-10-02), slices **P-5** (a friend pays at signup; friends already held are let in once they pay) and **P-9** (admin Paid invites, Essentials or Autopilot), which the user moved to right after P-5 on 2026-10-03. Merged so far: P-0 (#183), P-1 (#188), P-2a (#192; migration 20261025 applied, checker PASS) | P-2b onward waits on Offir's answers to the Stripe questions (emailed 2026-10-04). Real money waits on the go-live checklist in that document's §9.5, which includes **G-1**, the Supabase service-role key rotation, **still open**. Slice-by-slice status lives in that document's §9.1 | Stripe answers: **Offir**. G-1: **the user, together with Offir** |
 | Perks (bonus credits on a friend's first payment) | 5c, and only once scoped | — |
 
 ### 0.4 Parked
 
 | Item | Note |
 |---|---|
-| **Slice 4: close open signup** | Parked 2026-09-29. **Required before launch.** See R-8(c) and the research notes P4-1 to P4-3 in §10, including **G-7**: Supabase's automatic Google identity linking is a platform-wide weakness that can only be recorded here, not closed. |
+| **Slice 4: close open signup** | Parked 2026-09-29; **the user re-confirmed it parked on 2026-10-04** ("decided to be parked, let's document it for now"). **Still required before launch.** This launch prerequisite is tracked here, not in the payments go-live checklist. It has no Stripe or Offir dependency, and its research (P4-1 to P4-3 in §10) is ready, so it can start as soon as the user un-parks it. See R-8(c) and §10, including **G-7**: Supabase's automatic Google identity linking is a platform-wide weakness that can only be recorded here, not closed. |
 
 ### 0.5 Hardening backlog (lower priority)
 
@@ -64,8 +67,7 @@ Detail for the first three is in the §10 backlog table.
 | Invite link domain | `vercel.app` → `app.agentspilot.ai` once that domain is live |
 | QA-3b-2 | The rare Google sign-in hiccup ([Slice 3 workplan](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_3_WORKPLAN.md)) |
 | OI-1: per-IP rate limit on `/api/public/invites/` | Vercel setting, requested from Offir |
-| Old 1a/1b checkers (E02/S02) | Fail by design now that later migrations changed what they check; retire or update them |
-| Invite test clean-up hooks | Still reset the friend-invites switch to `false` |
+| Unescaped text in five Business OS email families (§0.8 #24) | Meeting reminder (about 14 places), booking confirmation, payment receipt, refund confirmation and the intake emails put business and client text into the email without escaping it, so a phishing link could appear inside a genuine email. SA: Medium. Not part of invite signup; handed to **Offir** (owner of the business flows) by email on 2026-10-04. The fix is to pass those values through `lib/email/escapeHtml.ts` (the shared helper from #201) |
 
 ### 0.6 Recorded for later
 
@@ -74,7 +76,6 @@ Detail for the first three is in the §10 backlog table.
 | Account deletion is blocked by the `profiles` FK (no cascade) | Deleting a user needs a manual `profiles` delete first. Ties to the existing "account deletion never calls erasure" item. |
 | L-12: 12-month anonymisation of unused invite emails | A `durable-queue-drain` job; first due **2027-09-28** |
 | Pre-enforcement conditions | T-9; the "awaiting payment" label in the shadow report; revisit Slice 4. See the D-14 row in [BUSINESS_OS_ENTITLEMENTS.md](/docs/architecture/BUSINESS_OS_ENTITLEMENTS.md) |
-| 5c BA question | May admins let a held friend in without paying? To be decided when 5c is scoped |
 | Level reporting | Slice 6 (§6.5, FR-27) |
 | Future invite features | Default personal-note template (BQ-12); earning invites; admins granting extra invites (§14) |
 
@@ -89,6 +90,9 @@ Detail for the first three is in the §10 backlog table.
 | LanguageContext logging fix | Merged (#155) |
 | `app/onboarding-chat/page.tsx` `console.*` → Pino | Merged (#168, 2026-10-02) |
 | Hardening bundle: sign-up code and existing-account emails fail closed without the platform sender (the From line in production is unchanged; an unset sender gives the same answer on both paths, so it cannot reveal whether an address has an account); no email address in the rejected password sign-in log; business name, logo and website links escaped in the branded email template | Merged (#171, 2026-10-02). SA approved; QA waived by the user. |
+| 5c BA question: may admins let a held friend in without paying? (§0.8 #11) | **Decided 2026-10-02** as BQ-P3 in [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md) §10: yes, as an explicit admin action with a required reason, audited. It is recorded as a waiver, not a payment: the friend does not count as paid and no perks fire. |
+| Branded invite emails and sign-up page | Merged (#197, 2026-10-04). See §0.1. |
+| Tidy-ups (§0.8 #21 and #23): old 1a/1b checkers, test hooks and the switch, one shared `escapeHtml`, escaped button links, checked style colours and fonts | Merged (#201, 2026-10-04). See §0.1. |
 
 ### 0.8 Prioritised open items (2026-10-02)
 
@@ -96,17 +100,17 @@ Ranked by the user on 2026-10-02. This table holds rank, effort and impact only;
 
 | # | Item | Why it matters | Effort | Owner | Blocked by | Detail |
 |---|---|---|---|---|---|---|
-| 1 | Supabase service-role key rotation (G-1) | Security; blocks 5c and enforcement | M (ops) | User + Offir | — | §0.3 |
-| 2 | The user's two production tests: a friend invite to a Gmail +alias, and Google sign-up with a second real Gmail. TL checks the DB afterwards | Proves the live loop end to end | S | User; TL | — | §0.2 |
+| 1 | Supabase service-role key rotation (G-1) | Security; blocks real money (payments go-live checklist §9.5, row 3) and enforcement | M (ops) | User + Offir | — | §0.3 |
+| 2 | The user's production tests: a friend invite to a Gmail +alias, Google sign-up with a second real Gmail, and a test invite to see the new branded email and sign-up page (#197). TL checks the DB afterwards | Proves the live loop end to end | S | User; TL | — | §0.2 |
 | 3 | Run the full Jest suite in CI (guards such as `mutationOrSelect` only catch problems when they run) | Stability | M | Dev + SA (separate session) | — | Cross-cutting, not invite-only; TEST_STRATEGY_AND_CI_TIERING workplan (not on main yet) |
 | 4 | Sign-up code email uses `platformSenderAddress()` and fails closed. ✅ Done (#171) | Stability / trust | S | — | — | §0.7 |
 | 5 | `signInWithPassword` no longer logs the email on rejection. ✅ Done (#171) | Privacy | S | — | — | §0.7 |
 | 6 | `businessName` escaped in `base-template.ts`. ✅ Done (#171) | Stability / security | S | — | — | §0.7 |
 | 7 | Vercel per-IP rate limit on `/api/public/invites/` (OI-1) | Security / cost | S (ops) | Offir | Offir's time | §0.5 |
-| 8 | Slice 4: close open signup (R-8(c), G-7) | Security; required before launch | M | Dev + SA | The user's decision to un-park | §0.4 |
+| 8 | Slice 4: close open signup (R-8(c), G-7) | Security; required before launch | M | Dev + SA | Parked by the user (re-confirmed 2026-10-04); no Stripe or Offir dependency | §0.4 |
 | 9 | Pre-enforcement conditions (T-9, the shadow report's "awaiting payment" label, Slice 4 revisit) | Required before entitlements are enforced | M | Dev + SA | — | §0.6; D-14 row in [BUSINESS_OS_ENTITLEMENTS.md](/docs/architecture/BUSINESS_OS_ENTITLEMENTS.md) |
-| 10 | 5c: the friend pays | Revenue | L | Dev + SA | S-4a (Stripe buy path) and #1 | §0.3 |
-| 11 | BA question for 5c: may admins let a held friend in without paying? | Business decision | S | User (BA frames it) | — | §0.6 |
+| 10 | 5c: the friend pays (payments slices P-5 and P-9) | Revenue | L | Dev + SA | Payments P-2b onward (Offir's Stripe answers); real money also #1 and the payments go-live checklist (§9.5) | §0.3; [payments §9.1](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md#91-slice-list) |
+| 11 | BA question for 5c: may admins let a held friend in without paying? ✅ Decided 2026-10-02 (BQ-P3): yes, an audited admin action with a reason, recorded as a waiver, not a payment | Business decision | S | — | — | §0.7 |
 | 12 | 2b: resend an invite with a fresh link (cap 3 a day) | UX | M | Dev | — | §0.5; §10 backlog |
 | 13 | Invite links on `app.agentspilot.ai` instead of `neuronforge-kohl.vercel.app` | Trust | S (ops) | User / Offir | The domain going live | §0.5 |
 | 14 | Account deletion blocked by the `profiles` FK (no cascade); erasure not called | Compliance | M–L | Dev + SA | — | §0.6 |
@@ -116,11 +120,12 @@ Ranked by the user on 2026-10-02. This table holds rank, effort and impact only;
 | 18 | QA-3b-2: the rare Google sign-up hiccup | UX | S | Dev | — | §0.5; [Slice 3 workplan](/docs/workplans/BUSINESS_OS_INVITE_SIGNUP_SLICE_3_WORKPLAN.md) |
 | 19 | Future invite features: default note template (BQ-12), earning invites, admins granting invites | Growth | S–M each | BA → Dev | — | §0.6; §14 |
 | 20 | Fix the `new-api-route` skill's audit advice (log non-blocking, then await the flush) | Maintainability | S | Dev | — | Cross-cutting, not invite-only |
-| 21 | Tidy-ups: old 1a/1b checkers (E02/S02 fail by design); invite test clean-up hooks still reset the switch to `false` | Hygiene | S | Dev | — | §0.5 |
+| 21 | Tidy-ups: old 1a/1b checkers (E02/S02 fail by design); invite test clean-up hooks still reset the switch to `false`. ✅ Done (#201) | Hygiene | S | — | — | §0.7 |
 | 22 | L-12: 12-month anonymisation of unused invite emails (`durable-queue-drain` job) | Compliance; first due 2027-09-28 | M | Dev + SA | — | §0.6 |
-| 23 | Email template tidy-up found in #171: colours and font names go into style attributes unchecked; the button and info-row helpers rely on callers to escape; seven duplicate private `escapeHtml` copies could become one shared helper | Maintainability; low risk, nothing customer-typed reaches them today | S | Dev | — | #171 PR description |
+| 23 | Email template tidy-up found in #171: colours and font names go into style attributes unchecked; the button and info-row helpers rely on callers to escape; seven duplicate private `escapeHtml` copies could become one shared helper. ✅ Done (#201) | Maintainability; low risk, nothing customer-typed reaches them today | S | — | — | §0.7 |
+| 24 | Five Business OS email families (meeting reminder, booking confirmation, payment receipt, refund confirmation, intake) put business and client text into emails without escaping it | Security / trust: phishing-link risk (SA: Medium) | S | Offir (owner of the business flows; handed over by email 2026-10-04) | — | §0.5. Cross-cutting, not invite-only |
 
-**Suggested next:** #1, #2 and #7 (ops, with Offir); #3 in a separate session; then #8 (needs the user's OK to un-park Slice 4); then #10 once S-4a and #1 are done.
+**Suggested next:** #1, #2 and #7 (ops, with Offir); payments P-2b once Offir replies; then P-8a, the admin billing panel, to be evaluated. #3 continues in a separate session, unchanged. Slice 4 (#8) stays parked.
 
 The credits diary is a separate workstream (credit-deduction slice 7) and is deliberately left out of this table.
 
@@ -982,3 +987,4 @@ Checked against `origin/main` `fe7f6410` on 2026-09-30. **This branch is 14 comm
 | 2026-10-01 | Friend invites switched on, pending merge (Dev) | User: "Switch friend invites on, waiving the concurrency proof and the demo." Progress note in §10: the switch-on PR sets `accountInvitesAvailable: true`; `paidInvitesAvailable` stays `false`. Live on merge and deploy. Preconditions and waivers (5a P-1, the 5b demo, N-6; he/es wording approved) recorded in the Slice 5b workplan §10.1. |
 | 2026-10-02 | Status section added; requirement made the master status document (BA) | User: "keep it our main document". Added §0 "Current status & open items" (and a ToC entry): live in production (Slices 0, 1a–1c, 2a, 3a, 3b switched on 2026-09-30 via `NEXT_PUBLIC_GOOGLE_SIGNIN_CLIENT_ID`, 5a, 5b-1/5b-2, friend-invites switch-on #164, migrations 20261012/13/14/20/23/24 applied), pending user tests, next and blocked (5c on S-4a and G-1; key rotation still open, owned by the user with Offir), parked (Slice 4), hardening backlog (including the onboarding-chat `console.*` conversion, in progress elsewhere), recorded-for-later and done items. Per-slice detail stays in the workplans. Replaced the stale status line; the §10 switch-on note now reads "merged (#164, 2026-10-02)". No requirement, FR or decision changed. |
 | 2026-10-02 | Prioritised open items added (BA) | Added §0.8: the user's ranking of 22 open items, plus #23 (email template tidy-up found in #171), each with effort, impact, owner, blocker and a pointer to where its detail lives; #4 to #6 keep their numbers, marked done in #171. Moved from §0.5 to §0.7: the onboarding-chat `console.*` conversion (merged #168) and the hardening bundle (sign-up code sender failing closed, no email in the rejected sign-in log, business name escaped; merged #171); the §0.5 intro now says "first three". Added a priority pointer at the top of §0. The credits diary is kept out of §0.8 by the user's decision (separate workstream, credit-deduction slice 7). No requirement, FR or decision changed. |
+| 2026-10-04 | §0 refreshed (BA) | Status date 2026-10-04 (header, §0). **Live:** #197 (branded invite emails and sign-up page; indigo platform email colour; every page state restyled; no behaviour change) and #201 (tidy-ups), both merged 2026-10-04, added to §0.1 and §0.7. #201 closes §0.8 #21 (old 1a/1b checkers report table-wide totals as information; test hooks restore the shipped friend-invites switch) and #23 (one shared `escapeHtml`, button links escaped, style colours and fonts checked); both marked done in place and their §0.5 rows removed. **5c:** S-4a is now the plan-payments work ([BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md), PR #175, approved 2026-10-02), slices P-5 (friend pays at signup, held friends let in) and P-9 (admin Paid invites, moved to right after P-5 by the user on 2026-10-03). P-0 (#183), P-1 (#188) and P-2a (#192, migration 20261025 applied, checker PASS) merged; P-2b onward waits on Offir's Stripe answers (emailed 2026-10-04); real money waits on that document's §9.5 go-live checklist, including G-1. Overview, status line, §0.3 and §0.8 #1 and #10 updated; detail stays in the payments document. **§0.8 #11** decided 2026-10-02 as BQ-P3 (yes, an audited admin action with a reason, recorded as a waiver, not a payment); moved from §0.6 to §0.7. **Slice 4:** the user re-confirmed it parked on 2026-10-04; still required before launch and tracked here; no Stripe or Offir dependency; research P4-1 to P4-3 ready (§0.4, §0.8 #8). **New §0.8 #24** and §0.5 row: five Business OS email families insert business and client text without escaping (SA: Medium), handed to Offir by email 2026-10-04; fix via `lib/email/escapeHtml.ts`. §0.8 #2 and §0.2 add a test invite to see #197. #3 unchanged (separate session). Suggested next updated. No requirement, FR or decision of this document changed. |

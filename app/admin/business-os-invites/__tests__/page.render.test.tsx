@@ -16,6 +16,11 @@ import userEvent from '@testing-library/user-event';
 import BusinessOsInvitesPage from '../page';
 import type { InviteRow, InvitesPayload } from '../types';
 
+// Timeout only, no assertion changes. These cases type into the form character
+// by character with userEvent.type, so the file takes ~29s on its own and some
+// cases ran past Jest's 5s default when the full suite loaded every worker.
+jest.setTimeout(30_000);
+
 const LINK = 'http://localhost:3000/invite#t=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
 function row(overrides: Partial<InviteRow> = {}): InviteRow {

@@ -9,9 +9,9 @@
  * together, and `npm run typecheck:bos-llm` (a required check) is what
  * evaluates that pin. Edit both sides together.
  *
- * Slice B1b will add the audit-entry fields (`entry` on a row, `audit` on the
- * payload). They are ABSENT here on purpose, not blank: a missing column
- * cannot be misread as "no entry" (FR-B1).
+ * Slice B1b added the audit-entry fields (`entry` on a row, `audit` on the
+ * payload). A row with no entry carries a STATE, never blank fields: calls,
+ * tokens, models and the error code read as unknown, not as "none" (FR-B1).
  *
  * Server-only by convention: it holds no value, only types.
  *
@@ -56,6 +56,71 @@ export interface AiActivityRow {
   corrected: boolean;
   adjustmentCount: number;
   reasonCodes: string[];
+  /** B1b: the action's audit entry, matched on `actionId` AND account, or why there is none. */
+  entry: AiActivityEntryState;
+}
+
+/** Why an entry's presence could not be decided. Never reported as "lost" (FR-B5 Q1). */
+export type AiActivityEntryUnknownReason =
+  /** The audit read failed. */
+  | 'audit_read_failed'
+  /** The audit read was cut at its row cap, so the entry may be in the part not read. */
+  | 'audit_read_incomplete'
+  /** The archive cutoff could not be read, so "may be archived" and "lost" cannot be told apart. */
+  | 'archive_unread'
+  /** The charge's own time could not be read, so its age decides nothing (SA-CR-B-1). */
+  | 'charge_time_unreadable';
+
+/**
+ * The audit entry of one charge (B1b, FR-B1, FR-B5 Q1, SA-B1-7).
+ *
+ * - `found`: one entry with this `actionId` on THIS account, projected field by
+ *   field. A field the entry does not carry in the expected shape is NULL
+ *   (shown as unknown).
+ * - `account_mismatch`: an entry with this `actionId` exists only on ANOTHER
+ *   account. A defect marker: neither account's entry data is sent.
+ * - `too_recent` / `may_be_archived` / `lost`: no entry, classified (D-6).
+ * - `unknown`: the evidence was incomplete; never "lost".
+ */
+export type AiActivityEntryState =
+  | {
+      state: 'found';
+      callCount: number | null;
+      failedCallCount: number | null;
+      inputTokens: number | null;
+      outputTokens: number | null;
+      totalTokens: number | null;
+      /** At most 10, each at most 64 characters. NULL when the entry's list is unreadable (shown as unknown). */
+      models: string[] | null;
+      /** A short identifier only (the writer's `sanitizeErrorCode` shape); NULL when none or not of that shape. */
+      errorCode: string | null;
+    }
+  | { state: 'account_mismatch' }
+  | { state: 'too_recent' }
+  | { state: 'may_be_archived' }
+  | { state: 'lost' }
+  | { state: 'unknown'; reason: AiActivityEntryUnknownReason };
+
+/** Counted over the ROWS SHOWN, not the window (workplan § D step 8). */
+export interface AiActivityNoEntryCounts {
+  tooRecent: number;
+  mayBeArchived: number;
+  lost: number;
+  unknown: number;
+  /** Rows with at least one entry of their `actionId` on another account (found or not). */
+  accountMismatch: number;
+}
+
+/** How the audit join went for the rows shown (B1b). */
+export interface AiActivityAuditSummary {
+  /** `incomplete`: the read reached its row cap. */
+  status: 'ok' | 'failed' | 'incomplete';
+  /** The "too recent" window, in minutes, stated on screen (OQ-5). */
+  settleMinutes: number;
+  /** The highest audit archive cutoff of a run that moved rows, or NULL when none has. */
+  archiveCutoff: string | null;
+  archive: AiActivityReadStatus;
+  noEntry: AiActivityNoEntryCounts;
 }
 
 /**
@@ -108,4 +173,6 @@ export interface AiActivityPayload {
   /** Amounts that could not be read and were counted as 0 (never silent). */
   unreadableAmounts: number;
   deletedAccounts: AiActivityDeletedBucket | null;
+  /** B1b. NULL when no row is shown: there was nothing to join. */
+  audit: AiActivityAuditSummary | null;
 }

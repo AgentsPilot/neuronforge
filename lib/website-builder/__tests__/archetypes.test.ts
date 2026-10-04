@@ -168,8 +168,16 @@ describe('the recipes', () => {
     expect(therapist.indexOf('about')).toBeLessThan(therapist.indexOf('services'));
   });
 
-  it('gives a trainer a price list', () => {
-    expect(recipeFor('trainer')).toContain('pricing');
+  // Prices reach a trainer's page through the services block, which carries each
+  // service's price. `offer_led` deliberately dropped its `pricing` block in
+  // e9178f0a because it printed the same catalogue a second time (see the
+  // comment above `offer_led` in recipes.ts). `landing` keeps `pricing`, as it
+  // has no services block and is the only place the offer's price appears.
+  it('shows a trainer prices once, through services, and keeps pricing on a landing page', () => {
+    const trainer = recipeFor('trainer');
+    expect(trainer).toContain('services');
+    expect(trainer).not.toContain('pricing');
+    expect(RECIPES.landing).toContain('pricing');
   });
 
   it('lets the page type win outright', () => {

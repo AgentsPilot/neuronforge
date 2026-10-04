@@ -1,9 +1,10 @@
 /**
  * The Activity list: one `<tr>` per Business OS AI action (FR-B1).
  *
- * B1a columns only. The audit-entry columns (calls, tokens, models, error
- * code) arrive with B1b, and until then they are ABSENT rather than blank: a
- * blank cell could be misread as "none", an absent column cannot.
+ * B1b adds the audit-entry columns (calls / failed, tokens, models, error
+ * code). When a row has no matched entry, or a field of it is not readable,
+ * the cell says "Unknown": never blank, which could be misread as "none"
+ * (FR-B1). Why there is no entry is the row's record state.
  *
  * Cost and credits are NET of corrections; a corrected row shows the charged
  * figure struck beside it. When corrections could not be read the figure is
@@ -13,10 +14,19 @@
 
 import { CheckCircle2, XCircle } from 'lucide-react';
 
-import { formatCredits, formatUsd } from '../../costFormat';
+import { formatCount, formatCredits, formatUsd } from '../../costFormat';
 import { formatInstant } from '../../format';
-import { AREA_NOT_DECLARED, COLUMNS, NAME_UNAVAILABLE, OUTCOME_LABELS, TRIGGER_LABELS } from '../../activityCopy';
-import type { ActivityAmount, ActivityRow } from '../../activityTypes';
+import {
+  AREA_NOT_DECLARED,
+  COLUMNS,
+  ENTRY_ERROR_NONE,
+  ENTRY_FIELD_UNKNOWN,
+  ENTRY_MODELS_NONE,
+  NAME_UNAVAILABLE,
+  OUTCOME_LABELS,
+  TRIGGER_LABELS,
+} from '../../activityCopy';
+import type { ActivityAmount, ActivityEntryState, ActivityRow } from '../../activityTypes';
 import { RecordStateMarker } from './RecordStateMarker';
 
 const shortId = (id: string) => `${id.slice(0, 8)}…`;
@@ -35,7 +45,51 @@ function Amount({ amount, format, testId }: { amount: ActivityAmount; format: (n
   );
 }
 
-export function ActivityTable({ rows }: { rows: ActivityRow[] }) {
+type FoundEntry = Extract<ActivityEntryState, { state: 'found' }>;
+
+const unknownCell = <span className="text-slate-500">{ENTRY_FIELD_UNKNOWN}</span>;
+const countOrUnknown = (value: number | null) => (value === null ? unknownCell : formatCount(value));
+
+/** The four entry cells. Anything but a found entry reads "Unknown" in each. */
+function EntryCells({ entry }: { entry: ActivityEntryState }) {
+  const found: FoundEntry | null = entry.state === 'found' ? entry : null;
+  return (
+    <>
+      <td className="whitespace-nowrap px-3 py-2 text-right" data-testid="activity-calls">
+        {found ? (
+          <>
+            {countOrUnknown(found.callCount)} / {countOrUnknown(found.failedCallCount)}
+          </>
+        ) : (
+          unknownCell
+        )}
+      </td>
+      <td
+        className="whitespace-nowrap px-3 py-2 text-right"
+        data-testid="activity-tokens"
+        title={
+          found && found.inputTokens !== null && found.outputTokens !== null
+            ? `${formatCount(found.inputTokens)} in, ${formatCount(found.outputTokens)} out`
+            : undefined
+        }
+      >
+        {found ? countOrUnknown(found.totalTokens) : unknownCell}
+      </td>
+      <td className="px-3 py-2 font-mono text-[11px]" data-testid="activity-models">
+        {found && found.models !== null
+          ? found.models.length > 0
+            ? found.models.join(', ')
+            : ENTRY_MODELS_NONE
+          : unknownCell}
+      </td>
+      <td className="px-3 py-2 font-mono text-[11px]" data-testid="activity-error-code">
+        {found ? found.errorCode ?? ENTRY_ERROR_NONE : unknownCell}
+      </td>
+    </>
+  );
+}
+
+export function ActivityTable({ rows, settleMinutes }: { rows: ActivityRow[]; settleMinutes: number | null }) {
   return (
     <div className="overflow-x-auto rounded-xl border border-slate-700">
       <table className="min-w-full text-left text-xs text-slate-300" data-testid="activity-table">
@@ -49,6 +103,10 @@ export function ActivityTable({ rows }: { rows: ActivityRow[] }) {
             <th scope="col" className="px-3 py-2">{COLUMNS.outcome}</th>
             <th scope="col" className="px-3 py-2 text-right">{COLUMNS.cost}</th>
             <th scope="col" className="px-3 py-2 text-right">{COLUMNS.credits}</th>
+            <th scope="col" className="px-3 py-2 text-right">{COLUMNS.calls}</th>
+            <th scope="col" className="px-3 py-2 text-right">{COLUMNS.tokens}</th>
+            <th scope="col" className="px-3 py-2">{COLUMNS.models}</th>
+            <th scope="col" className="px-3 py-2">{COLUMNS.errorCode}</th>
             <th scope="col" className="px-3 py-2">{COLUMNS.groupId}</th>
             <th scope="col" className="px-3 py-2">{COLUMNS.state}</th>
           </tr>
@@ -85,11 +143,12 @@ export function ActivityTable({ rows }: { rows: ActivityRow[] }) {
               <td className="whitespace-nowrap px-3 py-2 text-right">
                 <Amount amount={row.credits} format={formatCredits} testId="activity-credits" />
               </td>
+              <EntryCells entry={row.entry} />
               <td className="px-3 py-2 font-mono text-[11px] text-slate-400" title={row.groupId}>
                 {shortId(row.groupId)}
               </td>
               <td className="px-3 py-2">
-                <RecordStateMarker row={row} />
+                <RecordStateMarker row={row} settleMinutes={settleMinutes} />
               </td>
             </tr>
           ))}

@@ -5,11 +5,14 @@
  * (ADMIN_BOS_CLEANUP slice 7a; FR-Q5, FR-Q6, FR-Q7; SA C7-13; workplan §2.7 and
  * conditions W7A-2, W7A-4, W7A-5, W7A-7(c), W7A-10).
  *
- * READ-ONLY. Its one request is a GET to the items route, with the queue, the
- * state and the page only. Its only buttons are the four state tabs and
- * Previous / Next. The re-send and cancellable columns are marks computed on
- * the server by the shared eligibility function; there is no action here
- * (7b/7c add them). Pinned by app/admin/__tests__/jobsQueues.source.guard.test.ts.
+ * READ-ONLY ITSELF. Its one request is a GET to the items route, with the
+ * queue, the state and the page only. Its own buttons are the four state tabs
+ * and Previous / Next. The re-send and cancellable columns are marks computed
+ * on the server by the shared eligibility function. Slice 7b: a row marked
+ * cancellable renders the CancelQueueItemDialog trigger in its Cancellable
+ * cell; that dialog owns the one POST, and `onChanged` refreshes the page
+ * after it. Re-send comes with 7c. Pinned by
+ * app/admin/__tests__/jobsQueues.source.guard.test.ts.
  *
  * It renders only what the route sent: fixed labels, the platform's status
  * words, times and counts. Server error text is never shown; each outcome
@@ -30,6 +33,7 @@ import { useEffect, useState } from 'react';
 
 import { createLogger } from '@/lib/logger';
 import { ageWords, formatUtc } from './jobsFormat';
+import { CancelQueueItemDialog } from './CancelQueueItemDialog';
 import type { BosQueueId } from '@/lib/cron/bosCronJobs';
 import type { QueueItemState, QueueItemView, QueueItemsView } from '@/lib/admin/jobs/jobsQueuesTypes';
 
@@ -111,8 +115,9 @@ function leasedWords(item: QueueItemView): string {
   return item.lease === 'expired' ? "no: claimed by a run; the queue's own sweep releases it" : 'no: a run holds it';
 }
 
+/** The words for a row that cannot be cancelled; a cancellable row shows the button instead. */
 function cancellableWords(item: QueueItemView): string {
-  if (item.cancel.allowed) return 'yes';
+  if (item.cancel.allowed) return '';
   return item.cancel.code === 'leased' ? leasedWords(item) : 'no';
 }
 
@@ -120,10 +125,13 @@ export function QueueItemsPanel({
   queueId,
   queueLabel,
   refreshKey,
+  onChanged,
 }: {
   queueId: BosQueueId;
   queueLabel: string;
   refreshKey: number;
+  /** Refresh the page (figures and this list) after an item action (FR-Q7). */
+  onChanged: () => void;
 }) {
   const [tab, setTab] = useState<QueueItemState>('stuck');
   // The page, with the refreshKey it was chosen under: a new refreshKey means
@@ -204,8 +212,8 @@ export function QueueItemsPanel({
       className="mt-2 space-y-2 rounded-lg border border-slate-700 bg-slate-900/60 p-3"
     >
       <p className="text-xs text-slate-400">
-        Read-only. Re-send and cancel come in a later release; these columns show which items would qualify. Failed
-        items keep no failure time, so their age is counted {ageAnchorSentence(queueId)}.
+        Items marked cancellable can be closed from their row; re-sending comes in a later release. Failed items keep
+        no failure time, so their age is counted {ageAnchorSentence(queueId)}.
       </p>
 
       <div role="group" aria-label="Item state" className="flex flex-wrap gap-1">
@@ -265,7 +273,13 @@ export function QueueItemsPanel({
                   <td className="py-1 pr-3">{item.attempts}</td>
                   <td className="py-1 pr-3">{ageText(item)}</td>
                   <td className="py-1 pr-3">{resendWords(queueId, item)}</td>
-                  <td className="py-1">{cancellableWords(item)}</td>
+                  <td className="py-1">
+                    {item.cancel.allowed ? (
+                      <CancelQueueItemDialog queueId={queueId} queueLabel={queueLabel} item={item} onChanged={onChanged} />
+                    ) : (
+                      cancellableWords(item)
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

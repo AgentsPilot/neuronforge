@@ -21,11 +21,19 @@
  *     before the migration (C03 reads FAIL, the baseline that proves it
  *     discriminates; every other row PASS) and after it (VERDICT PASS).
  *   scripts/probe-audit-owner-policy-migration.sql
- *     The write probe. Inserts six tagged rows, reads them as the owner, as a
+ *     The write probe. Inserts seven tagged rows, reads them as the owner, as a
  *     random stranger id and as service_role, then raises PROBE PASS / FAIL,
- *     which rolls everything back. P01 to P08 must PASS; P09 is INFO when
- *     the live credit-lot row is invisible to its owner (or skipped), and FAIL
- *     when that row is visible.
+ *     which rolls everything back. P01 to P08 and P10 must PASS; P09 is INFO
+ *     when the live credit-lot row is invisible to its owner (or skipped), and
+ *     FAIL when that row is visible.
+ *
+ * SUPERSEDED BY 20261035 (ADMIN_BOS_CLEANUP slice 7b, SA W7B-1). The live
+ * registry gained `bos_queue_item`, and migration 20261035 is now the latest
+ * owner-policy migration (lib/audit/__tests__/ownerVisibility.test.ts follows
+ * it). So this file's MIGRATION case is frozen to 20261018's own four
+ * literals: a superseded migration must not follow the registry. The checker
+ * and the probe check the CURRENT state, so their cases here still follow the
+ * registry (seven probe rows; P10 is the `bos_queue_item` check).
  *
  * WHY. BD-26 (user, 2026-10-03): admin credit-lot and plan-operation audit
  * entries stay written against the owner's account (`user_id` = the account)
@@ -87,6 +95,8 @@ const probeFlat = flatOf(probe);
 
 const POLICY = '"Users can view their own audit logs"';
 const HIDDEN = [...OWNER_HIDDEN_ENTITY_TYPES].sort();
+/** 20261018's own list, frozen (W7B-1 d): it no longer follows the registry. */
+const BD26_HIDDEN = ['ai_action', 'business_os_account_plan', 'business_os_credit_lot', 'business_os_credit_period'];
 
 /** Every single-quoted literal in a SQL text. */
 function literalsOf(sql: string): string[] {
@@ -196,13 +206,13 @@ describe('the migration', () => {
     expect(migration).not.toContain('service_role_bypass_rls');
   });
 
-  it('keeps the owner scope and the null arm, and hides the registry set', () => {
+  it('keeps the owner scope and the null arm, and hides its own frozen four types', () => {
     expect(migrationFlat).toContain(
       "USING ( auth.uid() = user_id AND (entity_type IS NULL OR entity_type NOT IN ('ai_action', 'business_os_account_plan', 'business_os_credit_lot', 'business_os_credit_period')) );"
     );
     const listed = migrationFlat.match(/NOT IN \(([^)]*)\)/);
     expect(listed).not.toBeNull();
-    expect(literalsOf(listed ? listed[1] : '').sort()).toEqual(HIDDEN);
+    expect(literalsOf(listed ? listed[1] : '').sort()).toEqual(BD26_HIDDEN);
     expect(migrationFlat).not.toMatch(/IS DISTINCT FROM/);
   });
 });
@@ -275,7 +285,7 @@ describe('the probe (W26-2, W26-10)', () => {
     expect(probeFlat).toContain('FROM auth.users AS auth_user WHERE auth_user.id = v_owner');
   });
 
-  it('inserts the six rows before any role switch, with realistic actions and no severity', () => {
+  it('inserts the seven rows before any role switch, with realistic actions and no severity', () => {
     const insertAt = probe.indexOf('INSERT INTO public.audit_trail');
     expect(insertAt).toBeGreaterThan(0);
     expect(insertAt).toBeLessThan(probe.indexOf('SET LOCAL ROLE'));
@@ -287,6 +297,7 @@ describe('the probe (W26-2, W26-10)', () => {
       "(v_owner, 'BOS_ENTITLEMENT_TIER_ASSIGNED', 'business_os_account_plan', v_tag)",
       "(v_owner, 'BOS_CREDIT_LOT_GRANTED', 'business_os_credit_lot', v_tag)",
       "(v_owner, 'BOS_CREDIT_LOW_LINE_CROSSED', 'business_os_credit_period', v_tag)",
+      "(v_owner, 'BOS_QUEUE_ITEM_CANCELLED', 'bos_queue_item', v_tag)",
       "(v_stranger, 'SETTINGS_PROFILE_UPDATED', 'settings', v_tag)",
     ]) {
       expect(probeFlat).toContain(row);
@@ -308,13 +319,14 @@ describe('the probe (W26-2, W26-10)', () => {
     expect(probeFlat).toContain("json_build_object('sub', v_stranger::text, 'role', 'authenticated')");
   });
 
-  it('carries P01 to P08 as checks, P09 as INFO on the live row, and expects exactly 6 rows for service_role', () => {
-    for (const row of ['P01', 'P02', 'P03', 'P04', 'P05', 'P06', 'P07', 'P08']) {
+  it('carries P01 to P08 and P10 as checks, P09 as INFO on the live row, and expects exactly 7 rows for service_role', () => {
+    for (const row of ['P01', 'P02', 'P03', 'P04', 'P05', 'P06', 'P07', 'P08', 'P10']) {
       expect(probe).toContain(`'${row} PASS `);
       expect(probe).toContain(`'${row} FAIL `);
     }
     expect(probe).toContain("'P09 INFO ");
-    expect(probe).toContain('IF v_service_total = 6 THEN');
+    expect(probe).toContain('IF v_service_total = 7 THEN');
+    expect(probe).not.toContain('v_service_total = 6');
     expect(probe).toContain("'39c134b8fab349ebb05fc174ce4a8229'::uuid");
     expect(probe).toContain("'f29556b8bf4c4a55ab247165acdf4866'::uuid");
   });

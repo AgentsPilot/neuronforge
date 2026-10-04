@@ -57,12 +57,12 @@ describe('listOwnerEntries', () => {
     expect(result.data).toEqual({ logs: rows, total: 1, page: 1, limit: 1000, hasMore: false });
     expect(calls).toContainEqual(['from', 'audit_trail']);
     expect(calls).toContainEqual(['eq', 'user_id', OWNER]);
-    // BD-26: every owner-hidden entity type, in one NOT IN.
+    // BD-26: every owner-hidden entity type, in one NOT IN. ADMIN_BOS_CLEANUP slice 7b added bos_queue_item (migration 20261035).
     expect(calls).toContainEqual([
       'not',
       'entity_type',
       'in',
-      '(ai_action,business_os_account_plan,business_os_credit_lot,business_os_credit_period)',
+      '(ai_action,bos_queue_item,business_os_account_plan,business_os_credit_lot,business_os_credit_period)',
     ]);
     expect(calls.some((c) => c[0] === 'neq')).toBe(false);
     expect(calls).toContainEqual(['not', 'action', 'like', 'BUSINESS_AI_ACTION_%']);
@@ -118,6 +118,8 @@ describe('listOwnerEntries', () => {
     [{ entityType: 'business_os_account_plan' }],
     [{ entityType: 'business_os_credit_period' }],
     [{ entityType: 'ai_action' }],
+    // ADMIN_BOS_CLEANUP slice 7b added bos_queue_item (migration 20261035).
+    [{ entityType: 'bos_queue_item' }],
     [{ action: 'BUSINESS_AI_ACTION_STARTED' }],
   ])('answers a request for owner-hidden entries with nothing, without querying: %j', async (filter) => {
     const { client, calls } = fakeClient({ data: [{ id: 'should-not-appear' }], error: null, count: 1 });

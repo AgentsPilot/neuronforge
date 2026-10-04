@@ -16,6 +16,15 @@
  * and view rules are unchanged; the new read-only `QueueItemsPanel.tsx` joins
  * the read-only file set with EVERY original rule, plus a one-GET pin; the
  * moved formatters (`jobsFormat.ts`) join the console and import checks.
+ *
+ * Amended by ADMIN_BOS_CLEANUP slice 7b (SA OP-15, §2.8), narrowly: `page.tsx`
+ * keeps every rule; the view keeps every rule except that its header sentence
+ * now also says one item can be cancelled (still one "Drain", no capital-C
+ * "Cancel", one fetch); the panel keeps EVERY read-only rule plus one counted
+ * allowance, the `<CancelQueueItemDialog` element in its Cancellable cell; the
+ * new `CancelQueueItemDialog.tsx` owns one POST, to the literal action URL,
+ * with a pinned body, and is the only file here allowed the word "Cancel"
+ * besides the drain dialog.
  */
 
 import * as fs from 'fs';
@@ -25,12 +34,14 @@ const PAGE = 'app/admin/jobs-queues/page.tsx';
 const VIEW = 'app/admin/components/jobs/JobsQueuesView.tsx';
 const DIALOG = 'app/admin/components/jobs/DrainNowDialog.tsx';
 const PANEL = 'app/admin/components/jobs/QueueItemsPanel.tsx';
+const CANCEL_DIALOG = 'app/admin/components/jobs/CancelQueueItemDialog.tsx';
 const FORMAT = 'app/admin/components/jobs/jobsFormat.ts';
 /** The read-only files: every original rule applies (W7D-2; the panel since slice 7a). */
 const FILES = [PAGE, VIEW, PANEL];
 /** Every client file on the page: client-only, C-21 imports, no console, no "OK". */
-const CLIENT_FILES = [PAGE, VIEW, DIALOG, PANEL];
-const VIEW_HEADER_SENTENCE = 'Each queue has a Drain now button; everything else here is read-only.';
+const CLIENT_FILES = [PAGE, VIEW, DIALOG, PANEL, CANCEL_DIALOG];
+const VIEW_HEADER_SENTENCE =
+  "Each queue has a Drain now button, and a waiting, failed or orphaned item can be cancelled from its queue's list; everything else here is read-only.";
 const read = (relative: string) => fs.readFileSync(path.join(process.cwd(), relative), 'utf8');
 
 function codeOf(source: string): string {
@@ -156,5 +167,58 @@ describe('slice 7a: the item list is read-only (SA OP-11, W7A-10)', () => {
     expect(code).not.toMatch(/\brequire\(/);
     expect(code).not.toMatch(/console\./);
     expect(code).not.toMatch(/\bOK\b/);
+  });
+});
+
+describe('slice 7b: one item action, and nothing more (SA OP-15, §2.8)', () => {
+  it('QueueItemsPanel.tsx: exactly one <CancelQueueItemDialog element, as the allowed branch of the last cell', () => {
+    const code = codeOf(read(PANEL));
+    expect(code.match(/<CancelQueueItemDialog\b/g)).toHaveLength(1);
+    const cells = [...code.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((m) => m[1]);
+    expect(cells.length).toBeGreaterThan(5);
+    const last = cells[cells.length - 1];
+    expect(last).toMatch(/^\s*\{\s*item\.cancel\.allowed\s*\?\s*\(?\s*<CancelQueueItemDialog\b/);
+    for (const cell of cells.slice(0, -1)) expect(cell).not.toMatch(/CancelQueueItemDialog/);
+  });
+
+  it('the allowance is a decision, not a regex accident: the identifier does not match \bCancel\b', () => {
+    expect('CancelQueueItemDialog').not.toMatch(/\bCancel\b/);
+    expect('<CancelQueueItemDialog />').not.toMatch(/\b(Retry|Requeue|Cancel|Drain)\b/);
+  });
+
+  it('JobsQueuesView.tsx passes the refresh to the panel, and never names the cancel dialog', () => {
+    const code = codeOf(read(VIEW));
+    expect(code).toMatch(/<QueueItemsPanel\b[^>]*\bonChanged=\{onDrained\}/);
+    expect(code).not.toMatch(/CancelQueueItemDialog/);
+  });
+
+  it('CancelQueueItemDialog.tsx makes exactly one POST, with one fetch, to the literal action URL', () => {
+    const code = codeOf(read(CANCEL_DIALOG));
+    expect(code.match(/method:\s*['"](POST|PUT|PATCH|DELETE|GET)['"]/g)).toEqual(["method: 'POST'"]);
+    const fetches = [...code.matchAll(/fetch\(\s*([^,)]*)/g)].map((m) => m[1].trim());
+    expect(fetches).toEqual(["'/api/admin/jobs-queues/items/action'"]);
+  });
+
+  it('CancelQueueItemDialog.tsx builds the body from the row and the trimmed reason only (no account id can be added)', () => {
+    const code = codeOf(read(CANCEL_DIALOG));
+    expect(code.match(/JSON\.stringify\(/g)).toHaveLength(1);
+    expect(code).toMatch(
+      /body:\s*JSON\.stringify\(\{\s*queue:\s*queueId,\s*itemId:\s*item\.id,\s*action:\s*'cancel',\s*expected:\s*\{\s*status:\s*item\.status,\s*attempts:\s*item\.attempts\s*\},\s*reason:\s*reason\.trim\(\),?\s*\}\)/
+    );
+    expect(code).not.toMatch(/\b(userId|accountId|ownerUserId|user_id)\b/);
+  });
+
+  it('CancelQueueItemDialog.tsx: no Retry, Requeue or Drain; no green; never "OK"; no console; "Cancel" allowed here', () => {
+    const code = codeOf(read(CANCEL_DIALOG));
+    expect(code).not.toMatch(/\b(Retry|Requeue|Drain)\b/);
+    expect(code).not.toMatch(GREEN_CLASS);
+    expect(code).not.toMatch(/\bOK\b/);
+    expect(code).not.toMatch(/console\./);
+    expect(code).toMatch(/\bCancel item\b/);
+  });
+
+  it('CancelQueueItemDialog.tsx never renders server text: no error or details field is read from a response', () => {
+    const code = codeOf(read(CANCEL_DIALOG));
+    expect(code).not.toMatch(/\.(error|details|message)\b(?!\s*\()/);
   });
 });

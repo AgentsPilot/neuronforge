@@ -128,7 +128,8 @@ describe('GET /api/user/data-export', () => {
         c[0] === 'not' &&
         c[1] === 'entity_type' &&
         c[2] === 'in' &&
-        c[3] === '(ai_action,business_os_account_plan,business_os_credit_lot,business_os_credit_period)'
+        // ADMIN_BOS_CLEANUP slice 7b added bos_queue_item (migration 20261035).
+        c[3] === '(ai_action,bos_queue_item,business_os_account_plan,business_os_credit_lot,business_os_credit_period)'
     );
     const notLike = audit.findIndex((c) => c[0] === 'not' && c[1] === 'action' && c[2] === 'like' && c[3] === 'BUSINESS_AI_ACTION_%');
     const select = audit.findIndex((c) => c[0] === 'select' && c[1] === '*');

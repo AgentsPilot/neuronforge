@@ -238,6 +238,9 @@ import * as adminsList from '../admins/route';
 // ── ADMIN_BOS_CLEANUP slice 7d (2026-10-04) — gated from birth ──────────────
 import * as jobsQueuesDrain from '../jobs-queues/drain/route';
 
+// ── ADMIN_BOS_CLEANUP slice 7b (2026-10-04) — gated from birth ──────────────
+import * as jobsQueuesItemAction from '../jobs-queues/items/action/route';
+
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };
 const CUSTOMER = { id: '22222222-2222-4222-8222-222222222222', email: 'customer@example.com' };
 const MSG_CTX = { params: { id: '99999999-9999-4999-8999-999999999999' } };
@@ -364,6 +367,26 @@ const CASES: Array<{ name: string; call: () => Promise<Response> }> = [
   // above with a recorded touch) and the write-ahead audit row must never
   // happen before the gate answers.
   { name: 'POST /api/admin/jobs-queues/drain', call: () => jobsQueuesDrain.POST(req('/api/admin/jobs-queues/drain', 'POST', { queue: 'insight_actions', reason: 'gate test' })) },
+
+  // ── ADMIN_BOS_CLEANUP slice 7b (2026-10-04) ─────────────────────────────
+  // "Cancel item": the first write to a live queue row (one compare-and-set
+  // UPDATE through AdminQueueActionsRepository). Gated from birth; the item
+  // read, the update and the audit row must never happen before the gate. The
+  // body is well-formed (a uuid and a valid `expected`), so the admin case
+  // reaches the handler and gets a 404 from the empty fake client, not a 400.
+  {
+    name: 'POST /api/admin/jobs-queues/items/action',
+    call: () =>
+      jobsQueuesItemAction.POST(
+        req('/api/admin/jobs-queues/items/action', 'POST', {
+          queue: 'insight_actions',
+          itemId: '00000000-0000-4000-8000-000000000000',
+          action: 'cancel',
+          expected: { status: 'pending', attempts: 0 },
+          reason: 'gate test',
+        })
+      ),
+  },
 ];
 
 beforeEach(() => {
@@ -389,10 +412,12 @@ describe('slice 1 — anonymous writes and destructive actions are refused', () 
     //  + 1  `admins#GET`, gated from birth
     //  = 57
     //  + 1  `jobs-queues/drain#POST` (ADMIN_BOS_CLEANUP slice 7d), gated from birth
-    //  = 58, which is every admin handler now on the canonical gate EXCEPT the
+    //  = 58
+    //  + 1  `jobs-queues/items/action#POST` (ADMIN_BOS_CLEANUP slice 7b), gated from birth
+    //  = 59, which is every admin handler now on the canonical gate EXCEPT the
     // 3 category-A system-config routes (covered by their own suites) and the 6
     // correct-but-inline copies (slice 4, still parked; 7 until `audit-trail#GET` moved to `requireAdmin` on 2026-09-25).
-    expect(CASES).toHaveLength(58);
+    expect(CASES).toHaveLength(59);
   });
 
   describe.each(CASES)('$name', ({ call }) => {

@@ -5,7 +5,9 @@
  * table's columns and record-state text (AC-B1, AC-B17), the count line
  * (AC-B11), the cut-over line (AC-B20), the deleted-account bucket (AC-B9),
  * the platform-account refusal (SA-B1-5), the controls reaching the route
- * (AC-B3), and the page's URL-addressable tab (SA-RC-13, SA-B1-8).
+ * (AC-B3), and the page's URL-addressable tab (SA-RC-13, SA-B1-8). Slice
+ * B1b: the entry columns, the audit-entry states as text (AC-B17), and the
+ * "over the rows shown" counts with the 15-minute boundary (OQ-5).
  */
 
 import '@testing-library/jest-dom';
@@ -23,7 +25,18 @@ import {
   ACTIVITY_EMPTY,
   ACTIVITY_TAB_LABEL,
   ADJUSTMENTS_FAILED,
+  AUDIT_ARCHIVE_FAILED,
+  AUDIT_READ_FAILED,
+  AUDIT_READ_INCOMPLETE,
   COLUMNS,
+  ENTRY_FIELD_UNKNOWN,
+  ENTRY_UNKNOWN_REASONS,
+  ENTRY_UNKNOWN_SHORT,
+  MARKER_ACCOUNT_MISMATCH,
+  MARKER_ENTRY_UNKNOWN,
+  MARKER_LOST,
+  MARKER_MAY_BE_ARCHIVED,
+  MARKER_TOO_RECENT,
   CUTOVER_ENTIRELY_BEFORE,
   CUTOVER_LINE,
   DELETED_BUCKET_NOTE,
@@ -32,9 +45,30 @@ import {
   NAMES_FAILED,
   PLATFORM_ACCOUNT_ERROR,
 } from '../activityCopy';
-import type { ActivityPayload, ActivityRow } from '../activityTypes';
+import type { ActivityAuditSummary, ActivityEntryState, ActivityPayload, ActivityRow } from '../activityTypes';
 
 const A = '11111111-1111-4111-8111-111111111111';
+
+type FoundEntry = Extract<ActivityEntryState, { state: 'found' }>;
+
+const FOUND_ENTRY: FoundEntry = {
+  state: 'found',
+  callCount: 3,
+  failedCallCount: 1,
+  inputTokens: 1200,
+  outputTokens: 300,
+  totalTokens: 1500,
+  models: ['model-alpha', 'model-beta'],
+  errorCode: null,
+};
+
+const AUDIT_OK: ActivityAuditSummary = {
+  status: 'ok',
+  settleMinutes: 15,
+  archiveCutoff: null,
+  archive: 'ok',
+  noEntry: { tooRecent: 0, mayBeArchived: 0, lost: 0, unknown: 0, accountMismatch: 0 },
+};
 
 function row(over: Partial<ActivityRow> = {}): ActivityRow {
   return {
@@ -53,6 +87,7 @@ function row(over: Partial<ActivityRow> = {}): ActivityRow {
     corrected: false,
     adjustmentCount: 0,
     reasonCodes: [],
+    entry: FOUND_ENTRY,
     ...over,
   };
 }
@@ -89,6 +124,7 @@ function payload(over: Partial<ActivityPayload> = {}): ActivityPayload {
     unresolvedAdjustments: 0,
     unreadableAmounts: 0,
     deletedAccounts: { status: 'ok', count: 3, costUsd: 0.003, credits: 3, atLeast: false },
+    audit: AUDIT_OK,
     ...over,
   };
 }
@@ -170,14 +206,14 @@ describe('states', () => {
 });
 
 describe('the table (AC-B1, AC-B17)', () => {
-  it('labels the cost column "Cost (USD)" and has no audit-entry columns yet (B1b)', async () => {
+  it('labels the cost column "Cost (USD)" and carries the B1b audit-entry columns', async () => {
     stub(() => ok(payload()));
     render(<ActivityTab />);
     const table = await screen.findByTestId('activity-table');
     const headers = within(table).getAllByRole('columnheader').map((h) => h.textContent);
     expect(headers).toEqual(Object.values(COLUMNS));
     expect(headers).toContain('Cost (USD)');
-    for (const absent of ['Calls', 'Tokens', 'Models', 'Error code']) expect(headers).not.toContain(absent);
+    for (const present of ['Calls / failed', 'Tokens', 'Models', 'Error code']) expect(headers).toContain(present);
   });
 
   it('every state renders as TEXT, never colour alone', async () => {
@@ -218,6 +254,140 @@ describe('the table (AC-B1, AC-B17)', () => {
     );
     render(<ActivityTab />);
     expect(await screen.findByTestId('activity-adjustments-failed')).toHaveTextContent(ADJUSTMENTS_FAILED);
+  });
+});
+
+describe('B1b: the audit entry (FR-B1, FR-B5, AC-B17)', () => {
+  it('a found entry fills the four columns', async () => {
+    stub(() => ok(payload({ rows: [row({ outcome: 'failed', entry: { ...FOUND_ENTRY, errorCode: 'RATE_LIMITED' } })], total: 1 })));
+    render(<ActivityTab />);
+    const [first] = await screen.findAllByTestId('activity-row');
+    expect(within(first).getByTestId('activity-calls')).toHaveTextContent('3 / 1');
+    expect(within(first).getByTestId('activity-tokens')).toHaveTextContent('1,500');
+    expect(within(first).getByTestId('activity-tokens')).toHaveAttribute('title', '1,200 in, 300 out');
+    expect(within(first).getByTestId('activity-models')).toHaveTextContent('model-alpha, model-beta');
+    expect(within(first).getByTestId('activity-error-code')).toHaveTextContent('RATE_LIMITED');
+    expect(within(first).getByTestId('marker-none')).toBeInTheDocument();
+  });
+
+  it('a row with no entry reads "Unknown" in every entry column, never blank', async () => {
+    stub(() => ok(payload({ rows: [row({ entry: { state: 'lost' } })], total: 1 })));
+    render(<ActivityTab />);
+    const [first] = await screen.findAllByTestId('activity-row');
+    for (const testId of ['activity-calls', 'activity-tokens', 'activity-models', 'activity-error-code']) {
+      expect(within(first).getByTestId(testId)).toHaveTextContent(ENTRY_FIELD_UNKNOWN);
+    }
+  });
+
+  it('QA E-B2: an unreadable model list reads "Unknown", not "None recorded"', async () => {
+    stub(() => ok(payload({ rows: [row({ entry: { ...FOUND_ENTRY, models: null } })], total: 1 })));
+    render(<ActivityTab />);
+    const [first] = await screen.findAllByTestId('activity-row');
+    expect(within(first).getByTestId('activity-models')).toHaveTextContent(ENTRY_FIELD_UNKNOWN);
+  });
+
+  it('every unknown reason has its own visible short text', async () => {
+    const reasons = Object.keys(ENTRY_UNKNOWN_SHORT) as (keyof typeof ENTRY_UNKNOWN_SHORT)[];
+    stub(() =>
+      ok(
+        payload({
+          rows: reasons.map((reason, i) =>
+            row({ actionId: `aaaaaaaa-aaaa-4aaa-8aaa-00000000002${i}`, entry: { state: 'unknown', reason } })
+          ),
+          total: reasons.length,
+        })
+      )
+    );
+    render(<ActivityTab />);
+    const rows = await screen.findAllByTestId('activity-row');
+    reasons.forEach((reason, i) =>
+      expect(within(rows[i]).getByTestId('marker-entry-unknown')).toHaveTextContent(ENTRY_UNKNOWN_SHORT[reason])
+    );
+  });
+
+  it('SA-CR-B-2: the archive cutoff is shown as a date; absent when no run has moved rows', async () => {
+    stub(() => ok(payload({ audit: { ...AUDIT_OK, archiveCutoff: '2026-12-28T00:00:00+00:00' } })));
+    const { unmount } = render(<ActivityTab />);
+    expect(await screen.findByTestId('activity-audit-archive-cutoff')).toHaveTextContent(
+      'Audit entries from before 2026-12-28 00:00 UTC may have been archived'
+    );
+    unmount();
+    stub(() => ok(payload()));
+    render(<ActivityTab />);
+    await screen.findByTestId('activity-audit-summary');
+    expect(screen.queryByTestId('activity-audit-archive-cutoff')).toBeNull();
+  });
+
+  it('a found entry with an unreadable count shows "Unknown" for that count only', async () => {
+    stub(() => ok(payload({ rows: [row({ entry: { ...FOUND_ENTRY, callCount: null } })], total: 1 })));
+    render(<ActivityTab />);
+    const [first] = await screen.findAllByTestId('activity-row');
+    expect(within(first).getByTestId('activity-calls')).toHaveTextContent(`${ENTRY_FIELD_UNKNOWN} / 1`);
+  });
+
+  it('every no-entry state renders as TEXT, with the 15-minute boundary on screen', async () => {
+    const states: ActivityEntryState[] = [
+      { state: 'too_recent' },
+      { state: 'may_be_archived' },
+      { state: 'lost' },
+      { state: 'unknown', reason: 'audit_read_incomplete' },
+      { state: 'account_mismatch' },
+    ];
+    stub(() =>
+      ok(
+        payload({
+          rows: states.map((entry, i) => row({ actionId: `aaaaaaaa-aaaa-4aaa-8aaa-00000000001${i}`, entry })),
+          total: states.length,
+          audit: { ...AUDIT_OK, noEntry: { tooRecent: 1, mayBeArchived: 1, lost: 1, unknown: 1, accountMismatch: 1 } },
+        })
+      )
+    );
+    render(<ActivityTab />);
+    const rows = await screen.findAllByTestId('activity-row');
+    expect(within(rows[0]).getByTestId('marker-entry-too-recent')).toHaveTextContent(MARKER_TOO_RECENT(15));
+    expect(MARKER_TOO_RECENT(15)).toContain('under 15 min');
+    expect(within(rows[1]).getByTestId('marker-entry-may-be-archived')).toHaveTextContent(MARKER_MAY_BE_ARCHIVED);
+    expect(within(rows[2]).getByTestId('marker-entry-lost')).toHaveTextContent(MARKER_LOST);
+    const unknown = within(rows[3]).getByTestId('marker-entry-unknown');
+    // SA-CR-B-3 / QA E-B3: a neutral label, with the reason as VISIBLE text, not hover-only.
+    expect(unknown).toHaveTextContent(`${MARKER_ENTRY_UNKNOWN} — ${ENTRY_UNKNOWN_SHORT.audit_read_incomplete}`);
+    expect(MARKER_ENTRY_UNKNOWN).toBe('Audit entry unknown');
+    expect(unknown).toHaveAttribute('title', ENTRY_UNKNOWN_REASONS.audit_read_incomplete);
+    expect(within(rows[4]).getByTestId('marker-entry-account-mismatch')).toHaveTextContent(MARKER_ACCOUNT_MISMATCH);
+  });
+
+  it('the counts are labelled as over the rows shown, and state the settle boundary', async () => {
+    stub(() =>
+      ok(
+        payload({
+          audit: { ...AUDIT_OK, noEntry: { tooRecent: 1, mayBeArchived: 0, lost: 4, unknown: 2, accountMismatch: 1 } },
+        })
+      )
+    );
+    render(<ActivityTab />);
+    const summary = await screen.findByTestId('activity-audit-summary');
+    expect(summary).toHaveTextContent('Audit entries, over the 2 rows shown:');
+    expect(within(summary).getByTestId('activity-audit-counts')).toHaveTextContent(
+      '4 lost, 0 may be archived, 1 too recent, 2 unknown, 1 with an entry on another account.'
+    );
+    expect(within(summary).getByTestId('activity-audit-settle')).toHaveTextContent('under 15 minutes old');
+  });
+
+  it.each([
+    ['failed', { status: 'failed' as const }, 'activity-audit-failed', AUDIT_READ_FAILED],
+    ['cut', { status: 'incomplete' as const }, 'activity-audit-incomplete', AUDIT_READ_INCOMPLETE],
+    ['archive unread', { archive: 'failed' as const }, 'activity-audit-archive-failed', AUDIT_ARCHIVE_FAILED],
+  ])('names a %s audit read', async (_name, over, testId, text) => {
+    stub(() => ok(payload({ audit: { ...AUDIT_OK, ...over } })));
+    render(<ActivityTab />);
+    expect(await screen.findByTestId(testId)).toHaveTextContent(text);
+  });
+
+  it('shows no audit summary when there is no row', async () => {
+    stub(() => ok(payload({ rows: [], total: 0, audit: null })));
+    render(<ActivityTab />);
+    await screen.findByTestId('activity-empty');
+    expect(screen.queryByTestId('activity-audit-summary')).toBeNull();
   });
 });
 
