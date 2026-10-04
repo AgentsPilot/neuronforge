@@ -518,6 +518,86 @@ export function emailNoticeBox(
   `;
 }
 
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * BRAND-TINTED BLOCKS: an eyebrow label, a highlight panel, a quote.
+ *
+ * Added for the platform's invite emails (invitation, sign-up code), which read
+ * as a plain column of grey text. They are general helpers, like the ones
+ * above, and every colour is DERIVED from the branding passed in (a wash of the
+ * brand colour over the card, never a literal hue), so a business email could
+ * use them and stay on its own colours, dark cards included.
+ *
+ * Two differences from `emailNoticeBox`, both on purpose:
+ *   - the accent side follows the reading direction (`branding.locale`), so a
+ *     Hebrew quote has its rule on the right, where the text starts;
+ *   - `bgcolor` is written as an attribute as well as CSS, for Outlook.
+ *
+ * Every helper takes HTML that the CALLER has already escaped.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+/** The brand's tints for those blocks, computed against the card they sit on. */
+function brandTints(branding?: BrandingData) {
+  const palette = emailPalette(branding);
+  return {
+    palette,
+    // A light wash of the brand on the card: 8% on light, 18% on dark.
+    wash: mix(palette.surface, palette.brand, palette.dark ? 0.18 : 0.08),
+    // The panel's hairline, a little stronger than the wash.
+    edge: mix(palette.surface, palette.brand, palette.dark ? 0.4 : 0.22),
+    // Brand-coloured text that stays legible on that wash.
+    accentInk: palette.dark ? mix(palette.brand, '#ffffff', 0.6) : mix(palette.brand, '#000000', 0.15),
+    startSide: isRTL(branding?.locale ?? 'en') ? 'right' : 'left',
+  };
+}
+
+/** A small rounded label above a heading ("Invitation"). */
+export function emailEyebrow(text: string, branding?: BrandingData): string {
+  const t = brandTints(branding);
+  return `<p style="margin: 0 0 14px;"><span style="display: inline-block; padding: 4px 12px; border-radius: 999px; background-color: ${t.wash}; color: ${t.accentInk}; font-size: 12px; font-weight: 700; letter-spacing: 0.04em;">${text}</span></p>`;
+}
+
+/** A tinted, outlined panel that sets one block apart (the plan, a code). */
+export function emailHighlightPanel(
+  content: string,
+  branding?: BrandingData,
+  options: { padding?: string; dashed?: boolean } = {}
+): string {
+  const t = brandTints(branding);
+  const padding = options.padding ?? '20px';
+  return `
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 20px;">
+      <tr>
+        <td bgcolor="${t.wash}" style="padding: ${padding}; background-color: ${t.wash}; border: 1px ${options.dashed ? 'dashed' : 'solid'} ${t.edge}; border-radius: ${t.palette.radius}; color: ${t.palette.ink};">
+          ${content}
+        </td>
+      </tr>
+    </table>
+  `;
+}
+
+/** The small brand-coloured label at the top of a highlight panel. */
+export function emailPanelLabel(text: string, branding?: BrandingData): string {
+  const t = brandTints(branding);
+  return `<p style="margin: 0 0 6px; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; color: ${t.accentInk};">${text}</p>`;
+}
+
+/** Someone's own words, set as a quote: a caption, then the text, with a brand rule on the reading-start side. */
+export function emailQuote(caption: string, body: string, branding?: BrandingData): string {
+  const t = brandTints(branding);
+  return `
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 20px;">
+      <tr>
+        <td bgcolor="${t.palette.mutedSurface}" style="padding: 16px 20px; background-color: ${t.palette.mutedSurface}; border-${t.startSide}: 4px solid ${t.palette.brand}; border-radius: 6px;">
+          <p style="margin: 0 0 6px; font-size: 13px; font-weight: 600; color: ${t.palette.inkMuted};">${caption}</p>
+          <p style="margin: 0; font-size: 15px; line-height: 1.6; color: ${t.palette.ink};">${body}</p>
+        </td>
+      </tr>
+    </table>
+  `;
+}
+
 /**
  * Format currency for display
  */
