@@ -71,7 +71,33 @@ export async function processDueBriefings(now = new Date()): Promise<DispatchSum
 
   for (const row of claimed.data) {
     try {
-      const outcome = await dispatchOne(row.user_id, row.timezone, now);
+      /*
+       * One business day per row, used for BOTH the check and the render.
+       *
+       * The claim has no date predicate, so a row left pending past the
+       * business's midnight (a cron outage, a late retry) used to be rendered
+       * with the NEXT day's content under the old date — and that day's own
+       * row then sent as well. A row is sent only on its own date.
+       *
+       * The row's stored zone, not today's preference: `briefing_date` was
+       * written in it, so a zone change mid-day cannot cause a false mismatch.
+       * A future-dated row is closed the same way, which is fail-closed.
+       *
+       * If `markSkipped` fails the row stays `processing`; the reaper re-pends
+       * it, this guard skips it again, and it dead-letters. It is never sent.
+       */
+      const day: BusinessDay = businessDayFor(now, row.timezone);
+      if (row.briefing_date !== day.date) {
+        await dailyBriefingSendRepository.markSkipped(row.id, 'stale_date');
+        summary.skipped += 1;
+        logger.warn(
+          { rowId: row.id, userId: row.user_id, briefingDate: row.briefing_date, runDate: day.date },
+          'Briefing row is not for the business day; closed without sending'
+        );
+        continue;
+      }
+
+      const outcome = await dispatchOne(row.user_id, day);
 
       if (outcome.sent) {
         await dailyBriefingSendRepository.markSent(row.id);
@@ -161,13 +187,12 @@ interface DispatchOutcome {
   reason: string;
 }
 
-async function dispatchOne(
-  userId: string,
-  timezone: string,
-  now: Date
-): Promise<DispatchOutcome> {
-  const day: BusinessDay = businessDayFor(now, timezone);
-
+/**
+ * `day` is the one the caller already checked against the row's
+ * `briefing_date`. It is taken rather than recomputed so the date that was
+ * checked is, by construction, the date that is rendered.
+ */
+async function dispatchOne(userId: string, day: BusinessDay): Promise<DispatchOutcome> {
   const facts = await buildBriefingFacts(userId, day);
 
   /*
