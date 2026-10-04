@@ -21,16 +21,27 @@
 // (`auth.uid() = user_id`) apply to every read. An expired session therefore
 // fails as a read error, never as "no rows".
 //
-// ONE sanctioned exception (credit deduction slice 11c, SA S11-SQ-9, OP-25):
-// `lib/business-os/credits/adminCreditPositionDeps.ts` constructs this
-// repository on the service-role client for the admin per-account credit view,
-// because an admin reads ANOTHER account's credits and no RLS policy allows
-// that. Its account id is the admin route's URL path id, after `requireAdmin`,
-// the platform check and the tenant check; the `.eq('user_id', accountId)`
-// below is then the only line, and the owner-granted column lists mean no cost
-// column can reach the admin payload this way. A source guard in
-// `__tests__/BusinessOsCreditOwnerReadRepository.test.ts` pins exactly two
-// constructing files, and that only that one names the service client.
+// Documented service-role callers (S11-SQ-9 pattern, SA-ruled): a caller with
+// no user session, or one reading ANOTHER account, may construct this class on
+// the service-role client in its own deps file, which documents the RLS
+// bypass. This file still imports no service client, and every method still
+// requires the account id and adds `.eq('user_id', accountId)`; the
+// owner-granted column lists mean no cost column can reach either caller.
+// Exactly two such callers today:
+//   - `lib/business-os/credits/creditLowLineDeps.ts` (credit deduction slice
+//     8b, SA SQ-44): the low-line check inside the AI charge recorder; the
+//     account is the charge record's, validated by `runAiAction`.
+//   - `lib/business-os/credits/adminCreditPositionDeps.ts` (credit deduction
+//     slice 11c, SA S11-SQ-9, OP-25): the admin per-account credit view, because
+//     an admin reads ANOTHER account's credits and no RLS policy allows that.
+//     Its account id is the admin route's URL path id, after `requireAdmin`,
+//     the platform check and the tenant check.
+// A source guard in `__tests__/BusinessOsCreditOwnerReadRepository.test.ts`
+// pins exactly three constructing product files (the owner wiring plus those
+// two), and that only those two name the service client.
+//
+// `findTotalsForPeriod` and `listTotalsFrom` take an optional abort signal
+// (slice 8b, SA SQ-44) so a time-boxed caller can cancel the request.
 //
 // `new-repository` checklist, singleton item: N/A BY DESIGN. A singleton would
 // need a default client, and the only default that works without a request is
@@ -212,18 +223,20 @@ export class BusinessOsCreditOwnerReadRepository {
   /** The totals row of one period, or null when nothing was charged in it yet. */
   async findTotalsForPeriod(
     accountId: string,
-    periodStart: string
+    periodStart: string,
+    options: { signal?: AbortSignal } = {}
   ): Promise<RepositoryResult<OwnerCreditTotalsRow | null>> {
     const method = 'findTotalsForPeriod';
     try {
       this.assertAccount(accountId);
       assertPeriodKey(periodStart);
-      const { data, error } = await this.supabase
+      let query = this.supabase
         .from('business_os_credit_totals')
         .select(OWNER_TOTALS_COLUMNS)
         .eq('user_id', accountId)
-        .eq('period_start', periodStart)
-        .maybeSingle();
+        .eq('period_start', periodStart);
+      if (options.signal) query = query.abortSignal(options.signal);
+      const { data, error } = await query.maybeSingle();
       if (error) throw error;
       return { data: (data ?? null) as unknown as OwnerCreditTotalsRow | null, error: null };
     } catch (error) {
@@ -237,20 +250,23 @@ export class BusinessOsCreditOwnerReadRepository {
    */
   async listTotalsFrom(
     accountId: string,
-    fromPeriodStart: string
+    fromPeriodStart: string,
+    options: { signal?: AbortSignal } = {}
   ): Promise<RepositoryResult<OwnerCeilingResult<OwnerCreditTotalsRow>>> {
     const method = 'listTotalsFrom';
     try {
       this.assertAccount(accountId);
       assertPeriodKey(fromPeriodStart);
       const ceiling = OWNER_CREDIT_READ_LIMITS.TOTALS_CEILING;
-      const { data, error } = await this.supabase
+      let query = this.supabase
         .from('business_os_credit_totals')
         .select(OWNER_TOTALS_COLUMNS)
         .eq('user_id', accountId)
         .gte('period_start', fromPeriodStart)
         .order('period_start', { ascending: true })
         .range(0, ceiling - 1);
+      if (options.signal) query = query.abortSignal(options.signal);
+      const { data, error } = await query;
       if (error) throw error;
       const rows = (data ?? []) as unknown as OwnerCreditTotalsRow[];
       return { data: { rows, reachedCeiling: rows.length >= ceiling }, error: null };

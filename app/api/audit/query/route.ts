@@ -4,7 +4,8 @@
 // log of whatever account the `x-user-id` header named, with no login. Now the
 // account is the session user only (FR-22, FR-23), the query is validated (FR-24),
 // and the read goes through AuditTrailRepository, which never returns an AI audit
-// entry (FR-27). The response shape is unchanged: { success, logs, total, page,
+// entry (FR-27) or an admin credit / plan entry (BD-26, lib/audit/ownerVisibility.ts).
+// The response shape is unchanged: { success, logs, total, page,
 // limit, hasMore }.
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';

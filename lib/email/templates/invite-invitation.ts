@@ -38,7 +38,16 @@
 
 import type { Locale } from '@/lib/i18n/config';
 import { platformEmailBranding } from '@/lib/email/platformBranding';
-import { emailButton, formatEmailDate, wrapInBrandedTemplate } from './base-template';
+import {
+  emailButton,
+  emailEyebrow,
+  emailHighlightPanel,
+  emailPalette,
+  emailPanelLabel,
+  emailQuote,
+  formatEmailDate,
+  wrapInBrandedTemplate,
+} from './base-template';
 
 /** What the invitation offers, decided by the caller from the invite row. */
 export type InvitationOffer =
@@ -64,6 +73,8 @@ export interface InviteInvitationEmailData {
 }
 
 interface Copy {
+  /** The small label above the heading. Visual only: not in the plain-text part. */
+  eyebrow: string;
   subject: (name: string) => string;
   subjectFallback: string;
   heading: (name: string) => string;
@@ -83,6 +94,7 @@ interface Copy {
 
 const COPY: Record<Locale, Copy> = {
   en: {
+    eyebrow: 'Invitation',
     subject: (name) => `${name} invited you to AgentPilot`,
     subjectFallback: "You're invited to AgentPilot",
     heading: (name) => `${name} invited you to join AgentPilot`,
@@ -100,6 +112,7 @@ const COPY: Record<Locale, Copy> = {
     ignore: 'Not expecting this? You can ignore this email; nothing happens unless you sign up.',
   },
   he: {
+    eyebrow: 'הזמנה',
     subject: (name) => `הזמנה מ־${name} להצטרף ל־AgentPilot`,
     subjectFallback: 'הזמנה להצטרף ל־AgentPilot',
     heading: (name) => `קיבלת הזמנה מ־${name} להצטרף ל־AgentPilot`,
@@ -117,6 +130,7 @@ const COPY: Record<Locale, Copy> = {
     ignore: 'לא ציפית להודעה הזו? אפשר פשוט להתעלם ממנה. שום דבר לא יקרה אם לא נרשמים.',
   },
   es: {
+    eyebrow: 'Invitación',
     subject: (name) => `${name} te ha invitado a AgentPilot`,
     subjectFallback: 'Te han invitado a AgentPilot',
     heading: (name) => `${name} te ha invitado a unirte a AgentPilot`,
@@ -178,25 +192,38 @@ export function generateInviteInvitationEmail(data: InviteInvitationEmailData): 
   const noteFrom = name ? t.noteFrom(name) : t.noteFromFallback;
   const link = escapeHtml(data.linkUrl);
 
+  const palette = emailPalette(branding);
+
+  /*
+   * Layout: eyebrow, heading, the note as a quote, the plan in a tinted panel,
+   * one full-width button, the expiry, then (under a hairline) the plain link
+   * and the safety line. The words and their order in the plain-text part are
+   * unchanged; only the HTML gained structure.
+   */
   const noteHtml = note
-    ? `
-      <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600;">${escapeHtml(noteFrom)}</p>
-      <p style="margin: 0 0 20px; font-size: 15px; line-height: 1.6; white-space: normal;">${escapeHtml(note).replace(/\r?\n/g, '<br>')}</p>`
+    ? emailQuote(escapeHtml(noteFrom), escapeHtml(note).replace(/\r?\n/g, '<br>'), branding)
     : '';
+
+  const planHtml = emailHighlightPanel(
+    `${emailPanelLabel(escapeHtml(t.offerTitle), branding)}
+          <p style="margin: 0 0 4px; font-size: 20px; font-weight: 700; color: ${palette.ink};"><span dir="ltr">${escapeHtml(data.planName)}</span></p>
+          <p style="margin: 0; font-size: 14px; line-height: 1.6; color: ${palette.inkMuted};">${offer.map(escapeHtml).join(' · ')}</p>`,
+    branding
+  );
 
   const content = `
     <div dir="${dir}" style="text-align: ${align};">
-      <h1 style="margin: 0 0 16px; font-size: 20px; font-weight: 600;">${escapeHtml(heading)}</h1>
+      ${emailEyebrow(escapeHtml(t.eyebrow), branding)}
+      <h1 style="margin: 0 0 20px; font-size: 24px; line-height: 1.3; font-weight: 700; color: ${palette.ink};">${escapeHtml(heading)}</h1>
       ${noteHtml}
-      <p style="margin: 0 0 4px; font-size: 14px; font-weight: 600;">${escapeHtml(t.offerTitle)}</p>
-      <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.6;"><span dir="ltr">${escapeHtml(data.planName)}</span> · ${offer
-        .map(escapeHtml)
-        .join(' · ')}</p>
-      ${emailButton(escapeHtml(t.button), link, { branding })}
-      <p style="margin: 16px 0 4px; font-size: 13px;">${escapeHtml(t.plainLink)}</p>
-      <p dir="ltr" style="margin: 0 0 16px; font-size: 13px; text-align: left; word-break: break-all; font-family: monospace;">${link}</p>
-      <p style="margin: 0 0 16px; font-size: 14px; line-height: 1.6;">${escapeHtml(t.validUntil(expiry))}</p>
-      <p style="margin: 20px 0 0; font-size: 13px; opacity: 0.7; line-height: 1.6;">${escapeHtml(t.ignore)}</p>
+      ${planHtml}
+      ${emailButton(escapeHtml(t.button), link, { branding, fullWidth: true })}
+      <p style="margin: 0 0 24px; font-size: 14px; line-height: 1.6; color: ${palette.inkMuted};">${escapeHtml(t.validUntil(expiry))}</p>
+      <div style="border-top: 1px solid ${palette.line}; padding-top: 16px;">
+        <p style="margin: 0 0 4px; font-size: 13px; color: ${palette.inkMuted};">${escapeHtml(t.plainLink)}</p>
+        <p dir="ltr" style="margin: 0 0 16px; font-size: 13px; text-align: left; word-break: break-all; font-family: monospace; color: ${palette.inkMuted};">${link}</p>
+        <p style="margin: 0; font-size: 13px; line-height: 1.6; color: ${palette.inkFaint};">${escapeHtml(t.ignore)}</p>
+      </div>
     </div>
   `;
 

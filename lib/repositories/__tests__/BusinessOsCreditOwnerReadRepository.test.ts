@@ -320,15 +320,17 @@ describe('source guards', () => {
 });
 
 /**
- * Credit deduction slice 11c (SA W11c-17): the CI-side pin on the one
- * service-role path. This suite runs in `test:bos-entitlements`. Exactly two
- * product files construct this repository, and only the admin wiring names
- * the service client.
+ * Credit deduction slice 11c (SA W11c-17): the CI-side pin on the
+ * service-role paths. This suite runs in `test:bos-entitlements`. Exactly three
+ * product files construct this repository (the owner wiring, slice 8b's
+ * low-line wiring and the admin wiring), and only the two documented
+ * service-role callers (low-line and admin) name the service client.
  */
 describe('who constructs this repository (slice 11c, SA W11c-17)', () => {
   const ROOT = process.cwd();
   const OWNER_WIRING = 'lib/business-os/credits/ownerCreditUsageDeps.ts';
   const ADMIN_WIRING = 'lib/business-os/credits/adminCreditPositionDeps.ts';
+  const LOW_LINE_WIRING = 'lib/business-os/credits/creditLowLineDeps.ts';
   const CONSTRUCTS = /new\s+BusinessOsCreditOwnerReadRepository\s*\(/;
   const SERVICE_CLIENT = /(?<![A-Za-z0-9_$])supabaseServer(?![A-Za-z0-9_$])/;
   const codeOf = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
@@ -358,14 +360,16 @@ describe('who constructs this repository (slice 11c, SA W11c-17)', () => {
     expect(sources.length).toBeGreaterThan(500);
   });
 
-  it('exactly two product files construct it: the owner wiring and the admin wiring', () => {
+  it('exactly three product files construct it: the owner, low-line and admin wirings', () => {
     expect(sources.filter(({ code }) => CONSTRUCTS.test(code)).map(({ file }) => file).sort()).toEqual(
-      [ADMIN_WIRING, OWNER_WIRING].sort()
+      [ADMIN_WIRING, LOW_LINE_WIRING, OWNER_WIRING].sort()
     );
   });
 
-  it('only the admin wiring names the service client', () => {
+  it('only the two documented service-role callers name the service client (not the owner wiring)', () => {
     const constructors = sources.filter(({ code }) => CONSTRUCTS.test(code));
-    expect(constructors.filter(({ code }) => SERVICE_CLIENT.test(code)).map(({ file }) => file)).toEqual([ADMIN_WIRING]);
+    expect(
+      constructors.filter(({ code }) => SERVICE_CLIENT.test(code)).map(({ file }) => file).sort()
+    ).toEqual([ADMIN_WIRING, LOW_LINE_WIRING].sort());
   });
 });

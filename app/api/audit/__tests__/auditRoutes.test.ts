@@ -24,6 +24,9 @@ const mockListOwnerEntries = jest.fn();
 jest.mock('@/lib/repositories/AuditTrailRepository', () => ({
   auditTrailRepository: { listOwnerEntries: (...args: unknown[]) => mockListOwnerEntries(...args) },
 }));
+// The BD-26 cases load the real repository module; its default client must not
+// try to connect.
+jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: {} }));
 
 const mockLogged: Array<{ level: string; fields: Record<string, unknown>; msg: string }> = [];
 jest.mock('@/lib/logger', () => {
@@ -130,6 +133,30 @@ describe('GET /api/audit/query', () => {
     expect(res.status).toBe(200);
     expect(mockListOwnerEntries.mock.calls[0][1]).toMatchObject({ entityType: 'stripe_connect_account' });
   });
+
+  // BD-26 (W26-5). The route is wired to the REAL repository here (the module
+  // mock delegates to it), over a client that throws if it is ever queried: a
+  // hidden entity type must come back 200 with an empty page and no read.
+  it.each([['business_os_credit_lot'], ['business_os_credit_period']])(
+    'answers ?entityType=%s with 200 and an empty page, without reading the table',
+    async (entityType) => {
+      const { AuditTrailRepository } = jest.requireActual('@/lib/repositories/AuditTrailRepository') as typeof import('@/lib/repositories/AuditTrailRepository');
+      const from = jest.fn(() => {
+        throw new Error('the audit table must not be read for a hidden entity type');
+      });
+      const realRepository = new AuditTrailRepository({ from } as never);
+      mockListOwnerEntries.mockImplementation((userId: string, q: Parameters<typeof realRepository.listOwnerEntries>[1]) =>
+        realRepository.listOwnerEntries(userId, q)
+      );
+      mockGetUser.mockResolvedValue(OWNER_A);
+
+      const res = await queryGET(get(`?entityType=${entityType}&limit=1000`));
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ success: true, logs: [], total: 0, page: 1, limit: 1000, hasMore: false });
+      expect(from).not.toHaveBeenCalled();
+    }
+  );
 
   it('returns no internal error text outside development (FR-26)', async () => {
     mockGetUser.mockResolvedValue(OWNER_A);

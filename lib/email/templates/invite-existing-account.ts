@@ -27,7 +27,7 @@
 
 import type { Locale } from '@/lib/i18n/config';
 import { platformEmailBranding } from '@/lib/email/platformBranding';
-import { wrapInBrandedTemplate } from './base-template';
+import { emailButton, emailPalette, wrapInBrandedTemplate } from './base-template';
 
 export interface InviteExistingAccountEmailData {
   /** The normal sign-in page (`marketingUrl('/login')`), built by the caller. */
@@ -88,12 +88,17 @@ export function generateInviteExistingAccountEmail(data: InviteExistingAccountEm
   const dir = isRTL ? 'rtl' : 'ltr';
   const align = isRTL ? 'right' : 'left';
 
+  const branding = platformEmailBranding(data.locale);
+  const palette = emailPalette(branding);
+
+  // `href` has passed `safeHref` (http(s), no quote or angle bracket), so it is
+  // safe as the button's href as it stands; the label is our own copy.
   const content = `
     <div dir="${dir}" style="text-align: ${align};">
-      <h1 style="margin: 0 0 16px; font-size: 20px; font-weight: 600;">${t.heading}</h1>
-      <p style="margin: 0 0 20px; font-size: 15px; line-height: 1.6;">${t.lead}</p>
-      ${href ? `<p style="margin: 0 0 20px;"><a href="${href}" style="display: inline-block; padding: 10px 20px; border-radius: 6px; background: #111827; color: #ffffff; text-decoration: none; font-weight: 600;">${t.action}</a></p>` : ''}
-      <p style="margin: 20px 0 0; font-size: 13px; opacity: 0.7; line-height: 1.6;">${t.ignore}</p>
+      <h1 style="margin: 0 0 16px; font-size: 24px; line-height: 1.3; font-weight: 700; color: ${palette.ink};">${t.heading}</h1>
+      <p style="margin: 0 0 20px; font-size: 15px; line-height: 1.6; color: ${palette.inkMuted};">${t.lead}</p>
+      ${href ? emailButton(t.action, href, { branding }) : ''}
+      <p style="margin: 20px 0 0; padding-top: 16px; border-top: 1px solid ${palette.line}; font-size: 13px; line-height: 1.6; color: ${palette.inkFaint};">${t.ignore}</p>
     </div>
   `;
 
@@ -101,7 +106,7 @@ export function generateInviteExistingAccountEmail(data: InviteExistingAccountEm
 
   return {
     subject: t.subject,
-    html: wrapInBrandedTemplate(content, platformEmailBranding(data.locale)),
+    html: wrapInBrandedTemplate(content, branding),
     text,
   };
 }

@@ -107,6 +107,8 @@ const SOURCES = [
   // Credit deduction slice 8a — the admin "Credits left" column (names `creditAllowanceForDisplay`).
   'lib/business-os/credits/adminCreditPercent.ts',
   'app/admin/users/components/CreditsLeftCell.tsx',
+  // Credit deduction slice 8b — the low-line audit record (names `creditAllowanceForDisplay`).
+  'lib/business-os/credits/creditLowLine.ts',
   // The one presentation rule both surfaces apply to a category's line.
   'lib/business-os/planCategoryLine.ts',
   // Credit deduction slice 11c — the admin per-account credit view. The route

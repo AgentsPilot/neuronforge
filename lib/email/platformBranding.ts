@@ -52,7 +52,13 @@ export function platformEmailBranding(locale: Locale): BrandingData {
 
   return {
     businessName: PLATFORM_EMAIL_NAME,
-    primaryColor: '#0f172a',
+    /*
+     * The app's own primary (V2 `--v2-primary-dark`, `app/v2/globals-v2.css`),
+     * so the button and the tinted panels in these emails match the invite
+     * page and the app they lead to. It was slate-900, which made every
+     * platform email a black-and-grey column. White on it is 6.3:1 (AA).
+     */
+    primaryColor: '#4F46E5',
     secondaryColor: '#334155',
     locale,
     ...(logoUrl

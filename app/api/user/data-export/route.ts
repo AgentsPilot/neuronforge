@@ -1,5 +1,17 @@
 // /app/api/user/data-export/route.ts
 // GDPR Article 15 & 20: Right to access and data portability
+//
+// BD-26 (user decision, 2026-10-04): the owner's export leaves out internal
+// admin audit entries — every OWNER_HIDDEN_ENTITY_TYPES type and any Business
+// OS AI action event — the same rule as the owner RLS policy and
+// AuditTrailRepository.listOwnerEntries (lib/audit/ownerVisibility.ts). A
+// source guard (lib/audit/__tests__/ownerAuditReads.guard.test.ts) keeps both
+// exclusions here.
+//
+// Known, deliberately unchanged here (workplan FU-1): the audit query filters
+// on `timestamp`, a column that does not exist, so it exports no audit rows
+// today; and the reads use a direct service-role client rather than a
+// repository.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
@@ -7,6 +19,11 @@ import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { auditLog } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
+import { OWNER_HIDDEN_ENTITY_TYPES } from '@/lib/audit/ownerVisibility';
+import { AI_ACTION_EVENT_PREFIX } from '@/lib/audit/requestSchemas';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'UserDataExportAPI' });
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,6 +39,8 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET(req: NextRequest) {
   const startTime = Date.now();
+  const correlationId = req.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
 
   try {
     // Authenticate user
@@ -44,7 +63,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    console.log(`📦 [DATA EXPORT] Starting data export for user: ${user.id}`);
+    requestLogger.info({ userId: user.id }, 'Data export started');
 
     // Create service role client for unrestricted access
     const serviceSupabase = createClient(
@@ -154,11 +173,15 @@ export async function GET(req: NextRequest) {
 
     exportData.transactions = transactions || [];
 
-    // 8. Audit Logs (last 90 days, user-specific actions only)
+    // 8. Audit Logs (last 90 days, user-specific actions only). Owner-hidden
+    // entries are left out (BD-26): the hidden entity types, and any AI action
+    // event whatever its type. The values are fixed identifiers, so no quoting.
     const { data: auditLogs } = await serviceSupabase
       .from('audit_trail')
       .select('*')
       .eq('user_id', user.id)
+      .not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`)
+      .not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`)
       .gte('timestamp', ninetyDaysAgo.toISOString())
       .order('timestamp', { ascending: false })
       .limit(10000);
@@ -177,7 +200,20 @@ export async function GET(req: NextRequest) {
       export_duration_ms: Date.now() - startTime,
     };
 
-    console.log(`✅ [DATA EXPORT] Export completed:`, exportData.summary);
+    requestLogger.info(
+      {
+        userId: user.id,
+        totalAgents: exportData.summary.total_agents,
+        totalExecutions: exportData.summary.total_executions,
+        totalConfigurations: exportData.summary.total_configurations,
+        totalPluginConnections: exportData.summary.total_plugin_connections,
+        totalTransactions: exportData.summary.total_transactions,
+        totalAuditLogs: exportData.summary.total_audit_logs,
+        exportSizeKb: exportData.summary.export_size_kb,
+        durationMs: exportData.summary.export_duration_ms,
+      },
+      'Data export completed'
+    );
 
     // AUDIT TRAIL: Log data export
     try {
@@ -199,9 +235,9 @@ export async function GET(req: NextRequest) {
         severity: 'info',
         complianceFlags: ['GDPR', 'SOC2'],
       });
-      console.log('✅ Data export audit logged');
+      requestLogger.info({ userId: user.id }, 'Data export audit logged');
     } catch (auditError) {
-      console.error('⚠️ Audit logging failed (non-critical):', auditError);
+      requestLogger.error({ err: auditError, userId: user.id }, 'Data export audit logging failed (non-critical)');
     }
 
     // Return data as downloadable JSON
@@ -215,7 +251,7 @@ export async function GET(req: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('❌ [DATA EXPORT] Failed:', error);
+    requestLogger.error({ err: error }, 'Data export failed');
 
     return NextResponse.json(
       {

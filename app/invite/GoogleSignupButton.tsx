@@ -32,6 +32,7 @@ import { useRouter } from 'next/navigation';
 import { signInWithGoogleIdToken } from '@/lib/client/auth-actions';
 import { marketingUrl } from '@/lib/utils/origins';
 
+import { INVITE_PRIMARY_BUTTON } from './InviteShell';
 import type { InviteLocale, SignupCopy } from './invitePageCopy';
 import { GOOGLE_IDENTITY_SCRIPT_SRC, useGoogleIdentity, type GoogleCredential } from './useGoogleIdentity';
 
@@ -135,13 +136,13 @@ export function GoogleSignupButton({ token, clientId, locale, maskedEmail, copy,
 
   if (ready) {
     return (
-      <section data-testid="invite-google-ready" className="space-y-3 border-t border-slate-200 pt-5">
-        <h2 className="text-lg font-semibold">{copy.google.readyHeading}</h2>
+      <section data-testid="invite-google-ready" className="space-y-3">
+        <h2 className="text-lg font-semibold text-emerald-800">{copy.google.readyHeading}</h2>
         <p className="text-sm text-slate-600">{copy.google.readyBody}</p>
         <a
           href={marketingUrl('/login')}
           rel="noreferrer"
-          className="inline-block rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+          className={INVITE_PRIMARY_BUTTON}
         >
           {signInLabel}
         </a>
@@ -153,7 +154,7 @@ export function GoogleSignupButton({ token, clientId, locale, maskedEmail, copy,
   if (identity.failed) return null;
 
   return (
-    <section data-testid="invite-google" className="space-y-3 border-t border-slate-200 pt-5">
+    <section data-testid="invite-google" className="space-y-3">
       <Script
         id="google-identity-services"
         src={GOOGLE_IDENTITY_SCRIPT_SRC}
@@ -167,7 +168,13 @@ export function GoogleSignupButton({ token, clientId, locale, maskedEmail, copy,
           {copy.google.creating}
         </p>
       )}
-      <p data-testid="invite-google-error" role="alert" aria-live="polite" className="min-h-[1.25rem] text-sm text-rose-700">
+      {/* Always mounted (a live region must exist before its text does); visually hidden while empty. */}
+      <p
+        data-testid="invite-google-error"
+        role="alert"
+        aria-live="polite"
+        className={error ? 'rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700' : 'sr-only'}
+      >
         {error}
       </p>
       {identity.rendered && (

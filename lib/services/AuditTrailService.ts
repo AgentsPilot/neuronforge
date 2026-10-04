@@ -319,6 +319,11 @@ class AuditTrailService {
 
   /**
    * Query audit logs with advanced filtering
+   *
+   * CALLER CONTRACT: this reads every matching row with the service role. An
+   * owner-facing caller must exclude OWNER_HIDDEN_ENTITY_TYPES and AI action
+   * events (BD-26, lib/audit/ownerVisibility.ts); the owner read path is
+   * AuditTrailRepository.listOwnerEntries. No production caller today.
    */
   public async query(params: AuditQueryParams): Promise<AuditQueryResult> {
     const page = params.page || 1;
@@ -414,6 +419,8 @@ class AuditTrailService {
    * CALLER CONTRACT: `userId` is the authenticated account's own id, or one an
    * admin gate verified, never a request-body value. This runs with the service
    * role, so the argument is the tenant boundary. No production caller today.
+   * An owner-facing caller must exclude OWNER_HIDDEN_ENTITY_TYPES and AI action
+   * events (BD-26, lib/audit/ownerVisibility.ts): this returns every row.
    *
    * Known, pre-existing: the live read is one request, so PostgREST's 1,000-row
    * cap applies to it. The archived read pages. Recorded under requirement C-17.

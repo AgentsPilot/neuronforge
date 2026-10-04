@@ -779,7 +779,14 @@ describe('L8: the charge path is pinned to 20261015 (T11a.4, OP-7, W11a-5)', () 
       }
       return out;
     };
-    const allowed = new Set([CHARGES_MIGRATION, CHARGES_ROLLBACK].map((file) => relative(ROOT, file)));
+    // Re-pinned on purpose (Admin AI Activity slice B0', PR #195): two index-only files on
+    // business_os_credit_charges. They create/drop indexes and nothing else, so the charge path
+    // L8 pins (functions, columns, grants) is unchanged; the test below keeps them index-only.
+    const indexOnly = [
+      join(MIGRATIONS_DIR, '20261026_business_os_credit_charges_activity_indexes.sql'),
+      join(SQL_SCRIPTS_DIR, '20261026_business_os_credit_charges_activity_indexes_rollback.sql'),
+    ];
+    const allowed = new Set([CHARGES_MIGRATION, CHARGES_ROLLBACK, ...indexOnly].map((file) => relative(ROOT, file)));
     const files = [...walk(MIGRATIONS_DIR), ...walk(SQL_SCRIPTS_DIR)];
     expect(files.length).toBeGreaterThan(20);
     const namers = files
@@ -788,6 +795,17 @@ describe('L8: the charge path is pinned to 20261015 (T11a.4, OP-7, W11a-5)', () 
       .filter((rel) => CHARGE_PATH_NAMES.some((name) => readFileSync(join(ROOT, rel), 'utf8').includes(name)))
       .map((rel) => rel.split(sep).join('/'));
     expect(namers).toEqual([]);
+    for (const file of indexOnly) {
+      const statements = read(file)
+        .replace(/\r/g, '')
+        .replace(/--[^\n]*/g, '')
+        .split(';')
+        .map((statement) => statement.replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+      for (const statement of statements) {
+        expect(statement).toMatch(/^(BEGIN|COMMIT|SET LOCAL lock_timeout = '1s'|CREATE INDEX IF NOT EXISTS business_os_credit_charges_\w+ ON public\.business_os_credit_charges \(|DROP INDEX IF EXISTS public\.business_os_credit_charges_\w+$)/);
+      }
+    }
   });
 });
 

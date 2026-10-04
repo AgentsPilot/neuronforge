@@ -85,8 +85,9 @@ export const CREDIT_REPORT_LIMITS = {
 export const FALLBACK_RECONCILED_REASON = 'fallback_price_reconciled';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const CREDIT_SCALE = 1e6;
-const COST_SCALE = 1e10;
+/** Integer units of the ledger's own scales (credits 6 dp, cost 10 dp). Exported for the Activity view (OQ-9). */
+export const CREDIT_SCALE = 1e6;
+export const COST_SCALE = 1e10;
 
 export interface CreditReportLogger {
   error: (ctx: Record<string, unknown>, msg: string) => void;
@@ -132,7 +133,7 @@ export function windowInstants(window: CreditReportWindow): { start: Date; end: 
 // ============ Amounts ============
 
 /** Integer units of `scale`; `NaN` for an unreadable value (counted by the caller). */
-function toUnits(value: number | string | null | undefined, scale: number): number {
+export function toUnits(value: number | string | null | undefined, scale: number): number {
   const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
   return Number.isFinite(n) ? Math.round(n * scale) : NaN;
 }
