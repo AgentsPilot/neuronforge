@@ -34,7 +34,22 @@ jest.mock('@/lib/logger', () => {
   return { createLogger: () => logger };
 });
 
-jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: {} }));
+/*
+ * The route reads the owner's timezone from `user_preferences` beside the
+ * profile read (c1a427e6). A bare `{}` made that throw while the Promise.all
+ * array was still being built, after the profile read had started, so its
+ * rejection went unhandled and Node killed the Jest worker. No preferences row
+ * is the honest stub: the route falls back to its default clock.
+ */
+jest.mock('@/lib/supabaseServer', () => ({
+  supabaseServer: {
+    from: () => ({
+      select: () => ({
+        eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }),
+      }),
+    }),
+  },
+}));
 jest.mock('@/lib/business-os/userCurrency', () => ({ resolveUserCurrency: async () => 'USD' }));
 /*
  * Layer 2: the chat area switch is read at route entry (Step 3). Mocked ON so

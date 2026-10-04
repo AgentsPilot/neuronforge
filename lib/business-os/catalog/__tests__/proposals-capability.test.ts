@@ -74,6 +74,8 @@ describe('the two status rules', () => {
   it('declares every status the database allows', () => {
     expect(proposals.fields.status.enumValues).toEqual([
       'draft', 'sent', 'viewed', 'accepted', 'declined', 'expired', 'withdrawn', 'superseded',
+      // Added by migration 20260928b_proposal_stopped_state.sql (#151).
+      'stopped',
     ]);
   });
 

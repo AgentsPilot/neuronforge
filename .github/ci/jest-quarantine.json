@@ -1,0 +1,18 @@
+{
+  "$comment": "Suites the PR gate (jest.gate.config.js) does not run. REMOVALS ONLY: .github/ci/jest-gate-check.mjs fails any PR that adds a path not present on the base branch, so an addition needs SA review and a visible override. Every entry was red on main at 'since'. The floors are raised by hand and never lowered without SA. Workplan: docs/workplans/TEST_STRATEGY_AND_CI_TIERING_WORKPLAN.md section 0.",
+  "minSuites": 721,
+  "minTests": 13187,
+  "suites": [
+    { "path": "lib/agentkit/v6/logical-ir/schemas/__tests__/validation.test.ts", "reason": "V6 IR schema drift (12/51 failing). V6 is parked; owner is whoever resumes it.", "since": "894150f5" },
+    { "path": "lib/agentkit/v6/translation/__tests__/IRToNaturalLanguageTranslator.test.ts", "reason": "V6 translator output drift (11/25 failing). V6 is parked.", "since": "894150f5" },
+    { "path": "lib/agentkit/v6/compiler/__tests__/LogicalIRCompiler.test.ts", "reason": "V6 compiler drift (20/22 failing). V6 is parked.", "since": "894150f5" },
+    { "path": "lib/agentkit/v4/__tests__/v4-generator.test.ts", "reason": "V4 generator drift (22/23 failing). The agent platform is parked.", "since": "894150f5" },
+    { "path": "lib/pilot/__tests__/StructuredTransforms.test.ts", "reason": "Pilot transform drift (4/66 failing). The agent platform is parked.", "since": "894150f5" },
+    { "path": "lib/pilot/__tests__/StructuredTransforms.wp33.test.ts", "reason": "Pilot transform drift (3/18 failing). The agent platform is parked.", "since": "894150f5" },
+    { "path": "lib/pilot/__tests__/StructuredTransforms.wp37.test.ts", "reason": "Pilot transform drift (2/8 failing). The agent platform is parked.", "since": "894150f5" },
+    { "path": "lib/pilot/__tests__/ConditionalEvaluator.test.ts", "reason": "Pilot condition-evaluator drift (5/18 failing). The agent platform is parked.", "since": "894150f5" },
+    { "path": "lib/pilot/__tests__/ConditionalEvaluator.contains_any.test.ts", "reason": "The contains_any operator is entirely red (25/25). The agent platform is parked.", "since": "894150f5" },
+    { "path": "lib/orchestration/__tests__/TokenBudgetManager.test.ts", "reason": "Orchestration budget drift (17/21 failing). The agent platform is parked.", "since": "894150f5" },
+    { "path": "lib/orchestration/__tests__/IntentClassifier.test.ts", "reason": "Orchestration classifier drift (1/23 failing). The agent platform is parked.", "since": "894150f5" }
+  ]
+}
