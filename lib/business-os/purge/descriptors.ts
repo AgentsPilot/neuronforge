@@ -405,6 +405,10 @@ const EXCLUDED: PurgeDescriptor[] = [
   never('business_os_credit_lot_draws', U,
     'Credits taken back out of a lot (admin reversals; consumption from slice 9). A financial record that what is left of a lot is rebuilt from; never purged and never archived. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
 
+  // Plan payments P-2a (PF-14, SA-P1): the Business OS billing record.
+  never('business_os_billing_accounts', U,
+    'The Business OS billing record: the Stripe customer and subscription of the plan, one row per account per Stripe mode. A Reset that removed it would orphan a live Stripe subscription that keeps charging, and lose the customer link. A retained financial record: never purged and never archived. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
+
   // Admin Archiving (Slice 2, condition C-4)
   never('archive_runs', G,
     'The platform run log of archiving: who ran it, when, which cutoff, how many rows. No user_id and no business content, counts only. Never archived and never purged.'),
