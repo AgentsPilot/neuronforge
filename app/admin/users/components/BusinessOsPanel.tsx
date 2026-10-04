@@ -2,6 +2,9 @@
  * The Business OS panel at the top of an expanded Businesses row
  * (admin reorganisation slice 2b).
  *
+ * Order: header, Credits (credit deduction slice 11c, its own read), Plan &
+ * entitlements (collapsed), AI spend, AI failures.
+ *
  * Two reads, both admin-gated on the server:
  *   - the EXISTING entitlements route, rendered by the SAME component the Plans
  *     & entitlements screen uses — so the plan, cohort and "which layer decided"
@@ -28,6 +31,7 @@ import {
 } from '@/app/admin/business-os-tiers/components/EntitlementSnapshot';
 import type { AccountPayload } from '@/app/admin/business-os-tiers/types';
 import type { AccountSummaryPayload } from '../types';
+import { CreditsBlock } from './CreditsBlock';
 
 /**
  * Every refusal the summary route can return, as a sentence. Kept complete by a
@@ -73,6 +77,14 @@ function auditLink(accountId: string, groupId?: string | null): string {
   return `/admin/audit-trail?${params.toString()}`;
 }
 
+/** The fold's one line: the tier and cohort the entitlements read already returned, nothing more. */
+function planSummary(payload: AccountPayload): string {
+  const parts = ['Plan & entitlements'];
+  if (payload.plan?.tier) parts.push(payload.plan.tier);
+  if (payload.plan?.cohort) parts.push(`cohort ${payload.plan.cohort}`);
+  return parts.join(' · ');
+}
+
 interface Props {
   accountId: string;
   /** The login's name, shown beside the business name. */
@@ -113,6 +125,12 @@ export function BusinessOsPanel({ accountId, userName }: Props) {
   else if (summary.state === 'ok' && summary.data.business.status === 'ok') {
     headerTitle = summary.data.business.companyName || 'Unnamed business';
   }
+  // What the credit forms' confirm step names (slice 11c): the business when
+  // the summary named one, otherwise the account id, never "Business OS".
+  const businessLabel =
+    summary.state === 'ok' && summary.data.business.status === 'ok' && summary.data.business.companyName
+      ? summary.data.business.companyName
+      : accountId;
 
   return (
     <section
@@ -152,19 +170,38 @@ export function BusinessOsPanel({ accountId, userName }: Props) {
             <p className="text-sm text-slate-400">Business profile not created yet (setup in progress).</p>
           )}
 
-          {/* Plan: the entitlements API, rendered by the Plans & entitlements component */}
-          <div>
-            <h4 className="text-sm font-semibold text-slate-300">Plan & entitlements</h4>
-            {plan.state === 'ok' ? (
+          {/* Credits (credit deduction slice 11c): its own read, first after the header */}
+          <CreditsBlock accountId={accountId} businessLabel={businessLabel} />
+
+          {/* Plan: the entitlements API, rendered by the Plans & entitlements
+              component, collapsed by default here only (user UI fixes,
+              2026-10-04). The Plans page renders it open, unchanged. A read
+              failure is never hidden behind the fold. */}
+          {plan.state === 'ok' ? (
+            <details data-testid="bos-panel-plan" className="group">
+              <summary
+                data-testid="bos-panel-plan-summary"
+                className="cursor-pointer select-none text-sm font-semibold text-slate-300 hover:text-white"
+              >
+                {planSummary(plan.data)}
+                <span className="font-normal text-emerald-300">
+                  {' · '}
+                  <span className="group-open:hidden">Show all capabilities</span>
+                  <span className="hidden group-open:inline">Hide capabilities</span>
+                </span>
+              </summary>
               <EntitlementSnapshot payload={plan.data} />
-            ) : (
-              plan.state === 'error' && (
+            </details>
+          ) : (
+            plan.state === 'error' && (
+              <div>
+                <h4 className="text-sm font-semibold text-slate-300">Plan & entitlements</h4>
                 <p data-testid="bos-panel-plan-error" className="mt-2 text-sm text-rose-300">
                   {ENTITLEMENT_ERROR_COPY[plan.code] ?? 'The plan could not be read.'}
                 </p>
-              )
-            )}
-          </div>
+              </div>
+            )
+          )}
 
           {summary.state === 'error' && (
             <p data-testid="bos-panel-summary-error" className="text-sm text-rose-300">

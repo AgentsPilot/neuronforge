@@ -209,6 +209,12 @@ describe('source guards (G3, G6, W11a-7)', () => {
     'lib/business-os/credits/__tests__/creditAdminOps.test.ts',
     'app/api/admin/business-os/entitlements/accounts/[accountId]/route.ts',
     'app/api/admin/business-os/entitlements/__tests__/routes.test.ts',
+    // Slice 11c (SA W11c-3): the admin per-account credit view reads the lots
+    // (the wiring names the singleton) and their positions (the route calls
+    // the balance core); the route test names both.
+    'lib/business-os/credits/adminCreditPositionDeps.ts',
+    'app/api/admin/business-os/credits/accounts/[accountId]/route.ts',
+    'app/api/admin/business-os/credits/accounts/[accountId]/__tests__/route.test.ts',
   ];
   const ALLOWED = new Set(ALLOWED_LIST.map((p) => p.split('/').join(sep)));
 

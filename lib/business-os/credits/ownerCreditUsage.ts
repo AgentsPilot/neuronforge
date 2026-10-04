@@ -32,10 +32,20 @@
  * importer: it is display only and refuses nothing.
  *
  * ── TENANT ISOLATION ─────────────────────────────────────────────────────────
- * The account comes from the session user only, through `resolveAccountId`.
- * The ledger is read with the owner's RLS client (the owner repository adds
- * `.eq('user_id', …)` on top). Service role is used only by the injected plan
- * anchor read and the pure period function, both in `ownerCreditUsageDeps.ts`.
+ * The two OWNER wrappers take the account from the session user only, through
+ * `resolveAccountId`. The ledger is read with the owner's RLS client (the owner
+ * repository adds `.eq('user_id', …)` on top). Service role is used only by the
+ * injected plan anchor read and the pure period function, both in
+ * `ownerCreditUsageDeps.ts`.
+ *
+ * `readCreditPosition` (credit deduction slice 11c, SA S11-SQ-9) takes an
+ * account id the CALLER has already resolved and authorised. It has exactly
+ * two callers, pinned by a source guard in `__tests__/creditPosition.test.ts`
+ * (SA W11c-2): the two owner wrappers below, and the admin per-account credit
+ * view `GET /api/admin/business-os/credits/accounts/[accountId]`, which passes
+ * the URL path id only after `requireAdmin`, Zod, the platform check and the
+ * tenant check, with the service-role wiring of `adminCreditPositionDeps.ts`
+ * (every repository read there is still `.eq('user_id', accountId)`).
  *
  * ── FAILURE ──────────────────────────────────────────────────────────────────
  * Any ledger, anchor or period read error, a non-finite figure, or a trial
@@ -73,13 +83,19 @@ export interface OwnerCreditUsageLogger {
 }
 
 export interface OwnerCreditUsageDeps extends CreditPeriodDeps {
-  /** The owner repository, built on the CALLER'S RLS client. */
+  /**
+   * The owner repository, built on the CALLER'S RLS client for the owner
+   * surfaces; on the service role for the admin view (`adminCreditPositionDeps.ts`).
+   */
   owner: Pick<
     BusinessOsCreditOwnerReadRepository,
     'findTotalsForPeriod' | 'listTotalsFrom' | 'listAdjustmentsForPeriods' | 'findChargesByActionIds'
   >;
   now?: () => Date;
-  /** Tests only. Production reads the entitlement snapshot. */
+  /**
+   * Tests, and the admin view (which reads the snapshot itself to get the
+   * deciding layer as well). The owner surfaces read the entitlement snapshot.
+   */
   readAllowance?: (accountId: string, log: OwnerCreditUsageLogger) => Promise<OwnerCreditAllowance | null>;
 }
 
@@ -204,7 +220,11 @@ async function attributeCorrections(
  * total was summed from.
  */
 export interface OwnerCreditWindow {
-  /** From `resolveAccountId(userId)` only. */
+  /**
+   * From `resolveAccountId(userId)` on the owner surfaces; on the admin view,
+   * the canonical URL path id after `requireAdmin`, the platform check and the
+   * tenant check (slice 11c). Never from a request body.
+   */
   accountId: string;
   kind: OwnerCreditPeriodKind;
   /** The predicate BOTH the totals read and the ledger-row read use. */
@@ -322,6 +342,33 @@ function logReadFailure(log: OwnerCreditUsageLogger, error: unknown, accountId: 
   return err;
 }
 
+/** The credit position of one account: the same window and figures as the owner's card. */
+export type CreditPosition = OwnerCreditWindow;
+
+/**
+ * The credit position of ONE account the CALLER has already resolved and
+ * authorised (credit deduction slice 11c, SA S11-SQ-9, OP-23): the owner
+ * surfaces through the account seam, the admin view after requireAdmin, the
+ * platform check and the tenant check. Only wraps `computeOwnerCreditWindow`;
+ * it never derives a period of its own (SA W11c-13). Never throws.
+ *
+ * Exactly two product callers, pinned by `__tests__/creditPosition.test.ts`
+ * (SA W11c-2): this file's two wrappers and the admin credit view route.
+ */
+export async function readCreditPosition(
+  accountId: string,
+  deps: OwnerCreditUsageDeps,
+  log: OwnerCreditUsageLogger,
+  failureMessage = 'Credit position read failed'
+): Promise<Result<CreditPosition>> {
+  const now = (deps.now ?? (() => new Date()))();
+  try {
+    return { data: await computeOwnerCreditWindow(accountId, now, deps, log), error: null };
+  } catch (error) {
+    return { data: null, error: logReadFailure(log, error, accountId, failureMessage) };
+  }
+}
+
 /**
  * The owner's credit window and its figures, for the credit history (slice 7a).
  * Never throws; `{ data, error }`.
@@ -333,12 +380,7 @@ export async function resolveOwnerCreditWindow(
 ): Promise<Result<OwnerCreditWindow>> {
   // The ONLY account this can read: the session user's, through the seam.
   const accountId = resolveAccountId(userId);
-  const now = (deps.now ?? (() => new Date()))();
-  try {
-    return { data: await computeOwnerCreditWindow(accountId, now, deps, log), error: null };
-  } catch (error) {
-    return { data: null, error: logReadFailure(log, error, accountId, 'Owner credit window read failed') };
-  }
+  return readCreditPosition(accountId, deps, log, 'Owner credit window read failed');
 }
 
 /** The owner's credit usage for the card. Never throws; `{ data, error }`. */
@@ -349,24 +391,25 @@ export async function readOwnerCreditUsage(
 ): Promise<Result<OwnerCreditUsage>> {
   // The ONLY account this can read: the session user's, through the seam.
   const accountId = resolveAccountId(userId);
-  const now = (deps.now ?? (() => new Date()))();
-
-  try {
-    const window = await computeOwnerCreditWindow(accountId, now, deps, log);
-    const granted = 0;
-    return {
-      data: {
-        period: { kind: window.kind, resetsOn: window.resetsOn },
-        allowance: window.allowance ? { amount: window.allowance.amount, per: window.allowance.per } : null,
-        used: window.used,
-        usedByOwner: window.usedByOwner,
-        usedAutomatic: window.usedAutomatic,
-        granted,
-        remaining: computeCreditBalance({ allowance: window.allowance?.amount ?? null, granted, used: window.used }),
-      },
-      error: null,
-    };
-  } catch (error) {
-    return { data: null, error: logReadFailure(log, error, accountId, 'Owner credit usage read failed') };
+  const position = await readCreditPosition(accountId, deps, log, 'Owner credit usage read failed');
+  if (position.error || !position.data) {
+    return { data: null, error: position.error ?? new Error('Owner credit usage read failed') };
   }
+
+  // Outside the read's try since slice 11c: nothing here can throw
+  // (`computeCreditBalance` returns null rather than throwing). Keep it so.
+  const window = position.data;
+  const granted = 0;
+  return {
+    data: {
+      period: { kind: window.kind, resetsOn: window.resetsOn },
+      allowance: window.allowance ? { amount: window.allowance.amount, per: window.allowance.per } : null,
+      used: window.used,
+      usedByOwner: window.usedByOwner,
+      usedAutomatic: window.usedAutomatic,
+      granted,
+      remaining: computeCreditBalance({ allowance: window.allowance?.amount ?? null, granted, used: window.used }),
+    },
+    error: null,
+  };
 }

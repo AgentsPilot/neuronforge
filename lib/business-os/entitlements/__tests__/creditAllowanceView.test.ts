@@ -7,9 +7,9 @@
  * fixture. "No allowance" (null) must never become "0 of 0".
  */
 
-import { creditAllowanceForDisplay } from '../creditAllowanceView';
+import { creditAllowanceDecision, creditAllowanceForDisplay } from '../creditAllowanceView';
 import { previewAccountFor } from '../planPresentation';
-import { resolveEntitlements, type EntitlementResolution } from '../resolver';
+import { resolveEntitlements, type EntitlementResolution, type TraceEntry } from '../resolver';
 import { readCodeConfig } from '../source';
 import type { SnapshotResult } from '../EntitlementService';
 import type { LifecycleState } from '../types';
@@ -116,5 +116,74 @@ describe('creditAllowanceForDisplay', () => {
   ])('state %s shows an allowance: %s (W6-9)', (state, shows) => {
     const resolution = { ...resolutionFor('champion'), state };
     expect(creditAllowanceForDisplay(snapshot(resolution)) !== null).toBe(shows);
+  });
+});
+
+/**
+ * creditAllowanceDecision — the same allowance plus the layer that decided it,
+ * for the admin per-account credit view (credit deduction slice 11c, SA OP-24).
+ */
+describe('creditAllowanceDecision', () => {
+  const LAYERS: TraceEntry['layer'][] = ['basis', 'lifecycle_gate', 'grandfather', 'addon', 'cohort_values', 'override'];
+
+  function withLayer(planId: string, layer: TraceEntry['layer']): EntitlementResolution {
+    const base = resolutionFor(planId);
+    return {
+      ...base,
+      values: { ...base.values, 'credits.allowance': { ...base.values['credits.allowance'], decidedBy: layer } },
+    };
+  }
+
+  it.each(LAYERS)('reports the layer %s when an allowance is shown', (layer) => {
+    const decision = creditAllowanceDecision(snapshot(withLayer('champion', layer)));
+    expect(decision.layer).toBe(layer);
+    expect(decision.allowance).not.toBeNull();
+  });
+
+  it('reports the real config layer for a plain tier (non-vacuity: not a fixture value)', () => {
+    const resolution = resolutionFor(config.tierOrder[0]);
+    expect(creditAllowanceDecision(snapshot(resolution)).layer).toBe(resolution.values['credits.allowance'].decidedBy);
+  });
+
+  it('the layer is null whenever the allowance is null', () => {
+    const anomaly = resolveEntitlements({ config, account: null, overrides: [], addons: [], now: NOW });
+    const withheldBase = resolutionFor('champion');
+    const withheld: EntitlementResolution = {
+      ...withheldBase,
+      values: {
+        ...withheldBase.values,
+        'credits.allowance': { ...withheldBase.values['credits.allowance'], value: { perMonth: 0 }, decidedBy: 'override' },
+      },
+    };
+    const cases: SnapshotResult[] = [
+      { resolution: null, unavailable: true, stale: false },
+      snapshot(anomaly),
+      snapshot({ ...withLayer('champion', 'override'), basis: { kind: 'none' as const } }),
+      snapshot(withheld),
+      snapshot({ ...withLayer('champion', 'override'), state: 'paused' }),
+      snapshot({ ...withLayer('champion', 'override'), state: 'unknown' }),
+    ];
+    for (const entry of cases) {
+      expect(creditAllowanceDecision(entry)).toEqual({ allowance: null, layer: null });
+    }
+  });
+
+  it('its allowance deep-equals creditAllowanceForDisplay on every fixture (one rule, not two)', () => {
+    const fixtures: SnapshotResult[] = [
+      ...config.tierOrder.map((tier) => snapshot(resolutionFor(tier))),
+      snapshot(resolutionFor('champion')),
+      snapshot(resolutionFor('trial')),
+      snapshot(resolutionFor('champion'), { stale: true }),
+      { resolution: null, unavailable: true, stale: false },
+      snapshot(resolveEntitlements({ config, account: null, overrides: [], addons: [], now: NOW })),
+      snapshot({ ...resolutionFor('champion'), basis: { kind: 'none' as const } }),
+      ...(['trial', 'champion', 'active', 'past_due', 'grace', 'paused', 'unknown'] as LifecycleState[]).map((state) =>
+        snapshot({ ...resolutionFor('champion'), state })
+      ),
+    ];
+    expect(fixtures.length).toBeGreaterThan(10);
+    for (const fixture of fixtures) {
+      expect(creditAllowanceDecision(fixture).allowance).toEqual(creditAllowanceForDisplay(fixture));
+    }
   });
 });
