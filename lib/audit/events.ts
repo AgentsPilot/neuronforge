@@ -152,6 +152,8 @@ export const AUDIT_EVENTS = {
   // Every one of these is an admin changing what an account is entitled to, so
   // each carries the actor, the reason and the before/after plan row. They are
   // the only write path to the entitlement tables (workplan §4.12, WC-7).
+  // Those written against an account (entity 'business_os_account_plan') are
+  // hidden from that account's owner (BD-26, lib/audit/ownerVisibility.ts).
   BOS_ENTITLEMENT_PLAN_ROW_ENSURED: 'BOS_ENTITLEMENT_PLAN_ROW_ENSURED',
   BOS_ENTITLEMENT_COHORT_SET: 'BOS_ENTITLEMENT_COHORT_SET',
   BOS_ENTITLEMENT_EXPIRY_SET: 'BOS_ENTITLEMENT_EXPIRY_SET',
@@ -174,7 +176,8 @@ export const AUDIT_EVENTS = {
   // `extraCreditsBasis: 'read_before_write'`) and, for a reduction, the lot's
   // remaining before / after as the reversal function returned them under its
   // lock. A replay of the same request writes no entry (S11-CR-2): the lot or
-  // draw row is itself the append-only record.
+  // draw row is itself the append-only record. Hidden from the account's owner
+  // (BD-26, lib/audit/ownerVisibility.ts): the reason is internal.
   BOS_CREDIT_LOT_GRANTED: 'BOS_CREDIT_LOT_GRANTED',
   BOS_CREDIT_LOT_REDUCED: 'BOS_CREDIT_LOT_REDUCED',
 

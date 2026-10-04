@@ -89,6 +89,11 @@ export const AUDIT_ENTITY_TYPES = [
   // id is the queue id, e.g. 'payment_reminders' (audit_trail.entity_id is
   // TEXT, as for 'ais_config').
   'bos_queue',
+  // One account's credit period. Written by slice 8b's low-line event
+  // (BOS_CREDIT_LOW_LINE_CROSSED, SQ-46), system-written. Hidden from owners
+  // (BD-26, lib/audit/ownerVisibility.ts); registered ahead of 8b so the owner
+  // policy and the registry hide it from day one.
+  'business_os_credit_period',
 ] as const;
 
 export type EntityType = (typeof AUDIT_ENTITY_TYPES)[number];
