@@ -1,6 +1,6 @@
 # Business OS entitlements
 
-> **Last Updated**: 2026-10-03
+> **Last Updated**: 2026-10-04
 
 ## Overview
 
@@ -21,6 +21,7 @@ What an account can do in Business OS, and why. This module answers one question
 9. [Ops checks](#ops-checks)
 10. [Importing the module from outside it](#importing-the-module-from-outside-it)
 11. [Metering: the credit ledger](#metering-the-credit-ledger)
+12. [Billing: the plan billing record and Stripe settings](#billing-the-plan-billing-record-and-stripe-settings)
 
 ---
 
@@ -273,6 +274,35 @@ What is left of a lot is **always rebuilt from rows**: credits granted minus its
 
 ---
 
+## Billing: the plan billing record and Stripe settings
+
+Plan payments P-2a ([workplan](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P2_WORKPLAN.md), [requirement](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md) SA-P1 as amended by P-2 Q-1/Q-2). **Status: inert.** No route reads or writes the table; the migration `20261025` is applied by hand (pre-check, migration in a new tab, checker) before P-2a merges.
+
+| Object | What it is |
+|---|---|
+| `business_os_billing_accounts` | One row **per account per Stripe mode** (UNIQUE `user_id, livemode`; surrogate `id` primary key). The Business OS Stripe customer (`stripe_customer_id`, UNIQUE, never the agent-platform customer) and, from P-3a/P-3b, the plan subscription and a display mirror of its state. RLS on with **no policy and no client grant**; `service_role` holds SELECT, INSERT, and UPDATE on 17 columns only, so `id`, `user_id`, `livemode` and `created_at` can never be rewritten. No DELETE. Checker: `scripts/check-bos-billing-accounts-migration.sql` |
+| `BusinessOsBillingAccountRepository` | `findByUser(userId, livemode)` and `recordCustomer` only (three-field insert). A source guard lists the files allowed to name it |
+| `ensureBusinessOsStripeCustomer` (`lib/business-os/billing/businessOsStripeCustomer.ts`) | The account's Business OS Stripe customer in the current mode: the stored row, or one Stripe create (idempotency key `bos-customer:<userId>`, metadata `product`/`bos_user_id`, never `user_id`) through the shared `StripeService.findOrCreatePlatformCustomer`. No route calls it until P-3a |
+| `stripeModeFromKey` / `currentStripeMode` (`stripeMode.ts`) | `test` for `sk_test_`/`rk_test_`, `live` for `sk_live_`/`rk_live_`; anything else throws |
+
+**Lifecycle.** `never` in the purge registry and keyed to `auth.users`, so a business Reset cannot reach it (it would orphan a subscription that keeps charging). On account deletion it is **minimised**: `user_id` is set to NULL by the foreign key, and `stripe_customer_id` is kept for reconciliation with Stripe.
+
+**Stripe environment names** (PF-8). `.env.example` is not tracked (`.env*` is git-ignored), so the names live here; the file itself is staging work (C2). Never put a value in this table or in any doc.
+
+| Name | Where | Mode rule |
+|---|---|---|
+| `STRIPE_SECRET_KEY` | Server | `sk_test_…` in test, `sk_live_…` in live. Its prefix decides which billing row is read (`stripeMode.ts`) |
+| `STRIPE_WEBHOOK_SECRET` | Server | The signing secret of the platform webhook endpoint **of the same mode** as the key |
+| `STRIPE_CONNECT_WEBHOOK_SECRET` | Server | The signing secret of the Connect webhook endpoint of the same mode |
+| `STRIPE_CLIENT_ID` | Server | The Connect client id (`ca_…`) of the same mode |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Browser | `pk_test_…` with a test key, `pk_live_…` with a live key |
+| `NEXT_PUBLIC_STRIPE_CLIENT_ID` | Browser | The same Connect client id, for the browser |
+| `STRIPE_BOS_PORTAL_CONFIGURATION_ID` | Server | The Business OS customer-portal configuration (`bpc_…`) of the same mode: a test key with the test configuration, a live key with the live one (SA-P10). Read from P-7a |
+
+Plan lookup keys are **code, not env**: the same keys exist in each mode (Q-T1; P-2b).
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -303,3 +333,4 @@ What is left of a lot is **always rebuilt from rows**: credits granted minus its
 | 2026-10-02 | Metering: credits added as lots (credit deduction slice 11a) | New "Credits added: lots" paragraph and object table in § Metering: `business_os_credit_lots`, `business_os_credit_lot_draws` and their two `service_role`-only write functions (migration `20261017`, not yet applied), append-only by privilege, owner column grants, the per-account advisory lock key that slice 9 / 10 must reuse, the binding consumption order, the one definition of extra credits (`creditLots.ts`), and the lifecycle verdicts (`never` purged, `minimise` on deletion). Nothing reads or writes them before 11b; nothing enforced. No import of this module, no capability or tier change |
 | 2026-10-02 | Admin give / take back credits (credit deduction slice 11b) | § Admin operations: `grant_credits` and `reduce_credit_lot` on the accounts route, their order of checks and refusal codes, replays (no audit entry), the audit keys and entity, and why a credit op leaves the entitlement cache alone (and when that must change, slice 9 / 10). New rule: no admin may run any op on their own account (403 `own_account`, all nine ops, S11-BQ-1; S11-C-11 for the plain-words copy). § Metering: the lots are applied to PROD and written only through the 11b ops (CR11a-2). No new importer of this module (`creditAdminOps.ts` imports nothing from it); no capability or tier change |
 | 2026-10-03 | Metering: the admin "Credits left" column (credit deduction slice 8a) | One paragraph in § Metering: the batched, failure-isolated percentage read for `/admin/users`; `adminCreditPercent.ts` registered as a non-gate importer (display only); `adminCreditPercentDeps.ts` a declared plan-repository reader. No capability or tier change |
+| 2026-10-04 | Billing: the plan billing record and Stripe settings (plan payments P-2a) | New § Billing: `business_os_billing_accounts` (one row per account per Stripe mode, server-write-only, 17 updatable columns, minimised on deletion), its repository, `ensureBusinessOsStripeCustomer`, `stripeMode.ts`, and the seven Stripe environment names with their mode rule (PF-8; `.env.example` deferred to staging C2 per SA Q-4) |
