@@ -1,6 +1,6 @@
 # Admin Identification & Access
 
-> **Last Updated**: 2026-10-02
+> **Last Updated**: 2026-10-03
 
 ## Overview
 
@@ -40,8 +40,8 @@ It exists because, before this work, the system had **no trustworthy admin signa
 > version of it described an *intended* end state and a reader would have
 > concluded the system was protected when it was not.
 
-Re-derived **2026-10-02** (ADMIN_BOS_CLEANUP slice 1, on `main` `023dde98` plus that slice): **87 handlers across 58
-route files = 81 `requireAdmin` + 6 inline + 0 open.** The split is measured, not
+Re-derived **2026-10-03** (credit deduction slice 11c, on `main` `5061489b` plus that slice): **88 handlers across 59
+route files = 82 `requireAdmin` + 6 inline + 0 open.** The split is measured, not
 asserted — re-run the census rather than trusting these figures if much time has
 passed.
 
@@ -75,6 +75,12 @@ passed.
 > folded in), added `admins#GET` (row 87), and registered the three invite
 > handlers (rows 88–90, doc only). Measured on the branch: **87 / 81 + 6 / 58
 > files**, and the register's live (non-struck) rows now equal that count.
+> **87 → 88 (2026-10-03):** `business-os/credits/accounts/[accountId]#GET` (credit
+> deduction slice 11c, the admin per-account credit view), gated from birth with
+> `requireAdmin` as its first statement (row 91). Re-measured from disk with the
+> method below: **88 / 82 + 6 / 59 files**. No cap moved: the guard's caps count
+> exemptions, and a handler gated from birth enters no exemption list (SA OP-34).
+>
 > **Method:** a scratch Node script walks `app/api/admin/**/route.ts` (skipping
 > `__tests__`), strips comments, counts each exported `GET`/`POST`/`PUT`/
 > `PATCH`/`DELETE`/`HEAD`/`OPTIONS` function or const, and classifies a handler
@@ -91,7 +97,7 @@ passed.
 | It derives admin identity **only** from `admin_users`, via `AdminAccessService` | ✅ True |
 | It fails closed, answers **401** signed-out / **403** non-admin, and never 500s on an authorization outcome | ✅ True |
 | No app-code access decision reads `profiles.role` — a repo-wide sweep returns **zero** hits | ✅ True, and CI rule R4 keeps it that way |
-| **Every one of the 87 `/api/admin/*` handlers requires an admin.** 81 via `requireAdmin`, 6 via their own equivalent check. **Zero open.** | ✅ **True as of 2026-10-02** (slices 2 + 3 of the unification; re-counted from disk in ADMIN_BOS_CLEANUP slice 1) |
+| **Every one of the 88 `/api/admin/*` handlers requires an admin.** 82 via `requireAdmin`, 6 via their own equivalent check. **Zero open.** | ✅ **True as of 2026-10-03** (slices 2 + 3 of the unification; re-counted from disk in credit deduction slice 11c) |
 | **All 26 `/admin` pages are protected on the server**, by inheritance from `app/admin/layout.tsx` | ✅ **True as of 2026-09-21** (slice 5), for the 21 pages then. The 5 added since inherited it without an edit: `business-os-tiers`, `platform-dashboard` (the old landing, moved in admin reorganisation slice 4, beside the rewritten `/admin` Health page), `archiving` (Admin Archiving slice 1) and `jobs-queues` (admin reorganisation slice 5, a client page). Re-counted 2026-09-27: 26 `page.tsx` files under `app/admin/` |
 | A **new** admin route cannot ship ungated | ✅ **True.** `Admin authz surface guard` is a **required status check** on `main` with `enforce_admins` and `strict` — a red guard blocks the merge |
 | A **new** `/admin` page is protected before its author writes a line of it | ✅ True — it renders as `children` of the guarded layout; there is no per-page opt-out |
@@ -118,7 +124,7 @@ verbs open in the *same* files, so a file-level table would have been misleading
 That asymmetry is gone now — every row below is gated — but the handler remains
 the right unit for the register.
 
-**81 `requireAdmin` · 6 correct-but-inline · 0 open.** (Rows 73–80 were added 2026-09-25, rows 81–83 on 2026-09-26, row 84 on 2026-09-27, rows 85–86 on 2026-09-29/30 and rows 87–90 on 2026-10-02; the numbering of rows 1–72 is kept so older references still resolve. Rows 47–49 are struck through, not removed: their handlers were deleted on 2026-10-02. **90 rows, 87 live**, equal to the measured handler count.)
+**82 `requireAdmin` · 6 correct-but-inline · 0 open.** (Rows 73–80 were added 2026-09-25, rows 81–83 on 2026-09-26, row 84 on 2026-09-27, rows 85–86 on 2026-09-29/30, rows 87–90 on 2026-10-02 and row 91 on 2026-10-03; the numbering of rows 1–72 is kept so older references still resolve. Rows 47–49 are struck through, not removed: their handlers were deleted on 2026-10-02. **91 rows, 88 live**, equal to the measured handler count.)
 
 | # | Route | Verb | State | Note |
 |---|---|---|---|---|
@@ -212,6 +218,7 @@ the right unit for the register.
 | 88 | `business-os/invites` | `GET` | ✅ gated | `requireAdmin` first statement (`invites/route.ts:79`). Gated from birth by the Business OS invite signup work; registered 2026-10-02 (doc only) so the register matches the measured census |
 | 89 | `business-os/invites` | `POST` | ✅ gated | `requireAdmin` first statement (`invites/route.ts:136`). Idem |
 | 90 | `business-os/invites/[inviteId]/revoke` | `POST` | ✅ gated | `requireAdmin` first statement (`revoke/route.ts:34`). Idem |
+| 91 | `business-os/credits/accounts/[accountId]` | `GET` | ✅ gated | `requireAdmin` first statement, new in credit deduction slice 11c (the Credits block of the Businesses panel at `/admin/users`). A deliberate cross-account, read-only read of ONE account's credits: plan allowance and its deciding layer, used, plan left, over plan, extra credits and the account's lots with their take-backs; credits only, no combined figure. Account only from the path (lower-cased), after 400 / 409 `platform_account` / the tenant check (500 / 404), with no read on any of them; service-role reads through `lib/business-os/credits/adminCreditPositionDeps.ts`, each scoped `.eq('user_id', accountId)`. No write, no audit row (a plain read). Pinned by its route test |
 
 ### CI enforcement
 
@@ -597,3 +604,4 @@ npx eslint app lib components hooks --rule '{"no-console":"error"}'
 | 2026-09-30 | Credit deduction slice 4b: register row 86 | Row **86** `business-os/credits/leak-check#GET` (the on-demand credit leak check), gated from birth with `requireAdmin` as its first statement. Census still not re-derived (see the 4a row above); no cap moved |
 | 2026-10-02 | A refused admin access is now recorded — on three surfaces only | `requireAdmin`, `requireAdminPage` and the refused act-as each write one `audit_trail` row (`action = SECURITY_UNAUTHORIZED_ACCESS`) when the admin check answers "no". Added a **"What is NOT true"** row recording that the **6 hand-rolled handlers record nothing on refusal**, so that action covers the three shared surfaces only and an empty filter result is not "nobody probed"; closing it is part of the parked slice 4. No gate, count or cap changed |
 | 2026-10-02 | ADMIN_BOS_CLEANUP slice 1: Admin users page read-only, slice 7's routes deleted, R4 → 0, census 87 = 81 + 6 + 0, 58 files | `/admin/settings` ("Admin users") rewritten as a **truthful read-only list** (active `admin_users` rows, `ADMIN_EMAILS`-only addresses, overlap marker); its only request is the new **`GET /api/admin/admins`** (row 87, `requireAdmin` first, repository read, 500 never an empty list, counts-only logs). `settings/admin-users` (GET + POST) and `settings/platform-users` (GET) **deleted**, folding in admin-authz slice 7 (rows 47–49 struck). One `ADMIN_EMAILS` parser for app code, `lib/admin/adminEmailsEnv.ts` (the seed script's copy is OI-12). Guard **R4 parked 2 → 0**, no other cap moved; `adminGate.writes` 59 → 57. Census **re-measured from disk** (method in [As-Built State](#as-built-state--read-this-first)): 89 / 59 files on `023dde98`, **87 / 81 + 6 / 58 files** after; the three gated-but-unregistered invite handlers registered as rows 88–90 (doc only) so live rows = measured handlers. Added "Removing an admin" to [Bootstrapping Admins](#bootstrapping-admins), including the seed re-activation trap and the `is_platform_admin()` asymmetry. OI-2b and OI-3 done; "What is NOT true" Settings row restated |
+| 2026-10-03 | Credit deduction slice 11c: register row 91, census 88 = 82 + 6 + 0, 59 files | Row **91** `business-os/credits/accounts/[accountId]#GET` (the admin per-account credit view behind the Credits block of the Businesses panel), gated from birth with `requireAdmin` as its first statement. Census **re-measured from disk** with the method in [As-Built State](#as-built-state--read-this-first): **88 / 82 + 6 / 59 files**. No cap moved (SA OP-34: the caps count exemptions; a handler gated from birth moves none) |

@@ -23,6 +23,10 @@ const SCREEN_FILES = [
   // Slice 4
   `${ROOT}/components/UserNameLine.tsx`,
   `${ROOT}/userName.ts`,
+  // Credit deduction slice 11c
+  `${ROOT}/components/CreditsBlock.tsx`,
+  `${ROOT}/components/CreditFormDialog.tsx`,
+  `${ROOT}/creditCopy.ts`,
 ];
 
 describe('the screen is protected by the layout it inherits from', () => {
@@ -69,5 +73,64 @@ describe('the Business OS panel carries no server module and no second rule', ()
     const panel = codeOf(read(`${ROOT}/components/BusinessOsPanel.tsx`));
     expect(panel).toContain('AUDIT_EVENTS.BUSINESS_AI_ACTION_FAILED');
     expect(panel).not.toContain("'BUSINESS_AI_ACTION_FAILED'");
+  });
+});
+
+describe('the Credits block (credit deduction slice 11c)', () => {
+  const CREDIT_FILES = [`${ROOT}/components/CreditsBlock.tsx`, `${ROOT}/components/CreditFormDialog.tsx`, `${ROOT}/creditCopy.ts`];
+  const BLOCK = `${ROOT}/components/CreditsBlock.tsx`;
+
+  /** A code line naming both figures: the shape of a combined "remaining" (G11c-1, S11-CR-3). */
+  const COMBINED = (code: string) =>
+    code.split('\n').filter((line) => line.includes('planLeft') && line.includes('extraCredits'));
+
+  it('the combined-figure rule sees a planted sum', () => {
+    expect(COMBINED('const total = usage.planLeft + extra.extraCredits;')).toHaveLength(1);
+    expect(COMBINED('const a = usage.planLeft;\nconst b = extra.extraCredits;')).toHaveLength(0);
+  });
+
+  it.each(CREDIT_FILES)('%s never puts plan left and extra credits in one expression (no combined figure)', (file) => {
+    expect(COMBINED(codeOf(read(file)))).toEqual([]);
+  });
+
+  it('the block shows no share, band or running-low line (SA W11c-14)', () => {
+    const code = codeOf(read(BLOCK));
+    expect(code).not.toContain('%');
+    expect(code).not.toMatch(/creditBands/);
+    expect(code).not.toMatch(/running low/i);
+  });
+
+  it('the block names no decidedBy: it shows the layer the server sent as allowanceLayer', () => {
+    const code = codeOf(read(BLOCK));
+    expect(code).not.toMatch(/decidedBy/);
+    expect(code).toContain('allowanceLayer');
+  });
+
+  it.each(CREDIT_FILES)('%s renders free text as text only (no dangerouslySetInnerHTML)', (file) => {
+    expect(codeOf(read(file))).not.toMatch(/dangerouslySetInnerHTML/);
+  });
+
+  it.each([BLOCK, `${ROOT}/components/CreditFormDialog.tsx`])('%s is a client component', (file) => {
+    expect(read(file)).toMatch(/^'use client';/);
+  });
+
+  it('the forms post to the existing entitlements route, and add no credit route of their own', () => {
+    const dialog = codeOf(read(`${ROOT}/components/CreditFormDialog.tsx`));
+    expect(dialog).toContain('/api/admin/business-os/entitlements/accounts/');
+    expect(dialog).toContain("op: 'grant_credits'");
+    expect(dialog).toContain("op: 'reduce_credit_lot'");
+  });
+
+  it('the panel renders the block above the plan, with the business label (user UI fixes, 2026-10-04)', () => {
+    const panel = codeOf(read(`${ROOT}/components/BusinessOsPanel.tsx`));
+    expect(panel).toContain('<CreditsBlock accountId={accountId} businessLabel={businessLabel} />');
+    expect(panel.indexOf('<CreditsBlock')).toBeLessThan(panel.indexOf('<EntitlementSnapshot'));
+  });
+
+  it('the plan is folded in the panel only: the Plans page component itself is unchanged and has no fold', () => {
+    const panel = codeOf(read(`${ROOT}/components/BusinessOsPanel.tsx`));
+    expect(panel).toMatch(/<details[\s\S]*<EntitlementSnapshot[\s\S]*<\/details>/);
+    const snapshot = codeOf(read('app/admin/business-os-tiers/components/EntitlementSnapshot.tsx'));
+    expect(snapshot).not.toMatch(/<details|Collapsible/);
   });
 });

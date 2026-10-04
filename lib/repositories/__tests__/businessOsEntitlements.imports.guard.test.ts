@@ -142,12 +142,25 @@ const ALLOWED = new Set(
     // session's, through the account seam. Listed in NO_STATE_WRITE_REFERRERS
     // below, which pins it, and the slice 6a test below pins the one method.
     'lib/business-os/credits/ownerCreditUsageDeps.ts',
+    // ── Credit deduction slice 11c, 2026-10-03 — the admin per-account credit view ──
+    // The route passes the plan repository to the tenant check (as the summary
+    // route does): READ ONLY through `isBusinessOsTenant`. An admin route, gated
+    // by `requireAdmin`. Its test replaces the repository with a fake.
+    'app/api/admin/business-os/credits/accounts/[accountId]/route.ts',
+    'app/api/admin/business-os/credits/accounts/[accountId]/__tests__/route.test.ts',
+    // The view's service-role wiring: READ ONLY, `findPeriodAnchor` and nothing
+    // else (the slice 11c test below pins the one method). Listed in
+    // NO_STATE_WRITE_REFERRERS below.
+    'lib/business-os/credits/adminCreditPositionDeps.ts',
   ].map((p) => p.split('/').join(sep))
 );
 
 /** Slice 6a: the owner card's wiring, and the ONE plan-repository method it may call. */
 const OWNER_CREDIT_CARD_WIRING = 'lib/business-os/credits/ownerCreditUsageDeps.ts';
 const OWNER_CREDIT_CARD_METHOD = 'findPeriodAnchor';
+
+/** Slice 11c: the admin credit view's wiring, and the ONE plan-repository method it may call. */
+const ADMIN_CREDIT_VIEW_WIRING = 'lib/business-os/credits/adminCreditPositionDeps.ts';
 
 /** The methods that CHANGE entitlement state. Component 5's admin routes own these. */
 const WRITE_METHODS = [
@@ -191,6 +204,8 @@ const NO_STATE_WRITE_REFERRERS = [
   'lib/business-os/invites/friendInviteDeps.ts',
   // Credit deduction slice 6a: the owner card's period — READ ONLY, `findPeriodAnchor` and nothing else.
   'lib/business-os/credits/ownerCreditUsageDeps.ts',
+  // Credit deduction slice 11c: the admin credit view's wiring — READ ONLY, `findPeriodAnchor` and nothing else.
+  'lib/business-os/credits/adminCreditPositionDeps.ts',
 ].map((p) => p.split('/').join(sep));
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -316,6 +331,12 @@ describe('RC-15 — entitlement repository referrers', () => {
       'findPeriodAnchor',
       'updatePlan',
     ]);
+  });
+
+  it('Slice 11c: the admin credit view wiring calls findPeriodAnchor on the plan repository and NOTHING else', () => {
+    const source = readFileSync(join(ROOT, ...ADMIN_CREDIT_VIEW_WIRING.split('/')), 'utf8');
+    const calls = [...source.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1]);
+    expect(calls).toEqual([OWNER_CREDIT_CARD_METHOD]);
   });
 
   it('the allowed list names files that exist', () => {

@@ -21,6 +21,17 @@
 // (`auth.uid() = user_id`) apply to every read. An expired session therefore
 // fails as a read error, never as "no rows".
 //
+// ONE sanctioned exception (credit deduction slice 11c, SA S11-SQ-9, OP-25):
+// `lib/business-os/credits/adminCreditPositionDeps.ts` constructs this
+// repository on the service-role client for the admin per-account credit view,
+// because an admin reads ANOTHER account's credits and no RLS policy allows
+// that. Its account id is the admin route's URL path id, after `requireAdmin`,
+// the platform check and the tenant check; the `.eq('user_id', accountId)`
+// below is then the only line, and the owner-granted column lists mean no cost
+// column can reach the admin payload this way. A source guard in
+// `__tests__/BusinessOsCreditOwnerReadRepository.test.ts` pins exactly two
+// constructing files, and that only that one names the service client.
+//
 // `new-repository` checklist, singleton item: N/A BY DESIGN. A singleton would
 // need a default client, and the only default that works without a request is
 // the service role, which is exactly what this file must never hold.

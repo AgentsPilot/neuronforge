@@ -13,6 +13,8 @@ import { AUDIT_EVENTS } from '@/lib/audit/events';
 import {
   ADMIN_CREDIT_GRANT_CEILING,
   CREDIT_ADMIN_OP_NAMES,
+  CREDIT_REASON_MAX,
+  CREDIT_REASON_MIN,
   executeCreditAdminOp,
   grantCreditsSchema,
   isCreditAdminOp,
@@ -528,6 +530,68 @@ describe('reduce', () => {
   it('a repository error is 500 lot_write_failed', async () => {
     const { ctx } = context({ lots: lots(), reverse: 'error' });
     expect(await executeCreditAdminOp(reduce(), ctx)).toEqual({ ok: false, status: 500, error: 'lot_write_failed' });
+  });
+
+  // ── CR11b-2 (slice 11c, SA OP-35, W11c-9) ─────────────────────────────────
+  it('CR11b-2: a healthy partial reduction keeps the pre-11c figure (the draw stamped at now is counted at now)', async () => {
+    const { ctx } = context({
+      lots: lots(),
+      reverse: { status: 'recorded', drawId: DRAW, credits: 40, remainingBefore: 100, remainingAfter: 60 },
+    });
+    const result = await executeCreditAdminOp(reduce(), ctx);
+    // 113.75 − 40: had the synthetic draw been dropped as "after now", this would read 113.75.
+    expect(result).toMatchObject({ audit: { changes: { extraCreditsBefore: 113.75, extraCreditsAfter: 73.75 } } });
+  });
+
+  it('CR11b-2: an inconsistent (clamped) lot gives the exact figure, not before − credits', async () => {
+    // LOT has drawn 120 of 100: clamped to 0 by extraCreditsAt. Only the boost lot counts.
+    const inconsistent = [
+      lotRow({
+        id: LOT,
+        creditsGranted: 100,
+        draws: [{ id: DRAW, lotId: LOT, accountId: ACCOUNT, kind: 'reversal', credits: 120, reason: 'x', actorAdminId: ADMIN, idempotencyKey: 'k', createdAt: '2026-09-02T00:00:00.000Z' }],
+      }),
+      lotRow({ id: BOOST_LOT, source: 'boost_purchase', actorKind: 'stripe_webhook', actorAdminId: null, creditsGranted: 13.75 }),
+    ];
+    const { ctx } = context({
+      lots: inconsistent,
+      reverse: { status: 'recorded', drawId: DRAW, credits: 10, remainingBefore: 0, remainingAfter: 0 },
+    });
+    const result = await executeCreditAdminOp(reduce({ amount: 10 }), ctx);
+    // The old arithmetic would say 13.75 − 10 = 3.75; the lot stays clamped at 0, so 13.75.
+    expect(result).toMatchObject({ audit: { changes: { extraCreditsBefore: 13.75, extraCreditsAfter: 13.75 } } });
+  });
+
+  it('CR11b-2: a reduction of the other lot of an inconsistent account still subtracts exactly', async () => {
+    const inconsistent = [
+      lotRow({
+        id: LOT,
+        creditsGranted: 100,
+        draws: [{ id: DRAW, lotId: LOT, accountId: ACCOUNT, kind: 'reversal', credits: 120, reason: 'x', actorAdminId: ADMIN, idempotencyKey: 'k', createdAt: '2026-09-02T00:00:00.000Z' }],
+      }),
+      lotRow({ id: BOOST_LOT, source: 'boost_purchase', actorKind: 'stripe_webhook', actorAdminId: null, creditsGranted: 13.75 }),
+    ];
+    const { ctx } = context({
+      lots: inconsistent,
+      reverse: { status: 'recorded', drawId: DRAW, credits: 3.5, remainingBefore: 13.75, remainingAfter: 10.25 },
+    });
+    const result = await executeCreditAdminOp(reduce({ lotId: BOOST_LOT, amount: 3.5, confirmPaidCredits: true }), ctx);
+    expect(result).toMatchObject({ audit: { changes: { extraCreditsBefore: 13.75, extraCreditsAfter: 10.25 } } });
+  });
+});
+
+describe('reason bounds (slice 11c, SA W11c-6)', () => {
+  it('are exported as 3 and 500, matching the table CHECKs', () => {
+    expect(CREDIT_REASON_MIN).toBe(3);
+    expect(CREDIT_REASON_MAX).toBe(500);
+  });
+
+  it('are the bounds the schema itself enforces', () => {
+    const base = { op: 'grant_credits', amount: 1, expiresAt: null, requestId: REQUEST.toLowerCase() };
+    expect(grantCreditsSchema.safeParse({ ...base, reason: 'x'.repeat(CREDIT_REASON_MIN) }).success).toBe(true);
+    expect(grantCreditsSchema.safeParse({ ...base, reason: 'x'.repeat(CREDIT_REASON_MIN - 1) }).success).toBe(false);
+    expect(grantCreditsSchema.safeParse({ ...base, reason: 'x'.repeat(CREDIT_REASON_MAX) }).success).toBe(true);
+    expect(grantCreditsSchema.safeParse({ ...base, reason: 'x'.repeat(CREDIT_REASON_MAX + 1) }).success).toBe(false);
   });
 });
 

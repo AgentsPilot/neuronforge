@@ -106,6 +106,12 @@ const SOURCES = [
   'components/business-os/CreditHistoryPanel.tsx',
   // The one presentation rule both surfaces apply to a category's line.
   'lib/business-os/planCategoryLine.ts',
+  // Credit deduction slice 11c — the admin per-account credit view. The route
+  // and its wiring match the builder regex through their import path; the
+  // block renders an allowance (listed voluntarily).
+  'app/api/admin/business-os/credits/accounts/[accountId]/route.ts',
+  'lib/business-os/credits/adminCreditPositionDeps.ts',
+  'app/admin/users/components/CreditsBlock.tsx',
 ];
 
 /** The builders whose output carries a credit allowance to a reader. */
