@@ -37,7 +37,7 @@ exports[`T3-S: the request each Step 3 call site puts on the wire (AC-2) chat/pl
       "max_tokens": 1500,
       "messages": [
         {
-          "content": "sha256:539a815e6041821d2aa711fd5b4c9f84a9d38940200659d0a63a51706e6c37aa (len 31366)",
+          "content": "sha256:539a815f6041821d2aa711fd5b4c9f84a9d38940200659d0a63a51706e6c37aa (len 31366)",
           "role": "system",
         },
         {
