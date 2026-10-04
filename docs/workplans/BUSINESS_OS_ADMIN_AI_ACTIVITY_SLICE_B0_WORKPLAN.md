@@ -7,7 +7,8 @@
 **SA rulings this plan implements:** SA-1, SA-4, SA-5, SA-6, SA-14 (§ SA Review Notes) and re-check §4 Q3 + carry-forward item 4 (§ SA Re-Check Notes)
 **Date:** 2026-09-24
 **Branch:** ⛔ **not yet created — RM cuts it from `main` at kickoff.** Suggested name: `feature/admin-ai-activity-slice-b0`. Verified 2026-09-24: `git branch --show-current` → `main`, and `git branch -a --list "*ai-activity*"` returns only Slice A's merged branch. **Dev does not create it.** See [T0](#t0--branch-setup-blocker).
-**Status:** 📋 **Planning — for SA review. No code, no SQL and no migration file is committed by this plan.**
+**Status:** ⛔ **Superseded 2026-10-02 — do not implement.** Gap B was re-planned on the Business OS credit ledger (`business_os_credit_charges`), which already holds one row per AI action, so this grouping RPC is retired (SA-R1). Its replacement is slice B0′ — two indexes on the charge table, no function — planned with the B1 workplan. See the requirement's Gap B "Re-plan 2026-10-02" and SA Re-plan Review. Kept as the record.
+*(Previous status: 📋 Planning — for SA review. No code, no SQL and no migration file is committed by this plan.)*
 
 ## Overview
 
