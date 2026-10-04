@@ -52,9 +52,10 @@ describe('AUDIT_EVENT_AUDIENCE is exhaustive over the catalogue', () => {
   //    owner; it was written only by its call site, hence "Unknown event" rows.
   // +2 Business OS (BOS_CREDIT_LOT_GRANTED, BOS_CREDIT_LOT_REDUCED): credit deduction slice 11b.
   // +1 Business OS (BOS_CREDIT_LOW_LINE_CROSSED): credit deduction slice 8b.
-  it('pins the split: 31 Business OS, 61 shared, 84 AgentsPilot', () => {
-    expect(registered).toHaveLength(176);
-    expect(eventsTagged('bos')).toHaveLength(31);
+  // +1 Business OS (BOS_QUEUE_DRAIN_STARTED): ADMIN_BOS_CLEANUP slice 7d, Drain now.
+  it('pins the split: 32 Business OS, 61 shared, 84 AgentsPilot', () => {
+    expect(registered).toHaveLength(177);
+    expect(eventsTagged('bos')).toHaveLength(32);
     expect(eventsTagged('shared')).toHaveLength(61);
     expect(eventsTagged('agentspilot')).toHaveLength(84);
   });

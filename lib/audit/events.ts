@@ -231,6 +231,18 @@ export const AUDIT_EVENTS = {
   BOS_FRIEND_INVITE_REFUSED: 'BOS_FRIEND_INVITE_REFUSED',
 
   // ==========================================
+  // BUSINESS OS QUEUES (admin-only, server-written)
+  // ==========================================
+  // ADMIN_BOS_CLEANUP slice 7d: an admin pressed "Drain now" on one Business OS
+  // queue (POST /api/admin/jobs-queues/drain). Entity type 'bos_queue', id = the
+  // queue id. Written BEFORE the drain runs (a write-ahead record, SA W7D-1), so
+  // a drain the platform kills at its time limit is still on record; hence
+  // "STARTED", not "DRAINED". The details carry exactly the admin's reason, the
+  // queue and the correlation id. The outcome, counts and duration are in the
+  // response and the server log under the same correlation id, never here.
+  BOS_QUEUE_DRAIN_STARTED: 'BOS_QUEUE_DRAIN_STARTED',
+
+  // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
   // ==========================================
   // One entry when a run starts and one when it ends. A run that stops at its
@@ -749,6 +761,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
   [AUDIT_EVENTS.BOS_CREDIT_LOW_LINE_CROSSED]: {
     severity: 'info',
     description: "A Business OS account's plan credits dropped below the low line (percentage before / after recorded)",
+  },
+  // ADMIN_BOS_CLEANUP slice 7d. 'warning': an admin made the platform process
+  // (and possibly send) queued items across every account, outside the schedule.
+  [AUDIT_EVENTS.BOS_QUEUE_DRAIN_STARTED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin started a Business OS queue drain now',
   },
   // Slice 5a: a champion's friend invites (FR-28 to FR-32, F5a-13).
   [AUDIT_EVENTS.BOS_FRIEND_INVITE_CREATED]: {

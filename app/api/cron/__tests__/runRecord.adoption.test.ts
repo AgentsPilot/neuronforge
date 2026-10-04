@@ -100,10 +100,14 @@ jest.mock('@/lib/business-os/insight/prioritizer', () => ({ InsightPrioritizer: 
 jest.mock('@/lib/business-os/insight/repository', () => ({ InsightRepository: class {} }));
 jest.mock('@/lib/business-os/insight/correlation', () => ({ getCorrelationEngine: () => ({}) }));
 jest.mock('@/lib/business-os/llm/aiActionAudit', () => ({ runAiAction: jest.fn() }));
+const mockBillDueDatedStages = jest.fn();
+const mockProcessOverdueItems = jest.fn();
+const mockProcessDueReminders = jest.fn();
 jest.mock('@/lib/services/PaymentReminderService', () => ({
   paymentReminderService: {
-    processOverdueItems: async () => ({ overdueInvoices: 0, overdueInstallments: 0, remindersScheduled: 0 }),
-    processDueReminders: async () => ({ processed: 0, sent: 0, failed: 0 }),
+    billDueDatedStages: (...a: unknown[]) => mockBillDueDatedStages(...a),
+    processOverdueItems: (...a: unknown[]) => mockProcessOverdueItems(...a),
+    processDueReminders: (...a: unknown[]) => mockProcessDueReminders(...a),
   },
 }));
 jest.mock('@/lib/repositories/PaymentRepository', () => ({
@@ -140,6 +144,9 @@ beforeEach(() => {
   mockStartRun.mockResolvedValue({ data: true, error: null });
   mockFinishRun.mockResolvedValue({ data: true, error: null });
   mockPrune.mockResolvedValue({ data: true, error: null });
+  mockBillDueDatedStages.mockResolvedValue({ billed: 0, skipped: 0, failed: 0 });
+  mockProcessOverdueItems.mockResolvedValue({ overdueInvoices: 0, overdueInstallments: 0, remindersScheduled: 0 });
+  mockProcessDueReminders.mockResolvedValue({ processed: 0, sent: 0, failed: 0 });
 });
 
 afterAll(() => {
@@ -200,5 +207,34 @@ describe.each(BOS_CRON_JOBS.map((job) => [job.id, job] as const))('%s', (id, job
       return copy;
     };
     expect(strip(await recorded.json())).toEqual(strip(await plain.json()));
+  });
+});
+
+describe('payment-reminders: every step of the job', () => {
+  const steps = [
+    ['billDueDatedStages', mockBillDueDatedStages],
+    ['processOverdueItems', mockProcessOverdueItems],
+    ['processDueReminders', mockProcessDueReminders],
+  ] as const;
+
+  it('runs each step once, billing before the overdue scan and the scan before the sender', async () => {
+    const { GET } = loadRoute('payment-reminders');
+    const response = await GET(cronRequest('payment-reminders', `Bearer ${SECRET}`));
+    expect(response.status).toBe(200);
+
+    for (const [, mock] of steps) expect(mock).toHaveBeenCalledTimes(1);
+    const order = steps.map(([, mock]) => mock.mock.invocationCallOrder[0]);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  it.each(steps)('a throw from %s fails the run and is recorded as failed, like any other step', async (_name, mock) => {
+    mock.mockRejectedValue(new Error('step down'));
+    const { GET } = loadRoute('payment-reminders');
+    const response = await GET(cronRequest('payment-reminders', `Bearer ${SECRET}`));
+    expect(response.status).toBe(500);
+
+    expect(mockFinishRun).toHaveBeenCalledTimes(1);
+    const [, finish] = mockFinishRun.mock.calls[0] as [string, Record<string, unknown>];
+    expect(finish).toMatchObject({ outcome: 'failed', httpStatus: 500, errorClass: 'http_error', counts: {} });
   });
 });

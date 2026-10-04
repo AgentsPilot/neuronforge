@@ -10,6 +10,8 @@ import { useState } from 'react';
 
 import { signOutUser } from '@/lib/client/auth-actions';
 
+import { INVITE_SECONDARY_BUTTON } from '../InviteShell';
+
 export function SignOutButton({
   label,
   busyLabel,
@@ -44,7 +46,7 @@ export function SignOutButton({
         data-testid="awaiting-payment-sign-out"
         onClick={onClick}
         disabled={busy}
-        className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 hover:bg-gray-50 disabled:opacity-60"
+        className={INVITE_SECONDARY_BUTTON}
       >
         {busy ? busyLabel : label}
       </button>

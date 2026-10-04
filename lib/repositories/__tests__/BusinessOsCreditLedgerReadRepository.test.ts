@@ -30,9 +30,11 @@ jest.mock('@/lib/logger', () => {
 
 import {
   BusinessOsCreditLedgerReadRepository,
+  CHARGE_LIST_LIMITS,
   CREDIT_LEDGER_READ_LIMITS,
   CREDIT_LEDGER_ROW_COLUMNS,
   CREDIT_TOTALS_COLUMNS,
+  type ChargeListFilter,
   CREDIT_TOTALS_POSITION_COLUMNS,
   type CreditLedgerRow,
 } from '../BusinessOsCreditLedgerReadRepository';
@@ -40,7 +42,9 @@ import {
 type Call = { method: string; args: unknown[] };
 
 /** Records every query; each resolves with `respond(calls, index)`. */
-function recordingClient(respond: (calls: Call[], index: number) => { data: unknown; error: unknown }) {
+function recordingClient(
+  respond: (calls: Call[], index: number) => { data: unknown; error: unknown; count?: number | null }
+) {
   const queries: Call[][] = [];
   const client = {
     from: (table: string) => {
@@ -48,7 +52,7 @@ function recordingClient(respond: (calls: Call[], index: number) => { data: unkn
       const index = queries.length;
       queries.push(calls);
       const builder: Record<string, unknown> = {};
-      for (const method of ['select', 'eq', 'in', 'gte', 'lt', 'lte', 'order', 'range', 'limit']) {
+      for (const method of ['select', 'eq', 'in', 'gte', 'lt', 'lte', 'order', 'range', 'limit', 'not', 'is']) {
         builder[method] = (...args: unknown[]) => {
           calls.push({ method, args });
           return builder;
@@ -489,6 +493,302 @@ describe('findChargesByActionIds', () => {
   });
 });
 
+describe('the Activity list (admin AI Activity view, slice B1a)', () => {
+  // Half-open on created_at, starting at the charging cut-over floor.
+  const WINDOW = { from: new Date('2026-09-29T16:50:53.914Z'), to: new Date('2026-10-03T00:00:00.000Z') };
+  const FILTER: ChargeListFilter = { range: WINDOW };
+  const LIST = { sort: 'created_at' as const, limit: 100 };
+
+  describe('listChargesAllAccountsInWindow', () => {
+    it('reads charge rows of every LIVE account, half-open on created_at, newest first, capped and counted IN the query', async () => {
+      const { client, queries } = recordingClient(() => ({ data: [ledgerRow('1')], error: null, count: 7 }));
+      const result = await new BusinessOsCreditLedgerReadRepository(client).listChargesAllAccountsInWindow(FILTER, LIST);
+
+      expect(result).toEqual({ data: { rows: [ledgerRow('1')], total: 7 }, error: null });
+      expect(queries).toHaveLength(1);
+      const [q] = queries;
+      expect(q[0].args).toEqual(['business_os_credit_charges']);
+      expect(argsOf(q, 'select')).toEqual([[CREDIT_LEDGER_ROW_COLUMNS, { count: 'exact' }]]);
+      expect(argsOf(q, 'eq')).toEqual([['kind', 'charge']]);
+      // Deleted accounts are excluded here: they have their own bucket (FR-B8).
+      expect(argsOf(q, 'not')).toEqual([['user_id', 'is', null]]);
+      expect(argsOf(q, 'is')).toEqual([]);
+      expect(argsOf(q, 'gte')).toEqual([['created_at', WINDOW.from.toISOString()]]);
+      expect(argsOf(q, 'lt')).toEqual([['created_at', WINDOW.to.toISOString()]]);
+      expect(argsOf(q, 'lte')).toEqual([]);
+      expect(argsOf(q, 'in')).toEqual([]);
+      expect(argsOf(q, 'order')).toEqual([
+        ['created_at', { ascending: false }],
+        ['id', { ascending: false }],
+      ]);
+      // FR-B10: the cap is in the query, not a slice in Node.
+      expect(argsOf(q, 'range')).toEqual([[0, 99]]);
+      expect(mockLog.info).toHaveBeenCalledTimes(1);
+    });
+
+    it('orders by GROSS cost, then id, for the cost sort', async () => {
+      const { client, queries } = recordingClient(() => ({ data: [], error: null, count: 0 }));
+      await new BusinessOsCreditLedgerReadRepository(client).listChargesAllAccountsInWindow(FILTER, {
+        sort: 'cost_usd',
+        limit: 10,
+      });
+      expect(argsOf(queries[0], 'order')).toEqual([
+        ['cost_usd', { ascending: false }],
+        ['id', { ascending: false }],
+      ]);
+      expect(argsOf(queries[0], 'range')).toEqual([[0, 9]]);
+    });
+
+    it('applies every filter, together, to the same query that is counted', async () => {
+      const { client, queries } = recordingClient(() => ({ data: [], error: null, count: 0 }));
+      await new BusinessOsCreditLedgerReadRepository(client).listChargesAllAccountsInWindow(
+        {
+          range: WINDOW,
+          actionTypes: ['chat_turn', 'chat_website_operation'],
+          outcome: 'failed',
+          triggeredBy: 'scheduled',
+          minCostUsd: '0.0015',
+        },
+        LIST
+      );
+      const [q] = queries;
+      expect(argsOf(q, 'in')).toEqual([['action_type', ['chat_turn', 'chat_website_operation']]]);
+      expect(argsOf(q, 'eq')).toEqual([
+        ['kind', 'charge'],
+        ['outcome', 'failed'],
+        ['triggered_by', 'scheduled'],
+      ]);
+      // The cost floor stays a decimal string: numeric(16,10) never goes through a float.
+      expect(argsOf(q, 'gte')).toEqual([
+        ['created_at', WINDOW.from.toISOString()],
+        ['cost_usd', '0.0015'],
+      ]);
+    });
+
+    it.each([
+      ['an area', { actionTypes: ['insight_run'] }, 'in', ['action_type', ['insight_run']]],
+      ['an outcome', { outcome: 'succeeded' }, 'eq', ['outcome', 'succeeded']],
+      ['a trigger', { triggeredBy: 'external' }, 'eq', ['triggered_by', 'external']],
+      ['a cost floor', { minCostUsd: '2' }, 'gte', ['cost_usd', '2']],
+    ])('applies %s on its own', async (_name, extra, method, expected) => {
+      const { client, queries } = recordingClient(() => ({ data: [], error: null, count: 0 }));
+      await new BusinessOsCreditLedgerReadRepository(client).listChargesAllAccountsInWindow(
+        { range: WINDOW, ...(extra as Partial<ChargeListFilter>) },
+        LIST
+      );
+      expect(argsOf(queries[0], method)).toContainEqual(expected);
+    });
+
+    it('passes a missing count through as null, never as 0', async () => {
+      const { client } = recordingClient(() => ({ data: [ledgerRow('1')], error: null, count: null }));
+      const result = await new BusinessOsCreditLedgerReadRepository(client).listChargesAllAccountsInWindow(FILTER, LIST);
+      expect(result.data?.total).toBeNull();
+    });
+
+    it.each([
+      ['a limit over the cap', FILTER, { sort: 'created_at', limit: CHARGE_LIST_LIMITS.MAX_LIMIT + 1 }],
+      ['a zero limit', FILTER, { sort: 'created_at', limit: 0 }],
+      ['a fractional limit', FILTER, { sort: 'created_at', limit: 1.5 }],
+      ['an unknown sort', FILTER, { sort: 'service', limit: 10 }],
+      ['an empty window', { range: { from: WINDOW.from, to: WINDOW.from } }, LIST],
+      ['an empty action-type list', { range: WINDOW, actionTypes: [] }, LIST],
+      ['a malformed action type', { range: WINDOW, actionTypes: ['chat_turn,outcome.eq.failed'] }, LIST],
+      [
+        'too many action types',
+        { range: WINDOW, actionTypes: Array.from({ length: CHARGE_LIST_LIMITS.MAX_ACTION_TYPES + 1 }, (_v, i) => `t${i}`) },
+        LIST,
+      ],
+      ['an unknown outcome', { range: WINDOW, outcome: 'maybe' }, LIST],
+      ['an unknown trigger', { range: WINDOW, triggeredBy: 'cron' }, LIST],
+      ['a cost floor that is not a dollar amount', { range: WINDOW, minCostUsd: '1e3' }, LIST],
+      ['a cost floor with more than 10 decimals', { range: WINDOW, minCostUsd: '0.00000000001' }, LIST],
+    ])('refuses %s before querying', async (_name, filter, opts) => {
+      const { client, queries } = recordingClient(() => ({ data: [], error: null, count: 0 }));
+      const result = await new BusinessOsCreditLedgerReadRepository(client).listChargesAllAccountsInWindow(
+        filter as ChargeListFilter,
+        opts as typeof LIST
+      );
+      expect(result.data).toBeNull();
+      expect(result.error).toBeInstanceOf(Error);
+      expect(queries).toHaveLength(0);
+      expect(mockLog.warn).toHaveBeenCalled();
+    });
+
+    it('returns a database error as { data: null, error }, never throws', async () => {
+      const { client } = recordingClient(() => ({ data: null, error: new Error('down') }));
+      const result = await new BusinessOsCreditLedgerReadRepository(client).listChargesAllAccountsInWindow(FILTER, LIST);
+      expect(result).toEqual({ data: null, error: expect.objectContaining({ message: 'down' }) });
+    });
+  });
+
+  describe('listChargesForAccountInWindow', () => {
+    it('scopes the same query to the one account, and logs at debug', async () => {
+      const { client, queries } = recordingClient(() => ({ data: [], error: null, count: 0 }));
+      const result = await new BusinessOsCreditLedgerReadRepository(client).listChargesForAccountInWindow(A, FILTER, LIST);
+      expect(result.error).toBeNull();
+      const [q] = queries;
+      expect(argsOf(q, 'eq')).toEqual([
+        ['kind', 'charge'],
+        ['user_id', A],
+      ]);
+      expect(argsOf(q, 'not')).toEqual([]);
+      expect(argsOf(q, 'is')).toEqual([]);
+      expect(argsOf(q, 'select')).toEqual([[CREDIT_LEDGER_ROW_COLUMNS, { count: 'exact' }]]);
+      expect(mockLog.info).not.toHaveBeenCalled();
+      expect(mockLog.debug).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([['missing', ''], ['malformed', 'not-a-uuid']])('refuses a %s account before querying', async (_n, id) => {
+      const { client, queries } = recordingClient(() => ({ data: [], error: null, count: 0 }));
+      const result = await new BusinessOsCreditLedgerReadRepository(client).listChargesForAccountInWindow(id, FILTER, LIST);
+      expect(result.data).toBeNull();
+      expect(queries).toHaveLength(0);
+    });
+  });
+
+  describe('listAdjustmentsForActionIds', () => {
+    const ID = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001';
+
+    it('reads adjustment rows by the action ids they correct, with NO time bound (FR-B12)', async () => {
+      const adjustment = ledgerRow('9', {
+        kind: 'adjustment',
+        action_id: null,
+        adjusts_action_id: ID,
+        reason_code: 'fallback_price_reconciled',
+      });
+      const { client, queries } = recordingClient(() => ({ data: [adjustment], error: null }));
+      const result = await new BusinessOsCreditLedgerReadRepository(client).listAdjustmentsForActionIds([ID, ID]);
+
+      expect(result).toEqual({ data: { rows: [adjustment], reachedCeiling: false }, error: null });
+      const [q] = queries;
+      expect(argsOf(q, 'select')).toEqual([[CREDIT_LEDGER_ROW_COLUMNS]]);
+      expect(argsOf(q, 'eq')).toEqual([['kind', 'adjustment']]);
+      expect(argsOf(q, 'in')).toEqual([['adjusts_action_id', [ID]]]);
+      // An adjustment written in a later period still nets onto its charge.
+      expect(argsOf(q, 'gte')).toEqual([]);
+      expect(argsOf(q, 'lt')).toEqual([]);
+      expect(argsOf(q, 'range')).toEqual([[0, CREDIT_LEDGER_READ_LIMITS.MAX_PAGE_SIZE - 1]]);
+    });
+
+    it.each([
+      ['no ids', []],
+      ['a malformed id', ['nope']],
+      [
+        'more ids than one request may carry',
+        Array.from({ length: CREDIT_LEDGER_READ_LIMITS.MAX_IDS_PER_REQUEST + 1 }, (_v, i) =>
+          `aaaaaaaa-aaaa-4aaa-8aaa-${String(i).padStart(12, '0')}`
+        ),
+      ],
+    ])('refuses %s before querying', async (_name, ids) => {
+      const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+      const result = await new BusinessOsCreditLedgerReadRepository(client).listAdjustmentsForActionIds(ids);
+      expect(result.data).toBeNull();
+      expect(queries).toHaveLength(0);
+    });
+
+    it('returns a failed read as an error, never throws', async () => {
+      const exploding = {
+        from: () => {
+          throw new Error('client exploded');
+        },
+      } as unknown as SupabaseClient;
+      const result = await new BusinessOsCreditLedgerReadRepository(exploding).listAdjustmentsForActionIds([ID]);
+      expect(result.error?.message).toBe('client exploded');
+    });
+  });
+
+  describe('listChargesOfDeletedAccountsInWindow', () => {
+    it('reads charges with user_id NULL, with the same filters, counted on the first page only', async () => {
+      const { client, queries } = recordingClient((_c, i) => ({
+        data:
+          i === 0
+            ? [ledgerRow('1', { user_id: null }), ledgerRow('2', { user_id: null })]
+            : [ledgerRow('3', { user_id: null })],
+        error: null,
+        count: i === 0 ? 3 : null,
+      }));
+      const result = await new BusinessOsCreditLedgerReadRepository(client).listChargesOfDeletedAccountsInWindow(
+        { range: WINDOW, outcome: 'succeeded' },
+        { pageSize: 2, ceiling: 10 }
+      );
+
+      expect(result.error).toBeNull();
+      expect(result.data?.rows.map((r) => r.id)).toEqual(['1', '2', '3']);
+      expect(result.data?.total).toBe(3);
+      expect(result.data?.reachedCeiling).toBe(false);
+      expect(queries).toHaveLength(2);
+      expect(argsOf(queries[0], 'select')).toEqual([[CREDIT_LEDGER_ROW_COLUMNS, { count: 'exact' }]]);
+      expect(argsOf(queries[1], 'select')).toEqual([[CREDIT_LEDGER_ROW_COLUMNS, undefined]]);
+      for (const q of queries) {
+        expect(argsOf(q, 'is')).toEqual([['user_id', null]]);
+        expect(argsOf(q, 'not')).toEqual([]);
+        expect(argsOf(q, 'eq')).toEqual([
+          ['kind', 'charge'],
+          ['outcome', 'succeeded'],
+        ]);
+      }
+      expect(mockLog.info).toHaveBeenCalledTimes(1);
+    });
+
+    it('says when the ceiling was reached', async () => {
+      let n = 0;
+      const { client } = recordingClient(() => ({
+        data: [ledgerRow(String(n++), { user_id: null }), ledgerRow(String(n++), { user_id: null })],
+        error: null,
+        count: 99,
+      }));
+      const result = await new BusinessOsCreditLedgerReadRepository(client).listChargesOfDeletedAccountsInWindow(FILTER, {
+        pageSize: 2,
+        ceiling: 4,
+      });
+      expect(result.data?.rows).toHaveLength(4);
+      expect(result.data?.reachedCeiling).toBe(true);
+      expect(result.data?.total).toBe(99);
+    });
+
+    /** Serves `n` stored rows honouring the requested range, as PostgREST does. */
+    function tableOf(n: number) {
+      const stored = Array.from({ length: n }, (_v, i) => ledgerRow(String(i), { user_id: null }));
+      return recordingClient((calls) => {
+        const [from, to] = argsOf(calls, 'range')[0] as [number, number];
+        return { data: stored.slice(from, to + 1), error: null, count: n };
+      });
+    }
+
+    it('QA E-1: exactly the ceiling is NOT "reached" — every row was read', async () => {
+      const { client, queries } = tableOf(4);
+      const result = await new BusinessOsCreditLedgerReadRepository(client).listChargesOfDeletedAccountsInWindow(FILTER, {
+        pageSize: 2,
+        ceiling: 4,
+      });
+      expect(result.data?.rows).toHaveLength(4);
+      expect(result.data?.reachedCeiling).toBe(false);
+      // The probe for a fifth row is one row wide.
+      expect(argsOf(queries[queries.length - 1], 'range')).toEqual([[4, 4]]);
+    });
+
+    it('QA E-1: one row past the ceiling is "reached", and only the ceiling is returned', async () => {
+      const { client } = tableOf(5);
+      const result = await new BusinessOsCreditLedgerReadRepository(client).listChargesOfDeletedAccountsInWindow(FILTER, {
+        pageSize: 2,
+        ceiling: 4,
+      });
+      expect(result.data?.rows.map((r) => r.id)).toEqual(['0', '1', '2', '3']);
+      expect(result.data?.reachedCeiling).toBe(true);
+    });
+
+    it('refuses bad paging before querying', async () => {
+      const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+      const result = await new BusinessOsCreditLedgerReadRepository(client).listChargesOfDeletedAccountsInWindow(FILTER, {
+        pageSize: 1001,
+        ceiling: 10,
+      });
+      expect(result.data).toBeNull();
+      expect(queries).toHaveLength(0);
+    });
+  });
+});
+
 describe('source guards', () => {
   const FILE = 'lib/repositories/BusinessOsCreditLedgerReadRepository.ts';
   const code = fs
@@ -524,7 +824,7 @@ describe('source guards', () => {
     expect(code).toMatch(/\.lt\(\s*['"]created_at['"]/);
   });
 
-  it('is imported only by the report builder, the leak check (slice 4b), the barrel and tests', () => {
+  it('is imported only by the report builder, the leak check (slice 4b), the Activity view (B1a), the barrel and tests', () => {
     const roots = ['app', 'lib', 'components', 'hooks', 'scripts'];
     const found: string[] = [];
     const walk = (dir: string) => {
@@ -546,6 +846,11 @@ describe('source guards', () => {
         'lib/business-os/credits/creditLeakCheck.ts',
         // ... and the production wiring, which calls two read methods.
         'lib/business-os/credits/creditLeakCheckDeps.ts',
+        // Admin AI Activity view (Gap B slice B1a): types via Pick<...> and the
+        // value CHARGE_LIST_LIMITS; it calls no read method itself ...
+        'lib/business-os/credits/aiActivity.ts',
+        // ... and its production wiring, which calls the four Activity reads.
+        'lib/business-os/credits/aiActivityDeps.ts',
         // Slice 8a: the admin "Credits left" column's production wiring.
         'lib/business-os/credits/adminCreditPercentDeps.ts',
         'lib/repositories/BusinessOsCreditLedgerReadRepository.ts',

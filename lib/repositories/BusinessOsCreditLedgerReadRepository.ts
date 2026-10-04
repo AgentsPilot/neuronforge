@@ -19,7 +19,10 @@
 // (`lib/business-os/credits/creditReport.ts`), reached only from an admin route
 // that runs `requireAdmin` before anything else, and the leak check (slice 4b,
 // wired in `lib/business-os/credits/creditLeakCheckDeps.ts`), reached from that
-// admin door and from a fail-closed cron. Owners cannot read the cost
+// admin door and from a fail-closed cron; and the admin AI Activity view
+// (Gap B slice B1a, wired in `lib/business-os/credits/aiActivityDeps.ts`),
+// reached only from `app/api/admin/business-os/ai-activity`, which runs
+// `requireAdmin` first. Owners cannot read the cost
 // columns at all (per-column grants, slice 3), so this read cannot be served
 // through the owner's RLS client: every select here names a cost column the
 // owner holds no grant on. Owner-facing reads therefore use their own
@@ -34,12 +37,21 @@
 //
 // ── ACCOUNT SCOPE, BY SIGNATURE ──────────────────────────────────────────────
 // Every account method REQUIRES an account id, or a non-empty list of them, and
-// refuses a malformed one before querying (CLAUDE.md rule 4). The one
-// cross-account read is `listTotalsForPeriodsInRange`, reached by calling a
-// differently NAMED method, never by leaving an argument out (the
-// TokenUsageRepository convention). `findChargesByActionIds` looks rows up by
-// their own unique action ids: it serves the adjustments' originals, and its
-// caller checks the account of each row it gets back.
+// refuses a malformed one before querying (CLAUDE.md rule 4). Every read that
+// is NOT scoped to an account is reached by calling a differently NAMED method,
+// never by leaving an argument out (the TokenUsageRepository convention):
+//   - ALL ACCOUNTS: `listTotalsForPeriodsInRange` (the cost report) and
+//     `listChargesAllAccountsInWindow` (the Activity list; deleted accounts
+//     excluded, they have their own bucket). Both log at info.
+//   - NO ACCOUNT: `listChargesOfDeletedAccountsInWindow`, the charges whose
+//     account was deleted (`user_id` NULL, ON DELETE SET NULL). Logs at info.
+//   - BY UNIQUE ID: `findChargesByActionIds` (an adjustment's original) and
+//     `listAdjustmentsForActionIds` (the adjustments of a page of charges). A
+//     lookup by id is not an ownership proof: their callers check each row's
+//     account against the row it belongs to (`resolveEffectiveFields`).
+// The two Activity list methods share ONE private builder, `chargeQuery`, whose
+// unscoped forms are reachable only from the named methods (the `pageTotals`
+// precedent).
 //
 // ── COLUMNS ──────────────────────────────────────────────────────────────────
 // Only the allow-listed columns below are ever selected (exported and tested).
@@ -160,6 +172,67 @@ export const CREDIT_LEDGER_READ_LIMITS = {
   MAX_IDS_PER_REQUEST: 200,
 } as const;
 
+// ── The Activity list (admin AI Activity view, Gap B slice B1a) ──────────────
+
+/** The two orders the Activity list offers. Both tie-break on `id DESC` (FR-B11). */
+export type ChargeListSort = 'created_at' | 'cost_usd';
+
+/** The charge-row filters of the Activity list. Charge rows only: adjustments are never list rows. */
+export interface ChargeListFilter {
+  /** HALF-OPEN on `created_at`: `from <= created_at < to` (a microsecond column, see `CreditPeriodStartRange`). */
+  range: CreditPeriodStartRange;
+  /** The area's action types, passed in as plain data. Non-empty when present. */
+  actionTypes?: readonly string[];
+  outcome?: 'succeeded' | 'failed';
+  triggeredBy?: 'owner' | 'scheduled' | 'external';
+  /** GROSS charge cost floor, a decimal string: `numeric(16,10)` is never round-tripped through a float. */
+  minCostUsd?: string;
+}
+
+export interface ChargeListOptions {
+  sort: ChargeListSort;
+  /** 1 to `CHARGE_LIST_LIMITS.MAX_LIMIT`, asserted here and applied IN the query (FR-B10). */
+  limit: number;
+}
+
+export interface ChargeListPage {
+  rows: CreditLedgerRow[];
+  /**
+   * `count: 'exact'` on the identical filters: the honest filtered count
+   * (FR-B10). It is a plain count, not an aggregate, so PGRST123 does not
+   * apply. NULL when PostgREST returned no count — never coerced to 0, so the
+   * caller shows no count rather than a wrong one.
+   */
+  total: number | null;
+}
+
+export const CHARGE_LIST_LIMITS = {
+  /** The Activity list's server-side cap (FR-B10). */
+  MAX_LIMIT: 100,
+  /** More than every declared action type; an area is a handful. */
+  MAX_ACTION_TYPES: 64,
+  /** Adjustment rows read per `listAdjustmentsForActionIds` call. A charge has 0 or 1 today. */
+  ADJUSTMENTS_CEILING: 2000,
+} as const;
+
+/** The column's own CHECK format (20261015 `business_os_credit_charges_action_type_format`). */
+const ACTION_TYPE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
+/** Dollars, at most the column's 10 decimal places. */
+const COST_PATTERN = /^\d{1,6}(\.\d{1,10})?$/;
+const OUTCOMES: readonly string[] = ['succeeded', 'failed'];
+const TRIGGERS: readonly string[] = ['owner', 'scheduled', 'external'];
+const SORTS: readonly string[] = ['created_at', 'cost_usd'];
+
+/**
+ * Who a charge query covers. The two unscoped forms are reachable only from
+ * the method NAMED for them (`listChargesAllAccountsInWindow`,
+ * `listChargesOfDeletedAccountsInWindow`).
+ */
+type ChargeScope =
+  | { kind: 'account'; userId: string }
+  | { kind: 'all_accounts' }
+  | { kind: 'deleted_accounts' };
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 class CreditLedgerReadGuardError extends Error {
@@ -212,6 +285,60 @@ export class BusinessOsCreditLedgerReadRepository {
     if (!Number.isInteger(opts.ceiling) || opts.ceiling < 1 || opts.ceiling > MAX_CEILING) {
       throw new CreditLedgerReadGuardError(`ceiling must be an integer from 1 to ${MAX_CEILING}`);
     }
+  }
+
+  /** The Activity list's filters: every value is checked against the column's own rules before it reaches a query. */
+  private assertChargeFilter(filter: ChargeListFilter): void {
+    if (!filter) throw new CreditLedgerReadGuardError('A charge filter is required');
+    this.assertRange(filter.range);
+    if (filter.actionTypes !== undefined) {
+      const types = filter.actionTypes;
+      if (!Array.isArray(types) || types.length === 0 || types.length > CHARGE_LIST_LIMITS.MAX_ACTION_TYPES) {
+        throw new CreditLedgerReadGuardError(
+          `actionTypes, when given, must hold 1 to ${CHARGE_LIST_LIMITS.MAX_ACTION_TYPES} action types`
+        );
+      }
+      for (const type of types) {
+        if (typeof type !== 'string' || !ACTION_TYPE_PATTERN.test(type)) {
+          throw new CreditLedgerReadGuardError('Every action type must match the column format');
+        }
+      }
+    }
+    if (filter.outcome !== undefined && !OUTCOMES.includes(filter.outcome)) {
+      throw new CreditLedgerReadGuardError('outcome must be succeeded or failed');
+    }
+    if (filter.triggeredBy !== undefined && !TRIGGERS.includes(filter.triggeredBy)) {
+      throw new CreditLedgerReadGuardError('triggeredBy must be owner, scheduled or external');
+    }
+    if (filter.minCostUsd !== undefined && (typeof filter.minCostUsd !== 'string' || !COST_PATTERN.test(filter.minCostUsd))) {
+      throw new CreditLedgerReadGuardError('minCostUsd must be a dollar amount with at most 10 decimals');
+    }
+  }
+
+  private assertListOptions(opts: ChargeListOptions): void {
+    if (!opts || !SORTS.includes(opts.sort)) {
+      throw new CreditLedgerReadGuardError('sort must be created_at or cost_usd');
+    }
+    if (!Number.isInteger(opts.limit) || opts.limit < 1 || opts.limit > CHARGE_LIST_LIMITS.MAX_LIMIT) {
+      throw new CreditLedgerReadGuardError(`limit must be an integer from 1 to ${CHARGE_LIST_LIMITS.MAX_LIMIT}`);
+    }
+  }
+
+  /** Non-empty, at most `MAX_IDS_PER_REQUEST`, every one a UUID. Returns them de-duplicated. */
+  private assertActionIds(actionIds: readonly string[]): string[] {
+    if (!Array.isArray(actionIds) || actionIds.length === 0) {
+      throw new CreditLedgerReadGuardError('At least one action id is required');
+    }
+    const unique = [...new Set(actionIds)];
+    if (unique.length > CREDIT_LEDGER_READ_LIMITS.MAX_IDS_PER_REQUEST) {
+      throw new CreditLedgerReadGuardError(`At most ${CREDIT_LEDGER_READ_LIMITS.MAX_IDS_PER_REQUEST} action ids per call`);
+    }
+    for (const id of unique) {
+      if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
+        throw new CreditLedgerReadGuardError('Every action id must be a UUID');
+      }
+    }
+    return unique;
   }
 
   private fail<T>(method: string, error: unknown): RepositoryResult<T> {
@@ -532,6 +659,211 @@ export class BusinessOsCreditLedgerReadRepository {
     } catch (error) {
       return this.fail(method, error);
     }
+  }
+
+  // ============ The Activity list (admin AI Activity view, slice B1a) ============
+
+  /**
+   * The CHARGE rows of EVERY account written in the window, filtered, ordered
+   * (`sort` DESC, then `id` DESC) and capped IN the query at `limit`, with the
+   * exact filtered count. Charges of deleted accounts are excluded: they have
+   * their own bucket (`listChargesOfDeletedAccountsInWindow`, FR-B8).
+   *
+   * Cross-account by NAME (see the header). Admin Activity view only; never
+   * call it from an owner-facing path. Logged at info.
+   */
+  async listChargesAllAccountsInWindow(
+    filter: ChargeListFilter,
+    opts: ChargeListOptions
+  ): Promise<RepositoryResult<ChargeListPage>> {
+    const method = 'listChargesAllAccountsInWindow';
+    try {
+      this.assertChargeFilter(filter);
+      this.assertListOptions(opts);
+      const page = await this.pageOfCharges(filter, { kind: 'all_accounts' }, opts);
+      this.logger.info(
+        { method, sort: opts.sort, limit: opts.limit, rows: page.rows.length, total: page.total },
+        'Credit charges of all accounts listed'
+      );
+      return { data: page, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
+
+  /** The same list for ONE account. Refuses a malformed account id before querying. */
+  async listChargesForAccountInWindow(
+    userId: string,
+    filter: ChargeListFilter,
+    opts: ChargeListOptions
+  ): Promise<RepositoryResult<ChargeListPage>> {
+    const method = 'listChargesForAccountInWindow';
+    try {
+      this.assertAccount(userId);
+      this.assertChargeFilter(filter);
+      this.assertListOptions(opts);
+      const page = await this.pageOfCharges(filter, { kind: 'account', userId }, opts);
+      this.logger.debug(
+        { method, sort: opts.sort, limit: opts.limit, rows: page.rows.length, total: page.total },
+        'Credit charges of one account listed'
+      );
+      return { data: page, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
+
+  /**
+   * The ADJUSTMENT rows that point at these charges (`adjusts_action_id`),
+   * written at ANY time: a correction made in a later period still nets onto
+   * its charge (FR-B12), so this read has no `created_at` bound. At most
+   * `MAX_IDS_PER_REQUEST` ids per call; up to `ADJUSTMENTS_CEILING` rows,
+   * newest first, de-duplicated by id.
+   *
+   * Like `findChargesByActionIds`, a lookup by id is not an ownership proof:
+   * the caller checks each adjustment's account against its charge's
+   * (`resolveEffectiveFields` refuses a cross-account pair).
+   */
+  async listAdjustmentsForActionIds(
+    actionIds: readonly string[]
+  ): Promise<RepositoryResult<CreditLedgerPagedResult<CreditLedgerRow>>> {
+    const method = 'listAdjustmentsForActionIds';
+    try {
+      const unique = this.assertActionIds(actionIds);
+      const pageSize = CREDIT_LEDGER_READ_LIMITS.MAX_PAGE_SIZE;
+      const ceiling = CHARGE_LIST_LIMITS.ADJUSTMENTS_CEILING;
+      const rows: CreditLedgerRow[] = [];
+      const seen = new Set<string>();
+
+      for (let from = 0; rows.length < ceiling; from += pageSize) {
+        const size = Math.min(pageSize, ceiling - rows.length);
+        const { data, error } = await this.supabase
+          .from('business_os_credit_charges')
+          .select(CREDIT_LEDGER_ROW_COLUMNS)
+          .eq('kind', 'adjustment')
+          .in('adjusts_action_id', unique)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(from, from + size - 1);
+        if (error) throw error;
+
+        const page = (data ?? []) as unknown as CreditLedgerRow[];
+        for (const row of page) {
+          const key = String(row.id);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          rows.push(row);
+        }
+        if (page.length < size) break;
+      }
+
+      const reachedCeiling = rows.length >= ceiling;
+      this.logger.debug(
+        { method, requested: unique.length, found: rows.length, reachedCeiling },
+        'Credit adjustments read by the action ids they correct'
+      );
+      return { data: { rows: rows.slice(0, ceiling), reachedCeiling }, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
+
+  /**
+   * The CHARGE rows whose account was DELETED (`user_id` NULL) written in the
+   * window, with the same filters as the list, newest first, paged up to
+   * `ceiling`, plus their exact count (FR-B8). Named for its purpose (SA-R12):
+   * these rows belong to no account, so this is not an account read.
+   *
+   * The count is requested on the FIRST page only (SA optimisation note): one
+   * count per read, not one per page. Logged at info.
+   *
+   * `reachedCeiling` here is EXACT, unlike the `>=` rule of the other paged
+   * reads (QA E-1): the read asks for ONE row past the ceiling, so it is true
+   * only when more rows exist than were returned. Exactly `ceiling` matching
+   * rows are all summed by the caller, and must not read as "at least".
+   */
+  async listChargesOfDeletedAccountsInWindow(
+    filter: ChargeListFilter,
+    opts: CreditLedgerPageOptions
+  ): Promise<RepositoryResult<CreditLedgerPagedResult<CreditLedgerRow> & { total: number | null }>> {
+    const method = 'listChargesOfDeletedAccountsInWindow';
+    try {
+      this.assertChargeFilter(filter);
+      this.assertPaging(opts);
+
+      const rows: CreditLedgerRow[] = [];
+      const seen = new Set<string>();
+      let total: number | null = null;
+
+      // One row past the ceiling: the only way to tell "exactly the ceiling" from "more".
+      const want = opts.ceiling + 1;
+      for (let from = 0; rows.length < want; from += opts.pageSize) {
+        const size = Math.min(opts.pageSize, want - rows.length);
+        const { data, error, count } = await this.chargeQuery(filter, { kind: 'deleted_accounts' }, from === 0)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(from, from + size - 1);
+        if (error) throw error;
+        if (from === 0) total = typeof count === 'number' ? count : null;
+
+        const page = (data ?? []) as unknown as CreditLedgerRow[];
+        for (const row of page) {
+          const key = String(row.id);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          rows.push(row);
+        }
+        if (page.length < size) break;
+      }
+
+      const reachedCeiling = rows.length > opts.ceiling;
+      this.logger.info(
+        { method, rows: Math.min(rows.length, opts.ceiling), total, reachedCeiling },
+        'Credit charges of deleted accounts read'
+      );
+      return { data: { rows: rows.slice(0, opts.ceiling), reachedCeiling, total }, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
+
+  /** One capped, ordered page of charges with its exact count. Callers have run every guard. */
+  private async pageOfCharges(
+    filter: ChargeListFilter,
+    scope: ChargeScope,
+    opts: ChargeListOptions
+  ): Promise<ChargeListPage> {
+    const { data, error, count } = await this.chargeQuery(filter, scope, true)
+      .order(opts.sort, { ascending: false })
+      .order('id', { ascending: false })
+      .range(0, opts.limit - 1);
+    if (error) throw error;
+    return {
+      rows: (data ?? []) as unknown as CreditLedgerRow[],
+      total: typeof count === 'number' ? count : null,
+    };
+  }
+
+  /**
+   * The ONE filter builder of the Activity reads (charge rows, half-open
+   * `created_at` window, the list filters, the scope). The unscoped scopes are
+   * reachable only from the named methods above.
+   */
+  private chargeQuery(filter: ChargeListFilter, scope: ChargeScope, withCount: boolean) {
+    let query = this.supabase
+      .from('business_os_credit_charges')
+      .select(CREDIT_LEDGER_ROW_COLUMNS, withCount ? { count: 'exact' } : undefined)
+      .eq('kind', 'charge')
+      .gte('created_at', filter.range.from.toISOString())
+      .lt('created_at', filter.range.to.toISOString());
+    if (scope.kind === 'account') query = query.eq('user_id', scope.userId);
+    else if (scope.kind === 'all_accounts') query = query.not('user_id', 'is', null);
+    else query = query.is('user_id', null);
+    if (filter.actionTypes !== undefined) query = query.in('action_type', [...filter.actionTypes]);
+    if (filter.outcome !== undefined) query = query.eq('outcome', filter.outcome);
+    if (filter.triggeredBy !== undefined) query = query.eq('triggered_by', filter.triggeredBy);
+    if (filter.minCostUsd !== undefined) query = query.gte('cost_usd', filter.minCostUsd);
+    return query;
   }
 }
 

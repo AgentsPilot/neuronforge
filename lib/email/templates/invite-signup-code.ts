@@ -30,7 +30,7 @@
 
 import type { Locale } from '@/lib/i18n/config';
 import { platformEmailBranding } from '@/lib/email/platformBranding';
-import { wrapInBrandedTemplate } from './base-template';
+import { emailHighlightPanel, emailPalette, wrapInBrandedTemplate } from './base-template';
 
 export interface InviteSignupCodeEmailData {
   /** Exactly the digits; validated by the caller. */
@@ -84,14 +84,24 @@ export function generateInviteSignupCodeEmail(data: InviteSignupCodeEmailData): 
   const dir = isRTL ? 'rtl' : 'ltr';
   const align = isRTL ? 'right' : 'left';
 
-  // The code is always read left to right, and spaced for reading aloud.
+  const branding = platformEmailBranding(data.locale);
+  const palette = emailPalette(branding);
+
+  // The code is always read left to right, and spaced for reading aloud. It
+  // sits in a dashed, brand-tinted panel so it is the one thing the eye finds.
+  const codePanel = emailHighlightPanel(
+    `<p dir="ltr" style="margin: 0 0 16px; font-size: 32px; font-weight: 700; letter-spacing: 8px; text-align: center; font-family: monospace; color: ${palette.ink};">${data.code}</p>`,
+    branding,
+    { padding: '20px 16px 4px', dashed: true }
+  );
+
   const content = `
     <div dir="${dir}" style="text-align: ${align};">
-      <h1 style="margin: 0 0 16px; font-size: 20px; font-weight: 600;">${t.heading}</h1>
-      <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.6;">${t.lead}</p>
-      <p dir="ltr" style="margin: 0 0 16px; font-size: 32px; font-weight: 700; letter-spacing: 8px; text-align: center; font-family: monospace;">${data.code}</p>
-      <p style="margin: 0 0 16px; font-size: 14px; line-height: 1.6;">${t.validFor(data.validMinutes)}</p>
-      <p style="margin: 20px 0 0; font-size: 13px; opacity: 0.7; line-height: 1.6;">${t.ignore}</p>
+      <h1 style="margin: 0 0 16px; font-size: 24px; line-height: 1.3; font-weight: 700; color: ${palette.ink};">${t.heading}</h1>
+      <p style="margin: 0 0 20px; font-size: 15px; line-height: 1.6; color: ${palette.inkMuted};">${t.lead}</p>
+      ${codePanel}
+      <p style="margin: 0 0 16px; font-size: 14px; line-height: 1.6; color: ${palette.inkMuted};">${t.validFor(data.validMinutes)}</p>
+      <p style="margin: 20px 0 0; padding-top: 16px; border-top: 1px solid ${palette.line}; font-size: 13px; line-height: 1.6; color: ${palette.inkFaint};">${t.ignore}</p>
     </div>
   `;
 
@@ -101,7 +111,7 @@ export function generateInviteSignupCodeEmail(data: InviteSignupCodeEmailData): 
     subject: t.subject,
     // The platform's own look, with the AgentPilot wordmark: this is not a
     // business-to-client email (Slice 3a, E-2).
-    html: wrapInBrandedTemplate(content, platformEmailBranding(data.locale)),
+    html: wrapInBrandedTemplate(content, branding),
     text,
   };
 }
