@@ -27,7 +27,7 @@ describe('platformEmailBranding', () => {
     const branding = platformEmailBranding('en');
     expect(branding).toEqual({
       businessName: 'AgentPilot',
-      primaryColor: '#0f172a',
+      primaryColor: '#4F46E5', // the app's V2 primary (was slate-900; invite branding refresh)
       secondaryColor: '#334155',
       locale: 'en',
       logoUrl: `${PROD}/images/brand/wordmark.png`,
