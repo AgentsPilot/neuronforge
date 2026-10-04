@@ -68,11 +68,15 @@ const RULES = [
  * added tomorrow is covered.
  */
 const ACTIVITY_ROUTE = 'app/api/admin/business-os/ai-activity/route.ts';
+/** Gap B slice B2a: the drill-down route, outside the credits module too. */
+const ACTIVITY_DRILL_DOWN_ROUTE = 'app/api/admin/business-os/ai-activity/drill-down/route.ts';
 const ACTIVITY_SCREEN_DIR = 'app/admin/business-os-llm/components/activity';
 const ACTIVITY_SCREEN_MODULES = [
   'app/admin/business-os-llm/activityTypes.ts',
   'app/admin/business-os-llm/activityCopy.ts',
   'app/admin/business-os-llm/activityPresets.ts',
+  // B2a: the drill-down's client mirror.
+  'app/admin/business-os-llm/activityDrillDownTypes.ts',
 ];
 
 const files = [
@@ -80,6 +84,7 @@ const files = [
   READ_REPOSITORY,
   OWNER_READ_REPOSITORY,
   ACTIVITY_ROUTE,
+  ACTIVITY_DRILL_DOWN_ROUTE,
   ...sourceFiles(ACTIVITY_SCREEN_DIR),
   ...ACTIVITY_SCREEN_MODULES,
 ];
@@ -102,6 +107,13 @@ describe('N-10: no grouping or filtering on the raw service column', () => {
         ACTIVITY_ROUTE,
         `${ACTIVITY_SCREEN_DIR}/ActivityTab.tsx`,
         `${ACTIVITY_SCREEN_DIR}/ActivityTable.tsx`,
+        // The drill-down (B2a), named for the same reason.
+        `${CREDITS_DIR}/aiActivityDrillDown.ts`,
+        `${CREDITS_DIR}/aiActivityDrillDownDeps.ts`,
+        `${CREDITS_DIR}/aiActivityDrillDownTypes.ts`,
+        ACTIVITY_DRILL_DOWN_ROUTE,
+        `${ACTIVITY_SCREEN_DIR}/ActivityDrillDown.tsx`,
+        `${ACTIVITY_SCREEN_DIR}/DrillDownCharges.tsx`,
         ...ACTIVITY_SCREEN_MODULES,
       ])
     );

@@ -493,6 +493,116 @@ describe('findChargesByActionIds', () => {
   });
 });
 
+describe('listChargesOfGroupForAccount (the Activity drill-down, slice B2a)', () => {
+  const GROUP_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+  it('reads the charges of ONE group of ONE account, with no time bound, newest first, logged at debug', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [ledgerRow('1', { group_id: GROUP_ID })], error: null }));
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listChargesOfGroupForAccount(A, GROUP_ID, PAGING);
+
+    expect(result).toEqual({ data: { rows: [ledgerRow('1', { group_id: GROUP_ID })], reachedCeiling: false }, error: null });
+    expect(queries).toHaveLength(1);
+    const [q] = queries;
+    expect(q[0].args).toEqual(['business_os_credit_charges']);
+    expect(argsOf(q, 'select')).toEqual([[CREDIT_LEDGER_ROW_COLUMNS]]);
+    // The account AND the group, both: a grouping id can be shared across accounts (F-28).
+    expect(argsOf(q, 'eq')).toEqual([
+      ['kind', 'charge'],
+      ['user_id', A],
+      ['group_id', GROUP_ID],
+    ]);
+    // A group's charges belong together whenever they were written.
+    for (const method of ['gte', 'lt', 'lte', 'in', 'not', 'is']) expect(argsOf(q, method)).toEqual([]);
+    expect(argsOf(q, 'order')).toEqual([
+      ['created_at', { ascending: false }],
+      ['id', { ascending: false }],
+    ]);
+    expect(argsOf(q, 'range')).toEqual([[0, 1]]);
+    expect(mockLog.info).not.toHaveBeenCalled();
+    expect(mockLog.debug).toHaveBeenCalledTimes(1);
+  });
+
+  it('pages, de-duplicates by id, and reports the ceiling with the >= rule', async () => {
+    let n = 0;
+    const { client, queries } = recordingClient(() => {
+      const page = [ledgerRow(String(n)), ledgerRow(String(n + 1))];
+      n += 1; // overlap by one: every page repeats the previous page's last row
+      return { data: page, error: null };
+    });
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listChargesOfGroupForAccount(A, GROUP_ID, {
+      pageSize: 2,
+      ceiling: 3,
+    });
+    expect(result.data?.rows.map((r) => r.id)).toEqual(['0', '1', '2']);
+    expect(result.data?.reachedCeiling).toBe(true);
+    expect(queries.length).toBeGreaterThanOrEqual(2);
+
+    // Exactly the ceiling is treated as "may be incomplete": a full last page cannot be told from a cut one.
+    const exact = recordingClient(() => ({ data: [ledgerRow('1'), ledgerRow('2')], error: null }));
+    const atCeiling = await new BusinessOsCreditLedgerReadRepository(exact.client).listChargesOfGroupForAccount(A, GROUP_ID, {
+      pageSize: 2,
+      ceiling: 2,
+    });
+    expect(atCeiling.data?.reachedCeiling).toBe(true);
+  });
+
+  it('a short page ends the read below the ceiling', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [ledgerRow('1')], error: null }));
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listChargesOfGroupForAccount(A, GROUP_ID, PAGING);
+    expect(result.data?.reachedCeiling).toBe(false);
+    expect(queries).toHaveLength(1);
+  });
+
+  it.each([
+    ['a missing account', '', GROUP_ID, PAGING],
+    ['a malformed account', 'not-a-uuid', GROUP_ID, PAGING],
+    ['a filter-syntax account', `${A},user_id.neq.x`, GROUP_ID, PAGING],
+    ['a missing group', A, '', PAGING],
+    ['a malformed group', A, 'not-a-uuid', PAGING],
+    ['a filter-syntax group', A, `${GROUP_ID},group_id.neq.x`, PAGING],
+    ['a page larger than PostgREST returns', A, GROUP_ID, { pageSize: 1001, ceiling: 10 }],
+    ['a zero ceiling', A, GROUP_ID, { pageSize: 10, ceiling: 0 }],
+  ])('refuses %s before querying', async (_name, account, group, paging) => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listChargesOfGroupForAccount(account, group, paging);
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+    expect(queries).toHaveLength(0);
+    expect(mockLog.warn).toHaveBeenCalled();
+  });
+
+  it('returns a failed page as an error, never a partial result, and never throws', async () => {
+    const { client } = recordingClient((_c, i) =>
+      i === 0 ? { data: [ledgerRow('1'), ledgerRow('2')], error: null } : { data: null, error: new Error('page 2') }
+    );
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listChargesOfGroupForAccount(A, GROUP_ID, PAGING);
+    expect(result).toEqual({ data: null, error: expect.objectContaining({ message: 'page 2' }) });
+
+    const exploding = {
+      from: () => {
+        throw new Error('client exploded');
+      },
+    } as unknown as SupabaseClient;
+    const thrown = await new BusinessOsCreditLedgerReadRepository(exploding).listChargesOfGroupForAccount(A, GROUP_ID, PAGING);
+    expect(thrown.error?.message).toBe('client exploded');
+  });
+
+  it('the method body names no service filter and no time bound (by source)', () => {
+    const source = fs.readFileSync(path.join(process.cwd(), 'lib/repositories/BusinessOsCreditLedgerReadRepository.ts'), 'utf8');
+    const start = source.indexOf('async listChargesOfGroupForAccount(');
+    expect(start).toBeGreaterThan(-1);
+    // The method ends at the first two-space-indented closing brace; CRLF or LF checkouts alike.
+    const rest = source.slice(start);
+    const end = rest.search(/\r?\n {2}\}\r?\n/);
+    expect(end).toBeGreaterThan(0);
+    const body = rest.slice(0, end);
+    expect(body).toContain(".eq('user_id', userId)");
+    expect(body).toContain(".eq('group_id', groupId)");
+    expect(body).not.toMatch(/service/);
+    expect(body).not.toMatch(/\.(gte|lt|lte)\(/);
+  });
+});
+
 describe('the Activity list (admin AI Activity view, slice B1a)', () => {
   // Half-open on created_at, starting at the charging cut-over floor.
   const WINDOW = { from: new Date('2026-09-29T16:50:53.914Z'), to: new Date('2026-10-03T00:00:00.000Z') };
@@ -824,7 +934,7 @@ describe('source guards', () => {
     expect(code).toMatch(/\.lt\(\s*['"]created_at['"]/);
   });
 
-  it('is imported only by the report builder, the leak check (slice 4b), the Activity view (B1a), the barrel and tests', () => {
+  it('is imported only by the report builder, the leak check (slice 4b), the Activity view (B1a) and its drill-down (B2a), the barrel and tests', () => {
     const roots = ['app', 'lib', 'components', 'hooks', 'scripts'];
     const found: string[] = [];
     const walk = (dir: string) => {
@@ -851,6 +961,12 @@ describe('source guards', () => {
         'lib/business-os/credits/aiActivity.ts',
         // ... and its production wiring, which calls the four Activity reads.
         'lib/business-os/credits/aiActivityDeps.ts',
+        // Gap B slice B2a, the drill-down: types via Pick<...>; it calls no
+        // read method itself ...
+        'lib/business-os/credits/aiActivityDrillDown.ts',
+        // ... and its production wiring, which calls three reads: the charge
+        // by action id, the group of one account, and the adjustments.
+        'lib/business-os/credits/aiActivityDrillDownDeps.ts',
         // Slice 8a: the admin "Credits left" column's production wiring.
         'lib/business-os/credits/adminCreditPercentDeps.ts',
         'lib/repositories/BusinessOsCreditLedgerReadRepository.ts',

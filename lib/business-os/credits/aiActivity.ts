@@ -144,7 +144,7 @@ export const CHARGING_CUTOVER_FLOOR_MS = Date.UTC(2026, 8, 29, 16, 50, 53, 914);
 type RepoResult<T> = { data: T | null; error: Error | null };
 
 /** A charge row of a live account, as kept for the page (action id and account always set). */
-type PageCharge = CreditLedgerRow & { action_id: string; user_id: string };
+export type PageCharge = CreditLedgerRow & { action_id: string; user_id: string };
 
 export interface AiActivityDeps {
   /** The four Activity reads. Production wiring: `aiActivityDeps.ts`. */
@@ -223,7 +223,7 @@ export function cutoverClamp(start: Date, end: Date): { coverage: AiActivityCove
 const errorOf = (err: unknown): Error => (err instanceof Error ? err : new Error(String(err)));
 
 /** Settles a call that may throw synchronously, so one failing read never fails another. */
-async function settle<T>(call: () => Promise<RepoResult<T>>): Promise<RepoResult<T>> {
+export async function settle<T>(call: () => Promise<RepoResult<T>>): Promise<RepoResult<T>> {
   try {
     return await call();
   } catch (err) {
@@ -243,7 +243,7 @@ interface NettedAdjustments {
  * `resolveEffectiveFields` refuses (its charge is on another account, or it is
  * not an adjustment of a known charge) is NOT netted: it is only counted.
  */
-function netAdjustments(
+export function netAdjustments(
   adjustments: readonly CreditLedgerRow[],
   chargesByActionId: ReadonlyMap<string, CreditLedgerRow>,
   units: (value: number | string | null | undefined, scale: number) => number
@@ -459,15 +459,18 @@ export async function buildAiActivity(
 // B1b: the audit join
 // ---------------------------------------------------------------------------
 
-type AuditRead = { status: 'ok'; page: AdminAiActionEntriesPage } | { status: 'failed' };
-type ArchiveRead = { status: 'ok'; cutoffMs: number | null; cutoff: string | null } | { status: 'failed' };
+export type AuditRead = { status: 'ok'; page: AdminAiActionEntriesPage } | { status: 'failed' };
+export type ArchiveRead = { status: 'ok'; cutoffMs: number | null; cutoff: string | null } | { status: 'failed' };
 
 /**
  * The page's grouping ids (from the CHARGE rows, never the request), read in
  * one call over `[earliest - slack, latest + slack)`. At most 100 distinct
  * ids, because the page holds at most 100 rows.
  */
-async function readAuditEntries(pageRows: readonly PageCharge[], deps: AiActivityDeps): Promise<AuditRead> {
+export async function readAuditEntries(
+  pageRows: readonly PageCharge[],
+  deps: Pick<AiActivityDeps, 'listAuditEntries'>
+): Promise<AuditRead> {
   const groupIds = [
     ...new Set(
       pageRows
@@ -492,7 +495,7 @@ async function readAuditEntries(pageRows: readonly PageCharge[], deps: AiActivit
  * SUCCEEDED run's cutoff and the cutoff of any recent run of this source that
  * moved rows (a partial run moves rows too). NULL when no run has moved any.
  */
-async function readArchiveCutoff(deps: AiActivityDeps): Promise<ArchiveRead> {
+export async function readArchiveCutoff(deps: Pick<AiActivityDeps, 'archive'>): Promise<ArchiveRead> {
   const [latest, runs] = await Promise.all([
     settle(() => deps.archive.getLatestCutoff(AUDIT_ARCHIVE_SOURCE)),
     settle(() => deps.archive.listRuns({ limit: AI_ACTIVITY_LIMITS.ARCHIVE_RUNS_INSPECTED })),
@@ -518,7 +521,7 @@ const finiteCount = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : null;
 
 /** The entry's allow-listed fields, one by one. Never a spread of `details` (AC-B13). */
-function projectEntry(details: Record<string, unknown>): AiActivityEntryState {
+export function projectEntry(details: Record<string, unknown>): AiActivityEntryState {
   // A `models` that is not a list is unreadable: NULL ("Unknown"), never [] (QA E-B2).
   const models = Array.isArray(details.models)
     ? details.models
@@ -569,7 +572,7 @@ function newestEntry(entries: readonly AdminAiActionEntryRow[]): AdminAiActionEn
  * unreadable -> unknown; older than the cutoff plus its margin (E-B1) ->
  * may_be_archived; otherwise lost.
  */
-function joinAuditEntries(
+export function joinAuditEntries(
   pageRows: readonly PageCharge[],
   auditRead: AuditRead,
   archiveRead: ArchiveRead,

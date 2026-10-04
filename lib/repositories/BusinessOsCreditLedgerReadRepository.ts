@@ -22,7 +22,10 @@
 // admin door and from a fail-closed cron; and the admin AI Activity view
 // (Gap B slice B1a, wired in `lib/business-os/credits/aiActivityDeps.ts`),
 // reached only from `app/api/admin/business-os/ai-activity`, which runs
-// `requireAdmin` first. Owners cannot read the cost
+// `requireAdmin` first; and its drill-down (Gap B slice B2a, wired in
+// `lib/business-os/credits/aiActivityDrillDownDeps.ts`), reached only from
+// `app/api/admin/business-os/ai-activity/drill-down` after `requireAdmin`.
+// Owners cannot read the cost
 // columns at all (per-column grants, slice 3), so this read cannot be served
 // through the owner's RLS client: every select here names a cost column the
 // owner holds no grant on. Owner-facing reads therefore use their own
@@ -45,10 +48,18 @@
 //     excluded, they have their own bucket). Both log at info.
 //   - NO ACCOUNT: `listChargesOfDeletedAccountsInWindow`, the charges whose
 //     account was deleted (`user_id` NULL, ON DELETE SET NULL). Logs at info.
-//   - BY UNIQUE ID: `findChargesByActionIds` (an adjustment's original) and
+//   - BY UNIQUE ID: `findChargesByActionIds` (an adjustment's original, and
+//     the Activity drill-down's ENTRY read, B2a) and
 //     `listAdjustmentsForActionIds` (the adjustments of a page of charges). A
 //     lookup by id is not an ownership proof: their callers check each row's
-//     account against the row it belongs to (`resolveEffectiveFields`).
+//     account against the row it belongs to (`resolveEffectiveFields`). For
+//     the drill-down, the row found by its action id is the one fact the
+//     request supplies; that row's OWN account and grouping id then scope
+//     every later read (SA-RC-11), after `requireAdmin`.
+//   - ACCOUNT-SCOPED GROUP READ: `listChargesOfGroupForAccount` (B2a) requires
+//     an account AND a grouping id, both taken by its caller from a charge row
+//     it has already read, never from a request. It has no time bound: a
+//     group's charges belong together whenever they were written.
 // The two Activity list methods share ONE private builder, `chargeQuery`, whose
 // unscoped forms are reachable only from the named methods (the `pageTotals`
 // precedent).
@@ -627,6 +638,12 @@ export class BusinessOsCreditLedgerReadRepository {
    * `MAX_IDS_PER_REQUEST` per call. Serves an adjustment's original when it
    * sits in a period that was not read. The caller checks each row's account
    * against the adjustment's: a lookup by id is not an ownership proof.
+   *
+   * Also the Activity drill-down's ENTRY read (Gap B slice B2a): one admin-
+   * supplied action id, after `requireAdmin`. The row it returns is the only
+   * thing the request decides; that row's own `user_id` and `group_id` become
+   * the scope of every later read (SA-RC-11). A row of no account (deleted)
+   * or of a platform account is refused by the caller, never opened.
    */
   async findChargesByActionIds(actionIds: readonly string[]): Promise<RepositoryResult<CreditLedgerRow[]>> {
     const method = 'findChargesByActionIds';
@@ -656,6 +673,68 @@ export class BusinessOsCreditLedgerReadRepository {
       const rows = (data ?? []) as unknown as CreditLedgerRow[];
       this.logger.debug({ method, requested: unique.length, found: rows.length }, 'Credit charges read by action id');
       return { data: rows, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
+
+  // ============ The Activity drill-down (admin AI Activity view, slice B2a) ============
+
+  /**
+   * The CHARGE rows of ONE account that share one grouping id, at ANY time,
+   * newest first (`created_at DESC, id DESC`), paged, de-duplicated by id, up
+   * to `ceiling`. Served by `business_os_credit_charges_group_idx`.
+   *
+   * Account-scoped by signature: both the account and the group come from a
+   * charge row the caller has already read, never from a request (SA-RC-11).
+   * A grouping id may be shared by several accounts (a chat turn id comes from
+   * a client header, F-28), so the account filter is what keeps another
+   * business's charges out. Logged at debug.
+   */
+  async listChargesOfGroupForAccount(
+    userId: string,
+    groupId: string,
+    opts: CreditLedgerPageOptions
+  ): Promise<RepositoryResult<CreditLedgerPagedResult<CreditLedgerRow>>> {
+    const method = 'listChargesOfGroupForAccount';
+    try {
+      this.assertAccount(userId);
+      if (typeof groupId !== 'string' || !UUID_PATTERN.test(groupId)) {
+        throw new CreditLedgerReadGuardError('A grouping id (UUID) is required');
+      }
+      this.assertPaging(opts);
+
+      const rows: CreditLedgerRow[] = [];
+      const seen = new Set<string>();
+
+      for (let from = 0; rows.length < opts.ceiling; from += opts.pageSize) {
+        const size = Math.min(opts.pageSize, opts.ceiling - rows.length);
+        const { data, error } = await this.supabase
+          .from('business_os_credit_charges')
+          .select(CREDIT_LEDGER_ROW_COLUMNS)
+          .eq('kind', 'charge')
+          .eq('user_id', userId)
+          .eq('group_id', groupId)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(from, from + size - 1);
+        if (error) throw error;
+
+        const page = (data ?? []) as unknown as CreditLedgerRow[];
+        for (const row of page) {
+          // A row inserted during paging shifts an older one onto the next
+          // page: it is read twice, never skipped. Keep the first copy.
+          const key = String(row.id);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          rows.push(row);
+        }
+        if (page.length < size) break;
+      }
+
+      const reachedCeiling = rows.length >= opts.ceiling;
+      this.logger.debug({ method, rows: rows.length, reachedCeiling }, 'Credit charges of one group of one account read');
+      return { data: { rows: rows.slice(0, opts.ceiling), reachedCeiling }, error: null };
     } catch (error) {
       return this.fail(method, error);
     }

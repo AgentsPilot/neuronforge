@@ -165,6 +165,8 @@ export const DELETED_BUCKET_AT_LEAST = 'at least';
 // ---- Columns ----
 
 export const COLUMNS = {
+  /** B2a: the row's button that opens the drill-down. First, so a keyboard reaches it first. */
+  details: 'Details',
   when: 'When (UTC)',
   business: 'Business',
   area: 'Area',
@@ -182,3 +184,65 @@ export const COLUMNS = {
 } as const;
 
 export const SHOW_ALL_BUSINESSES = 'Show all businesses';
+
+// ---- B2a: the drill-down drawer (FR-B2, AC-B17: text, never colour alone) ----
+
+/** The row button's visible text; its accessible name is `OPEN_DETAILS_LABEL`. */
+export const OPEN_DETAILS = 'Open';
+/** The button's accessible name: which action, and when, so a screen reader can tell rows apart. */
+export const OPEN_DETAILS_LABEL = (actionType: string, when: string | null) =>
+  `Open details for ${actionType || 'this action'}${when ? ` at ${when}` : ''}`;
+
+export const DRILL_DOWN_TITLE = 'AI action';
+export const DRILL_DOWN_LOADING = 'Reading the AI action…';
+/** The route's one 404 body for every "not found": the screen says the same, and nothing more. */
+export const DRILL_DOWN_NOT_FOUND = 'This AI action could not be found.';
+export const DRILL_DOWN_ERROR_FALLBACK = 'Could not read the AI action';
+
+export const DRILL_DOWN_SECTIONS = {
+  action: 'Action',
+  corrections: 'Corrections',
+  entry: 'Audit entry',
+  group: 'Grouping id',
+} as const;
+
+export const DRILL_DOWN_FIELDS = {
+  business: 'Business',
+  when: 'When (UTC)',
+  area: 'Area',
+  actionType: 'Action type',
+  trigger: 'Trigger',
+  outcome: 'Outcome',
+  cost: 'Cost (USD)',
+  credits: 'Credits charged',
+  state: 'Record state',
+  calls: 'Calls',
+  failedCalls: 'Failed calls',
+  inputTokens: 'Input tokens',
+  outputTokens: 'Output tokens',
+  totalTokens: 'Total tokens',
+  models: 'Models',
+  errorCode: 'Error code',
+} as const;
+
+export const CORRECTIONS_NONE = 'No corrections.';
+export const CORRECTIONS_UNREAD = 'Corrections could not be read, so none are listed and the figures above are as charged.';
+export const CORRECTION_COLUMNS = {
+  when: 'When (UTC)',
+  reason: 'Reason',
+  cost: 'Cost (USD)',
+  credits: 'Credits',
+} as const;
+export const CORRECTION_REASON_NONE = 'No reason recorded';
+
+/** The entry state when there are no fields to show; the chip beside it says why. */
+export const ENTRY_NO_FIELDS = 'No audit entry fields to show for this action:';
+
+/** FR-B2, requirement `:326`: the calls of a shared group are never split between its actions. */
+export const GROUP_SHARED = (count: string, atLeast: boolean) =>
+  `This grouping id holds ${atLeast ? 'at least ' : ''}${count} charged actions on this account. ` +
+  'Its AI calls cannot be attributed to one of them.';
+export const GROUP_SINGLE = 'This grouping id holds only this charged action on this account.';
+export const GROUP_FAILED = 'The other actions of this grouping id could not be read, so only this action is shown.';
+export const GROUP_THIS_ACTION = 'This action';
+export const GROUP_CHARGES_CAPTION = 'Charged actions of this grouping id on this account, newest first';

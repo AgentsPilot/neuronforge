@@ -142,8 +142,14 @@ function stub(respond: Responder) {
 }
 
 const ok = (data: ActivityPayload) => ({ status: 200, body: { success: true, data } });
+/**
+ * SA-B2-11: the LIST route by its exact path. A prefix match would also count
+ * `/api/admin/business-os/ai-activity/drill-down` (B2a) as a list read.
+ */
+const LIST_PATH = '/api/admin/business-os/ai-activity';
+const isListUrl = (url: string) => url.split('?')[0] === LIST_PATH;
 const activityCalls = (fetchMock: jest.Mock) =>
-  fetchMock.mock.calls.map((c) => String(c[0])).filter((u) => u.startsWith('/api/admin/business-os/ai-activity'));
+  fetchMock.mock.calls.map((c) => String(c[0])).filter(isListUrl);
 const lastActivityParams = (fetchMock: jest.Mock) => {
   const calls = activityCalls(fetchMock);
   return new URLSearchParams(calls[calls.length - 1].split('?')[1]);
@@ -564,7 +570,7 @@ describe('controls (AC-B3, AC-B17)', () => {
     global.fetch = jest.fn(
       (input: RequestInfo | URL) =>
         new Promise<Response>((resolve) => {
-          if (String(input).startsWith('/api/admin/business-os/ai-activity')) resolvers.push(resolve);
+          if (isListUrl(String(input))) resolvers.push(resolve);
         })
     ) as unknown as typeof fetch;
     render(<ActivityTab />);
@@ -582,7 +588,7 @@ describe('controls (AC-B3, AC-B17)', () => {
 describe('the page: the Activity tab and the URL (SA-RC-13, SA-B1-8)', () => {
   function stubPage() {
     return stub((url) => {
-      if (url.startsWith('/api/admin/business-os/ai-activity')) return ok(payload());
+      if (isListUrl(url)) return ok(payload());
       if (url.startsWith('/api/admin/business-os/credits/report')) return { status: 500, body: { success: false, error: 'not under test' } };
       return { status: 200, body: { success: true, data: { areas: [], generatedAt: '2026-10-02T09:00:00.000Z' } } };
     });
