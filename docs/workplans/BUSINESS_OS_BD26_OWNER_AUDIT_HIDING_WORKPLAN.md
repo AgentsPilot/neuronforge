@@ -7,7 +7,7 @@
 **Design:** SA, 2026-10-04 (copied into §2 to §5 below; the scratchpad original is not kept)
 **Branch:** `fix/bos-owner-audit-hides-admin-entries` (from `origin/main` @ `89dbc568`)
 **Date:** 2026-10-04
-**Status:** Code Complete (2026-10-04; uncommitted; awaiting SA code review + QA; 20261018 not applied)
+**Status:** PR #202 open (2026-10-04); SA code review approved, QA passed; 20261018 not applied
 
 ## Overview
 
@@ -506,7 +506,14 @@ None.
 
 ## Commit Info
 
-_RM populates._
+| Item | Value |
+|---|---|
+| Branch | `fix/bos-owner-audit-hides-admin-entries` |
+| Commits | `fc3f1ab7` docs, `4204253d` fix, `9faa22cf` merge of `origin/main` @ `4fab9f99` (slice 8b, #200) |
+| PR | https://github.com/AgentsPilot/neuronforge/pull/202 (open 2026-10-04) |
+| Merge conflicts | Requirement change history (kept both sides); `lib/audit/types.ts` auto-merge left two `business_os_credit_period` entries, reduced to one |
+| Re-test after merge | `test:bos-entitlements` 160 suites / 3,751 tests, `test:authz-guard` 119, all pass |
+| PROD | 20261018 **not applied**. After merge, the user runs §6; PR #194 (11c) merges only after that |
 
 ---
 
@@ -520,3 +527,4 @@ _RM populates._
 | 2026-10-04 | SA code review: approved for QA with conditions (CR26-1..CR26-6) | Migration / rollback / checker / probe sound for PROD; write path, admin views and the 20260930 file untouched; all 7 deviations accepted. Before the PR: CR26-1 rebase onto `origin/main` and classify the new `bos_queue` entity type as `owner` (no SQL change); CR26-2 confirm the newly added route suites pass on CI's Node 18 (global `crypto.randomUUID`). Low: P09 wording in the test header / §3.3, a 42501 clause in the §6 STOP rule |
 | 2026-10-04 | QA report: PASS WITH NOTES | All suites re-run green (`test:bos-entitlements` 154 suites / 3,573 tests, Jest 76.2 s locally against 72.4 s on the old paths; authz guard; `typecheck:bos-llm` 0 new). Independent PGlite run 21 / 21 and Dev harness 33 / 33. Route black box 14 / 14. `creditPeriod` fix confirmed (2 fail before, pass after). Write path, 20260930 file and admin views untouched. Bug QA26-1 (Low): backslash-u escapes in the export route test. CR26-1 rebase confirmed necessary; notes on migration file order, NULL handling and FU-1 |
 | 2026-10-04 | Review fixes + main merged (Dev) | Fast-forwarded to `origin/main` `8c8b5d08` with the work still uncommitted; `types.ts` conflict resolved by keeping both entries. CR26-1 `bos_queue` set to `owner` (no SQL change), QA26-1 emoji check without escapes, CR26-3 P09 wording, CR26-5 42501 STOP clause, P04 FAIL prints the low-line count. `test:bos-entitlements` 157 / 3,679 green, authz guard 119, `typecheck:bos-llm` 0 new. Still uncommitted |
+| 2026-10-04 | Committed, PR #202 opened (RM) | fc3f1ab7 docs, 4204253d fix, merge of main 9faa22cf (slice 8b); duplicate `business_os_credit_period` entity type reduced to one; re-tested 160 suites / 3,751 tests + authz 119; 20261018 not applied |
