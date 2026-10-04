@@ -1,6 +1,6 @@
 # Requirement: Admin Cleanup for Business OS
 
-> **Last Updated**: 2026-10-03
+> **Last Updated**: 2026-10-04
 
 **Created by:** BA
 **Date:** 2026-10-02
@@ -423,6 +423,8 @@ Recorded so they are not lost. **Each needs a user decision before any work.** T
 | **UI config** (hidden page) | ⚠️ **Yes** | It writes `v2_custom_tokens`, which `lib/design-system-v2/theme-provider.tsx:62-69` applies to **all of `/business-os`** (`app/business-os/layout.tsx:68`). Its sidebar description, "AgentsPilot app UI version", is wrong about its reach. `ui_version` is dead. | Surface it as "Theme (affects Business OS)", or lock it. |
 | **Exchange rates** (unlisted) | No (AP display) | It writes `exchange_rates` from the browser Supabase client with no admin route, and calls a third-party API from the browser. | Drop it (R-17). The table's RLS state must be checked first (`business-os-schema-check`). |
 | **The other 11 parked AP pages** | No | Platform dashboard, Agent execution queue, System flow, Agent generation, Orchestration, AIS config, Agent memory config, Agent memory dashboard, Reward config, Storage config, Executions config | Drop candidates for R-17 once AgentsPilot's future is decided. D-3 stands until then. |
+
+**2026-10-04: HelpBot embedding model locked.** The HelpBot PUT no longer writes `helpbot_embedding_model`, refuses a changed value with a 400, and the page shows it read-only with the warning. See [ADMIN_HELPBOT_LOCK_AND_AUDIT_EMAIL_WORKPLAN.md](/docs/workplans/ADMIN_HELPBOT_LOCK_AND_AUDIT_EMAIL_WORKPLAN.md).
 
 ---
 
@@ -902,3 +904,4 @@ There is no blocking question. Three things to know, with the default that appli
 | 2026-10-03 | Slice 2 workplan SA-approved (W2-1..W2-9) | §8 Security NFR now names model price writes as a WC-7 flush exception (C2-7). The parked price-source row in §11 gains the three false info-box lines and the `flush()` early-return limit, for the separate pricing session. SA also found that a saved price kept showing its old value (W2-1); it is fixed in slice 2. |
 | 2026-10-03 | SA review: slice 3 | **APPROVED WITH CONDITIONS (C3-1..C3-12).** Live read-only schema probe on `19566036`: `workflow_executions.input_data` is confirmed missing, and `output_data` and `workflow_step_executions.execution_id` (a filter column; the real key is `workflow_execution_id`) are **two more phantoms**. **NF-3 is latent:** because the executions read fails, the agent prompt read never runs, so fixing FR-AC5 alone would **start** sending prompts across accounts. TA-8 is therefore **in** slice 3, in the same PR, and the cut is made in the `select` (prompts, steps, schemas, input and output). TA-6 is confirmed and extended (also `agent` and `category`); TA-7 is overruled in form: all four category cards hide in BOS scope; the BOS drill path no longer lands on Agent. OI-9 stays debt. `console.*`: 0 in both files. No guard, register or nav-test change. One PR, about 1.5 days. No blocking user question; three FYIs. |
 | 2026-10-03 | SA review: slice 4 (requirement and workplan, one pass) | **Approved with conditions W4-1..W4-9** (in the slice 4 workplan). Live read-only probe: `public.users` is missing (42P01), `profiles(id, full_name)` is valid, and every `audit_trail` search field exists. TA-10 is confirmed: the names come from `profiles` via `UserProfileRepository`. FR-AT3's wording is corrected (note under §4.3). FR-AR1's comment is tied to `ARCHIVE_RUNS_ENABLED` by a symmetric test. |
+| 2026-10-04 | HelpBot embedding model locked (§12) | The HelpBot config PUT no longer writes `helpbot_embedding_model` (shared with BOS chat; changing it invalidates every stored vector). A changed value is refused with a 400; the page shows it read-only. Short path, with the audit-row email fallback (Q-SA4-1, user-approved): [ADMIN_HELPBOT_LOCK_AND_AUDIT_EMAIL_WORKPLAN.md](/docs/workplans/ADMIN_HELPBOT_LOCK_AND_AUDIT_EMAIL_WORKPLAN.md). |
