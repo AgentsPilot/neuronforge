@@ -165,3 +165,91 @@ export interface DrainResult {
   counts: DrainCount[];
   durationMs: number;
 }
+
+// ── The queue item list (ADMIN_BOS_CLEANUP slice 7a) ─────────────────────────
+
+/** Which rows the list shows (workplan §2.1). */
+export type QueueItemState = 'stuck' | 'failed' | 'dead_lettered' | 'waiting';
+
+/** Why an item cannot be re-sent (C7-5, C7-7, §E). 7c returns the same codes with a 422. */
+export type QueueItemRetryRefusal =
+  | 'retry_not_offered'
+  | 'not_retryable_state'
+  | 'retry_window_passed'
+  | 'briefing_not_today'
+  | 'no_due_time';
+
+/** Why an item cannot be cancelled (C7-2). */
+export type QueueItemCancelRefusal = 'leased' | 'not_cancellable_state';
+
+export type QueueItemRetryView = { allowed: true; until: string } | { allowed: false; code: QueueItemRetryRefusal };
+export type QueueItemCancelView = { allowed: true } | { allowed: false; code: QueueItemCancelRefusal };
+
+/**
+ * The §E "due" anchor, as shown. `queued` is the queue time of lead replies and
+ * insight actions: their real due time is not kept anywhere (§E).
+ */
+export type QueueItemDue =
+  | { basis: 'scheduled'; at: string | null }
+  | { basis: 'business_day'; date: string | null }
+  | { basis: 'queued'; at: string };
+
+/**
+ * What an age is measured from. Failed items keep no failure time, so their age
+ * is counted from the §E anchor, and the words say which one (W7A-4).
+ */
+export type QueueItemAgeBasis =
+  | 'since_claimed'
+  | 'no_lease'
+  | 'since_due'
+  | 'since_queued'
+  | 'since_day_start'
+  | 'overdue';
+
+export interface QueueItemAge {
+  /** Whole minutes; negative on a waiting item that is not due yet; null when there is no time to measure from. */
+  minutes: number | null;
+  basis: QueueItemAgeBasis;
+}
+
+/** One row of the list. Metadata only, exactly these keys (C7-13). */
+export interface QueueItemView {
+  /** The queue row's own id (not an account id): 7b/7c act on it. */
+  id: string;
+  /** `company_name`, or one of three fixed sentences. */
+  businessName: string;
+  /** A fixed label; the raw kind value is never sent. */
+  kindLabel: string;
+  /** The platform's own status word; 7b/7c send it back as `expected.status`. */
+  status: string;
+  statusLabel: string;
+  state: QueueItemState;
+  /** From the fixed-marker filter that matched, never from the error text. */
+  errorCategory: 'failed' | 'dead_lettered' | null;
+  attempts: number;
+  due: QueueItemDue;
+  /** Waiting items only. */
+  nextAttemptAt: string | null;
+  age: QueueItemAge;
+  /** Stuck items only: 'none' = no claim recorded (orphaned), 'expired' = claimed before the stuck threshold. */
+  lease: 'none' | 'expired' | null;
+  retry: QueueItemRetryView;
+  cancel: QueueItemCancelView;
+}
+
+/** `data` of a successful `GET /api/admin/jobs-queues/items`. Exactly these keys. */
+export interface QueueItemsView {
+  queue: string;
+  state: QueueItemState;
+  /** The clock every age and mark is measured against. */
+  now: string;
+  page: number;
+  pageSize: number;
+  /** The last page the route serves (CR7A-2): only the first `maxPage * pageSize` items can be listed. */
+  maxPage: number;
+  /** null = the page asked for is past the end of the list (W7A-2). */
+  total: number | null;
+  /** False on the last servable page even when `total` is larger (CR7A-2 / QA-7A-1). */
+  hasMore: boolean;
+  items: QueueItemView[];
+}

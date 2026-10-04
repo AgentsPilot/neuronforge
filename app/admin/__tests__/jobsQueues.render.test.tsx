@@ -95,20 +95,22 @@ describe('the Scheduled jobs & queues page', () => {
   });
 
   // Amended deliberately by ADMIN_BOS_CLEANUP slice 7d (SA W7D-2, OP-3): the
-  // page was "Refresh only"; it is now Refresh plus one Drain now per queue,
-  // and nothing else.
-  it('the only buttons are Refresh and one Drain now per queue', async () => {
+  // page was "Refresh only"; it is now Refresh plus one Drain now per queue.
+  // Amended again by slice 7a (SA OP-11): plus one "View items" per queue
+  // (a read-only toggle), with every item list closed, and nothing else.
+  it('the only buttons are Refresh, one Drain now and one View items per queue', async () => {
     mockRoute();
     render(<AdminJobsQueuesPage />);
     await screen.findByTestId('job-calendar-sync');
     const buttons = screen.getAllByRole('button');
-    expect(buttons).toHaveLength(1 + 5);
+    expect(buttons).toHaveLength(1 + 5 + 5);
     expect(buttons.filter((b) => b.textContent?.includes('Refresh'))).toHaveLength(1);
     const drains = buttons.filter((b) => b.textContent === 'Drain now');
     expect(drains).toHaveLength(5);
+    expect(buttons.filter((b) => b.textContent === 'View items')).toHaveLength(5);
     for (const queue of BOS_QUEUES) {
-      expect(within(screen.getByTestId(`queue-${queue.id}`)).getAllByRole('button')).toHaveLength(1);
-      expect(within(screen.getByTestId(`queue-${queue.id}`)).getByRole('button').textContent).toBe('Drain now');
+      const inCard = within(screen.getByTestId(`queue-${queue.id}`)).getAllByRole('button');
+      expect(inCard.map((b) => b.textContent)).toEqual(['Drain now', 'View items']);
     }
   });
 
