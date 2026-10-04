@@ -103,7 +103,8 @@ const NINETY_DAYS_AGO = '2026-04-16T12:00:00.000Z';
 const ONE_YEAR_AGO = '2025-07-15T12:00:00.000Z';
 
 const OWNER = { id: '2f734ed5-3681-4049-880d-3de7b096bea3', email: 'a@example.com', created_at: '2026-01-01T00:00:00Z' };
-const HIDDEN_TYPES = '(ai_action,business_os_account_plan,business_os_credit_lot,business_os_credit_period)';
+// ADMIN_BOS_CLEANUP slice 7b added bos_queue_item (migration 20261035).
+const HIDDEN_TYPES = '(ai_action,bos_queue_item,business_os_account_plan,business_os_credit_lot,business_os_credit_period)';
 
 const TABLES = [
   'profiles',

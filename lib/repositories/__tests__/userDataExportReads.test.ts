@@ -191,7 +191,8 @@ describe('GDPR data export repository reads', () => {
   it('the audit read applies both BD-26 owner exclusions', async () => {
     const { client, calls } = recordingClient({ data: [], error: null });
     await new AuditTrailRepository(client).listOwnerEntriesForExport(USER, SINCE);
-    expect(calls).toContainEqual(['not', 'entity_type', 'in', '(ai_action,business_os_account_plan,business_os_credit_lot,business_os_credit_period)']);
+    // ADMIN_BOS_CLEANUP slice 7b added bos_queue_item (migration 20261035).
+    expect(calls).toContainEqual(['not', 'entity_type', 'in', '(ai_action,bos_queue_item,business_os_account_plan,business_os_credit_lot,business_os_credit_period)']);
     expect(calls).toContainEqual(['not', 'action', 'like', 'BUSINESS_AI_ACTION_%']);
   });
 });
