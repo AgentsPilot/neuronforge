@@ -253,3 +253,44 @@ export interface QueueItemsView {
   hasMore: boolean;
   items: QueueItemView[];
 }
+
+// ── One action on one queue item (ADMIN_BOS_CLEANUP slice 7b) ────────────────
+
+/** What `POST /api/admin/jobs-queues/items/action` can do. 7b: cancel only; 7c widens this union. */
+export type QueueItemAction = 'cancel';
+
+/** The body of `POST /api/admin/jobs-queues/items/action`. Exactly these keys (strict on the server). */
+export interface QueueItemActionRequest {
+  queue: string;
+  itemId: string;
+  action: QueueItemAction;
+  /** What the list showed: the platform's status word and the attempt count. */
+  expected: { status: string; attempts: number };
+  /** 3 to 500 characters after trimming. Kept in the admin audit trail only. */
+  reason: string;
+}
+
+/** A status word with its fixed label. */
+export interface QueueItemStatusWord {
+  status: string;
+  statusLabel: string;
+}
+
+/** `data` of a successful action. Exactly these keys: no account id, no content. */
+export interface QueueItemActionResult {
+  queue: string;
+  itemId: string;
+  action: QueueItemAction;
+  before: QueueItemStatusWord;
+  after: QueueItemStatusWord;
+}
+
+/** The `code` of a refused or failed action. */
+export type QueueItemActionRefusal =
+  | 'invalid_input'
+  | 'not_cancellable_state'
+  | 'leased'
+  | 'item_not_found'
+  | 'item_changed'
+  | 'action_failed'
+  | 'outcome_unknown';

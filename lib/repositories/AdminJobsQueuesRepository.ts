@@ -25,6 +25,9 @@
 //   - Methods never throw: they return `{ data, error }`.
 //
 // The five queue tables are READ ONLY here; nothing about them changes (A-6).
+// One single-item read for the slice 7b action route
+// (`readQueueItemAllAccounts`); this repository still writes nothing. The one
+// write to a queue row lives in AdminQueueActionsRepository.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
@@ -654,6 +657,65 @@ export class AdminJobsQueuesRepository {
       return { data: { rows, total }, error: null };
     } catch (error) {
       this.logger.warn({ ...logContext, code: (error as { code?: string }).code }, 'Queue items read failed');
+      return { data: null, error: asError(error) };
+    }
+  }
+
+  /**
+   * ONE queue row by id, across all accounts (ADMIN_BOS_CLEANUP slice 7b; SA
+   * C7-12 "reads extend AdminJobsQueuesRepository", workplan §2.2, OP-7).
+   *
+   * The action route re-reads the row on the server before its
+   * compare-and-set, to check it is still what the admin saw and to take the
+   * row's OWN `user_id` for the write. SERVICE ROLE, ON PURPOSE, as the list:
+   * the only caller is app/api/admin/jobs-queues/items/action/route.ts, after
+   * `requireAdmin` (the isolation guard enforces "only app/api/admin/**").
+   *
+   * The same column allow-list and field-by-field mapper as the list: no new
+   * column, no error text, skip reason, payload or claimer. `null` means no
+   * such row in THIS queue's table (never `.single()`, so a missing row is not
+   * a PGRST116 error). Read-only; logs ids and `found` only, never a row value.
+   */
+  async readQueueItemAllAccounts(
+    context: AdminReadContext,
+    queue: AdminQueueId,
+    itemId: string,
+    options: AdminReadOptions = {}
+  ): Promise<RepositoryResult<RawQueueItem | null>> {
+    const missing = this.requireContext(context);
+    if (missing) return { data: null, error: missing };
+    if (!Object.prototype.hasOwnProperty.call(ADMIN_QUEUE_SPECS, queue)) return { data: null, error: new Error('Unknown queue') };
+    if (typeof itemId !== 'string' || itemId.length === 0) return { data: null, error: new Error('An item id is required') };
+    const spec = ADMIN_QUEUE_SPECS[queue];
+    const logContext = { correlationId: context.correlationId, adminUserId: context.adminId, queue };
+
+    try {
+      let query = (this.supabase
+        .from(spec.table)
+        .select(ADMIN_QUEUE_ITEM_COLUMNS[queue].join(', ')) as unknown as Query)
+        .eq('id', itemId)
+        .limit(1);
+      if (options.signal) query = query.abortSignal(options.signal);
+
+      const { data, error } = await query;
+      if (error) {
+        this.logger.warn({ ...logContext, code: (error as { code?: string }).code }, 'Queue item read failed');
+        return { data: null, error: asError(error) };
+      }
+      const raw = Array.isArray(data) ? data : [];
+      if (raw.length === 0) {
+        this.logger.info({ ...logContext, found: false }, 'Queue item read (all accounts)');
+        return { data: null, error: null };
+      }
+      const mapped = mapItemRow(queue, raw[0]);
+      if (!mapped) {
+        this.logger.warn({ ...logContext, code: 'malformed_row' }, 'Queue item read failed');
+        return { data: null, error: new Error('The queue item row was not in the expected shape') };
+      }
+      this.logger.info({ ...logContext, found: true }, 'Queue item read (all accounts)');
+      return { data: mapped, error: null };
+    } catch (error) {
+      this.logger.warn({ ...logContext, code: (error as { code?: string }).code }, 'Queue item read failed');
       return { data: null, error: asError(error) };
     }
   }

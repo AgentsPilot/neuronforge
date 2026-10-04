@@ -84,6 +84,10 @@ describe('B-1: fixed kind labels (C7-13)', () => {
     ['payment_reminders', 'payment_received', 'Payment receipt'],
     ['lead_responses', 'invite', 'Booking invite to a new lead'],
     ['lead_responses', 'chase', 'Follow-up to a lead'],
+    // Slice 7b (OP-11, W7B-11): the three kinds 20260916 and 20260923 added.
+    ['lead_responses', 'invoice_chase', 'Invoice chase to a client'],
+    ['lead_responses', 'intake_chase', 'Intake form reminder'],
+    ['lead_responses', 'meeting_reminder', 'Meeting reminder'],
     ['insight_actions', 'chase_invoice', 'Invoice chase'],
     ['insight_actions', 'followup_nudge', 'Follow-up nudge'],
     ['insight_actions', 'booking_reminder', 'Booking reminder'],
@@ -108,6 +112,36 @@ describe('B-1: fixed kind labels (C7-13)', () => {
 
   it('the label tables cover exactly the five queues', () => {
     expect(Object.keys(QUEUE_ITEM_KIND_LABELS).sort()).toEqual([...QUEUE_ITEM_QUEUE_IDS].sort());
+  });
+
+  /**
+   * W7B-11: the lead-reply labels follow the LIVE CHECK, read from the latest
+   * migration that sets `lead_responses_kind_check` (comments ignored). A new
+   * kind added by a future migration fails here instead of showing "Other".
+   */
+  it('W7B-11: the lead-reply labels are exactly the kinds of the latest lead_responses_kind_check migration', () => {
+    const dir = path.join(process.cwd(), 'supabase', 'migrations');
+    const lists = fs
+      .readdirSync(dir)
+      .filter((name) => name.endsWith('.sql'))
+      .sort()
+      .map((name) => {
+        const sql = fs
+          .readFileSync(path.join(dir, name), 'utf8')
+          .split(/\r?\n/)
+          .filter((line) => !line.trim().startsWith('--'))
+          .join('\n');
+        const match = sql.match(/ADD\s+CONSTRAINT\s+lead_responses_kind_check\s+CHECK\s*\(\s*kind\s+IN\s*\(([^)]*)\)/i);
+        return match ? { name, kinds: [...match[1].matchAll(/'([^']*)'/g)].map((m) => m[1]) } : null;
+      })
+      .filter((entry): entry is { name: string; kinds: string[] } => entry !== null);
+    expect(lists.length).toBeGreaterThanOrEqual(2);
+    const latest = lists[lists.length - 1];
+    expect(latest.name >= '20260923').toBe(true);
+    expect(latest.kinds.sort()).toEqual(['chase', 'intake_chase', 'invite', 'invoice_chase', 'meeting_reminder']);
+    const labels = QUEUE_ITEM_KIND_LABELS.lead_responses;
+    expect(typeof labels).toBe('object');
+    expect(Object.keys(labels).sort()).toEqual(latest.kinds.sort());
   });
 });
 

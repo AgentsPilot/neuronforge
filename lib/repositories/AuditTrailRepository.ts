@@ -49,9 +49,10 @@
 // Owner-hidden entries are excluded IN THE QUERY, so the page, its counts and
 // its CSV export can never see one: every entity type in
 // OWNER_HIDDEN_ENTITY_TYPES (lib/audit/ownerVisibility.ts — `ai_action`, the
-// admin plan and credit-lot entries, slice 8b's credit-period entry; BD-26),
-// plus any `BUSINESS_AI_ACTION_*` event whatever its type (Layer 3 D-6). The
-// owner RLS policy (migration 20261018) mirrors the same list.
+// admin plan and credit-lot entries, slice 8b's credit-period entry; BD-26;
+// and the admin queue-item cancel, ADMIN_BOS_CLEANUP slice 7b), plus any
+// `BUSINESS_AI_ACTION_*` event whatever its type (Layer 3 D-6). The owner RLS
+// policy (migration 20261018, then 20261035) mirrors the same list.
 // Only the admin exceptions above read AI entries.
 
 import { SupabaseClient } from '@supabase/supabase-js';

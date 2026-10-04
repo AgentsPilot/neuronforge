@@ -22,7 +22,14 @@ import { AUDIT_ENTITY_OWNER_VISIBILITY, OWNER_HIDDEN_ENTITY_TYPES, isOwnerHidden
 const MIGRATIONS_DIR = join(process.cwd(), 'supabase', 'migrations');
 const OWNER_POLICY_ALTER = 'ALTER POLICY "Users can view their own audit logs"';
 
-const EXPECTED_HIDDEN = ['ai_action', 'business_os_account_plan', 'business_os_credit_lot', 'business_os_credit_period'];
+// + bos_queue_item: ADMIN_BOS_CLEANUP slice 7b (SA OP-2 option 1, W7B-1; migration 20261035).
+const EXPECTED_HIDDEN = [
+  'ai_action',
+  'bos_queue_item',
+  'business_os_account_plan',
+  'business_os_credit_lot',
+  'business_os_credit_period',
+];
 
 /** SQL with `--` comment lines removed and line endings normalised. */
 function executable(sql: string): string {
@@ -70,7 +77,7 @@ describe('AUDIT_ENTITY_OWNER_VISIBILITY: forced classification', () => {
     }
   });
 
-  it('hides exactly the four BD-26 types (set equality)', () => {
+  it('hides exactly the four BD-26 types plus slice 7b\'s bos_queue_item (set equality)', () => {
     expect(sortedSet(OWNER_HIDDEN_ENTITY_TYPES)).toEqual(EXPECTED_HIDDEN);
   });
 
@@ -85,9 +92,9 @@ describe('AUDIT_ENTITY_OWNER_VISIBILITY: forced classification', () => {
 });
 
 describe('the owner policy mirrors the registry (W26-4)', () => {
-  it('the latest owner-policy migration is 20261018 or later', () => {
+  it('the latest owner-policy migration is 20261035 or later (slice 7b)', () => {
     const { file } = latestOwnerPolicyMigration();
-    expect(file >= '20261018').toBe(true);
+    expect(file >= '20261035').toBe(true);
   });
 
   it("its NOT IN list equals OWNER_HIDDEN_ENTITY_TYPES, as sets", () => {

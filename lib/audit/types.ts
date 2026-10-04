@@ -95,6 +95,11 @@ export const AUDIT_ENTITY_TYPES = [
   // id is the queue id, e.g. 'payment_reminders' (audit_trail.entity_id is
   // TEXT, as for 'ais_config').
   'bos_queue',
+  // POST /api/admin/jobs-queues/items/action (ADMIN_BOS_CLEANUP slice 7b): one
+  // queue row, id = the row's own uuid. Written against the item's account and
+  // classified 'operator' (lib/audit/ownerVisibility.ts). Slice 7c's re-send
+  // uses the same type.
+  'bos_queue_item',
 ] as const;
 
 export type EntityType = (typeof AUDIT_ENTITY_TYPES)[number];

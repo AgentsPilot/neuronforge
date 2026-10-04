@@ -27,6 +27,7 @@
 import { queueItemEligibility } from '@/lib/admin/jobs/queueItemEligibility';
 import type { BosQueueId } from '@/lib/cron/bosCronJobs';
 import type {
+  QueueItemAction,
   QueueItemAge,
   QueueItemDue,
   QueueItemState,
@@ -46,6 +47,13 @@ export const QUEUE_ITEM_QUEUE_IDS = [
   'lead_responses',
   'insight_actions',
 ] as const satisfies readonly BosQueueId[];
+
+/**
+ * The actions `POST /api/admin/jobs-queues/items/action` performs (slice 7b:
+ * cancel only), the one list its Zod enum is built from. 7c adds 'retry' here,
+ * to the QueueItemAction union, and one `case` in the route (OP-16).
+ */
+export const QUEUE_ITEM_ACTIONS = ['cancel'] as const satisfies readonly QueueItemAction[];
 
 /** The list's states, in tab order. Equal to the repository's (pinned by test). */
 export const QUEUE_ITEM_STATES = ['stuck', 'failed', 'dead_lettered', 'waiting'] as const satisfies readonly QueueItemState[];
@@ -78,9 +86,14 @@ export const QUEUE_ITEM_KIND_LABELS: Readonly<Record<BosQueueId, string | Readon
   },
   payment_automations: 'Payment automation',
   daily_briefing_sends: 'Morning briefing',
+  // Every kind of the live CHECK (20260923_meeting_reminder.sql); a test reads
+  // that migration, so a new kind fails a test instead of showing "Other" (W7B-11).
   lead_responses: {
     invite: 'Booking invite to a new lead',
     chase: 'Follow-up to a lead',
+    invoice_chase: 'Invoice chase to a client',
+    intake_chase: 'Intake form reminder',
+    meeting_reminder: 'Meeting reminder',
   },
   insight_actions: {
     chase_invoice: 'Invoice chase',
@@ -113,6 +126,11 @@ export const BUSINESS_NAME_UNAVAILABLE = 'Name not available';
 
 const own = (table: Readonly<Record<string, string>>, key: string): string | undefined =>
   Object.prototype.hasOwnProperty.call(table, key) ? table[key] : undefined;
+
+/** The fixed label for a status word; an unknown one is "Unrecognised status" (slice 7b responses). */
+export function statusLabelFor(status: string): string {
+  return own(QUEUE_ITEM_STATUS_LABELS, status) ?? UNRECOGNISED_STATUS;
+}
 
 /** The fixed label for a row's kind on a queue. Never the raw value. */
 export function kindLabel(queue: BosQueueId, kind: string | null): string {
