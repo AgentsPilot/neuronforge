@@ -8,7 +8,7 @@
 **Worktree:** `neuronforge-llm-deduction`
 **Branch:** `feature/business-os-credit-deduction-slice-8` (confirmed with `git branch --show-current`; base `origin/main` `9a7c4fb3`). **Fast-forwarded by RM to `origin/main` `5061489b`** (admin cleanup 5a #177, admin header #178, slice 11b #179, #180) before code — R-1 / Q-11 closed (SA C-W2). 8b gets its own branch from RM after 8a merges.
 **Date:** 2026-10-03
-**Status:** 8a **Code Complete** — awaiting SA code review ∥ QA (uncommitted on the branch; evidence §4.15). SA workplan review ✅ approved with conditions 2026-10-03 (C-W1 to C-W5 folded in §4.0). 8b outline only, not started. *(Previous status, superseded: 8a In Progress.)*
+**Status:** 8a **Code Complete** — awaiting SA code review ∥ QA (uncommitted on the branch; evidence §4.15). SA workplan review ✅ approved with conditions 2026-10-03 (C-W1 to C-W5 folded in §4.0). 8b outline only, not started. *(Previous status, superseded: 8a In Progress.)* **2026-10-04:** 8a merged (PR #189). **8b Planning** — full plan in §5 on `feature/business-os-credit-deduction-slice-8b` (base `origin/main` `89dbc568`), awaiting SA workplan review.
 
 ## Overview
 
@@ -26,7 +26,7 @@ Slice 8a changes how an owner reads their credits and gives admins the same figu
 - [2. As-built facts this plan rests on (verified)](#2-as-built-facts-this-plan-rests-on-verified)
 - [3. Order, PRs and release](#3-order-prs-and-release)
 - [4. Part 8a](#4-part-8a)
-- [5. Part 8b — outline](#5-part-8b--outline)
+- [5. Part 8b — the low-line audit record](#5-part-8b--the-low-line-audit-record)
 - [6. What owners and admins see](#6-what-owners-and-admins-see)
 - [7. Test plan](#7-test-plan)
 - [8. Guardrails](#8-guardrails)
@@ -446,21 +446,340 @@ Uncommitted on `feature/business-os-credit-deduction-slice-8` at `5061489b`. No 
 - Dictionary keys added (he / es for native review): `usage.less_than_percent`, `usage.sr.monthly`, `usage.sr.trial`, `usage.sr.plain`; removed: `usage.of`, `usage.of_total`.
 - QA manual (SA condition 5): the card's % equals the `/admin/users` "Credits left" % for one live account.
 
-## 5. Part 8b — outline
+## 5. Part 8b — the low-line audit record
 
-*(Detailed in its own workplan section after 8a merges; full path. SA's rulings SQ-44 to SQ-46 and condition 4 are binding.)*
+*(Dev, 2026-10-04. Expanded from the outline written with 8a. Full path: this section → **SA workplan review** → Dev → SA code review → QA → user diff → RM. SA's rulings SQ-44, SQ-45, SQ-46 and condition 4 of "SA review — slice 8 scoping (2026-10-02)" are binding. Nothing below is built yet.)*
+
+**Branch:** `feature/business-os-credit-deduction-slice-8b`, cut by RM from `origin/main` `89dbc568` (includes 8a, PR #189). Confirmed with `git branch --show-current`. The requirement MD carries an uncommitted edit by the coordinator; Dev does not touch it.
+**Status:** SA workplan review ✅ approved with conditions (2026-10-04); conditions folded below; **Code Complete** (B-0 to B-7, evidence §5.12) — awaiting SA code review → QA. *(Previous, superseded: Planning — awaiting SA workplan review.)*
+
+### 5.0a SA workplan-review conditions and rulings (folded 2026-10-04)
+
+| # | Condition / ruling | Folded into |
+|---|---|---|
+| C-B1 (Q-B5) | `actorId` = a **UUID-checked platform actor** via a new pure `platformActorUuid()` in `lib/platformAccount.ts` (env value if a UUID, else the all-zero id; no imports, no logging). The hook uses it; it never imports `aiActionAudit.ts` (cycle). `platformActorId()` in `aiActionAudit.ts` may delegate only if behaviour is identical and its tests stay unedited, else a recorded follow-up. Tests: non-UUID env → all-zero; the entry's `actorId` equals it and is never the account | §5.5, §5.8, B-2 |
+| C-B2 | Hook-point source guard: exactly one `checkCreditLowLine(` in `aiChargeRecorder.ts`, after the `!data.recorded` return, inside `if (data.anchorSource === 'plan' && record.credits > 0)`; the recorder still names no `supabaseServer`, `.from(`, `.rpc(` | §5.6, §5.8 |
+| C-B3 | NI-7's flush-hang case: fake timers, total delay ≤ 500 ms + 2,000 ms, `jest.getTimerCount() === 0` after it settles; any test that hangs the chain calls `__resetAuditFlushChainForTests` | §5.8 |
+| C-B4 (Q-B7) | §5.12 pastes local runs of every §5.11 "not in CI" suite plus NI-5 before / after. CI scope unchanged. The CI-tier note is recorded by the coordinator (not edited by Dev) | §5.12 |
+| C-B5 (BD-26) | The two names (`BOS_CREDIT_LOW_LINE_CROSSED`, `'business_os_credit_period'`) — already passed on by the coordinator | §5.9 |
+| Q-B1 | Exact expression: `anchor: input.anchorSource === 'plan' ? input.periodStart : null`, with the comment; a test pins `per: 'month'` → `period` with **no** anchor read | §5.4 |
+| Q-B2 to Q-B4, Q-B6 to Q-B8; DV-B1 to DV-B4 | Accepted as proposed | §5.4 to §5.8 |
+
+### 5.0 What 8b delivers, and what it does not
+
+When a **recorded** AI charge takes an account's **shown** percentage left from at or above the low line (10) to below it, one audit entry `BOS_CREDIT_LOW_LINE_CROSSED` is written for admins (FR-49, BD-22). The check runs inside the charge recorder, after the write, under its own time limit, and can never change, fail or noticeably slow the action (FR-50).
+
+| In | Out (guardrails) |
+|---|---|
+| One pure crossing decision built on 8a's `creditPercentLeft` and `LOW_LINE_PERCENT` | No migration, no table, column, index or function (SQ-45). No change to `business_os_record_credit_charge`, `_charges`, `_totals` (11a L8 md5 untouched, AC-46) |
+| One hook module + one deps file, called once from `aiChargeRecorder.ts` `write()` | Nothing shown or sent to the owner; no notice, email or banner (BD-22) |
+| One registered event (`bos`, `info`) and one new entity type | No "seen" set, no `audit_trail` pre-read (SQ-45) |
+| An optional `signal` on the two owner-repository reads | No change to `runAiAction`'s logic; only its header comment's bound |
+| Registrations (entitlements, plan-repository referrers, `creditFigures`, cut-off guard) | Not the owner-hiding fix for these entries (BD-26 — owned by the slice 11 session; see §5.9) |
+| | Extra credits (lots) never count (BD-25): the line is measured against the **plan allowance only** |
+
+### 5.1 As-built facts 8b rests on (verified 2026-10-04 at `89dbc568`)
+
+| # | Fact | Where |
+|---|---|---|
+| B-F1 | `write()` returns early on exception, timeout and DB error (`:202-231`) and on `!data.recorded` (`:233-238`); then logs the `calendar_month` warn (`:240-243`), the fallback-priced info (`:245-259`) and `bos_ai_charge_recorded` at debug (`:261`). The hook goes **after `:261`**, the last line of `write()` | `lib/business-os/llm/aiChargeRecorder.ts` |
+| B-F2 | `AiChargeRecord` carries `actionId`, `accountId` (already validated by `runAiAction`), `actionType`, `trigger` (`'owner' \| 'scheduled' \| 'external'`), `credits` (number, 6 dp); the RPC result carries `recorded`, `periodStart` (the charge's own exact key), `anchorSource` (`'plan' \| 'calendar_month'`) | `chargeResolver.ts:50-64`; `aiChargeRecorder.ts:218` |
+| B-F3 | Owner read repository: `findTotalsForPeriod(accountId, periodStart)` (one row or null), `listTotalsFrom(accountId, from)` (ceiling 24, `reachedCeiling`); constructor **requires** a client and the file imports no service client (pinned by `BusinessOsCreditOwnerReadRepository.test.ts:306`); neither method takes a signal today | `lib/repositories/BusinessOsCreditOwnerReadRepository.ts:171-249` |
+| B-F4 | `BusinessOsCreditChargeRepository` already uses the signal pattern: `options: { signal?: AbortSignal } = {}`, `if (options.signal) query = query.abortSignal(options.signal)` | `BusinessOsCreditChargeRepository.ts:132`, `:150` |
+| B-F5 | `getEntitlementService().getSnapshot(accountId)` serves from a 30 s instance cache, else one read; `creditAllowanceForDisplay(snapshot)` → `{ amount, per: 'month' \| 'total' } \| null`; the owner card reaches it the same way (`ownerCreditUsage.ts:106-116`) | `EntitlementService.ts:203-240` |
+| B-F6 | `creditWindowRule({ anchor, allowance })`: anchor null ⇒ allowance null; `per: 'total'` + anchor ⇒ `trial_total`; else `period`. `parseLedgerFigure` returns null on an unparseable figure | `lib/business-os/credits/creditWindowRule.ts` |
+| B-F7 | `creditPercentLeft(used, allowance)` → `{ shown, band, share } \| null`; `LOW_LINE_PERCENT` derived from the band table (10); `bandFor(shown)`; `roundToLedger` in `creditBalance.ts` | `creditBands.ts`; `creditBalance.ts:26` |
+| B-F8 | `logAndFlush(entry, logger, { reason, continues })`: never rejects, races `AUDIT_FLUSH_TIMEOUT_MS = 2000`, serialised per instance, flushes the **whole** instance queue (so the action's own queued AI entry is written too — harmless) | `lib/audit/boundedAuditFlush.ts:91`, `:144-178` |
+| B-F9 | `buildLogEntry`: `severity = input.severity \|\| metadata.severity` (writer wins); **`actorId = input.actorId \|\| input.userId \|\| SYSTEM_ADMIN_USER_ID`** — passing `actorId: null` stores the **account** as the actor (see Q-B5) | `lib/services/AuditTrailService.ts:147-154` |
+| B-F10 | Registration pattern (11b): `AUDIT_EVENTS` key + comment (`events.ts:169-179`), `EVENT_METADATA` (`:722-736`, `complianceFlags` optional), `eventAudience.ts` tag (`:136-137`, `satisfies Record<AuditEvent, AuditAudience>`), a `GROUP_RULES` prefix in `filterOptions.ts:108` (cosmetic; without it the event falls into a "Bos" group). `AUDIT_ENTITY_TYPES` drives the entity filter by derivation (`filterOptions.ts:224`) — no second list to edit | `lib/audit/*` |
+| B-F11 | `eventAudience.test.ts:54-58` pins the counts: **175 registered, 30 `bos`**, 61 shared, 84 agentspilot, with a comment line per addition | that file |
+| B-F12 | Every suite that runs the recorder for real: `aiActionAudit.test.ts` (fakes the repository; default `recorded: true`, `anchorSource: 'plan'`, `:139`) and `aiChargeRecorder.test.ts` (default `ok()` = `recorded: true`, `'plan'`, `:86-89`). The other 10 census suites `jest.mock` the whole recorder, so the hook never loads there | `grep -rl aiChargeRecorder --include=*.test.ts` |
+| B-F13 | The recorder suite's source guards: only types from `aiActionAudit` (C-5), no `supabaseServer` / `.from(` / `.rpc(` **in the recorder file**, `recordCharge(` once, no "retry" | `aiChargeRecorder.test.ts:370-414` |
+| B-F14 | `accountSeam.guard.test.ts`: a product file that reaches the entitlement service must go through `resolveAccountId` and never pass a raw id to `getSnapshot` | `lib/business-os/entitlements/__tests__/accountSeam.guard.test.ts` |
+| B-F15 | `creditBands.guard.test.ts` `CONSUMERS` (`:27-31`) and the scoped comparison rule already cover every non-test file in `lib/business-os/credits/` — the new module is in scope automatically and joins `CONSUMERS` | that file |
+| B-F16 | CI: only `test:bos-entitlements` (`lib/business-os/entitlements`, `lib/repositories/__tests__`, `supabase/migrations/__tests__`, two single files), `test:authz-guard`, plugin tests, `lint:hooks`, `typecheck:bos-llm` (type-checks `lib/business-os/llm/`, `credits/`, `entitlements/`, `usage/`) and `build` run on PRs. **No CI job runs the rest of Jest** | `package.json:21`; `.github/workflows/*`; `scripts/typecheck-bos-llm.ts:102-110` |
+
+### 5.2 Approach
+
+```text
+runAiAction ─▶ recordAiCharge ─▶ write()
+                                   ├─ recordCharge (≤ 1.5 s budget, unchanged)
+                                   ├─ early returns: exception / timeout / DB error / recorded:false   (hook never called — NI-8)
+                                   ├─ existing logs (no plan row warn, fallback info, recorded debug)
+                                   └─ if anchorSource === 'plan' && credits > 0:                      (pre-filter — NI-8, Q-B2)
+                                        try { await checkCreditLowLine(input) } catch { one error log }  (defence in depth — NI-7)
+
+lib/business-os/credits/creditLowLine.ts   (server-only; non-gate entitlements importer)
+  checkCreditLowLine(input, deps = creditLowLineDeps())    — never throws
+   1. pre-filter again: calendar_month or credits ≤ 0 → return, ZERO reads
+   2. READ PHASE, raced against CREDIT_LOW_LINE_READ_BUDGET_MS = 500 (timer unref'd, cleared in finally; signal → owner reads)
+        allowance = creditAllowanceForDisplay(getSnapshot(resolveAccountId(account)))   — null → done
+        per 'month'  → findTotalsForPeriod(account, input.periodStart)                 — ONE read
+        per 'total'  → findPeriodAnchor(account) → creditWindowRule → listTotalsFrom(account, anchor)
+        usedAfter  = roundToLedger(Σ parseLedgerFigure(credits_total))
+   3. DECIDE (pure): usedBefore = roundToLedger(usedAfter − roundToLedger(credits)); crossedLowLine(before, after)
+   4. WRITE, only if crossed and the read phase did not time out:
+        Pino info 'bos_credit_low_line_crossed'  →  logAndFlush(entry)  (own 2 s bound)
+
+lib/business-os/credits/creditLowLineDeps.ts  (server-only)
+  findPeriodAnchor ← businessOsAccountPlanRepository (service role, findPeriodAnchor ONLY)
+  owner            ← new BusinessOsCreditOwnerReadRepository(supabaseServer)  — documented S11-SQ-9 pattern
+```
+
+The read phase and the write phase are separate on purpose: a read that answers after the 500 ms budget is discarded with the race, so a late result can **never** write an entry (tested).
+
+### 5.3 The crossing decision (FR-49; SQ-44; BD-20 / BD-25)
+
+In `creditLowLine.ts`, pure and exported:
+
+```typescript
+/** True when the SHOWN percentage is under the low line. Same rule as the card's red band. */
+export function isBelowLowLine(shown: ShownPercentLeft): boolean;   // less_than_one, or value < LOW_LINE_PERCENT
+export type LowLineCrossing =
+  | { crossed: true; before: ShownPercentLeft; after: ShownPercentLeft }
+  | { crossed: false; reason: 'no_allowance' | 'already_below' | 'still_above' | 'anomaly' };
+export function crossedLowLine(usedBefore: number, usedAfter: number, allowance: number): LowLineCrossing;
+```
+
+- Both sides go through **8a's `creditPercentLeft`** — the BD-20 integer rounding the card uses — so "crossed" means exactly "the card went from a non-red number to a red one". No percentage maths, cut-off or literal in this file (the cut-off guard enforces it).
+- `creditPercentLeft` returns null (no allowance, unsafe allowance) → `no_allowance`. `usedAfter < usedBefore` cannot happen for a positive charge; `usedBefore < 0` (the total read is smaller than this very charge — a read anomaly) → `anomaly`, no entry, one warn (Q-B4).
+- `allowance` is the **plan** allowance from `creditAllowanceForDisplay` only; credit lots are never read (BD-25). If 11d ever moves to plan + extra, this function and the card change together (§11 follow-up, unchanged).
+- A test proves `isBelowLowLine(shown) === (bandFor(shown) === 'below_line')` for every shown value 0..100 and `less_than_one`, so the line and the red band cannot drift.
+
+**Why "once per period" holds without a marker (SQ-45, derived):** within one period (or one trial) `credits_total` only rises — no adjustment is written (4c deferred), and lots never touch totals. So exactly one charge can straddle the line. A new period starts at 100% (no fire on a reset); a recovery needs a higher allowance (KI-22 extended: a second entry is then possible; reports count distinct `(account, periodStart)`); two charges committing together at the line can give two entries or none (KI-21). All accepted by SA.
+
+### 5.4 The hook module (SQ-44)
+
+New **`lib/business-os/credits/creditLowLine.ts`** (`import 'server-only'`).
+
+```typescript
+export const CREDIT_LOW_LINE_READ_BUDGET_MS = 500;
+export interface CreditLowLineInput {
+  accountId: string;           // record.accountId — validated by runAiAction, never caller input
+  credits: number;             // record.credits
+  periodStart: string;         // the charge's own key, verbatim (never re-derived from "now")
+  anchorSource: 'plan' | 'calendar_month';
+  actionId: string; actionType: string; trigger: 'owner' | 'scheduled' | 'external';
+  service: string;             // the recorder's AI_CHARGE_SERVICE, passed in (no import of the recorder)
+}
+export interface CreditLowLineDeps {
+  findPeriodAnchor(accountId: string): Promise<RepositoryResult<string | null>>;
+  owner: Pick<BusinessOsCreditOwnerReadRepository, 'findTotalsForPeriod' | 'listTotalsFrom'>;
+  readAllowance?(accountId: string): Promise<OwnerCreditAllowance | null>;   // test seam; default = entitlements
+}
+export async function checkCreditLowLine(input: CreditLowLineInput, deps?: CreditLowLineDeps): Promise<void>;
+```
+
+Steps:
+
+1. **Zero-read pre-filter:** `anchorSource === 'calendar_month'` (no plan row ⇒ no allowance) or `!(credits > 0)` → return, debug line `bos_credit_low_line_skipped`. No read, no timer.
+2. **Read phase**, inside a local `withReadBudget(CREDIT_LOW_LINE_READ_BUDGET_MS, (signal) => …)` — the same shape as the recorder's `withWriteBudget` (timer `unref`'d, cleared in `finally`, async IIFE so a synchronous throw becomes a handled rejection):
+   - `allowance` = `readAllowance` or the default: `creditAllowanceForDisplay(await getEntitlementService().getSnapshot(resolveAccountId(accountId)))`. Null (no allowance, unavailable snapshot, lapsed, paused) → done, debug `no_allowance`.
+   - `per === 'month'` → `creditWindowRule({ anchor: input.anchorSource === 'plan' ? input.periodStart : null, allowance })` (Q-B1, SA ruling: `anchorSource === 'plan'` is the database's own statement that a plan row existed at the write, so the charge's key stands in for "anchor present" and **no anchor read is spent**); mode `period`; **one** read, `owner.findTotalsForPeriod(accountId, input.periodStart, { signal })`. No row → anomaly (the charge was just written into that row) → warn, no entry.
+   - `per === 'total'` → `findPeriodAnchor(accountId)` → `creditWindowRule({ anchor, allowance })`; anchor null → done (plan row gone since the write); mode `trial_total` → `owner.listTotalsFrom(accountId, anchor, { signal })`; `reachedCeiling` → warn `ceiling`, no entry (never a partial sum, as the card).
+   - Each `credits_total` through `parseLedgerFigure`; any null → warn `unreadable_figure`, no entry. `usedAfter = roundToLedger(sum)`.
+3. **Decide:** `usedBefore = roundToLedger(usedAfter − roundToLedger(credits))`; `crossedLowLine(usedBefore, usedAfter, allowance.amount)`. Not crossed → debug only (the common case, not logged at info).
+4. **Write** (§5.5) only when crossed and the read phase finished in budget.
+5. **Never throws:** read errors, `{ error }` results, the timeout and any exception → **one** `warn` `bos_credit_low_line_check_failed` with `reason` (`timeout` / `read_failed` / `ceiling` / `unreadable_figure` / `anomaly` / `exception`), `errCode` (code or class name, never a message), `accountId`, `actionId`. Logs carry ids, codes and percentages only (bos-llm-call-standards Standard 5).
+
+Not cancelled by the signal: `getSnapshot` and `findPeriodAnchor` (neither takes one; SA asked for the signal on the two owner reads only). A late answer from either is ignored with the race (Q-B3).
+
+New **`lib/business-os/credits/creditLowLineDeps.ts`** (`import 'server-only'`): `findPeriodAnchor` from the `businessOsAccountPlanRepository` singleton, and **one module-level** `new BusinessOsCreditOwnerReadRepository(supabaseServer)`. Header documents the RLS bypass (tenant-isolation-guard; CLAUDE.md rule 4 / security table): the account id is `record.accountId`, validated by `runAiAction` from its own server-side identities, never request input; reads are SELECT-only on owner-safe columns of that one account, `.eq('user_id', accountId)` in every method; it runs in a background charge path with no session, so the owner's RLS client does not exist there — the S11-SQ-9 pattern SA ruled.
+
+**`lib/repositories/BusinessOsCreditOwnerReadRepository.ts`** (`new-repository` rules on an existing class): `findTotalsForPeriod` and `listTotalsFrom` gain `options: { signal?: AbortSignal } = {}` and `if (options.signal) query = query.abortSignal(options.signal)` (B-F4 pattern). Existing callers pass nothing → behaviour unchanged. The header's "THE CLIENT IS REQUIRED" section gains the documented service-role callers (8b `creditLowLineDeps.ts`; later 11c `readCreditPosition`), and states the file itself still imports no service client (its test at `:306` stays green unedited).
+
+### 5.5 The audit event (SQ-46)
+
+| Item | Value |
+|---|---|
+| Key | `AUDIT_EVENTS.BOS_CREDIT_LOW_LINE_CROSSED`, with a comment like 11b's (what, entity, details, "derived once per period, KI-21 / KI-22") |
+| Metadata | `severity: 'info'`, **no** `complianceFlags`, description "A Business OS account's plan credits dropped below the low line (percent before / after recorded)" |
+| Audience | `[AUDIT_EVENTS.BOS_CREDIT_LOW_LINE_CROSSED]: 'bos'` in `eventAudience.ts` → listed in the admin audit trail's Action Type dropdown (`OPERATOR_AUDIENCES`) |
+| Dropdown group | `GROUP_RULES` + `{ prefix: 'BOS_CREDIT_LOW_LINE_', label: 'Business OS Credits' }` — sits with the 11b lot events (cosmetic, Q-B6) |
+| Entity type | New `'business_os_credit_period'` in `AUDIT_ENTITY_TYPES`, commented ("one account's credit period; entity id = the account id; written only by the low-line hook, slice 8b") |
+| Ids | `entityId = userId = accountId`; `actorId = platformActorUuid()` (C-B1: `SYSTEM_ADMIN_USER_ID` when it is a UUID, else the all-zero id — never null, which `buildLogEntry` would turn into the account, and never a non-UUID, which would fail the whole flushed batch) |
+| `details` | `periodStart` (exact key), `periodKind` (`'monthly'` \| `'trial_total'`), `allowance` (plan amount), `percentBefore`, `percentAfter` (whole numbers, `'less_than_one'` as a string), `lowLine` (`LOW_LINE_PERCENT`), `service` (`input.service`, i.e. `'ai'` — passed in, see below), `actionId`, `actionType`, `trigger` |
+| Never | `severity` (the writer passes none — registration is the only source, B-F9), `resourceName`, owner text, tokens, dollars, cost, used credits |
+| Order | Pino `info` `{ event: 'bos_credit_low_line_crossed', accountId, actionId, actionType, trigger, periodStart, periodKind, percentBefore, percentAfter, lowLine }` **first**, then `await logAndFlush(entry, logger, { reason: 'credit low line crossed', continues: 'the AI action continues' })` |
+
+`service` is passed in on `CreditLowLineInput` from the recorder's `AI_CHARGE_SERVICE`, so the hook never imports the recorder (no cycle) and the recorder's "service only from `AI_CHARGE_SERVICE`" guard (B-F13) stays exact — its expected assignment list grows by one `service: AI_CHARGE_SERVICE` (DV-B3).
+
+**Severity guard** — new `lib/audit/__tests__/creditLowLineSeverity.guard.test.ts`, the `paymentRefundSeverity.guard` pattern: registered `info`, registration exists (not the "Unknown event" default), not `critical`, a value the CHECK accepts; and comment-stripped `creditLowLine.ts` has no `severity` key in any object literal (planted sample `severity: 'warning'` matched first).
+
+### 5.6 The hook point (SQ-44, FR-50)
+
+In **`aiChargeRecorder.ts` `write()`**, after the `bos_ai_charge_recorded` debug line (B-F1):
+
+```typescript
+if (data.anchorSource === 'plan' && record.credits > 0) {
+  try {
+    await checkCreditLowLine({ accountId: record.accountId, credits: record.credits, periodStart: data.periodStart,
+      anchorSource: data.anchorSource, actionId: record.actionId, actionType: record.actionType,
+      trigger: record.trigger, service: AI_CHARGE_SERVICE });
+  } catch (err) {
+    // checkCreditLowLine never throws; defence in depth (SA SQ-44).
+    logger.error({ event: 'bos_credit_low_line_check_failed', reason: 'exception', errCode: errCodeOf(err) ?? null, ...ids }, '…');
+  }
+}
+```
+
+- The pre-filter is repeated in the recorder so NI-8's "never **called** on `calendar_month`" holds literally; the hook keeps its own copy so it is safe on its own (Q-B2).
+- Header comments updated: the recorder's "cannot delay it beyond the budget" becomes "the write budget, plus at most `CREDIT_LOW_LINE_READ_BUDGET_MS` after a recorded charge, plus the audit flush bound on the one charge that crosses the low line"; `runAiAction`'s doc (`aiActionAudit.ts:12-17`, `:448-451`) says the same in one line. **No logic in `aiActionAudit.ts` changes.**
+- **Worst-case added delay** (SA): ≤ 0.5 s on any charged action with a plan row; ≤ 2.5 s on the one crossing charge per account per period. No change on uncharged, skipped, failed-write, duplicate or `calendar_month` paths.
+- The recorder still reaches the database only through the charge repository: `supabaseServer` lives in `creditLowLineDeps.ts`, which the recorder does not import (the hook defaults its deps).
+
+### 5.7 Registrations (`business-os-entitlements` skill; SQ-43)
+
+| Registry | Change |
+|---|---|
+| `lib/business-os/entitlements/__tests__/enforcementPoints.test.ts` `KNOWN_NON_GATE_IMPORTERS` | + `{ file: 'lib/business-os/credits/creditLowLine.ts', symbols: ['creditAllowanceForDisplay', 'getEntitlementService', 'resolveAccountId'], why: 'Credit deduction slice 8b: after a charge is recorded, reads the account\'s plan allowance (getSnapshot through the account seam, then creditAllowanceForDisplay) to decide whether the shown percentage crossed the low line, and writes one admin audit entry. It refuses nothing and never calls check() / decide(); if it ever does, it is a gate and belongs in ENFORCEMENT_POINTS.' }` — symbols equal the file's imports exactly |
+| `lib/repositories/__tests__/businessOsEntitlements.imports.guard.test.ts` | `creditLowLineDeps.ts` in `ALLOWED` (reason) **and** `NO_STATE_WRITE_REFERRERS`; a method pin like 6a / 8a: it calls `findPeriodAnchor` on the plan repository and nothing else (planted sample first) |
+| `accountSeam.guard.test.ts` | No edit expected: `creditLowLine.ts` names `resolveAccountId` and passes its result to `getSnapshot` (B-F14). If the guard's classifier needs an entry, Dev adds it and records it here |
+| `lib/business-os/entitlements/__tests__/creditFigures.fromConfig.guard.test.ts` | `SOURCES` + `lib/business-os/credits/creditLowLine.ts` (names `creditAllowanceForDisplay`, required by the completeness test). The 500 ms budget is not a credit figure (< 1,000) |
+| `lib/business-os/credits/__tests__/creditBands.guard.test.ts` | `CONSUMERS` + `creditLowLine.ts` (imports the band module; no cut-off defined or compared) — already promised in §4.3 |
+| `lib/business-os/credits/__tests__/creditPeriod.test.ts` "no `Date` from a key" `it.each` | + `creditLowLine.ts` (keys stay strings end to end) |
+| `lib/audit/__tests__/eventAudience.test.ts:54-58` | Count pin **175 → 176, `bos` 30 → 31**, one comment line ("+1 Business OS (BOS_CREDIT_LOW_LINE_CROSSED): credit deduction slice 8b") — forced by the new event (DV-B2) |
+| `test:bos-entitlements` | Run on the final diff, result pasted in §5.12 |
+
+No new API handler → no authz-guard census or cap change. No new capability id or tier literal.
+
+### 5.8 Test plan — 8b
+
+| Check | File | Pass criterion | In CI? |
+|---|---|---|---|
+| Crossing maths (AC-44 as unit tests) | new `lib/business-os/credits/__tests__/creditLowLine.test.ts` | Fires once at the crossing charge (10% → 9%); **not** on the next charge below (9% → 8%); **not** when the action starts below; trial crossing against 2,000 fires once (`periodKind: 'trial_total'`, summed from the anchor over two periods); one charge from 40% to over the allowance fires (`percentAfter: 0`); exactly 10.000000% after → no fire (orange); to "less than 1%" → fires with `'less_than_one'`; no allowance (snapshot null, unavailable) → no read beyond the snapshot, no entry; reset (new period, first charge) → none; `isBelowLowLine` ≡ `bandFor === 'below_line'` sweep | No — see §5.11 |
+| Reads and pre-filters (SQ-44) | same | `calendar_month` and `credits ≤ 0` → **zero** reads, no timer; monthly → exactly one `findTotalsForPeriod` with the charge's **verbatim** key (a microsecond string), never a key from `now` (fake clock moved a month: same key used); trial → anchor then `listTotalsFrom(anchor)`; ceiling, unparseable figure, missing row, `{ error }`, rejecting read, `usedBefore < 0` → one warn each, no entry | No |
+| Budget (NI-6 at unit level) | same | Hanging snapshot / anchor / totals read → returns at 500 ms, the owner read's signal aborted, `jest.getTimerCount() === 0`, one warn `timeout`; **a read that resolves after the budget writes no entry** | No |
+| Entry shape (SQ-46) | same (`AuditTrailService` mocked) | Exact `action`, `entityType`, `entityId === userId === account`, the agreed `actorId` (Q-B5), exact `details` key set, **no `severity` key**, no `resourceName`, recursive scan finds no `cost` / `token` / `usd` / `dollar` / `used` key; the Pino `info` is logged **before** `logAndFlush` is called (call order); flush failure → one warn, no throw | No |
+| Severity / registration | new `lib/audit/__tests__/creditLowLineSeverity.guard.test.ts`; `eventAudience.test.ts` | `info`, registered, `bos`, counts 176 / 31; writer passes none (planted first) | No |
+| Hook point **NI-6 / NI-7 / NI-8** | `lib/business-os/llm/__tests__/aiChargeRecorder.test.ts` (new `describe('low-line hook')`) | **NI-6:** real hook (`jest.requireActual`) with hanging deps → `recordAiCharge` resolves ≤ write + 500 ms, no timer left. **NI-7:** hook throws synchronously / rejects / `logAndFlush`'s write hangs (AuditTrail mocked at module level) → `recordAiCharge` still resolves, one log line, total delay ≤ 500 ms + 2,000 ms. **NI-8:** hook not called on `recorded: false`, timed-out write, DB error, thrown repository, skipped (`no_calls`, `not_charged`), not written (`invalid_identity`, `unpriceable`, `undecided`), `calendar_month`, `credits: 0`; called exactly once, with the charge's own `periodStart` / `anchorSource`, on the happy path. Source guard: one `checkCreditLowLine(` call, positioned after the `!data.recorded` return | No |
+| NI-1 to NI-4 unedited | `lib/business-os/llm/__tests__/aiActionAudit.test.ts` | **One** module-level `jest.mock('@/lib/business-os/credits/creditLowLine', …)` line (setup only); `git diff` of that file = that line (+ its comment) only; all NI tests green | No |
+| NI-5 | Whole Jest run, before (T-0) vs after | Identical failing-suite list; new suites only add passes | No (local) |
+| Owner repository signal | `lib/repositories/__tests__/BusinessOsCreditOwnerReadRepository.test.ts` | With a signal → `abortSignal` called with it; without → not called; existing tests unedited | **Yes** (`test:bos-entitlements`) |
+| Registrations | §5.7 suites | Green | **Yes** (entitlements, imports guard, creditFigures) / No (cut-off guard, creditPeriod) |
+| AC-46 | `git diff --stat origin/main -- supabase/` = empty | No migration, no charge-function change | Reviewed by SA |
+| Types / lint / build | `npx tsc --noEmit` vs T-0 baseline; `npm run typecheck:bos-llm`; `npx eslint` on changed files; `npm run lint:hooks`; `next build` (owed via the coordinator, as 8a) | No new error | `typecheck:bos-llm`, `lint:hooks`, build: **Yes** |
+
+### 5.9 QA manual check and post-merge checks
+
+- **QA (SA condition 5):** on a **test** account, a temporary entitlement override lowering the allowance so that one action crosses 10% (e.g. allowance just above `used / 0.9`), then one owner action → exactly **one** `BOS_CREDIT_LOW_LINE_CROSSED` row in `/admin/audit-trail` under the Business OS dropdown ("Business OS Credits" group), with the details of §5.5; a second action → **no** second row; remove the override afterwards. The action itself returns normally both times. QA does not sign in with real credentials, so the signed-in part may be owed by the user, as in 8a.
+- **User, after merge (condition 4, read-only on PROD):** re-run `scripts/check-bos-credit-lots-migration.sql` L8 (charge-function md5) and C7; both pass unchanged (8b changes no SQL).
+- **BD-26 dependency (not 8b's to fix):** like the 11b lot entries, a low-line entry is written with `userId` = the account and is therefore readable by that owner through `GET /api/audit/query` and `/monitoring` until the slice 11 session's owner-read exclusion lands (KI-25, accepted). That fix must cover the action `BOS_CREDIT_LOW_LINE_CROSSED` / entity type `'business_os_credit_period'`; Dev hands both names to the coordinator for the slice 11 session. Today no live account is expected to cross (KI-24), so in practice the only such row before that fix is QA's forced one, on a test account.
+
+### 5.10 Task list — 8b
 
 | # | Task | Estimate |
 |---|---|---|
-| B-1 | `lib/business-os/credits/creditLowLine.ts` (+ `creditLowLineDeps.ts`): `crossedLowLine(usedBefore, usedAfter, allowance)` via `creditPercentLeft` and `LOW_LINE_PERCENT` ("shown ≥ 10 before, < 10 after"); `checkCreditLowLine(...)` using the charge's own `periodStart` / `anchorSource`: `calendar_month` or `credits ≤ 0` → return with **zero reads**; allowance via cached `getSnapshot`, null → return; monthly → one `findTotalsForPeriod(account, periodStart)`; trial → anchor + `listTotalsFrom`; `usedBefore = roundToLedger(usedAfter − roundToLedger(credits))`; owner read repository on the service-role client, explicit and documented (S11-SQ-9 pattern); **500 ms read budget**, `unref`'d and cleared; optional `signal` on the two owner-repository reads | 0.4 d |
-| B-2 | Hook in `aiChargeRecorder.ts` `write()` after the `!data.recorded` return and the existing logs: one bounded **awaited** call in `try / catch`; recorder and `runAiAction` header comments updated to the new bound | 0.15 d |
-| B-3 | Audit: `AUDIT_EVENTS.BOS_CREDIT_LOW_LINE_CROSSED`, `'bos'` in `eventAudience.ts`, registered severity `info` (the writer passes **no** severity — pinned); new entity type `'business_os_credit_period'` in `AUDIT_ENTITY_TYPES`; `entityId = userId = account`, `actorId` null; details per SQ-46; Pino `info` (`event: 'bos_credit_low_line_crossed'`) **before** `logAndFlush` (own 2 s bound after the read budget) | 0.25 d |
-| B-4 | Tests: AC-44 cases as unit tests; **NI-6** (reads hang → delay ≤ read budget, no timer left), **NI-7** (hook throws / rejects / flush hangs → same value or error, one log, bounded delay), **NI-8** (never called on `recorded: false`, timed-out write, DB error, skipped / uncharged action, `calendar_month`); `aiActionAudit.test.ts` gains **one module-level `jest.mock` line** of the hook module (NI-1 to NI-4 bodies unedited); NI-5 re-run (whole-suite pass set identical) | 0.35 d |
-| B-5 | Registrations: `creditLowLine.ts` as the second non-gate importer (`getEntitlementService`, `resolveAccountId`, `creditAllowanceForDisplay` as used); the cut-off guard's consumer list gains it; `creditFigures` `SOURCES`; `npm run test:bos-entitlements` | 0.1 d |
-| B-6 | Docs; QA: forced crossing on a test account (temporary override lowering the allowance) → exactly one entry in the admin audit trail's Business OS dropdown, the next action none; user re-runs the 11a checker L8 / C7 on PROD (read-only) after merge | 0.1–0.25 d |
-| | **Total 8b** | **≈ 1.35–1.5 d** (SA: 1.25–1.6 d) |
+| ✅ **B-0** | Baselines: `npx tsc --noEmit` error list; `npm test` whole-suite pass/fail list (NI-5 "before"); `npm run test:bos-entitlements`; re-run the B-F12 census (`grep -rl aiChargeRecorder`) and confirm no suite but the two runs the real recorder | 0.1 d |
+| ✅ **B-1** | Owner repository: optional `signal` on the two reads + tests + header (§5.4) | 0.1 d |
+| ✅ **B-2** | `creditLowLine.ts` (pre-filter, read phase under 500 ms, `crossedLowLine`, `isBelowLowLine`, write phase) + `creditLowLineDeps.ts` + `creditLowLine.test.ts` (AC-44 cases, reads, budget, entry shape) (§5.3–5.5) | 0.5 d |
+| ✅ **B-3** | Audit registration: event + metadata + audience + group rule + entity type; `eventAudience.test.ts` count pin; severity guard (§5.5) | 0.15 d |
+| ✅ **B-4** | Recorder hook + pre-filter + header comments (recorder, `runAiAction`); recorder-suite module mock line + NI-6 / NI-7 / NI-8 + source guard; `aiActionAudit.test.ts` one mock line (§5.6, §5.8) | 0.3 d |
+| ✅ **B-5** | Registrations (§5.7) + `npm run test:bos-entitlements` | 0.1 d |
+| ✅ **B-6** | Docs: `BUSINESS_OS_CREDIT_PRICING.md` (the low-line record: when, once per period, derived, KI-21 / 22 / 23), `BUSINESS_OS_ENTITLEMENTS.md` (Metering: second display-only non-gate importer, and the new audit event beside the 11b lot events); Change History rows | 0.05 d |
+| ✅ **B-7** | Gates (§5.8) with results pasted in §5.12, incl. NI-5 "after", `git diff --numstat` (no deletion without insertion; `aiActionAudit.test.ts` = the one line; no `supabase/` change) | 0.1 d |
+| ⬜ **B-8** | Handover uncommitted: SA code review → QA → user diff → RM; hand the BD-26 names to the coordinator | — |
+| | **Total 8b** | **≈ 1.4 d** |
 
-Worst case added to an action: ≤ 0.5 s on any charged action, ≤ 2.5 s on the one crossing charge. No migration (SQ-45); KI-21 / KI-22 (extended) / KI-25 accepted.
+Inside SA's 1.25–1.6 d. B-2 is the likeliest to run long (the timing tests). If the total passes **2 d**, Dev stops and returns to SA rather than trimming tests.
+
+### 5.11 Tests CI does not run (flagged)
+
+Only `test:bos-entitlements` runs Jest on PRs (B-F16). **In CI:** the owner-repository signal tests, the `KNOWN_NON_GATE_IMPORTERS` entry, the plan-repository referrer pin, the `creditFigures` `SOURCES` entry. **Not in CI (local, SA and QA re-run):** `creditLowLine.test.ts`, the NI-6 / NI-7 / NI-8 proofs and NI-1 to NI-5 (`lib/business-os/llm/__tests__/`), the severity guard and the audience count (`lib/audit/__tests__/`), the cut-off guard and the creditPeriod Date guard (`lib/business-os/credits/__tests__/`). Type errors in the new code and tests **are** caught in CI by `typecheck:bos-llm` (it scopes `lib/business-os/llm/` and `credits/`). Moving these tests into a CI-run folder would put them next to unrelated code, so Dev does not propose it; widening the CI Jest scope belongs to the CI tiering work (Q-B7).
+
+### 5.12 8b implementation evidence
+
+*(Dev, 2026-10-04.)* Uncommitted on `feature/business-os-credit-deduction-slice-8b` at `89dbc568`. No migration, no SQL, no `supabase/` change, no database read or write, no dev server. Jest runs use the repo's setup env plus `NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:9` and stub keys. **`next build` not run by Dev (QA runs it in place).**
+
+**Gates**
+
+| Gate | Result |
+|---|---|
+| `npm run test:bos-entitlements` (CI) | ✅ **108 / 108 suites, 2,521 / 2,521 tests** (incl. the new non-gate entry, the plan-repository referrer pin for `creditLowLineDeps.ts`, the `creditFigures` SOURCES entry, the owner-repository signal suite) |
+| `npm run typecheck:bos-llm` (CI) | ✅ passed — 398 files in scope, 28 errors, **0 new**. It also reports one baseline entry already fixed (`app/api/onboarding/build/route.ts` TS18047) — not 8b's; left for whoever owns the baseline |
+| `npx tsc --noEmit` (6 GB heap) | 2,085 errors in the repo; **0 in the 22 changed or new TS files**. 39 error lines name `business_os_credit_period`: every one is a pre-existing "X is not assignable to EntityType" error in an untouched file (`lib/audit/admin-helpers.ts`, `ais-helpers.ts`, CRM / email / Stripe Connect routes, `WorkflowOrchestrator.ts`) whose message prints the union. No `Record<EntityType, …>` broke. A pre-change full-tsc baseline was not captured (the NI-5 run took the slot); the per-file check above stands in for it |
+| `npx eslint` on the 22 changed / new TS files | 0 errors; 6 warnings, all pre-existing (`events.ts:1239` unused `_`; `types.ts` five `any`) |
+| `npm run lint:hooks` | ✅ clean (`--max-warnings 0`) |
+| `git diff --numstat` | No deletion without insertion. `aiActionAudit.test.ts` **+2 / −0** (the one mock line and its comment); `aiActionAudit.ts` +6 / −3 (comments only); no file under `supabase/` |
+
+**Suites §5.11 lists as not in CI — local runs (C-B4)**
+
+| Suite | Result |
+|---|---|
+| `lib/business-os/credits/__tests__/creditLowLine.test.ts` (new) | ✅ 51 / 51 — AC-44 cases, reads and pre-filters, budget (incl. "a read answering after the budget writes no entry"), entry shape, actor (C-B1), flush hang (C-B3), source guards |
+| `lib/business-os/llm/__tests__/aiChargeRecorder.test.ts` | ✅ 60 / 60 (37 before + 23: NI-8 ×13, NI-6 ×2, NI-7 ×5, C-B2 ×3); the 37 existing bodies unedited |
+| `lib/business-os/llm/__tests__/aiActionAudit.test.ts` (NI-1 to NI-4) | ✅ 85 / 85, same count as before; diff = the one mock line |
+| `lib/audit/__tests__/creditLowLineSeverity.guard.test.ts` (new) | ✅ 5 / 5 |
+| `lib/audit/__tests__/eventAudience.test.ts` | ✅ 21 / 21 (176 / 31 / 61 / 84) |
+| `lib/audit/__tests__/` (all 12 suites) | ✅ green |
+| `lib/business-os/credits/__tests__/creditBands.guard.test.ts` | ✅ 55 / 55 (`creditLowLine.ts` in CONSUMERS and in scope; no cut-off) |
+| `lib/business-os/credits/__tests__/creditPeriod.test.ts` (Date guard) | ✅ 34 / 34 |
+| `lib/business-os/credits/__tests__/serviceColumn.guard.test.ts` | ✅ 34 / 34 (see DV-B5) |
+| `lib/__tests__/platformAccount.test.ts` | ✅ 13 / 13 (4 new for `platformActorUuid`) |
+| Combined: `lib/business-os/credits lib/business-os/llm lib/audit lib/__tests__/platformAccount.test.ts app/admin/audit-trail` | ✅ **72 / 72 suites, 1,563 / 1,563 tests** |
+
+**NI-5 — whole Jest run, before vs after**
+
+| | Suites | Failed suites | Tests | Failed | Passed |
+|---|---|---|---|---|---|
+| Before (`89dbc568`, no 8b code) | 812 | 27* | 14,966 | 146 | 14,784 |
+| After | 815 (+3 new) | 26 | 15,064 | 145 | 14,883 |
+
+\* One "before" red is Dev's own doing: `creditLowLine.ts` was written while the baseline was still running, and `serviceColumn.guard.test.ts` scanned it mid-run and failed (that is how DV-B5 was found). Excluding it, **the failing-suite list is identical before and after (26 suites)**: the V6 / agentkit / pilot / orchestration reds, `DeclarativeCompiler-*`, `proposals-capability`, `tokenUsageRepository.contract`, `featureFlags`, `website-builder` ×2, `runRecord.adoption`, chat-v4 `route.audit`, `marketingGate` (focused), plus the 8 skipped plugin integration suites. Per-suite pass counts change only in the suites 8b touched (above), plus `app/admin/audit-trail/__tests__/businessPicker.contract.test.ts` 63 → 64 (it iterates registered events). **No test that passed before fails after.**
+
+**Census (B-F12, re-run at B-0)**: three suites run the real recorder — `aiActionAudit.test.ts`, `aiChargeRecorder.test.ts` (both mock the hook module), and `lib/business-os/credits/__tests__/creditLeakCheck.ac31.test.ts`, missed in B-F12. That third suite's charge write is refused (its fake RPC returns `42501`), so the hook is never reached (NI-8's DB-error path); it passes unedited.
+
+**Deviations found while building (for SA code review)**
+
+| # | What | Why |
+|---|---|---|
+| DV-B5 | The hook's input field is **`chargeService`**, not `service` | `serviceColumn.guard.test.ts` (N-10) forbids `\.service\b` anywhere in `lib/business-os/credits/` outside the resolver, and `input.service` matched. The audit `details` key is still `service: 'ai'`. Consequence: **DV-B3 is moot** — the recorder passes `chargeService: AI_CHARGE_SERVICE`, so its "service only from `AI_CHARGE_SERVICE`" guard still sees exactly two `service:` assignments, unedited |
+| DV-B6 | The owner-repository signal tests live in a **new** `lib/repositories/__tests__/BusinessOsCreditOwnerReadRepository.signal.test.ts` | The existing suite's recording client has no `abortSignal` method; a new file keeps that suite unedited. Still in the CI scope |
+| DV-B7 | `platformActorId()` in `aiActionAudit.ts` does **not** delegate to `platformActorUuid()` (C-B1's option) | It caches per process and warns once; delegating would change when the env is read. Recorded as a follow-up (one rule, two implementations); behaviour and tests untouched |
+| DV-B8 | The hook logs its own give-ups at `warn` (`bos_credit_low_line_check_failed`); the recorder's defence-in-depth catch logs at `error` with the same event name | A hook give-up is expected and harmless; the recorder catching a throw is a defect |
+
+**Notes for SA / QA**
+
+- `creditLowLine.ts` imports `server-only`, like `adminCreditPercent.ts`; it is reached only through the recorder (server). `next build` (QA) is the check that no client bundle reaches it.
+- The trial path reads `findPeriodAnchor` and `getSnapshot` without a signal (Q-B3, accepted); a late answer is discarded.
+- QA manual (SA condition 5): a forced crossing on a test account → exactly one `BOS_CREDIT_LOW_LINE_CROSSED` row under "Business OS Credits" in `/admin/audit-trail`, actor = the platform account (not the owner), the next action none.
+- After merge, the user re-runs `scripts/check-bos-credit-lots-migration.sql` L8 / C7 on PROD (read-only).
+
+### 5.13 Deviations from SA rulings (for SA to accept or refuse)
+
+| # | Ruling | Deviation | Why |
+|---|---|---|---|
+| DV-B1 | Condition 4: "the single module mock line in the NI suite" | The **recorder's own suite** (`aiChargeRecorder.test.ts`) also gains one module-level `jest.mock` of the hook module, plus a module-level `AuditTrailService` mock for NI-7's flush case; its existing test bodies are unedited | Its default write returns `recorded: true`, `'plan'` (B-F12), so without the mock every existing test would run the real hook against the entitlements service; this is also the suite where SA put NI-6 to NI-8 |
+| DV-B2 | (not named) | `eventAudience.test.ts` count pin 175 → 176 and `bos` 30 → 31, one comment line | Forced by registering the event; how 11b and the invite slices did it |
+| DV-B3 | (not named) | The recorder guard "service only from `AI_CHARGE_SERVICE`" expects three `service: AI_CHARGE_SERVICE` assignments instead of two | The hook receives `service` from the recorder's constant rather than importing the recorder (no cycle) |
+| DV-B4 | SQ-44: "`credits ≤ 0` ⇒ return" inside the hook | Repeated as a pre-filter in the recorder (with `calendar_month`) | NI-8 says the hook is never **called** on `calendar_month`; the hook keeps its own check |
+
+### 5.14 Questions for SA
+
+| # | Question | Dev proposal |
+|---|---|---|
+| Q-B1 | SQ-41 says the 8b hook calls `creditWindowRule`. For a monthly allowance SQ-44 allows one read only, so no anchor is read | Call `creditWindowRule({ anchor: input.periodStart, allowance })` on the monthly path: `anchorSource === 'plan'` is the database's statement that a plan row existed at the write, and the rule only tests `anchor !== null` (the value is never used in `period` mode). Commented in code; a test pins `per: 'month'` → `period` |
+| Q-B2 | NI-8 "never called on `calendar_month`" vs SQ-44 "the hook returns with zero reads on `calendar_month`" | Both: the recorder checks `anchorSource === 'plan' && credits > 0` before calling; the hook repeats it (DV-B4) |
+| Q-B3 | `getSnapshot` and `findPeriodAnchor` take no signal; after the 500 ms budget they finish in the background | Accept: bounded by the race, the result is discarded, no entry can be written late (tested); adding a signal to the entitlements service is out of scope |
+| Q-B4 | The totals read returns less than this charge's own credits (or no row for the charge's key) | Anomaly: one warn, no entry. Never "fire to be safe" |
+| Q-B5 | SQ-46 "`actorId` null (system)", but `buildLogEntry` turns a null actor into `userId`, so the row would show the **account** as the actor (B-F9) | Pass `actorId` = the platform account (`platformAccountId()` from `lib/platformAccount.ts`, UUID-checked with the all-zero fallback — the same rule `runAiAction` uses for automatic AI entries), so the row reads as a system event. Alternative: accept actor = account |
+| Q-B6 | Without a `GROUP_RULES` prefix the event sits in a fallback "Bos" group in the dropdown | Add `BOS_CREDIT_LOW_LINE_` → "Business OS Credits" (beside 11b's lot events). Cosmetic; no event can be hidden by it |
+| Q-B7 | Most 8b tests are outside every CI Jest scope (§5.11) | Leave the scope as is in 8b; SA and QA re-run the listed suites; widening it is for the CI tiering work |
+| Q-B8 | The recorder adds no outer timer around the hook (SA: "one bounded awaited call"); the bound lives in the hook (500 ms + the flush's 2 s) | Keep as ruled; NI-6 / NI-7 prove the bound with the real hook. An outer race would be a second timer on every charged action |
+
+### 5.15 Risks — 8b
+
+| # | Risk | Mitigation |
+|---|---|---|
+| R-B1 | The hook adds latency to every charged action with a plan row | Cached snapshot (usually no round trip) + one indexed totals read; hard 500 ms bound (NI-6); crossing charge +2 s at most, once per account per period |
+| R-B2 | Duplicate or missed entry under concurrent charges at the line (KI-21), or after a mid-period allowance change (KI-22 extended) | Accepted by SA (SQ-45); reports count distinct `(account, periodStart)`; revisit triggers recorded in SQ-45 |
+| R-B3 | Entry lost: the flush times out, or a batch-interval flush is already running on the instance (`logAndFlush` serialises only its own callers — `boundedAuditFlush.ts` "SCOPE" note) | KI-23 accepted; the Pino `info` line is written first and carries the same ids and figures, so the event is recoverable from logs |
+| R-B4 | The hook loads the entitlements service and repositories into suites that run the real recorder | B-F12 census: only two suites; both get the module mock line (DV-B1); B-0 re-runs the census |
+| R-B5 | An owner reads their own low-line entry before the slice 11 hiding fix (BD-26, KI-25) | Accepted (own percentage only); names handed to the slice 11 session; no live account expected to cross today (KI-24) |
+| R-B6 | A late snapshot or anchor read keeps running after the budget on a warm instance | No side effect (read-only); the result is discarded (Q-B3) |
+| R-B7 | The service-role owner read is misused later for a caller-supplied id | Only `creditLowLineDeps.ts` constructs it on the service role; its header and the repository header name the one input (`record.accountId`, server-validated); the account-seam and referrer guards pin the wiring |
+
+**`console.*` in files 8b touches: none.** Counted 2026-10-04: `aiChargeRecorder.ts`, `aiActionAudit.ts`, `BusinessOsCreditOwnerReadRepository.ts`, `BusinessOsAccountPlanRepository.ts`, `lib/audit/events.ts`, `eventAudience.ts`, `types.ts`, `filterOptions.ts`, `creditBands.ts`, `creditWindowRule.ts`, `creditBalance.ts`, and the test files in §5.7 / §5.8 — **0 calls each**. New files use `createLogger`.
 
 ---
 
@@ -682,6 +1001,124 @@ Every card today reads 99–100% and green (KI-24).
 
 **Code approved for QA: Yes.**
 
+### SA Workplan Review — 8b (2026-10-04)
+
+**Reviewed by SA — 2026-10-04** (§5, on `feature/business-os-credit-deduction-slice-8b` at `89dbc568`; read-only)
+**Status:** ✅ Approved with conditions. ≈ 1.4 d is accepted, with Dev's stop at 2 d.
+
+#### As-built facts B-F1 to B-F16 — spot-checked against `89dbc568`
+
+All hold. Checked directly:
+- **B-F1:** `write()` early returns, the `!data.recorded` return, the `calendar_month` warn, and the `bos_ai_charge_recorded` debug as the last line.
+- **B-F9:** `AuditTrailService.ts:149`, `actorId = input.actorId || input.userId || systemAdminId || null`.
+- **B-F10:** `GROUP_RULES` with `BOS_CREDIT_LOT_` → "Business OS Credits" at `filterOptions.ts:108`.
+- **B-F11:** 175 / 30 / 61 / 84 at `eventAudience.test.ts:54-58`.
+- **B-F16:** the `test:bos-entitlements` scope in `package.json:21` includes `lib/repositories/__tests__`, so the owner-repository signal tests do run in CI.
+
+The rest (B-F2 to B-F8, B-F12 to B-F15) match the code I read for 8a and are unchanged on this base.
+
+**Worst-case latency claim — confirmed.**
+- Before the read race, the hook does only synchronous work: the pre-filter, building its deps (no I/O) and the cached config lookup.
+- The read phase is one race at 500 ms. The write phase is `logAndFlush`, whose 2 s race also covers its chain wait.
+- So: **≤ +0.5 s on any charged action with a plan row, ≤ +2.5 s on the one crossing charge**, plus negligible synchronous work.
+- No change on the uncharged, skipped, failed-write, duplicate or `calendar_month` paths.
+
+#### Deviations
+
+| # | Ruling |
+|---|---|
+| **DV-B1** | **Accepted.** The recorder suite's default write is `recorded: true`, `'plan'`, so it needs the same setup mock as the NI suite. Its existing bodies stay unedited, as Dev says. |
+| **DV-B2** | **Accepted.** The count-pin change is forced by registering the event, and follows the 11b pattern. |
+| **DV-B3** | **Accepted.** `service` is passed in, so there is no recorder import and no cycle. The guard stays exact at three assignments. |
+| **DV-B4** | **Accepted.** NI-8 is literal at the call site; the hook keeps its own zero-read pre-filter. |
+
+#### Questions
+
+| # | Ruling |
+|---|---|
+| **Q-B1** | **Accepted.** `anchorSource === 'plan'` is the database's own statement that a plan row existed at the write, and in `period` mode the rule only tests "anchor present". Write it as `anchor: input.anchorSource === 'plan' ? input.periodStart : null`, with the comment. A test pins `per: 'month'` → `period` with **no** anchor read. |
+| **Q-B2** | **Accepted** (see DV-B4). |
+| **Q-B3** | **Accepted.** The reads are read-only; a late answer is discarded with the race; the test proves no late entry. Adding a signal to the entitlements service is out of scope. |
+| **Q-B4** | **Accepted.** No row, or a total below this charge → one `anomaly` warn, no entry. Never "fire to be safe". |
+| **Q-B5** | **Changed from SQ-46: the actor is the platform actor, UUID-checked** — not `null` (which stores the account as the actor) and not the raw `platformAccountId()`. `actor_id` is a uuid column, and a non-UUID `SYSTEM_ADMIN_USER_ID` would fail **the whole flushed batch**, including the action's own AI entry (that is why `runAiAction` checks). See C-B1. SA note and Change History row added to the requirement. |
+| **Q-B6** | **Accepted.** `BOS_CREDIT_LOW_LINE_` → "Business OS Credits". |
+| **Q-B7** | **Leave CI scope unchanged in 8b — cheap, but not right.** Appending `lib/business-os/llm/__tests__` and `credits/__tests__` to `test:bos-entitlements` is one line, but it would put charge-path proofs into a job named and owned for entitlements invariants, and that job is **not a required check**, so it would add little protection. The right home is the parked CI-Jest / test-tiering work. See C-B4. |
+| **Q-B8** | **Accepted.** The bound lives in the hook; NI-6 / NI-7 prove it with the real hook, and a second timer on every charged action would be redundant. |
+
+#### Conditions
+
+1. **C-B1 (Q-B5).** `actorId` = a UUID-checked platform actor, without importing `aiActionAudit.ts` (it imports the recorder, which imports the hook: a cycle).
+   - Add a pure `platformActorUuid()` to `lib/platformAccount.ts`: `SYSTEM_ADMIN_USER_ID` if it is a UUID, else the all-zero id. No logging; the file keeps importing nothing.
+   - Use it in the hook.
+   - Optionally, `aiActionAudit.ts`'s `platformActorId()` may delegate to it, keeping its one-time warn; behaviour must be identical, with its tests unedited. If Dev does not, record the duplicate as a follow-up.
+   - Test: a non-UUID env value gives the all-zero actor.
+   - The entry-shape test asserts `actorId` equals that value, never the account.
+2. **C-B2.** The hook-point source guard pins:
+   - exactly one `checkCreditLowLine(` call in `aiChargeRecorder.ts`;
+   - placed after the `!data.recorded` return;
+   - inside `if (data.anchorSource === 'plan' && record.credits > 0)`;
+   - and the recorder file still names no `supabaseServer`, `.from(` or `.rpc(`.
+3. **C-B3.** NI-7's flush-hang case uses fake timers and asserts both that the total delay is ≤ 500 ms + 2,000 ms and that `jest.getTimerCount() === 0` after it settles. Any test that hangs the chain calls `__resetAuditFlushChainForTests` (`logAndFlush`'s chain is module state).
+4. **C-B4 (Q-B7).** §5.12 pastes local runs of every suite listed in §5.11 as "not in CI", plus NI-5 before / after. QA re-runs them. Dev adds one line to the parked CI-Jest / test-tiering item naming these four test folders, as the first charge-path tier: `lib/business-os/llm/__tests__/aiChargeRecorder.test.ts`, `aiActionAudit.test.ts`, `lib/business-os/credits/__tests__/`, `lib/audit/__tests__/`.
+5. **C-B5 (BD-26).** Hand the coordinator, for the slice 11 owner-hiding fix: the action `BOS_CREDIT_LOW_LINE_CROSSED`, the entity type `'business_os_credit_period'`, and the note that the fix must hide them on both the RLS policy side and the `/api/audit/query` repository side. 8b does not wait for it.
+
+**Business question:** none. BD-26 is already decided (owners do not see these entries); the hiding fix is the slice 11 session's.
+
+- [x] 8b workplan approved — proceed to implementation with C-B1 to C-B5.
+
+### SA Code Review — 8b (2026-10-04)
+
+**Code review by SA — 2026-10-04** (uncommitted diff on `feature/business-os-credit-deduction-slice-8b`, base `89dbc568`; 21 modified and 5 new files; the requirement MD is the coordinator's and was not reviewed; read-only — the gate results are Dev's, §5.12, cross-checked against the source)
+**Status:** ✅ Code approved. No required fixes.
+
+#### Verified
+
+| Item | Result |
+|---|---|
+| **SQ-44 hook point** | `aiChargeRecorder.ts:268-291` holds one awaited call. It sits after the `!data.recorded` return and the existing logs, inside `if (data.anchorSource === 'plan' && record.credits > 0)`, wrapped in `try / catch` (error log, never a throw). It uses the charge's own `periodStart` / `anchorSource`. |
+| **Reads** | `creditLowLine.ts:147-189`. Monthly: one `findTotalsForPeriod(account, periodStart, { signal })`, and no anchor read (Q-B1, `:156-159`). Trial: anchor, then `listTotalsFrom` with the ceiling ⇒ fail. A missing row ⇒ anomaly. An unparseable figure ⇒ fail. Allowance comes through `resolveAccountId` → `getSnapshot` → `creditAllowanceForDisplay`. Plan allowance only; lots never read (BD-25, pinned by a source test). |
+| **Crossing** | `crossedLowLine` (`:104-115`) runs both sides through 8a's `creditPercentLeft`. `isBelowLowLine` is proved ≡ the red band for every shown value. `usedBefore < 0` or a non-finite value ⇒ `anomaly`. An exact 10.000000% does not fire. |
+| **Budget / never throws (FR-50)** | `withReadBudget` (`:199-217`): the timer is `unref`'d and cleared in `finally`, an async IIFE handles a late rejection, and the abort signal reaches both owner reads. The read and write phases are separate, so a late read writes nothing (tested). Every path ends in a debug, a `warn` or the write; the outer `catch` ⇒ warn. |
+| **NI-6 / NI-7 / NI-8 with the real hook** | `aiChargeRecorder.test.ts` routes its mocked hook to `jest.requireActual` with injected reads. NI-6: the hook settles at exactly the read budget, with no timer left. NI-7: sync throw, rejection, read failure, and a hanging flush — bounded by ≤ 500 ms + 2,000 ms, no timer left, the chain reset in `beforeEach` / `afterEach` (C-B3). NI-8: 12 "not called" cases plus a timed-out write, and exactly-once with the exact input on the happy path. NI-1 to NI-4: `aiActionAudit.test.ts` +2 / −0 (one mock line). NI-5: identical failing-suite list before and after (§5.12). |
+| **C-B2 source guard** | Exactly one `checkCreditLowLine(`, after the `!data.recorded` return, inside the gate with no `}` in between; no `supabaseServer`, `supabaseClient`, `.from(` or `.rpc(` in the recorder. |
+| **Worst-case latency** | Holds as stated: ≤ +0.5 s on any charged action with a plan row; ≤ +2.5 s on the crossing charge; no change on every other path. |
+| **SQ-46 as corrected (C-B1)** | Key `BOS_CREDIT_LOW_LINE_CROSSED`, metadata `info` with no compliance flags, `'bos'` audience, group "Business OS Credits", entity type `'business_os_credit_period'`, `entityId = userId = account`. `actorId = platformActorUuid()` (`lib/platformAccount.ts`: pure, imports nothing, UUID-checked, all-zero fallback; tests for unset and non-UUID). The writer passes no `severity` (source guard with a planted sample). The details hold ids and figures only. The Pino `info` line comes **before** `logAndFlush` (call-order test). |
+| **Registrations** | `creditLowLine.ts` is in `KNOWN_NON_GATE_IMPORTERS` with its exact three symbols. `creditLowLineDeps.ts` is in ALLOWED + `NO_STATE_WRITE_REFERRERS`, pinned to `findPeriodAnchor`. Also registered: `creditFigures` SOURCES, cut-off guard CONSUMERS, the creditPeriod Date-guard scan, and the audience count pin 176 / 31. `test:bos-entitlements` 108 / 2,521 green. |
+| **Rule 1 / 4, service role** | Reads go only through the plan repository and the owner read repository (`.eq('user_id', accountId)` in every method). The service-role construction lives only in `creditLowLineDeps.ts`, documented: no session in the charge path, account = `record.accountId` validated by `runAiAction`, SELECT only. The repository header names it as the documented service-role caller, and the file itself still imports no service client. |
+| **Rules 2 / 3 / 6** | No new input surface; Pino only, logs carry ids, codes and percentages; no `any`. `tsc`: 0 errors in the 22 changed or new files. |
+| **`server-only`** | `creditLowLine.ts` / `creditLowLineDeps.ts` are `server-only`. The recorder already loaded service-role repositories, and no `'use client'` file imports `aiActionAudit` or `aiChargeRecorder` (repo grep: comment mentions only). QA's `next build` is the final check. |
+| **No charge SQL change (AC-46)** | No file under `supabase/`; no migration; the charge function, `_charges` and `_totals` are untouched. |
+| **Census** | `creditLeakCheck.ac31` runs the real recorder, but its fake RPC refuses the write (`42501`), so the hook is never reached (NI-8's DB-error path). It passes unedited. Accepted. |
+
+#### Deviations
+
+| # | Ruling |
+|---|---|
+| **DV-B5** | **Accepted.** `chargeService` keeps the N-10 `serviceColumn` guard exact, and the audit detail is still `service: 'ai'`. DV-B3 is moot: the recorder's `service:` assignment guard is unedited. |
+| **DV-B6** | **Accepted.** A separate signal suite keeps the existing suite unedited and is still in the CI scope. |
+| **DV-B7** | **Accepted as a follow-up.** One rule, two implementations (`aiActionAudit.platformActorId()` caches and warns; `platformActorUuid()` reads at call time). Their outputs agree for every env value. Fold them together when either is next touched. |
+| **DV-B8** | **Accepted.** A hook give-up is `warn` (expected, harmless); the recorder catching a throw is `error` (a defect). The same event name with a different level is fine and filterable. |
+
+#### Compatibility with the slice 11 BD-26 fix
+
+The fix is on `fix/bos-owner-audit-hides-admin-entries`, in the `neuronforge-llm-layer2-step4` folder; I read it, without editing. **It is compatible:**
+- Migration `20261018_audit_trail_owner_policy_hides_admin_entries.sql` adds `'business_os_credit_period'` to the owner RLS policy's excluded entity types.
+- `lib/audit/ownerVisibility.ts` marks it `operator`.
+- `AuditTrailRepository` excludes `OWNER_HIDDEN_ENTITY_TYPES` in the query.
+
+So an 8b entry is hidden from the owner by entity type in both places, whatever its action name. **Coordination:** that branch also adds `'business_os_credit_period'` to `AUDIT_ENTITY_TYPES` (`lib/audit/types.ts`, same position, different comment), and both branches edit `creditPeriod.test.ts`. Whichever PR merges second resolves `types.ts` to **one** entry; a duplicate would compile but is a defect. Until the fix merges, KI-25 stands (accepted; no live account is expected to cross, KI-24).
+
+#### Findings
+
+1. **`lib/audit/types.ts:86-90` × the slice 11 branch** — the same entity type is added on both branches; resolve to a single entry at the second merge (RM / coordinator). Priority: **Low (coordination)**.
+2. **`lib/business-os/credits/creditLowLine.ts:299`** — `entityType: 'business_os_credit_period'` is a typed literal, so it is checked against `EntityType`. No change. Priority: **Note**.
+
+**Required fixes:** none.
+**Owed by QA:** `next build`; the forced-crossing manual check (one row under "Business OS Credits", actor = platform account, the next action none); a re-run of the §5.11 suites. **Owed by the user after merge:** the 11a checker L8 / C7 on PROD (read-only).
+**Business question:** none.
+
+**Code approved for QA: Yes.**
+
 ---
 
 ## QA Testing Report
@@ -791,6 +1228,100 @@ So the two paths agree on every band, on "less than 1%", on 0% over the allowanc
 - [x] All 8a acceptance criteria QA can test pass (AC-40 to AC-43 by test and live check). AC-44 belongs to 8b, not this PR. The signed-in visual checks above are owed by the user.
 - [x] No High or Medium bug open. This is ready for the user's diff review once Dev lands SA's two Low fixes; those fixes need only the diff check.
 
+### QA Report — 8b (2026-10-04)
+
+**Test mode:** full
+**Strategy used:** A (Jest: every §5.11 not-in-CI suite plus the CI gates, re-run independently) + C (a scratch script driving the real `checkCreditLowLine` with the production deps against the live DB, **read-only**). The script wrapped `supabaseServer` so `insert` / `update` / `upsert` / `delete` / `rpc` throw. It stubbed `logAndFlush` to capture entries, stubbed `AuditTrailService` to write nothing, and swapped only the allowance amount in memory (a wrapper around the real `creditAllowanceForDisplay`, after the real snapshot read). Plus an in-place `next build`. No browser check: the signed-in, write-producing check is owed (below).
+**Focus:** api, pipeline (the charge path), security (actor, entity, scoping), performance (the time budget)
+**Skipped:** the live crossing that **writes** an audit row (needs a DB write; owed to the user). Also the signed-in `/admin/audit-trail` view of that row.
+**Input source:** prompt keywords (coordinator) + workplan §5.8 / §5.9 / §5.11
+
+**Branch / tree:** `feature/business-os-credit-deduction-slice-8b`, uncommitted. 21 modified + 5 new files. `git diff --numstat`: no deletion without insertion. `aiChargeRecorder.test.ts` is **+230 / −0**, so the 37 existing bodies are unedited. `aiActionAudit.test.ts` is **+2 / −0** (the mock line and its comment). `git diff origin/main -- supabase/ scripts/` is empty (AC-46).
+
+#### Gates (re-run by QA)
+
+| Gate | Result |
+|---|---|
+| `npm run test:bos-entitlements` (CI) | ✅ 108 / 108 suites, 2,521 / 2,521 tests |
+| `npm run typecheck:bos-llm` (CI) | ✅ passed. 398 files, 28 errors, **0 new**. The same "1 baseline entry fixed" note (`app/api/onboarding/build/route.ts`) is not 8b's |
+| `npm run lint:hooks` (CI) | ✅ exit 0 |
+| `npx eslint` on the 22 changed / new TS files | 0 errors; 6 warnings, all pre-existing (`events.ts:1239`, `types.ts` × 5 `any`) |
+| **`next build`** (in place, existing junction, `NODE_OPTIONS=--max-old-space-size=6144`) | ✅ **exit 0**. "Compiled successfully". The only error-level lines are the known "Dynamic server usage" noise from page-data collection on admin pages and crons, not 8b's. `bos_credit_low_line_crossed` appears in **1** `.next/server` chunk and **0** `.next/static` (client) files. So `server-only` in `creditLowLine.ts` / `creditLowLineDeps.ts` reaches no client bundle. `.next` was rebuilt in place, with no new folder |
+
+**§5.11 suites not run in CI, re-run locally** (stub Supabase URL, so no DB)
+
+| Suite | Result |
+|---|---|
+| Combined `lib/business-os/credits lib/business-os/llm lib/audit lib/__tests__/platformAccount.test.ts app/admin/audit-trail` | ✅ **72 / 72 suites, 1,563 / 1,563 tests** (matches §5.12) |
+| `creditLowLine.test.ts` | ✅ 51 / 51 |
+| `aiChargeRecorder.test.ts` (NI-6 / NI-7 / NI-8, C-B2, C-B3) | ✅ 60 / 60 |
+| `aiActionAudit.test.ts` (NI-1 to NI-4, unedited bodies) | ✅ 85 / 85 |
+| `creditLowLineSeverity.guard.test.ts` | ✅ 5 / 5 |
+| `eventAudience.test.ts` (176 / 31 / 61 / 84) | ✅ 21 / 21 |
+| `platformAccount.test.ts` | ✅ 13 / 13 |
+| `creditBands.guard` / `creditPeriod` / `serviceColumn.guard` | ✅ 55 / 34 / 34 |
+| Same key suites with `--detectOpenHandles` | No open handle reported, none hung |
+
+#### Simulated crossing: live reads, no writes (C)
+
+Accounts read: Eyal, Offir and Avital Omer. Each has a real allowance of 32,250 / month and one period, `2026-09-23T19:55:01.28632+00:00`. Totals are 6.82815 / 4.17345 / 298.59084. The cases ran on **Eyal Omer** (`39c134b8…`), U = 6.82815. Every case read the real period key verbatim and the real totals row. `blockedWrites = []` and `AuditTrailService` calls `= []` in **every** run, so nothing was written.
+
+| Case | Allowance (in memory) | Charge | Shown % before → after | Reads | Entries | Log |
+|---|---|---|---|---|---|---|
+| (a) monthly crossing | 7.187526 / month | 0.718753 | 15 → 4 | `business_os_credit_totals` × 1 | **1** | info `bos_credit_low_line_crossed` |
+| (b) next charge, same period | 7.187526 / month | 0.143751 | 7 → 4 | totals × 1 | **0** | debug `already_below` |
+| (c1) stays at or above the line | 13.6563 / month | 0.136563 | 51 → 50 | totals × 1 | **0** | debug `still_above` |
+| (c2) starts below the line | 6.967500 / month | 0.069675 | 3 → 2 | totals × 1 | **0** | debug `already_below` |
+| (c3) 15 → 9 (QA aimed at exactly 10; float rounding landed on 9, which is a correct crossing) | 7.586833 / month | 0.379342 | 15 → 9 | totals × 1 | 1 | info `crossed` |
+| (d1) trial crossing | 7.187526 **total** | 0.718753 | 15 → 4 | `business_os_account_plans` (anchor) + totals (`listTotalsFrom(anchor)`) | **1**, `periodKind: 'trial_total'` | info `crossed` |
+| (d2) trial, next charge | 7.187526 total | 0.143751 | 7 → 4 | anchor + totals | **0** | `already_below` |
+| (d3) trial, stays above | 13.6563 total | 1 | above → above | anchor + totals | **0** | `still_above` |
+| (real) real allowance, no swap | 32,250 / month | 1 | 99 → 99 | totals × 1 | **0** | `still_above` (KI-24) |
+| (e1) `calendar_month` | — | 0.718753 | — | **none**, 0 snapshot calls | 0 | debug `skipped` / `not_applicable` |
+| (e2–e4) credits 0 / −1 / NaN | — | — | — | **none**, 0 snapshot calls | 0 | debug `skipped` |
+| (f) allowance answers at **700 ms** with a crossing value | 7.187526 / month (late) | 0.718753 | — | none inside the budget | **0**, and still **0 after waiting 2.5 s more** | one warn `timeout`, no second log |
+
+**The entry, from cases (a), (c3) and (d1).** `action` is `BOS_CREDIT_LOW_LINE_CROSSED` and `entityType` is `business_os_credit_period`. `entityId` and `userId` are the account. `actorId === platformActorUuid()`, never the account; the env value in `.env.local` is a UUID, so it is the configured platform id. There is **no `severity` key** and no `resourceName`. The details keys are exactly `actionId, actionType, allowance, lowLine, percentAfter, percentBefore, periodKind, periodStart, service, trigger`, with `service: 'ai'`, `lowLine: 10` and `periodStart` verbatim. No cost, token or used-credit field. The Pino `info` came before the stubbed flush.
+
+**Timers.** Active `Timeout` handles were 0 before and 0 after every case. In (f), 1 handle remained right after return: QA's own 700 ms stub sleep, not the hook's. It was 0 after the wait.
+
+#### Latency (4)
+
+- **By test (fake timers), as required:** NI-6 (`aiChargeRecorder.test.ts:540-561`) stays unsettled at 499 ms and resolves at 500 ms, with `getTimerCount() === 0`, for a hanging allowance read and a hanging totals read. C-B3 (`:589-609`) holds a hanging flush to ≤ 500 + 2,000 ms, with one entry handed to `AuditTrail.log`, one warn, and 0 timers. `creditLowLine.test.ts` pins `getTimerCount() === 0` at `:298`, `:389` and `:439`. **Worst cases: +0.5 s on any charged plan action, +2.5 s on the crossing charge. Confirmed.** C-B3's reads resolve at once, so it measures about 2.0 s, not the full 2.5 s. The 2.5 s worst case follows from the two sequential bounds, not from a single test.
+- **Live, from this machine (informational):** warm monthly checks took **180–260 ms**, and warm trial checks took **360–420 ms** (2 round trips). A **cold** process timed out every time: the first snapshot plus the first totals read took more than 500 ms. With the CPU at 100% from an unrelated Jest run, the race came back at **514–975 ms** rather than 500, because of event-loop starvation; under fake timers the bound is exact. In every timeout: no entry, one `timeout` warn, nothing thrown.
+
+#### Issues found
+
+**Bugs:** none.
+
+**Performance (should look at, not blocking):**
+1. **A read timeout on the crossing charge loses that period's entry for good, and leaves no figures in the logs.** `lib/business-os/credits/creditLowLine.ts:236-240`. "Once" is derived, so the next charge starts below the line and never fires (case b). The only trace is a `bos_credit_low_line_check_failed` / `timeout` warn with ids and no percentages. KI-23 covers a lost **flush**, where the Pino `crossed` line survives. It does not cover a lost **read**, where nothing records the crossing. From this dev machine, cold reads exceeded 500 ms every time. On Vercel near the DB, latency should be far lower, but cold instances pay a TLS handshake. Severity Medium as a data-completeness risk, though no action or charge is affected (FR-50 holds). Suggest: record it as a KI, or extend KI-23 in the requirement. After merge, watch the rate of `bos_credit_low_line_check_failed` `reason: timeout` in the Vercel logs. SA owns any budget change.
+
+**Edge cases (nice to fix, Low):**
+1. **Work continues after the budget.** `creditLowLine.ts:147-188`: `readFigures` does not check `signal.aborted` between steps. In (f), a late allowance answer still went on to call `findTotalsForPeriod` (with the already-aborted signal, so the request was cancelled at once). On the trial path, a late snapshot would go on to an **un-cancellable** `findPeriodAnchor` read. No write happens and the result is discarded (Q-B3, accepted), but one `if (signal.aborted) return …` after each await would avoid the wasted background reads.
+2. **DV-B7 follow-up stands:** there are two implementations of the platform-actor rule (`platformActorUuid()` and `aiActionAudit.ts` `platformActorId()`). Behaviour is identical today.
+
+#### AC coverage
+
+| Acceptance criterion | Tested? | Result | Notes |
+|---|---|---|---|
+| AC-44: one entry on the crossing; none on the next charge, none when starting below; trial once | ✅ | Pass (unit + live-read simulation) | The **written** row on PROD is owed (below) |
+| AC-45: read fail / throw / hang does not harm the action; bounded; NI-1 to NI-5 unedited; never on recorded:false and the like | ✅ | Pass | NI-6/7/8 green. `aiActionAudit.test.ts` +2/−0. Recorder bodies unedited |
+| AC-46: no SQL / migration change | ✅ | Pass | No `supabase/` diff. The L8 / C7 re-check is owed after merge |
+| FR-49 entry shape (SQ-46, C-B1) | ✅ | Pass | Actor = platform UUID, no severity, exact detail keys |
+| `server-only` stays out of client bundles | ✅ | Pass | `next build` exit 0, 0 hits in `.next/static` |
+
+#### Owed (needs the user's approval, or happens naturally)
+
+1. **A real crossing on PROD that writes one audit row.** On a **test** account, add a temporary entitlement override that brings the allowance just above `used / 0.9`. Then run one owner AI action, and expect **exactly one** `BOS_CREDIT_LOW_LINE_CROSSED` row in `/admin/audit-trail` under the **"Business OS Credits"** group, with **actor = the platform account** (not the owner) and the §5.5 details. A second action should write none, and both actions should return normally. Then remove the override. This writes a charge, a totals change and an audit row, so QA did not do it. It may also happen naturally once usage is real (KI-24). Note BD-26 / KI-25: until the slice 11 owner-read exclusion lands, the owner can read that row.
+2. **After merge, the user's read-only `scripts/check-bos-credit-lots-migration.sql` L8 (charge-function md5) and C7 on PROD.** Both should pass unchanged, since 8b changes no SQL.
+3. (Optional) **After deploy:** the rate of `bos_credit_low_line_check_failed` `reason: timeout` in the Vercel logs (Performance 1).
+
+#### Final status
+
+- [x] Every 8b acceptance criterion QA can test without a DB write passes. The live written row and the post-merge L8 / C7 re-check are owed.
+- [x] No High bug and no bug at all. One Medium performance / data-completeness note, which needs a KI or SA decision rather than a code fix before commit, and two Low edge cases. **PASS WITH NOTES.**
+
 ---
 
 ## Commit Info
@@ -809,3 +1340,7 @@ So the two paths agree on every band, on "less than 1%", on 0% over the allowanc
 | 2026-10-03 | SA Code Review | Code approved for QA. DV-1 addendum and DV-5 to DV-7 accepted; the empty-list refusal is accepted; two Low findings (route `creditsMs` measures the parallel block; `isAtOrAfter` used outside its documented role); wider-Jest reds unrelated |
 | 2026-10-03 | 8a Code Complete (Dev) | T-0 to T-12 done; §4.15 gate results (C-W5) and DV-1 addendum, DV-5 to DV-7; `next build` owed; awaiting SA code review ∥ QA |
 | 2026-10-03 | QA Report (8a) | PASS WITH NOTES. Gates re-run green (bos-entitlements 105/2,407; touched suites 41/965; lint:hooks; eslint 0 errors); `next build` exit 0; live read-only check: card % equals admin % on 6/6 accounts (all 99%), and on 24/24 with in-memory allowance overrides covering every band, less than 1%, 0% and trial; unauthenticated `GET /api/admin/users` returns 401. QA concurs with SA's two Low findings; signed-in en/he/es visual checks owed |
+| 2026-10-04 | SA Workplan Review — 8b | Approved with conditions: DV-B1 to DV-B4 accepted; Q-B1 to Q-B4 and Q-B6 to Q-B8 accepted (Q-B7: CI scope unchanged, gap recorded in the CI tiering item); **Q-B5 changes SQ-46 — the actor is a UUID-checked platform actor** (a non-UUID would fail the whole flushed batch); C-B1 to C-B5; facts B-F1 to B-F16 and the worst-case latency (+0.5 s / +2.5 s) confirmed at `89dbc568` |
+| 2026-10-04 | 8b workplan (Dev) | §5 expanded from the outline into the full 8b plan on `feature/business-os-credit-deduction-slice-8b` (base `89dbc568`, 8a merged): as-built facts B-F1 to B-F16, hook module + deps, crossing on the shown % via 8a's `creditPercentLeft`, 500 ms read budget with a separate write phase, `BOS_CREDIT_LOW_LINE_CROSSED` + entity type `business_os_credit_period`, NI-6 to NI-8, registrations, CI coverage gaps (§5.11), DV-B1 to DV-B4, Q-B1 to Q-B8, R-B1 to R-B7; estimate ≈ 1.4 d; no migration; `console.*` none. Awaiting SA workplan review |
+| 2026-10-04 | 8b Code Complete (Dev) | C-B1 to C-B5 and Q-B rulings folded (§5.0a); B-0 to B-7 done: `creditLowLine.ts` + deps, `platformActorUuid()`, owner-repository signal, event `BOS_CREDIT_LOW_LINE_CROSSED` + entity type, recorder hook, NI-6 to NI-8, registrations, docs. Gates in §5.12: bos-entitlements 108 / 2,521; local non-CI suites 72 / 1,563; NI-5 failing-suite list identical (26); typecheck:bos-llm 0 new; DV-B5 to DV-B8. Uncommitted; `next build` owed by QA |
+| 2026-10-04 | SA Code Review — 8b | Code approved for QA, no required fixes. C-B1 to C-B5 and SQ-44 to SQ-46 (actor as corrected) verified; NI-6 to NI-8 with the real hook; DV-B5 to DV-B8 accepted (DV-B7 a follow-up); slice 11 BD-26 fix compatible (hides `business_os_credit_period` by entity type in RLS and the repository) — coordinate the duplicate `AUDIT_ENTITY_TYPES` line at the second merge |
