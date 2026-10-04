@@ -29,14 +29,18 @@
 // request), and its only caller is `app/api/admin/health-summary/route.ts`,
 // behind `requireAdmin` (pinned by adminReadMethods.guard.test.ts).
 //
-// AI audit entries (entity type `ai_action`, events `BUSINESS_AI_ACTION_*`) are
-// operator-only until the charging decision (Layer 3 D-6). They are excluded
-// IN THE QUERY, so the page, its counts and its CSV export can never see one.
+// Owner-hidden entries are excluded IN THE QUERY, so the page, its counts and
+// its CSV export can never see one: every entity type in
+// OWNER_HIDDEN_ENTITY_TYPES (lib/audit/ownerVisibility.ts — `ai_action`, the
+// admin plan and credit-lot entries, slice 8b's credit-period entry; BD-26),
+// plus any `BUSINESS_AI_ACTION_*` event whatever its type (Layer 3 D-6). The
+// owner RLS policy (migration 20261018) mirrors the same list.
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
-import { AI_ACTION_ENTITY_TYPE, AI_ACTION_EVENT_PREFIX, isAiAuditFilter } from '@/lib/audit/requestSchemas';
+import { AI_ACTION_EVENT_PREFIX } from '@/lib/audit/requestSchemas';
+import { OWNER_HIDDEN_ENTITY_TYPES, isOwnerHiddenFilter } from '@/lib/audit/ownerVisibility';
 import type { AuditSeverity } from '@/lib/audit/types';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import type { AgentRepositoryResult as RepositoryResult } from './types';
@@ -129,13 +133,14 @@ export class AuditTrailRepository {
 
   /**
    * One page of the owner's own audit entries, newest first, never including an
-   * AI audit entry. `total` counts the same filtered rows.
+   * owner-hidden entry (an OWNER_HIDDEN_ENTITY_TYPES type or an AI action
+   * event; BD-26). `total` counts the same filtered rows.
    */
   async listOwnerEntries(userId: string, q: OwnerAuditQuery): Promise<RepositoryResult<OwnerAuditPage>> {
     const empty: OwnerAuditPage = { logs: [], total: 0, page: q.page, limit: q.limit, hasMore: false };
 
-    // Asking for AI entries is answered without a query: there are none for an owner.
-    if (isAiAuditFilter(q)) {
+    // Asking for hidden entries is answered without a query: there are none for an owner.
+    if (isOwnerHiddenFilter(q)) {
       return { data: empty, error: null };
     }
 
@@ -146,8 +151,9 @@ export class AuditTrailRepository {
         .from('audit_trail')
         .select(OWNER_COLUMNS, { count: 'exact' })
         .eq('user_id', userId)
-        // The primary guard. entity_type is NOT NULL, so no ordinary row is lost.
-        .neq('entity_type', AI_ACTION_ENTITY_TYPE)
+        // The primary guard (BD-26). entity_type is NOT NULL, so no ordinary row
+        // is lost. The values are fixed identifiers, so no quoting is needed.
+        .not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`)
         // Defence in depth, should an AI event ever be written under another type.
         .not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`);
 
