@@ -31,6 +31,8 @@ export const INVITE_LOCALES: readonly InviteLocale[] = ['en', 'he', 'es'];
 
 export interface InvitePageCopy {
   loading: string;
+  /** The small label above a valid invite's heading. Layout only. */
+  eyebrow: string;
   validHeading: (name: string) => string;
   noteHeading: (name: string) => string;
   offerHeading: string;
@@ -98,6 +100,8 @@ export interface InvitePageCopy {
  */
 export interface SignupCopy {
   heading: string;
+  /** "Step 1 of 2" above the form's heading. Layout only. */
+  stepOf: (step: number, total: number) => string;
   codeWillGoTo: (maskedEmail: string) => string;
   sendCode: string;
   sending: string;
@@ -156,6 +160,7 @@ export interface GoogleSignupCopy {
 export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
   en: {
     loading: 'Checking your invitation…',
+    eyebrow: 'Your invitation',
     validHeading: (name) => `${name} invited you`,
     noteHeading: (name) => `A note from ${name}`,
     offerHeading: 'What you are offered',
@@ -186,6 +191,7 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     linkExpires: (date) => `You can accept this invitation until ${date}.`,
     signup: {
       heading: 'Create your account',
+      stepOf: (step, total) => `Step ${step} of ${total}`,
       codeWillGoTo: (masked) => `We'll email a 6-digit code to ${masked} to confirm it's you.`,
       sendCode: 'Send me a code',
       sending: 'Sending…',
@@ -254,6 +260,7 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
   },
   he: {
     loading: 'בודקים את ההזמנה…',
+    eyebrow: 'ההזמנה שלך',
     validHeading: (name) => `קיבלת הזמנה מאת ${name}`,
     noteHeading: (name) => `הודעה מאת ${name}`,
     offerHeading: 'מה מוצע לך',
@@ -284,6 +291,7 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     linkExpires: (date) => `אפשר לקבל את ההזמנה עד ${date}.`,
     signup: {
       heading: 'יצירת החשבון',
+      stepOf: (step, total) => `שלב ${step} מתוך ${total}`,
       codeWillGoTo: (masked) => `נשלח קוד בן 6 ספרות אל ${LTR_ISOLATE}${masked}${POP_ISOLATE} כדי לוודא שזו הכתובת שלך.`,
       sendCode: 'שליחת קוד',
       sending: 'שולחים…',
@@ -353,6 +361,7 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
   },
   es: {
     loading: 'Comprobando tu invitación…',
+    eyebrow: 'Tu invitación',
     validHeading: (name) => `${name} te ha invitado`,
     noteHeading: (name) => `Un mensaje de ${name}`,
     offerHeading: 'Lo que se te ofrece',
@@ -383,6 +392,7 @@ export const INVITE_PAGE_COPY: Record<InviteLocale, InvitePageCopy> = {
     linkExpires: (date) => `Puedes aceptar esta invitación hasta el ${date}.`,
     signup: {
       heading: 'Crea tu cuenta',
+      stepOf: (step, total) => `Paso ${step} de ${total}`,
       codeWillGoTo: (masked) => `Te enviaremos un código de 6 dígitos a ${masked} para confirmar que eres tú.`,
       sendCode: 'Enviarme un código',
       sending: 'Enviando…',

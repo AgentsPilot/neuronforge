@@ -26,11 +26,13 @@
 
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
+import { AlertTriangle, Hourglass, LogIn } from 'lucide-react';
 
 import { readHoldForSession } from '@/lib/business-os/invites/paymentHoldGate';
 import { marketingUrl } from '@/lib/utils/origins';
 
 import { awaitingPaymentCopyFor } from '../awaitingPaymentCopy';
+import { INVITE_PRIMARY_BUTTON, InviteShell, InviteStateIcon } from '../InviteShell';
 import { SignOutButton } from './SignOutButton';
 
 export const dynamic = 'force-dynamic';
@@ -49,33 +51,34 @@ export default async function AwaitingPaymentPage() {
 
   const { locale, copy } = awaitingPaymentCopyFor(hold.state === 'held' ? hold.language : 'en');
   const signInUrl = marketingUrl('/login');
-  const dir = locale === 'he' ? 'rtl' : 'ltr';
+  const dir: 'ltr' | 'rtl' = locale === 'he' ? 'rtl' : 'ltr';
 
   return (
-    <main dir={dir} lang={locale} className="flex min-h-screen items-center justify-center bg-gray-50 px-4 py-12">
-      <section
-        data-testid={`awaiting-payment-${hold.state}`}
-        className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-8 shadow-sm"
-      >
+    <InviteShell locale={locale} dir={dir}>
+      <section data-testid={`awaiting-payment-${hold.state}`} className="space-y-4">
         {hold.state === 'held' ? (
           <>
-            <p className="mb-2 text-sm font-medium text-gray-500">{copy.title}</p>
-            <h1 className="mb-4 text-2xl font-semibold text-gray-900">{copy.heldHeading}</h1>
-            <p className="mb-2 text-base leading-relaxed text-gray-700">{copy.heldBody}</p>
-            <p className="mb-6 text-base leading-relaxed text-gray-700">{copy.heldLater}</p>
-            <SignOutButton label={copy.signOut} busyLabel={copy.signingOut} failedLabel={copy.signOutFailed} signInUrl={signInUrl} />
+            <InviteStateIcon tone="brand">
+              <Hourglass className="h-6 w-6" />
+            </InviteStateIcon>
+            <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">{copy.title}</p>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">{copy.heldHeading}</h1>
+            <p className="text-base leading-relaxed text-slate-700">{copy.heldBody}</p>
+            <p className="text-base leading-relaxed text-slate-700">{copy.heldLater}</p>
+            <div className="pt-2">
+              <SignOutButton label={copy.signOut} busyLabel={copy.signingOut} failedLabel={copy.signOutFailed} signInUrl={signInUrl} />
+            </div>
           </>
         ) : null}
 
         {hold.state === 'signed_out' ? (
           <>
-            <h1 className="mb-4 text-2xl font-semibold text-gray-900">{copy.signedOutHeading}</h1>
-            <p className="mb-6 text-base leading-relaxed text-gray-700">{copy.signedOutBody}</p>
-            <a
-              data-testid="awaiting-payment-sign-in"
-              href={signInUrl}
-              className="inline-block rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
-            >
+            <InviteStateIcon tone="neutral">
+              <LogIn className="h-6 w-6" />
+            </InviteStateIcon>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">{copy.signedOutHeading}</h1>
+            <p className="text-base leading-relaxed text-slate-700">{copy.signedOutBody}</p>
+            <a data-testid="awaiting-payment-sign-in" href={signInUrl} className={INVITE_PRIMARY_BUTTON}>
               {copy.signIn}
             </a>
           </>
@@ -83,14 +86,13 @@ export default async function AwaitingPaymentPage() {
 
         {hold.state === 'error' ? (
           <>
-            <h1 className="mb-4 text-2xl font-semibold text-gray-900">{copy.errorHeading}</h1>
-            <p className="mb-6 text-base leading-relaxed text-gray-700">{copy.errorBody}</p>
-            <div className="flex flex-wrap items-center gap-3">
-              <a
-                data-testid="awaiting-payment-try-again"
-                href="/invite/awaiting-payment"
-                className="inline-block rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
-              >
+            <InviteStateIcon tone="warning">
+              <AlertTriangle className="h-6 w-6" />
+            </InviteStateIcon>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">{copy.errorHeading}</h1>
+            <p className="text-base leading-relaxed text-slate-700">{copy.errorBody}</p>
+            <div className="flex flex-wrap items-center gap-3 pt-2">
+              <a data-testid="awaiting-payment-try-again" href="/invite/awaiting-payment" className={INVITE_PRIMARY_BUTTON}>
                 {copy.tryAgain}
               </a>
               <SignOutButton label={copy.signOut} busyLabel={copy.signingOut} failedLabel={copy.signOutFailed} signInUrl={signInUrl} />
@@ -98,6 +100,6 @@ export default async function AwaitingPaymentPage() {
           </>
         ) : null}
       </section>
-    </main>
+    </InviteShell>
   );
 }
