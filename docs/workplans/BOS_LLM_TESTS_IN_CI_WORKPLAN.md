@@ -22,6 +22,7 @@ This workplan adds that suite to CI as a blocking check, without lengthening the
 10. [Out of scope](#10-out-of-scope)
 11. [Questions for SA](#11-questions-for-sa)
 12. [SA Review](#12-sa-review)
+13. [QA Test Report](#qa-test-report)
 
 ---
 
@@ -69,9 +70,9 @@ Step durations from four recent non-skipped runs (`gh run view`), in seconds:
 |---|---|
 | 37184648443 (PR) | 214 s |
 | 37184288060 (PR) | 207 s |
-| 37172283864 (PR) | ~245 s (whole run) |
+| 37172283864 (PR) | 167 s (job; the run's 245 s included a 77 s queue wait; corrected per SA §12.1) |
 
-**Headroom for a step appended to the type-check job is about 50–55 s** (≈207 − 155). That is the number Option A must fit inside, with margin.
+**Headroom is per commit, not one number.** The draft said ~50–55 s (≈207 − 155). SA measured 17 paired commits: the median gap between the type-check job and Build finishing is about 62 s, but about 1 run in 5 has a fast Build (119–170 s), where the gap fell to 8 s and once to −8 s. The bar is therefore C-2's paired per-commit test, not a single headroom figure.
 
 ### 3.3 The suite itself, and why local numbers are not used
 
@@ -142,9 +143,10 @@ Each slice is hours, not days. No production code changes, no data, no secrets.
 
 - **AC-1:** On a PR that touches anything outside `docs/`, `scripts/` or `.claude/`, `Type check (Business OS LLM attribution)` runs `test:bos-llm` with `--ci`, so a stale snapshot **fails**; it is never rewritten.
 - **AC-2:** A failing BOS LLM test **blocks the merge** (Slice 3 proof).
-- **AC-3:** The job's median duration stays below `Build (next build)`'s median over the 3 measured runs: no added PR wall-clock.
+- **AC-3:** Over the 5 measured runs, the median per-commit completion delta (Build job end − type-check job end) is ≥ 0, and the new step's median is ≤ 40 s. (Restated per SA C-3.)
 - **AC-4:** A docs-only PR still skips the job's work and reports success (existing behaviour unchanged).
-- **AC-5:** The type-check and literal verdicts are still reported when the tests fail, and the reverse (`!cancelled()` on every gate step).
+- **AC-5:** The type-check and literal verdicts are still reported when the tests fail, and the reverse (`!cancelled()` on every gate step after the first; the type check runs first and needs none). Known side effect, accepted: if `npm ci` fails, the later steps run without `node_modules` and also go red.
+- **AC-6:** An obsolete snapshot entry, or an orphaned `.snap` file anywhere in the repo, fails the step under `--ci`. (Added per SA C-6; proven in §12.5.)
 
 ---
 
@@ -161,7 +163,7 @@ Each slice is hours, not days. No production code changes, no data, no secrets.
 
 ## 10. Out of scope
 
-- **The full Jest suite in CI.** That is the test-tiering workplan (branch `chore/test-tiering`, not yet merged), which also covers the ~21 suites red on `main` for unrelated reasons. This change must not wait for it, and must not conflict with it: the tiering plan should absorb `test:bos-llm` as one tier.
+- **The full Jest suite in CI.** That is the test-tiering workplan (branch `chore/test-tiering`, not yet merged), which also covers the ~21 suites red on `main` for unrelated reasons. This change must not wait for it, and must not conflict with it: the tiering plan should absorb `test:bos-llm` as one tier. **Both edit the `package.json` scripts block (SA C-8):** whichever merges second rebases, and tiering takes `test:bos-llm` over as one of its tiers.
 - **Chat eval (`eval:chat`) in CI.** It calls a real model on a real account and is non-deterministic by design.
 - The six planner defects found by the 2026-10-04 cold eval (sent to the Business OS owner).
 
@@ -235,6 +237,217 @@ Each slice is hours, not days. No production code changes, no data, no secrets.
 
 **Run 1 (PR #199, run 37189752967): red, for the environment, not the tests.** The new step took **11 s** and failed 3 files (`modelSettings.off.nonchat`, `callParams.boundary.step2`, `modelSettings.off.chat`) with `ReferenceError: crypto is not defined`. The code under test (for example `chat-v4/route.ts:392`) calls the global `crypto.randomUUID()`, which Node 18 does not expose. This job pinned `NODE_VERSION: '18'`; `.nvmrc`, `build.yml`, Vercel and local development are all on **22**. **Fix:** the job now reads `node-version-file: '.nvmrc'`, as `build.yml` does. No test was edited (C-9 respected). This also moves the type-check and literal steps to Node 22. Both are Node-version-agnostic, but **SA to confirm** this is acceptable inside this PR. The other guard workflows (`admin-authz-guard`, `bos-entitlements`, `plugin-tests`, `react-hooks-guard`) still pin 18; out of scope here, flagged as a follow-up.
 
+**C-2 / R-5 result: all 5 attempts on commit 72a779e1** (type-check run 37190638636, build run 37190638602; re-derived by Dev, SA and QA from the GitHub API):
+
+| Attempt | Test step | Type-check job | Build job | Gap (Build end − type-check end) |
+|---|---|---|---|---|
+| 1 | 7 s | 99 s | 134 s | +35 s |
+| 2 | 9 s | 149 s | 212 s | +65 s |
+| 3 | 10 s | 145 s | 208 s | +65 s |
+| 4 | 10 s | 145 s | 209 s | +101 s (Build queued) |
+| 5 | 10 s | 138 s | 132 s | **−4 s** (fast Build: the accepted tail in §12.6.3) |
+| **Median** | **10 s** (≤ 40 s ✅) | | | **+65 s** (≥ 0 ✅) |
+
+Every test step was green. Per §12.6, the placement ruling is now **firm: Option A, scope S1, default workers.** The one negative gap was a fast Build (132 s), the case SA accepted. On that commit the PR would have been ready 4 s later than without this change.
+
+**C-6 / R-3 proofs (local, Node 22, `npm run test:bos-llm` or `jest <file> --ci`):**
+
+| Case | Result | Exit |
+|---|---|---|
+| Stray entry appended to `callParams.boundary.step3.test.ts.snap` | "1 snapshot obsolete" | 1 |
+| Test renamed (snapshot under the new name) | "New snapshot was not written" + 1 obsolete | 1 |
+| Orphaned `.snap` inside `lib/business-os/llm/__tests__/__snapshots__/` | "1 snapshot file obsolete" | 1 |
+| Orphaned `.snap` outside the folder (`lib/business-os/bizql/__tests__/__snapshots__/`) | "1 snapshot file obsolete": the orphan scan is repo-wide, so the step comment stays | 1 |
+| All probes removed, files restored | 23 passed | 0 |
+
+### 12.6 Slice 1 measurement + Slice 2 code review (SA)
+
+**Reviewed by SA, 2026-10-04**
+**Status:** APPROVED WITH CONDITIONS (provisional on attempts 4–5, see 12.6.3). Conditions R-1 to R-5 below.
+
+#### 12.6.1 Commit 72a779e1: Node 18 → `.nvmrc` (22) inside this PR
+
+**Ruling: accepted, in this PR.**
+
+- **The failure was environmental, not a test defect.** The 3 red suites hit `crypto.randomUUID()` on the global, which production (Node 22 on Vercel) provides and Node 18 does not. Making the test pass on 18 would mean editing a test or route code, which C-9 forbids. Moving the runner to the production major is the correct fix, and it is the one C-9 implies ("stop and report", which Dev did in §12.5).
+- **Precedent, not a new pattern.** `build.yml` already reads `node-version-file: '.nvmrc'`, and its comment states why a gate on a different major than production can be green while the deploy breaks. This job now follows the same rule (CLAUDE.md rule 7 satisfied).
+- **Type-check and literal steps on 22.** `tsc` output depends on the `typescript` and `@types/node` versions in the lockfile, not on the runtime major. The literal check is a plain `tsx` script. Both stayed green on 22 in attempts 1–3 (verified below). The step-scoped `NODE_OPTIONS=--max-old-space-size=6144` behaves the same on 22.
+- `NODE_VERSION` is no longer referenced anywhere in the workflow (grep: 0 hits), so no dangling `env.` read.
+- The four other guard workflows still pinning 18 are a correct out-of-scope follow-up. They run no code that needs the `crypto` global today.
+
+#### 12.6.2 C-2 measurement, re-derived by SA
+
+Source: `gh api repos/AgentsPilot/neuronforge/actions/runs/{37190638636,37190638602}/attempts/<n>/jobs`, job and step `started_at`/`completed_at`.
+
+| Attempt | `npm ci` | `tsc` step | Literal step | **Test step** | Type-check job | Build job | **Gap** (Build end − TC end) |
+|---|---|---|---|---|---|---|---|
+| 1 | 47 s | 25 s | 4 s | **7 s** | 99 s | 134 s | **+35 s** |
+| 2 | 80 s | 38 s | 7 s | **9 s** | 149 s | 212 s | **+65 s** |
+| 3 | 79 s | 39 s | 7 s | **10 s** | 145 s | 208 s | **+65 s** |
+| 4 | 77 s | running at review time | | | | | |
+| 5 | not started at review time | | | | | | |
+
+All numbers match Dev's table. Readings:
+
+- **Step budget (C-2a): passes with a wide margin.** 7–10 s against a 40 s cap. `--maxWorkers=2` is not needed and must not be added.
+- **Completion gap (C-2b): passes so far.** Median +65 s over 3 attempts. Attempt 1 is a fast-Build run (134 s, inside the 120–170 s tail named in C-2) and the gap was still +35 s.
+- **Do not credit Node 22 for the attempt-1 speed.** `npm ci` was 47 s in attempt 1 and 77–80 s in attempts 2–4, and `tsc` 25 s vs 38–39 s. That is runner variance, not a Node effect. The honest statement is: the job with the new step (145–149 s typical) is no longer than the job without it on Node 18 (148–159 s in §3.1). The step costs about 10 s, and that is inside the noise of `npm ci`.
+
+#### 12.6.3 Provisional placement ruling
+
+**Option A, scope S1, default workers, stands**, provided attempts 4 and 5 complete green and keep the five-run figures in line. Concretely, the ruling holds if, over all 5 attempts:
+
+1. the test step's median is ≤ 40 s, **and**
+2. the median per-attempt gap (Build end − type-check end) is ≥ 0, **and**
+3. every attempt's test step is green. One red attempt with no code change is a **flake**, and it outranks the timing: a required gate that flakes blocks unrelated merges.
+
+**What would change it:**
+
+| Outcome in attempts 4–5 | Effect |
+|---|---|
+| A test step > 40 s in one attempt, median still ≤ 40 s | Ruling stands. Record the outlier in §3 |
+| Median step > 40 s (needs both remaining attempts very slow) | Re-measure 5 runs with `npm run test:bos-llm -- --maxWorkers=2` on the step (C-1). Still over → Option B (§6) |
+| Median gap < 0 | Option A is withdrawn. Go to Option B; the admin-adds-check dependency is tracked like the build gate's OI-3 |
+| A negative gap in one attempt on a fast Build (< 170 s), median ≥ 0 | Accepted tail per C-2. Record it in §3 |
+| Any red test step on an unchanged SHA | Stop. Report the failing test and its log; no placement ruling until the flake is understood. Do not add retries |
+| Memory pressure (OOM, a killed worker) | `--maxWorkers=2` on the step, or `--workerIdleMemoryLimit`. Never a raised heap (ruling 5) |
+
+Dev records attempts 4–5 in §12.5 (or §3) and the final ruling becomes **firm without another SA pass** if the three tests above hold. Any row of the "what would change it" table other than the two "ruling stands / accepted tail" rows returns to SA.
+
+#### 12.6.4 Slice 2 code review (uncommitted diff)
+
+Checked against C-4, C-5, C-6, C-9.
+
+| # | Item | Finding | Result |
+|---|---|---|---|
+| 1 | Workflow header | Says the job is required, that a red run blocks for all three gates, and why the name must not change. "Only one on `main`" is gone. No counts, no dates | ✅ C-5 |
+| 2 | Third-gate header paragraph | Names the suite and the reason for the placement | ✅ (see R-4 on wording) |
+| 3 | Step comment | Names #151 → #185, `--ci` fail-not-write, the repo-wide orphan scan, no `--passWithNoTests`, `!cancelled()`, and "re-measure before widening". PR numbers are incident references, which C-4 asked for, not status | ✅ C-4, C-6 (documentation half) |
+| 4 | Step name and `if:` | `Run Business OS LLM test suite`, identical `if:` to the literal step, after it | ✅ C-4. The "for example" name in C-4 was not mandatory; this one is clear in the job's step list |
+| 5 | `timeout-minutes` comment | "about a minute after install" matches the measured `tsc` + literal + tests (36–58 s) | ✅ C-4 |
+| 6 | Skill Standard 7 | New `test:bos-llm` bullet: `--ci` fails a moved snapshot, update only that snapshot with `-t … -u` and give the reason in the commit. By-hand bullet names the `*attribution*` suites outside `llm/` (the glob also matches the hyphenated `*-attribution.test.ts` files) and `route.credits.test.ts`. The dead `route.test.ts.snap` line is removed and its retirement noted | ✅ ruling 4, with a gap: R-2 |
+| 7 | Skill Standard 8 | "Not required" replaced: required, a red run blocks, a green one still proves only what the check sees, and the boundary tests are now in CI | ✅ C-5 |
+| 8 | Skill checklist line | Adds `test:bos-llm`, deliberate snapshot moves, by-hand suites; drops "usage snapshot unchanged" | ✅ |
+| 9 | Counts and dates in skill/workflow | None found | ✅ C-5, C-9 |
+| 10 | Diff scope | `package.json` script (Slice 1), workflow step and comments, Node source (12.6.1), skill, workplan. No production code, no `.snap` change, no test edit | ✅ C-9 |
+| 11 | Workplan §3.2 | 245 s row corrected to 167 s job time; single headroom line replaced with the paired distribution and the fast-Build tail | ✅ C-5, C-2 (tail named) |
+| 12 | Workplan §10 | `package.json` scripts block named as the touch point with tiering | ✅ C-8 |
+| 13 | Workplan §8 AC-3 | Still the old "median of one job below the median of the other" text | ❌ C-3 not done: R-1 |
+| 14 | Workplan §8 AC-6 | Not added | ❌ C-6 not done: R-1 |
+| 15 | C-6 local proof | Stray obsolete entry → "1 snapshot obsolete", exit 1. Renamed test → "New snapshot was not written" + obsolete, exit 1. Both restored, exit 0. Not yet run: orphaned `.snap` | ⚠️ R-3 |
+| 16 | Logging (`console.*`) | No `lib/`, `app/` or `components/` file in the diff | n/a |
+| 17 | Entitlements imports | None in the diff | n/a |
+
+#### 12.6.5 Conditions for Slice 2 to be code-approved
+
+- **R-1 (§8).** Replace AC-3 with the C-3 wording and add AC-6 per C-6. Both were conditions of the workplan approval, and the acceptance criteria are what QA tests against.
+- **R-2 (Standard 7: say what `route.credits.test.ts` covers).** Ruling 4 asked for the reason it is on the by-hand list: it pins the owner usage payload. As written, a reader sees a file name without knowing what breaking it would mean. Half a sentence, no counts or dates.
+- **R-3 (orphan proof).** Run the orphaned-`.snap` case locally and record it in §12.5: copy any snapshot to a `__snapshots__/` path whose test file does not exist (inside `lib/business-os/llm/__tests__/`, then once **outside** it, to prove the repo-wide claim in the step comment). Expect `1 snapshot file obsolete` and exit 1 under `npm run test:bos-llm`. Delete the copies and confirm exit 0. If the outside-the-folder copy does **not** fail, remove "the orphan scan is repo-wide" from the step comment rather than leave a claim that is false. Also record the two proofs already run (stray entry, renamed test) with their exit codes in §12.5.
+- **R-4 (header wording, Low).** "it was measured to finish inside `next build`'s time" is true for the typical run but not for the fast-Build tail C-2 accepts. Prefer "measured against `next build`'s time; see the workplan", which the step comment already says. Not blocking on its own, but fix it with R-1/R-2.
+- **R-5 (attempts 4–5).** Record both attempts in the C-2 table. The placement in 12.6.3 becomes firm if the three tests there hold; otherwise return to SA.
+
+Slice 3 (C-7, the throwaway blocking proof) stays as planned after Slice 2 is committed.
+
+#### 12.6.6 Code approved for QA
+
+**Not yet.** Yes once R-1 to R-3 and R-5 are done and the five-run tests in 12.6.3 hold. R-4 is low priority. No further SA pass is needed for R-1, R-2, R-4 (text edits that match the wording above); R-3 returns to SA only if the out-of-folder orphan does not fail.
+
+---
+
+## QA Test Report
+
+**QA — 2026-10-04**
+**Test mode:** full
+**Strategy used:** C (script: local `npm run test:bos-llm`, snapshot probes, the skip script against synthetic commits in a throwaway worktree) + E (CI job/step timings from the GitHub API) + static read of the workflow YAML. No Jest test was added: the change is CI configuration.
+**Focus:** CI gate (pipeline of checks), schema of the workflow
+**Skipped:** AC-2 (merge actually blocked): Slice 3, only testable after merge. No CI re-run, no commit, no push (instructed).
+**Input source:** prompt keywords (TL brief) + §8 AC-1..AC-6 (AC-3/AC-6 as restated in §12.6)
+**Tested against:** HEAD 72a779e1 + the uncommitted Slice 2 diff (workflow comments, skill, workplan). Local Node v22.19.0 (`.nvmrc` = 22).
+
+### Test Coverage
+
+| Acceptance Criterion | Tested? | Result | Notes |
+|---|---|---|---|
+| AC-1 `test:bos-llm` runs with `--ci` in the required job | ✅ | Pass | `package.json`: `"test:bos-llm": "jest lib/business-os/llm/__tests__ --ci"`. Local run: 23 suites / 602 tests / 23 snapshots passed, exit 0 (14.6 s). Workflow step `Run Business OS LLM test suite` is step 6 of 7, after the literal check, `if: ${{ !cancelled() && steps.scope.outputs.skip != 'true' }}`, `run: npm run test:bos-llm`. Green on CI in all 5 attempts |
+| AC-2 a failing test blocks the merge | ⬜ | NOT YET TESTABLE | Slice 3, after merge (throwaway PR) |
+| AC-3 5 runs: median gap ≥ 0, median step ≤ 40 s | ✅ | Pass | Re-derived from the API, all 5 attempts (table below). Step median **10 s**; gap median **+65 s**; every test step green. Attempt 5 gap is **−4 s** on a fast Build (132 s < 170 s): the "accepted tail" row of §12.6.3 — must be recorded in §3 (see Edge Case 1) |
+| AC-4 docs-only change still skips and reports success | ✅ | Pass | Synthetic commits in a throwaway `git worktree add --detach` of HEAD, `bash .github/ci/non-deploying-change.sh HEAD^ HEAD`: `docs/` only → SKIP exit 0; `.claude/` + root `README.md` → SKIP exit 0; `lib/…/callCatalog.ts` → BUILD exit 1; the workflow file → BUILD exit 1; `package.json` → BUILD exit 1; a `.snap` under `lib/` → BUILD exit 1. On SKIP every gate step is skipped and only the summary step runs, so the job concludes success. Script unchanged by this PR |
+| AC-5 verdicts still reported when another gate fails | ✅ | Pass (see Edge Case 2) | Order: type check → literal → tests. Type check red → literal and tests still run (`!cancelled()`). Literal red → tests still run. Tests red → the two earlier verdicts already exist. Job fails if any step fails. The type-check step itself has no `!cancelled()`; harmless because it is the first gate (only checkout/setup/install precede it) |
+| AC-6 obsolete entry / orphaned `.snap` fails under `--ci` | ✅ | Pass | Re-verified locally (probes below), all restored. Also checked the AC-1 claim that a moved snapshot fails and is **not** rewritten |
+
+**AC-3 measurement** (`gh api repos/AgentsPilot/neuronforge/actions/runs/{37190638636,37190638602}/attempts/<n>/jobs`):
+
+| Attempt | Test step | Type-check job (start → end) | Build job (start → end) | Gap (Build end − TC end) | Test step result |
+|---|---|---|---|---|---|
+| 1 | 7 s | 08:58:26 → 09:00:05 (99 s) | 08:58:26 → 09:00:40 (134 s) | +35 s | success |
+| 2 | 9 s | 09:02:35 → 09:05:04 (149 s) | 09:02:37 → 09:06:09 (212 s) | +65 s | success |
+| 3 | 10 s | 09:13:18 → 09:15:43 (145 s) | 09:13:20 → 09:16:48 (208 s) | +65 s | success |
+| 4 | 10 s | 09:18:46 → 09:21:11 (145 s) | 09:19:23 → 09:22:52 (209 s) | +101 s | success |
+| 5 | 10 s | 09:23:50 → 09:26:08 (138 s) | 09:23:52 → 09:26:04 (132 s) | **−4 s** | success |
+
+Attempts 1–4 match Dev's and SA's numbers. Attempt 4's +101 s is partly start skew (Build started 37 s after the type check). Median step 10 s ≤ 40 s; median gap +65 s ≥ 0; no red step, so the three tests in §12.6.3 hold.
+
+**Other checks**
+
+| Check | Result |
+|---|---|
+| Workflow YAML parses (`js-yaml`) | ✅ Workflow name and job name unchanged (`Type check (Business OS LLM attribution)`); Setup Node uses `node-version-file: '.nvmrc'`; no `NODE_VERSION` reference left |
+| SA C-5: no counts or dates in added workflow/skill lines | ✅ Scan of every `+` line for dates, "N suites/tests/…" and seconds: 0 hits. PR numbers (#151, #185) are incident references, accepted by SA (§12.6.4 #3) |
+| SA C-9: diff scope | ✅ Committed vs `origin/main`: workflow, `package.json` (1 line), workplan. Uncommitted: workflow, skill, workplan. No test, `.snap` or production file |
+| R-2 / R-4 text | ✅ Skill names `route.credits.test.ts` "which pins the owner usage payload"; header now says runtime "was measured against `next build`'s time" |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+
+None.
+
+#### Performance Issues (should fix)
+
+None. The step costs 7–10 s; in attempt 5 it is the reason the type-check job ended after Build (≈ 6 s ahead of Build without it), which is the accepted fast-Build tail.
+
+#### Edge Cases (nice to fix)
+
+1. **R-5 not yet written into the workplan** — Attempts 4 and 5 are not in the §12.6.2 table or §12.5, and attempt 5's −4 s gap on a fast Build must be recorded in §3 per the §12.6.3 "accepted tail" row. §12.6.6 still reads "Not yet". Dev records them (this report's table can be copied); no SA pass is needed for this outcome per §12.6.3. — File: `docs/workplans/BOS_LLM_TESTS_IN_CI_WORKPLAN.md` — Severity: Low (documentation; the data passes).
+2. **AC-5 wording vs YAML** — AC-5 says "`!cancelled()` on every gate step", but `Run scoped type check` keeps the plain `steps.scope.outputs.skip != 'true'`. Behaviour is correct (it is the first gate). Side effect worth knowing: if `npm ci` fails, the literal and test steps still run with no `node_modules` and add two red steps whose cause is the install, not the code. Either tighten the AC wording to "every gate step after the first" or accept. — File: `.github/workflows/bos-llm-typecheck.yml` / §8 — Severity: Low.
+
+### Test Outputs / Logs
+
+```text
+npm run test:bos-llm (clean tree)
+Test Suites: 23 passed, 23 total
+Tests:       602 passed, 602 total
+Snapshots:   23 passed, 23 total            EXIT=0
+
+Probe 1 - stray entry appended to callParams.boundary.step3.test.ts.snap
+ > 1 snapshot obsolete from 1 test suite.
+Snapshots:   1 obsolete, 23 passed, 23 total   EXIT=1   (restored with git checkout)
+
+Probe 2 - orphaned .snap in lib/business-os/bizql/__tests__/__snapshots__/ (outside the folder)
+ > 1 snapshot file obsolete from 1 test suite.
+Snapshots:   1 file obsolete, 23 passed, 23 total   EXIT=1   (file and new dir removed)
+
+Probe 3 - value in callParams.snapshot.test.ts.snap changed (0.3 -> 0.31), jest <file> --ci
+ > 1 snapshot failed from 1 test suite.
+Tests: 1 failed, 7 passed, 8 total             EXIT=1   (.snap still carried the probe edit: not rewritten; restored)
+
+non-deploying-change.sh HEAD^ HEAD (throwaway worktree, synthetic commits)
+docs/ only                 -> SKIP  exit 0
+.claude/ + README.md       -> SKIP  exit 0
+lib/.../callCatalog.ts     -> BUILD exit 1
+.github/workflows/*.yml    -> BUILD exit 1
+package.json               -> BUILD exit 1
+lib/.../*.snap             -> BUILD exit 1
+```
+
+Cleanup: the throwaway worktree (no `node_modules` junction) was removed without `--force` and pruned; all probe files restored or deleted; `git status` shows only the three pre-existing modifications.
+
+### Final Status
+
+- [x] All testable acceptance criteria pass (AC-1, AC-3, AC-4, AC-5, AC-6) — ready for commit once Dev records attempts 4–5 (Edge Case 1)
+- [ ] Issues found — Dev must address before commit
+- AC-2 is NOT YET TESTABLE (Slice 3, after merge)
+
 ---
 
 ## Change History
@@ -244,3 +457,6 @@ Each slice is hours, not days. No production code changes, no data, no secrets.
 | 2026-10-04 | Created | Dev workplan after #151 / #185: measurements, options A/B/C, scope S1/S2, 3 slices, questions for SA |
 | 2026-10-04 | SA review | APPROVED WITH CONDITIONS (C-1 to C-9). Option A accepted, scope S1 only, bar restated as a paired per-SHA completion delta over 5 runs; §3.2 headroom corrected (run 37172283864's Build job was 167 s, headroom 8 s); `--ci` obsolete/orphan snapshot behaviour verified in Jest 30.2 source; Standard 7 points at `route.credits.test.ts` |
 | 2026-10-04 | Slice 1 run 1 | Red on Node 18 (`crypto` global). Job switched to `.nvmrc` (22); see §12.5 |
+| 2026-10-04 | SA Slice 1 measurement + Slice 2 code review | §12.6. Node 22 switch accepted in this PR (`build.yml` precedent). Attempts 1–3 re-derived: test step 7–10 s, gap +35/+65/+65 s. Provisional ruling: Option A, S1, default workers, firm if all 5 attempts give step median ≤ 40 s, median gap ≥ 0 and no red step. Slice 2 diff passes C-4/C-5/C-9; R-1 to R-5 open (AC-3/AC-6 in §8, `route.credits.test.ts` purpose, orphaned-`.snap` proof, header wording, attempts 4–5) |
+| 2026-10-04 | QA test report | AC-1, AC-3, AC-4, AC-5, AC-6 PASS; AC-2 not yet testable (Slice 3). All 5 attempts re-derived: step median 10 s, gap median +65 s (attempt 5 −4 s on a 132 s Build = accepted tail), all green. No bugs; 2 low edge cases (attempts 4–5 not yet recorded in §12.5/§3; AC-5 wording vs the first gate step) |
+| 2026-10-04 | Slice 1 complete (R-5) | Attempts 4–5 recorded (§12.5); median step 10 s, median gap +65 s, one −4 s fast-Build tail; placement firm (Option A, S1). AC-5 wording aligned with the YAML (QA edge case 2) |

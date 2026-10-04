@@ -1,9 +1,8 @@
-# Business OS LLM Attribution Type Check + Model-Literal Check
-# Workflow and job NAMES are kept stable on purpose, so the check's identity
-# survives if branch protection ever adopts it. It is NOT a required check
-# today - `Admin authz surface guard` is the only one on `main` - so a red run
-# here does NOT block a merge. Until that changes, both gates below are
-# advisory: they tell a reviewer the truth, they do not enforce it.
+# Business OS LLM Attribution Type Check + Model-Literal Check + Test Suite
+# The job name `Type check (Business OS LLM attribution)` is a REQUIRED status
+# check on `main`: a red run here blocks the merge, for all three gates below.
+# Workflow and job NAMES are kept stable on purpose - branch protection
+# requires the check by name, so renaming it silently drops the requirement.
 #
 # The call catalog (lib/business-os/llm/callCatalog.ts) turns a wrong area or
 # call name, or a missing account, into a TYPE error. Nothing else enforces
@@ -15,6 +14,12 @@
 # A second step runs the Layer 2 literal gate
 # (scripts/check-bos-llm-literals.ts): no Business OS call site may hardcode a
 # model name or a temperature instead of resolving it (FR-15).
+#
+# A third step runs `npm run test:bos-llm` (lib/business-os/llm/__tests__):
+# the boundary snapshots that record exactly what each call site sends to the
+# provider. Placed in this job, not its own, so it is required from day one and
+# shares the install; its runtime was measured against `next build`'s time -
+# see docs/workplans/BOS_LLM_TESTS_IN_CI_WORKPLAN.md.
 #
 # No `paths:` filter on purpose: the scope is derived from the import graph
 # (the catalog, its importers, barrels, and their direct callers), so a new
@@ -46,7 +51,7 @@ jobs:
   typecheck-bos-llm:
     name: Type check (Business OS LLM attribution)
     runs-on: ubuntu-latest
-    # The check takes ~1-2 minutes after install; fail fast if something hangs.
+    # The three gates take about a minute after install; fail fast if something hangs.
     timeout-minutes: 15
     steps:
       # fetch-depth 2 so HEAD^ resolves. On a merge landing on main HEAD^ is
@@ -127,9 +132,10 @@ jobs:
       # red until #185. `--ci` (in the npm script) makes a stale, new, obsolete or
       # orphaned snapshot FAIL instead of being written; the orphan scan is
       # repo-wide. No --passWithNoTests: a moved test folder must fail loudly.
-      # Same `!cancelled()` reasoning as the literal check above.
-      # MEASUREMENT PHASE: placement is ruled on CI timings, see
-      # docs/workplans/BOS_LLM_TESTS_IN_CI_WORKPLAN.md §6 and SA condition C-2.
+      # Same `!cancelled()` reasoning as the literal check above. Its runtime
+      # was measured against `next build` before it was placed here: see
+      # docs/workplans/BOS_LLM_TESTS_IN_CI_WORKPLAN.md. Re-measure before
+      # widening the test list.
       - name: Run Business OS LLM test suite
         if: ${{ !cancelled() && steps.scope.outputs.skip != 'true' }}
         run: npm run test:bos-llm
