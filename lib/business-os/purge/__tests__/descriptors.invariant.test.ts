@@ -655,3 +655,84 @@ describe('C-4 — archived activity history is purged with the live history', ()
     expect(archived?.order).toBe(live?.order);
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// Admin delete AD-1a — the SC-8 classification pass and the D-5 area field.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('AD-1a SC-8 — the tables the SchemaReconciler found on prod are classified', () => {
+  const baseline = JSON.parse(
+    fs.readFileSync(path.join(__dirname, 'classification-baseline.json'), 'utf-8')
+  ) as { count: number; levels: Record<string, string>; reviewNotes?: Record<string, string> };
+
+  const SC8: Record<string, string> = {
+    insight_actions: 'reset',
+    auth_handoff_codes: 'never',
+    ais_scoring_weights: 'never',
+    ais_system_config: 'never',
+    exchange_rates: 'never',
+    exchange_rate_history: 'never',
+    system_settings_config: 'never',
+    sla_events: 'never',
+    shared_agent_imports: 'never',
+  };
+  const FU9_NO_ACTION = ['exchange_rates', 'exchange_rate_history', 'system_settings_config', 'sla_events'];
+
+  it.each(Object.entries(SC8))('%s is a descriptor at level %s, matching the baseline', (table, level) => {
+    expect(byTable.get(table)?.level).toBe(level);
+    expect(baseline.levels[table]).toBe(level);
+  });
+
+  it('each SC-8 entry carries a dated review note in the baseline', () => {
+    for (const table of Object.keys(SC8)) {
+      expect(baseline.reviewNotes?.[table]).toMatch(/^\d{4}-\d{2}-\d{2} AD-1a SC-8: .{20,}/);
+    }
+  });
+
+  it('every review note names a table that is in the baseline', () => {
+    const orphans = Object.keys(baseline.reviewNotes ?? {}).filter((t) => !(t in baseline.levels));
+    expect(orphans).toEqual([]);
+  });
+
+  it('the baseline count matches its levels, and covers the SC-8 additions', () => {
+    expect(Object.keys(baseline.levels).length).toBe(baseline.count);
+    expect(baseline.count).toBe(144);
+  });
+
+  it('insight_actions is a user_id-scoped LEAF with full-row snapshot (SA-1(a))', () => {
+    const d = byTable.get('insight_actions')!;
+    expect(d.scope).toEqual({ kind: 'user_id' });
+    expect(d.order).toBe(byTable.get('crm_tasks')!.order); // the LEAF band
+    expect(d.snapshot).toBe('rows');
+    expect(d.notes).toMatch(/business_profiles/);
+    expect(descriptorsForRun('reset', { integrations: false, agents: false, activityHistory: false })
+      .some((x) => x.table === 'insight_actions')).toBe(true);
+  });
+
+  it.each(FU9_NO_ACTION)('%s notes its NO ACTION FK for FU-9', (table) => {
+    expect(byTable.get(table)?.notes).toMatch(/NO ACTION/);
+    expect(byTable.get(table)?.notes).toMatch(/FU-9/);
+  });
+});
+
+describe('AD-1a D-5 — every deletable descriptor has a business area', () => {
+  it('no non-never descriptor is missing an area', () => {
+    const missing = PURGE_DESCRIPTORS.filter((d) => d.level !== 'never' && !d.area).map((d) => d.table);
+    // Non-vacuity: there are deletable descriptors to check.
+    expect(PURGE_DESCRIPTORS.filter((d) => d.level !== 'never').length).toBeGreaterThan(50);
+    expect(missing).toEqual([]);
+  });
+
+  it('the required-area check can fail (negative case)', () => {
+    const broken = { table: 'x', level: 'reset', scope: { kind: 'user_id' }, order: 300, snapshot: 'rows' } as PurgeDescriptor;
+    expect([broken].filter((d) => d.level !== 'never' && !d.area)).toHaveLength(1);
+  });
+
+  it('opt-in descriptors group under the area of their option', () => {
+    for (const d of PURGE_DESCRIPTORS) {
+      if (d.level === 'optional:agents') expect(d.area).toBe('agents');
+      if (d.level === 'optional:integrations') expect(d.area).toBe('integrations');
+      if (d.level === 'optional:activityHistory') expect(d.area).toBe('activity_history');
+    }
+  });
+});
