@@ -61,10 +61,31 @@ const RULES = [
   },
 ] as const;
 
-const files = [...sourceFiles(CREDITS_DIR), READ_REPOSITORY, OWNER_READ_REPOSITORY];
+/**
+ * The admin AI Activity view (Gap B slice B1a, NFR-4.5, SA-RC-2): its route and
+ * its screen live OUTSIDE the credits module, so they are listed here. The rule
+ * applies to the view "wherever it lives": the screen is walked, so a component
+ * added tomorrow is covered.
+ */
+const ACTIVITY_ROUTE = 'app/api/admin/business-os/ai-activity/route.ts';
+const ACTIVITY_SCREEN_DIR = 'app/admin/business-os-llm/components/activity';
+const ACTIVITY_SCREEN_MODULES = [
+  'app/admin/business-os-llm/activityTypes.ts',
+  'app/admin/business-os-llm/activityCopy.ts',
+  'app/admin/business-os-llm/activityPresets.ts',
+];
+
+const files = [
+  ...sourceFiles(CREDITS_DIR),
+  READ_REPOSITORY,
+  OWNER_READ_REPOSITORY,
+  ACTIVITY_ROUTE,
+  ...sourceFiles(ACTIVITY_SCREEN_DIR),
+  ...ACTIVITY_SCREEN_MODULES,
+];
 
 describe('N-10: no grouping or filtering on the raw service column', () => {
-  it('scans the credits module and both read repositories', () => {
+  it('scans the credits module, both read repositories and the AI Activity view', () => {
     expect(files).toEqual(
       expect.arrayContaining([
         RESOLVER,
@@ -72,6 +93,16 @@ describe('N-10: no grouping or filtering on the raw service column', () => {
         `${CREDITS_DIR}/ownerCreditUsage.ts`,
         READ_REPOSITORY,
         OWNER_READ_REPOSITORY,
+        // The Activity view's server half: named explicitly, so moving a file
+        // out of the credits directory turns this red instead of silently
+        // dropping it from the scan.
+        `${CREDITS_DIR}/aiActivity.ts`,
+        `${CREDITS_DIR}/aiActivityDeps.ts`,
+        `${CREDITS_DIR}/aiActivityTypes.ts`,
+        ACTIVITY_ROUTE,
+        `${ACTIVITY_SCREEN_DIR}/ActivityTab.tsx`,
+        `${ACTIVITY_SCREEN_DIR}/ActivityTable.tsx`,
+        ...ACTIVITY_SCREEN_MODULES,
       ])
     );
   });

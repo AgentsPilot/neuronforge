@@ -69,6 +69,7 @@ export {
   CREDIT_LEDGER_ROW_COLUMNS,
   CREDIT_TOTALS_COLUMNS,
   CREDIT_LEDGER_READ_LIMITS,
+  CHARGE_LIST_LIMITS,
 } from './BusinessOsCreditLedgerReadRepository';
 export type {
   CreditLedgerRow,
@@ -76,6 +77,10 @@ export type {
   CreditPeriodStartRange,
   CreditLedgerPageOptions,
   CreditLedgerPagedResult,
+  ChargeListSort,
+  ChargeListFilter,
+  ChargeListOptions,
+  ChargeListPage,
 } from './BusinessOsCreditLedgerReadRepository';
 // Business OS credit ledger, the OWNER'S OWN read (credit deduction slice 6a):
 // the dashboard card. Takes the caller's RLS client (required, so no singleton);

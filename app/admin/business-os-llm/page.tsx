@@ -36,21 +36,35 @@
  * refresh, "read at" and the standing note belong to the Settings tab and are
  * shown only there.
  *
+ * ── Three tabs, addressable by URL (AI Activity view, Gap B slice B1a) ───
+ * **Activity** (`components/activity/ActivityTab.tsx`) lists one row per
+ * Business OS AI action from the credit ledger. It is mounted lazily and then
+ * kept mounted, exactly like Costs & credits. The chosen tab is in the URL as
+ * `?tab=settings|costs|activity` (SA-RC-13): read once on first render — which
+ * also opens that tab's lazy panel (SA-B1-8) — and written back with
+ * `history.replaceState`, keeping `history.state` as the analytics page does,
+ * so there is no navigation and no refetch. An unknown value means Settings;
+ * any other parameter (a future `actionId`, B3) is left alone and ignored.
+ *
  * @see docs/workplans/BUSINESS_OS_LLM_MODEL_SETTINGS_ADMIN_UI_WORKPLAN.md §5
  * @see docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_4_WORKPLAN.md §4.6
+ * @see docs/workplans/BUSINESS_OS_ADMIN_AI_ACTIVITY_SLICE_B1_WORKPLAN.md § F
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 
 import { AreaCard } from './components/AreaCard';
+import { ActivityTab } from './components/activity/ActivityTab';
 import { CostsTab } from './components/costs/CostsTab';
+import { ACTIVITY_TAB_LABEL } from './activityCopy';
 import { PAGE_STANDING_NOTE, PAGE_SUBTITLE } from './copy';
 import { COSTS_TAB_LABEL, SETTINGS_TAB_LABEL } from './costCopy';
 import { formatInstant } from './format';
 import type { SettingsPayload } from './types';
 
-type PageTab = 'settings' | 'costs';
+type PageTab = 'settings' | 'costs' | 'activity';
 
 const tabId = (id: PageTab) => `bos-llm-tab-${id}`;
 const panelId = (id: PageTab) => `bos-llm-panel-${id}`;
@@ -58,20 +72,52 @@ const panelId = (id: PageTab) => `bos-llm-panel-${id}`;
 const TABS: readonly (readonly [PageTab, string])[] = [
   ['settings', SETTINGS_TAB_LABEL],
   ['costs', COSTS_TAB_LABEL],
+  ['activity', ACTIVITY_TAB_LABEL],
 ];
 
+const TAB_PARAM = 'tab';
+
+/** The tab a `?tab=` value names; anything else is Settings. */
+function tabFromParam(value: string | null | undefined): PageTab {
+  return TABS.some(([id]) => id === value) ? (value as PageTab) : 'settings';
+}
+
+/** Write the chosen tab into the address bar without navigating (no refetch, no router). */
+function writeTabToUrl(id: PageTab) {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  url.searchParams.set(TAB_PARAM, id);
+  window.history.replaceState(window.history.state, '', url.toString());
+}
+
+// useSearchParams needs a Suspense boundary in Next 14.
 export default function BusinessOsLlmSettingsPage() {
+  return (
+    <Suspense fallback={null}>
+      <BusinessOsLlmSettingsContent />
+    </Suspense>
+  );
+}
+
+function BusinessOsLlmSettingsContent() {
+  // Null outside the App Router (e.g. a unit test); treated as "no tab asked for".
+  const searchParams = useSearchParams();
+  const [initialTab] = useState<PageTab>(() => tabFromParam(searchParams?.get(TAB_PARAM)));
   const [payload, setPayload] = useState<SettingsPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [tab, setTab] = useState<PageTab>('settings');
+  const [tab, setTab] = useState<PageTab>(initialTab);
   const onSettings = tab === 'settings';
-  // The cost report is not read until asked for; once asked, it stays mounted.
-  const [costsOpened, setCostsOpened] = useState(false);
+  // A lazy tab is not read until asked for — by a click OR by the URL it was
+  // opened with (SA-B1-8) — and once asked, it stays mounted.
+  const [costsOpened, setCostsOpened] = useState(initialTab === 'costs');
+  const [activityOpened, setActivityOpened] = useState(initialTab === 'activity');
   const chooseTab = (id: PageTab) => {
     if (id === 'costs') setCostsOpened(true);
+    if (id === 'activity') setActivityOpened(true);
     setTab(id);
+    writeTabToUrl(id);
   };
 
   const load = useCallback(async () => {
@@ -160,6 +206,10 @@ export default function BusinessOsLlmSettingsPage() {
 
       <div role="tabpanel" id={panelId('costs')} aria-labelledby={tabId('costs')} hidden={tab !== 'costs'}>
         {costsOpened && <CostsTab />}
+      </div>
+
+      <div role="tabpanel" id={panelId('activity')} aria-labelledby={tabId('activity')} hidden={tab !== 'activity'}>
+        {activityOpened && <ActivityTab />}
       </div>
 
       <div
