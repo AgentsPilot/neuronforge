@@ -170,6 +170,10 @@ export {
 // Source guards enforce both, barrel included.
 export { BosCronRunRepository, bosCronRunRepository } from './BosCronRunRepository';
 export { AdminJobsQueuesRepository, adminJobsQueuesRepository } from './AdminJobsQueuesRepository';
+// ADMIN_BOS_CLEANUP slice 7b: the one admin write to a live queue row (cancel one
+// item). Its ONLY permitted caller is app/api/admin/jobs-queues/items/action/route.ts;
+// a source guard enforces it, barrel exempt (AdminQueueActionsRepository.test.ts R-9).
+export { AdminQueueActionsRepository, adminQueueActionsRepository } from './AdminQueueActionsRepository';
 // Admin Archiving, read-only in Slice 1 (docs/workplans/ADMIN_ARCHIVING_SLICE_1_UI_WORKPLAN.md)
 export { ArchiveRepository, archiveRepository } from './ArchiveRepository';
 export type {

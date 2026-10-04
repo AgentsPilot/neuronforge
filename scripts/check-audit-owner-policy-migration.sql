@@ -49,6 +49,7 @@ needles AS (
     ('owner scope', 'auth' || chr(46) || 'uid' || chr(40) || chr(41) || ' ' || chr(61) || ' user_id'),
     ('null arm', 'entity_type IS NULL'),
     ('ai_action', chr(39) || 'ai_action' || chr(39)),
+    ('bos_queue_item', chr(39) || 'bos_queue_item' || chr(39)),
     ('business_os_account_plan', chr(39) || 'business_os_account_plan' || chr(39)),
     ('business_os_credit_lot', chr(39) || 'business_os_credit_lot' || chr(39)),
     ('business_os_credit_period', chr(39) || 'business_os_credit_period' || chr(39))
@@ -82,9 +83,10 @@ hidden_counts AS (
          count(*) FILTER (WHERE audit_row.entity_type = 'business_os_account_plan') AS plan_rows,
          count(*) FILTER (WHERE audit_row.entity_type = 'business_os_credit_lot') AS lot_rows,
          count(*) FILTER (WHERE audit_row.entity_type = 'business_os_credit_period') AS period_rows,
+         count(*) FILTER (WHERE audit_row.entity_type = 'bos_queue_item') AS queue_item_rows,
          count(*) FILTER (WHERE audit_row.action = 'BOS_CREDIT_LOW_LINE_CROSSED') AS low_line_rows
   FROM public.audit_trail AS audit_row
-  WHERE audit_row.entity_type IN ('ai_action', 'business_os_account_plan', 'business_os_credit_lot', 'business_os_credit_period')
+  WHERE audit_row.entity_type IN ('ai_action', 'bos_queue_item', 'business_os_account_plan', 'business_os_credit_lot', 'business_os_credit_period')
      OR audit_row.action = 'BOS_CREDIT_LOW_LINE_CROSSED'
 ),
 checks AS (
@@ -99,7 +101,7 @@ checks AS (
            || '  using ' || owner_summary.using_text
   FROM owner_summary
   UNION ALL
-  SELECT 30, 'C03 the owner policy keeps the owner scope and the null arm and hides all four types',
+  SELECT 30, 'C03 the owner policy keeps the owner scope and the null arm and hides all five types',
          CASE WHEN owner_summary.found = 1 AND missing_needles.total = 0
                AND position('IS DISTINCT FROM' IN owner_summary.using_text) = 0 THEN 'PASS' ELSE 'FAIL' END,
          missing_needles.listing
@@ -121,6 +123,7 @@ checks AS (
          'INFO',
          'ai_action ' || hidden_counts.ai_action_rows || ' and business_os_account_plan ' || hidden_counts.plan_rows
            || ' and business_os_credit_lot ' || hidden_counts.lot_rows || ' and business_os_credit_period ' || hidden_counts.period_rows
+           || ' and bos_queue_item ' || hidden_counts.queue_item_rows
            || ' and BOS_CREDIT_LOW_LINE_CROSSED ' || hidden_counts.low_line_rows
   FROM hidden_counts
   UNION ALL

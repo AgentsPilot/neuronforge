@@ -14,6 +14,8 @@
  * are mapped field by field; nothing is written; no row value is logged.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: {} }));
@@ -396,5 +398,136 @@ describe('R-9 / R-10: logs', () => {
     expect(result.data).toBeNull();
     expect(result.error).toBeTruthy();
     expect(JSON.stringify(mockLog.warn.mock.calls)).not.toContain('SENTINEL');
+  });
+});
+
+// ── ADMIN_BOS_CLEANUP slice 7b: the single-item read (workplan §2.2, §5.9) ──
+
+describe.each(QUEUES)('R-11 readQueueItemAllAccounts: %s', (queue) => {
+  const ITEM_ID = 'abcdef12-3456-4789-8abc-def012345678';
+
+  it('one request: the exact column list, eq id, limit 1, no single, no write; found → the mapped row', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [row({ id: ITEM_ID })], error: null }));
+    const result = await new AdminJobsQueuesRepository(client).readQueueItemAllAccounts(CTX, queue, ITEM_ID);
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toEqual([
+      { method: 'from', args: [ADMIN_QUEUE_SPECS[queue].table] },
+      { method: 'select', args: [ADMIN_QUEUE_ITEM_COLUMNS[queue].join(', ')] },
+      { method: 'eq', args: ['id', ITEM_ID] },
+      { method: 'limit', args: [1] },
+    ]);
+    expect(queries.flat().some((c) => WRITES.includes(c.method))).toBe(false);
+    expect(result.error).toBeNull();
+    expect(result.data).toMatchObject({ id: ITEM_ID, userId: 'user-1', status: 'failed', attempts: 2, claimedAt: null });
+  });
+
+  it('[] → null (no such row in THIS queue), not an error', async () => {
+    const { client } = recordingClient(() => ({ data: [], error: null }));
+    expect(await new AdminJobsQueuesRepository(client).readQueueItemAllAccounts(CTX, queue, ITEM_ID)).toEqual({ data: null, error: null });
+  });
+
+  it('the abort signal is passed to the request', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const controller = new AbortController();
+    await new AdminJobsQueuesRepository(client).readQueueItemAllAccounts(CTX, queue, ITEM_ID, { signal: controller.signal });
+    expect(queries[0]).toContainEqual({ method: 'abortSignal', args: [controller.signal] });
+  });
+});
+
+describe('R-11 readQueueItemAllAccounts: refusals, errors and the mapping', () => {
+  const ITEM_ID = 'abcdef12-3456-4789-8abc-def012345678';
+
+  it('a missing context, an unknown queue or an empty id: an error and no request', async () => {
+    const { client, queries } = recordingClient(empty);
+    const repo = new AdminJobsQueuesRepository(client);
+    for (const [context, queue, id] of [
+      [undefined, 'lead_responses', ITEM_ID],
+      [{ correlationId: 'c' }, 'lead_responses', ITEM_ID],
+      [CTX, 'nope', ITEM_ID],
+      [CTX, 'toString', ITEM_ID],
+      [CTX, 'lead_responses', ''],
+    ] as const) {
+      const result = await repo.readQueueItemAllAccounts(context as typeof CTX, queue as AdminQueueId, id);
+      expect(result.data).toBeNull();
+      expect(result.error).toBeInstanceOf(Error);
+    }
+    expect(queries).toEqual([]);
+  });
+
+  it('a malformed row fails the read', async () => {
+    const { client } = recordingClient(() => ({ data: [row({ attempts: -1 })], error: null }));
+    const result = await new AdminJobsQueuesRepository(client).readQueueItemAllAccounts(CTX, 'lead_responses', ITEM_ID);
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+  });
+
+  it('a Supabase error is returned with its code; the warn log carries the code, never the message', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: { message: 'SENTINEL-ERR', code: '57014' } }));
+    const result = await new AdminJobsQueuesRepository(client).readQueueItemAllAccounts(CTX, 'lead_responses', ITEM_ID);
+    expect((result.error as Error & { code?: string }).code).toBe('57014');
+    expect(JSON.stringify(mockLog.warn.mock.calls)).not.toContain('SENTINEL');
+    expect(mockLog.warn.mock.calls[0][0]).toMatchObject({ code: '57014', queue: 'lead_responses' });
+  });
+
+  it('a thrown client is returned, not thrown', async () => {
+    const client = {
+      from: () => {
+        throw new Error('boom SENTINEL');
+      },
+    } as unknown as SupabaseClient;
+    const result = await new AdminJobsQueuesRepository(client).readQueueItemAllAccounts(CTX, 'lead_responses', ITEM_ID);
+    expect(result.data).toBeNull();
+    expect(result.error).toBeTruthy();
+  });
+
+  it('extra fields a client returned (content, error text, claimer) never reach the result', async () => {
+    const { client } = recordingClient(() => ({
+      data: [
+        row({
+          error_message: 'SENTINEL-ERR',
+          skip_reason: 'SENTINEL-SKIP',
+          payload: { to: 'sentinel@client.test' },
+          recommendation: 'SENTINEL-REC',
+          claimed_by: 'SENTINEL-RUNNER',
+          contact_id: 'SENTINEL-CONTACT',
+        }),
+      ],
+      error: null,
+    }));
+    const result = await new AdminJobsQueuesRepository(client).readQueueItemAllAccounts(CTX, 'lead_responses', ITEM_ID);
+    expect(JSON.stringify(result.data)).not.toMatch(/SENTINEL|sentinel|client\.test/);
+    expect(Object.keys(result.data ?? {}).sort()).toEqual(
+      ['attempts', 'briefingDate', 'claimedAt', 'createdAt', 'id', 'kind', 'nextAttemptAt', 'scheduledAt', 'status', 'timezone', 'userId'].sort()
+    );
+  });
+
+  it('logs ids and found only: no row value', async () => {
+    const { client } = recordingClient(() => ({ data: [row({ user_id: 'OWNER-SENTINEL' })], error: null }));
+    await new AdminJobsQueuesRepository(client).readQueueItemAllAccounts(CTX, 'lead_responses', ITEM_ID);
+    expect(mockLog.info).toHaveBeenCalledWith(
+      { correlationId: CTX.correlationId, adminUserId: CTX.adminId, queue: 'lead_responses', found: true },
+      expect.any(String)
+    );
+    expect(JSON.stringify(mockLog.info.mock.calls)).not.toContain('OWNER-SENTINEL');
+  });
+});
+
+describe('R-12..R-14: the read repository stays a reader (slice 7b)', () => {
+  const source = fs
+    .readFileSync(path.join(process.cwd(), 'lib/repositories/AdminJobsQueuesRepository.ts'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+  it('R-12 the single-item read selects only ADMIN_QUEUE_ITEM_COLUMNS: never error_message or skip_reason', async () => {
+    for (const queue of QUEUES) {
+      const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+      await new AdminJobsQueuesRepository(client).readQueueItemAllAccounts(CTX, queue, 'x');
+      const select = queries[0].find((c) => c.method === 'select');
+      expect(String(select?.args[0])).not.toMatch(/error_message|skip_reason|payload|recommendation|claimed_by|\*/);
+    }
+  });
+
+  it('R-14 the file still contains no write: no .update( .insert( .upsert( .delete(', () => {
+    expect(source).not.toMatch(/\.(update|insert|upsert|delete)\(/);
   });
 });
