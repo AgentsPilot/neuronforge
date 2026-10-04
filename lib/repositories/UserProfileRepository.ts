@@ -221,6 +221,29 @@ export class UserProfileRepository {
       return { data: null, error: error as Error };
     }
   }
+
+  /**
+   * GDPR export only (GET /api/user/data-export, Art. 15 / 20). The caller's
+   * whole profile row, every column. The column set and `.single()` are fixed:
+   * changing either changes what the export holds, which is a privacy decision.
+   * A missing row is an error here (PGRST116), as it always was; the route
+   * ignores it and exports the auth fields alone.
+   */
+  async findForUserDataExport(userId: string): Promise<RepositoryResult<Record<string, unknown>>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
+
+      if (error) throw error;
+      return { data: data as Record<string, unknown>, error: null };
+    } catch (error) {
+      this.logger.error({ err: error, userId }, 'Failed to read the profile for the data export');
+      return { data: null, error: error as Error };
+    }
+  }
 }
 
 // Singleton instance for convenience (mirrors the rest of lib/repositories).

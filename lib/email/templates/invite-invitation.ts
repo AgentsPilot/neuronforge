@@ -48,6 +48,7 @@ import {
   formatEmailDate,
   wrapInBrandedTemplate,
 } from './base-template';
+import { escapeHtml } from '@/lib/email/escapeHtml';
 
 /** What the invitation offers, decided by the caller from the invite row. */
 export type InvitationOffer =
@@ -148,16 +149,6 @@ const COPY: Record<Locale, Copy> = {
     ignore: '¿No esperabas este correo? Puedes ignorarlo; no pasará nada a menos que te registres.',
   },
 };
-
-/** HTML-escape text the admin typed. Each template keeps its own (no shared helper exists). */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
 
 /** A subject line with no control character, so no text can start a new header. */
 function subjectSafe(value: string): string {

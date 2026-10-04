@@ -23,6 +23,7 @@ This workplan adds that suite to CI as a blocking check, without lengthening the
 11. [Questions for SA](#11-questions-for-sa)
 12. [SA Review](#12-sa-review)
 13. [QA Test Report](#qa-test-report)
+14. [Slice 3: proof that the gate blocks](#slice-3-proof-that-the-gate-blocks-2026-10-04)
 
 ---
 
@@ -448,6 +449,20 @@ Cleanup: the throwaway worktree (no `node_modules` junction) was removed without
 - [ ] Issues found — Dev must address before commit
 - AC-2 is NOT YET TESTABLE (Slice 3, after merge)
 
+## Slice 3: proof that the gate blocks (2026-10-04)
+
+**AC-2: ✅ PASS.** Throwaway PR #203 (branch `test/throwaway-bos-llm-gate-proof`, off `main` after #199 merged as 88fc5a3f) changed one hex digit of the `chat/planner` digest in `callParams.boundary.step3.test.ts.snap`, the same kind of drift #151 caused.
+
+| Evidence (SA C-7) | Result |
+|---|---|
+| `Type check (Business OS LLM attribution)`, run 37196753907 | ❌ failed on **Run Business OS LLM test suite**. `Run scoped type check` ✅ and `Run model/temperature literal check` ✅ still reported (AC-5) |
+| Failing log | `FAIL lib/business-os/llm/__tests__/callParams.boundary.step3.test.ts`, snapshot `T3-S … chat/planner 1`; `Tests: 1 failed, 624 passed`; `Snapshots: 1 failed, 22 passed`. Not rewritten under `--ci` |
+| Every other check | ✅ (authz guard, build, entitlements, hooks guard, Vercel) |
+| `gh pr view 203 --json mergeStateStatus` after all checks finished | **BLOCKED** |
+| Cleanup | #203 closed unmerged, with an evidence comment; remote and local branches deleted |
+
+With slice 3 done, every acceptance criterion (AC-1 to AC-6) has passed.
+
 ---
 
 ## Change History
@@ -460,3 +475,4 @@ Cleanup: the throwaway worktree (no `node_modules` junction) was removed without
 | 2026-10-04 | SA Slice 1 measurement + Slice 2 code review | §12.6. Node 22 switch accepted in this PR (`build.yml` precedent). Attempts 1–3 re-derived: test step 7–10 s, gap +35/+65/+65 s. Provisional ruling: Option A, S1, default workers, firm if all 5 attempts give step median ≤ 40 s, median gap ≥ 0 and no red step. Slice 2 diff passes C-4/C-5/C-9; R-1 to R-5 open (AC-3/AC-6 in §8, `route.credits.test.ts` purpose, orphaned-`.snap` proof, header wording, attempts 4–5) |
 | 2026-10-04 | QA test report | AC-1, AC-3, AC-4, AC-5, AC-6 PASS; AC-2 not yet testable (Slice 3). All 5 attempts re-derived: step median 10 s, gap median +65 s (attempt 5 −4 s on a 132 s Build = accepted tail), all green. No bugs; 2 low edge cases (attempts 4–5 not yet recorded in §12.5/§3; AC-5 wording vs the first gate step) |
 | 2026-10-04 | Slice 1 complete (R-5) | Attempts 4–5 recorded (§12.5); median step 10 s, median gap +65 s, one −4 s fast-Build tail; placement firm (Option A, S1). AC-5 wording aligned with the YAML (QA edge case 2) |
+| 2026-10-04 | Slice 3 done; workplan complete | #199 merged (88fc5a3f). Throwaway #203: test step red on a 1-digit snapshot change, other gates green, merge BLOCKED; closed unmerged, branches deleted. AC-2 PASS |

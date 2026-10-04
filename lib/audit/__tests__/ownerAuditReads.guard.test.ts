@@ -3,8 +3,11 @@
  * BUSINESS_OS_BD26_OWNER_AUDIT_HIDING_WORKPLAN.md §4, SA W26-6).
  *
  * Owner-hidden entries (lib/audit/ownerVisibility.ts) are left out by three
- * readers: the owner RLS policy, AuditTrailRepository.listOwnerEntries and the
- * data export route. A NEW owner-facing reader of the table would not know the
+ * readers: the owner RLS policy, AuditTrailRepository.listOwnerEntries and
+ * AuditTrailRepository.listOwnerEntriesForExport (the data export route's read;
+ * DATA_EXPORT_REPOSITORY_REFACTOR_WORKPLAN.md OP-3: the route no longer names
+ * the table, so it falls under the normal rule, and the export method must
+ * keep both exclusions). A NEW owner-facing reader of the table would not know the
  * rule, so this guard fails on any `'audit_trail'` / `"audit_trail"` /
  * `` `audit_trail` `` string literal in application code (comments do not
  * count) outside the allow-list below. It matches the literal, not only
@@ -33,8 +36,14 @@ const ALLOWED_FILES: Record<string, string> = {
   'hooks/useLatestArchiveCutoff.ts': 'an archive source key sent to an admin route, not a read',
 };
 
-/** Allowed only while it applies both owner exclusions (W26-6 c, ruling 5). */
+/**
+ * The data export route. NOT allow-listed (OP-3): it reads the table through
+ * AuditTrailRepository.listOwnerEntriesForExport, which must apply both owner
+ * exclusions (W26-6 c, ruling 5). Naming the table here again fails the guard.
+ */
 const DATA_EXPORT_ROUTE = 'app/api/user/data-export/route.ts';
+const AUDIT_REPOSITORY = 'lib/repositories/AuditTrailRepository.ts';
+const EXPORT_READ_METHOD = 'listOwnerEntriesForExport';
 
 const isAdminApi = (file: string) => file.startsWith('app/api/admin/');
 
@@ -131,15 +140,43 @@ function appliesBothOwnerExclusions(source: string): boolean {
   );
 }
 
+/**
+ * The body of `async <name>(` in a class source, from the `{` that opens it to
+ * its matching `}`; null when the method is not there. Braces are counted
+ * naively, which holds for the balanced braces of template literals.
+ */
+function methodBody(source: string, name: string): string | null {
+  const start = source.indexOf(`async ${name}(`);
+  if (start < 0) return null;
+  // The body opens at the first `{` that ends the signature line.
+  const open = source.slice(start).search(/\{\s*[\r\n]/);
+  if (open < 0) return null;
+  let depth = 0;
+  for (let i = start + open; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    else if (source[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start + open, i + 1);
+    }
+  }
+  return null;
+}
+
+/** The export read applies both owner exclusions (W26-6 c, ruling 5; OP-3). */
+function exportReadAppliesBothExclusions(repositorySource: string): boolean {
+  const body = methodBody(repositorySource, EXPORT_READ_METHOD);
+  return body !== null && appliesBothOwnerExclusions(body);
+}
+
+/** The data export route reads the audit rows through the export method. */
+function routeUsesExportRead(routeSource: string): boolean {
+  return withoutComments(routeSource).includes(`auditTrailRepository.${EXPORT_READ_METHOD}(`);
+}
+
 /** The guard's verdict for one file. */
 function violation(file: string, source: string): string | null {
   if (!stringLiteralsOf(source).includes('audit_trail')) return null;
   if (isAdminApi(file) || file in ALLOWED_FILES) return null;
-  if (file === DATA_EXPORT_ROUTE) {
-    return appliesBothOwnerExclusions(source)
-      ? null
-      : `${file} reads audit_trail without both owner exclusions (OWNER_HIDDEN_ENTITY_TYPES and AI_ACTION_EVENT_PREFIX)`;
-  }
   return `${file} names audit_trail outside the owner-read allow-list (BD-26: an owner-facing read must exclude OWNER_HIDDEN_ENTITY_TYPES)`;
 }
 
@@ -159,7 +196,7 @@ describe('owner reads of audit_trail (BD-26, W26-6)', () => {
   });
 
   it('every allow-listed file still names the table (no stale entry)', () => {
-    for (const allowed of [...Object.keys(ALLOWED_FILES), DATA_EXPORT_ROUTE]) {
+    for (const allowed of Object.keys(ALLOWED_FILES)) {
       const entry = files.find(({ file }) => file === allowed);
       expect({ allowed, found: Boolean(entry) }).toEqual({ allowed, found: true });
       expect({ allowed, names: stringLiteralsOf(entry!.source).includes('audit_trail') }).toEqual({ allowed, names: true });
@@ -178,9 +215,22 @@ describe('owner reads of audit_trail (BD-26, W26-6)', () => {
     }
   });
 
-  it('the data export route applies both owner exclusions', () => {
+  it('the data export read still exists by name in AuditTrailRepository (no stale entry, OP-3)', () => {
+    const entry = files.find(({ file }) => file === AUDIT_REPOSITORY);
+    expect(entry).toBeDefined();
+    expect(methodBody(entry!.source, EXPORT_READ_METHOD)).not.toBeNull();
+  });
+
+  it('the data export read applies both owner exclusions (OP-3)', () => {
+    const entry = files.find(({ file }) => file === AUDIT_REPOSITORY);
+    expect(entry && exportReadAppliesBothExclusions(entry.source)).toBe(true);
+  });
+
+  it('the data export route reads audit rows through that method, and does not name the table', () => {
     const entry = files.find(({ file }) => file === DATA_EXPORT_ROUTE);
-    expect(entry && appliesBothOwnerExclusions(entry.source)).toBe(true);
+    expect(entry).toBeDefined();
+    expect(routeUsesExportRead(entry!.source)).toBe(true);
+    expect(stringLiteralsOf(entry!.source)).not.toContain('audit_trail');
   });
 });
 
@@ -206,12 +256,43 @@ describe('the guard itself (negative controls)', () => {
     expect(violation('lib/repositories/AuditTrailRepository.ts', "from('audit_trail')")).toBeNull();
   });
 
-  it('fails the data export route when either exclusion is missing', () => {
+  it('fails the data export route if it names audit_trail again, even with both exclusions (OP-3)', () => {
     const both =
       "from('audit_trail').select('*').not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`).not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`)";
-    expect(violation(DATA_EXPORT_ROUTE, both)).toBeNull();
-    expect(violation(DATA_EXPORT_ROUTE, both.replace(/\.not\('action'[^]*$/, ''))).not.toBeNull();
-    expect(violation(DATA_EXPORT_ROUTE, both.replace(/\.not\('entity_type'[^]*?\)`\)/, ''))).not.toBeNull();
-    expect(violation(DATA_EXPORT_ROUTE, `// OWNER_HIDDEN_ENTITY_TYPES AI_ACTION_EVENT_PREFIX\nfrom('audit_trail')`)).not.toBeNull();
+    expect(violation(DATA_EXPORT_ROUTE, both)).not.toBeNull();
+    expect(violation(DATA_EXPORT_ROUTE, "const { data } = await auditTrailRepository.listOwnerEntriesForExport(user.id, since);")).toBeNull();
+  });
+
+  it('fails the export read when either exclusion is missing (OP-3)', () => {
+    const repo = (body: string) =>
+      [
+        'export class AuditTrailRepository {',
+        '  async listOwnerEntries(userId: string) {',
+        "    return this.supabase.from('audit_trail').not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`).not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`);",
+        '  }',
+        `  async ${EXPORT_READ_METHOD}(userId: string, since: string): Promise<unknown> {`,
+        body,
+        '  }',
+        '}',
+      ].join('\n');
+    const notIn = "      .not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`)";
+    const notLike = "      .not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`)";
+    const read = (...lines: string[]) => ["    const { data } = await this.supabase.from('audit_trail').select('*')", ...lines, '    return data;'].join('\n');
+
+    expect(exportReadAppliesBothExclusions(repo(read(notIn, notLike)))).toBe(true);
+    // Each exclusion missing. The sibling listOwnerEntries has both, so a check
+    // over the whole file instead of the method body would wrongly pass these.
+    expect(exportReadAppliesBothExclusions(repo(read(notLike)))).toBe(false);
+    expect(exportReadAppliesBothExclusions(repo(read(notIn)))).toBe(false);
+    // Only mentioned in a comment does not count.
+    expect(exportReadAppliesBothExclusions(repo(read('      // OWNER_HIDDEN_ENTITY_TYPES AI_ACTION_EVENT_PREFIX')))).toBe(false);
+    // The method gone.
+    expect(exportReadAppliesBothExclusions(repo(read(notIn, notLike)).replace(EXPORT_READ_METHOD, 'renamedRead'))).toBe(false);
+  });
+
+  it('fails when the route stops calling the export read', () => {
+    expect(routeUsesExportRead('const { data } = await auditTrailRepository.listOwnerEntriesForExport(user.id, since);')).toBe(true);
+    expect(routeUsesExportRead('// auditTrailRepository.listOwnerEntriesForExport(user.id, since)')).toBe(false);
+    expect(routeUsesExportRead('const { data } = await auditTrailRepository.listOwnerEntries(user.id, q);')).toBe(false);
   });
 });

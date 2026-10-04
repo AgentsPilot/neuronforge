@@ -22,7 +22,7 @@ jest.mock('@/lib/logger', () => {
 });
 
 import {
-  ADMIN_QUEUE_SELECTABLE_COLUMNS,
+  ADMIN_QUEUE_FIGURE_COLUMNS,
   ADMIN_QUEUE_SPECS,
   AdminJobsQueuesRepository,
   DEAD_LETTER_MARKER,
@@ -90,7 +90,7 @@ describe.each(QUEUES)('readQueueFiguresAllAccounts: %s', (queue) => {
       expect(q[0]).toEqual({ method: 'from', args: [spec.table] });
       const select = q.find((c) => c.method === 'select')!;
       const columns = String(select.args[0]).split(',').map((c) => c.trim());
-      for (const column of columns) expect(ADMIN_QUEUE_SELECTABLE_COLUMNS).toContain(column);
+      for (const column of columns) expect(ADMIN_QUEUE_FIGURE_COLUMNS).toContain(column);
       if (columns.length === 1 && columns[0] === 'id') {
         expect(select.args[1]).toEqual({ count: 'exact', head: true });
       }

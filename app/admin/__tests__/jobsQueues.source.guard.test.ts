@@ -11,6 +11,11 @@
  * rule except that the word "Drain" may appear exactly once, in its header
  * sentence; the one action lives in the new `DrainNowDialog.tsx`, which may
  * make exactly one POST, to the literal drain URL, and nothing else.
+ *
+ * Amended by ADMIN_BOS_CLEANUP slice 7a (SA OP-11, W7A-10), narrowly: the page
+ * and view rules are unchanged; the new read-only `QueueItemsPanel.tsx` joins
+ * the read-only file set with EVERY original rule, plus a one-GET pin; the
+ * moved formatters (`jobsFormat.ts`) join the console and import checks.
  */
 
 import * as fs from 'fs';
@@ -19,10 +24,12 @@ import * as path from 'path';
 const PAGE = 'app/admin/jobs-queues/page.tsx';
 const VIEW = 'app/admin/components/jobs/JobsQueuesView.tsx';
 const DIALOG = 'app/admin/components/jobs/DrainNowDialog.tsx';
-/** The two read-only files: every original rule applies (W7D-2). */
-const FILES = [PAGE, VIEW];
+const PANEL = 'app/admin/components/jobs/QueueItemsPanel.tsx';
+const FORMAT = 'app/admin/components/jobs/jobsFormat.ts';
+/** The read-only files: every original rule applies (W7D-2; the panel since slice 7a). */
+const FILES = [PAGE, VIEW, PANEL];
 /** Every client file on the page: client-only, C-21 imports, no console, no "OK". */
-const CLIENT_FILES = [PAGE, VIEW, DIALOG];
+const CLIENT_FILES = [PAGE, VIEW, DIALOG, PANEL];
 const VIEW_HEADER_SENTENCE = 'Each queue has a Drain now button; everything else here is read-only.';
 const read = (relative: string) => fs.readFileSync(path.join(process.cwd(), relative), 'utf8');
 
@@ -112,5 +119,42 @@ describe('slice 7d: the one action, and nothing more (SA W7D-2)', () => {
     expect(code).not.toMatch(/\bOK\b/);
     expect(code).not.toMatch(/console\./);
     expect(code).toMatch(/\bCancel\b/);
+  });
+});
+
+describe('slice 7a: the item list is read-only (SA OP-11, W7A-10)', () => {
+  it('QueueItemsPanel.tsx makes exactly one request: a GET to the items route', () => {
+    const code = codeOf(read(PANEL));
+    const fetches = [...code.matchAll(/fetch\(\s*([^,)]*)/g)].map((m) => m[1].trim());
+    expect(fetches).toHaveLength(1);
+    expect(fetches[0].startsWith('`/api/admin/jobs-queues/items?')).toBe(true);
+    // No method key at all: the default, a GET.
+    expect(code).not.toMatch(/\bmethod\s*:/);
+    expect(code).not.toMatch(/\bbody\s*:/);
+  });
+
+  it('QueueItemsPanel.tsx builds the query from queue, state and page only', () => {
+    const code = codeOf(read(PANEL));
+    expect(code.match(/new URLSearchParams\(/g)).toHaveLength(1);
+    expect(code).toMatch(/new URLSearchParams\(\{\s*queue:\s*queueId,\s*state:\s*tab,\s*page:\s*String\(page\)\s*\}\)/);
+    expect(code).not.toMatch(/\.(append|set)\(/);
+  });
+
+  it('QueueItemsPanel.tsx: no green; its only buttons are the four tabs and Previous / Next; nothing clickable in a cell', () => {
+    const code = codeOf(read(PANEL));
+    expect(code).not.toMatch(GREEN_CLASS);
+    // One <button> mapped over the four tabs, plus Previous and Next.
+    expect(code.match(/<button\b/g)).toHaveLength(3);
+    expect(code).toMatch(/TABS\.map\(/);
+    for (const cell of code.match(/<td\b[^>]*>/g) ?? []) expect(cell).not.toMatch(/onClick/);
+    expect(code).not.toMatch(/<td\b[^>]*>\s*<button/);
+  });
+
+  it('jobsFormat.ts: no imports at all, no console', () => {
+    const code = codeOf(read(FORMAT));
+    expect(code).not.toMatch(/\bimport\b/);
+    expect(code).not.toMatch(/\brequire\(/);
+    expect(code).not.toMatch(/console\./);
+    expect(code).not.toMatch(/\bOK\b/);
   });
 });

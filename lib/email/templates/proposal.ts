@@ -18,6 +18,7 @@ import {
   type BrandingData,
 } from './base-template';
 import { emailTranslations, clientFacingCancelReason } from './translations';
+import { escapeHtml } from '@/lib/email/escapeHtml';
 
 export interface ProposalEmailData {
   title: string;
@@ -188,16 +189,6 @@ export function generateProposalEmail(data: ProposalEmailData): { subject: strin
     ),
     html: wrapInBrandedTemplate(content, brandingWithLocale),
   };
-}
-
-/** Titles and descriptions are the owner's free text going into HTML. */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 /**
