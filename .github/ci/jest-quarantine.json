@@ -1,7 +1,7 @@
 {
-  "$comment": "Suites the PR gate (jest.gate.config.js) does not run. REMOVALS ONLY: .github/ci/jest-gate-check.mjs fails any PR that adds a path not present on the base branch, so an addition needs SA review and a visible override. Every entry was red on main at 'since'. The floors are raised by hand and never lowered without SA. Workplan: docs/workplans/TEST_STRATEGY_AND_CI_TIERING_WORKPLAN.md section 0.",
-  "minSuites": 721,
-  "minTests": 13187,
+  "$comment": "Suites the PR gate (jest.gate.config.js) does not run. REMOVALS ONLY: .github/ci/jest-gate-check.mjs fails any PR that adds a path not present on the base branch, so an addition needs SA review and a visible override. Every entry was red on main at 'since'. The floors are raised by hand and never lowered without SA. Pinned 2026-10-04 from PR #210's first Linux run (813 suites / 15,813 tests), about 2% below it: a bulk-deletion backstop, not an exact count (G1 and G5 are exact). Workplan: docs/workplans/TEST_STRATEGY_AND_CI_TIERING_WORKPLAN.md section 0.",
+  "minSuites": 800,
+  "minTests": 15500,
   "suites": [
     { "path": "lib/agentkit/v6/logical-ir/schemas/__tests__/validation.test.ts", "reason": "V6 IR schema drift (12/51 failing). V6 is parked; owner is whoever resumes it.", "since": "894150f5" },
     { "path": "lib/agentkit/v6/translation/__tests__/IRToNaturalLanguageTranslator.test.ts", "reason": "V6 translator output drift (11/25 failing). V6 is parked.", "since": "894150f5" },
