@@ -147,3 +147,21 @@ export interface QueuesTileFacts {
   oldestDueMinutes: number | null;
   oldestDueQueue: string | null;
 }
+
+/**
+ * One number a "Drain now" run reported (ADMIN_BOS_CLEANUP slice 7d), from the
+ * fixed per-queue allow-list in `drainCounts.ts`. Numbers only (C7-13).
+ */
+export interface DrainCount {
+  key: string;
+  label: string;
+  value: number;
+}
+
+/** `data` of a successful `POST /api/admin/jobs-queues/drain`. Exactly these keys. */
+export interface DrainResult {
+  queue: string;
+  /** Empty when the queue's drain reports no counts (payment automations). */
+  counts: DrainCount[];
+  durationMs: number;
+}

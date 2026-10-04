@@ -153,6 +153,45 @@ jest.mock('@/lib/services/EmbeddingService', () => ({
   },
 }));
 
+// ADMIN_BOS_CLEANUP slice 7d: the five queue drains behind `jobs-queues/drain`.
+// Factories only (SA W7D-6), never automock, so no real service module, and not
+// the PDF chain behind the lead drain, is loaded. Each records a touch, so a
+// drain that ran before the gate fails the strict denial assertions.
+jest.mock('@/lib/services/PaymentReminderService', () => ({
+  paymentReminderService: {
+    processDueReminders: () => {
+      mockTablesTouched.push('drain:payment_reminders');
+      return Promise.resolve({ processed: 0, sent: 0, failed: 0 });
+    },
+  },
+}));
+jest.mock('@/lib/services/PaymentAutomationEngine', () => ({
+  paymentAutomationEngine: {
+    processScheduledExecutions: () => {
+      mockTablesTouched.push('drain:payment_automations');
+      return Promise.resolve();
+    },
+  },
+}));
+jest.mock('@/lib/services/DailyBriefingDispatchService', () => ({
+  processDueBriefings: () => {
+    mockTablesTouched.push('drain:daily_briefing_sends');
+    return Promise.resolve({ enqueued: 0, sent: 0, skipped: 0, failed: 0 });
+  },
+}));
+jest.mock('@/lib/services/LeadResponseDispatchService', () => ({
+  dispatchLeadResponses: () => {
+    mockTablesTouched.push('drain:lead_responses');
+    return Promise.resolve({ reaped: 0, enqueued: 0, claimed: 0, sent: 0, skipped: 0 });
+  },
+}));
+jest.mock('@/lib/services/InsightActionDispatchService', () => ({
+  drainInsightActions: () => {
+    mockTablesTouched.push('drain:insight_actions');
+    return Promise.resolve({ reaped: 0, claimed: 0, sent: 0, skipped: 0, failed: 0 });
+  },
+}));
+
 // ───────────────────────────────────────────────────────────────────────────
 
 import * as agentGenerationConfig from '../agent-generation-config/route';
@@ -195,6 +234,9 @@ import * as archivingRuns from '../archiving/runs/route';
 
 // ── ADMIN_BOS_CLEANUP slice 1 (2026-10-02) — gated from birth ───────────────
 import * as adminsList from '../admins/route';
+
+// ── ADMIN_BOS_CLEANUP slice 7d (2026-10-04) — gated from birth ──────────────
+import * as jobsQueuesDrain from '../jobs-queues/drain/route';
 
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };
 const CUSTOMER = { id: '22222222-2222-4222-8222-222222222222', email: 'customer@example.com' };
@@ -315,6 +357,13 @@ const CASES: Array<{ name: string; call: () => Promise<Response> }> = [
   // ADMIN_EMAILS-only addresses). Gated from birth; the list must never be
   // read before the gate answers.
   { name: 'GET /api/admin/admins', call: () => adminsList.GET(req('/api/admin/admins', 'GET')) },
+
+  // ── ADMIN_BOS_CLEANUP slice 7d (2026-10-04) ─────────────────────────────
+  // "Drain now": runs one Business OS queue's drain, which sends to real
+  // recipients across every account. Gated from birth; the drain (each mocked
+  // above with a recorded touch) and the write-ahead audit row must never
+  // happen before the gate answers.
+  { name: 'POST /api/admin/jobs-queues/drain', call: () => jobsQueuesDrain.POST(req('/api/admin/jobs-queues/drain', 'POST', { queue: 'insight_actions', reason: 'gate test' })) },
 ];
 
 beforeEach(() => {
@@ -338,10 +387,12 @@ describe('slice 1 — anonymous writes and destructive actions are refused', () 
     //  - 3  deleted with admin-authz slice 7's routes (ADMIN_BOS_CLEANUP slice 1:
     //       the admin-users settings GET and POST, the platform-users GET)
     //  + 1  `admins#GET`, gated from birth
-    //  = 57, which is every admin handler now on the canonical gate EXCEPT the
+    //  = 57
+    //  + 1  `jobs-queues/drain#POST` (ADMIN_BOS_CLEANUP slice 7d), gated from birth
+    //  = 58, which is every admin handler now on the canonical gate EXCEPT the
     // 3 category-A system-config routes (covered by their own suites) and the 6
     // correct-but-inline copies (slice 4, still parked; 7 until `audit-trail#GET` moved to `requireAdmin` on 2026-09-25).
-    expect(CASES).toHaveLength(57);
+    expect(CASES).toHaveLength(58);
   });
 
   describe.each(CASES)('$name', ({ call }) => {

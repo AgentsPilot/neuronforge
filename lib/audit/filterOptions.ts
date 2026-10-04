@@ -106,6 +106,9 @@ const GROUP_RULES: readonly GroupRule[] = [
   { prefix: 'BOS_FRIEND_INVITE_', label: 'Business OS Signup Invites' },
   // Credit deduction slice 11b: an admin giving or taking back extra credits.
   { prefix: 'BOS_CREDIT_LOT_', label: 'Business OS Credits' },
+  // ADMIN_BOS_CLEANUP slice 7d: an admin pressing Drain now on a queue. Slices
+  // 7b/7c's per-item events (BOS_QUEUE_ITEM_*) will land in the same group.
+  { prefix: 'BOS_QUEUE_', label: 'Business OS Queues' },
   { prefix: 'AGENTKIT_', label: 'AgentKit' },
   { prefix: 'AIS_', label: 'Agent Intelligence Score' },
   { prefix: 'AI_PRICING_', label: 'AI Pricing' },

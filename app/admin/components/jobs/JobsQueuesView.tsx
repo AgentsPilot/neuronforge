@@ -5,8 +5,10 @@
  * part C). Renders only what `GET /api/admin/jobs-queues` sent; it imports no
  * registry, rule or read code (the C-21 pattern: `import type` only).
  *
- * READ-ONLY: there is a Refresh button and nothing else (no retry, requeue,
- * cancel or drain; roadmap R-18). No auto-refresh (A-11).
+ * READ-ONLY apart from one action: a Refresh button, and per queue the
+ * "Drain now" dialog (ADMIN_BOS_CLEANUP slice 7d), which lives in
+ * DrainNowDialog.tsx and owns the page's only POST. No retry, requeue or
+ * cancel here (roadmap R-18; slices 7a–7c, later). No auto-refresh (A-11).
  *
  * Green appears only on a job the computation called Healthy (a recorded
  * Vercel cron run and a good read) or a queue called Clear (a good read), and
@@ -18,6 +20,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 
 import { createLogger } from '@/lib/logger';
+import { DrainNowDialog, isDrainQueueId } from './DrainNowDialog';
 import type {
   JobStatus,
   JobView,
@@ -181,7 +184,7 @@ function JobRow({ job }: { job: JobView }) {
   );
 }
 
-function QueueCard({ queue }: { queue: QueueView }) {
+function QueueCard({ queue, onDrained }: { queue: QueueView; onDrained: () => void }) {
   const f = queue.figures;
   const rows: Array<[string, string]> = f
     ? [
@@ -215,7 +218,18 @@ function QueueCard({ queue }: { queue: QueueView }) {
           </h3>
           <p className="text-xs text-slate-500">Drained by {queue.drainedByLabel}</p>
         </div>
-        <Badge tone={QUEUE_TONE[queue.status]}>{queue.statusWords}</Badge>
+        <div className="flex items-center gap-2">
+          <Badge tone={QUEUE_TONE[queue.status]}>{queue.statusWords}</Badge>
+          {/* Shown even when the figures could not be read: recovery is the point. */}
+          {isDrainQueueId(queue.id) && (
+            <DrainNowDialog
+              queueId={queue.id}
+              queueLabel={queue.label}
+              drainedByLabel={queue.drainedByLabel}
+              onDrained={onDrained}
+            />
+          )}
+        </div>
       </header>
       {f ? (
         <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
@@ -273,7 +287,7 @@ export function JobsQueuesView() {
           <p className="mt-1 max-w-3xl text-sm text-slate-400">
             The Business OS scheduled jobs and the queues they drain. Red needs action, amber needs a look, and
             the green label Healthy or Clear means checked and clear. Grey means no run recorded yet or could not
-            check. Read-only.
+            check. Each queue has a Drain now button; everything else here is read-only.
           </p>
           {view && (
             <p data-testid="as-of" className="mt-1 text-xs text-slate-500">
@@ -347,7 +361,7 @@ export function JobsQueuesView() {
             </p>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               {view.queues.map((queue) => (
-                <QueueCard key={queue.id} queue={queue} />
+                <QueueCard key={queue.id} queue={queue} onDrained={() => void load()} />
               ))}
             </div>
           </section>
