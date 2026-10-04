@@ -182,34 +182,195 @@ describe('the Businesses list', () => {
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Businesses');
   });
 
-  it('opens a row on the Business OS panel, with agent facts folded away', async () => {
+  // `GET /api/admin/users/[id]/stats` after ADMIN_BOS_CLEANUP slice 5a: only
+  // `tokens` and `plugins`, each `null` when its read failed.
+  const TOKENS = {
+    total_input_tokens: 1200,
+    total_output_tokens: 300,
+    total_cost_usd: 0.4321,
+    total_calls: 7,
+    by_model: [{ model: 'openai/gpt-x', input: 1200, output: 300, cost: 0.4321, calls: 7 }],
+  };
+  const PLUGINS = {
+    total: 2,
+    active: 1,
+    list: [
+      { plugin: 'google-mail', connected_at: '2026-09-01T00:00:00Z', is_active: true },
+      { plugin: 'slack', connected_at: '2026-09-02T00:00:00Z', is_active: false },
+    ],
+  };
+
+  /** Open the first row with the stats route answering `stats`. */
+  async function openRowWithStats(stats: { status: number; body: unknown }) {
     mockFetch({
       '/api/admin/users?': { status: 200, body: listBody() },
       [`/entitlements/accounts/${ACCOUNT}`]: { status: 200, body: recordedAccountBody },
       [`/accounts/${ACCOUNT}/summary`]: { status: 200, body: SUMMARY },
-      [`/api/admin/users/${ACCOUNT}/stats`]: {
+      [`/api/admin/users/${ACCOUNT}/stats`]: stats,
+    });
+    render(<UsersPage />);
+    fireEvent.click((await screen.findAllByTestId('row-business'))[0]);
+    expect(await screen.findByTestId('bos-panel')).toBeTruthy();
+  }
+
+  it('P-1: opens a row on the Business OS panel, with no AgentsPilot fold and no Subscription card', async () => {
+    await openRowWithStats({ status: 200, body: { success: true, data: { tokens: TOKENS, plugins: PLUGINS } } });
+
+    const spend = await screen.findByTestId('ai-spend-card');
+    expect(spend.textContent).toContain('may be incomplete above 1,000 calls');
+    expect(spend.textContent).toContain('$0.4321');
+    const plugins = screen.getByTestId('plugins-card');
+    expect(plugins.textContent).toContain('1/2 active');
+    expect(plugins.textContent).toContain('Google Mail');
+
+    expect(screen.queryByTestId('agentspilot-details')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Subscription' })).toBeNull();
+    expect(document.body.textContent).not.toContain('AgentsPilot details');
+  });
+
+  it('P-2: a tokens section that could not be read says so, and shows no zero spend', async () => {
+    await openRowWithStats({ status: 200, body: { success: true, data: { tokens: null, plugins: PLUGINS } } });
+
+    const spend = await screen.findByTestId('ai-spend-card');
+    expect(spend.textContent).toContain('could not be read');
+    expect(spend.textContent).not.toContain('$0.0000');
+    expect(spend.textContent).not.toContain('LLM Calls');
+    expect(screen.getByTestId('plugins-card').textContent).toContain('Google Mail');
+  });
+
+  it('P-3: a plugins section that could not be read says so, and shows no 0/0 active', async () => {
+    await openRowWithStats({ status: 200, body: { success: true, data: { tokens: TOKENS, plugins: null } } });
+
+    const plugins = await screen.findByTestId('plugins-card');
+    expect(plugins.textContent).toContain('could not be read');
+    expect(plugins.textContent).not.toContain('active');
+    expect(plugins.textContent).not.toContain('No plugins connected');
+    expect(screen.getByTestId('ai-spend-card').textContent).toContain('$0.4321');
+  });
+
+  it('P-4: says under the heading that the list is every login; heading and count pill unchanged', async () => {
+    mockFetch({ '/api/admin/users?': { status: 200, body: listBody() } });
+    render(<UsersPage />);
+
+    expect((await screen.findByTestId('list-scope-note')).textContent).toContain('Every login on the platform');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Businesses');
+    expect(screen.getByTestId('count-pill').textContent).toContain('2');
+  });
+
+  it('P-5: the row detail shows no Role field (SA-5a-1)', async () => {
+    await openRowWithStats({ status: 200, body: { success: true, data: { tokens: TOKENS, plugins: PLUGINS } } });
+
+    await screen.findByTestId('ai-spend-card');
+    expect(screen.getByText('User ID:')).toBeTruthy();
+    expect(screen.queryByText('Role:')).toBeNull();
+    expect(document.body.textContent).not.toContain('authenticated');
+  });
+
+  it('P-6: a failed stats request shows "could not be read" on both cards, never zeros (SA-5a-2)', async () => {
+    await openRowWithStats({ status: 500, body: { success: false, error: 'Failed to fetch user statistics' } });
+
+    const spend = await screen.findByTestId('ai-spend-card');
+    const plugins = screen.getByTestId('plugins-card');
+    expect(spend.textContent).toContain('could not be read');
+    expect(plugins.textContent).toContain('could not be read');
+    for (const card of [spend, plugins]) {
+      expect(card.textContent).not.toContain('$0.0000');
+      expect(card.textContent).not.toContain('0/0');
+    }
+  });
+
+  it('P-6b: a 200 with success false is treated as a failed request (SA-5a-2)', async () => {
+    await openRowWithStats({ status: 200, body: { success: false, error: 'nope' } });
+
+    expect((await screen.findByTestId('ai-spend-card')).textContent).toContain('could not be read');
+    expect(screen.getByTestId('plugins-card').textContent).toContain('could not be read');
+  });
+
+  it('P-6c: a rejected stats fetch (network error) shows "could not be read", never vanishing cards (QA E-1)', async () => {
+    const routed = mockFetch({
+      '/api/admin/users?': { status: 200, body: listBody() },
+      [`/entitlements/accounts/${ACCOUNT}`]: { status: 200, body: recordedAccountBody },
+      [`/accounts/${ACCOUNT}/summary`]: { status: 200, body: SUMMARY },
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- jsdom has no fetch; standard test stub
+    (global as any).fetch = jest.fn(async (url: string) => {
+      if (String(url).includes(`/api/admin/users/${ACCOUNT}/stats`)) throw new TypeError('Failed to fetch');
+      return routed(url);
+    });
+    render(<UsersPage />);
+    fireEvent.click((await screen.findAllByTestId('row-business'))[0]);
+
+    const spend = await screen.findByTestId('ai-spend-card');
+    const plugins = screen.getByTestId('plugins-card');
+    expect(spend.textContent).toContain('could not be read');
+    expect(plugins.textContent).toContain('could not be read');
+    for (const card of [spend, plugins]) {
+      expect(card.textContent).not.toContain('$0.0000');
+      expect(card.textContent).not.toContain('0/0');
+    }
+  });
+
+  it('QA-P7: a login with no business, no usage and no plugins shows genuine zeros, not "could not be read"', async () => {
+    mockFetch({
+      '/api/admin/users?': { status: 200, body: listBody() },
+      [`/entitlements/accounts/${NO_BUSINESS}`]: { status: 404, body: { success: false, error: 'not_a_business_os_account' } },
+      [`/accounts/${NO_BUSINESS}/summary`]: { status: 404, body: { success: false, error: 'not_a_business_os_account' } },
+      [`/api/admin/users/${NO_BUSINESS}/stats`]: {
         status: 200,
         body: {
           success: true,
           data: {
-            agents: { total: 1, active: 1, inactive: 0, draft: 0, scheduled: 0, list: [] },
-            executions: { total_30d: 4, successful: 4, failed: 0, total_duration_ms: 0, total_tokens: 0, total_cost_usd: 0, success_rate: 100 },
             tokens: { total_input_tokens: 0, total_output_tokens: 0, total_cost_usd: 0, total_calls: 0, by_model: [] },
-            subscription: null,
             plugins: { total: 0, active: 0, list: [] },
           },
         },
       },
     });
     render(<UsersPage />);
+    fireEvent.click((await screen.findAllByTestId('row-business'))[1]);
 
-    fireEvent.click((await screen.findAllByTestId('row-business'))[0]);
+    expect((await screen.findByTestId('bos-panel-not-bos')).textContent).toContain('Not a Business OS account');
+    const spend = await screen.findByTestId('ai-spend-card');
+    const plugins = screen.getByTestId('plugins-card');
+    expect(spend.textContent).toContain('$0.0000');
+    expect(plugins.textContent).toContain('0/0 active');
+    expect(plugins.textContent).toContain('No plugins connected');
+    expect(spend.textContent).not.toContain('could not be read');
+    expect(plugins.textContent).not.toContain('could not be read');
+  });
 
-    expect(await screen.findByTestId('bos-panel')).toBeTruthy();
-    const folded = await screen.findByTestId('agentspilot-details');
-    expect(folded.tagName).toBe('DETAILS');
-    expect(folded.hasAttribute('open')).toBe(false);
-    expect(document.body.textContent).toContain('may be incomplete above 1,000 calls');
+  it('QA-P8: reopening a row after a failed stats read fetches it again (O-3); after success it does not', async () => {
+    const okDetails = {
+      [`/users/${ACCOUNT}/login-stats`]: { status: 200, body: { success: true, data: { total_logins: 1, failed_logins: 0, unique_ips: 1 } } },
+      [`/users/${ACCOUNT}/audit-logs`]: { status: 200, body: { success: true, data: [] } },
+      [`/entitlements/accounts/${ACCOUNT}`]: { status: 200, body: recordedAccountBody },
+      [`/accounts/${ACCOUNT}/summary`]: { status: 200, body: SUMMARY },
+      '/api/admin/users?': { status: 200, body: listBody() },
+    };
+    const statsCalls = (m: jest.Mock) =>
+      m.mock.calls.filter(([u]) => String(u).endsWith(`/api/admin/users/${ACCOUNT}/stats`)).length;
+
+    const failing = mockFetch({ ...okDetails, [`/api/admin/users/${ACCOUNT}/stats`]: { status: 500, body: { success: false } } });
+    render(<UsersPage />);
+    const row = (await screen.findAllByTestId('row-business'))[0];
+    fireEvent.click(row);
+    expect((await screen.findByTestId('ai-spend-card')).textContent).toContain('could not be read');
+    expect(statsCalls(failing)).toBe(1);
+
+    fireEvent.click(row); // close
+    const healthy = mockFetch({
+      ...okDetails,
+      [`/api/admin/users/${ACCOUNT}/stats`]: { status: 200, body: { success: true, data: { tokens: TOKENS, plugins: PLUGINS } } },
+    });
+    fireEvent.click(row); // reopen: the failed section is not cached
+    await waitFor(() => expect(screen.getByTestId('ai-spend-card').textContent).toContain('$0.4321'));
+    expect(screen.getByTestId('plugins-card').textContent).toContain('1/2 active');
+    expect(statsCalls(healthy)).toBe(1);
+
+    fireEvent.click(row); // close
+    fireEvent.click(row); // reopen: now loaded, served from state
+    expect((await screen.findByTestId('ai-spend-card')).textContent).toContain('$0.4321');
+    expect(statsCalls(healthy)).toBe(1);
   });
 
   it('says when the business-name search was capped (E-4)', async () => {

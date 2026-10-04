@@ -66,6 +66,17 @@ function displayInstantMs(iso: string): number {
   return Date.parse(`${y}-${mo}-${d}T${h}:${mi}:${s}.${millis}${offset}`);
 }
 
+/**
+ * A ledger timestamp as a millisecond ISO instant, for DISPLAY only (credit
+ * history, slice 7a, SA SQ-37): some browsers mis-parse six fractional
+ * digits. Never a key, a filter or a page position — those travel as the
+ * exact string PostgREST returned. `null` when the string does not parse.
+ */
+export function displayInstantIso(iso: string): string | null {
+  const ms = displayInstantMs(iso);
+  return Number.isNaN(ms) ? null : new Date(ms).toISOString();
+}
+
 /** Postgres `timestamp + interval 'n months'`: same day, clamped to the target month's last day. */
 function addMonthsClampedUtc(base: Date, months: number): Date {
   const targetMonthIndex = base.getUTCMonth() + months;
@@ -106,6 +117,48 @@ export function nextPeriodStartUtc(anchorIso: string, periodStartIso: string): s
     (periodInstant.getUTCMonth() - anchorInstant.getUTCMonth());
 
   return addMonthsClampedUtc(anchorInstant, monthsSinceAnchor + 1).toISOString();
+}
+
+/**
+ * Whether a totals row read by range is the CURRENT period's row (admin
+ * Businesses column, credit deduction slice 8a, SA SQ-42):
+ * `period start ≤ now < next period start`, with the next start from
+ * `nextPeriodStartUtc` — the same display mirror the card's reset date uses.
+ *
+ * A ROW SELECTOR among rows already read, DISPLAY maths only: never a filter
+ * key, never sent to the database. `false` when either string does not parse.
+ */
+export function isCurrentPeriodRow(anchorIso: string, periodStartIso: string, now: Date): boolean {
+  const startMs = displayInstantMs(periodStartIso);
+  const next = nextPeriodStartUtc(anchorIso, periodStartIso);
+  if (Number.isNaN(startMs) || next === null) return false;
+  const nowMs = now.getTime();
+  return startMs <= nowMs && nowMs < Date.parse(next);
+}
+
+/**
+ * Whether a period key is at or after the anchor — the trial total's ROW
+ * SELECTOR (slice 8a). Display maths, never a filter: safe at the millisecond
+ * because a trial's first period key equals its anchor and later keys are
+ * months apart. `false` when either string does not parse.
+ */
+export function isAtOrAfter(periodStartIso: string, anchorIso: string): boolean {
+  const periodMs = displayInstantMs(periodStartIso);
+  const anchorMs = displayInstantMs(anchorIso);
+  if (Number.isNaN(periodMs) || Number.isNaN(anchorMs)) return false;
+  return periodMs >= anchorMs;
+}
+
+/**
+ * The UTC midnight at or before an instant — used ONLY as a whole-day RANGE
+ * BOUND (slice 8a), which no millisecond truncation can move past a row (the
+ * ledger read repository's half-open rule, CR-B1). `null` when it does not parse.
+ */
+export function utcDayFloor(iso: string): Date | null {
+  const ms = displayInstantMs(iso);
+  if (Number.isNaN(ms)) return null;
+  const instant = new Date(ms);
+  return new Date(Date.UTC(instant.getUTCFullYear(), instant.getUTCMonth(), instant.getUTCDate()));
 }
 
 /**

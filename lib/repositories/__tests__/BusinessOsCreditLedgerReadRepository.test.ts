@@ -35,6 +35,7 @@ import {
   CREDIT_LEDGER_ROW_COLUMNS,
   CREDIT_TOTALS_COLUMNS,
   type ChargeListFilter,
+  CREDIT_TOTALS_POSITION_COLUMNS,
   type CreditLedgerRow,
 } from '../BusinessOsCreditLedgerReadRepository';
 
@@ -216,6 +217,95 @@ describe('listTotalsForAccountInRange', () => {
       expect(queries).toHaveLength(0);
     }
   );
+});
+
+describe('listTotalsForAccountsInRange (slice 8a, the admin "Credits left" column)', () => {
+  it('selects user_id, period_start and credits_total only — no cost column', () => {
+    expect(CREDIT_TOTALS_POSITION_COLUMNS.split(',').map((c) => c.trim())).toEqual([
+      'user_id',
+      'period_start',
+      'credits_total',
+    ]);
+    expect(CREDIT_TOTALS_POSITION_COLUMNS).not.toMatch(/cost|usd|fallback/);
+  });
+
+  it('reads the named accounts with one IN list, the half-open range, newest first', async () => {
+    const { client, queries } = recordingClient(() => ({
+      data: [{ user_id: A, period_start: 'p1', credits_total: '1.5' }],
+      error: null,
+    }));
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listTotalsForAccountsInRange(
+      [A, B, A],
+      RANGE,
+      PAGING
+    );
+
+    expect(result.error).toBeNull();
+    expect(result.data?.rows).toEqual([{ user_id: A, period_start: 'p1', credits_total: '1.5' }]);
+    expect(queries).toHaveLength(1);
+    expect(argsOf(queries[0], 'from')).toEqual([['business_os_credit_totals']]);
+    expect(argsOf(queries[0], 'select')).toEqual([[CREDIT_TOTALS_POSITION_COLUMNS]]);
+    expect(argsOf(queries[0], 'in')).toEqual([['user_id', [A, B]]]);
+    expect(argsOf(queries[0], 'gte')).toEqual([['period_start', '2026-08-01T00:00:00.000Z']]);
+    expect(argsOf(queries[0], 'lt')).toEqual([['period_start', '2026-10-01T00:00:00.000Z']]);
+    expect(argsOf(queries[0], 'eq')).toEqual([]);
+    expect(argsOf(queries[0], 'order')[0]).toEqual(['period_start', { ascending: false }]);
+  });
+
+  it('pages, de-duplicates by (account, period) and reports the ceiling', async () => {
+    const pages = [
+      [{ user_id: A, period_start: 'p1', credits_total: 1 }, { user_id: B, period_start: 'p1', credits_total: 2 }],
+      [{ user_id: B, period_start: 'p1', credits_total: 2 }, { user_id: A, period_start: 'p0', credits_total: 3 }],
+      [],
+    ];
+    const { client, queries } = recordingClient((_calls, i) => ({ data: pages[i], error: null }));
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listTotalsForAccountsInRange([A, B], RANGE, PAGING);
+    expect(queries).toHaveLength(3);
+    expect(result.data?.rows.map((r) => `${r.user_id}|${r.period_start}`)).toEqual([`${A}|p1`, `${B}|p1`, `${A}|p0`]);
+    expect(result.data?.reachedCeiling).toBe(false);
+
+    let n = 0;
+    const full = recordingClient(() => ({
+      data: [{ user_id: A, period_start: `q${n++}`, credits_total: 1 }, { user_id: A, period_start: `q${n++}`, credits_total: 1 }],
+      error: null,
+    }));
+    const capped = await new BusinessOsCreditLedgerReadRepository(full.client).listTotalsForAccountsInRange([A], RANGE, {
+      pageSize: 2,
+      ceiling: 4,
+    });
+    expect(capped.data?.rows).toHaveLength(4);
+    expect(capped.data?.reachedCeiling).toBe(true);
+  });
+
+  it('returns a database error as { data: null, error }, never throws', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: new Error('boom') }));
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listTotalsForAccountsInRange([A], RANGE, PAGING);
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('boom');
+  });
+
+  const tooMany = Array.from(
+    { length: CREDIT_LEDGER_READ_LIMITS.MAX_IDS_PER_REQUEST + 1 },
+    (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`
+  );
+  it.each([
+    ['no account ids', [] as string[], RANGE, PAGING],
+    ['a malformed account id', [A, 'nope'], RANGE, PAGING],
+    ['a filter-syntax account id', [`${A},user_id.neq.x`], RANGE, PAGING],
+    ['more than MAX_IDS_PER_REQUEST ids', tooMany, RANGE, PAGING],
+    ['an inverted range', [A], { from: RANGE.to, to: RANGE.from }, PAGING],
+    ['a bad page size', [A], RANGE, { pageSize: 0, ceiling: 10 }],
+  ])('refuses %s before querying', async (_name, ids, range, paging) => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const result = await new BusinessOsCreditLedgerReadRepository(client).listTotalsForAccountsInRange(
+      ids,
+      range as typeof RANGE,
+      paging
+    );
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+    expect(queries).toHaveLength(0);
+  });
 });
 
 describe('listRowsForAccountPeriods', () => {
@@ -761,6 +851,8 @@ describe('source guards', () => {
         'lib/business-os/credits/aiActivity.ts',
         // ... and its production wiring, which calls the four Activity reads.
         'lib/business-os/credits/aiActivityDeps.ts',
+        // Slice 8a: the admin "Credits left" column's production wiring.
+        'lib/business-os/credits/adminCreditPercentDeps.ts',
         'lib/repositories/BusinessOsCreditLedgerReadRepository.ts',
         'lib/repositories/index.ts',
       ].sort()

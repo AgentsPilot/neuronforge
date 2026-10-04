@@ -29,6 +29,12 @@
 // repository, `BusinessOsCreditOwnerReadRepository` (slice 6a, C-S6-2), which
 // takes the RLS client and selects only owner-granted columns.
 //
+// Slice 8a adds a third admin caller: the admin Businesses list's "Credits
+// left" column (`lib/business-os/credits/adminCreditPercent.ts`), reached only
+// from `GET /api/admin/users` after `requireAdmin`. It reads OTHER accounts'
+// figures, which no owner RLS client can, so it is service role too — but its
+// method (`listTotalsForAccountsInRange`) selects no cost column at all.
+//
 // ── ACCOUNT SCOPE, BY SIGNATURE ──────────────────────────────────────────────
 // Every account method REQUIRES an account id, or a non-empty list of them, and
 // refuses a malformed one before querying (CLAUDE.md rule 4). Every read that
@@ -144,6 +150,19 @@ export const CREDIT_LEDGER_ROW_COLUMNS =
 export const CREDIT_TOTALS_COLUMNS =
   'user_id, period_start, credits_total, credits_owner, credits_scheduled, credits_external, credits_adjustment, ' +
   'cost_usd_total, charge_count, fallback_priced_count, updated_at';
+
+/**
+ * The admin "Credits left" column's columns (slice 8a, SA SQ-42): what an
+ * account used per period, and nothing else — no cost column, even internally.
+ */
+export const CREDIT_TOTALS_POSITION_COLUMNS = 'user_id, period_start, credits_total';
+
+/** One totals row as the admin "Credits left" column reads it. */
+export interface CreditTotalsPositionRow {
+  user_id: string;
+  period_start: string;
+  credits_total: number | string;
+}
 
 export const CREDIT_LEDGER_READ_LIMITS = {
   /** PostgREST's default `max-rows`; a larger page would be silently cut. */
@@ -372,6 +391,69 @@ export class BusinessOsCreditLedgerReadRepository {
       this.assertPaging(opts);
       const result = await this.pageTotals(range, opts, userId);
       this.logger.debug({ method, rows: result.rows.length, reachedCeiling: result.reachedCeiling }, 'Credit totals read');
+      return { data: result, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
+
+  /**
+   * The totals rows of the NAMED accounts whose `period_start` falls in the
+   * range, selecting only `user_id, period_start, credits_total` — the admin
+   * Businesses list's "Credits left" column (slice 8a, SA SQ-42). One request
+   * per page for up to `MAX_IDS_PER_REQUEST` accounts; a longer list is
+   * REFUSED (the caller chunks), never truncated. Paged and de-duplicated by
+   * (account, period) like the other totals reads; `reachedCeiling` means the
+   * answer may be incomplete and must not be shown as a figure.
+   */
+  async listTotalsForAccountsInRange(
+    userIds: readonly string[],
+    range: CreditPeriodStartRange,
+    opts: CreditLedgerPageOptions
+  ): Promise<RepositoryResult<CreditLedgerPagedResult<CreditTotalsPositionRow>>> {
+    const method = 'listTotalsForAccountsInRange';
+    try {
+      this.assertAccounts(userIds);
+      if (userIds.length > CREDIT_LEDGER_READ_LIMITS.MAX_IDS_PER_REQUEST) {
+        throw new CreditLedgerReadGuardError(
+          `At most ${CREDIT_LEDGER_READ_LIMITS.MAX_IDS_PER_REQUEST} account ids per call`
+        );
+      }
+      this.assertRange(range);
+      this.assertPaging(opts);
+
+      const ids = [...new Set(userIds)];
+      const rows: CreditTotalsPositionRow[] = [];
+      const seen = new Set<string>();
+      for (let from = 0; rows.length < opts.ceiling; from += opts.pageSize) {
+        const to = from + Math.min(opts.pageSize, opts.ceiling - from) - 1;
+        const { data, error } = await this.supabase
+          .from('business_os_credit_totals')
+          .select(CREDIT_TOTALS_POSITION_COLUMNS)
+          .in('user_id', ids)
+          .gte('period_start', range.from.toISOString())
+          .lt('period_start', range.to.toISOString())
+          .order('period_start', { ascending: false })
+          .order('user_id', { ascending: true })
+          .range(from, to);
+        if (error) throw error;
+
+        const page = (data ?? []) as unknown as CreditTotalsPositionRow[];
+        for (const row of page) {
+          const key = `${row.user_id}|${row.period_start}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          rows.push(row);
+        }
+        if (page.length < to - from + 1) break;
+        if (from + opts.pageSize >= opts.ceiling) break;
+      }
+
+      const result = { rows: rows.slice(0, opts.ceiling), reachedCeiling: rows.length >= opts.ceiling };
+      this.logger.debug(
+        { method, accounts: ids.length, rows: result.rows.length, reachedCeiling: result.reachedCeiling },
+        'Credit totals of named accounts read'
+      );
       return { data: result, error: null };
     } catch (error) {
       return this.fail(method, error);

@@ -33,8 +33,9 @@ import { createLogger } from '@/lib/logger';
 import { ArchivedBeforeNotice } from '@/app/admin/components/ArchivedBeforeNotice';
 import { BusinessOsPanel } from './components/BusinessOsPanel';
 import { UserNameLine } from './components/UserNameLine';
+import { CreditsLeftCell } from './components/CreditsLeftCell';
 import { countLabels, toStatusFilter, type StatusFilter } from './userName';
-import type { RowBusiness } from './types';
+import type { RowBusiness, RowCreditsLeft } from './types';
 
 const logger = createLogger({ module: 'AdminUsersPage' });
 
@@ -55,6 +56,8 @@ interface User {
    * has none; `undefined` = the lookup failed, so the page says "unknown".
    */
   business?: RowBusiness | null;
+  /** Credits left (credit deduction slice 8a): only on rows with a business. */
+  creditsLeft?: RowCreditsLeft;
 }
 
 /** The business line of a row: the business name, or why there is none. */
@@ -72,45 +75,28 @@ interface UserLoginStats {
   unique_ips: number;
 }
 
+/**
+ * `GET /api/admin/users/[id]/stats` (ADMIN_BOS_CLEANUP slice 5a). A section is
+ * `null` when its read failed, or when the whole request failed (SA-5a-2); the
+ * card then says it could not be read, never zeros.
+ */
 interface UserDetailedStats {
-  agents: {
-    total: number;
-    active: number;
-    inactive: number;
-    draft: number;
-    scheduled: number;
-    list: Array<{ id: string; name: string; status: string; mode: string; created_at: string }>;
-  };
-  executions: {
-    total_30d: number;
-    successful: number;
-    failed: number;
-    total_duration_ms: number;
-    total_tokens: number;
-    total_cost_usd: number;
-    success_rate: number;
-  };
   tokens: {
     total_input_tokens: number;
     total_output_tokens: number;
     total_cost_usd: number;
     total_calls: number;
     by_model: Array<{ model: string; input: number; output: number; cost: number; calls: number }>;
-  };
-  subscription: {
-    balance: number;
-    total_spent: number;
-    executions_quota: number | null;
-    executions_used: number;
-    plan_name: string;
-    status: string;
   } | null;
   plugins: {
     total: number;
     active: number;
     list: Array<{ plugin: string; connected_at: string; is_active: boolean }>;
-  };
+  } | null;
 }
+
+/** Stored when the stats request itself failed, so both cards say so (SA-5a-2). */
+const UNREADABLE_STATS: UserDetailedStats = { tokens: null, plugins: null };
 
 interface AuditLogEntry {
   id: string;
@@ -297,8 +283,14 @@ export default function UsersPage() {
 
     setExpandedUserId(user.id);
 
-    // Don't fetch if already loaded
-    if (userLoginStats[user.id] && userAuditLogs[user.id] && userDetailedStats[user.id]) {
+    // Don't fetch if already loaded. A stats section that could not be read is
+    // not "loaded": it is fetched again on the next open, not cached (O-3).
+    if (
+      userLoginStats[user.id] &&
+      userAuditLogs[user.id] &&
+      userDetailedStats[user.id]?.tokens &&
+      userDetailedStats[user.id]?.plugins
+    ) {
       return;
     }
 
@@ -324,24 +316,29 @@ export default function UsersPage() {
         setUserAuditLogs(prev => ({ ...prev, [user.id]: auditData.data || [] }));
       }
 
-      // Process detailed stats (agents, tokens, etc.)
+      // Process detailed stats (connected plugins and AI spend)
       if (detailedStatsResponse.ok) {
         const detailedData = await detailedStatsResponse.json();
-        // Facts only: the payload holds agent names, plugin connections and
-        // spend for one person (QA E-3). Never the payload itself.
+        // Facts only: the payload holds plugin keys and AI spend for one
+        // person (QA E-3). Never the payload itself.
         logger.debug(
           {
             success: detailedData?.success === true,
-            agents: detailedData?.data?.agents?.total ?? null,
+            tokens: detailedData?.data?.tokens ? 'ok' : 'unavailable',
             plugins: detailedData?.data?.plugins?.total ?? null,
           },
           'User detailed stats response'
         );
-        if (detailedData.success) {
-          setUserDetailedStats(prev => ({ ...prev, [user.id]: detailedData.data }));
-        }
+        // A failed request stores both sections as unreadable, so the cards
+        // say so instead of vanishing (SA-5a-2).
+        const detailed: UserDetailedStats =
+          detailedData?.success === true && detailedData.data
+            ? { tokens: detailedData.data.tokens ?? null, plugins: detailedData.data.plugins ?? null }
+            : UNREADABLE_STATS;
+        setUserDetailedStats(prev => ({ ...prev, [user.id]: detailed }));
       } else {
         logger.error({ status: detailedStatsResponse.status }, 'Failed to fetch detailed stats');
+        setUserDetailedStats(prev => ({ ...prev, [user.id]: UNREADABLE_STATS }));
       }
 
       // Initialize audit filter for this user
@@ -350,6 +347,10 @@ export default function UsersPage() {
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to fetch user details');
+      // A rejected fetch (network error, blocked request, non-JSON body) must
+      // not make the cards vanish silently either: mark them unreadable unless
+      // this row already holds a result (SA 5a code review, QA E-1).
+      setUserDetailedStats(prev => (prev[user.id] ? prev : { ...prev, [user.id]: UNREADABLE_STATS }));
     } finally {
       setLoadingUserDetails(prev => ({ ...prev, [user.id]: false }));
     }
@@ -405,10 +406,10 @@ export default function UsersPage() {
    * rather than repointed: a delete button that fails with a toast is the same
    * broken-delete experience the tombstone exists to end.
    *
-   * NOT a security fix for this page. This whole admin surface is
-   * unauthenticated — no guard in middleware, in `app/admin/layout.tsx`, or on
-   * any page here — which is a separate tracked workstream. Removing one
-   * deletion affordance narrows that gap's blast radius; it does not close it.
+   * The admin surface itself is guarded on the server: `app/admin/layout.tsx`
+   * awaits `requireAdminPage()` before any admin page renders, and every
+   * `/api/admin` handler calls `requireAdmin`. Both are enforced by the admin
+   * authz CI guard (docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md).
    */
 
 
@@ -450,7 +451,13 @@ export default function UsersPage() {
       {/* Header */}
       <header className="flex items-center justify-between border-b border-slate-700 pb-4">
         <div className="flex items-center gap-4">
-          <h1 className="text-xl font-semibold text-white">Businesses</h1>
+          <div>
+            <h1 className="text-xl font-semibold text-white">Businesses</h1>
+            {/* FR-BU4: the list is every login, not only Business OS businesses. */}
+            <p data-testid="list-scope-note" className="text-sm text-slate-400">
+              Every login on the platform. Logins with no business show &quot;No Business OS business&quot;.
+            </p>
+          </div>
           {stats && (
             <>
               <span data-testid="count-pill" className="text-xs px-2 py-1 rounded bg-blue-500/20 text-blue-400">
@@ -635,6 +642,7 @@ export default function UsersPage() {
             <thead className="bg-slate-900/50">
               <tr className="text-left text-xs text-slate-400 uppercase tracking-wider">
                 <th className="px-4 py-3 font-medium">Business / user</th>
+                <th className="px-4 py-3 font-medium">Credits left</th>
                 <th className="px-4 py-3 font-medium">Contact</th>
                 {/* No status/role column (U-9, 2026-09-26): the Active badge sits
                     beside the name, and the Supabase sign-in role it would have
@@ -648,7 +656,7 @@ export default function UsersPage() {
             <tbody className="divide-y divide-slate-700/50">
               {filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
+                  <td colSpan={7} className="px-6 py-12 text-center text-slate-400">
                     <Database className="w-12 h-12 mx-auto mb-4 text-slate-600" />
                     {searchTerm.trim() !== '' && filter !== 'all' ? (
                       <>
@@ -677,6 +685,7 @@ export default function UsersPage() {
                 filteredUsers.slice(0, 100).map((user) => {
                   const isExpanded = expandedUserId === user.id;
                   const stats = userLoginStats[user.id];
+                  const detailedStats = userDetailedStats[user.id];
                   const isLoading = loadingUserDetails[user.id];
 
                   return (
@@ -712,6 +721,9 @@ export default function UsersPage() {
                               <p className="text-xs text-slate-500 font-mono mt-1">{user.id.slice(0, 8)}...</p>
                             </div>
                           </div>
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          <CreditsLeftCell business={user.business} creditsLeft={user.creditsLeft} />
                         </td>
                         <td className="px-6 py-4">
                           <div className="space-y-1">
@@ -785,7 +797,7 @@ export default function UsersPage() {
                       {/* Expanded Details Row */}
                       {isExpanded && (
                         <tr className="bg-slate-900/50">
-                          <td colSpan={6} className="px-6 py-6">
+                          <td colSpan={7} className="px-6 py-6">
                             {isLoading ? (
                               <div className="text-center py-12">
                                 <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
@@ -836,13 +848,7 @@ export default function UsersPage() {
                                         <span className="text-slate-400 text-xs">User ID:</span>
                                         <p className="text-white font-mono text-xs break-all">{user.id}</p>
                                       </div>
-                                      <div>
-                                        <span className="text-slate-400 text-xs">Role:</span>
-                                        <p className="text-white font-medium flex items-center gap-1">
-                                          <Shield className="w-3 h-3" />
-                                          {user.role}
-                                        </p>
-                                      </div>
+                                      {/* No role row (SA-5a-1, as U-9): the Supabase sign-in role is not an admin indicator (admins: admin_users only). */}
                                     </div>
                                   </div>
 
@@ -948,150 +954,28 @@ export default function UsersPage() {
                                   </div>
                                 )}
 
-                                {/* AgentsPilot facts, folded away (slice 2b; user decision: only the
-                                    agents list and agent executions fold). Nothing is removed. */}
-                                {userDetailedStats[user.id] && (
-                                  <details data-testid="agentspilot-details" className="rounded-xl border border-white/5 bg-slate-800/30 p-4">
-                                    <summary className="cursor-pointer text-sm font-semibold text-slate-300">
-                                      AgentsPilot details (agents and agent executions)
-                                    </summary>
-                                    <div className="mt-4 space-y-4">
-                                    <div className="bg-slate-800/50 p-4 rounded-lg w-fit">
-                                      <p className="text-xs text-slate-400">Agent executions (30 days)</p>
-                                      <p className="text-xl font-bold text-white">{userDetailedStats[user.id].executions.total_30d}</p>
-                                      <p className="text-xs text-green-400">
-                                        {userDetailedStats[user.id].executions.success_rate}% success
-                                      </p>
-                                    </div>
-                                  <div className="bg-gradient-to-br from-green-500/10 to-emerald-500/10 p-6 rounded-xl border border-green-500/20">
-                                    <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                                      <Activity className="w-5 h-5 text-green-400" />
-                                      Automations
-                                      <span className="ml-auto text-sm font-normal text-slate-400">
-                                        {userDetailedStats[user.id].agents.total} total
-                                      </span>
-                                    </h3>
-                                    <div className="grid grid-cols-4 gap-2 mb-4">
-                                      <div className="bg-slate-800/50 p-3 rounded-lg text-center">
-                                        <p className="text-xl font-bold text-green-300">{userDetailedStats[user.id].agents.active}</p>
-                                        <p className="text-xs text-slate-400">Active</p>
-                                      </div>
-                                      <div className="bg-slate-800/50 p-3 rounded-lg text-center">
-                                        <p className="text-xl font-bold text-slate-300">{userDetailedStats[user.id].agents.inactive}</p>
-                                        <p className="text-xs text-slate-400">Inactive</p>
-                                      </div>
-                                      <div className="bg-slate-800/50 p-3 rounded-lg text-center">
-                                        <p className="text-xl font-bold text-yellow-300">{userDetailedStats[user.id].agents.draft}</p>
-                                        <p className="text-xs text-slate-400">Draft</p>
-                                      </div>
-                                      <div className="bg-slate-800/50 p-3 rounded-lg text-center">
-                                        <p className="text-xl font-bold text-blue-300">{userDetailedStats[user.id].agents.scheduled}</p>
-                                        <p className="text-xs text-slate-400">Scheduled</p>
-                                      </div>
-                                    </div>
-                                    {userDetailedStats[user.id].agents.list.length > 0 ? (
-                                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 max-h-64 overflow-y-auto">
-                                        {userDetailedStats[user.id].agents.list.map((agent) => (
-                                          <div key={agent.id} className="bg-slate-800/50 p-3 rounded-lg flex items-center justify-between">
-                                            <div>
-                                              <p className="text-sm font-medium text-white">{agent.name}</p>
-                                              <p className="text-xs text-slate-500">{formatDate(agent.created_at)}</p>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                              {agent.mode === 'scheduled' && (
-                                                <span className="px-2 py-0.5 text-xs bg-blue-500/20 text-blue-300 rounded">
-                                                  Scheduled
-                                                </span>
-                                              )}
-                                              <span className={`px-2 py-0.5 text-xs rounded ${
-                                                agent.status === 'active' ? 'bg-green-500/20 text-green-300' :
-                                                agent.status === 'draft' ? 'bg-yellow-500/20 text-yellow-300' :
-                                                'bg-slate-500/20 text-slate-300'
-                                              }`}>
-                                                {agent.status}
-                                              </span>
-                                            </div>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    ) : (
-                                      <p className="text-slate-400 text-sm text-center py-4">No automations created</p>
-                                    )}
-                                  </div>
-                                    </div>
-                                  </details>
-                                )}
-
-                                {/* Subscription Info - Full Width */}
-                                {userDetailedStats[user.id]?.subscription && (
-                                  <div className="bg-gradient-to-br from-purple-500/10 to-pink-500/10 p-6 rounded-xl border border-purple-500/20">
-                                    <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                                      <Shield className="w-5 h-5 text-purple-400" />
-                                      Subscription
-                                    </h3>
-                                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                                      <div className="bg-slate-800/50 p-3 rounded-lg">
-                                        <p className="text-xs text-slate-400">Plan</p>
-                                        <p className="text-lg font-bold text-purple-300 capitalize">
-                                          {userDetailedStats[user.id].subscription?.plan_name || 'Free'}
-                                        </p>
-                                      </div>
-                                      <div className="bg-slate-800/50 p-3 rounded-lg">
-                                        <p className="text-xs text-slate-400">Status</p>
-                                        <p className={`text-lg font-bold capitalize ${
-                                          userDetailedStats[user.id].subscription?.status === 'active' ? 'text-green-300' : 'text-slate-300'
-                                        }`}>
-                                          {userDetailedStats[user.id].subscription?.status || 'N/A'}
-                                        </p>
-                                      </div>
-                                      <div className="bg-slate-800/50 p-3 rounded-lg">
-                                        <p className="text-xs text-slate-400">Balance</p>
-                                        <p className="text-lg font-bold text-white">
-                                          {formatCost(userDetailedStats[user.id].subscription?.balance || 0)}
-                                        </p>
-                                      </div>
-                                      <div className="bg-slate-800/50 p-3 rounded-lg">
-                                        <p className="text-xs text-slate-400">Total Spent</p>
-                                        <p className="text-lg font-bold text-white">
-                                          {formatCost(userDetailedStats[user.id].subscription?.total_spent || 0)}
-                                        </p>
-                                      </div>
-                                      <div className="bg-slate-800/50 p-3 rounded-lg">
-                                        <p className="text-xs text-slate-400 mb-1">Executions</p>
-                                        <div className="flex items-center gap-2">
-                                          <div className="flex-1 bg-slate-700/50 rounded-full h-2">
-                                            <div
-                                              className="bg-purple-500 h-2 rounded-full"
-                                              style={{
-                                                width: `${Math.min(100, ((userDetailedStats[user.id].subscription?.executions_used || 0) / (userDetailedStats[user.id].subscription?.executions_quota || 1)) * 100)}%`
-                                              }}
-                                            />
-                                          </div>
-                                          <span className="text-sm text-white">
-                                            {userDetailedStats[user.id].subscription?.executions_used || 0}
-                                            {userDetailedStats[user.id].subscription?.executions_quota && (
-                                              <span className="text-slate-400">/{userDetailedStats[user.id].subscription?.executions_quota}</span>
-                                            )}
-                                          </span>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
+                                {/* The AgentsPilot fold (agents, agent executions) and the
+                                    Subscription card (AP Pilot-Credit table, never rendered) were
+                                    removed in ADMIN_BOS_CLEANUP slice 5a: their reads named
+                                    columns that do not exist. */}
 
                                 {/* Plugin Connections - Full Width Row */}
-                                {userDetailedStats[user.id] && (
-                                  <div className="bg-gradient-to-br from-orange-500/10 to-amber-500/10 p-6 rounded-xl border border-orange-500/20">
+                                {detailedStats && (
+                                  <div data-testid="plugins-card" className="bg-gradient-to-br from-orange-500/10 to-amber-500/10 p-6 rounded-xl border border-orange-500/20">
                                     <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
                                       <Settings className="w-5 h-5 text-orange-400" />
                                       Connected Plugins
-                                      <span className="ml-auto text-sm font-normal text-slate-400">
-                                        {userDetailedStats[user.id].plugins.active}/{userDetailedStats[user.id].plugins.total} active
-                                      </span>
+                                      {detailedStats.plugins && (
+                                        <span className="ml-auto text-sm font-normal text-slate-400">
+                                          {detailedStats.plugins.active}/{detailedStats.plugins.total} active
+                                        </span>
+                                      )}
                                     </h3>
-                                    {userDetailedStats[user.id].plugins.list.length > 0 ? (
+                                    {detailedStats.plugins === null ? (
+                                      <p className="text-sm text-red-300">The connected plugins could not be read.</p>
+                                    ) : detailedStats.plugins.list.length > 0 ? (
                                       <div className="flex flex-wrap gap-2">
-                                        {userDetailedStats[user.id].plugins.list.map((plugin, idx) => (
+                                        {detailedStats.plugins.list.map((plugin, idx) => (
                                           <span
                                             key={idx}
                                             className={`px-3 py-1.5 text-sm rounded-lg flex items-center gap-2 ${
@@ -1111,55 +995,61 @@ export default function UsersPage() {
                                   </div>
                                 )}
 
-                                {/* Token Consumption & Executions */}
-                                {userDetailedStats[user.id] && (
-                                  <div className="bg-gradient-to-br from-cyan-500/10 to-teal-500/10 p-6 rounded-xl border border-cyan-500/20">
+                                {/* AI spend, all products (token_usage, 30 days) */}
+                                {detailedStats && (
+                                  <div data-testid="ai-spend-card" className="bg-gradient-to-br from-cyan-500/10 to-teal-500/10 p-6 rounded-xl border border-cyan-500/20">
                                     <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
                                       <TrendingUp className="w-5 h-5 text-cyan-400" />
                                       AI spend, all products (30 days; may be incomplete above 1,000 calls)
                                     </h3>
 
-                                    {/* Summary Stats */}
-                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-                                      <div className="bg-slate-800/50 p-4 rounded-lg">
-                                        <p className="text-xs text-slate-400">Input Tokens</p>
-                                        <p className="text-xl font-bold text-white">{formatNumber(userDetailedStats[user.id].tokens.total_input_tokens)}</p>
-                                      </div>
-                                      <div className="bg-slate-800/50 p-4 rounded-lg">
-                                        <p className="text-xs text-slate-400">Output Tokens</p>
-                                        <p className="text-xl font-bold text-white">{formatNumber(userDetailedStats[user.id].tokens.total_output_tokens)}</p>
-                                      </div>
-                                      <div className="bg-slate-800/50 p-4 rounded-lg">
-                                        <p className="text-xs text-slate-400">LLM Calls</p>
-                                        <p className="text-xl font-bold text-white">{formatNumber(userDetailedStats[user.id].tokens.total_calls)}</p>
-                                      </div>
-                                      <div className="bg-slate-800/50 p-4 rounded-lg">
-                                        <p className="text-xs text-slate-400">Total Cost</p>
-                                        <p className="text-xl font-bold text-cyan-300">{formatCost(userDetailedStats[user.id].tokens.total_cost_usd)}</p>
-                                      </div>
-                                    </div>
-
-                                    {/* Cost by Model */}
-                                    {userDetailedStats[user.id].tokens.by_model.length > 0 && (
-                                      <div>
-                                        <h4 className="text-sm font-semibold text-slate-300 mb-3">Cost by Model</h4>
-                                        <div className="space-y-2 max-h-48 overflow-y-auto">
-                                          {userDetailedStats[user.id].tokens.by_model.map((model, idx) => (
-                                            <div key={idx} className="bg-slate-800/50 p-3 rounded-lg flex items-center justify-between">
-                                              <div className="flex items-center gap-3">
-                                                <span className="text-sm font-mono text-white">{model.model}</span>
-                                                <span className="text-xs text-slate-500">{formatNumber(model.calls)} calls</span>
-                                              </div>
-                                              <div className="flex items-center gap-4 text-sm">
-                                                <span className="text-slate-400">
-                                                  <span className="text-blue-300">{formatNumber(model.input)}</span> in / <span className="text-green-300">{formatNumber(model.output)}</span> out
-                                                </span>
-                                                <span className="text-cyan-300 font-semibold">{formatCost(model.cost)}</span>
-                                              </div>
-                                            </div>
-                                          ))}
+                                    {detailedStats.tokens === null ? (
+                                      <p className="text-sm text-red-300">The AI usage records could not be read.</p>
+                                    ) : (
+                                      <>
+                                        {/* Summary Stats */}
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                                          <div className="bg-slate-800/50 p-4 rounded-lg">
+                                            <p className="text-xs text-slate-400">Input Tokens</p>
+                                            <p className="text-xl font-bold text-white">{formatNumber(detailedStats.tokens.total_input_tokens)}</p>
+                                          </div>
+                                          <div className="bg-slate-800/50 p-4 rounded-lg">
+                                            <p className="text-xs text-slate-400">Output Tokens</p>
+                                            <p className="text-xl font-bold text-white">{formatNumber(detailedStats.tokens.total_output_tokens)}</p>
+                                          </div>
+                                          <div className="bg-slate-800/50 p-4 rounded-lg">
+                                            <p className="text-xs text-slate-400">LLM Calls</p>
+                                            <p className="text-xl font-bold text-white">{formatNumber(detailedStats.tokens.total_calls)}</p>
+                                          </div>
+                                          <div className="bg-slate-800/50 p-4 rounded-lg">
+                                            <p className="text-xs text-slate-400">Total Cost</p>
+                                            <p className="text-xl font-bold text-cyan-300">{formatCost(detailedStats.tokens.total_cost_usd)}</p>
+                                          </div>
                                         </div>
-                                      </div>
+
+                                        {/* Cost by Model */}
+                                        {detailedStats.tokens.by_model.length > 0 && (
+                                          <div>
+                                            <h4 className="text-sm font-semibold text-slate-300 mb-3">Cost by Model</h4>
+                                            <div className="space-y-2 max-h-48 overflow-y-auto">
+                                              {detailedStats.tokens.by_model.map((model, idx) => (
+                                                <div key={idx} className="bg-slate-800/50 p-3 rounded-lg flex items-center justify-between">
+                                                  <div className="flex items-center gap-3">
+                                                    <span className="text-sm font-mono text-white">{model.model}</span>
+                                                    <span className="text-xs text-slate-500">{formatNumber(model.calls)} calls</span>
+                                                  </div>
+                                                  <div className="flex items-center gap-4 text-sm">
+                                                    <span className="text-slate-400">
+                                                      <span className="text-blue-300">{formatNumber(model.input)}</span> in / <span className="text-green-300">{formatNumber(model.output)}</span> out
+                                                    </span>
+                                                    <span className="text-cyan-300 font-semibold">{formatCost(model.cost)}</span>
+                                                  </div>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                      </>
                                     )}
                                   </div>
                                 )}

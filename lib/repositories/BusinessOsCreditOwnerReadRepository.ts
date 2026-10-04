@@ -1,10 +1,11 @@
 // lib/repositories/BusinessOsCreditOwnerReadRepository.ts
 //
 // READ-ONLY access to the Business OS credit ledger for the OWNER'S OWN
-// dashboard card, through the owner's RLS client.
+// dashboard card and credit history, through the owner's RLS client.
 //
 // Schema:   supabase/migrations/20261015_business_os_credit_charges.sql
 // Workplan: docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_6_WORKPLAN.md §4.3 (SA SQ-21, C-S6-2)
+//           docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_7_WORKPLAN.md §4.3 (SA SQ-31: the history's paged read)
 //
 // ── WHY NOT THE ADMIN LEDGER READER (C-S6-2) ─────────────────────────────────
 // The operator report's read repository selects the cost columns (`cost_usd`,
@@ -75,6 +76,53 @@ export const OWNER_TOTALS_COLUMNS =
 export const OWNER_CHARGE_COLUMNS =
   'kind, action_id, adjusts_action_id, credits, triggered_by, period_start, user_id, service, action_type';
 
+/** One ledger row as the credit history reads it (slice 7a, SA SQ-31). Satisfies `EffectiveFieldsInput`. */
+export interface OwnerDiaryRow {
+  id: string;
+  kind: 'charge' | 'adjustment';
+  action_id: string | null;
+  adjusts_action_id: string | null;
+  period_start: string;
+  credits: number | string;
+  /** Selected for the effective-fields resolver only. Never filter or group on it. */
+  service: string | null;
+  action_type: string | null;
+  triggered_by: string | null;
+  outcome: string | null;
+  /** The exact string PostgREST returned (microseconds); the keyset carries it verbatim. */
+  created_at: string;
+  user_id: string | null;
+}
+
+/**
+ * The credit history's columns (SA SQ-31). Each is in the migration's
+ * `authenticated` GRANT (tested). No `group_id`, `reason_code` or
+ * `credit_value_version`: a diary line does not need them.
+ */
+export const OWNER_DIARY_COLUMNS =
+  'id, kind, action_id, adjusts_action_id, period_start, credits, service, action_type, triggered_by, outcome, created_at, user_id';
+
+/**
+ * The window both the totals read and the ledger-row read use (slice 7a, SA
+ * SQ-30): one period key (monthly, calendar month), or every period from the
+ * trial anchor on. The caller builds it once; the keys are exact strings.
+ */
+export type OwnerLedgerWindow =
+  | { kind: 'period'; periodStart: string }
+  | { kind: 'from'; fromPeriodStart: string };
+
+/** Where the previous page ended: the last row's `created_at` (verbatim) and `id`. */
+export interface OwnerDiaryKeyset {
+  createdAt: string;
+  id: string;
+}
+
+export interface OwnerDiaryPage {
+  rows: OwnerDiaryRow[];
+  /** True when at least one more row follows this page. */
+  hasMore: boolean;
+}
+
 export const OWNER_CREDIT_READ_LIMITS = {
   /**
    * Totals rows read for a trial total. A trial spans a handful of monthly
@@ -87,6 +135,8 @@ export const OWNER_CREDIT_READ_LIMITS = {
   MAX_IDS_PER_REQUEST: 200,
   /** Period keys per adjustments read. */
   MAX_PERIODS_PER_REQUEST: 24,
+  /** Most lines one credit-history page may ask for (slice 7a). */
+  DIARY_PAGE_CEILING: 100,
 } as const;
 
 export interface OwnerCeilingResult<T> {
@@ -96,6 +146,13 @@ export interface OwnerCeilingResult<T> {
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The PostgREST timestamptz shape, strictly. A keyset value is interpolated
+ * into an or-expression, so it must be nothing but a timestamp: no comma, no
+ * parenthesis, no quote (SA SQ-29). Checked here AND at the route.
+ */
+export const OWNER_TIMESTAMPTZ_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/;
 
 class OwnerCreditReadGuardError extends Error {
   constructor(message: string) {
@@ -192,6 +249,67 @@ export class BusinessOsCreditOwnerReadRepository {
   }
 
   // ============ Ledger rows ============
+
+  /**
+   * One page of the window's ledger rows — charges AND adjustments — newest
+   * first, ordered `(created_at DESC, id DESC)` (slice 7a, SA SQ-29 / SQ-31).
+   * Reads `limit + 1` rows to know whether there is more. `after` is the last
+   * row of the previous page; its values are re-validated here (defence in
+   * depth: the route refused anything else) before they reach the
+   * or-expression, where they are double-quoted so a timestamp's `.`, `:` and
+   * `+` are never read as PostgREST syntax.
+   */
+  async listLedgerRowsForWindow(
+    accountId: string,
+    window: OwnerLedgerWindow,
+    after: OwnerDiaryKeyset | null,
+    limit: number
+  ): Promise<RepositoryResult<OwnerDiaryPage>> {
+    const method = 'listLedgerRowsForWindow';
+    try {
+      this.assertAccount(accountId);
+      if (!window || (window.kind !== 'period' && window.kind !== 'from')) {
+        throw new OwnerCreditReadGuardError('A ledger window is required');
+      }
+      const key = window.kind === 'period' ? window.periodStart : window.fromPeriodStart;
+      assertPeriodKey(key);
+      if (!Number.isInteger(limit) || limit < 1 || limit > OWNER_CREDIT_READ_LIMITS.DIARY_PAGE_CEILING) {
+        throw new OwnerCreditReadGuardError(
+          `A page size between 1 and ${OWNER_CREDIT_READ_LIMITS.DIARY_PAGE_CEILING} is required`
+        );
+      }
+      if (after !== null) {
+        if (
+          !after ||
+          typeof after.createdAt !== 'string' ||
+          !OWNER_TIMESTAMPTZ_PATTERN.test(after.createdAt) ||
+          typeof after.id !== 'string' ||
+          !UUID_PATTERN.test(after.id)
+        ) {
+          throw new OwnerCreditReadGuardError('A page position must be a timestamp and a UUID');
+        }
+      }
+
+      let query = this.supabase
+        .from('business_os_credit_charges')
+        .select(OWNER_DIARY_COLUMNS)
+        .eq('user_id', accountId);
+      query = window.kind === 'period' ? query.eq('period_start', key) : query.gte('period_start', key);
+      if (after !== null) {
+        const t = after.createdAt;
+        query = query.or(`created_at.lt."${t}",and(created_at.eq."${t}",id.lt.${after.id})`);
+      }
+      const { data, error } = await query
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(0, limit);
+      if (error) throw error;
+      const rows = (data ?? []) as unknown as OwnerDiaryRow[];
+      return { data: { rows: rows.slice(0, limit), hasMore: rows.length > limit }, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
 
   /** The adjustment rows of these periods (keys exactly as read from the totals rows). */
   async listAdjustmentsForPeriods(

@@ -95,6 +95,46 @@ export type { OwnerCreditTotalsRow, OwnerCreditChargeRow, OwnerCeilingResult } f
 // The credit period key from the database's own rule (slice 6a). Service role:
 // the function's EXECUTE is service_role only, and it reads no table.
 export { BusinessOsCreditPeriodRepository, businessOsCreditPeriodRepository } from './BusinessOsCreditPeriodRepository';
+// Business OS credit lots (credit deduction slice 11a): credits added to an
+// account and taken back. Server-only, service role, append-only through two
+// RPCs; no caller until 11b — a source guard enforces that, barrel included.
+export {
+  BusinessOsCreditLotRepository,
+  businessOsCreditLotRepository,
+  BOS_RECORD_CREDIT_LOT_RPC,
+  BOS_REVERSE_CREDIT_LOT_RPC,
+  CREDIT_LOT_COLUMNS,
+  CREDIT_LOT_DRAW_COLUMNS,
+  CREDIT_LOT_READ_LIMITS,
+} from './BusinessOsCreditLotRepository';
+export type {
+  BusinessOsCreditLot,
+  BusinessOsCreditLotRow,
+  BusinessOsCreditLotDrawRow,
+  BusinessOsCreditLotInput,
+  BusinessOsCreditLotRecordResult,
+  BusinessOsCreditLotReverseInput,
+  BusinessOsCreditLotReverseResult,
+  BusinessOsCreditLotReverseStatus,
+  BusinessOsCreditLotSource,
+  BusinessOsCreditLotActorKind,
+} from './BusinessOsCreditLotRepository';
+// Business OS billing record (plan payments P-2a): the Business OS Stripe
+// customer per account per mode. Server-only, service role, no client grant;
+// one caller (businessOsStripeCustomer.ts) — a source guard enforces that,
+// barrel included.
+export {
+  BusinessOsBillingAccountRepository,
+  businessOsBillingAccountRepository,
+  BILLING_ACCOUNT_COLUMNS,
+  BOS_BILLING_ACCOUNTS_TABLE,
+} from './BusinessOsBillingAccountRepository';
+export type {
+  BusinessOsBillingAccount,
+  BusinessOsBillingCustomerInput,
+  BusinessOsBillingCustomerRecordResult,
+  BusinessOsSubscriptionStatus,
+} from './BusinessOsBillingAccountRepository';
 export {
   OrganizationRepository,
   organizationRepository,

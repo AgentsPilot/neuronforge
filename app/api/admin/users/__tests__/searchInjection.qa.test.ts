@@ -56,6 +56,12 @@ jest.mock('@/lib/logger', () => {
 });
 
 // Loaded after the fetch stub, on purpose.
+// Credit deduction slice 8a: the route's credits-left pass is not under test here
+// (route.creditsLeft.test.ts covers it). Setup only; no assertion changes.
+jest.mock('@/lib/business-os/credits/adminCreditPercent', () => ({
+  readAdminCreditsLeft: async () => ({ outcome: 'ok', byUserId: new Map() }),
+}));
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { GET } = require('../route') as typeof import('../route');
 

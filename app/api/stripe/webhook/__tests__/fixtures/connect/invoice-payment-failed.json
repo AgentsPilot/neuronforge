@@ -1,0 +1,21 @@
+{
+  "id": "evt_connect_invoice_failed",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "type": "invoice.payment_failed",
+  "account": "acct_owner_a",
+  "livemode": false,
+  "created": 1790000500,
+  "data": {
+    "object": {
+      "id": "in_connect_failed_1",
+      "object": "invoice",
+      "customer": "cus_client_1",
+      "currency": "usd",
+      "amount_paid": 0,
+      "amount_due": 12000,
+      "metadata": {},
+      "parent": null
+    }
+  }
+}

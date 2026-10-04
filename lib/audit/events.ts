@@ -166,6 +166,17 @@ export const AUDIT_EVENTS = {
   BOS_ENTITLEMENT_PLAN_STATE_RESET: 'BOS_ENTITLEMENT_PLAN_STATE_RESET',
   // R2-1: the multi-account launch operation. Slice 1 ships the dry run.
   BOS_ENTITLEMENT_LAUNCH_DRY_RUN: 'BOS_ENTITLEMENT_LAUNCH_DRY_RUN',
+  // Credit deduction slice 11b: an admin gave extra credits to an account, or
+  // took credits back out of one of its credit lots. Entity type
+  // 'business_os_credit_lot', id = the lot id. The details carry the reason, the
+  // credits, the lot's source and the idempotency key; the changes carry the
+  // account's extra credits before / after (read before the write, labelled
+  // `extraCreditsBasis: 'read_before_write'`) and, for a reduction, the lot's
+  // remaining before / after as the reversal function returned them under its
+  // lock. A replay of the same request writes no entry (S11-CR-2): the lot or
+  // draw row is itself the append-only record.
+  BOS_CREDIT_LOT_GRANTED: 'BOS_CREDIT_LOT_GRANTED',
+  BOS_CREDIT_LOT_REDUCED: 'BOS_CREDIT_LOT_REDUCED',
 
   // ==========================================
   // BUSINESS OS INVITES (admin-only, server-written)
@@ -708,6 +719,20 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'A Business OS invitation email was not sent, or not confirmed in time; the admin was shown the link to copy (reason class only)',
+  },
+  // Credit deduction slice 11b. 'warning': an admin changed what an account can
+  // spend. SOC2 and not FINANCIAL: FINANCIAL is reserved for AgentsPilot's own
+  // platform-billing events (see PAYMENT_PLAN_CANCELLED below); every Business
+  // OS money event carries SOC2 alone (SA W11b-3).
+  [AUDIT_EVENTS.BOS_CREDIT_LOT_GRANTED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin gave extra credits to a Business OS account (credits, expiry and reason recorded)',
+  },
+  [AUDIT_EVENTS.BOS_CREDIT_LOT_REDUCED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin took credits back from a Business OS credit lot (credits, lot remaining and reason recorded)',
   },
   // Slice 5a: a champion's friend invites (FR-28 to FR-32, F5a-13).
   [AUDIT_EVENTS.BOS_FRIEND_INVITE_CREATED]: {

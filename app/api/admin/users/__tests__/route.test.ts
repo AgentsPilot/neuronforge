@@ -48,6 +48,12 @@ jest.mock('@/lib/repositories/BusinessProfileRepository', () => ({
   },
 }));
 
+// Credit deduction slice 8a: the route's credits-left pass is not under test here
+// (route.creditsLeft.test.ts covers it). Setup only; no assertion changes.
+jest.mock('@/lib/business-os/credits/adminCreditPercent', () => ({
+  readAdminCreditsLeft: async () => ({ outcome: 'ok', byUserId: new Map() }),
+}));
+
 import { GET } from '../route';
 
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };

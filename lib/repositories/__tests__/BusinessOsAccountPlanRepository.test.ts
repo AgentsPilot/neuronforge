@@ -202,6 +202,63 @@ describe('findPeriodAnchor (credit deduction slice 6a, SQ-20)', () => {
   });
 });
 
+describe('findPeriodAnchorsBatch (credit deduction slice 8a, SA SQ-42)', () => {
+  const A1 = '11111111-1111-4111-8111-111111111111';
+  const A2 = '22222222-2222-4222-8222-222222222222';
+  const A3 = '33333333-3333-4333-8333-333333333333';
+  const ANCHOR = '2026-09-14T09:31:07.123456+00:00';
+
+  it('reads user_id and period_anchor only, with one IN query, anchors verbatim; a missing account has no plan row', async () => {
+    const { client, calls, builder } = mockSupabase({
+      data: [
+        { user_id: A1, period_anchor: ANCHOR },
+        { user_id: A2, period_anchor: '2026-09-20T00:00:00+00:00' },
+      ],
+      error: null,
+    });
+
+    const { data, error } = await new BusinessOsAccountPlanRepository(client).findPeriodAnchorsBatch([A1, A2, A3]);
+
+    expect(error).toBeNull();
+    expect(data).toEqual({ [A1]: ANCHOR, [A2]: '2026-09-20T00:00:00+00:00' });
+    expect(data![A1]).toBe(ANCHOR);
+    expect(calls.table).toBe('business_os_account_plans');
+    expect(calls.select).toBe('user_id, period_anchor');
+    expect(calls.in).toEqual(['user_id', [A1, A2, A3]]);
+    expect(builder.insert).not.toHaveBeenCalled();
+    expect(builder.update).not.toHaveBeenCalled();
+    expect(builder.upsert).not.toHaveBeenCalled();
+    expect(builder.delete).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an empty list', [] as string[]],
+    ['more than 100 ids', Array.from({ length: BOS_ENTITLEMENT_BATCH_LIMIT + 1 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`)],
+    ['a malformed id', [A1, 'acct-1']],
+    ['a filter-syntax id', [`${A1},user_id.neq.x`]],
+  ])('refuses %s without querying', async (_name, ids) => {
+    const { client } = mockSupabase({ data: [], error: null });
+    const { data, error } = await new BusinessOsAccountPlanRepository(client).findPeriodAnchorsBatch(ids);
+    expect(data).toBeNull();
+    expect(error).toBeInstanceOf(Error);
+    expect(client.from as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it('returns a read error as an error, never as "no plan rows"', async () => {
+    const { client } = mockSupabase({ data: null, error: new Error('permission denied') });
+    const { data, error } = await new BusinessOsAccountPlanRepository(client).findPeriodAnchorsBatch([A1]);
+    expect(data).toBeNull();
+    expect(error?.message).toBe('permission denied');
+  });
+
+  it('treats a row with no readable anchor as an error', async () => {
+    const { client } = mockSupabase({ data: [{ user_id: A1, period_anchor: null }], error: null });
+    const { data, error } = await new BusinessOsAccountPlanRepository(client).findPeriodAnchorsBatch([A1]);
+    expect(data).toBeNull();
+    expect(error).toBeInstanceOf(Error);
+  });
+});
+
 describe('findEntitlementInputsBatch', () => {
   it('keys the result by account and uses a single IN query', async () => {
     const { client, calls } = mockSupabase({

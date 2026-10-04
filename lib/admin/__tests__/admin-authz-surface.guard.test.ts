@@ -333,16 +333,25 @@ const R3_PERMANENT: ReadonlyArray<Exemption> = [];
  *
  * A repo-wide sweep for an access decision keyed on `profiles.role` returns
  * ZERO hits (verified twice, 2026-09-20), so this rule is free to enforce and
- * cannot be argued down as noisy. Neither entry below reads `profiles` — both
- * read a `role` field inside the `system_settings_config.admin_users` JSON
- * blob, which grants nothing.
+ * cannot be argued down as noisy.
+ *
+ * **Genuinely zero since 2026-10-02.** The two parked entries (the admin
+ * settings page and its admin-users route, both comparing a `role` field
+ * inside the `system_settings_config.admin_users` JSON blob, which grants
+ * nothing) are gone: ADMIN_BOS_CLEANUP slice 1 deleted the route, folding in
+ * admin-authz slice 7, and rewrote the page read-only without a role
+ * comparison. `CAPS.R4.parked` went 2 → 0 in the same commit.
  *
  * This is the rule that stops F5 (profile self-promotion) being reintroduced
  * through the other door.
  */
 const R4_PARKED: ReadonlyArray<Exemption> = [
-  { id: 'app/admin/settings/page.tsx', why: 'PARKED 2026-09-20 — 4 occurrences (lines 322, 447, 457, 461) compare a `role` from `system_settings_config.admin_users`, NOT `profiles.role`. The store grants no access; the screen is NOT retired \u2014 slice 7 is parked, so it still exists and still writes to a store that grants nothing. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 7)' },
-  { id: 'app/api/admin/settings/admin-users/route.ts', why: 'PARKED 2026-09-20 — 2 occurrences (lines 210, 211); line 211 is inside `.filter(a => a.role === \'super_admin\')`. Same store, same non-grant. (Lines were 196/197 before slice 1 inserted the gate — D-Q4.) — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 7)' },
+  /*
+   * EMPTIED 2026-10-02 by ADMIN_BOS_CLEANUP slice 1, and that is a real
+   * result: admin-authz slice 7's routes deleted, the page rewritten without
+   * role comparisons, `CAPS.R4.parked` 2 → 0 in the same commit. Any new
+   * access decision on a role value now fails R4 with nothing to hide behind.
+   */
 ];
 const R4_PERMANENT: ReadonlyArray<Exemption> = [];
 
@@ -403,7 +412,7 @@ const CAPS = {
   R1: { parked: 6, permanent: 0 },
   R2: { parked: 6, permanent: 1 },
   R3: { parked: 0, permanent: 0 },
-  R4: { parked: 2, permanent: 0 },
+  R4: { parked: 0, permanent: 0 },
   R5: { parked: 0, permanent: 0 },
   R6: { parked: 0, permanent: 0 },
   R8: { parked: 0, permanent: 0 },
@@ -1068,11 +1077,13 @@ describe('repo-wide guard: the admin authorization surface', () => {
       expect(drift).toEqual([]);
     });
 
-    it('R3 and R5 are genuinely zero — a real result, not an untested rule', () => {
-      // Worth asserting separately: these two are the only rules with nothing
-      // exempted at all, so "green" for them means the repo is actually clean,
-      // not that everything was allow-listed.
+    it('R3, R4 and R5 are genuinely zero — a real result, not an untested rule', () => {
+      // Worth asserting separately: these rules have nothing exempted at all,
+      // so "green" for them means the repo is actually clean, not that
+      // everything was allow-listed. R4 joined on 2026-10-02 (ADMIN_BOS_CLEANUP
+      // slice 1 emptied its allow-list).
       expect(R3_PARKED.length + R3_PERMANENT.length).toBe(0);
+      expect(R4_PARKED.length + R4_PERMANENT.length).toBe(0);
       expect(R5_PARKED.length + R5_PERMANENT.length).toBe(0);
     });
 
@@ -1711,8 +1722,9 @@ describe('repo-wide guard: the admin authorization surface', () => {
     });
 
     it("fires on the `.filter(a => a.role === 'super_admin')` shape (W-8)", () => {
-      // admin-users/route.ts:211 (was :197 before slice 1 inserted the gate —
-      // D-Q4). Named explicitly because an allow-list that
+      // Taken from the admin-users settings route, line 211 (was :197 before
+      // slice 1 inserted the gate — D-Q4; file since deleted 2026-10-02, the
+      // shape is still pinned). Named explicitly because an allow-list that
       // under-counts its own occurrences is an allow-list that under-tests.
       expect(ROLE_COMPARISON.test("adminUsers.filter(a => a.role === 'super_admin').length")).toBe(true);
     });

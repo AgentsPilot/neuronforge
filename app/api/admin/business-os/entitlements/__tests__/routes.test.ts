@@ -152,6 +152,108 @@ jest.mock('@/lib/repositories/OnboardingConversationRepository', () => ({
   },
 }));
 
+// ── Slice 11b: the credit ops' repositories ─────────────────────────────────
+// Hex letters on purpose: an all-digit uuid reads the same in upper case, so
+// a case test written with one would prove nothing.
+const LOT = 'aaaaaaaa-3333-4333-8333-33333333333a';
+const BOOST_LOT = 'bbbbbbbb-4444-4444-8444-44444444444b';
+const FOREIGN_LOT = 'ffffffff-5555-4555-8555-55555555555f';
+const NEW_LOT = '66666666-6666-4666-8666-666666666666';
+const DRAW = '77777777-7777-4777-8777-777777777777';
+const REQUEST = '88888888-8888-4888-8888-888888888888';
+const PLATFORM = 'eeeeeeee-9999-4999-8999-99999999999e';
+/** An account and an admin whose ids have letters, for the case tests (W11b-1). */
+const HEX_ACCOUNT = 'abcdef01-2345-4678-89ab-cdef01234567';
+const HEX_ADMIN = 'fedcba98-7654-4321-8fed-cba987654321';
+const FAR_FUTURE = '2099-12-31T00:00:00.000Z';
+
+function creditLotRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: LOT,
+    accountId: ACCOUNT,
+    source: 'admin_grant',
+    creditsGranted: 100,
+    creditsBase: 100,
+    creditsBonus: 0,
+    creditValueVersion: 1,
+    expiresAt: null as string | null,
+    idempotencyKey: 'admin_grant:00000000-0000-4000-8000-000000000001',
+    sourceRef: null,
+    actorKind: 'admin',
+    actorAdminId: ADMIN,
+    reason: 'earlier grant',
+    createdAt: '2026-09-01T00:00:00.000Z',
+    draws: [] as unknown[],
+    ...overrides,
+  };
+}
+
+const credit = {
+  lots: [] as Array<ReturnType<typeof creditLotRow>>,
+  listError: false,
+  hold: 'not_held' as 'not_held' | 'held' | 'error' | 'throws',
+  record: { outcome: 'recorded', lotId: NEW_LOT } as Record<string, unknown> | 'error',
+  stored: null as Record<string, unknown> | null,
+  reverse: { status: 'recorded', drawId: DRAW, credits: 40, remainingBefore: 100, remainingAfter: 60 } as Record<string, unknown> | 'error',
+};
+
+function resetCredit() {
+  credit.lots = [
+    creditLotRow(),
+    creditLotRow({ id: BOOST_LOT, source: 'boost_purchase', actorKind: 'stripe_webhook', actorAdminId: null, creditsGranted: 13.75 }),
+  ];
+  credit.listError = false;
+  credit.hold = 'not_held';
+  credit.record = { outcome: 'recorded', lotId: NEW_LOT };
+  credit.stored = null;
+  credit.reverse = { status: 'recorded', drawId: DRAW, credits: 40, remainingBefore: 100, remainingAfter: 60 };
+}
+
+jest.mock('@/lib/repositories/BusinessOsCreditLotRepository', () => ({
+  businessOsCreditLotRepository: {
+    async listLotsWithDraws() {
+      repositoryCalls.push('listLotsWithDraws');
+      return credit.listError ? { data: null, error: new Error('lots read failed') } : { data: credit.lots, error: null };
+    },
+    async recordLot() {
+      repositoryCalls.push('recordLot');
+      return credit.record === 'error' ? { data: null, error: new Error('write failed') } : { data: credit.record, error: null };
+    },
+    async findLotForAccount() {
+      repositoryCalls.push('findLotForAccount');
+      return { data: credit.stored, error: null };
+    },
+    async reverseLot() {
+      repositoryCalls.push('reverseLot');
+      return credit.reverse === 'error' ? { data: null, error: new Error('write failed') } : { data: credit.reverse, error: null };
+    },
+  },
+}));
+
+jest.mock('@/lib/repositories/BusinessOsAccountLineageRepository', () => ({
+  businessOsAccountLineageRepository: {
+    async findHoldFactsForAccount() {
+      repositoryCalls.push('findHoldFactsForAccount');
+      if (credit.hold === 'throws') throw new Error('lineage exploded');
+      if (credit.hold === 'error') return { data: null, error: new Error('lineage read failed') };
+      if (credit.hold === 'held') return { data: { source: 'account_invite', first_paid_at: null, invite_id: null }, error: null };
+      return { data: null, error: null };
+    },
+  },
+}));
+
+jest.mock('@/lib/repositories/BusinessOsInviteRepository', () => ({
+  businessOsInviteRepository: {
+    async findHoldFactsById() {
+      repositoryCalls.push('findHoldFactsById');
+      return { data: null, error: null };
+    },
+  },
+}));
+
+/** Every write method of the plan and lot repositories, for the no-write-on-refusal checks (W11b-6). */
+const WRITE_METHODS = ['updatePlan', 'ensurePlanRow', 'createOverride', 'endOverride', 'resetPlanState', 'recordLot', 'reverseLot'];
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const accountRoute = require('@/app/api/admin/business-os/entitlements/accounts/[accountId]/route');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -185,6 +287,7 @@ beforeEach(() => {
   state.flushes = 0;
   state.events = [];
   repositoryCalls.length = 0;
+  resetCredit();
 });
 
 /** Every exported handler, so the gate cases cover all of them. */
@@ -198,6 +301,35 @@ const HANDLERS: Array<[string, () => Promise<Response>]> = [
           op: 'set_cohort',
           cohort: 'trial',
           reason: 'support case',
+        }),
+        { params: { accountId: ACCOUNT } }
+      ),
+  ],
+  // Slice 11b: the credit ops sit behind the same gate.
+  [
+    'accounts POST grant_credits',
+    () =>
+      accountRoute.POST(
+        post(`/api/admin/business-os/entitlements/accounts/${ACCOUNT}`, {
+          op: 'grant_credits',
+          amount: 50,
+          expiresAt: null,
+          requestId: REQUEST,
+          reason: 'goodwill',
+        }),
+        { params: { accountId: ACCOUNT } }
+      ),
+  ],
+  [
+    'accounts POST reduce_credit_lot',
+    () =>
+      accountRoute.POST(
+        post(`/api/admin/business-os/entitlements/accounts/${ACCOUNT}`, {
+          op: 'reduce_credit_lot',
+          lotId: LOT,
+          amount: 40,
+          requestId: REQUEST,
+          reason: 'mistaken grant',
         }),
         { params: { accountId: ACCOUNT } }
       ),
@@ -252,6 +384,72 @@ describe('the gate, on every handler', () => {
     });
 
     expect(response.status).toBe(403);
+  });
+});
+
+describe('T11b.1 characterisation pin: an existing op\'s audit call, byte for byte (slice 11b, S11-C-7, G11b-1)', () => {
+  // Written FIRST, on the route as it was before slice 11b, and never edited
+  // since: the credit ops add an audit override, a replay branch and a
+  // conditional cache invalidation to this route, and none of that may change
+  // what the seven existing ops record. Every key is pinned with `toEqual`.
+  const FIXED_NOW = new Date('2026-10-02T09:30:00.000Z');
+  const CORRELATION = 'corr-11b-pin';
+
+  beforeEach(() => {
+    // Only `Date` is faked: the request body is read through real streams.
+    jest.useFakeTimers({
+      now: FIXED_NOW,
+      doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'queueMicrotask'],
+    });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('set_cohort: the full audit entry, the response and the cache invalidation', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const entitlementService = require('@/lib/business-os/entitlements/EntitlementService');
+    const service = entitlementService.getEntitlementService();
+    const invalidate = jest.spyOn(service, 'invalidate');
+
+    const request = new NextRequest(new URL(`/api/admin/business-os/entitlements/accounts/${ACCOUNT}`, 'http://localhost'), {
+      method: 'POST',
+      body: JSON.stringify({ op: 'set_cohort', cohort: 'trial', reason: 'support case' }),
+      headers: { 'content-type': 'application/json', 'x-correlation-id': CORRELATION },
+    });
+
+    const response = await accountRoute.POST(request, { params: { accountId: ACCOUNT } });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ success: true, data: { accountId: ACCOUNT, op: 'set_cohort' } });
+
+    expect(state.audit).toHaveLength(1);
+    expect(state.audit[0]).toEqual({
+      action: 'BOS_ENTITLEMENT_COHORT_SET',
+      entityType: 'business_os_account_plan',
+      entityId: ACCOUNT,
+      userId: ACCOUNT,
+      actorId: ADMIN,
+      changes: {
+        before: { ...CHAMPION_PLAN },
+        after: {
+          user_id: ACCOUNT,
+          cohort: 'trial',
+          period_anchor: FIXED_NOW.toISOString(),
+          cohort_expires_at: null,
+          trial_started_at: FIXED_NOW.toISOString(),
+        },
+      },
+      details: { reason: 'support case', op: 'set_cohort', correlationId: CORRELATION },
+      severity: 'warning',
+      request,
+    });
+    expect(state.events).toEqual(['log', 'flush']);
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledWith(ACCOUNT);
+
+    invalidate.mockRestore();
   });
 });
 
@@ -625,3 +823,376 @@ describe('GET /accounts/[accountId] — the contract the admin screen renders (Q
     expect(response.status).toBe(404);
   });
 });
+
+describe('slice 11b — give / take back credits through the accounts route', () => {
+  const CORRELATION = 'corr-11b';
+  const url = (accountId: string) => `/api/admin/business-os/entitlements/accounts/${accountId}`;
+  const grantBody = { op: 'grant_credits', amount: 50, expiresAt: FAR_FUTURE, requestId: REQUEST, reason: 'goodwill' };
+  const reduceBody = { op: 'reduce_credit_lot', lotId: LOT, amount: 40, requestId: REQUEST, reason: 'mistaken grant' };
+
+  function request(accountId: string, body: unknown): NextRequest {
+    return new NextRequest(new URL(url(accountId), 'http://localhost'), {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'content-type': 'application/json', 'x-correlation-id': CORRELATION },
+    });
+  }
+
+  async function call(body: unknown, accountId = ACCOUNT) {
+    const req = request(accountId, body);
+    const response = await accountRoute.POST(req, { params: { accountId } });
+    return { response, req, json: await response.json() };
+  }
+
+  let invalidate: jest.SpyInstance;
+  const originalSystemId = process.env.SYSTEM_ADMIN_USER_ID;
+
+  beforeEach(() => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getEntitlementService } = require('@/lib/business-os/entitlements/EntitlementService');
+    invalidate = jest.spyOn(getEntitlementService(), 'invalidate');
+  });
+
+  afterEach(() => {
+    invalidate.mockRestore();
+    if (originalSystemId === undefined) delete process.env.SYSTEM_ADMIN_USER_ID;
+    else process.env.SYSTEM_ADMIN_USER_ID = originalSystemId;
+  });
+
+  it('grant: 200, one audit entry naming the lot, flushed before the response, cache untouched (G11b-7)', async () => {
+    const { response, req, json } = await call(grantBody);
+
+    expect(response.status).toBe(200);
+    expect(json).toEqual({
+      success: true,
+      data: { accountId: ACCOUNT, op: 'grant_credits', lotId: NEW_LOT, credits: 50, expiresAt: FAR_FUTURE, replayed: false },
+    });
+    expect(state.audit).toEqual([
+      {
+        action: 'BOS_CREDIT_LOT_GRANTED',
+        entityType: 'business_os_credit_lot',
+        entityId: NEW_LOT,
+        userId: ACCOUNT,
+        actorId: ADMIN,
+        changes: { extraCreditsBefore: 113.75, extraCreditsAfter: 163.75 },
+        details: {
+          reason: 'goodwill',
+          op: 'grant_credits',
+          correlationId: CORRELATION,
+          lotId: NEW_LOT,
+          credits: 50,
+          expiresAt: FAR_FUTURE,
+          replayed: false,
+          source: 'admin_grant',
+          idempotencyKey: `admin_grant:${REQUEST}`,
+          extraCreditsBasis: 'read_before_write',
+        },
+        severity: 'warning',
+        request: req,
+      },
+    ]);
+    expect(state.events).toEqual(['log', 'flush']);
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it('reduce: 200, one audit entry with the function\'s lot figures, cache untouched', async () => {
+    const { response, req, json } = await call(reduceBody);
+
+    expect(response.status).toBe(200);
+    expect(json).toEqual({
+      success: true,
+      data: { accountId: ACCOUNT, op: 'reduce_credit_lot', lotId: LOT, drawId: DRAW, credits: 40, lotRemainingAfter: 60, replayed: false },
+    });
+    expect(state.audit).toEqual([
+      {
+        action: 'BOS_CREDIT_LOT_REDUCED',
+        entityType: 'business_os_credit_lot',
+        entityId: LOT,
+        userId: ACCOUNT,
+        actorId: ADMIN,
+        changes: { extraCreditsBefore: 113.75, extraCreditsAfter: 73.75, lotRemainingBefore: 100, lotRemainingAfter: 60 },
+        details: {
+          reason: 'mistaken grant',
+          op: 'reduce_credit_lot',
+          correlationId: CORRELATION,
+          lotId: LOT,
+          drawId: DRAW,
+          credits: 40,
+          lotRemainingAfter: 60,
+          replayed: false,
+          source: 'admin_grant',
+          idempotencyKey: `admin_reversal:${REQUEST}`,
+          extraCreditsBasis: 'read_before_write',
+        },
+        severity: 'warning',
+        request: req,
+      },
+    ]);
+    expect(state.events).toEqual(['log', 'flush']);
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it('grant replay: 200, replayed true, the STORED figures, no audit entry and no flush (S11-CR-2, CR11a-4)', async () => {
+    credit.record = { outcome: 'replayed', lotId: NEW_LOT };
+    credit.stored = { ...creditLotRow({ id: NEW_LOT, creditsGranted: 25, expiresAt: '2098-01-01T00:00:00.000Z' }), draws: undefined };
+
+    const { response, json } = await call({ ...grantBody, amount: 50 });
+
+    expect(response.status).toBe(200);
+    expect(json).toEqual({
+      success: true,
+      data: { accountId: ACCOUNT, op: 'grant_credits', lotId: NEW_LOT, credits: 25, expiresAt: '2098-01-01T00:00:00.000Z', replayed: true },
+    });
+    expect(state.audit).toEqual([]);
+    expect(state.events).toEqual([]);
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it('reduce replay: 200, replayed true, the RETURNED credits, no audit entry and no flush (QA11a-2)', async () => {
+    credit.reverse = { status: 'already_recorded', drawId: DRAW, credits: 30, remainingBefore: 70, remainingAfter: 70 };
+
+    const { response, json } = await call({ ...reduceBody, amount: 40 });
+
+    expect(response.status).toBe(200);
+    expect(json).toEqual({
+      success: true,
+      data: { accountId: ACCOUNT, op: 'reduce_credit_lot', lotId: LOT, drawId: DRAW, credits: 30, lotRemainingAfter: 70, replayed: true },
+    });
+    expect(state.audit).toEqual([]);
+    expect(state.events).toEqual([]);
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it('an existing op still invalidates the cache (G11b-7, the control)', async () => {
+    await call({ op: 'set_cohort', cohort: 'trial', reason: 'support case' });
+    expect(invalidate).toHaveBeenCalledWith(ACCOUNT);
+  });
+
+  it('W11b-1: an UPPER-case path id on an existing op is handled as its lower-case form (audit ids and the cache key)', async () => {
+    expect(HEX_ACCOUNT.toUpperCase()).not.toBe(HEX_ACCOUNT);
+    const { response } = await call({ op: 'set_cohort', cohort: 'trial', reason: 'support case' }, HEX_ACCOUNT.toUpperCase());
+
+    expect(response.status).toBe(200);
+    expect(state.audit).toHaveLength(1);
+    expect(state.audit[0]).toMatchObject({ entityId: HEX_ACCOUNT, userId: HEX_ACCOUNT });
+    expect(invalidate).toHaveBeenCalledWith(HEX_ACCOUNT);
+    expect(invalidate).not.toHaveBeenCalledWith(HEX_ACCOUNT.toUpperCase());
+  });
+
+  it('W11b-1: the GET answers with the lower-case id too', async () => {
+    const response = await accountRoute.GET(get(url(HEX_ACCOUNT.toUpperCase())), { params: { accountId: HEX_ACCOUNT.toUpperCase() } });
+    expect(response.status).toBe(200);
+    expect((await response.json()).data.accountId).toBe(HEX_ACCOUNT);
+  });
+
+  it.each([
+    ['grant_credits', HEX_ADMIN],
+    ['grant_credits', HEX_ADMIN.toUpperCase()],
+    ['set_cohort', HEX_ADMIN],
+    ['set_cohort', HEX_ADMIN.toUpperCase()],
+  ])('own account (%s, path %s): 403 own_account, no repository call at all, no audit', async (op, path) => {
+    state.user = { id: HEX_ADMIN, email: 'admin@example.com' };
+    const body = op === 'grant_credits' ? grantBody : { op: 'set_cohort', cohort: 'trial', reason: 'support case' };
+    const { response, json } = await call(body, path);
+
+    expect(response.status).toBe(403);
+    expect(json).toMatchObject({ success: false, error: 'own_account' });
+    expect(repositoryCalls).toEqual([]);
+    expect(state.audit).toEqual([]);
+  });
+
+  it.each([
+    ['an invalid amount', { ...grantBody, amount: 0 }],
+    ['an injected accountId', { ...grantBody, accountId: '12121212-1212-4212-8212-121212121212' }],
+    ['an injected userId', { ...reduceBody, userId: '12121212-1212-4212-8212-121212121212' }],
+    ['a missing expiresAt key', { op: 'grant_credits', amount: 50, requestId: REQUEST, reason: 'goodwill' }],
+  ])('400 invalid_body for %s, nothing read', async (_name, body) => {
+    const { response, json } = await call(body);
+    expect(response.status).toBe(400);
+    expect(json).toMatchObject({ success: false, error: 'invalid_body' });
+    expect(repositoryCalls).toEqual([]);
+  });
+
+  it('400 invalid_account_id for a malformed path id on a credit op', async () => {
+    const response = await accountRoute.POST(post(url('nope'), grantBody), { params: { accountId: 'nope' } });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'invalid_account_id' });
+    expect(repositoryCalls).toEqual([]);
+  });
+
+  it('404 for a lot of another account, and reverseLot is never called (tenant-isolation-guard Step 7)', async () => {
+    const { response, json } = await call({ ...reduceBody, lotId: FOREIGN_LOT });
+    expect(response.status).toBe(404);
+    expect(json).toMatchObject({ error: 'lot_not_found' });
+    expect(repositoryCalls).not.toContain('reverseLot');
+  });
+
+  it('a real lot sent UPPER-cased proceeds (W11b-2)', async () => {
+    expect(LOT.toUpperCase()).not.toBe(LOT);
+    const { response } = await call({ ...reduceBody, lotId: LOT.toUpperCase() });
+    expect(response.status).toBe(200);
+    expect(repositoryCalls).toContain('reverseLot');
+  });
+
+  it('409 exceeds_remaining carries the remaining read before the attempt, with its basis (W11b-10)', async () => {
+    credit.reverse = { status: 'exceeds_remaining', drawId: null, credits: null, remainingBefore: null, remainingAfter: null };
+    const { response, json } = await call({ ...reduceBody, amount: 500 });
+    expect(response.status).toBe(409);
+    expect(json).toEqual({ success: false, error: 'exceeds_remaining', details: { remaining: 100, remainingBasis: 'read_before_write' } });
+  });
+
+  /**
+   * W11b-6: every refusal code of §11b.3.2 and §11b.3.6 writes nothing that
+   * the route controls (no audit, no flush, no invalidation) and no plan
+   * write. A pre-write refusal calls no write method at all; a refusal mapped
+   * from a lot function's own answer called exactly that one function once,
+   * and the function's contract is that every status but `recorded` wrote
+   * nothing.
+   */
+  type Case = [string, number, () => { body: unknown; path?: string }, 'recordLot' | 'reverseLot' | null];
+  const REFUSALS: Case[] = [
+    ['invalid_body', 400, () => ({ body: { ...grantBody, amount: -1 } }), null],
+    ['own_account', 403, () => ({ body: grantBody, path: ADMIN }), null],
+    [
+      'platform_account',
+      409,
+      () => {
+        process.env.SYSTEM_ADMIN_USER_ID = PLATFORM;
+        return { body: grantBody, path: PLATFORM };
+      },
+      null,
+    ],
+    [
+      'not_a_business_os_account',
+      404,
+      () => {
+        state.isTenant = false;
+        state.plan = null;
+        return { body: grantBody };
+      },
+      null,
+    ],
+    [
+      'tenant_check_failed',
+      500,
+      () => {
+        state.tenantCheckThrows = true;
+        return { body: reduceBody };
+      },
+      null,
+    ],
+    [
+      'plan_row_missing',
+      409,
+      () => {
+        state.plan = null;
+        return { body: reduceBody };
+      },
+      null,
+    ],
+    [
+      'awaiting_payment',
+      409,
+      () => {
+        credit.hold = 'held';
+        return { body: grantBody };
+      },
+      null,
+    ],
+    [
+      'payment_hold_check_failed',
+      500,
+      () => {
+        credit.hold = 'error';
+        return { body: grantBody };
+      },
+      null,
+    ],
+    [
+      'payment_hold_check_failed (reader throws)',
+      500,
+      () => {
+        credit.hold = 'throws';
+        return { body: grantBody };
+      },
+      null,
+    ],
+    ['expires_at_in_past', 400, () => ({ body: { ...grantBody, expiresAt: '2020-01-01T00:00:00.000Z' } }), null],
+    [
+      'credit_lots_unreadable',
+      500,
+      () => {
+        credit.listError = true;
+        return { body: grantBody };
+      },
+      null,
+    ],
+    ['lot_not_found', 404, () => ({ body: { ...reduceBody, lotId: FOREIGN_LOT } }), null],
+    ['paid_credits_locked', 409, () => ({ body: { ...reduceBody, lotId: BOOST_LOT } }), null],
+    [
+      'idempotency_key_conflict (grant)',
+      409,
+      () => {
+        credit.record = { outcome: 'idempotency_key_conflict' };
+        return { body: grantBody };
+      },
+      'recordLot',
+    ],
+    [
+      'lot_write_failed (grant)',
+      500,
+      () => {
+        credit.record = 'error';
+        return { body: grantBody };
+      },
+      'recordLot',
+    ],
+    [
+      'lot_read_failed (grant replay read-back)',
+      500,
+      () => {
+        credit.record = { outcome: 'replayed', lotId: NEW_LOT };
+        credit.stored = null;
+        return { body: grantBody };
+      },
+      'recordLot',
+    ],
+    ...(['lot_not_found', 'lot_expired', 'nothing_left', 'exceeds_remaining', 'idempotency_key_conflict'] as const).map(
+      (status): Case => [
+        `${status} (from the reversal function)`,
+        status === 'lot_not_found' ? 404 : 409,
+        () => {
+          credit.reverse = { status, drawId: null, credits: null, remainingBefore: null, remainingAfter: null };
+          return { body: reduceBody };
+        },
+        'reverseLot',
+      ]
+    ),
+    [
+      'lot_write_failed (reduce)',
+      500,
+      () => {
+        credit.reverse = 'error';
+        return { body: reduceBody };
+      },
+      'reverseLot',
+    ],
+  ];
+
+  it.each(REFUSALS)('refusal %s (%d): no audit, no flush, no invalidation, no write it did not have to attempt', async (name, status, setup, attempted) => {
+    const { body, path } = setup();
+    const { response, json } = await call(body, path ?? ACCOUNT);
+
+    expect(response.status).toBe(status);
+    expect(json.success).toBe(false);
+    expect(json.error).toBe(name.split(' ')[0]);
+    expect(state.audit).toEqual([]);
+    expect(state.flushes).toBe(0);
+    expect(invalidate).not.toHaveBeenCalled();
+
+    const writes = repositoryCalls.filter((method) => WRITE_METHODS.includes(method));
+    expect(writes).toEqual(attempted ? [attempted] : []);
+    if (name === 'own_account') expect(repositoryCalls).toEqual([]);
+  });
+});
+

@@ -29,6 +29,7 @@
 
 import { requireAdminPage } from '@/lib/admin/requireAdminPage';
 import AdminChrome from './components/AdminChrome';
+import { resolveAdminDisplayName } from './adminDisplayName';
 
 export default async function AdminLayout({
   children,
@@ -37,7 +38,10 @@ export default async function AdminLayout({
 }) {
   // Deliberately NOT wrapped in try/catch: `requireAdminPage` redirects by
   // throwing, and swallowing that would render the admin shell to a non-admin.
-  await requireAdminPage();
+  const admin = await requireAdminPage();
 
-  return <AdminChrome>{children}</AdminChrome>;
+  // Only the display string goes to the client chrome — never the id.
+  const adminName = await resolveAdminDisplayName(admin);
+
+  return <AdminChrome adminName={adminName}>{children}</AdminChrome>;
 }

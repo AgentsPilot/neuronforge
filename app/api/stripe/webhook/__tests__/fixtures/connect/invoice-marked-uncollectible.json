@@ -1,0 +1,18 @@
+{
+  "id": "evt_connect_invoice_uncollectible",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "type": "invoice.marked_uncollectible",
+  "account": "acct_owner_a",
+  "livemode": false,
+  "created": 1790000700,
+  "data": {
+    "object": {
+      "id": "in_connect_uncoll_1",
+      "object": "invoice",
+      "currency": "usd",
+      "metadata": {},
+      "parent": null
+    }
+  }
+}

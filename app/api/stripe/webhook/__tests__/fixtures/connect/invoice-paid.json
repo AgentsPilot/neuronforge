@@ -1,0 +1,24 @@
+{
+  "id": "evt_connect_invoice_paid",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "type": "invoice.paid",
+  "account": "acct_owner_a",
+  "livemode": false,
+  "created": 1790000000,
+  "data": {
+    "object": {
+      "id": "in_connect_1",
+      "object": "invoice",
+      "customer": "cus_client_1",
+      "currency": "usd",
+      "amount_paid": 15000,
+      "amount_due": 15000,
+      "total": 15000,
+      "hosted_invoice_url": "https://invoice.stripe.test/i/in_connect_1",
+      "invoice_pdf": "https://invoice.stripe.test/i/in_connect_1/pdf",
+      "metadata": { "neuronforge_invoice_id": "pinv-0001" },
+      "parent": null
+    }
+  }
+}

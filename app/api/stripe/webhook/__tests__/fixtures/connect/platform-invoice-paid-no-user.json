@@ -1,0 +1,20 @@
+{
+  "id": "evt_platform_invoice_paid_no_user",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "type": "invoice.paid",
+  "livemode": false,
+  "created": 1790001100,
+  "data": {
+    "object": {
+      "id": "in_platform_1",
+      "object": "invoice",
+      "customer": null,
+      "currency": "usd",
+      "amount_paid": 2000,
+      "metadata": {},
+      "parent": null,
+      "lines": { "object": "list", "data": [] }
+    }
+  }
+}

@@ -1,6 +1,6 @@
 # Business OS entitlements
 
-> **Last Updated**: 2026-10-02
+> **Last Updated**: 2026-10-04
 
 ## Overview
 
@@ -21,6 +21,7 @@ What an account can do in Business OS, and why. This module answers one question
 9. [Ops checks](#ops-checks)
 10. [Importing the module from outside it](#importing-the-module-from-outside-it)
 11. [Metering: the credit ledger](#metering-the-credit-ledger)
+12. [Billing: the plan billing record and Stripe settings](#billing-the-plan-billing-record-and-stripe-settings)
 
 ---
 
@@ -177,18 +178,26 @@ All under `/api/admin/business-os/entitlements/**`, all gated by `requireAdmin` 
 | Route | Method | What |
 |---|---|---|
 | `accounts/<accountId>` | GET | What is this account entitled to, and **which layer decided each value** |
-| `accounts/<accountId>` | POST | `ensure_plan_row`, `set_cohort`, `set_expiry`, `assign_tier`, `add_override`, `end_override`, `reset_plan_state` |
+| `accounts/<accountId>` | POST | `ensure_plan_row`, `set_cohort`, `set_expiry`, `assign_tier`, `add_override`, `end_override`, `reset_plan_state`; and, from credit deduction slice 11b, `grant_credits` and `reduce_credit_lot` (see below) |
 | `shadow-report` | GET | Static / observed / `asTier` replay / setup-AI |
 | `launch` | POST | `launch_champion_existing` — dry run in Slice 1 |
 
-Refusals are explicit codes, never a database constraint: `not_a_business_os_account` (404), `plan_row_missing` (409), `would_leave_no_basis` (409), `capability_not_built` (409), `no_tiers_configured` (400), `expires_at_required_for_champion` (400), `tier_assigned` (409).
+Refusals are explicit codes, never a database constraint: `own_account` (403, every op), `not_a_business_os_account` (404), `plan_row_missing` (409), `would_leave_no_basis` (409), `capability_not_built` (409), `no_tiers_configured` (400), `expires_at_required_for_champion` (400), `tier_assigned` (409). The credit ops add their own, listed below.
 
 Two rules worth knowing before using them:
 
 - **Every assignment must say when it ends** — a champion and a tier both need the `expiresAt` key, even to say `null` ("no end date"). Silence is never read as "forever" (A-1, RC-4), and the report lists every open-ended account.
 - **No op may leave an account with neither an in-force tier nor a cohort** (R2-3). That state resolves to an anomaly, and under enforcement an anomaly denies owner-paid capabilities.
+- **No admin may run any op on their own account** (credit deduction slice 11b, S11-BQ-1): all nine ops answer 403 `own_account` before anything is read, including a test account on the admin's own login. The path id is compared case-insensitively, and is lower-cased after validation so the cache key and the audit ids use the canonical form. Admin BOS cleanup slice 6 must show this refusal in plain words (S11-C-11).
 
 `reset_plan_state` wipes and recreates: it needs a confirm literal, the account id echoed back, and `confirmTierLoss` if a tier is assigned. The overrides it ends go into the audit entry (`endedOverrides`), because afterwards that is the only trace of them.
+
+**Give / take back credits (credit deduction slice 11b).** Two ops on the same route, defined in `lib/business-os/credits/creditAdminOps.ts` (which imports nothing from this module; `adminOps.ts` composes them into the union and passes the credit value version in):
+
+- `grant_credits` — `amount` (whole credits, 1 to 100,000), `expiresAt` (required key: an instant with an explicit offset, or `null` for no end date), `requestId` (uuid, minted once per form opening), `reason` (3 to 500 characters). Records one `admin_grant` lot.
+- `reduce_credit_lot` — `lotId`, `amount` (whole credits or `'rest'`), `requestId`, `reason`, and `confirmPaidCredits: true` to take back a paid (`boost_purchase`) lot. Records one reversal draw.
+
+Order: own account 403 → platform account 409 `platform_account` → tenant 404 → plan row 409 → for a grant, payment hold (409 `awaiting_payment`; an unreadable hold fails closed with 500 `payment_hold_check_failed`) and expiry (400 `expires_at_in_past`) → the account's lots are read (500 `credit_lots_unreadable`) → for a reduction, the lot must be in that account (404 `lot_not_found`) and a paid lot needs the flag (409 `paid_credits_locked`) → the write. The lot functions' own answers map to `idempotency_key_conflict`, `lot_expired`, `nothing_left`, `exceeds_remaining` (409, with `details.remaining` read before the attempt) and `lot_write_failed` / `lot_read_failed` (500). The same request id twice records one lot or draw and answers `replayed: true` with the stored figures and **no audit entry**. Audited as `BOS_CREDIT_LOT_GRANTED` / `BOS_CREDIT_LOT_REDUCED` on entity `business_os_credit_lot` (the lot id), severity `warning`. **A credit op does not invalidate the entitlement cache**: lots are not an `EntitlementService` input today. If slice 9 / 10 makes extra credits an input to a cached decision, the credit ops must invalidate again. There is no button yet (11c).
 
 ## Ops checks
 
@@ -242,7 +251,55 @@ Credit deduction layer, slice 3 ([workplan](/docs/workplans/BUSINESS_OS_CREDIT_D
 
 **The owner's own read (slice 6a).** The dashboard's **Credits** card reads `GET /api/business-os/usage`: the owner's own period (the plan anchor through `business_os_credit_period_start`, the calendar month with no plan row, the whole trial from the anchor for a one-off total), used from the totals row split "by you" (`credits_owner`) / "automatic" (`credits_scheduled + credits_external`), corrections attributed through the charge they correct, and the allowance from this module through `creditAllowanceForDisplay` (`creditAllowanceView.ts`) — **display only**: `getSnapshot`, never `check()`, and its one caller (`lib/business-os/credits/ownerCreditUsage.ts`) is a registered non-gate importer. The ledger is read with the owner's **RLS client** through `BusinessOsCreditOwnerReadRepository` (owner-granted columns only); the service role is used only for the plan anchor and the pure period function. No tokens, dollars or cost reach the owner. [Workplan](/docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_6_WORKPLAN.md) §4.
 
+**The owner's credit history (slice 7a).** A **Credit history** link on the Credits card opens a side panel that reads `GET /api/business-os/credits/history` (one optional opaque cursor, 50 lines a page, never cached): every ledger row of the card's own window — the same window function as the card (`resolveOwnerCreditWindow` in `lib/business-os/credits/ownerCreditUsage.ts`) — newest first, through the owner's RLS client (`BusinessOsCreditOwnerReadRepository.listLedgerRowsForWindow`, granted columns only). A correction is shown under the service, area, label and trigger of the charge it corrects (`effectiveFields.ts`). It adds **no** importer of this module: `ownerCreditUsage.ts` stays the one registered non-gate importer, its symbol list unchanged.
+
+**The admin "Credits left" column (slice 8a).** `GET /api/admin/users` gives each Business OS row the percentage of credits left the owner's card shows (`creditBands.ts`), read in one batched pass (`lib/business-os/credits/adminCreditPercent.ts`): `getSnapshots` and a batched plan-anchor read per 100 accounts, then the totals per 200 accounts (`user_id, period_start, credits_total` only), under a 2 s budget — on any failure every row reads "Unknown" and the list still answers. `adminCreditPercent.ts` is a **registered non-gate importer** (`getEntitlementService`, `resolveAccountId`, `creditAllowanceForDisplay`) — **display only**: `getSnapshots`, never `check()`. Its wiring, `adminCreditPercentDeps.ts`, is a declared plan-repository reader (`findPeriodAnchorsBatch` only). The route itself imports nothing from this module.
+
+**Credits added: lots (slice 11a).** Credits given to an account on top of its plan — an admin grant now, a boost purchase later — are **lots**, kept apart from the bill ([workplan](/docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_11_WORKPLAN.md) §3, migration `20261017`). **Status: applied to PROD 2026-10-02; written only through the 11b admin ops (`grant_credits`, `reduce_credit_lot`, see [Admin operations](#admin-operations)); nothing is enforced (shadow).**
+
+| Object | What it is |
+|---|---|
+| `business_os_credit_lots` | One row per lot: account, source (`admin_grant` / `boost_purchase`), credits granted (= base + bonus, 6 dp, > 0), credit value version, optional expiry (after creation), idempotency key (unique: `admin_grant:<requestId>`, `boost:<reference>`), source reference, actor kind and admin id, reason. A shape CHECK per source. **Append-only** — `service_role` holds only SELECT and INSERT |
+| `business_os_credit_lot_draws` | One row per movement out of a lot: lot, account (always the lot's), kind, credits (> 0), reason, admin id, idempotency key (unique: `admin_reversal:<requestId>`). `kind` admits only `reversal` today; slice 9 / 10 adds `consumption` with its own columns. Append-only |
+| `business_os_record_credit_lot(...)` | The only lot writer: idempotent on the key; a key reused for another account, source or amount raises `23505`. `SECURITY INVOKER`, `service_role` only. Repository: `BusinessOsCreditLotRepository` |
+| `business_os_reverse_credit_lot(...)` | The only draw writer: answers `recorded`, `already_recorded`, `lot_not_found` (a missing lot and another account's lot answer the same), `lot_expired`, `nothing_left` or `exceeds_remaining`; only `recorded` writes. NULL credits takes the rest. `SECURITY INVOKER`, `service_role` only |
+
+What is left of a lot is **always rebuilt from rows**: credits granted minus its draws (checker row L7). "Extra credits at a moment" has one definition, `lib/business-os/credits/creditLots.ts`: the sum over lots that exist and are not expired at that moment (expired means `expires_at <= at`, the same `<=` as the reversal function), a mid-period lot counted from its creation. **Lots never touch the charge ledger**: neither the charge function nor the totals know about them, and the lots checker pins the charge functions' bodies (L8).
+
+**The per-account lock.** The reversal function takes `pg_advisory_xact_lock(hashtextextended('business_os_credit_lots:' || user_id, 0))` before it reads anything. **Slice 9 / 10's consumption writer must take the same lock.** Serialisation rests on that transaction-scoped lock plus READ COMMITTED (each statement after the lock sees the draws committed before it), which is how PostgREST runs RPCs; a writer under REPEATABLE READ would keep its old snapshot. **Binding consumption order** for slice 9 / 10: the plan allowance first, then lots soonest-expiring first, then lots with no expiry oldest first.
+
+**Who can see what.** Owners may SELECT their own rows through a column grant — lots: `id, user_id, source, credits_granted, credits_base, credits_bonus, expires_at, created_at`; draws: `id, lot_id, user_id, kind, credits, created_at`. The reason, actor, idempotency key, source reference and credit value version are hidden, and a column added later is hidden by default. No client role can write either table or execute either function. **Lifecycle:** both tables are `never` in the purge registry, keyed to `auth.users` (so a business Reset cannot reach them), and **minimised** on account deletion (`user_id` set to NULL by the foreign key). Lots carry the credit value version but change no price, allowance or credit value.
+
 **Charging start:** *to be recorded by RM at 3b-ii's production go-live (workplan §6.4 step 6).* Rows between the 3b-i apply time and that moment are developer or preview traffic on developers' own accounts (environments share the production database).
+
+---
+
+## Billing: the plan billing record and Stripe settings
+
+Plan payments P-2a ([workplan](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P2_WORKPLAN.md), [requirement](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md) SA-P1 as amended by P-2 Q-1/Q-2). **Status: inert.** No route reads or writes the table; the migration `20261025` is applied by hand (pre-check, migration in a new tab, checker) before P-2a merges.
+
+| Object | What it is |
+|---|---|
+| `business_os_billing_accounts` | One row **per account per Stripe mode** (UNIQUE `user_id, livemode`; surrogate `id` primary key). The Business OS Stripe customer (`stripe_customer_id`, UNIQUE, never the agent-platform customer) and, from P-3a/P-3b, the plan subscription and a display mirror of its state. RLS on with **no policy and no client grant**; `service_role` holds SELECT, INSERT, and UPDATE on 17 columns only, so `id`, `user_id`, `livemode` and `created_at` can never be rewritten. No DELETE. Checker: `scripts/check-bos-billing-accounts-migration.sql` |
+| `BusinessOsBillingAccountRepository` | `findByUser(userId, livemode)` and `recordCustomer` only (three-field insert). A source guard lists the files allowed to name it |
+| `ensureBusinessOsStripeCustomer` (`lib/business-os/billing/businessOsStripeCustomer.ts`) | The account's Business OS Stripe customer in the current mode: the stored row, or one Stripe create (idempotency key `bos-customer:<userId>`, metadata `product`/`bos_user_id`, never `user_id`) through the shared `StripeService.findOrCreatePlatformCustomer`. No route calls it until P-3a |
+| `stripeModeFromKey` / `currentStripeMode` (`stripeMode.ts`) | `test` for `sk_test_`/`rk_test_`, `live` for `sk_live_`/`rk_live_`; anything else throws |
+
+**Lifecycle.** `never` in the purge registry and keyed to `auth.users`, so a business Reset cannot reach it (it would orphan a subscription that keeps charging). On account deletion it is **minimised**: `user_id` is set to NULL by the foreign key, and `stripe_customer_id` is kept for reconciliation with Stripe.
+
+**Stripe environment names** (PF-8). `.env.example` is not tracked (`.env*` is git-ignored), so the names live here; the file itself is staging work (C2). Never put a value in this table or in any doc.
+
+| Name | Where | Mode rule |
+|---|---|---|
+| `STRIPE_SECRET_KEY` | Server | `sk_test_…` in test, `sk_live_…` in live. Its prefix decides which billing row is read (`stripeMode.ts`) |
+| `STRIPE_WEBHOOK_SECRET` | Server | The signing secret of the platform webhook endpoint **of the same mode** as the key |
+| `STRIPE_CONNECT_WEBHOOK_SECRET` | Server | The signing secret of the Connect webhook endpoint of the same mode |
+| `STRIPE_CLIENT_ID` | Server | The Connect client id (`ca_…`) of the same mode |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Browser | `pk_test_…` with a test key, `pk_live_…` with a live key |
+| `NEXT_PUBLIC_STRIPE_CLIENT_ID` | Browser | The same Connect client id, for the browser |
+| `STRIPE_BOS_PORTAL_CONFIGURATION_ID` | Server | The Business OS customer-portal configuration (`bpc_…`) of the same mode: a test key with the test configuration, a live key with the live one (SA-P10). Read from P-7a |
+
+Plan lookup keys are **code, not env**: the same keys exist in each mode (Q-T1; P-2b).
 
 ---
 
@@ -272,3 +329,8 @@ Credit deduction layer, slice 3 ([workplan](/docs/workplans/BUSINESS_OS_CREDIT_D
 | 2026-09-30 | Metering: the owner's own read (6a) | Credit deduction slice 6a: the dashboard Credits card reads the ledger through the owner's RLS client (`BusinessOsCreditOwnerReadRepository`) and the allowance through a new display-only helper inside this module, `creditAllowanceView.ts` (`creditAllowanceForDisplay`: exhaustive over lifecycle states; `paused` / `unknown`, anomalies and the withheld value mean "no allowance"). One new registered non-gate importer, `lib/business-os/credits/ownerCreditUsage.ts`; no gate, no capability-id literal outside the module |
 | 2026-10-01 | Before enforcement: held paid invitees | Invite-only signup Slice 5b-2 (D-14, widened by SA R-8): a new row in § Before enforcement can be switched on with three conditions for friends held awaiting payment — (a) T-9, the launch execution skips and its dry run lists them; (b) the shadow report labels them "awaiting payment"; (c) if Slice 4 resumes before S-5, close the F5b-5 API residual and the Q-1 / FR-12a friend-orphan trial path first. Documentation only; no code in this module changed |
 | 2026-10-02 | Customer plan surfaces: credits shown, first, localised (credit deduction slice 6b) | The temporary "Credits (included)" rule (`withCustomerDisplay`, R-7 option C) removed with its tests; restored assertions. New catalog category **`credits`** (`types.ts`, `schema.ts`, `catalog.ts`) shown first; an optional category-level `note` key (SA Q-9) carries the "what a credit is" sentence, variant by the allowance shape. OI-10: value phrases and number grouping in the reader's / invite's language; ids unchanged; admin stays English. Guard: credit figures only from config. No snapshot regeneration (the snapshot has no category field); no new importer of this module |
+| 2026-10-02 | Metering: the owner's credit history (credit deduction slice 7a) | One paragraph in the Metering section: the history panel reads the card's own window through the owner's RLS client; no new importer of this module |
+| 2026-10-02 | Metering: credits added as lots (credit deduction slice 11a) | New "Credits added: lots" paragraph and object table in § Metering: `business_os_credit_lots`, `business_os_credit_lot_draws` and their two `service_role`-only write functions (migration `20261017`, not yet applied), append-only by privilege, owner column grants, the per-account advisory lock key that slice 9 / 10 must reuse, the binding consumption order, the one definition of extra credits (`creditLots.ts`), and the lifecycle verdicts (`never` purged, `minimise` on deletion). Nothing reads or writes them before 11b; nothing enforced. No import of this module, no capability or tier change |
+| 2026-10-02 | Admin give / take back credits (credit deduction slice 11b) | § Admin operations: `grant_credits` and `reduce_credit_lot` on the accounts route, their order of checks and refusal codes, replays (no audit entry), the audit keys and entity, and why a credit op leaves the entitlement cache alone (and when that must change, slice 9 / 10). New rule: no admin may run any op on their own account (403 `own_account`, all nine ops, S11-BQ-1; S11-C-11 for the plain-words copy). § Metering: the lots are applied to PROD and written only through the 11b ops (CR11a-2). No new importer of this module (`creditAdminOps.ts` imports nothing from it); no capability or tier change |
+| 2026-10-03 | Metering: the admin "Credits left" column (credit deduction slice 8a) | One paragraph in § Metering: the batched, failure-isolated percentage read for `/admin/users`; `adminCreditPercent.ts` registered as a non-gate importer (display only); `adminCreditPercentDeps.ts` a declared plan-repository reader. No capability or tier change |
+| 2026-10-04 | Billing: the plan billing record and Stripe settings (plan payments P-2a) | New § Billing: `business_os_billing_accounts` (one row per account per Stripe mode, server-write-only, 17 updatable columns, minimised on deletion), its repository, `ensureBusinessOsStripeCustomer`, `stripeMode.ts`, and the seven Stripe environment names with their mode rule (PF-8; `.env.example` deferred to staging C2 per SA Q-4) |
