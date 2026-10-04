@@ -1,13 +1,13 @@
 # Workplan: Admin AI Activity — Slice B1 (the Activity tab list) with B0′ (charge-table indexes)
 
-> **Last Updated**: 2026-10-02
+> **Last Updated**: 2026-10-04
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_ADMIN_AI_ACTIVITY_VIEW_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_ADMIN_AI_ACTIVITY_VIEW_REQUIREMENT.md) — Gap B, slices **B0′** and **B1** (re-plan 2026-10-02)
 **SA rulings this plan implements:** SA-R1 to SA-R13 and SA-RC-1 to SA-RC-17 (requirement § SA Re-plan Review and § SA Re-plan Re-check). The superseded B0 workplan is **not** used as a design; only its verification log was read as background.
 **Date:** 2026-10-02
 **Branch:** B1a: **`feature/admin-ai-activity-b1a`** (cut by RM from `origin/main` `03b62c3c`; confirmed by Dev with `git branch --show-current`, worktree `neuronforge-ai-activity`). B1b: to be cut by RM after B1a merges.
-**Status:** B1a Code Complete (uncommitted, awaiting SA code review and the user's diff read). B0′ NOT yet applied on production (T2 owed by the user). B1b not started.
+**Status:** B1a committed and PR opened (2026-10-04), awaiting CI and merge. B0′ applied on production 2026-10-04 and verified. B1b not started.
 
 ## Overview
 
@@ -1266,7 +1266,15 @@ L-4  npm run lint:hooks                          exit 0
 
 ## Commit Info
 
-*[RM will populate this section]*
+**B1a** (RM, 2026-10-04), branch `feature/admin-ai-activity-b1a`, base `origin/main` `03b62c3c`:
+
+| Commit | Message |
+|---|---|
+| `0c03f55f` | docs(admin): Gap B re-plan on the credit ledger, B1 workplan, B0 superseded |
+| `e74f549b` | feat(db): B0' activity indexes on business_os_credit_charges (applied on production 2026-10-04) |
+| `077b3de2` | feat(admin): Business OS AI Activity tab, slice B1a (ledger list) |
+
+PR: opened to `main` by RM (see the PR for its number). Not merged; merge needs the CI Build check green and the user's explicit instruction. B1b: branch to be cut after B1a merges.
 
 ---
 
@@ -1274,6 +1282,7 @@ L-4  npm run lint:hooks                          exit 0
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-10-04 | B1a committed (RM) | Three commits on `feature/admin-ai-activity-b1a` (`0c03f55f`, `e74f549b`, `077b3de2`); PR opened to `main`. See § Commit Info |
 | 2026-10-02 | QA of B1a: PASS WITH NOTES | "QA Report — B1a — 2026-10-02" added under § QA Testing Report (targeted edit). Tested the tree before SA-CR-1 to SA-CR-3. Every in-scope AC is mapped to a test; AC-B16 and the keyboard pass are owed by the user. Eight mutation checks all went red, and restoration was confirmed byte-exact by sha256. Edge probes covered window bounds, limit, keys, UUIDs, empty and null-count results, the deleted-bucket ceiling and UTC presets. No bugs. E-1 duplicates SA-CR-2; E-2 to E-4 are Low. M-5 shows the authz CI guard does not enforce gate-first (OI-20). `creditPeriod` red is confirmed as CRLF, identical to `main` |
 | 2026-10-02 | SA code review of B1a: APPROVED WITH CHANGES | "SA Code Review — B1a — 2026-10-02" added under § SA Review Notes (targeted edit). SA-B1-1 to SA-B1-6, SA-B1-8, SA-B1-9 verified in code. D-1 to D-11 all accepted. Security, tenant isolation, CLAUDE.md and migration safety clean. Gates re-run: `typecheck:bos-llm` exit 0 (0 new), `lint:hooks` exit 0, authz guard green, scoped `tsc` with canary clean on touched files; Jest 33/34 (the one red suite is pre-existing `creditPeriod` CRLF). Build owed to CI. Three fixes for Dev: SA-CR-1 (Medium, typed ledger fakes in the builder test), SA-CR-2 and SA-CR-3 (Low) |
 | 2026-10-02 | B1a implemented (Dev), uncommitted | T0, T1, T3–T8 done on `feature/admin-ai-activity-b1a`. SA-B1-1 to SA-B1-6, SA-B1-8, SA-B1-9 applied (§ A, shape table, E1–E6, apply step 1, Test Plan gate list and L-2/L-4 updated). Deviations D-1 to D-11 recorded in Implementation Notes. T2 (hand-apply of B0′ on production) and T9 owed by the user |
