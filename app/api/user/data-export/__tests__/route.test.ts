@@ -6,19 +6,25 @@
  * after `select('*')`. The route's logging is Pino (no console), with a
  * correlation id, `userId` as a field and counts only. Nothing else changes:
  * the `timestamp` filter (FU-1) and the service-role client stay as they were.
+ * The reads now go through repositories (DATA_EXPORT_REPOSITORY_REFACTOR_WORKPLAN.md);
+ * the per-method checks live in lib/repositories/__tests__/userDataExportReads.test.ts
+ * and the full behaviour pin in route.characterization.test.ts.
  *
  * Supabase, the session cookies and the audit service are mocked; what is
- * asserted is the query the route builds and what it logs.
+ * asserted is the query the route builds and what it logs. The service-role
+ * client (`createClient`, which `supabaseServer` is built with) records under
+ * the table name; the browser anon client (`createBrowserClient`, imported via
+ * ExecutionRepository's default) records under `anon:<table>` (SA C-1).
  */
 
 import { NextRequest } from 'next/server';
 
 type Call = [string, ...unknown[]];
 const mockCalls: Record<string, Call[]> = {};
-let mockThrowOn: string | null = null;
 
-function mockBuilder(table: string) {
-  const calls: Call[] = (mockCalls[table] = mockCalls[table] ?? []);
+function mockBuilder(key: string) {
+  const table = key.startsWith('anon:') ? key.slice('anon:'.length) : key;
+  const calls: Call[] = (mockCalls[key] = mockCalls[key] ?? []);
   const result = { data: table === 'audit_trail' ? [{ id: 'row-1', action: 'USER_LOGIN' }] : [], error: null };
   const builder: Record<string, unknown> = {};
   for (const method of ['select', 'eq', 'neq', 'not', 'gte', 'order', 'limit']) {
@@ -29,7 +35,6 @@ function mockBuilder(table: string) {
   }
   builder.single = () => {
     calls.push(['single']);
-    if (mockThrowOn === table) return Promise.reject(new Error('relation "secret_table" does not exist'));
     return Promise.resolve({ data: null, error: null });
   };
   builder.then = (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
@@ -44,6 +49,7 @@ jest.mock('@supabase/supabase-js', () => ({
 const mockGetUser = jest.fn();
 jest.mock('@supabase/ssr', () => ({
   createServerClient: () => ({ auth: { getUser: () => mockGetUser() } }),
+  createBrowserClient: () => ({ from: (table: string) => mockBuilder(`anon:${table}`) }),
 }));
 jest.mock('next/headers', () => ({ cookies: async () => ({ get: () => undefined }) }));
 
@@ -87,7 +93,6 @@ let consoleSpies: jest.SpyInstance[] = [];
 
 beforeEach(() => {
   for (const key of Object.keys(mockCalls)) delete mockCalls[key];
-  mockThrowOn = null;
   mockGetUser.mockReset();
   mockAuditLog.mockReset();
   mockAuditLog.mockResolvedValue(undefined);
@@ -196,11 +201,20 @@ describe('GET /api/user/data-export', () => {
   });
 
   it('logs an unexpected failure with { err } and returns 500', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
-    mockThrowOn = 'profiles';
+    // OP-4: a repository now catches a rejecting table read and returns
+    // `{ error }`, so the only throw that reaches the route's catch is one
+    // outside the reads. Driven by a rejecting getUser().
+    mockGetUser.mockRejectedValue(new Error('relation "secret_table" does not exist'));
     const res = await GET(request());
     expect(res.status).toBe(500);
     const failed = mockLogged.find((l) => l.msg === 'Data export failed');
     expect(failed).toMatchObject({ level: 'error', fields: { err: { message: 'relation "secret_table" does not exist' } } });
+  });
+
+  it('reads nothing on the browser anon client (C-1)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    await GET(request());
+    expect(Object.keys(mockCalls).filter((k) => k.startsWith('anon:'))).toEqual([]);
+    expect(mockCalls.agent_executions).toBeDefined();
   });
 });

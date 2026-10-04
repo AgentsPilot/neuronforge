@@ -229,6 +229,28 @@ export class AgentConfigurationRepository {
       return { data: null as any, error: error as Error };
     }
   }
+
+  /**
+   * GDPR export only (GET /api/user/data-export, Art. 15 / 20). Every agent
+   * configuration row of the caller, every column, newest first. The column set
+   * is fixed; changing it changes what the export holds, which is a privacy
+   * decision.
+   */
+  async listForUserDataExport(userId: string): Promise<AgentRepositoryResult<Record<string, unknown>[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('agent_configurations')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return { data: (data ?? []) as Record<string, unknown>[], error: null };
+    } catch (error) {
+      this.logger.error({ err: error, userId }, 'Failed to list agent configurations for the data export');
+      return { data: null, error: error as Error };
+    }
+  }
 }
 
 // Export singleton instance for convenience

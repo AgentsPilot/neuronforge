@@ -9,7 +9,8 @@
 // the rows, but the audit routes have always read with the service role, and
 // this repository makes the scoping explicit instead of relying on RLS:
 // `.eq('user_id', userId)` on every query. For the owner method `userId` is
-// always the authenticated caller (never a client-supplied value).
+// always the authenticated caller (never a client-supplied value). The same
+// holds for `listOwnerEntriesForExport`, the GDPR data export's audit read.
 //
 // THE FIRST ADMIN EXCEPTION (admin reorganisation slice 2b, SA C-7):
 // `listAdminAiFailures` reads an ADMIN-SELECTED account's failed Business OS AI
@@ -180,6 +181,41 @@ export class AuditTrailRepository {
       };
     } catch (error) {
       this.logger.error({ err: error, userId, page: q.page, limit: q.limit }, 'Failed to list owner audit entries');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * GDPR export only (GET /api/user/data-export, Art. 15 / 20). The caller's own
+   * audit entries since `since` (an ISO timestamp the route computes), newest
+   * first, at most 10000, every column, with the same two BD-26 owner exclusions
+   * as listOwnerEntries (a source guard, lib/audit/__tests__/
+   * ownerAuditReads.guard.test.ts, keeps both here). The column set is fixed;
+   * changing it changes what the export holds, which is a privacy decision.
+   *
+   * Known and deliberately unchanged (FU-1 in
+   * BUSINESS_OS_BD26_OWNER_AUDIT_HIDING_WORKPLAN.md): it filters and orders on
+   * `timestamp`, a column that does not exist, so PostgREST answers 42703 and
+   * the export holds no audit rows today. The error is logged on every export
+   * until FU-1 lands. Fixing it changes what the export holds.
+   */
+  async listOwnerEntriesForExport(userId: string, since: string): Promise<RepositoryResult<Record<string, unknown>[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('audit_trail')
+        .select('*')
+        .eq('user_id', userId)
+        // BD-26, written as in listOwnerEntries. The values are fixed identifiers, so no quoting.
+        .not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`)
+        .not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`)
+        .gte('timestamp', since)
+        .order('timestamp', { ascending: false })
+        .limit(10000);
+
+      if (error) throw error;
+      return { data: (data ?? []) as Record<string, unknown>[], error: null };
+    } catch (error) {
+      this.logger.error({ err: error, userId }, 'Failed to list owner audit entries for the data export');
       return { data: null, error: error as Error };
     }
   }
