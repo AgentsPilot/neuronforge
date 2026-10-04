@@ -4,7 +4,8 @@
 
 /**
  * The "Scheduled jobs & queues" page (admin reorganisation slice 5, part C):
- * renders what the route sends; read-only (Refresh only); "Due now" and
+ * renders what the route sends; read-only apart from one Drain now per queue
+ * (slice 7d); "Due now" and
  * "Scheduled for later" are separate; green only on Healthy / Clear, with a
  * text label; the "not installed" sentence; no forbidden field names.
  */
@@ -93,13 +94,22 @@ describe('the Scheduled jobs & queues page', () => {
     expect(within(queue).getByText('Scheduled for later (not a backlog)').nextSibling?.textContent).toBe('7');
   });
 
-  it('is read-only: the only button is Refresh', async () => {
+  // Amended deliberately by ADMIN_BOS_CLEANUP slice 7d (SA W7D-2, OP-3): the
+  // page was "Refresh only"; it is now Refresh plus one Drain now per queue,
+  // and nothing else.
+  it('the only buttons are Refresh and one Drain now per queue', async () => {
     mockRoute();
     render(<AdminJobsQueuesPage />);
     await screen.findByTestId('job-calendar-sync');
     const buttons = screen.getAllByRole('button');
-    expect(buttons).toHaveLength(1);
-    expect(buttons[0].textContent).toContain('Refresh');
+    expect(buttons).toHaveLength(1 + 5);
+    expect(buttons.filter((b) => b.textContent?.includes('Refresh'))).toHaveLength(1);
+    const drains = buttons.filter((b) => b.textContent === 'Drain now');
+    expect(drains).toHaveLength(5);
+    for (const queue of BOS_QUEUES) {
+      expect(within(screen.getByTestId(`queue-${queue.id}`)).getAllByRole('button')).toHaveLength(1);
+      expect(within(screen.getByTestId(`queue-${queue.id}`)).getByRole('button').textContent).toBe('Drain now');
+    }
   });
 
   it('green only on a Healthy or Clear badge', async () => {

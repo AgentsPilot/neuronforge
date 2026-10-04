@@ -33,7 +33,8 @@ The admin reorganisation put Business OS (BOS) first in the sidebar. It did not 
 16. [SA Review — slices 1 and 5a (2026-10-02)](#sa-review--slices-1-and-5a-2026-10-02)
 17. [SA Review — slice 2 (2026-10-03)](#sa-review--slice-2-2026-10-03)
 18. [SA Review — slice 3 (2026-10-03)](#sa-review--slice-3-2026-10-03)
-19. [Change History](#change-history)
+19. [SA Review — slice 7 (2026-10-04)](#sa-review--slice-7-2026-10-04)
+20. [Change History](#change-history)
 
 ---
 
@@ -448,8 +449,8 @@ Business questions only. Technical forks are in §10, for SA.
 
 - [x] **OQ-1: Admin users. Read-only truth now, or full management?** **Answered by the user, 2026-10-02: option B, read-only now.** Option B shows the real admins and explains how to change them. You keep adding admins by script, which is rare with two admins. Option A lets you add and remove admins from the page, but it is a new way to become an admin and needs security review. *Suggested:* B now, A later when a third admin is needed. (raised by: BA | status: answered — B)
 - [x] **OQ-2: PARKED 2026-10-03 (UC-5)** — moved to its own session; see §11 "Model price source and Sync". Original question: **The pricing "Sync" button.** It replaces every model price with a list built into the app (June 2026), which changes what Business OS customers are charged. Should it (a) stay, clearly worded and with a confirmation, or (b) be removed, so prices change only by editing one model at a time? *Suggested:* (a) stay, reworded and with a confirmation. It is the quickest way to restore known-good prices after a bad edit. (raised by: BA | status: pending user input)
-- [ ] **OQ-3: Re-sending old client messages.** When a reminder, lead reply or briefing failed days ago, a late send may confuse the client: a payment reminder for an invoice already paid, or a "thanks for your enquiry" three days late. May an admin retry such an item at any age? *Suggested:* retry allowed up to **72 hours** after the item was due. After that, cancel only. (raised by: BA | status: pending user input)
-- [ ] **OQ-4: "Drain now" before launch?** Without it, after a fix you wait for the next scheduled run. That is up to 24 hours for daily payment reminders. *Suggested:* include it in slice 7. (raised by: BA | status: pending user input)
+- [x] **OQ-3: Re-sending old client messages.** **Answered by the user, 2026-10-04: retry allowed up to 72 hours after the item was due; after that, cancel only.** When a reminder, lead reply or briefing failed days ago, a late send may confuse the client: a payment reminder for an invoice already paid, or a "thanks for your enquiry" three days late. May an admin retry such an item at any age? *Suggested:* retry allowed up to **72 hours** after the item was due. After that, cancel only. (raised by: BA | status: pending user input)
+- [x] **OQ-4: "Drain now" before launch?** **Answered by the user, 2026-10-04: yes, include it in slice 7.** Without it, after a fix you wait for the next scheduled run. That is up to 24 hours for daily payment reminders. *Suggested:* include it in slice 7. (raised by: BA | status: pending user input)
 - [ ] **OQ-5: Businesses list default.** Should the list open on businesses only, or on every login? *Suggested:* businesses only, with a toggle to show all logins. (raised by: BA | status: pending user input)
 - [ ] **OQ-6: A second pair of eyes for plan changes?** Should changing a business's plan, expiry or overrides need a second admin's approval? *Suggested:* no. There are two admins, both owners, and a mandatory reason plus an audit row is enough. Revisit if support staff join. (raised by: BA | status: pending user input)
 - [ ] **OQ-7: Slice order.** Confirm or reorder §6. In particular: should queue actions (slice 7) move earlier because of the launch date? (raised by: BA | status: pending user input)
@@ -889,6 +890,171 @@ There is no blocking question. Three things to know, with the default that appli
 
 ---
 
+## SA Review — slice 7 (2026-10-04)
+
+**Reviewed by SA — 2026-10-04.** **Status: ✅ APPROVED WITH CONDITIONS (C7-1..C7-16).** **Scope: slice 7 only** (§4.2 FR-Q1..FR-Q7, the slice 7 lines of §9, TA-9, and the §5, §6 and §8 entries that touch them). Measured on `feature/admin-queue-actions` @ `5f10a926` (= `origin/main`). User inputs used: OQ-3 = a 72-hour retry window, then cancel only, enforced on the server; OQ-4 = "Drain now" is in. Both admins are owners. Every action needs a reason and an audit row, and no second-admin approval is needed (OQ-6 spirit; I found no reason to differ).
+
+### A. Schema check (TA-11), live, read-only
+
+Zero-row selects (`limit(0)`) with the service role. No RPC was called and nothing was written.
+
+| Table | Confirmed present | Confirmed **absent** (42703) |
+|---|---|---|
+| `payment_reminders` | `id, user_id, status, claimed_by, claimed_at, attempts, next_attempt_at, error_message, created_at, scheduled_at, sent_at, invoice_id, installment_id, contact_id, reminder_type, channel` | `skip_reason`, `updated_at` |
+| `payment_automation_executions` | the same claim set, plus `scheduled_at, executed_at, rule_id, entity_type, entity_id, trigger_event_id` | `updated_at` |
+| `daily_briefing_sends` | the claim set, plus `briefing_date, timezone, skip_reason, sent_at` | `scheduled_at` |
+| `lead_responses` | the claim set, plus `kind, contact_id, entity_id, skip_reason, sent_at` | `scheduled_at` |
+| `insight_actions` | the claim set, plus `kind, skip_reason, sent_at, dedupe_key` | `scheduled_at` |
+| `bos_cron_runs` | `id, job, source, started_at` | — |
+
+Consequences: **no queue table has `updated_at`**, so the compare-and-set version is `status` plus `attempts` (C7-3). `payment_reminders` has no `skip_reason`. The three non-payment tables have **no `scheduled_at`**, and they carry a status CHECK (`pending, processing, sent, skipped, failed`), so `'cancelled'` would be rejected there (C7-6).
+
+### B. As-built findings that shape the design
+
+| # | Finding | Evidence | Consequence |
+|---|---|---|---|
+| B7-1 | All five claims are `FOR UPDATE SKIP LOCKED` RPCs that select `status = 'pending'` only and bump `attempts`. All five reapers use `claimed_at < now() - lease`, with a 90 s lease against `maxDuration = 60` on every cron route. | the 5 migrations (`2026-08-14_*_claim.sql`, `20260911`, `20260914`, `20260917`). The cron routes for payment reminders, payment retry, the briefing and insight actions export `maxDuration = 60`. | A row that an admin moves to `pending` is sent **only** by the next claim. It cannot be sent inline. |
+| B7-2 | **The terminal writes are fenced by `id` only**, not by `claimed_by` or status: `LeadResponseRepository.finish`, `InsightActionRepository.close`, `DailyBriefingSendRepository.markTerminal`, `PaymentAutomationExecutionRepository.complete/fail`, and `PaymentReminderRepository.updateStatus` (`id` + `user_id`). | the repositories | So the **only** thing preventing a double send is "a row is never re-claimed while its runner is alive". That is the lease rule. Any admin action that moves a leased in-progress row back to `pending` breaks it (C7-2). |
+| B7-3 | **`payment_automation_executions` does nothing today.** `callBlockExecutor` is a placeholder that returns `{executed: true}` (`PaymentAutomationEngine.ts:129-151`). The block catalogue includes **money-moving blocks** (`charge_saved_method`, `refund_full`, `refund_partial`, `retry_payment`). Its `failed` status also holds guardrail decisions (`max executions reached`, `cooldown active`). | `lib/payments/PaymentBuildingBlocks.ts` | Retrying is meaningless today, and becomes a money action the day blocks are wired. **No retry on this queue** (C7-5). |
+| B7-4 | **The briefing renders for "now", not for the row's date.** `dispatchOne(row.user_id, row.timezone, now)` builds today's facts. | `DailyBriefingDispatchService.ts:69-75, 157-160` | Retrying yesterday's row would send **today's** briefing on yesterday's ledger row. Today's enqueue then sends it again, because `UNIQUE(user_id, briefing_date)` sees a different date. That is a double send. Retry is allowed **only on the row's own business date** (C7-7). |
+| B7-5 | The payment-reminders cron also **bills stages** (`billDueDatedStages`), **schedules overdue reminders** (`processOverdueItems`, a select-then-insert dedupe over 24 h) and **marks invoices overdue**. The payment-retry cron also runs **`paymentRetryService.processDueRetries()`**, which retries Stripe charges. | `app/api/cron/payment-reminders/route.ts:105-130`, `app/api/cron/payment-retry/route.ts:70-73` | Running those beside a concurrent cron could double-schedule a reminder, double-bill a stage or double-retry a charge. **Drain now calls only the claim-path drain** (C7-10). |
+| B7-6 | The dispatchers re-check the world at send time: settled invoice → `cancelled` (payment reminders); owner consent, applicability, booking state and appointment passed (lead responses); daily cap, settled invoice and business exists (insight actions). | `PaymentReminderService.ts:573-579`, `LeadResponseDispatchService.ts:95-130`, `InsightActionDispatchService.ts:150-190` | A retried item is checked again before it is sent. The 72-hour rule is a business limit on top of that, not the only safety net. |
+| B7-7 | Payment reminders keep **sending hours** (08:00–20:00, business time zone) by writing them into the due time (`sendableAt`, private). The claim does not check the hour. | `PaymentReminderService.ts:1270-1310` | A retry pressed at 02:00 business time would send at 02:00 unless the retry writes a sendable time (C7-8). |
+| B7-8 | Each failure path spends **exactly one attempt** when a row is already at the attempt limit: briefing `markFailed` when `attempts >= 3`; lead rows stay in progress → the reaper dead-letters them; insight `markFailed(retryable = attempts < 5)`; payment reminder → `failed`. | the dispatchers | **A retry that does not reset `attempts` buys exactly one more try.** That bounds a bad retry to one extra message (C7-4). |
+| B7-9 | The stuck-row reaper never reaches an in-progress row whose `claimed_at` is NULL (`NULL < x` is not true). The page's "stuck" count includes them (`claimed_at.is.null`). Only legacy or hand-written rows can be in that state: the payment-automation migration remapped `executing` → `running` without a lease. | `AdminJobsQueuesRepository.ts` (stuck filter), `2026-08-14_payment_automation_executions_claim.sql` step 2 | These are the only rows a per-item action is needed for. They are **cancel-only** (C7-2). |
+| B7-10 | `withCronRunRecord` records only a proven Vercel call (`source` `vercel_cron`/`other`). The Jobs page uses those rows to show whether a cron is alive. | `lib/cron/cronRunRecorder.ts`, `20261011_bos_cron_runs.sql:323` | If Drain now wrote a run row, it would hide a dead cron. It writes none (C7-11). |
+| B7-11 | **Pre-existing, out of scope:** `POST /api/business-os/leads/[id]` calls `dispatchLeadResponses()` **fire-and-forget**, and exports no `maxDuration`. `vercel.json` sets no function default. So the "lease > maxDuration" invariant is **not pinned** on that path. With B7-2, a run longer than 90 s could be re-claimed and re-sent. | `app/api/business-os/leads/[id]/route.ts:80` | Recorded in the §11 backlog note below (BL-7a). It is **not** fixed here, but slice 7 must not copy the pattern (C7-10). |
+| B7-12 | The OQ-4 premise is stale: no queue cron is daily any more. Payment reminders run at `:40` every hour, payment retry hourly, the briefing hourly, lead responses every 5 min, insight actions every 15 min. | `vercel.json` | Drain now saves up to an hour, not a day. It is still worth having (recovery while a cron is down or `CRON_SECRET` is missing). |
+
+### C. Ruling 1: the per-queue action matrix
+
+"Retry" = a failed or dead-lettered item goes back to `pending` for the next claim. "Cancel" = a terminal close that never sends. **"Release" and "requeue" are not per-item actions** (C7-2): leased stuck rows are released by Drain now, which runs the queue's own reaper with its provably-dead lease. "Requeue" is the same thing as retry.
+
+| Queue (table) | Retry (failed / dead-lettered → `pending`) | Cancel: from which states → to what | Release a stuck item | Drain now: entry point (only this) |
+|---|---|---|---|---|
+| **Payment reminders** (`payment_reminders`) | ✅ within 72 h of `scheduled_at`. Next try = the next **sending-hours** time (C7-8) | `pending`, `failed`, orphaned `processing` → **`cancelled`** | via Drain now. Orphaned (no lease): cancel only | `paymentReminderService.processDueReminders()`. **Never** `billDueDatedStages`, `processOverdueItems` or `markAllOverdueInvoices` |
+| **Payment automations** (`payment_automation_executions`) | ❌ **Not offered.** The executor is a placeholder, money blocks come later, and `failed` includes guardrail decisions (B7-3) | `pending` (including no due time), `failed`, `dead_letter`, orphaned `running` → **`cancelled`** | via Drain now. Orphaned: cancel only | `paymentAutomationEngine.processScheduledExecutions()`. **Never** `paymentRetryService.processDueRetries()` (Stripe charges) |
+| **Daily briefing** (`daily_briefing_sends`) | ✅ **only while `briefing_date` is still today** in the row's `timezone` (B7-4). That is stricter than 72 h | `pending`, `failed`, orphaned `processing` → **`skipped`**, `skip_reason = 'cancelled_by_admin'` | via Drain now. Orphaned: cancel only | `processDueBriefings()`. Its enqueue is idempotent through `UNIQUE(user_id, briefing_date)` |
+| **Lead replies** (`lead_responses`) | ✅ `failed` only, within 72 h of `created_at` (C7-9). The dispatcher re-checks consent and applicability | `pending`, `failed`, orphaned `processing` → **`skipped`**, `skip_reason = 'cancelled_by_admin'` | via Drain now. Orphaned: cancel only | `dispatchLeadResponses()`. Its enqueue is an upsert with `ignoreDuplicates` on the unique key |
+| **Insight actions** (`insight_actions`) | ✅ `failed` only, within 72 h of `created_at`. The daily cap is re-checked | `pending`, `failed`, orphaned `processing` → **`skipped`**, `skip_reason = 'cancelled_by_admin'` | via Drain now. Orphaned: cancel only | `drainInsightActions()` |
+
+**Never actionable, on any queue:** a leased in-progress row (`claimed_at` not null), and every terminal success or close (`sent`, `completed`, `skipped`, `cancelled`). `skipped` rows are **not retried**: a skip is a decision (paid, cap reached, not approved), not an error (the insight dispatcher header says so). A lead reply whose email failed is closed as `skipped / send_failed`, so it is not retryable in slice 7 (BL-7b).
+
+### D. Ruling 2: double-send design
+
+1. **Compare-and-set (CAS), never a blind update.** Every item action is **one** `UPDATE … WHERE id = $item AND user_id = $owner AND status = $expectedStatus AND attempts = $expectedAttempts [AND the queue's own extra predicate]`. It is issued through PostgREST as `.update(patch, { count: 'exact' })`, and the action won only if `count === 1`. **Never `.or()` together with `.select()`** on an update: on prod PostgREST that fails with a misleading 42703 (known defect, 2026-09-29). One UPDATE statement is atomic against the claim. The claim's `FOR UPDATE SKIP LOCKED` skips a row the admin's UPDATE has locked, and the admin's UPDATE re-checks its WHERE after waiting on a claim's lock (READ COMMITTED), so exactly one of them wins. **No RPC and no migration is needed for this.**
+2. **The version is `status` + `attempts`.** There is no `updated_at` (§A). Every claim bumps `attempts` and every reap or close changes `status`, so any drain activity between the admin's page load and the click makes the CAS miss. The client sends `expected: { status, attempts }`, which it was shown. The server **also** checks that `expected.status` is an allowed "from" state for that action on that queue (§C) **before** the UPDATE, so a client cannot widen the matrix by lying about what it saw.
+3. **Retry never sends inline.** It writes `status = 'pending'`, `next_attempt_at = <eligible time>` and `claimed_by = claimed_at = NULL`. It does **not** change `attempts`, `error_message`, `skip_reason`, the payload or any target column. The send happens only through the queue's claim RPC, on the next cron run or Drain now.
+4. **Drain now reuses the cron's function in-process** (§C last column). It does not call the cron URL. Against a concurrent cron, it behaves exactly like two overlapping cron runs, which Vercel already produces (drift and overlap): `SKIP LOCKED` hands each row to one runner, and the reaper is idempotent. The route exports **`maxDuration = 60`** and **awaits** the drain, so the 90 s lease stays provably dead. Fire-and-forget is forbidden (B7-11).
+5. **Double-click and two admins.** The second item action finds the CAS stale (`count = 0`). The server re-reads the row: if it no longer exists in that queue → 404; otherwise → 409 `item_changed` with the current status **label**. **No audit row** is written for a lost CAS, and the refusal is logged at `info`. Two concurrent Drain now calls are safe by (4). The button is disabled while a call is in flight, and no server lock is added.
+6. **What remains is at-least-once and cannot be closed here.** If an earlier attempt sent the message and then threw before closing the row, the client already has it, and a retry sends it again. The retry dialog says so in plain words (C7-13). Fencing the terminal writes on `claimed_by` (B7-2) is backlog BL-7a.
+
+### E. Ruling 3: the 72-hour "due" timestamp per queue
+
+| Queue | "Due" anchor | Why | Extra rule |
+|---|---|---|---|
+| Payment reminders | `scheduled_at` | The intended send time, never rewritten by the reaper (it writes `next_attempt_at`) | The retry's eligible time is the next sending-hours time. **Refuse if that time is later than `scheduled_at + 72 h`** |
+| Payment automations | `scheduled_at` | — | Not applicable: no retry |
+| Daily briefing | `briefing_date` in the row's `timezone` | The send is for a business day | **Same business day only**, which implies < 72 h |
+| Lead replies | `created_at` (queued at) | The real due time lives in `next_attempt_at`, which the reaper overwrites and dead-lettering clears. No column keeps it | Conservative: a chase queued 2 days ahead can be retried until about 1 day after its due time |
+| Insight actions | `created_at` | Same reason | — |
+
+**Enforcement:** checked in the route (with a clear refusal) **and** repeated inside the CAS predicate (`.gte('<anchor>', now - 72 h)`, and `.eq('briefing_date', today)`), so the rule also holds if the clock moves between the check and the write. **Refusal:** HTTP **422** with a code (`retry_window_passed`, `briefing_not_today`, `retry_not_offered`) and the anchor time. The UI shows a plain sentence, for example: *"This message was due on 1 Oct at 09:00 (more than 72 hours ago). It can be cancelled but not re-sent."* The list (7a) marks each row "retry available until …" or "cancel only", using the same function, so the button is disabled before the server has to refuse.
+
+**Accepted tail:** the window is checked when the admin acts. The send happens at the next claim (at most one cron interval, at most one hour, or immediately with Drain now). For payment reminders the eligible time already includes sending hours and is checked against the window.
+
+### F. Ruling 4: tenant isolation
+
+- **Request bodies are `.strict()` Zod.** Item action: `{ queue, itemId (uuid), action: 'retry' | 'cancel', expected: { status, attempts }, reason }`. Drain now: `{ queue, reason }`. There is **no `accountId` or `userId` field**, and a strict schema rejects one.
+- **The owner comes from the row.** The route first reads the item by `(queue table, id)` through the admin repository (metadata columns only). On no row → 404. The CAS then filters `.eq('user_id', row.user_id)` with **that** value, plus `id`. Per the `tenant-isolation-guard` skill: the admin path is cross-account by design (the gate replaces CLAUDE.md rule 4), the id is caller-supplied, and the defence is to derive the owner server-side and name both keys in the write. **No trigger** exists on any of the five tables (checked), and no upsert is used, so the scope-defeating three do not apply.
+- **The patch is an explicit allow-list per action** (§D.3). No body field is copied into it.
+- **Drain now acts on whatever is due across accounts**, exactly as the cron does. Every effect inside the drain is already scoped to `row.user_id` by the existing dispatchers.
+
+### G. Ruling 5: audit
+
+| Event (new `AUDIT_EVENTS` keys) | Audience (`eventAudience.ts`) | `entityType` / `entityId` | `userId` / `actorId` | `changes` | `details` |
+|---|---|---|---|---|---|
+| `BOS_QUEUE_ITEM_RETRIED` | `'bos'` | `'bos_queue_item'` / the item id | **the item's account** / the admin (the entitlements pattern) | `{ before: { status, attempts }, after: { status: 'pending', next_attempt_at } }` | `reason, queue, action, correlationId, dueAnchor, deadLettered` |
+| `BOS_QUEUE_ITEM_CANCELLED` | `'bos'` | `'bos_queue_item'` / the item id | the item's account / the admin | `{ before: { status, attempts }, after: { status } }` | the same |
+| `BOS_QUEUE_DRAINED` | `'bos'` | `'bos_queue'` / the queue id | the admin / the admin (no single account) | — | `reason, queue, correlationId` and the drain's **numeric** counts (reaped, claimed, sent, skipped, failed, as the function returns them) |
+
+- **Severity `'warning'`**, the same as the entitlement admin ops: an admin changed what a customer's clients receive.
+- **The reason is required:** `z.string().trim().min(3).max(500)`, the same rule as `adminOps.ts`. The dialog hint says *"Don't paste client details."*
+- **Flushed before responding**, through **`logAndFlush`** (`lib/audit/boundedAuditFlush.ts`), **not** a raw `auditTrail.flush()`. Raw `flush()` returns early while another flush is running (the §11 WC-7 limit). `logAndFlush` serialises and is bounded, and it never throws. This settles the open skill follow-up for these routes.
+- **Never in the audit row:** `error_message`, `skip_reason`, payload, recommendation, contact, invoice or booking ids, or client names. Only a lost CAS or a 422 refusal is logged (Pino, `info`), without an audit row.
+- **Registering the events** updates `lib/audit/events.ts`, `eventAudience.ts` and its test (an untagged event fails `eventAudience.test.ts`).
+
+### H. Ruling 6: migrations
+
+**None.** The CAS is plain PostgREST (§D.1). Every column used exists (§A). The status values used are already allowed: `cancelled` on the two payment tables (no CHECK), and `skipped` plus `skip_reason` on the three that have a CHECK. The claim and reaper RPCs are reused unchanged. **If** the workplan finds it needs one (it should not), the next free number is **`20261035` or later**. The blocks taken are 20261015–19 (credit deduction), 20261020–24 (invites), 20261025–29 (plan payments) and 20261030–34 (boost). Dev runs `ls supabase/migrations` and records the number with the other sessions before using it. The user applies it by hand, with a check script and a rollback script.
+
+### I. Ruling 8: CRON_SECRET and cron authentication
+
+- Drain now **never calls a cron URL**, never reads `CRON_SECRET`, never imports a cron route module, and adds **no** bypass header or parameter to any cron route. Its only gate is `requireAdmin`, as the first statement. So it creates **no unauthenticated trigger**.
+- It works **even when `CRON_SECRET` is unset**. That is the recovery case this feature exists for, and it is safe, because the caller is a proven admin.
+- The cron routes' `verifyCronSecret` and `withCronRunRecord` stay **byte-for-byte unchanged**. A source test pins this (C7-10).
+
+### J. Conditions
+
+1. **C7-1: The action matrix in §C is binding.** FR-Q1 is amended: "release a stuck in-progress item" becomes **"Drain now"** for leased stuck rows, plus **cancel** for orphaned in-progress rows (`claimed_at IS NULL`). Payment automations get **no retry**. The workplan's tests include one negative case per ❌ cell.
+2. **C7-2: No action ever moves an in-progress row to `pending`.** A row in `processing`/`running` with a non-null `claimed_at` is never actionable. With a null `claimed_at`, it can only be cancelled. (Reasons: B7-2, B7-9.)
+3. **C7-3: The CAS shape is that of §D.1–D.2.** It uses `count: 'exact'` with `count === 1`, never `.or()` together with `.select()` on an update. The server validates the "from" state before the write. QA probes the update **once against real PostgREST** with a no-match id (a zero-row update), as required since 2026-09-29.
+4. **C7-4: Retry never resets `attempts`**, and never clears `error_message`/`skip_reason` or touches the payload or target columns. One retry = one more try (B7-8).
+5. **C7-5: Payment automations get no retry.** The route returns 422 `retry_not_offered`, and the UI shows no button. Revisit when block execution is wired, behind its own SA review, with a per-block idempotency key.
+6. **C7-6: Cancel targets per table:** `cancelled` for the two payment tables. `skipped` + `skip_reason = 'cancelled_by_admin'` for the other three (their CHECK rejects `cancelled`). `error_message` is kept for diagnosis.
+7. **C7-7: A briefing retry is same-business-day only** (B7-4). The CAS includes `.eq('briefing_date', <today in the row's timezone>)`. Reuse `businessDayFor`.
+8. **C7-8: A payment reminder retry respects sending hours.** `next_attempt_at` = the next sendable time, from a small public method on `PaymentReminderService` that wraps the existing private `sendableAt`. Reuse it, never copy it. Refuse if that time is past `scheduled_at + 72 h`.
+9. **C7-9: The 72-hour rule follows §E**, in both the route and the CAS predicate, with the 422 codes and plain sentences from §E. One pure function computes eligibility for both the list (7a) and the action route (7c), with a unit test per queue, including the boundary at exactly 72 h.
+10. **C7-10: Drain now is exactly the §C last column.** It is `maxDuration = 60`, awaited, and in-process. A **source guard test** asserts that the drain route imports only those five entry points, that it never references `processOverdueItems`, `billDueDatedStages`, `markAllOverdueInvoices`, `processDueRetries`, `CRON_SECRET` or `app/api/cron/**`, and that the cron routes are unchanged.
+11. **C7-11: Drain now writes no `bos_cron_runs` row.** It is recorded only as `BOS_QUEUE_DRAINED`. The response carries the drain's counts only.
+12. **C7-12: Data access.** Reads (the 7a list) extend `AdminJobsQueuesRepository` with one `listQueueItemsAllAccounts` method. Its column allow-list (`ADMIN_QUEUE_SELECTABLE_COLUMNS` and its guard test) is widened **deliberately** by exactly `user_id, status, attempts, claimed_at` and the per-table `kind` / `reminder_type` / `briefing_date`. Writes go in a **new** `AdminQueueActionsRepository` (`new-repository` skill). It uses the service role, cross-account by design, has `AllAccounts` in its method names and a required `AdminReadContext`-style context first, logs ids and counts only, and its only permitted callers are the new admin routes (a source guard test, as in the existing repository). **No `.from('<queue table>')` in a route.** Business names come from `business_profiles.company_name` through a repository read.
+13. **C7-13: Privacy and UI copy.** The list and every response carry metadata only (FR-Q5), plus `kind`/`reminder_type` **mapped server-side to fixed labels** (unknown → "Other"). Never raw text, and never the account id (as slice 5). A serialised-response test seeds sentinel values into `error_message`, `skip_reason`, `payload`, `recommendation` and the contact/invoice/booking ids, and asserts that none appears. The retry dialog says: *"If an earlier attempt reached the client before failing, they will receive it again."* The dialogs reuse the archiving confirm dialog (TA-1, D-4).
+14. **C7-14: Admin authz surface.** New routes: `GET /api/admin/jobs-queues/items` (7a), `POST /api/admin/jobs-queues/items/action` (7b; 7c reuses it) and `POST /api/admin/jobs-queues/drain` (7d). Each calls `requireAdmin` as its first statement and attaches a `correlationId`. In `adminGate.writes.test.ts`, the pinned case count goes **57 → 58** (7b) **→ 59** (7d). 7c adds none. The GET route gets its own four denial cases. **No `CAPS` value moves** (R1–R8), and no exemption is added. Each sub-slice runs the guard locally (no CI job runs Jest).
+15. **C7-15: Logging and errors.** Pino only. `console.*` count in the touched files: `JobsQueuesView.tsx` 0, `jobs-queues/route.ts` 0, `AdminJobsQueuesRepository.ts` 0. Dev re-counts any other touched file and flags it per CLAUDE.md. Errors use the standard format, and `details` only in development.
+16. **C7-16: Tests (on top of the C-items).** For each queue: a happy path per allowed action; a CAS loss caused by a simulated concurrent claim (the update returns `count: 0` → 409, no audit, no second state change), which is the §9 double-send test; a 72 h refusal; a foreign or unknown id → 404; the strict schema rejects an `accountId`; the audit row's shape and `logAndFlush` being awaited before the response; Drain now calls the exact entry point once. FR-Q7 is covered by re-fetching the existing `GET /api/admin/jobs-queues`.
+
+### K. TA-9 and §9
+
+- **TA-9: confirmed and sharpened** by §D. "The §8.1 claim and lease" = the queue's own drain function, which reaps then claims.
+- **§9 slice 7 lines, as amended:** "Each action works on each of the five queues" now reads **"each action allowed by the §C matrix works on its queue, and each ❌ cell is refused"**. The other four lines stand as written.
+
+### L. Backlog found here (not slice 7)
+
+- **BL-7a (double-send hardening, recommended soon):** (1) fence every terminal write on `claimed_by = <runner>` and the in-progress status, so a re-claimed row's old runner cannot overwrite it (B7-2); (2) give `POST /api/business-os/leads/[id]` an explicit `maxDuration = 60` and stop fire-and-forget draining there (B7-11). These are small, but they change the live send path of three queues, so they get their own SA-reviewed change.
+- **BL-7b:** a lead reply whose email failed is closed as `skipped / send_failed`, so the admin cannot retry it. If wanted, a later slice can offer retry for that one reason code (fixed vocabulary, shown as a label).
+
+### M. Sub-slices and effort
+
+Each one is its own PR, ships alone and can be reverted alone.
+
+| # | Scope | Depends on | Effort |
+|---|---|---|---|
+| **7a** | Read-only per-item list: `GET …/items?queue=&state=` (waiting, stuck, failed, dead-lettered, cancellable), paged with a 50-row cap, metadata only (C7-12, C7-13); "retry until …" / "cancel only" from the shared eligibility function (C7-9); a table under each queue on the existing page | — | **S–M, about 1.5–2 days** |
+| **7b** | **Cancel**: `AdminQueueActionsRepository`, the action route, CAS, audit with `logAndFlush`, the dialog with a reason; registrations (events, audience, writes test 57 → 58) | 7a | **M, about 2 days** |
+| **7c** | **Retry**: the same route; per-queue eligibility (72 h, same-day briefing, sending hours); no retry on payment automations | 7b | **M, about 1.5–2 days** |
+| **7d** | **Drain now**: the route (writes test 58 → 59), the five entry points, `maxDuration = 60`, the source guards, a button per queue with a reason | none in code (it can ship after 7a, or even first) | **S, about 1–1.5 days** |
+
+**Total: about 6–7.5 days (M–L), as §5 estimated.** If launch is near, **7d is the best value per day**: it recovers every queue while a cron is down, and it is the smallest.
+
+### N. For the user (business terms)
+
+There is no blocking question. One question, and two things to know, each with the default that applies if you say nothing:
+
+- **Q-SA7-1: Should the business owner be told when you re-send or cancel one of their messages?** Today nothing tells them. Their dashboard only shows the new state (for example, a queued reply disappears). *Recommended: no notification for now. Your reason and the audit row are the record. Revisit when support staff join.*
+- **FYI-7a: A morning briefing can only be re-sent on its own day.** Re-sending yesterday's would send today's content under yesterday's date, and the business would then get today's briefing twice. After midnight in the business's time zone, a failed briefing can only be cancelled. *Default: as stated.*
+- **FYI-7b: Payment automations can be cancelled but not re-sent.** They do not run anything yet. When they do, some of them move money (charges and refunds), and re-running one is a separate decision. *Default: cancel and Drain now only.*
+
+### Approval
+- [x] Requirement for slice 7 approved, **with conditions C7-1..C7-16**. **No migration.** Dev writes **one workplan covering 7a–7d** (four PRs). SA reviews it before any code.
+
+**2026-10-04: SA amendments from the 7d workplan review** ([ADMIN_BOS_CLEANUP_SLICE_7D_WORKPLAN.md](/docs/workplans/ADMIN_BOS_CLEANUP_SLICE_7D_WORKPLAN.md), W7D-1..W7D-12; measured on `5b26c361`):
+- **C7-14 and §M, ordering:** the `adminGate.writes` counts follow ship order. 7d ships first, so it goes **57 → 58**, census **88 = 82 + 6 + 0, 59 files**, register row 91. 7b goes 58 → 59 later. 7c adds none.
+- **§G, Drain now audit:** the event is **`BOS_QUEUE_DRAIN_STARTED`** (it replaces `BOS_QUEUE_DRAINED`). It is written **before** the drain runs (write-ahead), through `logAndFlush`. It is **one row per press**, with `details` = `reason, queue, correlationId` only. Reason: a drain can be killed at `maxDuration` 60 s, which is most likely in a backlog, the case Drain now exists for. An audit row written after the drain would be lost exactly then, and FR-Q3 requires every action to have one. The outcome, the counts and the duration go into the response and the Pino log, keyed by the same `correlationId`. The audience (`'bos'`), the severity (`'warning'`), the entity (`'bos_queue'` / queue id) and the actor (the admin) are unchanged. C7-11's "recorded only as `BOS_QUEUE_DRAINED`" reads `BOS_QUEUE_DRAIN_STARTED`.
+- **§I and C7-10, "the cron routes are unchanged":** they are byte-for-byte unchanged **in the PR**, proven by the PR diff. After that, a structural source test pins them: `verifyCronSecret`, `withCronRunRecord('<job id>'`, `maxDuration = 60`, and no admin or bypass reference. There is no hash pin.
+- **Backlog BL-7c (new):** a drain killed at 60 s spends one attempt on every row it claimed but did not reach. The reaper backs these off. On the briefing and lead queues (3 attempts), three kills in a row would dead-letter rows that were never tried. This is the same on the cron. Fix it with a smaller batch or an in-drain deadline, as its own SA-reviewed change, ideally with BL-7a.
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -905,3 +1071,7 @@ There is no blocking question. Three things to know, with the default that appli
 | 2026-10-03 | SA review: slice 3 | **APPROVED WITH CONDITIONS (C3-1..C3-12).** Live read-only schema probe on `19566036`: `workflow_executions.input_data` is confirmed missing, and `output_data` and `workflow_step_executions.execution_id` (a filter column; the real key is `workflow_execution_id`) are **two more phantoms**. **NF-3 is latent:** because the executions read fails, the agent prompt read never runs, so fixing FR-AC5 alone would **start** sending prompts across accounts. TA-8 is therefore **in** slice 3, in the same PR, and the cut is made in the `select` (prompts, steps, schemas, input and output). TA-6 is confirmed and extended (also `agent` and `category`); TA-7 is overruled in form: all four category cards hide in BOS scope; the BOS drill path no longer lands on Agent. OI-9 stays debt. `console.*`: 0 in both files. No guard, register or nav-test change. One PR, about 1.5 days. No blocking user question; three FYIs. |
 | 2026-10-03 | SA review: slice 4 (requirement and workplan, one pass) | **Approved with conditions W4-1..W4-9** (in the slice 4 workplan). Live read-only probe: `public.users` is missing (42P01), `profiles(id, full_name)` is valid, and every `audit_trail` search field exists. TA-10 is confirmed: the names come from `profiles` via `UserProfileRepository`. FR-AT3's wording is corrected (note under §4.3). FR-AR1's comment is tied to `ARCHIVE_RUNS_ENABLED` by a symmetric test. |
 | 2026-10-04 | HelpBot embedding model locked (§12) | The HelpBot config PUT no longer writes `helpbot_embedding_model` (shared with BOS chat; changing it invalidates every stored vector). A changed value is refused with a 400; the page shows it read-only. Short path, with the audit-row email fallback (Q-SA4-1, user-approved): [ADMIN_HELPBOT_LOCK_AND_AUDIT_EMAIL_WORKPLAN.md](/docs/workplans/ADMIN_HELPBOT_LOCK_AND_AUDIT_EMAIL_WORKPLAN.md). |
+| 2026-10-04 | OQ-3 and OQ-4 answered; slice 7 started | The user answered OQ-3 (72-hour retry window, cancel-only after) and OQ-4 (include "drain now"). Slice 7 (queue actions, R-18) starts with an SA requirement review. Slices 1, 2, 3, 4 and 5a are merged (PRs #176, #184, #187, #190, #177). |
+| 2026-10-04 | SA review: slice 7 | **APPROVED WITH CONDITIONS (C7-1..C7-16). No migration.** Live read-only schema check on `5f10a926`: no queue table has `updated_at`, `payment_reminders` has no `skip_reason`, and the three non-payment tables have no `scheduled_at`. So the CAS version is `status` + `attempts`. Per-queue matrix: no per-item "release" (a leased row back to `pending` would double-send, because terminal writes are fenced by id only). Stuck rows are released by **Drain now** through the queue's own reaper; orphaned in-progress rows (no lease) are cancel-only. Payment automations: **no retry** (the executor is a placeholder; money blocks come later). Briefing retry is **same business day only** (it renders for "now"). Payment reminder retry respects sending hours. 72-hour anchors: `scheduled_at` (payments), `created_at` (lead replies, insight actions). Drain now calls only the claim-path drain (never stage billing, the overdue scan or Stripe charge retries), with `maxDuration = 60`, awaited, no cron URL, no `CRON_SECRET`, no cron-run row. Audit: `BOS_QUEUE_ITEM_RETRIED` / `_CANCELLED` / `BOS_QUEUE_DRAINED` (audience `bos`, severity warning, through `logAndFlush`). Writes test 57 → 59; no CAPS change. Sub-slices 7a–7d, about 6–7.5 days in total. Backlog BL-7a (fence terminal writes; the lead route's fire-and-forget drain) and BL-7b. One user question (Q-SA7-1) and two FYIs. |
+| 2026-10-04 | Slice 7 order decided (UC-7) | The user chose to ship **7d (Drain now) first**; 7a (item list), 7b (cancel) and 7c (retry) follow, each its own PR, under SA's C7-1..C7-16. **BL-7a** (runner-fenced terminal writes, and an explicit `maxDuration` on the lead route) is accepted for **later**, as its own SA-reviewed change. Q-SA7-1 (notify the owner on an admin retry or cancel) is not answered yet; the default is no. |
+| 2026-10-04 | SA: 7d workplan review amendments | 7d workplan **APPROVED WITH CONDITIONS (W7D-1..W7D-12)** on `5b26c361`. Amended C7-14 / §M (writes count by ship order: 7d 57 → 58, 7b 58 → 59), §G (the Drain now event becomes `BOS_QUEUE_DRAIN_STARTED`, a write-ahead row before the drain), §I / C7-10 ("unchanged" = PR diff plus a structural pin), and new backlog BL-7c (a killed drain spends an attempt on unreached rows). See the note under the slice 7 Approval. |

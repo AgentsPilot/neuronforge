@@ -83,6 +83,12 @@ export const AUDIT_ENTITY_TYPES = [
   // by the admin give / take back credit ops on the entitlements accounts route
   // (credit deduction slice 11b); the entity id is the lot id.
   'business_os_credit_lot',
+  // One Business OS queue (one of the five in lib/cron/bosCronJobs.ts
+  // BOS_QUEUES). Written only by the admin Drain now route,
+  // POST /api/admin/jobs-queues/drain (ADMIN_BOS_CLEANUP slice 7d); the entity
+  // id is the queue id, e.g. 'payment_reminders' (audit_trail.entity_id is
+  // TEXT, as for 'ais_config').
+  'bos_queue',
 ] as const;
 
 export type EntityType = (typeof AUDIT_ENTITY_TYPES)[number];
