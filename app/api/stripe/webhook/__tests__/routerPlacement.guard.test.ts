@@ -12,6 +12,8 @@
  *     subscription-mode checkout conversion are gone (as-built G-6).
  *   - The router is called from this route only: one endpoint (SR-3).
  *   - The 500 body carries no internal message outside development (SA P1-C5).
+ *   - Billing modules reach the database only through the allow-listed
+ *     repository caller `businessOsStripeCustomer.ts` (SA P1-C6, P-2a M-1).
  *
  * AST rather than regexes, like `pinoLogging.guard.test.ts`, so words in
  * comments cannot satisfy or trip it.
@@ -29,6 +31,49 @@ const sf = ts.createSourceFile(ROUTE, source, ts.ScriptTarget.Latest, true, ts.S
 function walk(node: ts.Node, visit: (n: ts.Node) => void): void {
   visit(node);
   ts.forEachChild(node, (child) => walk(child, visit));
+}
+
+/**
+ * P-2a M-1: the ONLY file in `lib/business-os/billing/` allowed to import a
+ * repository. It reaches the database through `BusinessOsBillingAccountRepository`
+ * (CLAUDE.md rule 1). The router, catalog and resolver must stay DB-free.
+ */
+const BILLING_REPOSITORY_CALLERS = ['businessOsStripeCustomer.ts'];
+
+const REPOSITORIES_DIR = path.join(ROOT, 'lib', 'repositories');
+
+/** Is this module specifier the repositories barrel or a file under it (alias or relative)? */
+function isRepositorySpecifier(fromFile: string, specifier: string): boolean {
+  if (specifier === '@/lib/repositories' || specifier.startsWith('@/lib/repositories/')) return true;
+  if (!specifier.startsWith('.')) return false;
+  const resolved = path.resolve(path.dirname(fromFile), specifier);
+  return resolved === REPOSITORIES_DIR || resolved.startsWith(REPOSITORIES_DIR + path.sep);
+}
+
+/**
+ * Every repository module a file imports: static imports (type-only included),
+ * `export … from`, `import()` and `require()`. AST, so comments and strings
+ * that merely mention the folder do not count.
+ */
+function repositoryImportsOf(fileName: string, text: string): string[] {
+  const file = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const found: string[] = [];
+  walk(file, (node) => {
+    let specifier: ts.Expression | undefined;
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      specifier = node.moduleSpecifier;
+    } else if (
+      ts.isCallExpression(node) &&
+      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(node.expression) && node.expression.text === 'require'))
+    ) {
+      specifier = node.arguments[0];
+    }
+    if (specifier && ts.isStringLiteral(specifier) && isRepositorySpecifier(fileName, specifier.text)) {
+      found.push(specifier.text);
+    }
+  });
+  return found;
 }
 
 function topLevelFunction(name: string): ts.FunctionDeclaration | undefined {
@@ -165,15 +210,44 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
     expect(code).toMatch(/details: process\.env\.NODE_ENV === 'development'/);
   });
 
-  it('the new billing modules do not touch the database (SA P1-C6)', () => {
+  it('billing modules touch the database only through the allow-listed repository caller (SA P1-C6, P-2a M-1)', () => {
     const dir = path.join(ROOT, 'lib/business-os/billing');
     for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.ts'))) {
-      const text = fs.readFileSync(path.join(dir, file), 'utf8');
-      expect({ file, supabase: /supabase/i.test(text), from: /\.from\(/.test(text) }).toEqual({
+      const full = path.join(dir, file);
+      const text = fs.readFileSync(full, 'utf8');
+      expect({
         file,
-        supabase: false,
-        from: false,
-      });
+        supabase: /supabase/i.test(text),
+        from: /\.from\(/.test(text),
+        repositoryImports: BILLING_REPOSITORY_CALLERS.includes(file) ? [] : repositoryImportsOf(full, text),
+      }).toEqual({ file, supabase: false, from: false, repositoryImports: [] });
     }
+    // The allow-listed caller exists and really is the one that imports a repository.
+    const caller = path.join(dir, 'businessOsStripeCustomer.ts');
+    expect(repositoryImportsOf(caller, fs.readFileSync(caller, 'utf8'))).toEqual([
+      '@/lib/repositories/BusinessOsBillingAccountRepository',
+    ]);
+  });
+
+  it('the repository-import check bites: barrel, file, relative path, type-only, re-export, dynamic import and require (M-1 negative control)', () => {
+    const file = path.join(ROOT, 'lib/business-os/billing/planPriceCatalog.ts');
+    const real = fs.readFileSync(file, 'utf8');
+    expect(repositoryImportsOf(file, real)).toEqual([]);
+    const injected: Array<[string, string]> = [
+      ["import { agentRepository } from '@/lib/repositories';", '@/lib/repositories'],
+      ["import { x } from '@/lib/repositories/BusinessOsBillingAccountRepository';", '@/lib/repositories/BusinessOsBillingAccountRepository'],
+      ["import { x } from '../../repositories/AgentRepository';", '../../repositories/AgentRepository'],
+      ["import type { X } from '@/lib/repositories/types';", '@/lib/repositories/types'],
+      ["export { x } from '@/lib/repositories';", '@/lib/repositories'],
+      ["const m = () => import('@/lib/repositories/AgentRepository');", '@/lib/repositories/AgentRepository'],
+      ["const m = require('@/lib/repositories');", '@/lib/repositories'],
+    ];
+    for (const [line, specifier] of injected) {
+      expect(repositoryImportsOf(file, `${line}\n${real}`)).toEqual([specifier]);
+    }
+    // Words in comments or strings that only mention the folder do not count.
+    expect(repositoryImportsOf(file, `// see @/lib/repositories\nconst s = 'lib/repositories';\n${real}`)).toEqual([]);
+    expect(repositoryImportsOf(file, "import { x } from '@/lib/repositoriesExtra';")).toEqual([]);
+    expect(repositoryImportsOf(file, "import { x } from '../../../repositories/AgentRepository';")).toEqual([]);
   });
 });
