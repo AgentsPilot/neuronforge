@@ -231,6 +231,10 @@ Each slice is hours, not days. No production code changes, no data, no secrets.
 
 [x] Workplan approved with conditions C-1 to C-9. Proceed to Slice 1. Return to SA with the Slice 1 numbers (C-2 table) for the placement ruling before Slice 2.
 
+### 12.5 Slice 1 log (Dev)
+
+**Run 1 (PR #199, run 37189752967): red, for the environment, not the tests.** The new step took **11 s** and failed 3 files (`modelSettings.off.nonchat`, `callParams.boundary.step2`, `modelSettings.off.chat`) with `ReferenceError: crypto is not defined`. The code under test (for example `chat-v4/route.ts:392`) calls the global `crypto.randomUUID()`, which Node 18 does not expose. This job pinned `NODE_VERSION: '18'`; `.nvmrc`, `build.yml`, Vercel and local development are all on **22**. **Fix:** the job now reads `node-version-file: '.nvmrc'`, as `build.yml` does. No test was edited (C-9 respected). This also moves the type-check and literal steps to Node 22. Both are Node-version-agnostic, but **SA to confirm** this is acceptable inside this PR. The other guard workflows (`admin-authz-guard`, `bos-entitlements`, `plugin-tests`, `react-hooks-guard`) still pin 18; out of scope here, flagged as a follow-up.
+
 ---
 
 ## Change History
@@ -239,3 +243,4 @@ Each slice is hours, not days. No production code changes, no data, no secrets.
 |---|---|---|
 | 2026-10-04 | Created | Dev workplan after #151 / #185: measurements, options A/B/C, scope S1/S2, 3 slices, questions for SA |
 | 2026-10-04 | SA review | APPROVED WITH CONDITIONS (C-1 to C-9). Option A accepted, scope S1 only, bar restated as a paired per-SHA completion delta over 5 runs; §3.2 headroom corrected (run 37172283864's Build job was 167 s, headroom 8 s); `--ci` obsolete/orphan snapshot behaviour verified in Jest 30.2 source; Standard 7 points at `route.credits.test.ts` |
+| 2026-10-04 | Slice 1 run 1 | Red on Node 18 (`crypto` global). Job switched to `.nvmrc` (22); see §12.5 |

@@ -42,9 +42,6 @@ concurrency:
   group: bos-llm-typecheck-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  NODE_VERSION: '18'
-
 jobs:
   typecheck-bos-llm:
     name: Type check (Business OS LLM attribution)
@@ -86,11 +83,15 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Node major from .nvmrc, as build.yml does: the production major. The
+      # test step below exercises route code that uses the global `crypto`,
+      # which Node 18 does not provide - on '18' it failed for a runtime that
+      # production does not run.
       - name: Setup Node.js
         if: steps.scope.outputs.skip != 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: '.nvmrc'
           cache: 'npm'
 
       - name: Install dependencies
