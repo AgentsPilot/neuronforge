@@ -10,7 +10,7 @@
 **11b branch:** `feature/business-os-credit-deduction-slice-11b` (off `origin/main` `9a7c4fb3`, which includes merged 11a PR #173; confirmed with `git branch --show-current` on 2026-10-02).
 **11c branch:** `feature/business-os-credit-deduction-slice-11c` (off `origin/main` `5061489b`, which includes 11a #173, 11b #179 and #180; confirmed with `git branch --show-current` on 2026-10-03).
 **Date:** 2026-10-02
-**Status:** **11a merged (PR #173) and applied to PROD 2026-10-02** (§17: checker VERDICT PASS 23/0, probe PROBE PASS, charge checker C7 PASS; gate S11-C-5 met). **11b merged (PR #179, 2026-10-03)** (section "11b — Admin give / take back credits (API)"; SA code review approved, QA pass; no migration). **11c: Code Complete (11c) 2026-10-03 — SA workplan review approved with conditions (W11c-1 to W11c-17, OP-30 cut), implemented and uncommitted; awaiting SA code review, then QA** (section "11c — Admin per-account credit view", results in §11c.10; no migration).
+**Status:** **11a merged (PR #173) and applied to PROD 2026-10-02** (§17: checker VERDICT PASS 23/0, probe PROBE PASS, charge checker C7 PASS; gate S11-C-5 met). **11b merged (PR #179, 2026-10-03)** (section "11b — Admin give / take back credits (API)"; SA code review approved, QA pass; no migration). **11c: PR #194 open (2026-10-04) — SA code review approved, QA pass, user approved; not merged, held until the BD-26 PR merges and `20261018` is applied to PROD** (section "11c — Admin per-account credit view", results in §11c.10; no migration).
 
 ## Overview
 
@@ -2189,7 +2189,7 @@ creditWindowRule.ts: absent · console.* in 26 changed app/lib files: 0 · backs
 |---|---|---|---|---|---|
 | 11a | 2026-10-02, after SA code review (CR11a-1 fixed and SA-confirmed) and QA PASS WITH NOTES | 2026-10-02 ("go ahead, commit and open the PR") | `3ffe3e7c` docs, `55f54ce4` feat, `9b737ba1` docs (PR number), `32a5a3be` docs (PROD apply record), `03ff6888` merge of main (slice 7a #174, docs conflicts), `ef17ee8c` fix (Tailwind CSS-escape path in this workplan) | #173 | ✅ `9a7c4fb3`, 2026-10-02 |
 | 11b | 2026-10-03, after SA code review APPROVED and QA PASS WITH NOTES | 2026-10-03 ("approved, commit and create a PR") | `a06c4693` docs, `ae07fec1` feat, `5804b7de` merge of main (#176), `fba3cc51` docs (PR number) | #179 | ✅ `05ca1a55`, 2026-10-03 |
-| 11c | — | — | — | — | — |
+| 11c | 2026-10-04, saw it working in the browser, including a live 200-credit grant on Eyal_Fitness | 2026-10-04 ("all looks good, continue") | `edcef514` docs, `3f48272a` feat, `d7b88b39` merge of main (`89dbc568`, incl. slice 8a #189), docs commit recording the PR | #194 | ⬜ not merged (held until BD-26) |
 
 ---
 
