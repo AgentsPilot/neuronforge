@@ -2,9 +2,10 @@
  * The admin AI Activity view's builder (Gap B slice B1a): one row per charge,
  * corrections netted in by id, the cut-over clamp, the area filter, the honest
  * count and cap, names, the deleted-account bucket, and that the list never
- * reaches `token_usage`. Workplan
+ * reaches `token_usage`. Slice B1b: the audit join (match on actionId AND
+ * account, SA-B1-7), the projection, and the "no audit entry" classes. Workplan
  * docs/workplans/BUSINESS_OS_ADMIN_AI_ACTIVITY_SLICE_B1_WORKPLAN.md § D and
- * the Test Plan (AC-B1, B3, B5, B7, B9, B11, B19, B20).
+ * the Test Plan (AC-B1, B3, B5, B6, B7, B9, B11, B13, B19, B20).
  */
 
 import * as fs from 'fs';
@@ -27,6 +28,9 @@ import type {
   CreditLedgerPagedResult,
   CreditLedgerRow,
 } from '@/lib/repositories/BusinessOsCreditLedgerReadRepository';
+import type { AdminAiActionEntriesPage, AdminAiActionEntryRow } from '@/lib/repositories/AuditTrailRepository';
+import type { ArchiveRunRow } from '@/lib/repositories/ArchiveRepository';
+import { LEAK_CHECK_LIMITS } from '../creditLeakCheck';
 
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
@@ -94,6 +98,11 @@ interface Seed {
   deletedTotal?: number | null;
   deletedReachedCeiling?: boolean;
   names?: { user_id: string; company_name: string | null }[];
+  /** B1b: what the cross-account audit read returns (the fake filters nothing: the builder must). */
+  entries?: AdminAiActionEntryRow[];
+  entriesReachedLimit?: boolean;
+  latestCutoff?: string | null;
+  runs?: ArchiveRunRow[];
 }
 
 /**
@@ -138,6 +147,16 @@ function makeDeps(seed: Seed = {}) {
       error: null,
     })),
   };
+  const entriesPage: AdminAiActionEntriesPage = {
+    rows: seed.entries ?? [],
+    reachedLimit: seed.entriesReachedLimit ?? false,
+  };
+  const listAuditEntries = fake<AiActivityDeps['listAuditEntries']>(async () => ({ data: entriesPage, error: null }));
+  type Archive = AiActivityDeps['archive'];
+  const archive: { [K in keyof Archive]: FakeOf<Archive[K]> } = {
+    getLatestCutoff: fake<Archive['getLatestCutoff']>(async () => ({ data: seed.latestCutoff ?? null, error: null })),
+    listRuns: fake<Archive['listRuns']>(async () => ({ data: seed.runs ?? [], error: null })),
+  };
   const findNames = fake<AiActivityDeps['findNames']>(async () => ({
     data: seed.names ?? [
       { user_id: A, company_name: 'Alpha Studio' },
@@ -145,8 +164,8 @@ function makeDeps(seed: Seed = {}) {
     ],
     error: null,
   }));
-  const deps: AiActivityDeps = { ledger, findNames, now: () => NOW };
-  return { deps, ledger, findNames };
+  const deps: AiActivityDeps = { ledger, findNames, listAuditEntries, archive, now: () => NOW };
+  return { deps, ledger, findNames, listAuditEntries, archive };
 }
 
 const input = (over: Partial<BuildAiActivityInput> = {}): BuildAiActivityInput => ({
@@ -487,6 +506,434 @@ describe('AC-B9 (deleted-account part): the bucket', () => {
     const payload = await buildAiActivity(input(), log, deps);
     expect(payload.deletedAccounts).toEqual({ status: 'failed', count: null, costUsd: null, credits: null, atLeast: false });
     expect(payload.rows).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B1b: the audit join
+// ---------------------------------------------------------------------------
+
+let entrySeq = 0;
+/** A schema 2 AI entry for `actionId` on `user`, with marker-free action-level fields. */
+function entry(
+  user: string | null,
+  actionId: string,
+  details: Record<string, unknown> = {},
+  extra: Partial<AdminAiActionEntryRow> = {}
+): AdminAiActionEntryRow {
+  entrySeq += 1;
+  return {
+    id: `entry-${String(entrySeq).padStart(3, '0')}`,
+    user_id: user,
+    created_at: '2026-10-01T09:59:59+00:00',
+    entity_id: GROUP,
+    details: {
+      schema: 2,
+      actionId,
+      callCount: 2,
+      failedCallCount: 1,
+      inputTokens: 100,
+      outputTokens: 50,
+      totalTokens: 150,
+      models: ['model-alpha', 'model-beta'],
+      outcome: 'succeeded',
+      ...details,
+    },
+    ...extra,
+  };
+}
+
+function run(over: Partial<ArchiveRunRow> = {}): ArchiveRunRow {
+  return {
+    id: 'run-1',
+    source: 'audit_trail',
+    status: 'partial',
+    retention_days: 90,
+    cutoff: '2026-10-01T00:00:00+00:00',
+    rows_archived: 0,
+    batches: 1,
+    started_by: A,
+    started_at: '2026-10-02T00:00:00.000Z',
+    last_batch_at: null,
+    finished_at: null,
+    error_code: null,
+    ...over,
+  };
+}
+
+const FOUND = {
+  state: 'found',
+  callCount: 2,
+  failedCallCount: 1,
+  inputTokens: 100,
+  outputTokens: 50,
+  totalTokens: 150,
+  models: ['model-alpha', 'model-beta'],
+  errorCode: null,
+};
+
+describe('B1b: the audit read itself', () => {
+  beforeEach(() => {
+    entrySeq = 0;
+  });
+
+  it('is keyed on the page grouping ids (lower-cased, distinct) over [earliest - 1 h, latest + 1 h)', async () => {
+    const c1 = charge(A, '0.0010000000', '1.000000', { created_at: '2026-10-01T10:00:00+00:00' });
+    const c2 = charge(B, '0.0010000000', '1.000000', { created_at: '2026-10-01T12:30:00+00:00' });
+    const c3 = charge(A, '0.0010000000', '1.000000', {
+      group_id: 'CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC',
+      created_at: '2026-10-01T11:00:00+00:00',
+    });
+    const { deps, listAuditEntries } = makeDeps({ page: [c1, c2, c3] });
+    await buildAiActivity(input(), log, deps);
+
+    expect(listAuditEntries).toHaveBeenCalledTimes(1);
+    const [groupIds, window] = firstCall(listAuditEntries);
+    expect(groupIds).toEqual([GROUP, 'cccccccc-cccc-4ccc-8ccc-cccccccccccc']);
+    expect(window).toEqual({ start: '2026-10-01T09:00:00.000Z', end: '2026-10-01T13:30:00.000Z' });
+    expect(AI_ACTIVITY_LIMITS.AUDIT_WINDOW_SLACK_MS).toBe(LEAK_CHECK_LIMITS.SLACK_MS);
+    expect(AI_ACTIVITY_LIMITS.AUDIT_WINDOW_SLACK_MS).toBe(60 * 60_000);
+  });
+
+  it('makes no audit or archive read when the page is empty, and sends audit: null', async () => {
+    const { deps, listAuditEntries, archive } = makeDeps({ page: [] });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(listAuditEntries).not.toHaveBeenCalled();
+    expect(archive.getLatestCutoff).not.toHaveBeenCalled();
+    expect(archive.listRuns).not.toHaveBeenCalled();
+    expect(payload.audit).toBeNull();
+  });
+
+  it('reads nothing at all for a window entirely before the cut-over', async () => {
+    const { deps, listAuditEntries, archive } = makeDeps({ page: [charge(A, '0.0010000000', '1.000000')] });
+    await buildAiActivity(input({ window: { from: '2026-09-01', to: '2026-09-28' } }), log, deps);
+    expect(listAuditEntries).not.toHaveBeenCalled();
+    expect(archive.listRuns).not.toHaveBeenCalled();
+  });
+
+  it('reads the archive cutoff through the two existing methods (OQ-8)', async () => {
+    const { deps, archive } = makeDeps({ page: [charge(A, '0.0010000000', '1.000000')] });
+    await buildAiActivity(input(), log, deps);
+    expect(firstCall(archive.getLatestCutoff)).toEqual(['audit_trail']);
+    expect(firstCall(archive.listRuns)).toEqual([{ limit: 100 }]);
+  });
+});
+
+describe('B1b / SA-B1-7: the match, on actionId AND account, server-side', () => {
+  beforeEach(() => {
+    entrySeq = 0;
+  });
+
+  it('an entry on the right account is found, projected field by field', async () => {
+    const c1 = charge(A, '0.0010000000', '1.000000');
+    const { deps } = makeDeps({ page: [c1], entries: [entry(A, c1.action_id as string)] });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.rows[0].entry).toEqual(FOUND);
+    expect(payload.audit).toEqual({
+      status: 'ok',
+      settleMinutes: 15,
+      archiveCutoff: null,
+      archive: 'ok',
+      noEntry: { tooRecent: 0, mayBeArchived: 0, lost: 0, unknown: 0, accountMismatch: 0 },
+    });
+  });
+
+  it('(i) compares the actionId lower-cased: an upper-case actionId still matches', async () => {
+    const c1 = charge(A, '0.0010000000', '1.000000');
+    const upper = (c1.action_id as string).toUpperCase();
+    const { deps } = makeDeps({
+      page: [c1],
+      entries: [entry(A, upper, {}, { entity_id: GROUP.toUpperCase() })],
+    });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.rows[0].entry.state).toBe('found');
+  });
+
+  it('(ii) an own-account entry wins; another account entry with the same actionId only adds to the count, and is never sent', async () => {
+    const c1 = charge(A, '0.0010000000', '1.000000');
+    const foreign = entry(B, c1.action_id as string, {
+      callCount: 987654,
+      models: ['marker-foreign-model'],
+      errorCode: 'MARKER_FOREIGN',
+    });
+    const { deps } = makeDeps({ page: [c1], entries: [foreign, entry(A, c1.action_id as string)] });
+    const payload = await buildAiActivity(input(), log, deps);
+
+    expect(payload.rows[0].entry).toEqual(FOUND);
+    expect(payload.audit?.noEntry.accountMismatch).toBe(1);
+    const json = JSON.stringify(payload);
+    for (const marker of ['987654', 'marker-foreign-model', 'MARKER_FOREIGN', foreign.id]) expect(json).not.toContain(marker);
+  });
+
+  it('(ii) only another account has the entry: the row is an account_mismatch defect marker, with no entry field of either account', async () => {
+    const a = charge(A, '0.0010000000', '1.000000');
+    const foreign = entry(B, a.action_id as string, { callCount: 987654, models: ['marker-foreign-model'] });
+    const { deps } = makeDeps({ page: [a], entries: [foreign] });
+    const payload = await buildAiActivity(input(), log, deps);
+
+    expect(payload.rows[0].entry).toEqual({ state: 'account_mismatch' });
+    expect(payload.rows[0].accountId).toBe(A);
+    expect(payload.audit?.noEntry).toMatchObject({ accountMismatch: 1, lost: 0 });
+    const json = JSON.stringify(payload);
+    expect(json).not.toContain('987654');
+    expect(json).not.toContain('marker-foreign-model');
+    expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ rows: 1 }), expect.stringContaining('another account'));
+  });
+
+  it('AC-B5: two accounts sharing one group each get their own entry, and nothing crosses', async () => {
+    const a = charge(A, '0.0010000000', '1.000000');
+    const b = charge(B, '0.0020000000', '2.000000');
+    const { deps } = makeDeps({
+      page: [a, b],
+      entries: [
+        entry(A, a.action_id as string, { callCount: 11, models: ['model-of-a'] }),
+        entry(B, b.action_id as string, { callCount: 22, models: ['model-of-b'] }),
+      ],
+    });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.rows[0].entry).toMatchObject({ state: 'found', callCount: 11, models: ['model-of-a'] });
+    expect(payload.rows[1].entry).toMatchObject({ state: 'found', callCount: 22, models: ['model-of-b'] });
+    expect(payload.audit?.noEntry.accountMismatch).toBe(0);
+  });
+
+  it('AC-B5: two charged actions of one account in one group each join their own entry by actionId', async () => {
+    const first = charge(A, '0.0010000000', '1.000000');
+    const second = charge(A, '0.0010000000', '1.000000');
+    const { deps } = makeDeps({
+      page: [first, second],
+      entries: [entry(A, second.action_id as string, { callCount: 2 }), entry(A, first.action_id as string, { callCount: 1 })],
+    });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.rows.map((r) => (r.entry.state === 'found' ? r.entry.callCount : null))).toEqual([1, 2]);
+  });
+
+  it('(iii) two own entries for one actionId: the newest is shown, then the higher id, logged at warn with ids only', async () => {
+    const c1 = charge(A, '0.0010000000', '1.000000');
+    const older = entry(A, c1.action_id as string, { callCount: 1 }, { created_at: '2026-10-01T09:59:00+00:00' });
+    const newer = entry(A, c1.action_id as string, { callCount: 3 }, { created_at: '2026-10-01T09:59:30+00:00' });
+    const { deps } = makeDeps({ page: [c1], entries: [older, newer] });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.rows[0].entry).toMatchObject({ state: 'found', callCount: 3 });
+    expect(log.warn).toHaveBeenCalledWith(
+      { actionId: c1.action_id, entryIds: [older.id, newer.id], read: 'activity audit entries' },
+      expect.stringContaining('more than one audit entry')
+    );
+
+    // A tie on time resolves by id, whatever order the read returned.
+    const tieA = entry(A, c1.action_id as string, { callCount: 5 }, { id: 'entry-aaa' });
+    const tieB = entry(A, c1.action_id as string, { callCount: 6 }, { id: 'entry-bbb' });
+    for (const order of [
+      [tieA, tieB],
+      [tieB, tieA],
+    ]) {
+      const { deps: d } = makeDeps({ page: [c1], entries: order });
+      expect((await buildAiActivity(input(), log, d)).rows[0].entry).toMatchObject({ callCount: 6 });
+    }
+  });
+
+  it('drops entries with no actionId (schema 1) and entries for a charge not on the page: never sent', async () => {
+    const c1 = charge(A, '0.0010000000', '1.000000');
+    const schema1 = entry(A, 'unused', { schema: 1, actionId: undefined, models: ['marker-schema-one'] });
+    const otherAction = entry(A, id(999), { models: ['marker-other-action'] });
+    const { deps } = makeDeps({ page: [c1], entries: [schema1, otherAction] });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.rows[0].entry).toEqual({ state: 'lost' });
+    const json = JSON.stringify(payload);
+    expect(json).not.toContain('marker-schema-one');
+    expect(json).not.toContain('marker-other-action');
+  });
+});
+
+describe('B1b / AC-B13: the projection is an allow-list', () => {
+  beforeEach(() => {
+    entrySeq = 0;
+  });
+
+  it('no prompt, owner text, output, error message or email reaches the payload; a free-text error code is dropped', async () => {
+    const c1 = charge(A, '0.0010000000', '1.000000', { outcome: 'failed' });
+    const leaky = entry(A, c1.action_id as string, {
+      prompt: 'MARKER_PROMPT_7f3a',
+      ownerText: 'MARKER_OWNER_TEXT_7f3a',
+      output: 'MARKER_OUTPUT_7f3a',
+      errorMessage: 'MARKER_ERROR_MESSAGE_7f3a',
+      user_email: 'marker-owner@example.com',
+      errorCode: 'connection reset by MARKER_FREE_TEXT',
+    });
+    const { deps } = makeDeps({ page: [c1], entries: [leaky] });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.rows[0].entry).toMatchObject({ state: 'found', errorCode: null });
+    const json = JSON.stringify(payload);
+    for (const marker of [
+      'MARKER_PROMPT',
+      'MARKER_OWNER_TEXT',
+      'MARKER_OUTPUT',
+      'MARKER_ERROR_MESSAGE',
+      'marker-owner@example.com',
+      'MARKER_FREE_TEXT',
+    ]) {
+      expect(json).not.toContain(marker);
+    }
+  });
+
+  it('QA E-B2: a models field that is not a list is unreadable: null (unknown), never [] (none)', async () => {
+    const c1 = charge(A, '0.0010000000', '1.000000');
+    const { deps } = makeDeps({ page: [c1], entries: [entry(A, c1.action_id as string, { models: 'model-alpha' })] });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.rows[0].entry).toMatchObject({ state: 'found', models: null });
+  });
+
+  it('keeps an identifier error code, caps the models, and reads a malformed count as null (unknown), never 0', async () => {
+    const c1 = charge(A, '0.0010000000', '1.000000', { outcome: 'failed' });
+    const models = [...Array.from({ length: 12 }, (_, i) => `model-${i}`), 'x'.repeat(65), 42];
+    const e = entry(A, c1.action_id as string, { errorCode: 'RATE_LIMITED', models, callCount: '3', totalTokens: -1 });
+    const { deps } = makeDeps({ page: [c1], entries: [e] });
+    const payload = await buildAiActivity(input(), log, deps);
+    const got = payload.rows[0].entry;
+    expect(got).toMatchObject({ state: 'found', errorCode: 'RATE_LIMITED', callCount: null, totalTokens: null });
+    if (got.state !== 'found') throw new Error('expected found');
+    expect(got.models).toEqual(Array.from({ length: 10 }, (_, i) => `model-${i}`));
+  });
+});
+
+describe('B1b / AC-B6: no audit entry, classified (FR-B5 question 1)', () => {
+  beforeEach(() => {
+    entrySeq = 0;
+  });
+
+  it('the settle window is 15 minutes, pinned (OQ-5)', () => {
+    expect(AI_ACTIVITY_LIMITS.AUDIT_SETTLE_MS).toBe(15 * 60_000);
+  });
+
+  it('T-1: the 15-minute boundary, behaviourally: 14m59s too recent, exactly 15m and 15m01s settled (lost)', async () => {
+    const at = (msAgo: number) => new Date(NOW.getTime() - msAgo).toISOString();
+    const rows = [
+      charge(A, '0.0010000000', '1.000000', { created_at: at(14 * 60_000 + 59_000) }),
+      charge(A, '0.0010000000', '1.000000', { created_at: at(15 * 60_000) }),
+      charge(A, '0.0010000000', '1.000000', { created_at: at(15 * 60_000 + 1_000) }),
+    ];
+    const { deps } = makeDeps({ page: rows });
+    const payload = await buildAiActivity(input(), log, deps);
+    // "under 15 min" on screen: strictly younger than 15 minutes is too recent.
+    expect(payload.rows.map((r) => r.entry.state)).toEqual(['too_recent', 'lost', 'lost']);
+  });
+
+  it('SA-CR-B-1: an unreadable charge time decides nothing: unknown, never too recent', async () => {
+    const good = charge(A, '0.0010000000', '1.000000');
+    const bad = charge(A, '0.0010000000', '1.000000', { created_at: 'not-a-time' });
+    const { deps } = makeDeps({ page: [good, bad] });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.rows[1].entry).toEqual({ state: 'unknown', reason: 'charge_time_unreadable' });
+    expect(payload.audit?.noEntry).toMatchObject({ tooRecent: 0, unknown: 1, lost: 1 });
+  });
+
+  it('QA E-B1: a charge within the margin after the cutoff may be archived (its entry is stamped just before it); beyond it, lost', async () => {
+    expect(AI_ACTIVITY_LIMITS.ARCHIVE_CUTOFF_MARGIN_MS).toBe(LEAK_CHECK_LIMITS.SLACK_MS);
+    const justAfter = charge(A, '0.0010000000', '1.000000', { created_at: '2026-10-01T09:00:05+00:00' });
+    const withinMargin = charge(A, '0.0010000000', '1.000000', { created_at: '2026-10-01T09:59:59+00:00' });
+    const beyond = charge(A, '0.0010000000', '1.000000', { created_at: '2026-10-01T10:00:00+00:00' });
+    const { deps } = makeDeps({ page: [justAfter, withinMargin, beyond], latestCutoff: '2026-10-01T09:00:00+00:00' });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.rows.map((r) => r.entry.state)).toEqual(['may_be_archived', 'may_be_archived', 'lost']);
+  });
+
+  it('a charge 5 minutes old is too recent; one 20 minutes old is lost', async () => {
+    const recent = charge(A, '0.0010000000', '1.000000', { created_at: '2026-10-02T11:55:00+00:00' });
+    const settled = charge(A, '0.0010000000', '1.000000', { created_at: '2026-10-02T11:40:00+00:00' });
+    const { deps } = makeDeps({ page: [recent, settled] });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.rows.map((r) => r.entry)).toEqual([{ state: 'too_recent' }, { state: 'lost' }]);
+    expect(payload.audit?.noEntry).toEqual({ tooRecent: 1, mayBeArchived: 0, lost: 1, unknown: 0, accountMismatch: 0 });
+  });
+
+  it('a charge older than the latest succeeded cutoff may be archived; one well after it is lost', async () => {
+    const old = charge(A, '0.0010000000', '1.000000', { created_at: '2026-10-01T08:00:00+00:00' });
+    const newer = charge(A, '0.0010000000', '1.000000', { created_at: '2026-10-01T11:00:00+00:00' });
+    const { deps } = makeDeps({ page: [old, newer], latestCutoff: '2026-10-01T09:00:00+00:00' });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.rows.map((r) => r.entry.state)).toEqual(['may_be_archived', 'lost']);
+    expect(payload.audit?.archiveCutoff).toBe('2026-10-01T09:00:00+00:00');
+  });
+
+  it('a PARTIAL run of audit_trail that moved rows also counts, and beats an earlier succeeded cutoff (SA-R7)', async () => {
+    const c1 = charge(A, '0.0010000000', '1.000000', { created_at: '2026-10-01T08:00:00+00:00' });
+    const { deps } = makeDeps({
+      page: [c1],
+      latestCutoff: '2026-09-01T00:00:00+00:00',
+      runs: [
+        // Moved nothing: ignored.
+        run({ cutoff: '2026-10-01T23:00:00+00:00', rows_archived: 0 }),
+        // Another source: ignored.
+        run({ source: 'other_source', cutoff: '2026-10-01T22:00:00+00:00', rows_archived: 5 }),
+        // bigint handed back as a string.
+        run({ cutoff: '2026-10-01T09:00:00+00:00', rows_archived: '12' }),
+      ],
+    });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.rows[0].entry.state).toBe('may_be_archived');
+    expect(payload.audit?.archiveCutoff).toBe('2026-10-01T09:00:00+00:00');
+  });
+
+  it('runs that moved nothing never make a row "may be archived"', async () => {
+    const c1 = charge(A, '0.0010000000', '1.000000', { created_at: '2026-10-01T08:00:00+00:00' });
+    const { deps } = makeDeps({ page: [c1], runs: [run({ cutoff: '2026-10-01T23:00:00+00:00', rows_archived: 0 })] });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.rows[0].entry.state).toBe('lost');
+  });
+
+  it('a failed audit read makes every row unknown, never lost', async () => {
+    const { deps, listAuditEntries } = makeDeps({ page: [charge(A, '0.0010000000', '1.000000'), charge(B, '0.0010000000', '1.000000')] });
+    listAuditEntries.mockResolvedValueOnce({ data: null, error: new Error('down') });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.rows.map((r) => r.entry)).toEqual([
+      { state: 'unknown', reason: 'audit_read_failed' },
+      { state: 'unknown', reason: 'audit_read_failed' },
+    ]);
+    expect(payload.audit).toMatchObject({ status: 'failed', noEntry: { unknown: 2, lost: 0 } });
+    // The list itself never fails over the join.
+    expect(payload.rows).toHaveLength(2);
+  });
+
+  it('a synchronous throw from the audit read fails only the join', async () => {
+    const { deps, listAuditEntries } = makeDeps({ page: [charge(A, '0.0010000000', '1.000000')] });
+    listAuditEntries.mockImplementationOnce(() => {
+      throw new Error('boom');
+    });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.audit?.status).toBe('failed');
+    expect(payload.rows[0].entry).toEqual({ state: 'unknown', reason: 'audit_read_failed' });
+  });
+
+  it('a read cut at its cap: a matched entry is still found, an unmatched row is unknown, never lost or a mismatch', async () => {
+    const matched = charge(A, '0.0010000000', '1.000000');
+    const unmatched = charge(A, '0.0010000000', '1.000000');
+    const mismatched = charge(A, '0.0010000000', '1.000000');
+    const { deps } = makeDeps({
+      page: [matched, unmatched, mismatched],
+      entries: [entry(A, matched.action_id as string), entry(B, mismatched.action_id as string)],
+      entriesReachedLimit: true,
+    });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.rows.map((r) => r.entry.state)).toEqual(['found', 'unknown', 'unknown']);
+    expect(payload.rows[1].entry).toEqual({ state: 'unknown', reason: 'audit_read_incomplete' });
+    expect(payload.audit).toMatchObject({ status: 'incomplete', noEntry: { unknown: 2, lost: 0, accountMismatch: 1 } });
+  });
+
+  it('an unreadable archive cutoff makes a settled row with no entry unknown; a too-recent row stays too recent', async () => {
+    const settled = charge(A, '0.0010000000', '1.000000');
+    const recent = charge(A, '0.0010000000', '1.000000', { created_at: '2026-10-02T11:55:00+00:00' });
+    const { deps, archive } = makeDeps({ page: [settled, recent] });
+    archive.listRuns.mockResolvedValueOnce({ data: null, error: new Error('down') });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.rows.map((r) => r.entry)).toEqual([{ state: 'unknown', reason: 'archive_unread' }, { state: 'too_recent' }]);
+    expect(payload.audit).toMatchObject({ archive: 'failed', archiveCutoff: null });
+  });
+
+  it('a found entry is not affected by an unreadable archive cutoff', async () => {
+    const c1 = charge(A, '0.0010000000', '1.000000');
+    const { deps, archive } = makeDeps({ page: [c1], entries: [entry(A, c1.action_id as string)] });
+    archive.getLatestCutoff.mockResolvedValueOnce({ data: null, error: new Error('down') });
+    const payload = await buildAiActivity(input(), log, deps);
+    expect(payload.rows[0].entry.state).toBe('found');
   });
 });
 
