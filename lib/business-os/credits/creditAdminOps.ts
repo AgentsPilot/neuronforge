@@ -76,9 +76,21 @@ export type CreditAdminOpName = (typeof CREDIT_ADMIN_OP_NAMES)[number];
 /** The basis of the account-level figures in the audit and in `exceeds_remaining` (OP-11, OP-22). */
 export const READ_BEFORE_WRITE = 'read_before_write' as const;
 
+/**
+ * The reason bounds, trimmed (slice 11c, SA W11c-6). Exported so the admin
+ * credit view sends the numbers to the form instead of a copy of them; they
+ * must still match the table CHECKs (a test pins 3 and 500).
+ */
+export const CREDIT_REASON_MIN = 3;
+export const CREDIT_REASON_MAX = 500;
+
 // The bounds match the table CHECKs (reason 3–500 trimmed, whole positive
 // credits), so a CHECK is never how an admin learns of a mistake (M-3).
-const creditReason = z.string().trim().min(3, 'a reason of at least 3 characters is required').max(500);
+const creditReason = z
+  .string()
+  .trim()
+  .min(CREDIT_REASON_MIN, 'a reason of at least 3 characters is required')
+  .max(CREDIT_REASON_MAX);
 const creditAmount = z.number().int().positive().max(ADMIN_CREDIT_GRANT_CEILING);
 // OP-17 / S11-SQ-14: an instant with an explicit offset (`Z` counts), so a bare
 // date can never be read in an unintended zone.
@@ -299,6 +311,34 @@ async function grantCredits(op: GrantCreditsOp, ctx: CreditAdminOpContext): Prom
   };
 }
 
+/**
+ * The account's extra credits after a recorded reduction (CR11b-2, slice 11c,
+ * SA OP-35, W11c-9): `extraCreditsAt` over the SAME list, with the returned
+ * draw appended to its lot. No second read. Exact even for a lot that
+ * `extraCreditsAt` clamps to 0, where "before − credits" would be wrong.
+ *
+ * One `now` for both: the synthetic draw is stamped `now`, and the figure is
+ * read at that same `now`, so the draw is never dropped as "after `at`".
+ * Falls back to today's subtraction only if the figure cannot be read, which
+ * cannot happen for a list `readLots` just read at the same `now` (defensive).
+ */
+function extraCreditsAfterReduction(
+  lots: readonly BusinessOsCreditLotRow[],
+  lotId: string,
+  credits: number,
+  now: Date,
+  extraCreditsBefore: number
+): number {
+  const drawnAt = now.toISOString();
+  const withDraw = lots.map((row) =>
+    row.id.toLowerCase() === lotId
+      ? { ...row, draws: [...row.draws, { kind: 'reversal' as const, credits, createdAt: drawnAt }] }
+      : row
+  );
+  const after = extraCreditsAt(withDraw, now);
+  return after ? after.extraCredits : addCredits(extraCreditsBefore, -credits);
+}
+
 async function reduceCreditLot(op: ReduceCreditLotOp, ctx: CreditAdminOpContext): Promise<CreditAdminOpOutcome> {
   // ── 8. The audit's "before", and the account-scoped list the lot must be in ─
   const read = await readLots(ctx);
@@ -335,6 +375,7 @@ async function reduceCreditLot(op: ReduceCreditLotOp, ctx: CreditAdminOpContext)
       // The lot figures are the function's, under its lock (S11-SQ-11); the
       // account figures are context, read before the write (OP-11).
       const credits = result.credits as number;
+      const extraCreditsAfter = extraCreditsAfterReduction(read.lots, lotId, credits, ctx.now, read.extraCredits);
       return {
         ok: true,
         action: 'BOS_CREDIT_LOT_REDUCED',
@@ -344,7 +385,7 @@ async function reduceCreditLot(op: ReduceCreditLotOp, ctx: CreditAdminOpContext)
           entityId: lotId,
           changes: {
             extraCreditsBefore: read.extraCredits,
-            extraCreditsAfter: addCredits(read.extraCredits, -credits),
+            extraCreditsAfter,
             lotRemainingBefore: result.remainingBefore,
             lotRemainingAfter: result.remainingAfter,
           },

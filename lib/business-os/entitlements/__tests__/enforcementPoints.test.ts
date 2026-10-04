@@ -365,6 +365,12 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['creditAllowanceForDisplay', 'getEntitlementService', 'resolveAccountId'],
       why: 'Credit deduction slice 6a: the owner dashboard card reads its credit allowance for DISPLAY only. It resolves the session account through the seam (`resolveAccountId`), reads `getSnapshot` (never `check()` / `decide()`) and turns the snapshot into a figure with `creditAllowanceForDisplay`, which keeps the capability id inside the module. It refuses nothing: an owner over the allowance still sees their figures, and refusing by allowance is slices 8 and 10 through `check()`. If this file ever calls `check`, it is a gate and belongs in ENFORCEMENT_POINTS.',
     },
+    // ── Credit deduction slice 11c, 2026-10-03 — the admin per-account credit view ──
+    {
+      file: 'app/api/admin/business-os/credits/accounts/[accountId]/route.ts',
+      symbols: ['creditAllowanceDecision', 'getEntitlementService', 'isBusinessOsTenant', 'resolveAccountId'],
+      why: 'Credit deduction slice 11c: the admin read-only credit view of ONE account. It asks whether the account is a Business OS tenant (`isBusinessOsTenant`, the same check as the entitlements and summary routes), resolves the path id through the account seam (`resolveAccountId`, required by `accountSeam.guard` for any file that reaches the service), reads `getSnapshot` for DISPLAY (never `check()` / `decide()`) and turns it into the allowance and its deciding layer with `creditAllowanceDecision`, which keeps the capability id inside the module. It refuses nothing: an account over its allowance is shown, not blocked. If this file ever calls `check`, it is a gate and belongs in ENFORCEMENT_POINTS.',
+    },
     // ── Credit deduction slice 8a, 2026-10-03 — the admin "Credits left" column ─
     {
       file: 'lib/business-os/credits/adminCreditPercent.ts',

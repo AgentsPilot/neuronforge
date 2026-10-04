@@ -65,3 +65,64 @@ export interface AccountSummaryPayload {
     items: AiFailureItemView[];
   };
 }
+
+// ── Credit deduction slice 11c: the admin per-account credit view ──────────
+// `GET /api/admin/business-os/credits/accounts/[accountId]` → `data`. A copy of
+// `lib/business-os/credits/adminCreditPositionTypes.ts` (this screen's source
+// guard forbids `@/lib/business-os` imports); the two are pinned together by
+// `lib/business-os/credits/__tests__/adminCreditPosition.wireTypes.test.ts`.
+// Credits only: no USD, and no combined figure of plan and extra credits.
+
+/** The resolver layer that decided the allowance (the Plan & entitlements vocabulary). */
+export type CreditAllowanceLayerView = 'basis' | 'lifecycle_gate' | 'grandfather' | 'addon' | 'cohort_values' | 'override';
+
+export interface CreditTakeBackView {
+  id: string;
+  credits: number;
+  reason: string | null;
+  actorAdminId: string | null;
+  createdAt: string;
+}
+
+export interface CreditLotView {
+  id: string;
+  source: 'admin_grant' | 'boost_purchase';
+  credits: number;
+  remaining: number;
+  expired: boolean;
+  /** False for a lot created after the read (clock skew): listed, not counted, no Take back. */
+  counted: boolean;
+  expiresAt: string | null;
+  reason: string | null;
+  actorKind: 'admin' | 'stripe_webhook';
+  actorAdminId: string | null;
+  createdAt: string;
+  takeBacks: CreditTakeBackView[];
+}
+
+export type CreditUsageBlockView =
+  | { status: 'error' }
+  | {
+      status: 'ok';
+      period: { kind: 'monthly' | 'trial_total' | 'calendar_month'; key: string; resetsOn: string | null };
+      allowanceStatus: 'ok' | 'unavailable';
+      allowance: { amount: number; per: 'month' | 'total' } | null;
+      allowanceLayer: CreditAllowanceLayerView | null;
+      used: number;
+      usedByOwner: number;
+      usedAutomatic: number;
+      planLeft: number | null;
+      overPlan: number | null;
+    };
+
+export type CreditExtraBlockView =
+  | { status: 'error' }
+  | { status: 'ok'; extraCredits: number; hasInconsistentLot: boolean; lots: CreditLotView[] };
+
+export interface AccountCreditPositionPayload {
+  accountId: string;
+  isOwnAccount: boolean;
+  limits: { grantCeiling: number; reasonMin: number; reasonMax: number };
+  usage: CreditUsageBlockView;
+  extra: CreditExtraBlockView;
+}

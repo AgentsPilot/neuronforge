@@ -318,3 +318,58 @@ describe('source guards', () => {
     expect(scopes).toBe(froms);
   });
 });
+
+/**
+ * Credit deduction slice 11c (SA W11c-17): the CI-side pin on the
+ * service-role paths. This suite runs in `test:bos-entitlements`. Exactly three
+ * product files construct this repository (the owner wiring, slice 8b's
+ * low-line wiring and the admin wiring), and only the two documented
+ * service-role callers (low-line and admin) name the service client.
+ */
+describe('who constructs this repository (slice 11c, SA W11c-17)', () => {
+  const ROOT = process.cwd();
+  const OWNER_WIRING = 'lib/business-os/credits/ownerCreditUsageDeps.ts';
+  const ADMIN_WIRING = 'lib/business-os/credits/adminCreditPositionDeps.ts';
+  const LOW_LINE_WIRING = 'lib/business-os/credits/creditLowLineDeps.ts';
+  const CONSTRUCTS = /new\s+BusinessOsCreditOwnerReadRepository\s*\(/;
+  const SERVICE_CLIENT = /(?<![A-Za-z0-9_$])supabaseServer(?![A-Za-z0-9_$])/;
+  const codeOf = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+  function productFiles(dir: string, out: string[] = []): string[] {
+    for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name === '__tests__' || entry.name.startsWith('.')) continue;
+      const rel = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) productFiles(rel, out);
+      else if (/\.tsx?$/.test(entry.name) && !/\.(test|spec)\.tsx?$/.test(entry.name)) out.push(rel);
+    }
+    return out;
+  }
+
+  const sources = ['app', 'lib', 'components']
+    .flatMap((dir) => productFiles(dir))
+    .map((file) => ({ file, code: codeOf(fs.readFileSync(path.join(ROOT, file), 'utf8')) }));
+
+  it('the rules see a planted violation, and ignore one in a comment', () => {
+    expect(CONSTRUCTS.test(codeOf('const r = new BusinessOsCreditOwnerReadRepository(supabaseServer);'))).toBe(true);
+    expect(CONSTRUCTS.test(codeOf('// new BusinessOsCreditOwnerReadRepository(client)'))).toBe(false);
+    expect(SERVICE_CLIENT.test(codeOf("import { supabaseServer } from '@/lib/supabaseServer';"))).toBe(true);
+    expect(SERVICE_CLIENT.test(codeOf('/* supabaseServer is explained here */'))).toBe(false);
+  });
+
+  it('scans a non-trivial number of files', () => {
+    expect(sources.length).toBeGreaterThan(500);
+  });
+
+  it('exactly three product files construct it: the owner, low-line and admin wirings', () => {
+    expect(sources.filter(({ code }) => CONSTRUCTS.test(code)).map(({ file }) => file).sort()).toEqual(
+      [ADMIN_WIRING, LOW_LINE_WIRING, OWNER_WIRING].sort()
+    );
+  });
+
+  it('only the two documented service-role callers name the service client (not the owner wiring)', () => {
+    const constructors = sources.filter(({ code }) => CONSTRUCTS.test(code));
+    expect(
+      constructors.filter(({ code }) => SERVICE_CLIENT.test(code)).map(({ file }) => file).sort()
+    ).toEqual([ADMIN_WIRING, LOW_LINE_WIRING].sort());
+  });
+});

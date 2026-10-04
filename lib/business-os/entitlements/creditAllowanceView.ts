@@ -5,8 +5,12 @@
 //
 // ── WHY IT LIVES INSIDE THE MODULE ──────────────────────────────────────────
 // It names the capability id, and the id literal stays inside the module (the
-// entitlements guards). The one caller outside (`lib/business-os/credits/
-// ownerCreditUsage.ts`) is registered as a non-gate importer.
+// entitlements guards). The two callers outside are registered as non-gate
+// importers: `lib/business-os/credits/ownerCreditUsage.ts` (the owner card and
+// history, `creditAllowanceForDisplay`) and, from credit deduction slice 11c,
+// the admin per-account credit view `app/api/admin/business-os/credits/
+// accounts/[accountId]/route.ts` (`creditAllowanceDecision`: the same figure
+// plus the resolver layer that decided it, for an admin's eyes only).
 //
 // ── DISPLAY ONLY — NEVER A GATE ─────────────────────────────────────────────
 // It answers "what figure does the card show?", never "may this call go
@@ -26,7 +30,7 @@
 // a cohort or tier name.
 
 import type { SnapshotResult } from './EntitlementService';
-import { withheldValue } from './resolver';
+import { withheldValue, type TraceEntry } from './resolver';
 import { CAPABILITIES } from './config/catalog';
 import type { CapabilityDef, CapabilityValue, LifecycleState } from './types';
 
@@ -95,4 +99,24 @@ export function creditAllowanceForDisplay(snapshot: SnapshotResult): CreditAllow
   if (definition && sameValue(resolved.value, withheldValue(definition))) return null;
 
   return toAllowance(resolved.value);
+}
+
+/** The allowance and the layer that decided it (credit deduction slice 11c, SA OP-24). */
+export interface CreditAllowanceDecision {
+  /** Exactly `creditAllowanceForDisplay(snapshot)`: one rule, not two. */
+  allowance: CreditAllowanceForDisplay | null;
+  /** The resolver's layer for the credit allowance; null whenever `allowance` is null. */
+  layer: TraceEntry['layer'] | null;
+}
+
+/**
+ * The allowance the owner's card shows, with the layer that decided it, for
+ * the admin credit view. The figure is `creditAllowanceForDisplay` itself, so
+ * the admin and the owner can never read two different allowances.
+ */
+export function creditAllowanceDecision(snapshot: SnapshotResult): CreditAllowanceDecision {
+  const allowance = creditAllowanceForDisplay(snapshot);
+  if (allowance === null) return { allowance: null, layer: null };
+  const resolved = snapshot.resolution?.values[CREDIT_ALLOWANCE];
+  return { allowance, layer: resolved ? resolved.decidedBy : null };
 }

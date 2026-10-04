@@ -63,6 +63,29 @@ const SUMMARY = {
   },
 };
 
+/** `GET /api/admin/business-os/credits/accounts/[accountId]` (credit deduction slice 11c). */
+const CREDITS = {
+  success: true,
+  data: {
+    accountId: ACCOUNT,
+    isOwnAccount: false,
+    limits: { grantCeiling: 100000, reasonMin: 3, reasonMax: 500 },
+    usage: {
+      status: 'ok',
+      period: { kind: 'monthly', key: '2026-09-14T09:31:07.123456+00:00', resetsOn: '2026-10-14T09:31:07.123Z' },
+      allowanceStatus: 'ok',
+      allowance: { amount: 5000, per: 'month' },
+      allowanceLayer: 'basis',
+      used: 12,
+      usedByOwner: 10,
+      usedAutomatic: 2,
+      planLeft: 4988,
+      overPlan: 0,
+    },
+    extra: { status: 'ok', extraCredits: 0, hasInconsistentLot: false, lots: [] },
+  },
+};
+
 type Routes = Record<string, { status: number; body: unknown }>;
 
 function mockFetch(routes: Routes): jest.Mock {
@@ -83,6 +106,7 @@ describe('BusinessOsPanel', () => {
     mockFetch({
       [`/entitlements/accounts/${ACCOUNT}`]: { status: 200, body: recordedAccountBody },
       [`/accounts/${ACCOUNT}/summary`]: { status: 200, body: SUMMARY },
+      [`/credits/accounts/${ACCOUNT}`]: { status: 200, body: CREDITS },
     });
     render(<BusinessOsPanel accountId={ACCOUNT} userName="Dana Cohen" />);
 
@@ -132,6 +156,85 @@ describe('BusinessOsPanel', () => {
     expect(screen.getByTestId('account-result')).toBeTruthy();
     expect(screen.getByTestId('bos-panel-business').textContent).toBe('Business OS');
     expect(screen.getByTestId('bos-panel-user').textContent).toBe('Dana Cohen');
+  });
+
+  it('orders the panel header, Credits, Plan & entitlements (collapsed), AI spend, AI failures (user UI fixes, 2026-10-04)', async () => {
+    mockFetch({
+      [`/entitlements/accounts/${ACCOUNT}`]: { status: 200, body: recordedAccountBody },
+      [`/accounts/${ACCOUNT}/summary`]: { status: 200, body: SUMMARY },
+      [`/credits/accounts/${ACCOUNT}`]: { status: 200, body: CREDITS },
+    });
+    render(<BusinessOsPanel accountId={ACCOUNT} userName="Dana Cohen" />);
+
+    const credits = await screen.findByTestId('credits-block');
+    const fold = screen.getByTestId('bos-panel-plan') as HTMLDetailsElement;
+    const order = [
+      screen.getByTestId('bos-panel-business'),
+      credits,
+      fold,
+      screen.getByTestId('bos-panel-spend'),
+      screen.getByTestId('bos-panel-failures'),
+    ];
+    for (let i = 1; i < order.length; i++) {
+      expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+
+    // Collapsed by default; the snapshot (with its 30-second note) lives inside the fold.
+    expect(fold.tagName).toBe('DETAILS');
+    expect(fold.open).toBe(false);
+    const plan = within(fold).getByTestId('account-result');
+    expect(plan.textContent).toContain('This answer is good for');
+    // The one-line summary names the tier the entitlements read already returned.
+    const summary = screen.getByTestId('bos-panel-plan-summary');
+    expect(summary.textContent).toContain('Plan & entitlements · basic');
+    expect(summary.textContent).toContain('Show all capabilities');
+  });
+
+  it('a plan read failure is shown openly, never folded away', async () => {
+    mockFetch({
+      [`/entitlements/accounts/${ACCOUNT}`]: { status: 500, body: { success: false, error: 'Internal server error' } },
+      [`/accounts/${ACCOUNT}/summary`]: { status: 200, body: SUMMARY },
+      [`/credits/accounts/${ACCOUNT}`]: { status: 200, body: CREDITS },
+    });
+    render(<BusinessOsPanel accountId={ACCOUNT} userName="Dana Cohen" />);
+    expect((await screen.findByTestId('bos-panel-plan-error')).textContent).toContain('failed on the server');
+    expect(screen.queryByTestId('bos-panel-plan')).toBeNull();
+  });
+
+  it('renders the Credits block above Plan & entitlements, and passes it the business name (credit deduction slice 11c)', async () => {
+    const fetchMock = mockFetch({
+      [`/entitlements/accounts/${ACCOUNT}`]: { status: 200, body: recordedAccountBody },
+      [`/accounts/${ACCOUNT}/summary`]: { status: 200, body: SUMMARY },
+      [`/credits/accounts/${ACCOUNT}`]: { status: 200, body: CREDITS },
+    });
+    render(<BusinessOsPanel accountId={ACCOUNT} userName="Dana Cohen" />);
+
+    const credits = await screen.findByTestId('credits-block');
+    await waitFor(() => expect(within(credits).getByTestId('credits-extra-figure').textContent).toBe('0'));
+    expect(within(credits).getByTestId('credits-no-lots')).toBeTruthy();
+    // Above the plan: the Credits block comes first in the document.
+    const plan = screen.getByTestId('account-result');
+    expect(credits.compareDocumentPosition(plan) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith(`/api/admin/business-os/credits/accounts/${ACCOUNT}`))).toBe(true);
+
+    // The Give form's confirm step names the business, not "Business OS".
+    // jsdom has no crypto.randomUUID: stubbed, as W11c-8 asks.
+    Object.defineProperty(globalThis, 'crypto', {
+      configurable: true,
+      value: { randomUUID: () => '00000000-0000-4000-8000-000000000001' },
+    });
+    fireEvent.click(within(credits).getByTestId('credits-give'));
+    expect((await screen.findByTestId('credit-form-dialog')).textContent).toContain('Give credits to Acme Therapy');
+  });
+
+  it('shows no Credits block for a login with no business', async () => {
+    mockFetch({
+      [`/entitlements/accounts/${NO_BUSINESS}`]: { status: 404, body: { success: false, error: 'not_a_business_os_account' } },
+      [`/accounts/${NO_BUSINESS}/summary`]: { status: 404, body: { success: false, error: 'not_a_business_os_account' } },
+    });
+    render(<BusinessOsPanel accountId={NO_BUSINESS} userName="Agent Only" />);
+    await screen.findByTestId('bos-panel-not-bos');
+    expect(screen.queryByTestId('credits-block')).toBeNull();
   });
 
   it('marks an incomplete 30-day total as a lower bound, quoting the ceiling from the payload (N-6)', async () => {

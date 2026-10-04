@@ -22,12 +22,23 @@
 // fails as a read error, never as "no rows".
 //
 // Documented service-role callers (S11-SQ-9 pattern, SA-ruled): a caller with
-// no user session may construct this class on the service-role client in its
-// own deps file, which documents the RLS bypass. This file still imports no
-// service client, and every method still requires the account id and adds
-// `.eq('user_id', accountId)`. Today: `lib/business-os/credits/creditLowLineDeps.ts`
-// (credit deduction slice 8b — the low-line check inside the AI charge
-// recorder; the account is the charge record's, validated by `runAiAction`).
+// no user session, or one reading ANOTHER account, may construct this class on
+// the service-role client in its own deps file, which documents the RLS
+// bypass. This file still imports no service client, and every method still
+// requires the account id and adds `.eq('user_id', accountId)`; the
+// owner-granted column lists mean no cost column can reach either caller.
+// Exactly two such callers today:
+//   - `lib/business-os/credits/creditLowLineDeps.ts` (credit deduction slice
+//     8b, SA SQ-44): the low-line check inside the AI charge recorder; the
+//     account is the charge record's, validated by `runAiAction`.
+//   - `lib/business-os/credits/adminCreditPositionDeps.ts` (credit deduction
+//     slice 11c, SA S11-SQ-9, OP-25): the admin per-account credit view, because
+//     an admin reads ANOTHER account's credits and no RLS policy allows that.
+//     Its account id is the admin route's URL path id, after `requireAdmin`,
+//     the platform check and the tenant check.
+// A source guard in `__tests__/BusinessOsCreditOwnerReadRepository.test.ts`
+// pins exactly three constructing product files (the owner wiring plus those
+// two), and that only those two name the service client.
 //
 // `findTotalsForPeriod` and `listTotalsFrom` take an optional abort signal
 // (slice 8b, SA SQ-44) so a time-boxed caller can cancel the request.
