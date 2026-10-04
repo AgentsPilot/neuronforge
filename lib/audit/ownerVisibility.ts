@@ -6,13 +6,15 @@
 // Some entries are written against an owner's account (`user_id` = the account)
 // but are internal: an admin's credit grant and its internal reason, an admin's
 // plan operation, a Business OS AI action (operator-only until the charging
-// decision, Layer 3 D-6), and slice 8b's low-line event. They stay written as
+// decision, Layer 3 D-6), slice 8b's low-line event, and an admin's queue-item
+// cancel (ADMIN_BOS_CLEANUP slice 7b). They stay written as
 // they are; only owner READS leave them out. Admin screens read with the
 // service role and are not affected.
 //
 // The rule is by `entity_type` and lives here once. It is mirrored by:
 //   - the owner RLS policy on `audit_trail` (the latest migration that runs
-//     `ALTER POLICY "Users can view their own audit logs"`, today 20261018);
+//     `ALTER POLICY "Users can view their own audit logs"`: 20261018, then
+//     20261035 for `bos_queue_item`, ADMIN_BOS_CLEANUP slice 7b);
 //   - AuditTrailRepository.listOwnerEntries (GET /api/audit/query, /monitoring);
 //   - the data export route (app/api/user/data-export).
 // lib/audit/__tests__/ownerVisibility.test.ts fails if the policy's list and
@@ -70,6 +72,10 @@ export const AUDIT_ENTITY_OWNER_VISIBILITY = {
   // POST /api/admin/jobs-queues/drain), like archive_run: it never lands on an
   // owner's account, so 'owner' hides nothing from anyone but that admin.
   bos_queue: 'owner',
+  // ADMIN_BOS_CLEANUP slice 7b (SA OP-2 option 1): an admin's action on ONE
+  // account's queue item, with the internal reason; written against that
+  // account like business_os_credit_lot, so the owner must not read it.
+  bos_queue_item: 'operator',
   // BD-26 / KI-25: slice 8b's system-written low-line event.
   business_os_credit_period: 'operator',
 } as const satisfies Record<EntityType, AuditOwnerVisibility>;

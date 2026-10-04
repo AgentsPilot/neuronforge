@@ -5,10 +5,11 @@
  * part C). Renders only what `GET /api/admin/jobs-queues` sent; it imports no
  * registry, rule or read code (the C-21 pattern: `import type` only).
  *
- * READ-ONLY apart from one action: a Refresh button, and per queue the
- * "Drain now" dialog (ADMIN_BOS_CLEANUP slice 7d), which lives in
- * DrainNowDialog.tsx and owns the page's only POST. No retry, requeue or
- * cancel here (roadmap R-18; slices 7b–7c, later). No auto-refresh (A-11).
+ * READ-ONLY apart from two actions: a Refresh button, per queue the "Drain
+ * now" dialog (ADMIN_BOS_CLEANUP slice 7d, DrainNowDialog.tsx), and per
+ * cancellable item the "Cancel item" dialog (slice 7b, CancelQueueItemDialog.tsx,
+ * rendered by the item list). Each dialog owns its one POST; this file makes
+ * none. No retry or requeue here (slice 7c, later). No auto-refresh (A-11).
  *
  * Slice 7a: each queue card has a "View items" toggle that opens the read-only
  * QueueItemsPanel, which owns the list's only request (a GET). The view bumps
@@ -248,7 +249,9 @@ function QueueCard({ queue, onDrained, refreshKey }: { queue: QueueView; onDrain
           >
             {itemsOpen ? 'Hide items' : 'View items'}
           </button>
-          {itemsOpen && <QueueItemsPanel queueId={queue.id} queueLabel={queue.label} refreshKey={refreshKey} />}
+          {itemsOpen && (
+            <QueueItemsPanel queueId={queue.id} queueLabel={queue.label} refreshKey={refreshKey} onChanged={onDrained} />
+          )}
         </>
       )}
     </section>
@@ -296,7 +299,8 @@ export function JobsQueuesView() {
           <p className="mt-1 max-w-3xl text-sm text-slate-400">
             The Business OS scheduled jobs and the queues they drain. Red needs action, amber needs a look, and
             the green label Healthy or Clear means checked and clear. Grey means no run recorded yet or could not
-            check. Each queue has a Drain now button; everything else here is read-only.
+            check.{' '}
+            {"Each queue has a Drain now button, and a waiting, failed or orphaned item can be cancelled from its queue's list; everything else here is read-only."}
           </p>
           {view && (
             <p data-testid="as-of" className="mt-1 text-xs text-slate-500">

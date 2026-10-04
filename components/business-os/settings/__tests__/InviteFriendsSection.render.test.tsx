@@ -28,6 +28,9 @@ jest.mock('@/lib/business-os/LanguageContext', () => ({
 import { InviteFriendsSection } from '@/components/business-os/settings/InviteFriendsSection';
 import { INVITE_FRIENDS_COPY } from '@/components/business-os/settings/inviteFriendsCopy';
 
+// Timeout only, no assertion changes: it types character by character, takes 3.9s alone (78% of the 5s default), and timed out under full-suite load.
+jest.setTimeout(30_000);
+
 const LINK = 'https://app.example.test/invite#t=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const ALLOWANCE = 7; // Deliberately not 5: nothing in the copy may assume the number (R-7).
 

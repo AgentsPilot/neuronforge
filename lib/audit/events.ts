@@ -244,6 +244,15 @@ export const AUDIT_EVENTS = {
   // queue and the correlation id. The outcome, counts and duration are in the
   // response and the server log under the same correlation id, never here.
   BOS_QUEUE_DRAIN_STARTED: 'BOS_QUEUE_DRAIN_STARTED',
+  // ADMIN_BOS_CLEANUP slice 7b: an admin cancelled ONE queue item
+  // (POST /api/admin/jobs-queues/items/action). Entity type 'bos_queue_item',
+  // id = the queue row's own id; written against the item's ACCOUNT (user_id)
+  // with the admin as actor, and classified 'operator' so the owner never reads
+  // the admin's reason (SA OP-2 option 1, migration 20261035). Written only
+  // AFTER the compare-and-set won (OP-1): a refused or lost cancel writes
+  // nothing. The details carry exactly the reason, the queue, the action, the
+  // correlation id and the due anchor; never content, error text or a name.
+  BOS_QUEUE_ITEM_CANCELLED: 'BOS_QUEUE_ITEM_CANCELLED',
 
   // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
@@ -771,6 +780,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'An admin started a Business OS queue drain now',
+  },
+  // ADMIN_BOS_CLEANUP slice 7b. 'warning': an admin closed a real client's
+  // queued message for good; it will not be sent.
+  [AUDIT_EVENTS.BOS_QUEUE_ITEM_CANCELLED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin cancelled one Business OS queue item; it will not be sent',
   },
   // Slice 5a: a champion's friend invites (FR-28 to FR-32, F5a-13).
   [AUDIT_EVENTS.BOS_FRIEND_INVITE_CREATED]: {
