@@ -28,7 +28,7 @@ import { isDarkColor, mix, onColor } from '@/lib/branding/color';
 import { resolvePlatformWebsiteUrl } from '@/lib/branding/platformSite';
 import { safeExternalUrl } from '@/lib/branding/externalUrl';
 import type { Locale } from '@/lib/i18n/config';
-import type { BrandingData } from './templates/base-template';
+import { withSafeStyleValues, type BrandingData } from './templates/base-template';
 
 const logger = createLogger({ module: 'EmailBranding' });
 
@@ -125,7 +125,15 @@ export async function resolveEmailBranding(
 
   const p = resolvedProfile ?? {};
 
-  return {
+  /*
+   * Checked on the way out: the colours, radii and font names below come from
+   * the business's theme JSON and are written into inline `style` attributes,
+   * both by the shell and by templates that read `branding.primaryColor`
+   * directly. A value that is not a plain colour, length or family name falls
+   * back to the default (see `withSafeStyleValues`); every real theme value
+   * passes through unchanged.
+   */
+  return withSafeStyleValues({
     businessName: p.company_name || p.invoice_company_name || 'Business',
     logoUrl: (await resolveBusinessLogo(userId, p)) || undefined,
     primaryColor: theme?.colors?.primary || DEFAULT_EMAIL_BRANDING.primaryColor,
@@ -158,7 +166,7 @@ export async function resolveEmailBranding(
     bodyFont: theme?.fonts?.body || undefined,
     locale,
     ...emailTokens(theme),
-  };
+  }, DEFAULT_EMAIL_BRANDING);
 }
 
 /**

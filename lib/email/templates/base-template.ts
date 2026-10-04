@@ -5,6 +5,8 @@ import type { Locale } from '@/lib/i18n/config';
 import { isRTL } from '@/lib/i18n/config';
 import { isDarkColor, mix } from '@/lib/branding/color';
 import { stripHtmlComments } from '@/lib/email/htmlComments';
+import { escapeHrefAttribute, escapeHtml } from '@/lib/email/escapeHtml';
+import { safeCssColor, safeCssLength, safeFontName } from '@/lib/email/cssValues';
 
 export interface BrandingData {
   businessName: string;
@@ -70,12 +72,18 @@ export interface BrandingData {
 const FALLBACK_FONT_STACK =
   "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
 
-/** Quote a font name for CSS only when it needs it, then append the fallbacks. */
+/**
+ * Quote a font name for CSS only when it needs it, then append the fallbacks.
+ *
+ * The name comes from the business's theme and lands in a `style` attribute,
+ * so `safeFontName` first drops quotes (both kinds: a `"` used to close the
+ * attribute) and anything outside letters, digits, spaces and hyphens. A real
+ * family name is unchanged by that.
+ */
 function fontStack(name?: string): string {
-  if (!name) return FALLBACK_FONT_STACK;
-  const trimmed = name.trim();
+  const trimmed = safeFontName(name);
   if (!trimmed) return FALLBACK_FONT_STACK;
-  const quoted = /^[A-Za-z0-9-]+$/.test(trimmed) ? trimmed : `'${trimmed.replace(/'/g, '')}'`;
+  const quoted = /^[A-Za-z0-9-]+$/.test(trimmed) ? trimmed : `'${trimmed}'`;
   return `${quoted}, ${FALLBACK_FONT_STACK}`;
 }
 
@@ -137,22 +145,26 @@ export interface EmailPalette {
 }
 
 export function emailPalette(branding?: BrandingData): EmailPalette {
-  const surface = branding?.surfaceColor || '#ffffff';
-  const inkMuted = branding?.mutedTextColor || '#666666';
+  // Every value here ends up in a `style` attribute, so each one is checked
+  // (`lib/email/cssValues`); one that is not a plain colour or length gets the
+  // same default a missing value gets.
+  const surface = safeCssColor(branding?.surfaceColor, '#ffffff');
+  const mutedText = safeCssColor(branding?.mutedTextColor, '');
+  const inkMuted = mutedText || '#666666';
 
   return {
-    brand: branding?.primaryColor || '#4F46E5',
-    onBrand: branding?.onBrand || '#ffffff',
-    ink: branding?.textColor || '#1a1a1a',
+    brand: safeCssColor(branding?.primaryColor, '#4F46E5'),
+    onBrand: safeCssColor(branding?.onBrand, '#ffffff'),
+    ink: safeCssColor(branding?.textColor, '#1a1a1a'),
     inkMuted,
     // A quarter of the way back toward the card, which is the same relationship
     // #888888 had to #666666 on white.
-    inkFaint: branding?.mutedTextColor ? mix(inkMuted, surface, 0.25) : '#888888',
+    inkFaint: mutedText ? mix(inkMuted, surface, 0.25) : '#888888',
     surface,
-    mutedSurface: branding?.mutedSurfaceColor || '#fafafa',
-    line: branding?.borderColor || '#e5e5e5',
-    radius: branding?.radius || '12px',
-    buttonRadius: branding?.buttonRadius || '8px',
+    mutedSurface: safeCssColor(branding?.mutedSurfaceColor, '#fafafa'),
+    line: safeCssColor(branding?.borderColor, '#e5e5e5'),
+    radius: safeCssLength(branding?.radius, '12px'),
+    buttonRadius: safeCssLength(branding?.buttonRadius, '8px'),
     dark: isDarkColor(surface),
   };
 }
@@ -197,14 +209,43 @@ export function emailTone(
   };
 }
 
-/** Business-entered text headed for HTML (text or a double-quoted attribute). */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+/**
+ * The branding with every style value checked: colours must be hex or `rgb()`,
+ * radii plain lengths, font names free of quotes and markup.
+ *
+ * For a producer of `BrandingData` whose values come from outside (the
+ * business's theme, `resolveEmailBranding`). The helpers in this file check
+ * the values they read themselves. Templates also read `branding.primaryColor`
+ * and the neutrals directly, so the values need checking where the branding is
+ * built as well.
+ *
+ * A value that fails falls back: the two required colours to the defaults
+ * passed in, every optional field to `undefined`, which each reader already
+ * turns into its own default. Valid values are returned unchanged.
+ */
+export function withSafeStyleValues(
+  branding: BrandingData,
+  defaults: { primaryColor: string; secondaryColor: string }
+): BrandingData {
+  const optionalColor = (value?: string) => safeCssColor(value, '') || undefined;
+  const optionalLength = (value?: string) => safeCssLength(value, '') || undefined;
+  const optionalFont = (value?: string) => safeFontName(value) || undefined;
+  return {
+    ...branding,
+    primaryColor: safeCssColor(branding.primaryColor, defaults.primaryColor),
+    secondaryColor: safeCssColor(branding.secondaryColor, defaults.secondaryColor),
+    headingFont: optionalFont(branding.headingFont),
+    bodyFont: optionalFont(branding.bodyFont),
+    onBrand: optionalColor(branding.onBrand),
+    pageColor: optionalColor(branding.pageColor),
+    surfaceColor: optionalColor(branding.surfaceColor),
+    mutedSurfaceColor: optionalColor(branding.mutedSurfaceColor),
+    borderColor: optionalColor(branding.borderColor),
+    textColor: optionalColor(branding.textColor),
+    mutedTextColor: optionalColor(branding.mutedTextColor),
+    radius: optionalLength(branding.radius),
+    buttonRadius: optionalLength(branding.buttonRadius),
+  };
 }
 
 /**
@@ -241,16 +282,18 @@ export function wrapInBrandedTemplate(
 
   /*
    * Every fallback is the value this file used to hardcode, so an email sent
-   * for a business with no theme is unchanged to the byte.
+   * for a business with no theme is unchanged to the byte. A value that is not
+   * a plain colour or length (it would be written into a `style` attribute
+   * as-is) gets the same fallback.
    */
-  const onBrand = branding.onBrand || '#ffffff';
-  const page = branding.pageColor || '#f5f5f5';
-  const surface = branding.surfaceColor || '#ffffff';
-  const mutedSurface = branding.mutedSurfaceColor || '#fafafa';
-  const line = branding.borderColor || '#e5e5e5';
-  const ink = branding.textColor || '#1a1a1a';
-  const inkMuted = branding.mutedTextColor || '#666666';
-  const radius = branding.radius || '12px';
+  const onBrand = safeCssColor(branding.onBrand, '#ffffff');
+  const page = safeCssColor(branding.pageColor, '#f5f5f5');
+  const surface = safeCssColor(branding.surfaceColor, '#ffffff');
+  const mutedSurface = safeCssColor(branding.mutedSurfaceColor, '#fafafa');
+  const line = safeCssColor(branding.borderColor, '#e5e5e5');
+  const ink = safeCssColor(branding.textColor, '#1a1a1a');
+  const inkMuted = safeCssColor(branding.mutedTextColor, '#666666');
+  const radius = safeCssLength(branding.radius, '12px');
 
   /*
    * The header logo.
@@ -375,18 +418,41 @@ export function wrapInBrandedTemplate(
  */
 function helperTokens(branding?: BrandingData) {
   return {
-    brand: branding?.primaryColor || '#4F46E5',
-    onBrand: branding?.onBrand || '#ffffff',
-    line: branding?.borderColor || '#f0f0f0',
-    ink: branding?.textColor || '#1a1a1a',
-    inkMuted: branding?.mutedTextColor || '#666666',
-    mutedSurface: branding?.mutedSurfaceColor || '#fafafa',
-    radius: branding?.buttonRadius || '8px',
+    brand: safeCssColor(branding?.primaryColor, '#4F46E5'),
+    onBrand: safeCssColor(branding?.onBrand, '#ffffff'),
+    line: safeCssColor(branding?.borderColor, '#f0f0f0'),
+    ink: safeCssColor(branding?.textColor, '#1a1a1a'),
+    inkMuted: safeCssColor(branding?.mutedTextColor, '#666666'),
+    mutedSurface: safeCssColor(branding?.mutedSurfaceColor, '#fafafa'),
+    radius: safeCssLength(branding?.buttonRadius, '8px'),
   };
 }
 
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHAT THE HELPERS BELOW ESCAPE, AND WHAT THEY LEAVE TO THE CALLER
+ *
+ * TEXT (a button's `text`, a row's `label` and `value`, a box's `content`):
+ * the CALLER escapes it. The helpers write it as HTML. Escaping inside the
+ * helper would double-escape: `invite-invitation`, `new-enquiry` and `proposal`
+ * already pass `escapeHtml(...)` output, and some callers pass markup on
+ * purpose (`emailDetailsTable` takes rendered rows, `emailNoticeBox` and
+ * `emailHighlightPanel` take HTML content). A caller passing business- or
+ * client-entered text must wrap it in `escapeHtml` from `@/lib/email/escapeHtml`.
+ *
+ * URL (a button's `url`): the helper passes it through `escapeHrefAttribute`,
+ * which only removes what could close the `href` attribute and leaves any valid
+ * or already-escaped URL unchanged. It does NOT check the scheme: callers that
+ * take a URL from outside keep their own check (`safeHref`, `safeExternalUrl`).
+ *
+ * COLOURS AND RADII: checked here (`lib/email/cssValues`); a value that is not
+ * a plain colour or length gets the default.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
 /**
- * Generate a styled button for email templates
+ * Generate a styled button for email templates.
+ * `text` is HTML the caller has escaped; `url` is made attribute-safe here.
  */
 export function emailButton(
   text: string,
@@ -399,17 +465,15 @@ export function emailButton(
   } = {}
 ): string {
   const tokens = helperTokens(options.branding);
-  const {
-    color = tokens.onBrand,
-    backgroundColor = tokens.brand,
-    fullWidth = false
-  } = options;
+  const color = safeCssColor(options.color, tokens.onBrand);
+  const backgroundColor = safeCssColor(options.backgroundColor, tokens.brand);
+  const { fullWidth = false } = options;
 
   return `
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" ${fullWidth ? 'width="100%"' : ''} style="margin: 16px 0;">
       <tr>
         <td style="border-radius: ${tokens.radius}; background-color: ${backgroundColor};">
-          <a href="${url}" target="_blank" style="display: inline-block; padding: 14px 28px; font-size: 15px; font-weight: 600; color: ${color}; text-decoration: none; text-align: center; ${fullWidth ? 'width: 100%; box-sizing: border-box;' : ''}">
+          <a href="${escapeHrefAttribute(url)}" target="_blank" style="display: inline-block; padding: 14px 28px; font-size: 15px; font-weight: 600; color: ${color}; text-decoration: none; text-align: center; ${fullWidth ? 'width: 100%; box-sizing: border-box;' : ''}">
             ${text}
           </a>
         </td>
@@ -419,7 +483,8 @@ export function emailButton(
 }
 
 /**
- * Generate a secondary/outline button for email templates
+ * Generate a secondary/outline button for email templates.
+ * `text` is HTML the caller has escaped; `url` is made attribute-safe here.
  */
 export function emailOutlineButton(
   text: string,
@@ -431,13 +496,14 @@ export function emailOutlineButton(
   } = {}
 ): string {
   const tokens = helperTokens(options.branding);
-  const { color = tokens.brand, fullWidth = false } = options;
+  const color = safeCssColor(options.color, tokens.brand);
+  const { fullWidth = false } = options;
 
   return `
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" ${fullWidth ? 'width="100%"' : ''} style="margin: 8px 0;">
       <tr>
         <td style="border-radius: ${tokens.radius}; border: 2px solid ${color}; background-color: transparent;">
-          <a href="${url}" target="_blank" style="display: inline-block; padding: 12px 24px; font-size: 14px; font-weight: 600; color: ${color}; text-decoration: none; text-align: center; ${fullWidth ? 'width: 100%; box-sizing: border-box;' : ''}">
+          <a href="${escapeHrefAttribute(url)}" target="_blank" style="display: inline-block; padding: 12px 24px; font-size: 14px; font-weight: 600; color: ${color}; text-decoration: none; text-align: center; ${fullWidth ? 'width: 100%; box-sizing: border-box;' : ''}">
             ${text}
           </a>
         </td>
@@ -447,7 +513,8 @@ export function emailOutlineButton(
 }
 
 /**
- * Generate a detail row (label: value format)
+ * Generate a detail row (label: value format).
+ * `label` and `value` are HTML the caller has escaped.
  */
 export function emailDetailRow(label: string, value: string, branding?: BrandingData): string {
   const tokens = helperTokens(branding);
