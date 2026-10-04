@@ -14,7 +14,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import type { AgentRepositoryResult as RepositoryResult } from './types';
-import { ilikeContainsPattern, matchesLiterally } from './BusinessProfileRepository';
+import { ADMIN_IDENTITY_CHUNK, ilikeContainsPattern, matchesLiterally } from './BusinessProfileRepository';
 
 /**
  * Subset of the `profiles` table columns used for building UserContext.
@@ -38,6 +38,15 @@ export interface AdminProfileListRow {
 }
 
 export const ADMIN_PROFILE_LIST_COLUMNS = 'id, full_name, company, created_at, updated_at';
+
+/** What an admin screen may know about a person from `profiles`: the display name only. */
+export interface AdminProfileName {
+  id: string;
+  full_name: string | null;
+}
+
+/** The only columns `findAdminNamesByIds` selects. No email: `profiles` has none. Exported for tests. */
+export const ADMIN_PROFILE_NAME_COLUMNS = 'id, full_name';
 
 export interface AdminProfileListQuery {
   /** Free text. Matched with single-operator ILIKE calls, never an `.or()` string. */
@@ -170,6 +179,45 @@ export class UserProfileRepository {
       return { data: rows.slice(0, limit), error: null };
     } catch (error) {
       this.logger.error({ err: error }, 'Admin profile list failed');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * ADMIN ONLY (ADMIN_BOS_CLEANUP slice 4, TA-10): display names for the accounts
+   * on one admin audit-trail page. Replaces the route's read of a `users` table
+   * that does not exist.
+   *
+   * Runs on the default service-role client (`supabaseServer`), so it
+   * intentionally bypasses RLS on `profiles` — admin-only context: it reads
+   * every account's name, by design. The boundary is `requireAdmin` on the only
+   * caller, `app/api/admin/audit-trail/route.ts`, plus the caller guard in
+   * lib/repositories/__tests__/adminReadMethods.guard.test.ts, which allows
+   * calls from `app/api/admin/**` only. Read-only; the ids come from the
+   * `audit_trail` rows the route already loaded, not from the request.
+   *
+   * One `.in('id', …)` per chunk of ADMIN_IDENTITY_CHUNK ids, never one read per
+   * row; an empty list makes no query. Accounts without a profile row are simply
+   * absent. Names are never logged, only counts. Never throws.
+   */
+  async findAdminNamesByIds(userIds: readonly string[]): Promise<RepositoryResult<AdminProfileName[]>> {
+    try {
+      const unique = [...new Set(userIds)];
+      const found: AdminProfileName[] = [];
+      for (let i = 0; i < unique.length; i += ADMIN_IDENTITY_CHUNK) {
+        const chunk = unique.slice(i, i + ADMIN_IDENTITY_CHUNK);
+        const { data, error } = await this.supabase
+          .from('profiles')
+          .select(ADMIN_PROFILE_NAME_COLUMNS)
+          .in('id', chunk);
+        if (error) throw error;
+        found.push(...((data ?? []) as AdminProfileName[]));
+      }
+      // Counts only: a person's name is never logged.
+      this.logger.debug({ requested: unique.length, found: found.length }, 'Admin profile names read');
+      return { data: found, error: null };
+    } catch (error) {
+      this.logger.error({ err: error, requested: userIds.length }, 'Admin profile names read failed');
       return { data: null, error: error as Error };
     }
   }

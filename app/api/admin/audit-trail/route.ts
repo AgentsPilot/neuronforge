@@ -1,10 +1,12 @@
 // app/api/admin/audit-trail/route.ts
 // Admin audit trail browser: every account's audit rows, with filters.
 //
-// The read still uses an inline service-role client rather than a repository.
-// This PR only adds one predicate (user_id); moving the read is an OI-9
-// candidate (docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md), recorded rather
-// than silently waived.
+// The `audit_trail` read itself still uses an inline service-role client
+// rather than a repository: moving it is an OI-9 candidate
+// (docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md), recorded rather than
+// silently waived. It is the only inline read. Person names and business names
+// are attached afterwards through repository admin reads (ADMIN_BOS_CLEANUP
+// slice 4 replaced a read of a `users` table that does not exist).
 
 import { NextResponse, NextRequest } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
@@ -12,6 +14,7 @@ import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import { createLogger } from '@/lib/logger';
 import { AdminAuditTrailQuerySchema, firstIssueMessage } from '@/lib/audit/requestSchemas';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { userProfileRepository } from '@/lib/repositories/UserProfileRepository';
 
 // Initialize service role client for admin operations
 const supabaseServiceRole = createClient(
@@ -145,7 +148,9 @@ export async function GET(request: NextRequest) {
     if (search && logs) {
       const searchLower = search.toLowerCase();
 
-      // Helper function to search within JSONB
+      // Helper function to search within JSONB.
+      // any: audit_trail is read with select('*') and has no generated type
+      // (here and in the row callbacks below; CLAUDE.md rule 6).
       const searchInJSON = (obj: any): boolean => {
         if (!obj) return false;
         const jsonString = JSON.stringify(obj).toLowerCase();
@@ -173,19 +178,46 @@ export async function GET(request: NextRequest) {
       filteredLogs = filteredLogs.slice(0, pageSize);
     }
 
-    // Get unique user IDs from filtered logs to fetch additional user info (full_name)
+    // Unique account ids on this page, for the two name lookups below.
     const userIds = [...new Set(filteredLogs?.map((log: any) => log.user_id).filter(Boolean))];
 
-    // Fetch user information for display purposes (full_name not in audit_trail)
-    let usersMap: Record<string, any> = {};
+    // Person names, from `profiles.full_name` (ADMIN_BOS_CLEANUP slice 4,
+    // FR-AT1). This used to read a `users` table that does not exist in
+    // `public` (measured live: 42P01) and discarded the error, so the page had
+    // never shown a name. ONE batched repository read for the page; it selects
+    // `id, full_name` only — no email (`profiles` has none, and §8 adds no field).
+    //
+    // Same failure posture as the business-name block below, for the same
+    // reasons: a failure (returned or thrown) is logged and survived, and
+    // "we could not look it up" is not served as "there is no name" — the
+    // `users` key is dropped and the body says `userLookup: 'failed'`.
+    //
+    // Only a non-empty, trimmed name is stored (SA W4-5), so a row gets
+    // `users: { full_name }` exactly when there is a name to show, and the
+    // debug count below means what it says.
+    const userNames = new Map<string, string>();
+    let userLookup: 'ok' | 'failed' = 'ok';
     if (userIds.length > 0) {
-      const { data: users, error: usersError } = await supabaseServiceRole
-        .from('users')
-        .select('id, email, full_name')
-        .in('id', userIds);
-
-      if (!usersError && users) {
-        usersMap = Object.fromEntries(users.map(u => [u.id, u]));
+      try {
+        const names = await userProfileRepository.findAdminNamesByIds(userIds);
+        if (names.error || !names.data) {
+          userLookup = 'failed';
+          requestLogger.error(
+            { err: names.error, requested: userIds.length },
+            'User name lookup failed; audit logs served without user names'
+          );
+        } else {
+          for (const row of names.data) {
+            const name = row.full_name?.trim();
+            if (name) userNames.set(row.id, name);
+          }
+        }
+      } catch (lookupError: unknown) {
+        userLookup = 'failed';
+        requestLogger.error(
+          { err: lookupError, requested: userIds.length },
+          'User name lookup threw; audit logs served without user names'
+        );
       }
     }
 
@@ -201,9 +233,9 @@ export async function GET(request: NextRequest) {
     // adminReadMethods.guard.test.ts restricts the method to app/api/admin/**,
     // which this route is.
     //
-    // Deliberately NOT extended to the `users` read above: that inline
-    // service-role query is pre-existing debt (see the file header, OI-9) and
-    // moving it is a separate change. This new read does not join it.
+    // Like the person-name read above, this goes through a repository; the
+    // `audit_trail` read is the only one still on the inline service-role
+    // client (see the file header, OI-9).
     //
     // A failure here is not fatal — the page is a compliance browser and the
     // audit rows themselves are what it exists to show. We log and continue
@@ -249,12 +281,19 @@ export async function GET(request: NextRequest) {
     }
 
     // Attach user and business information to filtered logs for display.
-    // `business` is null for an account with no business profile (every
-    // agent-platform row) — the page shows nothing rather than a placeholder —
-    // and undefined when the lookup failed, so the two are not the same value.
+    // `users` is `{ full_name }` when the account has a name and null when it
+    // has none (the page then shows the account id); `business` is null for an
+    // account with no business profile (every agent-platform row) — the page
+    // shows nothing rather than a placeholder. Each is undefined when its
+    // lookup failed, so "unknown" and "none" are not the same value.
     const logsWithUsers = filteredLogs.map((log: any) => ({
       ...log,
-      users: log.user_id ? usersMap[log.user_id] : null,
+      users:
+        userLookup === 'failed'
+          ? undefined
+          : log.user_id && userNames.has(log.user_id)
+            ? { full_name: userNames.get(log.user_id) }
+            : null,
       business:
         businessLookup === 'failed'
           ? undefined
@@ -263,10 +302,19 @@ export async function GET(request: NextRequest) {
             : null,
     }));
 
-    // Counts and the lookup's outcome only — a business name is never logged
-    // (AC-B13), and route.businessName.test.ts asserts that across every path.
+    // Counts and the lookups' outcomes only — a business name is never logged
+    // (AC-B13) and neither is a person's name; route.businessName.test.ts and
+    // route.userName.test.ts assert that across every path.
     requestLogger.debug(
-      { count: logsWithUsers.length, page, searched: !!search, businessNamesResolved: companyNames.size, businessLookup },
+      {
+        count: logsWithUsers.length,
+        page,
+        searched: !!search,
+        userNamesResolved: userNames.size,
+        userLookup,
+        businessNamesResolved: companyNames.size,
+        businessLookup,
+      },
       'Audit logs fetched'
     );
 
@@ -278,7 +326,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       logs: logsWithUsers,
-      // 'failed' means the rows' missing `business` is unknown, not absent.
+      // 'failed' means the rows' missing `users` / `business` is unknown, not absent.
+      userLookup,
       businessLookup,
       pagination: {
         page,

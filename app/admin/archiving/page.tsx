@@ -11,15 +11,23 @@
  * a property of the route tree. A second check here would read as though the
  * first were optional (condition C-2).
  *
- * ── Starting a run, and why it cannot happen yet ────────────────────────────
+ * ── Starting a run, and what switches runs off ──────────────────────────────
+ * Runs are ON. `ARCHIVE_RUNS_ENABLED` in lib/archiving/config.ts is `true`
+ * (since archiving Slice 3, C-5), and the overview reports it as `runsEnabled`.
  * The Archive button opens a confirm dialog (FR-4, C-15) showing the retention,
  * the cutoff, the rows that will move and, at 180 or 90 days, what owners lose
  * (K-1). Continue appears on a partial, failed or stalled run and resumes it on
- * its stored cutoff. Both send `POST /api/admin/archiving/runs`. While the
- * overview says `runsEnabled: false`, Confirm and Continue are disabled and say
- * "Not switched on yet", and no request is sent (SA Q-1); the server refuses
- * regardless (409 `runs_not_enabled`, C-5). Nothing here runs on a timer or on
- * load: only an admin's click starts anything (AC-15).
+ * its stored cutoff. Both send `POST /api/admin/archiving/runs`. Nothing here
+ * runs on a timer or on load: only an admin's click starts anything (AC-15).
+ *
+ * Switching runs off is a reviewed code change: set `ARCHIVE_RUNS_ENABLED` to
+ * `false` (a constant, not an env var), and edit this paragraph in the same
+ * diff, because __tests__/source.guard.test.ts ties "Runs are ON" to the
+ * constant. The overview then says `runsEnabled: false`, and this page shows a
+ * "Runs off" badge by the title, disables Confirm and Continue with the note
+ * "Not switched on yet", and sends no request (SA Q-1). The server refuses
+ * regardless (409 `runs_not_enabled`, C-5), which this page shows as
+ * "Archiving is not switched on yet."
  *
  * ── The archive side ────────────────────────────────────────────────────────
  * The archived total, the "archived before" cutoff, the last run and the run
