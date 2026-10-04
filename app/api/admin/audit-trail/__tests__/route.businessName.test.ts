@@ -76,10 +76,18 @@ jest.mock('@/lib/repositories/BusinessProfileRepository', () => ({
   },
 }));
 
+/**
+ * Person names (slice 4) are covered by route.userName.test.ts. Mocked here so
+ * this suite stays about business names and never builds the real repository.
+ */
+jest.mock('@/lib/repositories/UserProfileRepository', () => ({
+  userProfileRepository: {
+    findAdminNamesByIds: async () => ({ data: [], error: null }),
+  },
+}));
+
 /** Rows the mocked `audit_trail` select resolves with. */
 let mockAuditRows: Array<Record<string, unknown>> = [];
-/** Rows the mocked `users` select resolves with. */
-let mockUserRows: Array<Record<string, unknown>> = [];
 
 jest.mock('@supabase/supabase-js', () => {
   const builder = (table: string): unknown =>
@@ -91,8 +99,6 @@ jest.mock('@supabase/supabase-js', () => {
             return (resolve: (v: unknown) => void) => {
               if (table === 'audit_trail') {
                 resolve({ data: mockAuditRows, error: null, count: mockAuditRows.length });
-              } else if (table === 'users') {
-                resolve({ data: mockUserRows, error: null, count: mockUserRows.length });
               } else {
                 resolve({ data: [], error: null, count: 0 });
               }
@@ -137,7 +143,6 @@ beforeEach(() => {
   mockLoggerFns.error.mockReset();
   mockLoggerFns.debug.mockReset();
   mockAuditRows = [];
-  mockUserRows = [];
 });
 
 describe('business name enrichment', () => {

@@ -9,12 +9,18 @@
  *   3. It writes to exactly one place: a POST to `/api/admin/archiving/runs`
  *      (Slice 2b). No other write method, no other URL (AC-15).
  *   4. No `console.*` (AC-18).
+ *   5. The header comment tells the truth about `ARCHIVE_RUNS_ENABLED`
+ *      (ADMIN_BOS_CLEANUP slice 4, FR-AR1, SA W4-6). It said runs "cannot happen
+ *      yet" long after they were switched on. The check is tied to the constant
+ *      both ways, so flipping it forces the comment to change in the same diff.
  *
  * Modelled on `app/admin/business-os-tiers/__tests__/source.guard.test.ts`.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
+
+import { ARCHIVE_RUNS_ENABLED } from '@/lib/archiving/config';
 
 const ROOT = 'app/admin/archiving';
 
@@ -141,5 +147,28 @@ describe('logging and typing', () => {
 
   it.each(allFiles)('%s uses no `any`', (relative) => {
     expect(codeOf(read(relative))).not.toMatch(/:\s*any\b|as\s+any\b/);
+  });
+});
+
+describe('the header comment matches ARCHIVE_RUNS_ENABLED (FR-AR1)', () => {
+  /** The page's leading JSDoc block, read RAW: here the comment is the subject. */
+  const header = (() => {
+    const match = read(`${ROOT}/page.tsx`).match(/^\s*['"]use client['"];\s*\/\*\*([\s\S]*?)\*\//);
+    if (!match) throw new Error('page.tsx has no leading JSDoc block after "use client"');
+    return match[1];
+  })();
+
+  it('A-1: names the constant that decides whether runs are on', () => {
+    expect(header).toMatch(/ARCHIVE_RUNS_ENABLED/);
+  });
+
+  it('A-2: says "Runs are ON" exactly when ARCHIVE_RUNS_ENABLED is true', () => {
+    expect(/Runs are ON/.test(header)).toBe(ARCHIVE_RUNS_ENABLED);
+  });
+
+  it('A-2: does not say runs "cannot happen yet" while they are on', () => {
+    if (ARCHIVE_RUNS_ENABLED) {
+      expect(header).not.toMatch(/cannot happen yet/i);
+    }
   });
 });

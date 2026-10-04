@@ -62,6 +62,12 @@ interface AuditLogEntry {
   severity: string;
   created_at: string;
   compliance_flags: string[];
+  /**
+   * The route fills `full_name` from `profiles` (ADMIN_BOS_CLEANUP slice 4) and
+   * never sends `email` (`profiles` has none), so the `users.email` branches
+   * below are unreachable from the route; kept so older fixtures still render.
+   * Null when the account has no name; absent when the lookup failed.
+   */
   users?: {
     email?: string;
     full_name?: string;
@@ -570,7 +576,7 @@ function AuditTrailPageContent() {
                 <input
                   id="audit-search"
                   type="text"
-                  placeholder="Search by agent, user email, or name..."
+                  placeholder="Search by email, action, resource or entity ID…"
                   value={filters.searchTerm}
                   onChange={(e) => setFilters({ ...filters, searchTerm: e.target.value })}
                   className="w-full pl-8 pr-3 py-1.5 text-sm bg-slate-900/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
