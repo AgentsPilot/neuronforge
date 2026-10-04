@@ -66,7 +66,9 @@ import type { AgentRepositoryResult as RepositoryResult } from './types';
 
 /**
  * The columns an owner may read: exactly the fields the /monitoring page uses,
- * plus the two ids. Not `hash` (the tamper hash) and not `user_email`.
+ * plus the two ids. Not `hash` (the tamper hash) and not `user_email`. The GDPR
+ * export's audit read (listOwnerEntriesForExport) uses the same set, so changing
+ * this also changes what the export holds: a privacy decision.
  */
 const OWNER_COLUMNS =
   'id, user_id, actor_id, action, entity_type, entity_id, resource_name, changes, details, ' +
@@ -242,33 +244,35 @@ export class AuditTrailRepository {
 
   /**
    * GDPR export only (GET /api/user/data-export, Art. 15 / 20). The caller's own
-   * audit entries since `since` (an ISO timestamp the route computes), newest
-   * first, at most 10000, every column, with the same two BD-26 owner exclusions
-   * as listOwnerEntries (a source guard, lib/audit/__tests__/
-   * ownerAuditReads.guard.test.ts, keeps both here). The column set is fixed;
-   * changing it changes what the export holds, which is a privacy decision.
+   * audit entries created since `since` (an ISO timestamp the route computes),
+   * newest first, at most 10000, with the same two BD-26 owner exclusions as
+   * listOwnerEntries (a source guard, lib/audit/__tests__/
+   * ownerAuditReads.guard.test.ts, keeps both here).
    *
-   * Known and deliberately unchanged (FU-1 in
-   * BUSINESS_OS_BD26_OWNER_AUDIT_HIDING_WORKPLAN.md): it filters and orders on
-   * `timestamp`, a column that does not exist, so PostgREST answers 42703 and
-   * the export holds no audit rows today. The error is logged on every export
-   * until FU-1 lands. Fixing it changes what the export holds.
+   * OWNER_COLUMNS only, the set the owner audit page reads: not `hash` (the
+   * internal tamper hash) and not `user_email` (a copy of the email the export
+   * already carries in `user_profile`). Changing this changes what the export
+   * holds: a privacy decision.
+   *
+   * Filters and orders on `created_at` (FU-1, DATA_EXPORT_FOLLOWUPS_WORKPLAN.md).
+   * Before that fix it used `timestamp`, a column that does not exist, so the
+   * export never held any audit history.
    */
   async listOwnerEntriesForExport(userId: string, since: string): Promise<RepositoryResult<Record<string, unknown>[]>> {
     try {
       const { data, error } = await this.supabase
         .from('audit_trail')
-        .select('*')
+        .select(OWNER_COLUMNS)
         .eq('user_id', userId)
         // BD-26, written as in listOwnerEntries. The values are fixed identifiers, so no quoting.
         .not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`)
         .not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`)
-        .gte('timestamp', since)
-        .order('timestamp', { ascending: false })
+        .gte('created_at', since)
+        .order('created_at', { ascending: false })
         .limit(10000);
 
       if (error) throw error;
-      return { data: (data ?? []) as Record<string, unknown>[], error: null };
+      return { data: (data ?? []) as unknown as Record<string, unknown>[], error: null };
     } catch (error) {
       this.logger.error({ err: error, userId }, 'Failed to list owner audit entries for the data export');
       return { data: null, error: error as Error };

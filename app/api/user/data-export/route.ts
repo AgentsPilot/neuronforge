@@ -6,8 +6,15 @@
 // / `listOwnerEntriesForExport` method keyed on the authenticated user's id.
 // The repositories read with the service role (`supabaseServer`), as this route
 // always has. A read error is ignored on purpose and gives an empty section,
-// as before: the audit read fails on every export until FU-1 is fixed, so
-// failing the route on it would break every export.
+// as before, so one failing table never blocks the person's whole download;
+// the repository logs the error.
+//
+// Every read names its columns (DATA_EXPORT_FOLLOWUPS_WORKPLAN.md, FU-P1): each
+// repository method selects a column-list constant next to it (the audit read
+// reuses OWNER_COLUMNS), so a column added to a table later is not exported
+// until someone decides it should be. Plugin
+// credentials are never read; the provider profile (`profile_data`) is read but
+// only allow-listed string fields of it reach the body (`accountProfile`).
 //
 // BD-26 (user decision, 2026-10-04): the owner's export leaves out internal
 // admin audit entries — every OWNER_HIDDEN_ENTITY_TYPES type and any Business
@@ -16,9 +23,10 @@
 // exclusions live in AuditTrailRepository.listOwnerEntriesForExport, kept
 // there by a source guard (lib/audit/__tests__/ownerAuditReads.guard.test.ts).
 //
-// Known, deliberately unchanged here (workplan FU-1): the audit read filters
-// on `timestamp`, a column that does not exist, so it exports no audit rows
-// today.
+// The audit read filters and orders on `created_at` (FU-1). Until that fix it
+// used `timestamp`, a column that does not exist, so no export before it held
+// any audit history; the plugin connection read likewise named a column that
+// does not exist (`metadata`, NF-1), so none held plugin connections either.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
@@ -44,6 +52,39 @@ const executionRepository = new ExecutionRepository(supabaseServer);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+/**
+ * The provider profile fields a person gets back in their export (SA C-1,
+ * DATA_EXPORT_FOLLOWUPS_WORKPLAN.md). An ALLOW-list on purpose: some providers
+ * store an access token inside `profile_data`, under names nobody can predict,
+ * so stripping known secret keys would fail open. Only these top-level keys,
+ * and only when the value is a string or an array of strings. Never an id /
+ * `sub`, never a token key, never a nested object. Changing this changes what
+ * the export holds: a privacy decision.
+ */
+const ACCOUNT_PROFILE_KEYS: readonly string[] = [
+  'name', 'given_name', 'family_name', 'email', 'mail', 'picture', 'avatar_url', 'locale',
+  'language', 'country', 'displayName', 'givenName', 'surname', 'jobTitle', 'mobilePhone',
+  'businessPhones', 'officeLocation', 'preferredLanguage', 'userPrincipalName', 'nickname',
+  'preferred_username',
+];
+
+/** The allow-listed part of a raw `profile_data` value; anything else is dropped. */
+function accountProfile(profileData: unknown): Record<string, string | string[]> {
+  const profile: Record<string, string | string[]> = {};
+  if (typeof profileData !== 'object' || profileData === null || Array.isArray(profileData)) return profile;
+  const source = profileData as Record<string, unknown>;
+  for (const key of ACCOUNT_PROFILE_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+    const value = source[key];
+    if (typeof value === 'string') {
+      profile[key] = value;
+    } else if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
+      profile[key] = [...(value as string[])];
+    }
+  }
+  return profile;
+}
 
 /**
  * Export all user data in machine-readable format (GDPR compliance)
@@ -130,15 +171,22 @@ export async function GET(req: NextRequest) {
 
     exportData.agent_configurations = configurations || [];
 
-    // 5. Plugin Connections (sensitive - credentials are never selected)
+    // 5. Plugin Connections (sensitive - credentials are never selected). The
+    // raw `profile_data` never reaches the body: only its allow-listed fields.
     const { data: connections } = await pluginConnectionRepository.listForUserDataExport(user.id);
 
     exportData.plugin_connections = (connections || []).map(conn => ({
       plugin_key: conn.plugin_key,
-      connected_at: conn.created_at,
+      plugin_name: conn.plugin_name,
+      account_username: conn.username,
+      account_email: conn.email,
+      account_profile: accountProfile(conn.profile_data),
+      scope: conn.scope,
+      status: conn.status,
+      connected_at: conn.connected_at ?? conn.created_at,
       last_updated: conn.updated_at,
-      metadata: conn.metadata,
-      // Credentials excluded for security
+      last_used: conn.last_used,
+      disconnected_at: conn.disconnected_at,
     }));
 
     // 6. Subscription & Billing Data
@@ -223,13 +271,16 @@ export async function GET(req: NextRequest) {
       },
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     requestLogger.error({ err: error }, 'Data export failed');
 
+    // FU-P2: the cause stays in the log line above; the body carries it only in
+    // development (CLAUDE.md error response format).
     return NextResponse.json(
       {
+        success: false,
         error: 'Data export failed',
-        message: error.message || 'An unexpected error occurred',
+        details: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.message : String(error)) : undefined,
       },
       { status: 500 }
     );
