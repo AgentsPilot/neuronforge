@@ -46,10 +46,12 @@
 //     artefact quietly wrong in the one direction that matters.
 
 import { SupabaseClient } from '@supabase/supabase-js';
+import { z } from 'zod';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import { resolveUserConnectAccounts } from '@/lib/payments/stripeAccountContext';
 import type { PurgeDescriptor, PurgeOptions } from '@/lib/business-os/purge/types';
+import type { AgentRepositoryResult as RepositoryResult } from './types';
 import {
   LOCAL_BLOCKING_CONDITIONS,
   type LocalBlockingCondition,
@@ -72,6 +74,35 @@ export type PurgeRpcResult =
       duration_ms: number;
     }
   | { ok: false; reason: 'already_running'; user_id: string };
+
+/**
+ * The subset of `purge_schema_introspect()`'s payload the SchemaReconciler reads
+ * (AD-1a, SC-7). Parsed rather than cast: the reconciler's verdict is a
+ * fail-closed oracle, so a payload whose shape changed must surface as an
+ * error ("unverified"), never as an empty table list that reconciles clean.
+ *
+ * `references` is the target's relname WITHOUT its schema, so an FK to
+ * `auth.users` arrives as `users` (migration 20260915a).
+ */
+const SchemaIntrospectionSchema = z.object({
+  generated_at: z.string().optional(),
+  columns: z.array(
+    z.object({
+      table_name: z.string().min(1),
+      column_name: z.string().min(1),
+    })
+  ),
+  foreign_keys: z.array(
+    z.object({
+      constraint_name: z.string(),
+      table_name: z.string().min(1),
+      references: z.string().min(1),
+      on_delete: z.string(),
+    })
+  ),
+});
+
+export type PurgeSchemaSnapshot = z.infer<typeof SchemaIntrospectionSchema>;
 
 export interface TableCount {
   table: string;
@@ -226,6 +257,52 @@ export class BusinessPurgeRepository {
     }
   }
 
+
+  /**
+   * AD-1a (SC-7) — read the live schema through `purge_schema_introspect()`.
+   *
+   * Read-only by construction: the function performs no DML and no DDL
+   * (migration 20260915a). Service role, deliberately (B-4 above, plus a third
+   * reason): EXECUTE on this function is granted to `service_role` ONLY,
+   * because it discloses the whole schema. There is no user-scoped way to call
+   * it, and nothing here is tenant data — so there is no `user_id` to filter on.
+   *
+   * Never throws. Returns `{ data: null, error }` on an RPC error OR a payload
+   * that does not parse, so the caller reports "could not verify" rather than
+   * reconciling an empty list as clean. Logs carry no payload, only counts.
+   */
+  async introspectSchema(): Promise<RepositoryResult<PurgeSchemaSnapshot>> {
+    try {
+      const { data, error } = await this.supabase.rpc('purge_schema_introspect');
+      if (error) throw error;
+
+      const parsed = SchemaIntrospectionSchema.safeParse(data);
+      if (!parsed.success) {
+        throw new Error(
+          `purge_schema_introspect returned an unexpected shape: ${parsed.error.issues
+            .slice(0, 3)
+            .map((i) => `${i.path.join('.') || '(root)'} ${i.message}`)
+            .join('; ')}`
+        );
+      }
+
+      return { data: parsed.data, error: null };
+    } catch (error) {
+      this.logger.warn({ err: error }, 'Schema introspection failed');
+      return {
+        data: null,
+        // A PostgREST error is a plain object, not an Error — keep its message.
+        error:
+          error instanceof Error
+            ? error
+            : new Error(
+                typeof (error as { message?: unknown })?.message === 'string'
+                  ? (error as { message: string }).message
+                  : String(error)
+              ),
+      };
+    }
+  }
 
   // ══════════════════════════════════════════════════════════════════════════
   // Slice 2 — the two pre-delete controls
