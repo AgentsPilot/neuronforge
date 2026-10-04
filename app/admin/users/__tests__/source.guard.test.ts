@@ -27,7 +27,27 @@ const SCREEN_FILES = [
   `${ROOT}/components/CreditsBlock.tsx`,
   `${ROOT}/components/CreditFormDialog.tsx`,
   `${ROOT}/creditCopy.ts`,
+  // Credit deduction slice 8a
+  `${ROOT}/components/CreditsLeftCell.tsx`,
 ];
+
+/**
+ * Credit deduction slice 8a (SA C-S8-1, DV-4): the ONE allowed `lib/business-os`
+ * import on this screen — the band module, which imports nothing itself — and
+ * only in the "Credits left" cell. An exact string, never a prefix.
+ */
+const BANDS_IMPORT = '@/lib/business-os/credits/creditBands';
+const BANDS_FILE = `${ROOT}/components/CreditsLeftCell.tsx`;
+
+/** Every `lib/business-os` module a file imports. */
+function businessOsImports(code: string): string[] {
+  return [...code.matchAll(/from ['"](@\/lib\/business-os[^'"]*)['"]/g)].map((m) => m[1]);
+}
+
+/** The forbidden ones: all of them, except the band module in the cell. */
+function forbiddenBusinessOsImports(file: string, code: string): string[] {
+  return businessOsImports(code).filter((spec) => !(file === BANDS_FILE && spec === BANDS_IMPORT));
+}
 
 describe('the screen is protected by the layout it inherits from', () => {
   it('app/admin/layout.tsx still awaits requireAdminPage() as its FIRST statement', () => {
@@ -44,9 +64,31 @@ describe('the screen is protected by the layout it inherits from', () => {
 });
 
 describe('the Business OS panel carries no server module and no second rule', () => {
-  it.each(SCREEN_FILES)('%s imports nothing from lib/business-os, the call catalog or a repository', (file) => {
+  it('the band-module exception is exact (planted samples)', () => {
+    const planted = (spec: string) => `import { x } from '${spec}';`;
+    expect(forbiddenBusinessOsImports(BANDS_FILE, planted(BANDS_IMPORT))).toEqual([]);
+    for (const spec of [
+      '@/lib/business-os/credits/creditBandsX',
+      '@/lib/business-os/credits/creditBands/index',
+      '@/lib/business-os/credits/creditDisplay',
+      '@/lib/business-os/entitlements/creditAllowanceView',
+    ]) {
+      expect(forbiddenBusinessOsImports(BANDS_FILE, planted(spec))).toEqual([spec]);
+    }
+    // Anywhere but the cell, even the band module is forbidden.
+    expect(forbiddenBusinessOsImports(`${ROOT}/page.tsx`, planted(BANDS_IMPORT))).toEqual([BANDS_IMPORT]);
+  });
+
+  it('the "Credits left" cell is the one file that imports the band module', () => {
+    for (const file of SCREEN_FILES) {
+      const imports = businessOsImports(codeOf(read(file)));
+      expect({ file, imports }).toEqual({ file, imports: file === BANDS_FILE ? [BANDS_IMPORT] : [] });
+    }
+  });
+
+  it.each(SCREEN_FILES)('%s imports nothing from lib/business-os (but the pinned band module), the call catalog or a repository', (file) => {
     const code = codeOf(read(file));
-    expect(code).not.toMatch(/from ['"]@\/lib\/business-os/);
+    expect(forbiddenBusinessOsImports(file, code)).toEqual([]);
     expect(code).not.toMatch(/callCatalog/);
     expect(code).not.toMatch(/from ['"]@\/lib\/repositories/);
   });

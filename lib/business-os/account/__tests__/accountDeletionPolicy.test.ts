@@ -134,4 +134,19 @@ describe('[smoke] account deletion policy', () => {
       expect(policyFor(table).strip).toBeUndefined();
     }
   });
+
+  it('P-2a (SA-P1, Q-1, Q-3): keeps the billing record detached (minimise) by ON DELETE SET NULL, and keeps the Stripe customer id', () => {
+    /*
+     * The Business OS billing record is a retained financial record like the
+     * credit ledger. user_id is nullable ON DELETE SET NULL (Q-1) and
+     * service_role holds no UPDATE on it (Q-2), so the detach is the foreign
+     * key's. stripe_customer_id is kept on purpose (Q-3): no strip.
+     */
+    expect(accountTablesToProcess()).toEqual(expect.arrayContaining(['business_os_billing_accounts']));
+    const policy = policyFor('business_os_billing_accounts');
+    expect(policy.verdict).toBe('minimise');
+    expect(policy.reason).toMatch(/ON DELETE SET NULL/);
+    expect(policy.reason).toMatch(/stripe_customer_id is deliberately kept/);
+    expect(policy.strip).toBeUndefined();
+  });
 });

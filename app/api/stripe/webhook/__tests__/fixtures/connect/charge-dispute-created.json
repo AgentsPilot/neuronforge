@@ -1,0 +1,21 @@
+{
+  "id": "evt_connect_dispute_created",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "type": "charge.dispute.created",
+  "account": "acct_owner_a",
+  "livemode": false,
+  "created": 1790000900,
+  "data": {
+    "object": {
+      "id": "dp_1",
+      "object": "dispute",
+      "charge": "ch_connect_1",
+      "payment_intent": { "id": "pi_website_1" },
+      "amount": 15000,
+      "status": "needs_response",
+      "reason": "fraudulent",
+      "evidence_details": { "due_by": 1790600000 }
+    }
+  }
+}

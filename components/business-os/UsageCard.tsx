@@ -13,17 +13,24 @@
  *
  * ── WHAT IT SHOWS ────────────────────────────────────────────────────────────
  *   - a monthly plan: "Resets {date}", the ring emptying against the allowance,
- *     "{left} left of {allowance}", and the one-sentence explanation as a
- *     tooltip on the ring (hover or keyboard focus; user decision 2026-10-01);
- *   - a trial: the same against the one-off total — "For your trial", "of
- *     {n} in total", and no reset date;
+ *     "{percent} left" (slice 8a, FR-46 — no credit count), and the
+ *     one-sentence explanation as a tooltip on the ring (hover or keyboard
+ *     focus; user decision 2026-10-01; unchanged, BD-24);
+ *   - a trial: the same against the one-off total — "For your trial", and no
+ *     reset date;
+ *   - the ring's colour is the BAND of the shown percentage (green / blue /
+ *     orange / red, `creditBands.ts` — the one definition, BD-19); the
+ *     percentage is always written, so colour is never the only signal, and
+ *     the ring's label states it for a screen reader;
  *   - no allowance (no plan row, or none resolvable): credits used in the
- *     ring's centre, with no gauge, no "left" and no tooltip — never "0 of 0".
- *     "This month" only for the calendar-month case;
- *   - over the allowance: "0 left", an empty ring. No warning, no "paused"
- *     and no upgrade wording (slices 8 and 10).
- *   - a read that failed: the error line — never a zero.
- * Whole credits, with "less than 1" (D-c, `creditDisplay.ts`).
+ *     ring's centre, with no gauge, no "left" and no tooltip — never "0 of 0"
+ *     or "0%". "This month" only for the calendar-month case;
+ *   - over the allowance: "0%", an empty ring on a red track. No warning, no
+ *     "paused" and no upgrade wording (slice 10).
+ *   - a read that failed: the error line — never "0%" or "100%".
+ * The percentage follows BD-20 (whole, rounded down; 100% only when nothing
+ * was used; "less than 1%"; 0% at or over), from the payload's EXACT used.
+ * Credits used (no allowance) are whole credits with "less than 1" (D-c).
  *
  * ── WHEN IT RE-READS (FR-39) ────────────────────────────────────────────────
  * On mount; (a) when an owner AI action on the page finishes (the
@@ -50,6 +57,7 @@ import { CreditHistoryPanel } from '@/components/business-os/CreditHistoryPanel'
 import { isBusinessOsCreditHistoryEnabled } from '@/lib/utils/featureFlags';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { onCreditUsageChanged } from '@/lib/business-os/client/creditUsageSignal';
+import { bandColor, creditPercentLeft } from '@/lib/business-os/credits/creditBands';
 import { toDisplayedCredits, type DisplayedCreditFigure } from '@/lib/business-os/credits/creditDisplay';
 import type { OwnerCreditUsage } from '@/lib/business-os/credits/ownerCreditUsageTypes';
 import { createLogger } from '@/lib/logger';
@@ -63,17 +71,16 @@ const MUTED = 'var(--v2-text-secondary)';
 const TRACK = 'var(--v2-border)';
 
 /**
- * One colour for the arc, and one for the last fifth of it.
- *
- * A low balance is the one thing this card can tell you that changes what you
- * do next, so it gets the platform's alert orange rather than a second
- * arbitrary hue. Colour only: no warning text (slice 8).
+ * The frame ring of the no-allowance state. The gauge's colour is the band of
+ * the shown percentage (`creditBands.ts`), never a colour chosen here.
  */
 const ACCENT = '#2a78d6';
-const LOW = '#F97316';
 
-/** At or below this share of the allowance the arc turns orange. */
-const LOW_THRESHOLD = 0.2;
+/**
+ * The error line's own colour: an error is not a band (SA SQ-39). Unchanged
+ * from slice 6a; its text contrast is a recorded follow-up (slice 8 workplan R-8).
+ */
+const ERROR_INK = '#F97316';
 
 const R = 15;
 const STROKE = 4;
@@ -192,7 +199,10 @@ export function UsageCard() {
   const figure = (f: DisplayedCreditFigure) => (f.kind === 'less_than_one' ? t('usage.less_than_one') : numbers.format(f.value));
 
   const allowance = usage?.allowance ?? null;
-  const gauged = usage !== null && allowance !== null && allowance.amount > 0;
+  // The percentage, its band and the exact share, from the payload's EXACT
+  // used (SQ-40) — not D-c's displayed used. Null means no gauge.
+  const position = usage && allowance && allowance.amount > 0 ? creditPercentLeft(usage.used, allowance.amount) : null;
+  const gauged = position !== null;
   const isTrial = usage?.period.kind === 'trial_total';
   // What a credit is (D-b). Only beside an allowance (DV-3): both variants say
   // the plan includes an amount, which is not true without one.
@@ -206,12 +216,21 @@ export function UsageCard() {
       })
     : null;
 
-  const left = gauged && shown ? shown.left ?? 0 : 0;
-  const share = gauged ? Math.min(1, left / allowance!.amount) : 0;
-  const isLow = gauged && share <= LOW_THRESHOLD;
+  const percentFormat = new Intl.NumberFormat(language, { style: 'percent', maximumFractionDigits: 0 });
+  // Intl gives each language its own spacing and sign ("64%", "64 %").
+  const formatPercent = (whole: number) => percentFormat.format(whole / 100);
+  const isLessThanOne = position?.shown.kind === 'less_than_one';
+  const percentText = position
+    ? position.shown.kind === 'less_than_one'
+      ? t('usage.less_than_percent', { percent: formatPercent(1) })
+      : formatPercent(position.shown.value)
+    : null;
+  // At or over the allowance: no arc, and the track itself carries the red band.
+  const nothingLeft = position !== null && position.share === 0;
 
   /** Beside the title: the reset date, the trial, "this month" — or nothing (no allowance). */
   let periodLabel: string | null = null;
+  let resetsLong: string | null = null;
   if (usage) {
     if (usage.period.kind === 'calendar_month') {
       periodLabel = t('usage.this_month');
@@ -223,13 +242,24 @@ export function UsageCard() {
         // In the BUSINESS's clock and the reader's language.
         const date = new Intl.DateTimeFormat(language, timeZoneOptions({ day: 'numeric', month: 'short' })).format(resets);
         periodLabel = t('usage.resets_on', { date });
+        resetsLong = new Intl.DateTimeFormat(language, timeZoneOptions({ day: 'numeric', month: 'long' })).format(resets);
       }
     }
   }
 
-  const headline = !usage || !shown ? '—' : gauged ? numbers.format(left) : figure(shown.used);
+  const headline = !usage || !shown ? '—' : gauged ? percentText! : figure(shown.used);
   const headlineLabel = gauged ? t('usage.left') : t('usage.used');
-  const ofLine = gauged ? t(isTrial ? 'usage.of_total' : 'usage.of', { n: numbers.format(allowance!.amount) }) : null;
+  // The number carries the meaning; the band's colour name is never read (AC-42).
+  const ringLabel =
+    !usage || !shown
+      ? t('usage.title')
+      : gauged
+        ? isTrial
+          ? t('usage.sr.trial', { percent: percentText! })
+          : resetsLong
+            ? t('usage.sr.monthly', { percent: percentText!, date: resetsLong })
+            : t('usage.sr.plain', { percent: percentText! })
+        : `${headline} ${headlineLabel}`;
 
   return (
     <div
@@ -297,7 +327,7 @@ export function UsageCard() {
       {/* Says WHY it is empty. A blank card and a broken card look identical
           otherwise — and a failed read is never shown as zero. */}
       {failed && (
-        <p data-testid="credits-error" style={{ fontSize: '11.5px', color: LOW, marginTop: 6 }}>
+        <p data-testid="credits-error" style={{ fontSize: '11.5px', color: ERROR_INK, marginTop: 6 }}>
           {t('usage.error')}
         </p>
       )}
@@ -311,7 +341,8 @@ export function UsageCard() {
         <div
           data-testid="credits-ring"
           role="img"
-          aria-label={usage && shown ? `${headline} ${headlineLabel}${ofLine ? ` ${ofLine}` : ''}` : t('usage.title')}
+          aria-label={ringLabel}
+          data-band={position ? position.band : undefined}
           aria-describedby={explain ? explainId : undefined}
           tabIndex={explain ? 0 : undefined}
           onMouseEnter={explain ? () => setExplainOpen(true) : undefined}
@@ -333,7 +364,15 @@ export function UsageCard() {
             style={{ width: '100%', height: '100%', transform: 'rotate(-90deg)', overflow: 'visible' }}
             aria-hidden="true"
           >
-            <circle cx="18" cy="18" r={R} fill="none" stroke={TRACK} strokeWidth={STROKE} />
+            <circle
+              data-testid="credits-track"
+              cx="18"
+              cy="18"
+              r={R}
+              fill="none"
+              stroke={nothingLeft ? bandColor(position!.band) : TRACK}
+              strokeWidth={STROKE}
+            />
 
             {/*
               The arc is what is LEFT, so it shrinks from full as the period is
@@ -341,18 +380,18 @@ export function UsageCard() {
               low balance a rounded end overhangs its own arc and reads as more
               left than there is.
             */}
-            {gauged && left > 0 && (
+            {position && position.share > 0 && (
               <circle
                 data-testid="credits-arc"
-                data-low={isLow ? 'true' : 'false'}
+                data-band={position.band}
                 cx="18"
                 cy="18"
                 r={R}
                 fill="none"
-                stroke={isLow ? LOW : ACCENT}
+                stroke={bandColor(position.band)}
                 strokeWidth={STROKE}
                 strokeDasharray={CIRCUMFERENCE}
-                strokeDashoffset={CIRCUMFERENCE * (1 - share)}
+                strokeDashoffset={CIRCUMFERENCE * (1 - position.share)}
                 style={{ transition: 'stroke-dashoffset 600ms ease, stroke 300ms ease' }}
               />
             )}
@@ -379,24 +418,22 @@ export function UsageCard() {
           >
             <span
               data-testid="credits-headline"
+              data-size={isLessThanOne ? 'small' : 'large'}
               style={{
-                fontSize: '29px',
+                // "less than 1%" / "menos del 1 %" does not fit the ring at the
+                // headline size (SQ-47): a smaller size, wrapping inside the ring.
+                fontSize: isLessThanOne ? '15px' : '29px',
+                maxWidth: isLessThanOne ? 104 : undefined,
                 fontWeight: 700,
                 color: INK,
                 fontVariantNumeric: 'tabular-nums',
                 letterSpacing: '-0.02em',
-                lineHeight: 1,
+                lineHeight: isLessThanOne ? 1.15 : 1,
               }}
             >
               {headline}
             </span>
             {usage && <span style={{ fontSize: '12px', color: MUTED, marginTop: 4 }}>{headlineLabel}</span>}
-            {/* The denominator, so the arc has a scale. */}
-            {ofLine && (
-              <span data-testid="credits-of" style={{ fontSize: '11px', color: MUTED, marginTop: 2 }}>
-                {ofLine}
-              </span>
-            )}
           </div>
 
           {explain && (

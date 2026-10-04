@@ -6,6 +6,7 @@
  *   AuditTrailRepository.listAdminAiFailures
  *   AuditTrailRepository.countAdminEventsAllAccountsInWindow (slice 4, SA C-5)
  *   UserProfileRepository.listForAdmin
+ *   UserProfileRepository.findAdminNamesByIds (ADMIN_BOS_CLEANUP slice 4)
  *
  * Two things are pinned: what each reads (columns, scoping, no filter-string
  * search), and WHO may call it — only `app/api/admin/**`, behind requireAdmin.
@@ -16,9 +17,17 @@ import * as path from 'path';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: {} }));
+/**
+ * Every argument list any repository passed to its logger, at any level. A local
+ * capture (SA W4-4) so N-6 can prove a person's name never reaches a log line.
+ */
+const mockRepoLogCalls: unknown[][] = [];
 jest.mock('@/lib/logger', () => {
   const make = (): Record<string, unknown> => {
-    const logger: Record<string, unknown> = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
+    const record = jest.fn((...args: unknown[]) => {
+      mockRepoLogCalls.push(args);
+    });
+    const logger: Record<string, unknown> = { info: record, warn: record, error: record, debug: record };
     logger.child = () => logger;
     return logger;
   };
@@ -31,7 +40,12 @@ import {
   ADMIN_IDENTITY_CHUNK,
 } from '../BusinessProfileRepository';
 import { AuditTrailRepository, ADMIN_AI_FAILURE_COLUMNS } from '../AuditTrailRepository';
-import { UserProfileRepository, ADMIN_PROFILE_LIST_COLUMNS, compareForAdminList } from '../UserProfileRepository';
+import {
+  UserProfileRepository,
+  ADMIN_PROFILE_LIST_COLUMNS,
+  ADMIN_PROFILE_NAME_COLUMNS,
+  compareForAdminList,
+} from '../UserProfileRepository';
 import { ilikeContainsPattern, matchesLiterally } from '../BusinessProfileRepository';
 
 type Call = { method: string; args: unknown[] };
@@ -266,6 +280,75 @@ describe('UserProfileRepository.listForAdmin', () => {
   });
 });
 
+describe('UserProfileRepository.findAdminNamesByIds (ADMIN_BOS_CLEANUP slice 4)', () => {
+  beforeEach(() => {
+    mockRepoLogCalls.length = 0;
+  });
+
+  it('N-1: selects exactly id and full_name from profiles, filtered by .in(id)', async () => {
+    const rows = [{ id: ACCOUNT, full_name: 'Dana Cohen' }];
+    const { client, queries } = recordingClient(() => ({ data: rows, error: null }));
+    const result = await new UserProfileRepository(client).findAdminNamesByIds([ACCOUNT]);
+
+    expect(result).toEqual({ data: rows, error: null });
+    // Pinned: no email (profiles has none) and no other column (§8 Privacy).
+    expect(ADMIN_PROFILE_NAME_COLUMNS).toBe('id, full_name');
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toEqual([
+      { method: 'from', args: ['profiles'] },
+      { method: 'select', args: [ADMIN_PROFILE_NAME_COLUMNS] },
+      { method: 'in', args: ['id', [ACCOUNT]] },
+    ]);
+  });
+
+  it('N-2: deduplicates and batches: one .in() per chunk with the exact ids, never one read per account', async () => {
+    const ids = Array.from({ length: ADMIN_IDENTITY_CHUNK + 1 }, (_, i) =>
+      `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`
+    );
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const result = await new UserProfileRepository(client).findAdminNamesByIds([...ids, ids[0], ids[ADMIN_IDENTITY_CHUNK]]);
+
+    expect(result).toEqual({ data: [], error: null });
+    expect(queries).toHaveLength(2);
+    expect(queries[0]).toContainEqual({ method: 'in', args: ['id', ids.slice(0, ADMIN_IDENTITY_CHUNK)] });
+    expect(queries[1]).toContainEqual({ method: 'in', args: ['id', ids.slice(ADMIN_IDENTITY_CHUNK)] });
+  });
+
+  it('N-3: an empty list returns { data: [], error: null } and issues no query', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const result = await new UserProfileRepository(client).findAdminNamesByIds([]);
+
+    expect(result).toEqual({ data: [], error: null });
+    expect(queries).toHaveLength(0);
+  });
+
+  it('N-4: a database error returns { data: null, error } and does not throw', async () => {
+    const dbError = { message: 'permission denied for table profiles' };
+    const { client } = recordingClient(() => ({ data: null, error: dbError }));
+    const result = await new UserProfileRepository(client).findAdminNamesByIds([ACCOUNT]);
+
+    expect(result.data).toBeNull();
+    expect(result.error).toBe(dbError);
+  });
+
+  it('N-6: logs counts on success, never a full_name', async () => {
+    const rows = [
+      { id: ACCOUNT, full_name: 'Dana Cohen' },
+      { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', full_name: 'Avi Levi' },
+    ];
+    const { client } = recordingClient(() => ({ data: rows, error: null }));
+    const result = await new UserProfileRepository(client).findAdminNamesByIds(rows.map((r) => r.id));
+
+    // The names really flowed through the method.
+    expect(result.data?.map((r) => r.full_name)).toEqual(['Dana Cohen', 'Avi Levi']);
+    expect(mockRepoLogCalls.length).toBeGreaterThan(0);
+    expect(mockRepoLogCalls).toContainEqual([{ requested: 2, found: 2 }, expect.any(String)]);
+    const logged = JSON.stringify(mockRepoLogCalls);
+    expect(logged).not.toContain('Dana Cohen');
+    expect(logged).not.toContain('Avi Levi');
+  });
+});
+
 // ─── Who may call them (SA C-7) ───────────────────────────────────────────────
 
 const ROOT = process.cwd();
@@ -274,6 +357,8 @@ const ADMIN_METHODS = [
   'findAdminIdentitiesByUserIds',
   'listAdminAiFailures',
   'listForAdmin',
+  // ADMIN_BOS_CLEANUP slice 4: person names for the admin audit trail.
+  'findAdminNamesByIds',
   // Slice 4: the first unscoped (all-accounts) audit read.
   'countAdminEventsAllAccountsInWindow',
 ];

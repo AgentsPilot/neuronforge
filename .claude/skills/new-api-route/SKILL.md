@@ -172,7 +172,7 @@ Per `CLAUDE.md`, every new API route ships with at minimum:
 2. Auth failure (401 with no user)
 3. Invalid input (400 with a body that fails Zod)
 
-Mock `getUser`, the repository, and `AuditTrailService.getInstance().log` (return `Promise.resolve()`).
+Mock `getUser`, the repository, and `AuditTrailService.getInstance().log` (and `.flush` for WC-7 routes), both returning `Promise.resolve()` — a missing or `undefined`-returning `flush` mock makes `.catch` throw and the route return 500.
 
 ---
 
@@ -186,7 +186,8 @@ Before reporting the task done, verify:
 - [ ] Repository call passes `user.id` so the `.eq('user_id', userId)` filter is applied
 - [ ] Zod schema validates the full body before any business logic runs
 - [ ] **Admin route? `requireAdmin` is the first statement, and there is no other admin check anywhere in the file** (no `profiles.role`, no `app_metadata.role`, no direct `AdminAccessService`)
-- [ ] Audit log uses `.catch()` (non-blocking) — never `await` it in the success path
+- [ ] Every audit call chains `.catch()` so an audit failure never fails the request. Awaiting is allowed
+- [ ] **Write that must be audited** (money, access, entitlement or price change — WC-7)? After `log()`, `await auditTrail.flush().catch(err => requestLogger.error({ err }, 'Audit flush failed'))` before responding. `log()` only queues: without an awaited flush the row waits for the background timer, which may never run once the serverless instance freezes. Precedents: `app/api/admin/business-os/entitlements/accounts/[accountId]/route.ts`, `app/api/admin/business-os/invites/route.ts`, `app/api/admin/archiving/runs/route.ts`. Known limit: `flush()` returns early while another flush is running (`isFlushing`), so an awaited flush can return before this request's row is written
 - [ ] Error response uses `process.env.NODE_ENV === 'development'` guard for details
 - [ ] Integration test covers happy path + 401 + 400
 - [ ] `npm run lint` passes (TypeScript errors are ignored by `next.config.js` but **must still be fixed**)
@@ -202,6 +203,7 @@ If the user asks for any of these, push back and offer the correct alternative:
 | `import { createServerClient } from '@supabase/ssr'` directly in the route | Use the repository |
 | `console.log('[API]', ...)` | `requestLogger.info({...}, 'message')` |
 | `if (!body.name) return ... 400` (manual validation) | Zod schema with `.parse()` |
-| `await auditTrail.log(...)` blocking the response | `.catch()` non-blocking |
+| An audit call with no `.catch()`, so an audit failure fails the request | Always chain `.catch()`; awaiting is fine |
+| A money, access, entitlement or price write that responds without flushing the audit | `await auditTrail.flush().catch(...)` before responding (WC-7) |
 | Returning raw `error.message` to client in production | Guard with `NODE_ENV === 'development'` |
 | Skipping `.eq('user_id', userId)` because "it's just a read" | Always filter by user unless `supabaseServer` is intentional and documented |

@@ -3,6 +3,9 @@
 
 import Stripe from 'stripe';
 import { SupabaseClient } from '@supabase/supabase-js';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'StripeService' });
 
 /**
  * StripeService
@@ -32,7 +35,70 @@ export class StripeService {
   }
 
   /**
-   * Get or create Stripe customer for user
+   * Find or create a Stripe customer. Shared by the agent platform and
+   * Business OS (plan payments P-2a, reuse plan Q-T8).
+   *
+   * Stripe only: no database access and no product-specific side effect. Each
+   * product persists the returned id in its own record (agent platform:
+   * `user_subscriptions`; Business OS: `business_os_billing_accounts`).
+   *
+   * Semantics are exactly the ones `getOrCreateCustomer` always had, so the
+   * agent platform does not change (characterisation suite
+   * `lib/stripe/__tests__/getOrCreateCustomer.characterisation.test.ts`):
+   * - with `existingCustomerId`, the customer is retrieved; if the call
+   *   resolves the id is reused, INCLUDING a customer deleted at Stripe
+   *   (`{ deleted: true }`), a kept quirk (SA ruling Q-6);
+   * - if the retrieve throws, it warns and falls through to create;
+   * - otherwise it creates with exactly `{ email, name, metadata }`, and passes
+   *   request options only when an idempotency key is given (the agent
+   *   platform passes none: adding one would change its behaviour).
+   *
+   * `livemode` is `null` for a reused deleted customer: Stripe's
+   * `DeletedCustomer` has no `livemode` field (SA P2-C3).
+   *
+   * Deliberately placed above `getOrCreateCustomer` and takes no database
+   * client: the user_subscriptions lockdown guard reads the slice from
+   * `getOrCreateCustomer` to `createCustomCreditSubscription`, and only three
+   * methods of this class may take one.
+   */
+  async findOrCreatePlatformCustomer(params: {
+    existingCustomerId?: string | null;
+    email: string;
+    name?: string;
+    metadata: Record<string, string>;
+    idempotencyKey?: string;
+  }): Promise<{ customerId: string; created: boolean; livemode: boolean | null }> {
+    const { existingCustomerId, email, name, metadata, idempotencyKey } = params;
+
+    if (existingCustomerId) {
+      // Verify customer exists in Stripe
+      try {
+        const retrieved = await this.stripe.customers.retrieve(existingCustomerId);
+        return {
+          customerId: existingCustomerId,
+          created: false,
+          livemode: retrieved.deleted ? null : retrieved.livemode,
+        };
+      } catch (error) {
+        logger.warn({ err: error, customerId: existingCustomerId }, 'Stripe customer not found, creating a new one');
+        // Fall through to create new customer
+      }
+    }
+
+    // Create new Stripe customer. The two-argument form only with a key, so a
+    // call without one is exactly the call the agent platform always made.
+    const customer = idempotencyKey
+      ? await this.stripe.customers.create({ email, name, metadata }, { idempotencyKey })
+      : await this.stripe.customers.create({ email, name, metadata });
+
+    return { customerId: customer.id, created: true, livemode: customer.livemode };
+  }
+
+  /**
+   * Get or create Stripe customer for user (agent platform).
+   *
+   * The Stripe half lives in `findOrCreatePlatformCustomer`; this caller keeps
+   * the `user_subscriptions` read and seed, with the statements unchanged (Q-T8).
    */
   async getOrCreateCustomer(
     supabase: SupabaseClient,
@@ -47,25 +113,22 @@ export class StripeService {
       .eq('user_id', userId)
       .single();
 
-    if (userSub?.stripe_customer_id) {
-      // Verify customer exists in Stripe
-      try {
-        await this.stripe.customers.retrieve(userSub.stripe_customer_id);
-        return userSub.stripe_customer_id;
-      } catch (error) {
-        console.warn('Customer not found in Stripe, creating new:', error);
-        // Fall through to create new customer
-      }
-    }
-
-    // Create new Stripe customer
-    const customer = await this.stripe.customers.create({
+    // No idempotency key: the agent platform never sent one.
+    const found = await this.findOrCreatePlatformCustomer({
+      existingCustomerId: userSub?.stripe_customer_id,
       email,
       name,
       metadata: {
         user_id: userId
       }
     });
+
+    if (!found.created) {
+      return found.customerId;
+    }
+
+    // Named `customer` so the user_subscriptions statements below stay as they were.
+    const customer = { id: found.customerId };
 
     // Update our database - only update stripe_customer_id on existing rows
     const { data: existing } = await supabase
@@ -309,12 +372,17 @@ export class StripeService {
     // Detect if this is an upgrade (higher amount) or downgrade (lower amount)
     const isUpgrade = newAmountUsd > currentMonthlyAmountUsd;
 
-    console.log(`💡 [StripeService] Subscription update detected:`, {
-      current: `$${currentMonthlyAmountUsd.toFixed(2)}`,
-      new: `$${newAmountUsd.toFixed(2)}`,
-      type: isUpgrade ? 'UPGRADE' : 'DOWNGRADE',
-      prorationBehavior: isUpgrade ? 'always_invoice (immediate)' : 'none (next cycle)'
-    });
+    // Ids and amounts only: no customer email or name (SA P2-C5).
+    logger.info(
+      {
+        subscriptionId,
+        currentMonthlyAmountUsd,
+        newAmountUsd,
+        changeType: isUpgrade ? 'upgrade' : 'downgrade',
+        prorationBehavior: isUpgrade ? 'always_invoice' : 'none'
+      },
+      'Stripe subscription amount update'
+    );
 
     // Create new price for the new amount
     // Store Pilot Credits in metadata (not tokens)

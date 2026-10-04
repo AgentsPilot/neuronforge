@@ -143,6 +143,18 @@ export const ACCOUNT_POLICY_EXCEPTIONS: Record<string, AccountTablePolicy> = {
       'detached from the person. Its user_id is declared ON DELETE SET NULL, and service_role holds ' +
       'no UPDATE on it, so the detach happens when the auth user is deleted, not through an update.',
   },
+
+  // Plan payments P-2a (PF-14; SA-P1 as amended by Q-1, Q-3). No `strip`.
+  business_os_billing_accounts: {
+    verdict: 'minimise',
+    reason:
+      'Financial record: the Business OS billing record (Stripe customer and plan subscription, per ' +
+      'Stripe mode). Retained for accounting, detached from the person. Its user_id is declared ' +
+      'ON DELETE SET NULL, and service_role holds no UPDATE on user_id, so the detach happens when the ' +
+      'auth user is deleted, not through an update. stripe_customer_id is deliberately kept (SA Q-3): ' +
+      'it is a pseudonymous link needed to reconcile with Stripe, whose own records hold the email; ' +
+      'deleting the Stripe customer is a separate P-7a / PF-14 decision.',
+  },
 };
 
 /**

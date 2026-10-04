@@ -147,6 +147,8 @@ AND activity_type = 'plugin_call';
 
 ## Admin Configuration
 
+> Moved 2026-10-03 (ADMIN_BOS_CLEANUP slice 2): the calculator configuration is now on `/admin/agentspilot-billing` (AgentsPilot, parked, URL-only). `/admin/system-config` holds only model pricing.
+
 Admins can adjust plugin token pricing via:
 1. Navigate to `/admin/system-config`
 2. Find "Token Estimation" section

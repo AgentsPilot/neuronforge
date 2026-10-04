@@ -1,0 +1,22 @@
+{
+  "id": "evt_platform_checkout_sub",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "type": "checkout.session.completed",
+  "livemode": false,
+  "created": 1790002000,
+  "data": {
+    "object": {
+      "id": "cs_platform_sub",
+      "object": "checkout.session",
+      "mode": "subscription",
+      "customer": "cus_platform_1",
+      "subscription": "sub_platform_1",
+      "amount_total": 2000,
+      "metadata": {
+        "user_id": "victim-user",
+        "credits": "5000"
+      }
+    }
+  }
+}

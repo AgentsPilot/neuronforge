@@ -71,6 +71,20 @@ const MODEL_OPTIONS = [
   { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet', provider: 'anthropic' },
 ]
 
+/** Shown under the read-only Embedding Model field. */
+const EMBEDDING_MODEL_LOCK_NOTE =
+  'Read-only: this model is shared with Business OS chat. Changing it invalidates every stored vector (the plan cache and verified questions), so it is a data migration, not a setting.'
+
+/**
+ * The save body, minus the embedding model. The server never writes that key
+ * and rejects a changed value, so the page does not send it at all.
+ */
+function withoutEmbeddingModel(config: HelpBotConfig) {
+  const semantic: Partial<HelpBotConfig['semantic']> = { ...config.semantic }
+  delete semantic.embeddingModel
+  return { ...config, semantic }
+}
+
 export default function HelpBotConfigPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -143,7 +157,7 @@ export default function HelpBotConfigPage() {
       const response = await fetch('/api/admin/helpbot-config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config }),
+        body: JSON.stringify({ config: withoutEmbeddingModel(config) }),
       })
       const result = await response.json()
       if (result.success) {
@@ -454,24 +468,19 @@ export default function HelpBotConfigPage() {
           {config.semantic.enabled && (
             <>
               {/* Embedding Model */}
+              {/* Read-only on purpose: the server never writes this key and
+                  refuses a changed value (app/api/admin/helpbot-config/route.ts). */}
               <div>
-                <Label className="text-white">Embedding Model</Label>
-                <select
+                <Label htmlFor="helpbot-embedding-model" className="text-white">Embedding Model</Label>
+                <Input
+                  id="helpbot-embedding-model"
                   value={config.semantic.embeddingModel}
-                  onChange={(e) =>
-                    setConfig({
-                      ...config,
-                      semantic: { ...config.semantic, embeddingModel: e.target.value },
-                    })
-                  }
-                  className="w-full mt-2 px-4 py-2 bg-slate-900/50 border border-white/10 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
-                >
-                  <option value="text-embedding-3-small">text-embedding-3-small (1536 dims, $0.02/1M tokens)</option>
-                  <option value="text-embedding-3-large">text-embedding-3-large (3072 dims, $0.13/1M tokens)</option>
-                  <option value="text-embedding-ada-002">text-embedding-ada-002 (1536 dims, $0.10/1M tokens)</option>
-                </select>
+                  readOnly
+                  aria-readonly="true"
+                  className="mt-2 bg-slate-900/50 border-white/10 text-slate-300 cursor-not-allowed"
+                />
                 <p className="text-xs text-slate-400 mt-2">
-                  <strong>text-embedding-3-small</strong> offers the best price/performance ratio
+                  {EMBEDDING_MODEL_LOCK_NOTE}
                 </p>
               </div>
 

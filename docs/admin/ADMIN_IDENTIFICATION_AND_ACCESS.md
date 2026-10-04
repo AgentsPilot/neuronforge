@@ -1,6 +1,6 @@
 # Admin Identification & Access
 
-> **Last Updated**: 2026-10-03
+> **Last Updated**: 2026-10-04
 
 ## Overview
 
@@ -80,6 +80,9 @@ passed.
 > `requireAdmin` as its first statement (row 91). Re-measured from disk with the
 > method below: **88 / 82 + 6 / 59 files**. No cap moved: the guard's caps count
 > exemptions, and a handler gated from birth enters no exemption list (SA OP-34).
+> Re-measured again after merging `origin/main` `89dbc568` (ADMIN_BOS_CLEANUP
+> slice 2, credit deduction slice 8a): unchanged at **88 / 82 + 6 / 59 files**;
+> 28 `/admin` pages.
 >
 > **Method:** a scratch Node script walks `app/api/admin/**/route.ts` (skipping
 > `__tests__`), strips comments, counts each exported `GET`/`POST`/`PUT`/
@@ -98,7 +101,7 @@ passed.
 | It fails closed, answers **401** signed-out / **403** non-admin, and never 500s on an authorization outcome | ✅ True |
 | No app-code access decision reads `profiles.role` — a repo-wide sweep returns **zero** hits | ✅ True, and CI rule R4 keeps it that way |
 | **Every one of the 88 `/api/admin/*` handlers requires an admin.** 82 via `requireAdmin`, 6 via their own equivalent check. **Zero open.** | ✅ **True as of 2026-10-03** (slices 2 + 3 of the unification; re-counted from disk in credit deduction slice 11c) |
-| **All 26 `/admin` pages are protected on the server**, by inheritance from `app/admin/layout.tsx` | ✅ **True as of 2026-09-21** (slice 5), for the 21 pages then. The 5 added since inherited it without an edit: `business-os-tiers`, `platform-dashboard` (the old landing, moved in admin reorganisation slice 4, beside the rewritten `/admin` Health page), `archiving` (Admin Archiving slice 1) and `jobs-queues` (admin reorganisation slice 5, a client page). Re-counted 2026-09-27: 26 `page.tsx` files under `app/admin/` |
+| **All 28 `/admin` pages are protected on the server**, by inheritance from `app/admin/layout.tsx` | ✅ **True as of 2026-09-21** (slice 5), for the 21 pages then. The 7 added since inherited it without an edit: `business-os-tiers`, `business-os-llm`, `platform-dashboard` (the old landing, moved in admin reorganisation slice 4, beside the rewritten `/admin` Health page), `archiving` (Admin Archiving slice 1), `jobs-queues` (admin reorganisation slice 5, a client page), `business-os-invites` (invite-only signup slice 0) and `agentspilot-billing` (ADMIN_BOS_CLEANUP slice 2, a client page). 21 + 7 = 28. Re-counted 2026-09-27: 26 `page.tsx` files under `app/admin/`. Re-counted 2026-10-03 from disk: 27 on `5061489b`, 28 after ADMIN_BOS_CLEANUP slice 2 |
 | A **new** admin route cannot ship ungated | ✅ **True.** `Admin authz surface guard` is a **required status check** on `main` with `enforce_admins` and `strict` — a red guard blocks the merge |
 | A **new** `/admin` page is protected before its author writes a line of it | ✅ True — it renders as `children` of the guarded layout; there is no per-page opt-out |
 
@@ -117,7 +120,7 @@ the work mostly done, as it was when the work had barely started.
 | ~~"A refused admin access is recorded"~~ | **Only on three surfaces.** Since 2026-10-01 the shared gates write one `audit_trail` row with `action = SECURITY_UNAUTHORIZED_ACCESS` when they answer "no": `requireAdmin` (`lib/admin/requireAdminRoute.ts`), `requireAdminPage` (`lib/admin/requireAdminPage.ts`) and the refused act-as (`lib/server/route-identity.ts`). The **6 hand-rolled handlers above record NOTHING on refusal** — `agents`, `business-os/llm-usage`, `business-os/llm-usage/businesses`, `chat-usage`, `users/[id]/audit-logs`, `users/[id]/login-stats`. So filtering `/admin/audit-trail` by that action shows refusals on the counted surfaces only; an empty result means "nothing was refused on those three", never "nobody probed". Anonymous callers are also not recorded (401, no identity to refuse), and a refusal caused by the admin check **throwing** is deliberately not recorded either. Closing this is part of the **parked slice 4** conversion, which is also the only thing that can shorten the list of six. |
 | ~~"The published counts cannot drift"~~ | The equality caps stop the exemption lists getting **longer**. Nothing forces an entry to be deleted when its handler is gated, so the figures can still drift **conservatively** — understating how much is gated (OI-22). |
 
-### Every admin handler and its state (87)
+### Every admin handler and its state (88)
 
 The unit is the **handler**, not the file: slice 1 gated write verbs and left read
 verbs open in the *same* files, so a file-level table would have been misleading.
@@ -604,4 +607,5 @@ npx eslint app lib components hooks --rule '{"no-console":"error"}'
 | 2026-09-30 | Credit deduction slice 4b: register row 86 | Row **86** `business-os/credits/leak-check#GET` (the on-demand credit leak check), gated from birth with `requireAdmin` as its first statement. Census still not re-derived (see the 4a row above); no cap moved |
 | 2026-10-02 | A refused admin access is now recorded — on three surfaces only | `requireAdmin`, `requireAdminPage` and the refused act-as each write one `audit_trail` row (`action = SECURITY_UNAUTHORIZED_ACCESS`) when the admin check answers "no". Added a **"What is NOT true"** row recording that the **6 hand-rolled handlers record nothing on refusal**, so that action covers the three shared surfaces only and an empty filter result is not "nobody probed"; closing it is part of the parked slice 4. No gate, count or cap changed |
 | 2026-10-02 | ADMIN_BOS_CLEANUP slice 1: Admin users page read-only, slice 7's routes deleted, R4 → 0, census 87 = 81 + 6 + 0, 58 files | `/admin/settings` ("Admin users") rewritten as a **truthful read-only list** (active `admin_users` rows, `ADMIN_EMAILS`-only addresses, overlap marker); its only request is the new **`GET /api/admin/admins`** (row 87, `requireAdmin` first, repository read, 500 never an empty list, counts-only logs). `settings/admin-users` (GET + POST) and `settings/platform-users` (GET) **deleted**, folding in admin-authz slice 7 (rows 47–49 struck). One `ADMIN_EMAILS` parser for app code, `lib/admin/adminEmailsEnv.ts` (the seed script's copy is OI-12). Guard **R4 parked 2 → 0**, no other cap moved; `adminGate.writes` 59 → 57. Census **re-measured from disk** (method in [As-Built State](#as-built-state--read-this-first)): 89 / 59 files on `023dde98`, **87 / 81 + 6 / 58 files** after; the three gated-but-unregistered invite handlers registered as rows 88–90 (doc only) so live rows = measured handlers. Added "Removing an admin" to [Bootstrapping Admins](#bootstrapping-admins), including the seed re-activation trap and the `is_platform_admin()` asymmetry. OI-2b and OI-3 done; "What is NOT true" Settings row restated |
+| 2026-10-03 | ADMIN_BOS_CLEANUP slice 2: `/admin` pages 27 → 28 | `agentspilot-billing` added (the AgentsPilot grace period, boost packs and calculator, moved off `/admin/system-config`, which is now Model pricing only). It is a client page under the guarded layout and inherits the guard without an edit. The page truth-table row now names all seven pages added since 2026-09-21 (`business-os-llm` was missing from the old list; `business-os-invites` arrived after the 2026-09-27 count). No handler, register row, census or cap changes. The `system-config/pricing` write handlers (PUT, POST, DELETE) now flush their audit entries before responding |
 | 2026-10-03 | Credit deduction slice 11c: register row 91, census 88 = 82 + 6 + 0, 59 files | Row **91** `business-os/credits/accounts/[accountId]#GET` (the admin per-account credit view behind the Credits block of the Businesses panel), gated from birth with `requireAdmin` as its first statement. Census **re-measured from disk** with the method in [As-Built State](#as-built-state--read-this-first): **88 / 82 + 6 / 59 files**. No cap moved (SA OP-34: the caps count exemptions; a handler gated from birth moves none) |

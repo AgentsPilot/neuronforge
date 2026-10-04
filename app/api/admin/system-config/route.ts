@@ -20,8 +20,10 @@
  * write today, `payment_grace_period_days`, is read directly, so there is no
  * practical effect.
  *
- * Response shapes are deliberately identical to the pre-Step-0 route, so
- * `app/admin/system-config/page.tsx` needs no change.
+ * Response shapes are deliberately identical to the pre-Step-0 route. Since
+ * ADMIN_BOS_CLEANUP slice 2 the only caller is
+ * `app/admin/agentspilot-billing/page.tsx` (grace period and the `billing` rows),
+ * which needed no route change.
  *
  * @module app/api/admin/system-config
  */
@@ -76,6 +78,19 @@ function canonicalKey(key: string): string {
  */
 function isReservedKey(key: string): boolean {
   return canonicalKey(key).startsWith(RESERVED_KEY_PREFIX);
+}
+
+/**
+ * Exact keys this route must never write. `helpbot_embedding_model` is read by
+ * Business OS chat's plan cache and verified questions (EmbeddingService):
+ * changing it invalidates every stored vector, so it is a data migration, not a
+ * setting (`lib/business-os/llm/modelSettingsPolicy.ts`). The HelpBot route
+ * refuses it too (ADMIN_HELPBOT_LOCK_AND_AUDIT_EMAIL, SA F-1).
+ */
+const LOCKED_KEYS: ReadonlySet<string> = new Set(['helpbot_embedding_model']);
+
+function isLockedKey(key: string): boolean {
+  return LOCKED_KEYS.has(canonicalKey(key));
 }
 
 /** A stored key never has surrounding whitespace; a padded one is a typo or a probe. */
@@ -206,6 +221,22 @@ export async function PUT(request: NextRequest) {
           success: false,
           error:
             'Business OS LLM area settings (bos_llm_area_*) cannot be changed here. Use scripts/bos-llm-settings.ts.',
+        },
+        { status: 400 }
+      );
+    }
+
+    const lockedKeys = keys.filter(isLockedKey);
+    if (lockedKeys.length > 0) {
+      requestLogger.warn(
+        { userId: gate.user.id, lockedKeys },
+        'Refused a write to a locked settings key'
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'helpbot_embedding_model cannot be changed here: it is shared with Business OS chat and changing it is a data migration.',
         },
         { status: 400 }
       );

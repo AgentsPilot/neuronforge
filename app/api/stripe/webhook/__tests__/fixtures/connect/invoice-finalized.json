@@ -1,0 +1,20 @@
+{
+  "id": "evt_connect_invoice_finalized",
+  "object": "event",
+  "api_version": "2025-10-29.clover",
+  "type": "invoice.finalized",
+  "account": "acct_owner_a",
+  "livemode": false,
+  "created": 1790000600,
+  "data": {
+    "object": {
+      "id": "in_connect_final_1",
+      "object": "invoice",
+      "currency": "usd",
+      "hosted_invoice_url": "https://invoice.stripe.test/i/in_connect_final_1",
+      "invoice_pdf": "https://invoice.stripe.test/i/in_connect_final_1/pdf",
+      "metadata": {},
+      "parent": null
+    }
+  }
+}

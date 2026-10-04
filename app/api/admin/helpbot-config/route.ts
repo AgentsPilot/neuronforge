@@ -14,6 +14,19 @@ const supabase = createClient(
 export const dynamic = 'force-dynamic'
 
 /**
+ * Shared with Business OS chat: `EmbeddingService` reads it, and BOS chat's
+ * `PlanCache` and `VerifiedQuestions` store vectors made with it. Changing it
+ * invalidates every stored vector (and 3-small -> 3-large changes dimensions),
+ * so it is a data migration, not a setting — see
+ * lib/business-os/llm/modelSettingsPolicy.ts (BOS_LLM_SETTINGS_EXCLUSION_REASON).
+ * This route therefore never writes it; the source guard in
+ * __tests__/embeddingLock.test.ts keeps it out of the PUT's write set.
+ */
+const HELPBOT_EMBEDDING_MODEL_KEY = 'helpbot_embedding_model'
+/** Must match the fallback `EmbeddingService` reads with, so the 400 compares against what is actually used. */
+const HELPBOT_EMBEDDING_MODEL_DEFAULT = 'text-embedding-3-small'
+
+/**
  * GET /api/admin/helpbot-config
  * Fetch current helpbot configuration
  */
@@ -44,7 +57,7 @@ export async function GET() {
       },
       semantic: {
         enabled: settings.find((s) => s.key === 'helpbot_semantic_search_enabled')?.value ?? true,
-        embeddingModel: settings.find((s) => s.key === 'helpbot_embedding_model')?.value || 'text-embedding-3-small',
+        embeddingModel: settings.find((s) => s.key === HELPBOT_EMBEDDING_MODEL_KEY)?.value || HELPBOT_EMBEDDING_MODEL_DEFAULT,
         cacheThreshold: settings.find((s) => s.key === 'helpbot_semantic_threshold')?.value || 0.85,
         faqThreshold: settings.find((s) => s.key === 'helpbot_semantic_faq_threshold')?.value || 0.80,
         autoPromoteEnabled: settings.find((s) => s.key === 'helpbot_auto_promote_enabled')?.value ?? false,
@@ -98,6 +111,32 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Config object required' }, { status: 400 })
     }
 
+    // The embedding model is read-only here (see HELPBOT_EMBEDDING_MODEL_KEY).
+    // Sending the stored value back is tolerated (an older page sent the whole
+    // config); a different value is refused before anything is written.
+    const requestedEmbeddingModel = config.semantic?.embeddingModel
+    if (requestedEmbeddingModel !== undefined && requestedEmbeddingModel !== null) {
+      const storedEmbeddingModel = await SystemConfigService.getString(
+        supabase,
+        HELPBOT_EMBEDDING_MODEL_KEY,
+        HELPBOT_EMBEDDING_MODEL_DEFAULT
+      )
+      if (requestedEmbeddingModel !== storedEmbeddingModel) {
+        requestLogger.warn(
+          { requestedEmbeddingModel, storedEmbeddingModel },
+          'Rejected HelpBot config save: embedding model is locked'
+        )
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              'The embedding model cannot be changed here. It is shared with Business OS chat, and changing it invalidates every stored vector (the plan cache and verified questions), so it is a data migration, not a setting.',
+          },
+          { status: 400 }
+        )
+      }
+    }
+
     const updates: Record<string, any> = {
       helpbot_general_model: config.general.model,
       helpbot_general_temperature: config.general.temperature,
@@ -106,7 +145,6 @@ export async function PUT(request: NextRequest) {
       helpbot_input_temperature: config.input.temperature,
       helpbot_input_max_tokens: config.input.maxTokens,
       helpbot_semantic_search_enabled: config.semantic.enabled,
-      helpbot_embedding_model: config.semantic.embeddingModel,
       helpbot_semantic_threshold: config.semantic.cacheThreshold,
       helpbot_semantic_faq_threshold: config.semantic.faqThreshold,
       helpbot_auto_promote_enabled: config.semantic.autoPromoteEnabled,

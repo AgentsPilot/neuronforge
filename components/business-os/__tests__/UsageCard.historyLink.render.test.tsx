@@ -99,7 +99,7 @@ describe('parked: with the flag off (the default), the card is exactly the 6a ca
     else process.env[FLAG] = value;
     install({ ok: true, body: { success: true, data: MONTHLY } });
     render(<UsageCard />);
-    await screen.findByTestId('credits-of');
+    await screen.findByTestId('credits-arc');
     await act(async () => {});
     expect(screen.queryByTestId('credits-history-link')).not.toBeInTheDocument();
     expect(screen.queryByTestId('credit-history-panel')).not.toBeInTheDocument();

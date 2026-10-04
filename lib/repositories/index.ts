@@ -114,6 +114,22 @@ export type {
   BusinessOsCreditLotSource,
   BusinessOsCreditLotActorKind,
 } from './BusinessOsCreditLotRepository';
+// Business OS billing record (plan payments P-2a): the Business OS Stripe
+// customer per account per mode. Server-only, service role, no client grant;
+// one caller (businessOsStripeCustomer.ts) — a source guard enforces that,
+// barrel included.
+export {
+  BusinessOsBillingAccountRepository,
+  businessOsBillingAccountRepository,
+  BILLING_ACCOUNT_COLUMNS,
+  BOS_BILLING_ACCOUNTS_TABLE,
+} from './BusinessOsBillingAccountRepository';
+export type {
+  BusinessOsBillingAccount,
+  BusinessOsBillingCustomerInput,
+  BusinessOsBillingCustomerRecordResult,
+  BusinessOsSubscriptionStatus,
+} from './BusinessOsBillingAccountRepository';
 export {
   OrganizationRepository,
   organizationRepository,

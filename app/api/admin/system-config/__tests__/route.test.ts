@@ -151,6 +151,23 @@ describe('PUT validation and reserved keys (T0-2)', () => {
     expect(setMultiple).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['the exact key', 'helpbot_embedding_model'],
+    ['an upper-case variant', 'HELPBOT_EMBEDDING_MODEL'],
+    ['a zero-width-space prefix', '​helpbot_embedding_model'],
+  ])('refuses the locked helpbot_embedding_model key (%s) with 400 and writes nothing', async (_label, key) => {
+    const response = await route.PUT(
+      putRequest({ updates: { [key]: 'text-embedding-3-large' } })
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      error: expect.stringContaining('helpbot_embedding_model'),
+    });
+    expect(setMultiple).not.toHaveBeenCalled();
+  });
+
   it('refuses bos_llm_area_* keys with 400 and writes nothing', async () => {
     const response = await route.PUT(
       putRequest({ updates: { bos_llm_area_chat: { enabled: false } } })

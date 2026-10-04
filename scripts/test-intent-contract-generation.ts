@@ -16,7 +16,7 @@ import { UserPluginConnections } from '../lib/server/user-plugin-connections.js'
 import { PluginManagerV2 } from '../lib/server/plugin-manager-v2.js'
 import { writeFileSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { createLogger } from '../lib/logger/index.js'
+import { createLogger } from '../lib/logger'
 
 const logger = createLogger({ module: 'TEST', service: 'IntentContract' })
 

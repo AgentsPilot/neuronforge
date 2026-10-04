@@ -62,6 +62,18 @@ interface AuditLogEntry {
   severity: string;
   created_at: string;
   compliance_flags: string[];
+  /**
+   * The sign-in email the writer recorded on the row (`audit_trail.user_email`,
+   * sent by the route's `select('*')` and matched by its search). Shown when the
+   * account has no profile name (Q-SA4-1, user-approved 2026-10-04).
+   */
+  user_email?: string | null;
+  /**
+   * The route fills `full_name` from `profiles` (ADMIN_BOS_CLEANUP slice 4) and
+   * never sends `email` (`profiles` has none), so the `users.email` branches
+   * below are unreachable from the route; kept so older fixtures still render.
+   * Null when the account has no name; absent when the lookup failed.
+   */
   users?: {
     email?: string;
     full_name?: string;
@@ -120,6 +132,18 @@ function filtersFromUrl(params: URLSearchParams | null): FilterState {
     entityType: params.get('entity_type') || 'all',
     userId: params.get('user_id') || '',
   };
+}
+
+/**
+ * Who a row is about, for the row line and the expanded "User" tile:
+ * profile name, then the row's sign-in email (Q-SA4-1), then the account id.
+ *
+ * `users.email` sits after `user_email` only for older test fixtures: the route
+ * never sends it (slice 4 O-7). Callers render this only when `user_id` is set,
+ * so a system row (no user) is unchanged.
+ */
+function auditUserLabel(log: AuditLogEntry): string | null {
+  return log.users?.full_name || log.user_email || log.users?.email || log.user_id;
 }
 
 /**
@@ -570,7 +594,7 @@ function AuditTrailPageContent() {
                 <input
                   id="audit-search"
                   type="text"
-                  placeholder="Search by agent, user email, or name..."
+                  placeholder="Search by email, action, resource or entity ID…"
                   value={filters.searchTerm}
                   onChange={(e) => setFilters({ ...filters, searchTerm: e.target.value })}
                   className="w-full pl-8 pr-3 py-1.5 text-sm bg-slate-900/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -895,7 +919,7 @@ function AuditTrailPageContent() {
                     {log.user_id && (
                       <span className="text-slate-500">
                         User: <span className="text-slate-300">
-                          {log.users?.email || log.users?.full_name || log.user_id}
+                          {auditUserLabel(log)}
                         </span>
                       </span>
                     )}
@@ -937,7 +961,7 @@ function AuditTrailPageContent() {
                         <div className="bg-slate-800/30 rounded-lg p-3">
                           <div className="text-xs text-slate-400 mb-1">User</div>
                           <div className="text-sm font-semibold text-slate-200 truncate">
-                            {log.users?.email || log.users?.full_name || log.user_id}
+                            {auditUserLabel(log)}
                           </div>
                         </div>
                       )}

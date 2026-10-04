@@ -104,6 +104,9 @@ const SOURCES = [
   'app/api/business-os/credits/history/route.ts',
   'lib/business-os/credits/ownerCreditHistory.ts',
   'components/business-os/CreditHistoryPanel.tsx',
+  // Credit deduction slice 8a — the admin "Credits left" column (names `creditAllowanceForDisplay`).
+  'lib/business-os/credits/adminCreditPercent.ts',
+  'app/admin/users/components/CreditsLeftCell.tsx',
   // The one presentation rule both surfaces apply to a category's line.
   'lib/business-os/planCategoryLine.ts',
   // Credit deduction slice 11c — the admin per-account credit view. The route
@@ -231,7 +234,8 @@ describe('credit figures come only from configuration (user requirement, 2026-10
     const strings = dictionaryStringsAboutCredits();
     // Non-vacuity: the scan really reaches the plan and usage copy in three languages.
     expect(strings.filter(({ key }) => key === 'plan.category.credits')).toHaveLength(3);
-    expect(strings.filter(({ key }) => key === 'usage.of')).toHaveLength(3);
+    // Slice 8a: `usage.of` is gone (SQ-47); the card's percentage label is the anchor now.
+    expect(strings.filter(({ key }) => key === 'usage.sr.monthly')).toHaveLength(3);
 
     const offenders = strings.filter(({ value }) => findFigures(value).length > 0);
     expect(offenders).toEqual([]);
@@ -239,8 +243,11 @@ describe('credit figures come only from configuration (user requirement, 2026-10
 
   it('the usage templates take the number as a placeholder, never a value', () => {
     const strings = dictionaryStringsAboutCredits();
-    for (const key of ['usage.of', 'usage.of_total']) {
-      for (const { value } of strings.filter((entry) => entry.key === key)) expect(value).toContain('{n}');
+    // Slice 8a: the card shows a percentage; every template takes it as {percent}.
+    for (const key of ['usage.less_than_percent', 'usage.sr.monthly', 'usage.sr.trial', 'usage.sr.plain']) {
+      const entries = strings.filter((entry) => entry.key === key);
+      expect(entries).toHaveLength(3);
+      for (const { value } of entries) expect(value).toContain('{percent}');
     }
   });
 });
