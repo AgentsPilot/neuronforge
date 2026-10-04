@@ -94,6 +94,7 @@ jest.mock('@/lib/business-os/insight/correlation', () => ({ getCorrelationEngine
 jest.mock('@/lib/business-os/llm/aiActionAudit', () => ({ runAiAction: jest.fn() }));
 jest.mock('@/lib/services/PaymentReminderService', () => ({
   paymentReminderService: {
+    billDueDatedStages: async () => ({ billed: 0, skipped: 0, failed: 0 }),
     processOverdueItems: async () => ({ overdueInvoices: 0, overdueInstallments: 0, remindersScheduled: 0 }),
     processDueReminders: async () => ({ processed: 0, sent: 0, failed: 0 }),
   },
