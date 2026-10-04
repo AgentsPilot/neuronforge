@@ -34,8 +34,14 @@ import {
   OWNER_CHARGE_COLUMNS,
   OWNER_CREDIT_READ_LIMITS,
   OWNER_DIARY_COLUMNS,
+  OWNER_LOT_COLUMNS,
+  OWNER_LOT_DRAW_COLUMNS,
   OWNER_TOTALS_COLUMNS,
+  type OwnerCreditLotRow,
 } from '../BusinessOsCreditOwnerReadRepository';
+// Slice 11d: type only, for the type-level assertion that an owner lot row is
+// a balance-core lot (listed on the G3 guard, SA W11d-3).
+import type { CreditLotForBalance } from '@/lib/business-os/credits/creditLots';
 
 type Call = { method: string; args: unknown[] };
 
@@ -371,5 +377,203 @@ describe('who constructs this repository (slice 11c, SA W11c-17)', () => {
     expect(
       constructors.filter(({ code }) => SERVICE_CLIENT.test(code)).map(({ file }) => file).sort()
     ).toEqual([ADMIN_WIRING, LOW_LINE_WIRING].sort());
+  });
+});
+
+/**
+ * Credit deduction slice 11d (workplan §11d.6.1; SA W11d-5, OP-40, W11d-7):
+ * the owner's own credit lots, for the card's "Extra credits" figure.
+ */
+describe('listOwnCreditLots (slice 11d)', () => {
+  const migration = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/20261017_business_os_credit_lots.sql'), 'utf8');
+  const grantedTo = (table: string): string[] => {
+    const match = new RegExp(`GRANT SELECT \\(([^)]*)\\) ON TABLE public\\.${table} TO authenticated;`).exec(migration);
+    if (!match) throw new Error(`No authenticated GRANT line for ${table}`);
+    return match[1].split(',').map((c) => c.trim());
+  };
+  const columns = (list: string) => list.split(',').map((c) => c.trim());
+  const HIDDEN = ['reason', 'actor_kind', 'actor_admin_id', 'idempotency_key', 'source_ref', 'credit_value_version'];
+
+  const lotRow = (n: number, over: Record<string, unknown> = {}) => ({
+    id: `bbbbbbbb-bbbb-4bbb-8bbb-${String(n).padStart(12, '0')}`,
+    user_id: A,
+    credits_granted: '200.000000',
+    expires_at: null,
+    created_at: '2026-10-01T09:00:00.123456+00:00',
+    ...over,
+  });
+  const drawRow = (lot: number, over: Record<string, unknown> = {}) => ({
+    id: `eeeeeeee-eeee-4eee-8eee-${String(lot).padStart(12, '0')}`,
+    lot_id: `bbbbbbbb-bbbb-4bbb-8bbb-${String(lot).padStart(12, '0')}`,
+    user_id: A,
+    kind: 'reversal',
+    credits: '50.000000',
+    created_at: '2026-10-02T09:00:00+00:00',
+    ...over,
+  });
+
+  /** Lots from `lots`, draws from `draws`, by table. */
+  const byTable = (lots: unknown, draws: unknown = []) =>
+    recordingClient((calls) =>
+      calls[0].args[0] === 'business_os_credit_lots' ? { data: lots, error: null } : { data: draws, error: null }
+    );
+
+  it('parses both 20261017 GRANT lines (non-vacuity), and the hidden columns are not granted', () => {
+    expect(grantedTo('business_os_credit_lots')).toContain('credits_granted');
+    expect(grantedTo('business_os_credit_lot_draws')).toContain('lot_id');
+    for (const column of HIDDEN) {
+      expect(grantedTo('business_os_credit_lots')).not.toContain(column);
+      expect(grantedTo('business_os_credit_lot_draws')).not.toContain(column);
+    }
+  });
+
+  it('the column lists are exact strings (SA OP-40)', () => {
+    expect(OWNER_LOT_COLUMNS).toBe('id, user_id, credits_granted, expires_at, created_at');
+    expect(OWNER_LOT_DRAW_COLUMNS).toBe('id, lot_id, user_id, kind, credits, created_at');
+  });
+
+  it('both column lists are subsets of their GRANT lines, and narrower: no source, base or bonus', () => {
+    expect(columns(OWNER_LOT_COLUMNS).filter((c) => !grantedTo('business_os_credit_lots').includes(c))).toEqual([]);
+    expect(columns(OWNER_LOT_DRAW_COLUMNS).filter((c) => !grantedTo('business_os_credit_lot_draws').includes(c))).toEqual([]);
+    for (const column of ['source', 'credits_base', 'credits_bonus', ...HIDDEN]) {
+      expect(columns(OWNER_LOT_COLUMNS)).not.toContain(column);
+      expect(columns(OWNER_LOT_DRAW_COLUMNS)).not.toContain(column);
+    }
+  });
+
+  it('no lots: [] and NO draws query', async () => {
+    const { client, queries } = byTable([]);
+    const result = await new BusinessOsCreditOwnerReadRepository(client).listOwnCreditLots(A);
+    expect(result).toEqual({ data: [], error: null });
+    expect(queries).toHaveLength(1);
+    const calls = queries[0];
+    expect(calls[0].args).toEqual(['business_os_credit_lots']);
+    expect(argsOf(calls, 'select')).toEqual([[OWNER_LOT_COLUMNS]]);
+    expect(argsOf(calls, 'eq')).toEqual([['user_id', A]]);
+    expect(argsOf(calls, 'order')).toEqual([['created_at', { ascending: true }]]);
+    expect(argsOf(calls, 'range')).toEqual([[0, OWNER_CREDIT_READ_LIMITS.LOTS_CEILING - 1]]);
+  });
+
+  it('lots and their draws: both reads scoped by user_id, draws attached to their lot, numeric strings parsed', async () => {
+    const { client, queries } = byTable(
+      [lotRow(1), lotRow(2, { expires_at: '2026-12-31T00:00:00+00:00', credits_granted: 12.5 })],
+      [drawRow(1), drawRow(1, { id: 'eeeeeeee-eeee-4eee-8eee-000000000099', credits: '0.250000' })]
+    );
+    const result = await new BusinessOsCreditOwnerReadRepository(client).listOwnCreditLots(A);
+    expect(result.error).toBeNull();
+    expect(result.data).toEqual([
+      {
+        id: 'bbbbbbbb-bbbb-4bbb-8bbb-000000000001',
+        creditsGranted: 200,
+        expiresAt: null,
+        createdAt: '2026-10-01T09:00:00.123456+00:00',
+        draws: [
+          { kind: 'reversal', credits: 50, createdAt: '2026-10-02T09:00:00+00:00' },
+          { kind: 'reversal', credits: 0.25, createdAt: '2026-10-02T09:00:00+00:00' },
+        ],
+      },
+      {
+        id: 'bbbbbbbb-bbbb-4bbb-8bbb-000000000002',
+        creditsGranted: 12.5,
+        expiresAt: '2026-12-31T00:00:00+00:00',
+        createdAt: '2026-10-01T09:00:00.123456+00:00',
+        draws: [],
+      },
+    ]);
+    expect(queries).toHaveLength(2);
+    const draws = queries[1];
+    expect(draws[0].args).toEqual(['business_os_credit_lot_draws']);
+    expect(argsOf(draws, 'select')).toEqual([[OWNER_LOT_DRAW_COLUMNS]]);
+    expect(argsOf(draws, 'eq')).toEqual([['user_id', A]]);
+    expect(argsOf(draws, 'in')).toEqual([
+      ['lot_id', ['bbbbbbbb-bbbb-4bbb-8bbb-000000000001', 'bbbbbbbb-bbbb-4bbb-8bbb-000000000002']],
+    ]);
+    expect(argsOf(draws, 'range')).toEqual([[0, OWNER_CREDIT_READ_LIMITS.LOTS_CEILING - 1]]);
+  });
+
+  it('chunks the draws read at MAX_IDS_PER_REQUEST (201 lots, two draw requests)', async () => {
+    const lots = Array.from({ length: OWNER_CREDIT_READ_LIMITS.MAX_IDS_PER_REQUEST + 1 }, (_, i) => lotRow(i + 1));
+    const { client, queries } = byTable(lots, []);
+    const result = await new BusinessOsCreditOwnerReadRepository(client).listOwnCreditLots(A);
+    expect(result.data).toHaveLength(201);
+    expect(queries).toHaveLength(3);
+    expect((argsOf(queries[1], 'in')[0][1] as string[]).length).toBe(OWNER_CREDIT_READ_LIMITS.MAX_IDS_PER_REQUEST);
+    expect((argsOf(queries[2], 'in')[0][1] as string[]).length).toBe(1);
+  });
+
+  it.each([
+    ['the lots ceiling', () => byTable(Array.from({ length: OWNER_CREDIT_READ_LIMITS.LOTS_CEILING }, (_, i) => lotRow(i + 1)))],
+    [
+      'a draws chunk at the ceiling',
+      () => byTable([lotRow(1)], Array.from({ length: OWNER_CREDIT_READ_LIMITS.LOTS_CEILING }, () => drawRow(1))),
+    ],
+  ])('%s is an error, never a partial list', async (_name, make) => {
+    const { client } = make();
+    const result = await new BusinessOsCreditOwnerReadRepository(client).listOwnCreditLots(A);
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+  });
+
+  it('a read error on the lots or the draws is an error', async () => {
+    const failLots = recordingClient(() => ({ data: null, error: new Error('permission denied for column') }));
+    expect((await new BusinessOsCreditOwnerReadRepository(failLots.client).listOwnCreditLots(A)).error?.message).toBe(
+      'permission denied for column'
+    );
+    const failDraws = recordingClient((calls) =>
+      calls[0].args[0] === 'business_os_credit_lots'
+        ? { data: [lotRow(1)], error: null }
+        : { data: null, error: new Error('JWT expired') }
+    );
+    const result = await new BusinessOsCreditOwnerReadRepository(failDraws.client).listOwnCreditLots(A);
+    expect(result).toEqual({ data: null, error: expect.any(Error) });
+  });
+
+  it.each([
+    ['an unreadable granted figure', [lotRow(1, { credits_granted: 'abc' })], []],
+    ['a null granted figure', [lotRow(1, { credits_granted: null })], []],
+    ['an unreadable created_at', [lotRow(1, { created_at: 'yesterday' })], []],
+    ['an unreadable expires_at', [lotRow(1, { expires_at: 'soon' })], []],
+    ['a non-UUID lot id', [lotRow(1, { id: 'lot-1' })], []],
+    ['an unreadable draw figure', [lotRow(1)], [drawRow(1, { credits: 'Infinity' })]],
+    ['an unreadable draw date', [lotRow(1)], [drawRow(1, { created_at: 42 })]],
+    ['a consumption draw: the slice 9 tripwire (W11d-7)', [lotRow(1)], [drawRow(1, { kind: 'consumption' })]],
+    ['a lots answer that is not a list', { id: 'x' }, []],
+  ])('%s is an error, never 0', async (_name, lots, draws) => {
+    const { client } = byTable(lots, draws);
+    const result = await new BusinessOsCreditOwnerReadRepository(client).listOwnCreditLots(A);
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+  });
+
+  it.each([['not-a-uuid'], [''], [undefined as unknown as string]])('refuses the account %p before any query', async (account) => {
+    const { client, queries } = byTable([lotRow(1)]);
+    const result = await new BusinessOsCreditOwnerReadRepository(client).listOwnCreditLots(account);
+    expect(result.error).toBeInstanceOf(Error);
+    expect(queries).toHaveLength(0);
+  });
+
+  it('its row type is a balance-core lot (type-level: the scoped tsc fails otherwise)', () => {
+    const asBalanceLot = (row: OwnerCreditLotRow): CreditLotForBalance => row;
+    expect(typeof asBalanceLot).toBe('function');
+  });
+
+  it('only the repository and the card payload builder name listOwnCreditLots among product files (G11d-4)', () => {
+    const ROOT = process.cwd();
+    const found: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+        if (entry.name === 'node_modules' || entry.name === '__tests__' || entry.name.startsWith('.')) continue;
+        const rel = `${dir}/${entry.name}`;
+        if (entry.isDirectory()) walk(rel);
+        else if (/\.tsx?$/.test(entry.name) && !/\.(test|spec)\.tsx?$/.test(entry.name)) {
+          if (fs.readFileSync(path.join(ROOT, rel), 'utf8').includes('listOwnCreditLots')) found.push(rel);
+        }
+      }
+    };
+    ['app', 'lib', 'components', 'hooks'].forEach(walk);
+    // Non-vacuity: the builder really is found, so an empty scan cannot pass.
+    expect(found.sort()).toEqual(
+      ['lib/business-os/credits/ownerCreditUsage.ts', 'lib/repositories/BusinessOsCreditOwnerReadRepository.ts'].sort()
+    );
   });
 });

@@ -1,6 +1,6 @@
-# Workplan: Business OS credit deduction — slice 11, credit lots (11a in full; 11b and 11c detailed; 11d outlined)
+# Workplan: Business OS credit deduction — slice 11, credit lots (11a in full; 11b, 11c and 11d detailed)
 
-> **Last Updated**: 2026-10-03
+> **Last Updated**: 2026-10-04
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_LLM_DEDUCTION_LAYER_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_DEDUCTION_LAYER_REQUIREMENT.md): §12 "Slice 11 — Admin grant / reduce credits and per-account view", "Slice 11 scoping (BA, 2026-10-02)" including "Folded in after the SA review", §13 "Slice 11 decisions for the user (2026-10-02)" (all accepted by the user 2026-10-02; **S11-D-4 = A**, so no owner-note column; **S11-BQ-1 = Yes**), §14 S11-SQ-1 to S11-SQ-16 with their SA rulings, and **"SA review — slice 11 scoping (2026-10-02)"** (binding; cited below as "SA-11")
@@ -9,8 +9,9 @@
 **Branch:** `feature/business-os-credit-deduction-slice-11` (off `origin/main` `023dde98`; confirmed with `git branch --show-current` on 2026-10-02). 11b, 11c and 11d get their own branches from RM.
 **11b branch:** `feature/business-os-credit-deduction-slice-11b` (off `origin/main` `9a7c4fb3`, which includes merged 11a PR #173; confirmed with `git branch --show-current` on 2026-10-02).
 **11c branch:** `feature/business-os-credit-deduction-slice-11c` (off `origin/main` `5061489b`, which includes 11a #173, 11b #179 and #180; confirmed with `git branch --show-current` on 2026-10-03).
+**11d branch:** `feature/business-os-credit-deduction-slice-11d` (off `origin/main` `3fde62b2`, which includes 11a #173, 11b #179, 11c #194, BD-26 #202, slice 8a #189 / 8b #200; confirmed with `git branch --show-current` on 2026-10-04).
 **Date:** 2026-10-02
-**Status:** **11a merged (PR #173) and applied to PROD 2026-10-02** (§17: checker VERDICT PASS 23/0, probe PROBE PASS, charge checker C7 PASS; gate S11-C-5 met). **11b merged (PR #179, 2026-10-03)** (section "11b — Admin give / take back credits (API)"; SA code review approved, QA pass; no migration). **11c: PR #194 open (2026-10-04) — SA code review approved, QA pass, user approved; not merged, held until the BD-26 PR merges and `20261018` is applied to PROD** (section "11c — Admin per-account credit view", results in §11c.10; no migration).
+**Status:** **11a merged (PR #173) and applied to PROD 2026-10-02** (§17: checker VERDICT PASS 23/0, probe PROBE PASS, charge checker C7 PASS; gate S11-C-5 met). **11b merged (PR #179, 2026-10-03)** (section "11b — Admin give / take back credits (API)"; SA code review approved, QA pass; no migration). **11c merged (PR #194, 2026-10-04, `15c96605`)** (section "11c — Admin per-account credit view", results in §11c.10; no migration). **11d: PR #213 open (2026-10-04) — SA code review approved (QA folded into SA re-run per proportionate-effort rule); user approved; no migration** (section "11d — Owner sees extra credits", results in §11d.10; no migration).
 
 ## Overview
 
@@ -31,9 +32,10 @@ Slice 11 lets an admin give an account extra credits and take them back, shows a
 11. [Flagged items](#11-flagged-items)
 12. [Outline: 11b — admin give / take back (API)](#12-outline-11b--admin-give--take-back-api) *(superseded by the 11b section)*
 13. [Outline: 11c — admin per-account credit view](#13-outline-11c--admin-per-account-credit-view) *(superseded by the 11c section)*
-14. [Outline: 11d — owner sees extra credits](#14-outline-11d--owner-sees-extra-credits)
+14. [Outline: 11d — owner sees extra credits](#14-outline-11d--owner-sees-extra-credits) *(superseded by the 11d section)*
 - [11b — Admin give / take back credits (API)](#11b--admin-give--take-back-credits-api) (detailed 11b workplan, 2026-10-02)
 - [11c — Admin per-account credit view](#11c--admin-per-account-credit-view) (detailed 11c workplan, 2026-10-03)
+- [11d — Owner sees extra credits](#11d--owner-sees-extra-credits) (detailed 11d workplan, 2026-10-04)
 15. [SA Review Notes](#15-sa-review-notes)
 16. [QA Testing Report](#16-qa-testing-report)
 17. [PROD apply record (the user pastes here)](#17-prod-apply-record-the-user-pastes-here)
@@ -652,6 +654,8 @@ The spec is followed as written until SA rules on each of these.
 *(Detailed later. ≈ 2 d.)* `GET /api/admin/business-os/credits/accounts/[accountId]` (`requireAdmin` first, uuid path, 409 `platform_account`, 404 tenant, `force-dynamic`, correlationId); `readCreditPosition(accountId, deps, log)` extracted from `readOwnerCreditUsage` (its tests green unedited); `adminCreditPositionDeps.ts` builds the owner read repository on the service-role client, documented; allowance and deciding layer from a helper inside the entitlements module; the route registered in `KNOWN_NON_GATE_IMPORTERS`; lots through `listLotsWithDraws` and extra credits through `extraCreditsAt`. Figures: plan left, extra credits, "over the plan this period" when above 0 — **no combined remaining** (S11-CR-3). Credits block with Give / Take back forms in `BusinessOsPanel.tsx` (S11-D-8 B; request id minted per form opening; confirm names the business; refusal copy map with a completeness test). Admin register row, census and authz guard caps +1 in the same PR.
 
 ## 14. Outline: 11d — owner sees extra credits
+
+> **Superseded 2026-10-04** by [11d — Owner sees extra credits](#11d--owner-sees-extra-credits) below, the detailed 11d workplan. Kept as written for the record.
 
 *(Detailed later. ≈ 1 d; may run in parallel with 11c once 11a is merged and applied.)* `extraCredits` replaces `granted` in the owner payload (exact, 6 dp), `remaining` stays plan-only (`computeCreditBalance` with `granted: 0`); owner reads through new methods on `BusinessOsCreditOwnerReadRepository` (owner RLS client, granted columns only, subset-tested against the 20261017 GRANT lines); the second figure "Extra credits" with its one line in en / he / es (he / es marked for native review); the payload allow-list pin and forbidden-word walk updated deliberately. Coordinate with slice 7 on `ownerCreditUsage.ts` / `LanguageContext.tsx` (whoever merges second rebases).
 
@@ -1522,6 +1526,378 @@ The SA-11 rulings are followed as written until SA rules on each of these.
 
 ---
 
+## 11d — Owner sees extra credits
+
+*(Written by Dev 2026-10-04 on `feature/business-os-credit-deduction-slice-11d` (off `origin/main` `3fde62b2`, which includes 11a #173, 11b #179, 11c #194, BD-26 #202 with `20261018` applied to PROD, slice 8a #189 and 8b #200, and the data-export refactor; confirmed with `git branch --show-current`). Supersedes the §14 outline. No code yet; awaiting SA workplan review. Sources: requirement §13 **S11-D-1 A** (one "Extra credits" figure for every kind of lot, with its one line), **S11-D-4 A** (the reason is internal; the owner never sees it, nor the admin, nor the key), boost **R-5 (c)** (plan left and extra credits are two figures, never a combined total on the owner card), **BD-25** (the % and the low line measure the plan allowance only), **BD-11** (refresh triggers); §14 **S11-SQ-4** (one definition of extra credits), **S11-SQ-10** (owner payload: `granted` replaced by `extraCredits`, `remaining` stays plan-only, owner reads through new owner-repository methods, `computeCreditBalance` unchanged), **S11-SQ-15** (registration); **S11-AC-7**; "SA review — slice 11 scoping" (SA-11) item 10 of its conditions list; the slice 8 constraints (`creditBands.ts`, `creditWindowRule.ts`, `aiChargeRecorder.ts` untouched).)*
+
+### 11d.1 Analysis summary
+
+**What 11d touches (as-built on `3fde62b2`).**
+
+| Area | Today | 11d |
+|---|---|---|
+| Owner card `components/business-os/UsageCard.tsx` (500 lines, `'use client'`) | Reads `GET /api/business-os/usage`; validates the payload (`isOwnerCreditUsage`: period, allowance, used and its split; `granted` / `remaining` not checked); shows "N% left" of the **plan allowance** (`creditPercentLeft(usage.used, allowance.amount)`, band from `creditBands.ts`), the reset date or "For your trial", the explanation tooltip on the ring, used credits when there is no allowance, the error line; the flag-gated history link. Re-reads on mount, on `creditUsageSignal`, on tab visible / back-forward restore, and on the refresh icon (BD-11), one read at a time. Imports from the credits directory exactly `creditBands`, `creditDisplay`, `ownerCreditUsageTypes` (pinned by `ownerCreditSurface.guard` rule 3). Rendered once, in `LiveDashboard.tsx` `:2214` (the "usage-readiness" row beside System readiness) | One new block under the ring: "Extra credits" + the figure, and the one line. Shown only when the payload's `extraCredits` is above 0 (BQ-11d-1). The %, the band, the arc, the tooltip and the no-allowance state are **unchanged** and never read `extraCredits` |
+| Payload type `ownerCreditUsageTypes.ts` | `granted: number` ("Always 0 until grants exist (slice 11). The card ignores it."), `remaining: number \| null` (`max(0, allowance + granted − used)`) | `granted` **removed**, `extraCredits: number` added (exact, 6 dp, never negative, every non-expired lot); `remaining`'s doc becomes "max(0, allowance − used): the plan only, never extra credits" (S11-SQ-10) |
+| Builder `ownerCreditUsage.ts` | `readOwnerCreditUsage(userId, deps, log)`: seam → `readCreditPosition` → maps the window; `const granted = 0`; `remaining = computeCreditBalance({ allowance, granted, used })` | Reads the owner's lots **in parallel** with the position, through a new owner-repository method on the same RLS client, and passes them to `extraCreditsAt(lots, now)` (the one definition, S11-SQ-4). `remaining` = `computeCreditBalance({ …, granted: 0, … })`, literally. `readCreditPosition`, `resolveOwnerCreditWindow` and `computeOwnerCreditWindow` **unchanged** (the history, the admin view and slice 8's readers keep their shape). Its entitlements imports do not change |
+| Wiring `ownerCreditUsageDeps.ts` | `ownerCreditUsageDeps(ownerClient)` builds the owner repository on the caller's RLS client | Code unchanged: the lot read is a method of that same owner repository instance. Only its return type widens to the card's deps type (§11d.3.2) |
+| Route `app/api/business-os/usage/route.ts` | No input at all; RLS client; `force-dynamic` + `no-store`; one `info` log (`userId`, `periodKind`, `gauged`, `used`) | Unchanged in shape. The `info` log gains `hasExtra: boolean` (never the figure, as 11c's log rule) |
+| Owner read repository `BusinessOsCreditOwnerReadRepository.ts` (415 lines) | Ledger reads only (totals, adjustments, charges, diary), on the caller's client; selects only `authenticated`-granted columns, each list tested against the `20261015` GRANT lines; three constructing product files pinned (owner wiring, 8b low line, 11c admin) | **One new method** `listOwnCreditLots(accountId)`: lots then their draws, owner-granted columns only, `.eq('user_id', accountId)` on both, a ceiling that answers an error. Column lists tested as a subset of the `20261017` GRANT lines |
+| Lots and their owner access (migration `20261017`, applied 2026-10-02) | RLS on both tables; `authenticated` SELECT policy `(SELECT auth.uid()) = user_id`; column grants: lots `id, user_id, source, credits_granted, credits_base, credits_bonus, expires_at, created_at`; draws `id, lot_id, user_id, kind, credits, created_at`. Reason, actor, key, source reference and credit value version are not readable by an owner at all | Read **through the owner's RLS client**, never the service role and never `BusinessOsCreditLotRepository` (whose column list names hidden columns and would be refused by the column grant anyway). `20261018` (BD-26) changed only the owner audit policy; the lot policies are as `20261017` left them |
+| Balance core `creditLots.ts` | `extraCreditsAt(lots, at)`; header "11c and 11d will read it too"; the G3 guard lists every file allowed to name it | Called by `ownerCreditUsage.ts`; the header names its callers; the G3 list gains the builder and the test files that name it |
+| Translations `lib/business-os/LanguageContext.tsx` (11,668 lines) | `usage.*` keys in en (`:1300`), es (`:5023`), he (`:10752`); he / es carry "needs native review" comments | Two new keys per language: `usage.extra.label`, `usage.extra.explain` (he / es with the same native-review comment) |
+
+**Collision check (2026-10-04).** `UsageCard.tsx`, `ownerCreditUsage.ts`, `ownerCreditUsageTypes.ts` and `LanguageContext.tsx` were last changed by slices 8a / 8b / 11c, all merged; no open branch in this worktree touches them. The credits boost (slice 5, the owner's "Bought credits" figure, T-13) is not started: under S11-D-1 A it adds **no** key and no second figure; it reuses this one (a BA edit to the boost requirement, already noted in SA-11). `LanguageContext.tsx` is the one shared hot file: the edit is eight added lines in three places, so a rebase is trivial.
+
+**Skills read and how they apply.**
+
+| Skill | Applies because | What it requires in 11d |
+|---|---|---|
+| `business-os-entitlements` | `ownerCreditUsage.ts` is a registered importer and is edited | Its symbols (`creditAllowanceForDisplay`, `getEntitlementService`, `resolveAccountId`) do not change, so `KNOWN_NON_GATE_IMPORTERS` is not edited (S11-SQ-15). `creditLots.ts` and the repository are outside the module and import nothing from it. No capability or tier literal anywhere. `npm run test:bos-entitlements` on the final diff |
+| `tenant-isolation-guard` | A new read of an owned table | Not a service-role path: the account is the session's (`resolveAccountId(user.id)`), the client is the caller's RLS client, the route takes no input. The repository still requires the account id and adds `.eq('user_id', accountId)` on both reads (CLAUDE.md rule 4; RLS is defence in depth). Test: both reads carry the filter; a non-UUID is refused before any query |
+| `new-repository` | New method on an existing repository | `RepositoryResult`, never throws, client injected (no default, as the class already is), `user_id` filter, a unit test for the method; no soft delete (append-only table) |
+| `business-os-schema-check` | Claims about `business_os_credit_lots` / `_draws` columns | Verified against `supabase/migrations/20261017_business_os_credit_lots.sql` (the GRANT lines quoted above) and the 11a PROD checker record (§17, VERDICT PASS). The test parses the GRANT lines, so a drift fails in CI |
+| `bos-llm-call-standards`, `durable-queue-drain`, `new-api-route`, `new-plugin` | Not engaged (no AI call, no queue, no new route, no plugin) | — |
+
+**Root-cause phase (V6 rule):** not applicable.
+
+**`console.*` in the files 11d touches: 0 in every one** (counted 2026-10-04): `UsageCard.tsx` (it already logs through `createLogger`), `ownerCreditUsage.ts`, `ownerCreditUsageTypes.ts`, `ownerCreditUsageDeps.ts`, `creditDisplay.ts`, `creditLots.ts`, `BusinessOsCreditOwnerReadRepository.ts`, `app/api/business-os/usage/route.ts`, `LanguageContext.tsx`, and the tests to be extended. Nothing to flag under CLAUDE.md rule 3.
+
+### 11d.2 Scope, out of scope and guardrails
+
+**In scope:**
+- `listOwnCreditLots` on the owner read repository, its column lists and tests.
+- `extraCredits` replaces `granted` in `OwnerCreditUsage`; the builder computes it with `extraCreditsAt`.
+- The card's second figure and its one line; a pure display helper for the figure in `creditDisplay.ts`.
+- Six translation strings (en / he / es; he / es marked for native review).
+- The payload allow-list pin, the forbidden-word walk widened for S11-AC-7, and the registrations of §11d.3.6.
+- Docs: the entitlements doc paragraph on extra credits, this workplan, the requirement's slice 11 row at hand-over.
+
+**Out of scope:** any lot list, source, date, reason or "Added by our team" label on the owner card (S11-D-4 A allows that label only "if lots are listed at all"; S11-D-1 does not require a list, so none is built, §11d.3.4); any combined total, to the owner (R-5 (c)); the % / bands / low line / admin "Credits left" column (BD-25: plan only, untouched); `computeCreditBalance` (S11-SQ-10); `balance.ts` and enforcement (slice 9); the credit history (parked, BD-17); Settings → Plan and the invite page; any "top up" or "buy" prompt (boost); a notification to the owner when a grant arrives; any migration or SQL; the admin view (11c) and the 11b ops.
+
+**Guardrails (each tested or checked):**
+
+| # | Guardrail | Proven by |
+|---|---|---|
+| G11d-1 | **No combined total** in the owner payload or on the card (R-5 (c), S11-AC-7) | The payload pin's exact key set (no `granted`, `total`, `combined`, `balance`); a test that `remaining` is identical whatever the lots hold; a source rule on the card that `extraCredits` never appears in an arithmetic expression or a call other than the display helper (planted violation first) |
+| G11d-2 | **The %, the band and the low line ignore extra credits** (BD-25, slice 8) | Render test: the same usage with `extraCredits` 0 and 5,000 gives the same headline, `data-band`, arc offset and screen-reader label; source rule: `creditPercentLeft` is called with `usage.used` and `allowance.amount` only. `creditBands.ts`, `creditWindowRule.ts`, `creditLowLine*.ts`, `adminCreditPercent*.ts` and `aiChargeRecorder.ts` show no line in `git diff` |
+| G11d-3 | **The owner never sees a reason, an admin, a key, a source reference, a credit value version, the base / bonus split, a token, a dollar or a cost** (S11-D-4 A, S11-AC-7) | Payload forbidden-word walk widened (§11d.6.2); the repository's column lists are an exact list and a subset of the `20261017` owner GRANT lines (no `credits_base`, `credits_bonus`, `source` either: the card does not need them) |
+| G11d-4 | **The owner read uses the owner's RLS client**, never the service role and never the admin lot repository | `ownerCreditSurface.guard` rule 4 unchanged and green (builder and route import no service client and no repository singleton); the G3 guard keeps `BusinessOsCreditLotRepository` out of every owner file; the owner repository's constructor pin (three constructing files) unchanged; a new pin: only `ownerCreditUsage.ts` (and tests) calls `listOwnCreditLots` |
+| G11d-5 | **One definition of extra credits** (S11-SQ-4) | The builder calls `extraCreditsAt`; a cross-check test feeds the same lots to the builder and to `extraCreditsAt` and gets the same figure (the admin view uses the same function, so they agree by construction) |
+| G11d-6 | **A failed or unreadable lot read is never shown as 0** | Builder tests: a lot read error, the ceiling, or a null `extraCreditsAt` returns an error (the card's existing error line, OP-38) |
+| G11d-7 | **No change to the history, the admin view or slice 8's readers** | `readCreditPosition` / `resolveOwnerCreditWindow` untouched; `ownerCreditHistory.test.ts`, `creditPosition.test.ts`, `adminCreditPercent.test.ts`, `creditLowLine.test.ts` and the 11c route tests green and unedited |
+| G11d-8 | **No new CI job, step or workflow; no added CI time** | The pins go into `lib/business-os/credits/__tests__` and `lib/repositories/__tests__`, which `test:bos-entitlements` already runs. *(SA W11d-4, OP-42 overruled:)* `components/business-os/__tests__/UsageCard` and `app/api/business-os/usage/__tests__` are added to the `test:bos-entitlements` path list (one `package.json` line); no workflow file in the diff. QA records the PR run's `Business OS Entitlements` and `Build` durations; if the entitlements job ever ends after `Build`, the two paths are dropped and that is recorded |
+| G11d-9 | **No agent touches a database; nothing committed before the user has seen the diff** | This workplan; §11d.6.5 |
+
+### 11d.3 Implementation approach
+
+#### 11d.3.1 The owner lot read — `BusinessOsCreditOwnerReadRepository.listOwnCreditLots`
+
+```typescript
+/** One lot as the owner may read it (granted columns only). Structurally usable by `creditLots.ts`. */
+export interface OwnerCreditLotRow {
+  id: string;
+  creditsGranted: number;
+  expiresAt: string | null;
+  createdAt: string;
+  draws: Array<{ kind: 'reversal'; credits: number; createdAt: string }>;
+}
+
+export const OWNER_LOT_COLUMNS = 'id, user_id, credits_granted, expires_at, created_at';
+export const OWNER_LOT_DRAW_COLUMNS = 'id, lot_id, user_id, kind, credits, created_at';
+
+async listOwnCreditLots(accountId: string): Promise<RepositoryResult<OwnerCreditLotRow[]>>;
+```
+
+- Same algorithm as `BusinessOsCreditLotRepository.listLotsWithDraws` (11a), so the two cannot disagree on what a lot holds: lots `.eq('user_id', accountId)`, oldest first, bounded; **no draws read when there are no lots** (the case for nearly every account today, so the card pays one extra small query, run in parallel with the ledger reads); draws `.eq('user_id', accountId).in('lot_id', chunk)` in chunks of `MAX_IDS_PER_REQUEST`.
+- New limit `OWNER_CREDIT_READ_LIMITS.LOTS_CEILING = 1000` (the 11a figure): reaching it on lots or draws is an **error**, never a partial list.
+- Figures parsed as the 11a repository does (number or decimal string; anything else an error, never 0); timestamps checked; `kind` checked against `['reversal']`, so slice 9's consumption draws fail loudly here until slice 9 widens it, exactly as the admin repository does (R11d-5).
+- The row type is declared in the repository, not imported from `creditLots.ts` (repositories import nothing from `lib/business-os`; the 11a precedent). It is structurally a `CreditLotForBalance`; a type-level test asserts it.
+- Header: a paragraph that the lot reads exist for the owner card only, that the two service-role constructors (8b low line, 11c admin) do not call them (pinned), and the column-grant rule now covers `20261017` as well.
+
+#### 11d.3.2 The builder — `readOwnerCreditUsage`
+
+```typescript
+/** The card's wiring: the shared deps, plus the owner's own lot read (slice 11d). */
+export interface OwnerCreditCardDeps extends OwnerCreditUsageDeps {
+  owner: OwnerCreditUsageDeps['owner'] & Pick<BusinessOsCreditOwnerReadRepository, 'listOwnCreditLots'>;
+}
+
+export async function readOwnerCreditUsage(
+  userId: string,
+  deps: OwnerCreditCardDeps,
+  log: OwnerCreditUsageLogger
+): Promise<Result<OwnerCreditUsage>>;
+```
+
+- One `now`, taken once and handed to both reads (`{ ...deps, now: () => now }` for `readCreditPosition`; `extraCreditsAt(lots, now)`), so the plan figure and the extra figure describe the same instant (the CR11b-2 "one `now`" precedent).
+- `Promise.all([readCreditPosition(…), deps.owner.listOwnCreditLots(accountId)])`: no added latency on the card.
+- A lot read error, the ceiling, or `extraCreditsAt` answering `null` (an unreadable figure or date) → `{ data: null, error }`, logged with a code (`lots_read_failed`, `lots_unreadable`), so the card shows its existing error line (OP-38). `hasInconsistentLot` → one `warn` with the account id; the owner sees the clamped figure.
+- `extraCredits: result.extraCredits` (already 6 dp from the core). `remaining: computeCreditBalance({ allowance, granted: 0, used })`, with `granted: 0` written literally and a comment citing S11-SQ-10 / R-5 (c).
+- `OwnerCreditCardDeps` is a **card-only** type, so `OwnerCreditUsageDeps` (used by the history, the admin view and the low line) is unchanged and none of their fakes or wiring move. `ownerCreditUsageDeps()`'s return type becomes `OwnerCreditCardDeps` (its body already returns the class instance, which has the method); `ownerCreditHistoryDeps` still type-checks (it spreads the card deps into a wider shape).
+- The module header gains one paragraph: "Extra credits (slice 11d)": where they come from, that they never enter `remaining`, the %, the band or the low line, and that the owner read is the RLS client's.
+
+#### 11d.3.3 The payload — `OwnerCreditUsage`
+
+```typescript
+export interface OwnerCreditUsage {
+  period: { kind: OwnerCreditPeriodKind; resetsOn: string | null };
+  allowance: OwnerCreditAllowance | null;
+  used: number;
+  usedByOwner: number;
+  usedAutomatic: number;
+  /**
+   * Credits added on top of the plan (an admin gift now, a purchase later), not
+   * expired, exact to 6 dp, never negative. A SEPARATE figure: never added to
+   * `remaining`, the percentage or the low line (R-5 (c), BD-25).
+   */
+  extraCredits: number;
+  /** max(0, allowance − used): the PLAN only. Null without an allowance. */
+  remaining: number | null;
+}
+```
+
+Still types only, no value import (rule 3 of the surface guard). The card's validator adds `isFiniteNumber(v.extraCredits) && v.extraCredits >= 0`; a payload without it is an error, never a hidden figure (the server and the client deploy together on Vercel).
+
+#### 11d.3.4 The card
+
+**Placement:** directly under the ring, above the (flag-gated) history link, centred like the ring's own text:
+
+```
+Extra credits   200
+Extra credits are used after your plan's credits and do not reset monthly.
+```
+
+- Label `usage.extra.label` at 12px muted, figure at 13px semibold `INK`, tabular numbers, in one row (`data-testid="credits-extra"`, figure `credits-extra-figure`); the line `usage.extra.explain` at 11.5px muted, wrapping, `textAlign: center` (`credits-extra-explain`). RTL follows the card's `direction`. No colour, no icon, no band: it is not a gauge.
+- **Shown only when `extraCredits > 0`** (BQ-11d-1, **decided by the user 2026-10-04**: show nothing at 0; SA W11d-1): not while loading, not on the error line, not when 0. It is shown in the no-allowance state too (S11-SQ-10: an account with lots and no allowance simply shows the extra figure).
+- **Figure rounding:** a new pure helper in `creditDisplay.ts`, `toDisplayedExtraCredits(extra): DisplayedCreditFigure | null`: `null` for 0 or anything not finite / negative (the block is hidden); `less_than_one` for 0 < x < 1; otherwise **rounded down** to a whole credit (a balance is never shown higher than it is; whole grants make this exact today). Formatted with the card's existing `figure()` and `Intl.NumberFormat(language)`, so he / es group digits their own way. `creditDisplay.ts` stays import-free. *(SA W11d-11: the owner figure is floored while the admin block, `CreditsBlock.tsx`, formats its own figure, so the two can differ below one credit by design; QA step 4 compares a whole-number grant.)*
+- **No lot list.** S11-D-1 asks for one figure; listing lots would need the "Added by our team" label (S11-D-4 A), dates, and an expired / taken-back state, for no owner decision the figure does not already support. If the user ever wants it, the owner columns needed are already granted (OP-41).
+- **Refresh:** no new trigger. The figure comes in the same payload, so it follows BD-11 exactly: a grant made by an admin shows on the owner's next tab return, page restore, refresh icon or own AI action. No timer (surface guard rule 2 stays green).
+- The ring's tooltip, `aria-label` and `data-band` are unchanged. The block is plain text, so a screen reader reads "Extra credits 200" and the line in order; no extra `aria-*`.
+
+#### 11d.3.5 Strings (`LanguageContext.tsx`, beside the other `usage.*` keys)
+
+| Key | en | he (native review owed) | es (native review owed) |
+|---|---|---|---|
+| `usage.extra.label` | Extra credits | קרדיטים נוספים | Créditos extra |
+| `usage.extra.explain` | Extra credits are used after your plan's credits and do not reset monthly. | קרדיטים נוספים מנוצלים אחרי הקרדיטים של התוכנית שלך ואינם מתאפסים מדי חודש. | Los créditos extra se usan después de los créditos de tu plan y no se renuevan cada mes. |
+
+The en line is S11-D-1's text verbatim; the he / es labels are S11-D-1's. The he and es blocks each get one comment line, "// Slice 11d (S11-D-1): needs native review.", the form slice 8a used. Total: +8 lines, no line removed.
+
+#### 11d.3.6 Registrations and guard lists (same PR)
+
+| List | Change |
+|---|---|
+| `lib/business-os/credits/__tests__/creditLots.test.ts` G3 `ALLOWED_LIST` | + `lib/business-os/credits/ownerCreditUsage.ts` (names `extraCreditsAt`) and every test file that names a G3 symbol (expected: `ownerCreditUsage.test.ts`, `ownerCreditUsage.payload.test.ts`); the non-vacuity check covers the new product entry. The owner repository names none of the symbols (it reads the table by name, which is not a G3 symbol) |
+| `lib/business-os/credits/__tests__/ownerCreditSurface.guard.test.ts` | `creditLots.ts` added to `OWNER_SURFACE` (rule 1: it is now part of the owner surface); rule 3 unchanged (the card still imports exactly `creditBands`, `creditDisplay`, `ownerCreditUsageTypes`); new rule 6: the card's `extraCredits` is only ever passed to `toDisplayedExtraCredits` / compared with 0, and `creditPercentLeft` takes `usage.used` and `allowance.amount` only (G11d-1, G11d-2; planted violations first) |
+| `lib/repositories/__tests__/BusinessOsCreditOwnerReadRepository.test.ts` | GRANT-line parse of `20261017` for both tables (non-vacuity: both lines parsed); `OWNER_LOT_COLUMNS` / `OWNER_LOT_DRAW_COLUMNS` subset and exact; the method's cases (§11d.6.1); the "scopes every query by user_id" rule still green; new pin: `listOwnCreditLots` is named only by the repository, `ownerCreditUsage.ts` and tests (the three-constructor pin unchanged) |
+| `KNOWN_NON_GATE_IMPORTERS` (`enforcementPoints.test.ts`) | **No change** (S11-SQ-15): `ownerCreditUsage.ts`'s symbols are unchanged; no new file imports from the module, type-only included |
+| `businessOsEntitlements.imports.guard.test.ts` | **No change**: `ownerCreditUsageDeps.ts` still calls `findPeriodAnchor` only |
+| `creditFigures.fromConfig.guard.test.ts` `SOURCES` | **No change**: every touched product file that renders or builds a credit figure (`UsageCard.tsx`, the route, the builder, the wiring, `creditDisplay.ts`) is already listed; no new product file is created. The new strings carry no number |
+| Admin register / authz guard | **No change**: no admin route |
+
+### 11d.4 Files to create / modify
+
+| File | Action | Reason |
+|---|---|---|
+| `lib/repositories/BusinessOsCreditOwnerReadRepository.ts` | modify | `listOwnCreditLots`, two column lists, a ceiling, the row type, header paragraph |
+| `lib/repositories/__tests__/BusinessOsCreditOwnerReadRepository.test.ts` | modify | GRANT subset for `20261017`, method cases, the caller pin |
+| `lib/business-os/credits/ownerCreditUsageTypes.ts` | modify | `granted` → `extraCredits`; `remaining` doc |
+| `lib/business-os/credits/ownerCreditUsage.ts` | modify | `OwnerCreditCardDeps`, the parallel lot read, `extraCreditsAt`, `granted: 0` literal, header paragraph |
+| `lib/business-os/credits/ownerCreditUsageDeps.ts` | modify | Return type of `ownerCreditUsageDeps` only; header line |
+| `lib/business-os/credits/creditDisplay.ts` | modify | `toDisplayedExtraCredits` |
+| `lib/business-os/credits/creditLots.ts` | modify | Header: callers named (comment only) |
+| `app/api/business-os/usage/route.ts` | modify | `hasExtra` in the `info` log; header line on extra credits |
+| `components/business-os/UsageCard.tsx` | modify | Validator, the block, header paragraph |
+| `lib/business-os/LanguageContext.tsx` | modify | Two keys × three languages, two review comments (+8 / -0) |
+| `lib/business-os/credits/__tests__/ownerCreditUsage.payload.test.ts` | modify | Exact keys (`granted` out, `extraCredits` in), forbidden words widened, cases with lots (§11d.6.2) |
+| `lib/business-os/credits/__tests__/ownerCreditUsage.test.ts` | modify | Fake owner gains `listOwnCreditLots` (empty); `granted: 0` → `extraCredits: 0` in the three expectations; new extra-credit cases (§11d.6.2) |
+| `lib/business-os/credits/__tests__/ownerCreditUsage.crossCheck.test.ts` | modify | Fake owner gains the empty lot read (mechanical; no assertion changes) |
+| `lib/business-os/credits/__tests__/creditDisplay.test.ts` | modify | Helper cases |
+| `lib/business-os/credits/__tests__/creditLots.test.ts` | modify | G3 list |
+| `lib/business-os/credits/__tests__/ownerCreditSurface.guard.test.ts` | modify | `OWNER_SURFACE` + `creditLots.ts`; rule 6 |
+| `app/api/business-os/usage/__tests__/route.credits.test.ts` | modify | Fixture `granted` → `extraCredits`; the log carries `hasExtra`, never the figure |
+| `components/business-os/__tests__/UsageCard.render.test.tsx`, `UsageCard.percent.render.test.tsx`, `UsageCard.historyLink.render.test.tsx` | modify | Fixtures `granted: 0` → `extraCredits: 0` (the validator requires it) |
+| `components/business-os/__tests__/UsageCard.extraCredits.render.test.tsx` | create | The block's cases (§11d.6.3) |
+| `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md` | modify | One paragraph: the owner's "Extra credits" figure, separate from the plan %; Change History |
+| `docs/workplans/BUSINESS_OS_CREDIT_DEDUCTION_SLICE_11_WORKPLAN.md` | modify | Ticks and evidence |
+| `docs/requirements/BUSINESS_OS_LLM_DEDUCTION_LAYER_REQUIREMENT.md` | modify | Slice 11 status row at hand-over (and S11-AC-7 ticked after merge, by TL) |
+
+**Not touched:** every migration and SQL script; `creditBalance.ts`, `creditBands.ts`, `creditWindowRule.ts`, `creditLowLine.ts` / `creditLowLineDeps.ts`, `adminCreditPercent*.ts`, `aiChargeRecorder.ts`, `BusinessOsCreditLotRepository.ts`, `creditAdminOps.ts`, the 11c admin route, wiring and block; `readCreditPosition` and the history; `LiveDashboard.tsx`; any workflow file or `package.json`.
+
+### 11d.5 Task list
+
+- [x] **T11d.0 Pre-flight.** `git branch --show-current` = `feature/business-os-credit-deduction-slice-11d`; `git status` recorded; `console.*` re-counted in every file of §11d.4.
+- [x] **T11d.1 Baseline.** Run the owner suites, the card render suites and the route suite on unmodified code; record counts.
+- [x] **T11d.2 Repository.** `listOwnCreditLots`, column lists, ceiling, header; its tests incl. the `20261017` GRANT subset.
+- [x] **T11d.3 Payload and builder.** Types; `OwnerCreditCardDeps`; the parallel read; `extraCreditsAt`; the error codes; the deps return type; builder and payload tests; the mechanical fake updates.
+- [x] **T11d.4 Display helper** and its tests.
+- [x] **T11d.5 Card and strings.** Validator, the block, the six strings; fixtures; the new render suite.
+- [x] **T11d.6 Guards.** G3 list, `OWNER_SURFACE`, rule 6, the caller pin; `npm run test:bos-entitlements` green.
+- [x] **T11d.7 Docs.** Entitlements doc paragraph; route / module headers.
+- [x] **T11d.8 Gates and hand-over.** The §11d.6.4 commands; `git diff --numstat` (no deletion without insertion; `LanguageContext.tsx` must show +8 / -0); backslash-hex scan of every changed file; evidence in §11d.10; requirement row; status → Code Complete (11d); uncommitted; hand to TL for SA code review, then QA.
+
+### 11d.6 Test plan and commands
+
+The server-side pins are in folders `test:bos-entitlements` already runs (`lib/business-os/credits/__tests__`, `lib/repositories/__tests__`), so they are CI-covered with no added CI step. ~~The card render suites (`components/business-os/__tests__`) and `app/api/business-os/usage/__tests__` are **not** CI-run today (as for 11c's client suites); Dev and QA run them locally and record the counts (OP-42).~~ *(Superseded by SA W11d-4: OP-42 overruled. The four `UsageCard*` render suites and `app/api/business-os/usage/__tests__` are added to `test:bos-entitlements`, so they are CI-run; 11c's client suites already were.)*
+
+#### 11d.6.1 Repository (`BusinessOsCreditOwnerReadRepository.test.ts`)
+
+- Columns: both `20261017` GRANT lines parsed (non-vacuity); `OWNER_LOT_COLUMNS` and `OWNER_LOT_DRAW_COLUMNS` are subsets of them; they are exactly the lists above (no `source`, `credits_base`, `credits_bonus`, `reason`, `actor_*`, `idempotency_key`, `source_ref`, `credit_value_version`).
+- No lots → `[]` and **no draws query** issued.
+- Lots and draws: each read `.eq('user_id', accountId)`; draws chunked at `MAX_IDS_PER_REQUEST` (201 lots → two draw requests); draws attached to their lot; numeric strings parsed.
+- The ceiling reached on lots or on draws → error, never a partial list. A read error → error. An unreadable figure, date or unknown `kind` → error. A non-UUID account → refused before any query.
+- The returned row type is assignable to `CreditLotForBalance` (type-level assertion).
+- Pin: `listOwnCreditLots` named only by the repository, `ownerCreditUsage.ts` and test files.
+
+#### 11d.6.2 Builder and payload (`ownerCreditUsage.test.ts`, `ownerCreditUsage.payload.test.ts`)
+
+- No lots → `extraCredits: 0`; `remaining` as today.
+- One 200-credit lot, no expiry → 200; mid-period lot counts at once; an expired lot (at the `<=` boundary) → 0; a reversal of 50 → 150; a fractional remainder kept exact (6 dp); a lot created after `now` ignored.
+- **`remaining` is the same with and without lots** (monthly, trial, over the allowance) (G11d-1).
+- No allowance (no plan row) and 200 extra → `allowance: null`, `remaining: null`, `extraCredits: 200`.
+- A lot read error / the ceiling → `{ error }`, one `error` log with `lots_read_failed`; an unreadable lot (core answers `null`) → `{ error }` with `lots_unreadable`; an inconsistent lot → the clamped figure and one `warn`.
+- One `now` for both reads (a fake clock that would return two instants is called once).
+- The two reads start before either finishes (parallel; a deferred-promise test).
+- Cross-check (G11d-5): the payload's `extraCredits` equals `extraCreditsAt(sameLots, now).extraCredits`.
+- **Payload pin:** the exact key set for the four existing shapes, with `granted` replaced by `extraCredits`; the existing banned-word scan; a widened scan for S11-AC-7: `reason`, `actor`, `admin`, `idempot`, `source`, `lot`, `base`, `bonus`, `version` as key segments (proved on planted keys first; `allowance`, `remaining`, `extraCredits`, `resetsOn` pass); and no value equal to a lot id, a reason or the account id (a lot with a recognisable reason and id is fed in through the fake to prove it cannot leak).
+
+#### 11d.6.3 Card (`UsageCard.extraCredits.render.test.tsx`, jsdom, fetch stubbed as the existing suites do)
+
+- `extraCredits: 200` → "Extra credits" and "200" and the line; 0 → no block; 0.4 → "less than 1"; 199.6 → "199" (rounded down); 12,000 → grouped per language.
+- **The % does not move:** the same usage with `extraCredits` 0 and 5,000 → identical headline text, `data-band`, arc `strokeDashoffset` and ring `aria-label` (G11d-2).
+- Over the allowance (0% on red) with 200 extra → still "0%" and red, with the extra block below (no combined figure, no wording change).
+- No allowance with 200 extra → used in the ring, and the extra block.
+- Loading and the error line → no block. A payload missing `extraCredits`, or negative / non-finite → the error line.
+- he (RTL) and es: the label and line in that language; the block inherits `direction: rtl`.
+- After a refresh that brings `extraCredits` from 0 to 200, the block appears (no remount).
+- No element's text contains the sum of the plan figure and the extra figure (G11d-1, a direct check on the rendered text).
+
+#### 11d.6.4 Commands Dev will run before hand-over
+
+```bash
+npx jest lib/business-os/credits lib/repositories/__tests__/BusinessOsCreditOwnerReadRepository.test.ts components/business-os/__tests__/UsageCard app/api/business-os/usage
+npm run test:bos-entitlements
+npm run typecheck:bos-llm
+NODE_OPTIONS=--max-old-space-size=6144 npx tsc --noEmit -p <scratchpad>/tsconfig.slice11d.json
+npx eslint <every touched .ts / .tsx file>
+git diff --numstat
+```
+
+The scoped `tsc` (scratchpad; `files` = the touched `.ts` / `.tsx` files + `next-env.d.ts`) is the type gate, as in 11a–11c (ts-jest does not type-check here). `next build` is not run locally (the CI `Build` job covers it); if SA asks for it, it runs only in a way that never removes or rewrites the shared `node_modules` junction. The two pre-existing `creditPeriod.test.ts` failures, if still present, are re-confirmed, not fixed.
+
+#### 11d.6.5 QA's manual browser check (CLAUDE.md "New UI flows")
+
+Local dev in this folder talks to the **real** Supabase (git-ignored `.env.local`); every step below is read-only.
+
+1. The user runs `npx next dev -p 3000` from `neuronforge-llm-layer2-step4`.
+2. **An account with extra credits:** Eyal_Fitness has the 200-credit lot granted live during 11c (§18). Seeing its card needs **a sign-in as that business's owner**; agents hold no owner credentials, so either the user signs in as Eyal_Fitness (if it is one of his test logins) or the owner does it on a screen share. Check: the card shows the plan's "N% left" exactly as before, and under it "Extra credits 200" with the line; no combined number anywhere; switch the language to he (RTL) and es and check fit and wrapping in the usage-readiness row beside System readiness (desktop and below 900px).
+3. **An account with none:** the user's own owner login: the card is unchanged (no block).
+4. **Cross-check with the admin view:** in `/admin/users`, Eyal_Fitness's Credits block (11c) shows the same extra credits figure.
+5. **Refresh trigger:** with the owner card open in one tab, nothing is granted (a new grant needs the user's explicit approval, on an account he names; lots are permanent). If the user does approve one, check that the card picks it up on returning to the tab, without a reload.
+6. Everything the browser cannot safely show (read failures, the ceiling, rounding edges, the % staying put with large figures) is covered by §11d.6.3.
+
+### 11d.7 Estimate
+
+| Part | Days |
+|---|---|
+| Repository method, column lists, tests (GRANT subset, chunking, ceiling, caller pin) | 0.25 |
+| Types, builder, payload pin, builder tests, mechanical fake / fixture updates | 0.3 |
+| Display helper, card block, strings, render suite | 0.3 |
+| Guard lists (G3, surface guard rule 6), docs, gates, evidence | 0.15 |
+| **Total** | **≈ 1.0 d** |
+
+Matches SA-11's ≈ 1 d. No migration; nothing for the user at the database.
+
+### 11d.8 Risks
+
+| # | Risk | Mitigation |
+|---|---|---|
+| R11d-1 | An owner reads "N% left" and "Extra credits 200" as one balance, or expects the % to rise after a gift | The one line says how extra credits behave; BD-25 is the user's decision; no combined figure (G11d-1). If owners are confused, a wording change is a strings-only follow-up |
+| R11d-2 | The new lot read fails for everyone (for example a column grant missing on PROD) and takes the whole card down with it | The `20261017` checker passed on PROD (§17), the columns are a tested subset of the migration's GRANT lines, and accounts with no lots read one table only. If SA prefers the plan figure to survive a failed lot read, OP-38's alternative applies |
+| R11d-3 | The block makes the card taller than System readiness and grows the row | Two short lines, 11.5–13px; checked in he / es and below 900px in §11d.6.5 step 2 |
+| R11d-4 | An extra query on every card read | One small read by `user_id`, in parallel with the ledger reads; the draws read is skipped when there are no lots |
+| R11d-5 | Slice 9 adds consumption draws and the owner read refuses the unknown `kind` | Intended tripwire, the same as the admin repository's: slice 9 widens both `kind` checks in one change (recorded in the owner repository header) |
+| R11d-6 | he / es wording | Marked for native review, owed by the user with the slice 8a strings |
+| R11d-7 | A subagent write truncating `LanguageContext.tsx` (11,668 lines) | Edit only; `git diff --numstat` must show +8 / -0 for it; deletion without insertion is a stop |
+| R11d-8 | A Windows path with a backslash and hex digits in a scanned file | Forward slashes only; the backslash-hex scan at T11d.8 |
+
+### 11d.9 Open points for SA
+
+| # | Point | Dev proposal |
+|---|---|---|
+| **OP-38** | A failed lot read: fail the whole card, or show the plan figure without the extra block? | **Fail the whole card** (the existing error line), the 6a rule "never a zero, never a partial answer": hiding the block on a failed read would look exactly like "no extra credits". Alternative: a nullable `extraCredits` plus a third string ("Extra credits could not be loaded"), ≈ +0.1 d |
+| **OP-39** | Where the deps for the lot read live | A card-only `OwnerCreditCardDeps` (the shared `OwnerCreditUsageDeps` is unchanged, so the history, the admin view and the low line move nothing); `ownerCreditUsageDeps()` returns it; the method is on the owner repository instance it already builds |
+| **OP-40** | Column lists narrower than the grant | Lots `id, user_id, credits_granted, expires_at, created_at`; draws `id, lot_id, user_id, kind, credits, created_at`. `source`, `credits_base`, `credits_bonus` are granted but not selected: the card needs none of them, and leaving them out keeps the boost's split off the owner path |
+| **OP-41** | No lot list on the owner card | Figure only (S11-D-1). S11-D-4 A's "Added by our team" label is therefore not built; recorded as the label to use if a list is ever added |
+| **OP-42** | CI coverage of the card and owner route suites | No change (user rule: no added CI time). The decisive pins (payload keys, forbidden words, no combined figure in the card source, % untouched by source rule, GRANT subset) are in CI-run folders; the render suites run locally and their counts go into §11d.10. SA may instead add `components/business-os/__tests__/UsageCard*` to `test:bos-entitlements` if the runtime stays inside the build's critical path |
+| **OP-43** | Rounding the figure down | Floor to a whole credit, "less than 1" between 0 and 1, so a balance is never shown higher than it is (the D-c rule rounds *used* to nearest; this is a remainder, so down) |
+| **OP-44** | `remaining` kept in the payload though the card does not read it | Kept (S11-SQ-10 says it stays, plan-only); its doc says "the plan only" so no future reader takes it for a combined figure |
+
+*(SA rulings 2026-10-04: OP-38, OP-39, OP-40, OP-41, OP-43, OP-44 as proposed; OP-42 overruled, W11d-4. BQ-11d-1 decided by the user 2026-10-04: show nothing at 0.)*
+
+**Business question for the user (BQ-11d-1), in plain words.** *(Decided by the user 2026-10-04: show nothing when 0.)* *When an owner has no extra credits, should the card still say "Extra credits: 0", or show nothing?* **Recommendation: show nothing until the owner has some.** Almost every owner will never have extra credits; a permanent "0" adds a line to a card the user has already asked to keep simple (6a), and reads like an invitation to buy something that cannot be bought yet. When a gift arrives the line appears, and it disappears again when the gift ends or is used up. The other choice (always show it, "0" included) makes the feature visible to everyone but adds clutter for most.
+
+### 11d.10 Results (Dev)
+
+*(Dev, 2026-10-04. Branch `feature/business-os-credit-deduction-slice-11d`, confirmed with `git branch --show-current`. **Uncommitted.** No migration, no database touched.)*
+
+**T11d.0 pre-flight.** `console.*` re-counted: **0** in every product file of §11d.4 (`UsageCard.tsx`, `ownerCreditUsage.ts`, `ownerCreditUsageTypes.ts`, `ownerCreditUsageDeps.ts`, `creditDisplay.ts`, `creditLots.ts`, `BusinessOsCreditOwnerReadRepository.ts`, the usage route, `LanguageContext.tsx`). Nothing to flag (CLAUDE.md rule 3).
+
+**T11d.1 baseline** (unmodified code): `npx jest lib/business-os/credits lib/repositories/__tests__/BusinessOsCreditOwnerReadRepository components/business-os/__tests__/UsageCard app/api/business-os/usage` → **37 suites, 907 / 907**. The two `creditPeriod.test.ts` failures noted in earlier slices are no longer present (green).
+
+**What was built (per §11d.3, with the SA conditions).**
+
+| Part | Where | Notes |
+|---|---|---|
+| Owner lot read | `BusinessOsCreditOwnerReadRepository.listOwnCreditLots` | Mirrors the admin read (W11d-5): oldest first, `.range(0, 999)` then `>= 1000` is an error on the lots and on each draw chunk; no draw query with no lots; chunks of 200; its own parse / map (no import from the admin lot repository); `kind` other than `'reversal'` is an error (slice 9 tripwire in the header, W11d-7); `.eq('user_id', accountId)` on both reads; UUID guard before any query; never throws. New exported `OWNER_LOT_COLUMNS`, `OWNER_LOT_DRAW_COLUMNS`, `OwnerCreditLotRow`, `OwnerCreditLotDrawRow`, `OWNER_CREDIT_READ_LIMITS.LOTS_CEILING` |
+| Payload | `ownerCreditUsageTypes.ts` | `granted` removed, `extraCredits` added; `remaining` documented as plan-only (OP-44). Still types only |
+| Builder | `ownerCreditUsage.ts` | Card-only `OwnerCreditCardDeps` (OP-39). One `now`, passed as `{ ...deps, now: () => now }`; `Promise.all([readCreditPosition, listOwnCreditLots])` (a `.catch` turns an unexpected rejection into the same error result, so "never throws" holds, W11d-6); `lots_read_failed` / `lots_unreadable` added to the existing code union and logged through `logReadFailure` (W11d-2); `hasInconsistentLot` → one `warn` with `{ accountId, lots }` only; `remaining` = `computeCreditBalance({ …, granted: 0, … })` literally. `readCreditPosition`, `resolveOwnerCreditWindow`, `computeOwnerCreditWindow` unchanged; entitlements imports unchanged |
+| Wiring | `ownerCreditUsageDeps.ts` | Return type of `ownerCreditUsageDeps` only (`OwnerCreditCardDeps`) and a header line |
+| Display helper | `creditDisplay.ts` `toDisplayedExtraCredits` | `null` for 0, negative or not finite; `less_than_one` for 0 < x < 1; otherwise floored (OP-43). Still import-free |
+| Card | `UsageCard.tsx` | Validator requires `extraCredits` finite and `>= 0`; block `credits-extra` (label, `credits-extra-figure`, `credits-extra-explain`) under the ring, above the history link, only when the helper answers non-null (W11d-1); plain text, no colour / icon / band / own direction. %, band, arc, tooltip, aria-label untouched |
+| Route | `app/api/business-os/usage/route.ts` | `info` log gains `hasExtra: boolean` only (W11d-8); header paragraph |
+| Strings | `LanguageContext.tsx` | `usage.extra.label`, `usage.extra.explain` × en / es / he; es / he with "// Slice 11d (S11-D-1): needs native review." — **+8 / -0** (W11d-10) |
+| CI path list | `package.json` `test:bos-entitlements` | + `components/business-os/__tests__/UsageCard app/api/business-os/usage/__tests__` (W11d-4); no workflow change |
+| Docs | `BUSINESS_OS_ENTITLEMENTS.md` | One § Metering paragraph (% is plan-only; extra credits a separate figure, shown only above 0) + Change History row (W11d-11). `creditLots.ts` header names its callers |
+
+**Tests (new / changed).**
+
+| Suite | Count after | What it pins |
+|---|---|---|
+| `lib/repositories/__tests__/BusinessOsCreditOwnerReadRepository.test.ts` | **54** (+23) | `20261017` GRANT lines parsed for both tables (non-vacuity; hidden columns not granted); `OWNER_LOT_COLUMNS` / `OWNER_LOT_DRAW_COLUMNS` as **exact strings** and as **subsets** of the GRANT lines, without `source`, `credits_base`, `credits_bonus` or any hidden column; no lots → `[]` and no draws query; both reads `.eq('user_id', A)`, ordered, ranged; draws attached, numeric strings parsed; 201 lots → two draw chunks; lots ceiling / draws-chunk ceiling → error; read errors → error; 9 unreadable shapes incl. a `consumption` draw (W11d-7) → error; non-UUID / empty / undefined account refused before any query; type-level `OwnerCreditLotRow` → `CreditLotForBalance`; caller pin: among product files only the repository and `ownerCreditUsage.ts` name `listOwnCreditLots`. Existing "scopes every query by user_id" (2 new `.from` = 2 new scopes) and the three-constructor pin unchanged and green |
+| `lib/business-os/credits/__tests__/ownerCreditUsage.test.ts` | **41** (21 → 41) | Fake gains `listOwnCreditLots`; three expectations `granted: 0` → `extraCredits: 0`; new: no lots → 0; 200 / mid-period / `<=` expiry boundary / 1 ms after / reversal 50 → 150 / 66.666667 exact / created after now / two lots; `remaining` identical with and without a 5,000 lot (monthly, trial, over the allowance — the whole payload equal but `extraCredits`); no plan row + 200; `lots_read_failed` (one `error` log) and a rejecting read → error result; `lots_unreadable`; inconsistent lot → clamped figure + one `warn` `{ accountId, lots: 2 }`; one clock call; lots asked for while the plan read is held (parallel); cross-check with `extraCreditsAt` on the same lots (G11d-5) |
+| `lib/business-os/credits/__tests__/ownerCreditUsage.payload.test.ts` | **69** (29 → 69) | Exact key set with `granted` out and `extraCredits` in (four shapes, with lots, plus a no-lots run per shape); S11-AC-7 key-segment walk (`reason`, `actor`, `admin`, `idempot*`, `source`, `lot(s)`, `base`, `bonus`, `version`) proved on 13 planted keys and 11 passing ones; a fake lot carrying a recognisable id, reason, admin id, key and source → none of those values (nor the account id) in the payload; no `granted` / `total` / `combined` / `balance` key |
+| `lib/business-os/credits/__tests__/creditDisplay.test.ts` | **20** (+12) | `toDisplayedExtraCredits`: 0 / negative / NaN / Infinity hidden; 0.000001, 0.4, 0.999999 → "less than 1"; 1, 199.6 → 199, 199.999999 → 199, 200, 12000.5 → 12000 |
+| `lib/business-os/credits/__tests__/ownerCreditSurface.guard.test.ts` | **54** (6 new cases) | `creditLots.ts` in `OWNER_SURFACE` (rule 1); rule 3 unchanged (card imports exactly `creditBands`, `creditDisplay`, `ownerCreditUsageTypes`); **rule 6** with planted violations first (5 arithmetic / call shapes on `extraCredits`, `extraShown` arithmetic, `creditPercentLeft` with extra on either argument, `bandColor` of a non-position value) and clean shapes; on the card: `extraCredits` only in `isFiniteNumber(v.extraCredits)`, `v.extraCredits >= 0`, `toDisplayedExtraCredits(usage.extraCredits)`; `extraShown` only declared, tested and passed to `figure()`; every `creditPercentLeft` call is `(usage.used, allowance.amount)`; every `bandColor` takes `position.band` / `position!.band` |
+| `lib/business-os/credits/__tests__/creditLots.test.ts` | **40** (+4) | G3 `ALLOWED_LIST` + `ownerCreditUsage.ts`, `ownerCreditUsage.test.ts`, the owner repository test (type import) and `ownerCreditSurface.guard.test.ts` (lists `credits/creditLots.ts` in `OWNER_SURFACE`) (W11d-3); non-vacuity covers the new product entry; new: the owner repository, the usage route, the wiring and the card name none of the G3 symbols, comments included |
+| `components/business-os/__tests__/UsageCard.extraCredits.render.test.tsx` | **37** (new) | Per en / he / es: 200 → label, "200", the line; 0 → no `credits-extra` and no "Extra credits" text (W11d-1); 0.4 → "less than 1"; 199.6 → 199; 12,000 grouped per language; **0 vs 5,000 extra → identical headline, `data-band`, arc `stroke-dashoffset` and band, ring `aria-label`, track** (G11d-2); over the allowance + 200 → 0% red, no arc, block below; no allowance + 200 → used in the ring + block; direction inherited (RTL in he); no text or label equals plan left + extra or allowance + extra (G11d-1, W11d-9). Plus: no block while loading (appears on release), none on the error line; `extraCredits` missing / negative / null / string → the error line; a refresh 0 → 200 shows the block on the same card element |
+| `UsageCard.render` 34, `UsageCard.percent.render` 57, `UsageCard.historyLink.render` 14 | unchanged counts | Fixtures `granted: 0` → `extraCredits: 0` only (the validator requires it) |
+| `app/api/business-os/usage/__tests__/route.credits.test.ts` | **17** (+5) | Fake answers the lots / draws tables; fixture `granted` → `extraCredits`; owner-client tables now `business_os_credit_lots` + `business_os_credit_totals` (no draws read without lots); new: a 200 lot with a 50 reversal → `extraCredits: 150`, `remaining` unchanged, no lot id in the answer, both lot reads on the owner client scoped to the caller; the `info` log carries `hasExtra` true / false and never the figure; a lots read error, a draws read error, an unreadable lot figure → 500 with the generic message only |
+| `ownerCreditUsage.crossCheck` 2, `creditPosition` 18, `ownerCreditHistory` 32, `adminCreditPercent` 24 | unchanged counts, **assertions unedited** | **Deviation (see below):** their fakes gain one `listOwnCreditLots` line returning `[]` and the deps type becomes `OwnerCreditCardDeps`, because they call `readOwnerCreditUsage` directly. No assertion, case or source pin changed; `creditPosition.test.ts`'s two-caller pin is untouched and green |
+
+**Commands and results.**
+
+| Command | Result |
+|---|---|
+| `npx jest lib/business-os/credits lib/repositories/__tests__/BusinessOsCreditOwnerReadRepository.test.ts components/business-os/__tests__/UsageCard app/api/business-os/usage` | **36 suites, 1,025 / 1,025** (with the baseline's wider repository pattern: 38 suites, 1,054; baseline 37 / 907) |
+| `npm run test:bos-entitlements` (with the two added paths) | **176 suites, 4,398 / 4,398**; jest `Time` 64.0 s (first run), 86.2 s on the final re-run under local load; wall 75 s / 93 s |
+| `npm run test:authz-guard` | **119 / 119** (after one fix: an `['…', 'admin', …].includes(s)` literal in the payload test tripped R4's role-decision pattern; replaced by a `Set` lookup) |
+| `npm run typecheck:bos-llm` | **passed**: 413 files in scope, 28 errors, **0 new** (it also reports one unrelated baseline entry now fixed, `app/api/onboarding/build/route.ts`; baseline not updated) |
+| Scoped `tsc` (6 GB heap; scratchpad `tsconfig.slice11d.json`, `include: []`, `files` = the 24 touched `.ts` / `.tsx` files + `next-env.d.ts`) | **0 errors in any touched line.** 30 pre-existing errors in two files pulled in: `lib/analytics/aiAnalytics.ts` (6, implicit any) and `LanguageContext.tsx` (24 × TS1117 duplicate keys such as `crm.task.priority.low`, `config.intake.preview`, none of them the new `usage.extra.*` keys, which appear exactly 6 times) |
+| `npx eslint` on every touched `.ts` / `.tsx` | 0 errors; 1 pre-existing warning (`LanguageContext.tsx` `currencyInitialized` unused). The one warning in the new suite was fixed |
+| Tailwind escape guard (`app/__tests__/tailwind-css-escape.guard.test.ts`) | **6 / 6** |
+| Backslash + hex scan of every changed / new file (tests and docs included) | **none added** (two pre-existing escapes in `LanguageContext.tsx` untouched, SA CR11d-2) |
+| `git diff --numstat` | `LanguageContext.tsx` **+8 / -0**; every deletion is an intended rewrite (fixture `granted` lines, the builder's return block, the validator's last line, imports). New file `UsageCard.extraCredits.render.test.tsx` 265 lines |
+
+**Deviations from the plan.**
+1. **Four existing owner tests got a mechanical fake line** (`ownerCreditUsage.crossCheck.test.ts` was planned; `creditPosition.test.ts`, `ownerCreditHistory.test.ts` and `adminCreditPercent.test.ts` were not). §11d.2 G11d-7 and SA W11d-6 expected them "unedited". They call `readOwnerCreditUsage` directly with `OwnerCreditUsageDeps` fakes; without the lot read they fail (the call throws on the missing method), and they would not type-check against `OwnerCreditCardDeps` either. The alternative, treating a missing method as "no lots", would add a production path that shows 0 on a wiring fault, against OP-38. The change per file is the one fake line plus the deps type annotation and its import; **no assertion, case or source pin changed**. `adminCreditPercent.test.ts` is a slice 8a **test** file; the slice 8 **product** files (`creditBands.ts`, `creditWindowRule.ts`, `creditLowLine*.ts`, `adminCreditPercent.ts`, `adminCreditPercentDeps.ts`, `aiChargeRecorder.ts`) show no line in `git diff`. SA to confirm at code review.
+2. `ownerCreditSurface.guard.test.ts` joins the G3 allowed list (it names `credits/creditLots.ts` in `OWNER_SURFACE`), in addition to the files §11d.3.6 expected.
+3. The builder wraps the lot leg of the `Promise.all` in a `.catch` that returns the same `{ data: null, error }` shape. The repository never rejects; the catch only keeps "never throws" true if a fake or a future change does.
+
+**Not done / owed.** SA code review; QA (manual browser check §11d.6.5, which needs an owner sign-in to Eyal_Fitness); QA to record the PR run's `Business OS Entitlements` vs `Build` durations (W11d-4); he / es native review of the two strings (with the slice 8a strings); commit and PR by RM after the user has seen the diff.
+
+---
+
 ## 15. SA Review Notes
 
 *(SA populates.)*
@@ -1895,6 +2271,125 @@ QA may proceed in parallel. CR11c-1 is recommended before the PR; if fixed, SA r
 
 **User UI fixes checked (2026-10-04)** — OK. CR11c-1 holds (`inFlight` ref blocks every close and a second submit; Close/Back disabled while busy; one POST per request id). The status line is built from the response (`credits`, `expiresAt`, `lotRemainingAfter`, `replayed`), rendered outside the `ok` branch so a failed re-read keeps it, and the dialog unmounts on success so the next opening mints a new id. `EntitlementSnapshot.tsx` unchanged; the `<details>` fold is panel-only, its summary uses the already-read `plan.tier`/`cohort`, no new read, and a plan read error stays outside the fold. `ALLOWANCE_LAYER_COPY` matches the server union (contract test), raw layer on `title`, unknown layer falls back to raw. Screen guard green; no `lib/business-os` import, `decidedBy`, share, band or combined figure. `app/admin/users/__tests__` 204/204.
 
+## SA Workplan Review — 11d (2026-10-04)
+
+**Reviewed by SA, 2026-10-04**, on `feature/business-os-credit-deduction-slice-11d` (off `origin/main` `3fde62b2`). Checked against S11-D-1 A, S11-D-4 A, boost R-5 (c), S11-SQ-4, S11-SQ-10, S11-SQ-15, S11-AC-7, SA-11 conditions 5 and 6, BD-25 (slice 8: % and low line of the plan only), BD-26 and the owner policies and column grants of `20261017`. Code read: `20261017_business_os_credit_lots.sql` (RLS on both tables; `authenticated` SELECT policy `(SELECT auth.uid()) = user_id` on **both** lots and draws; column GRANT lines lots `id, user_id, source, credits_granted, credits_base, credits_bonus, expires_at, created_at`, draws `id, lot_id, user_id, kind, credits, created_at`), `scripts/check-bos-credit-lots-migration.sql` (checks `has_column_privilege` for `authenticated` per column; PROD VERDICT PASS per §17), `creditLots.ts` (`extraCreditsAt`, `CreditLotForBalance`, `<=` expiry, draws at or before `at`, null on unreadable input), `ownerCreditUsage.ts` (`readOwnerCreditUsage`, `readCreditPosition`, `OwnerCreditUsageDeps`, the "nothing here can throw" note), `ownerCreditUsageDeps.ts` (both wiring functions), `ownerCreditUsageTypes.ts`, `creditBalance.ts`, `creditDisplay.ts` (`less_than_one` kind exists), `UsageCard.tsx` (validator, `creditPercentLeft(usage.used, allowance.amount)`), `app/api/business-os/usage/route.ts` (`createAuthenticatedServerClient`), `BusinessOsCreditOwnerReadRepository.ts` (UUID guard, `MAX_IDS_PER_REQUEST` 200), `BusinessOsCreditLotRepository.listLotsWithDraws` (the algorithm to mirror), `creditLots.test.ts` G3 (`SYMBOLS` includes `credits/creditLots` and `BusinessOsCreditLotRepository`, matched by substring, comments included), `ownerCreditSurface.guard.test.ts` rules 1 to 5, `app/admin/users/components/CreditsBlock.tsx` (the admin extra figure), `package.json` `test:bos-entitlements`, `.github/workflows/bos-entitlements.yml`. Consumers of the owner payload: only the route, the builder, the wiring, the types and `UsageCard.tsx` (so removing `granted` breaks no other reader). Measured: the four `UsageCard*` suites plus `app/api/business-os/usage/__tests__` run in 16.3 s locally (117 tests); on `main` 2026-10-04 12:38 UTC the `Business OS Entitlements` run took 80 s and `Build` 200 s. No live query was needed. Review only: no code, no database.
+
+**Status: ✅ APPROVED WITH CONDITIONS.** The plan is right and proportionate. The owner read goes through the owner's RLS client and a new method on the owner repository (S11-SQ-10), never the service role or the admin lot repository; both selected column lists are inside the `20261017` owner GRANT lines, and draws have their own owner SELECT policy and column grant, so the read works under RLS as designed. `extraCreditsAt` stays the one definition (S11-SQ-4); `remaining` stays plan-only with `granted: 0` written literally; the payload carries one new key and no combined figure (R-5 (c), SA-11 condition 5); the %, band, arc and low line are untouched (BD-25); no lot list, so no reason, admin, key or source reaches the owner (S11-D-4 A). No new entitlements importer (S11-SQ-15 holds: `ownerCreditUsage.ts`'s symbols do not change; `creditLots.ts` and the repository import nothing from the module). One factual correction: §11d.6 says the card suites are "not CI-run today (as for 11c's client suites)"; 11c's client suites **are** CI-run (`app/admin/users/__tests__` is in `test:bos-entitlements`). OP-42 is overruled accordingly (W11d-4). Apply W11d-1 to W11d-11 during implementation; SA checks them at code review. No resubmission needed.
+
+**BQ-11d-1: DECIDED by the user 2026-10-04 — show nothing when the account has no extra credits** (relayed by TL: "agree, show nothing when 0"). Technical constraint, met by this plan: hiding at 0 is only safe because a failed lot read never becomes 0 (OP-38 below); a value between 0 and 1 is not 0 and shows "less than 1". Made a build condition (W11d-1).
+
+### OP rulings
+
+| # | Ruling | Reason |
+|---|---|---|
+| OP-38 | ✅ **Fail the whole card** (existing error line); no nullable figure, no third string | With BQ-11d-1 = hide at 0, a hidden block on a failed read would be indistinguishable from "no extra credits". The 6a rule (never a zero, never a partial answer) applies. R11d-2 is covered by the PROD column-grant checker and the GRANT-subset test |
+| OP-39 | ✅ Card-only `OwnerCreditCardDeps`; `ownerCreditUsageDeps()` returns it | Keeps `OwnerCreditUsageDeps` (history, admin view, low line) and their fakes unchanged; the method lives on the instance already built on the caller's client |
+| OP-40 | ✅ Narrower than the grant: lots `id, user_id, credits_granted, expires_at, created_at`; draws `id, lot_id, user_id, kind, credits, created_at` | Verified a subset of both `20261017` GRANT lines; leaving out `source`, `credits_base`, `credits_bonus` keeps the boost split and the gift / purchase distinction off the owner path |
+| OP-41 | ✅ No lot list | S11-D-1 asks for one figure; "Added by our team" is recorded as the label if a list is ever built |
+| OP-42 | 🔄 **Overruled: add the card suites and the owner route suite to `test:bos-entitlements`** (W11d-4) | Measured: +16 s locally to a job that finishes about 120 s before `Build` on `main`, so it stays inside the critical path (user rule: no added CI time). 11c set the precedent (`app/admin/users/__tests__`). The render suites are the only proof of G11d-2 by behaviour |
+| OP-43 | ✅ Round down to a whole credit; "less than 1" for 0 < x < 1 | A remainder is never shown higher than it is; reuses the existing `less_than_one` kind and `usage.less_than_one` string |
+| OP-44 | ✅ Keep `remaining`, documented as plan-only | S11-SQ-10 as ruled; the doc line stops a future reader taking it for a combined figure |
+
+### Answers to the specific checks
+
+- **Owner RLS path.** The route builds `createAuthenticatedServerClient`; the owner repository takes that client; no service-role import is added to the route or builder (surface guard rule 4 stays green). The admin lot repository's `CREDIT_LOT_DRAW_COLUMNS` names `reason`, `actor_admin_id`, `idempotency_key`, which the owner grant would refuse anyway, so reuse is impossible as well as forbidden.
+- **Draws readable by the owner.** Yes: policy `business_os_credit_lot_draws_owner_select` (`authenticated`, `auth.uid() = user_id`) and the column grant `id, lot_id, user_id, kind, credits, created_at`. Every column the draw query filters or orders on (`user_id`, `lot_id`, `created_at`) is granted.
+- **Tenant isolation.** Not a service-role path: the account comes from `resolveAccountId(user.id)`, the route takes no input, RLS binds the read to `auth.uid()`; `.eq('user_id', accountId)` on both reads is defence in depth (rule 4). The new method on a class also constructed on the service role (8b low line, 11c admin) is covered by the caller pin (only `ownerCreditUsage.ts` and tests name `listOwnCreditLots`).
+- **One definition.** `extraCreditsAt` is called by the builder, as by 11b and 11c; the cross-check test proves it on the same lots.
+- **Payload allow-list.** Exact key set with `granted` out and `extraCredits` in; widened S11-AC-7 walk on key segments, plus a value check that a lot id, reason and account id fed through the fake never appear. Sufficient.
+- **Entitlements.** No new importer, no symbol change, `KNOWN_NON_GATE_IMPORTERS` and the imports guard unchanged. `npm run test:bos-entitlements` on the final diff.
+- **Slice 8.** `creditBands.ts`, `creditWindowRule.ts`, `creditLowLine*.ts`, `adminCreditPercent*.ts`, `aiChargeRecorder.ts` and the admin "Credits left" column are untouched; G11d-2 proves it in source and in render.
+
+### Conditions
+
+- **W11d-1 (BQ-11d-1, decided).** The block renders only when `extraCredits > 0`. Render tests in `UsageCard.extraCredits.render.test.tsx`: `extraCredits: 0` gives no `credits-extra` element and no "Extra credits" text; any value above 0 gives the block (200 shows "200"; 0.4 shows "less than 1"). Also absent while loading and on the error line. Update §11d.3.4 and §11d.9 to say "decided by the user 2026-10-04".
+- **W11d-2 (OP-38).** A lot read error, the ceiling, or `extraCreditsAt` answering `null` returns `{ data: null, error }`; the new codes (`lots_read_failed`, `lots_unreadable`) are added to the existing `OwnerCreditUsageError` code union and logged through the existing failure-logging path, not a new one. `hasInconsistentLot` logs one `warn` with the account id and a lot count only, never a figure.
+- **W11d-3 (G3 list, exact).** `creditLots.test.ts` G3 matches symbol substrings in comments too. Add to `ALLOWED_LIST` every file that names any G3 symbol, including: `ownerCreditUsage.ts`; each owner test that names `extraCreditsAt`; and `lib/repositories/__tests__/BusinessOsCreditOwnerReadRepository.test.ts` if its type-level assertion imports from `credits/creditLots`. No header comment in the owner repository, the route, the wiring or the card may name `BusinessOsCreditLotRepository` or `extraCreditsAt` unless that file is listed; prefer plain words ("the admin lot repository") over listing a file for a comment.
+- **W11d-4 (OP-42, CI).** Add `components/business-os/__tests__/UsageCard` and `app/api/business-os/usage/__tests__` to the `test:bos-entitlements` path list (one `package.json` line; no workflow change). G11d-8 and §11d.6 are reworded to match. QA records on the PR run the `Business OS Entitlements` and `Build` job durations; if the entitlements job ever ends after `Build`, drop the two paths and record it, rather than accept added CI time.
+- **W11d-5 (repository).** `listOwnCreditLots` mirrors `listLotsWithDraws` (oldest first, `.range(0, ceiling - 1)` then `>= ceiling` is an error, on lots and on each draw chunk; no draw query with no lots; chunks of `MAX_IDS_PER_REQUEST`), with its own parse and map functions inside the owner repository (no import from the admin lot repository, which G3 forbids). `OWNER_LOT_COLUMNS` and `OWNER_LOT_DRAW_COLUMNS` are exported literals, tested as exact strings and as subsets of the parsed GRANT lines (non-vacuity: both lines found). Never throws; `RepositoryResult`.
+- **W11d-6 (no throw, one now).** Both legs of the `Promise.all` must stay non-throwing (`readCreditPosition` and a `RepositoryResult` method); nothing that can throw is added to it or after it, keeping the 11c note "nothing here can throw" true. One `now` is taken once and passed through `{ ...deps, now: () => now }`; `readCreditPosition`'s signature does not change (its two-caller pin in `creditPosition.test.ts` stays green, unedited).
+- **W11d-7 (slice 9 tripwire).** The owner repository's `kind` check refuses anything but `'reversal'`, so slice 9's first consumption draw would take the owner card down for every account with lots. Record in the requirement's slice 9 row (and the owner repository header): slice 9 widens the `kind` check in **both** repositories and `CreditLotDrawForBalance` in the same PR as the first consumption-draw writer.
+- **W11d-8 (logging).** The route's `info` log gains `hasExtra: boolean` only, never the figure (as 11c). No `console.*` in any touched file (0 today; re-count at T11d.0).
+- **W11d-9 (no combined figure, rendered).** Keep G11d-1's rendered-text check (no element's text contains plan-left + extra) and the source rule 6 with planted violations first; rule 6 must also refuse `extraCredits` inside `creditPercentLeft`, `bandColor` or any arithmetic.
+- **W11d-10 (truncation and escapes).** `LanguageContext.tsx` must show +8 / -0 in `git diff --numstat` (R11d-7); the backslash-hex scan covers every changed file, tests included.
+- **W11d-11 (docs).** The requirement's slice 11 row and Change History record this review, BQ-11d-1 as decided and the OP-42 ruling; the entitlements doc paragraph says the % is of the plan only and extra credits are a separate figure. §11d.3.4 notes that the owner figure is floored while the admin block (`CreditsBlock.tsx`) shows its own formatting, so the two can differ below one credit by design (QA step 4 compares a whole-number grant).
+
+### Test plan and estimate
+
+§11d.6 is sufficient with W11d-1, W11d-3, W11d-4 and W11d-9 added. Estimate stays **≈ 1.0 d** (W11d-4 is one script line plus re-running the job).
+
+### Optimisation Suggestions
+
+- The 1,000-lot ceiling fails the whole card for that account. Fine for v1 (grants are rare; boost has a monthly cap); if boost lots ever accumulate, filtering fully used or expired lots must be done in both repositories in one change so the owner and admin figures stay identical.
+- Every card read now issues one extra small query; the draws read is skipped at zero lots, so no change is needed now.
+
+### Business decisions for the user
+
+None open. BQ-11d-1 is decided (hide at 0). The he / es strings join the native-review list owed with the slice 8a strings.
+
+### Approval
+
+[x] Workplan approved with conditions W11d-1 to W11d-11 — proceed to implementation. No resubmission; SA checks the conditions at code review.
+
+## SA Code Review — 11d (2026-10-04)
+
+**Code Review by SA, 2026-10-04**, on `feature/business-os-credit-deduction-slice-11d`, uncommitted diff (`git diff --stat` first: 27 tracked files, +1,457 / -53, plus the new `UsageCard.extraCredits.render.test.tsx`; no deletion without insertion; `LanguageContext.tsx` +8 / -0). Read in full: the diffs of `BusinessOsCreditOwnerReadRepository.ts`, `ownerCreditUsage.ts`, `ownerCreditUsageDeps.ts`, `ownerCreditUsageTypes.ts`, `creditDisplay.ts`, `creditLots.ts`, `UsageCard.tsx`, the usage route, `LanguageContext.tsx`, `package.json`, the two docs, and the changed tests (the four deviation files, the G3 list, surface guard rule 6, the payload pin, the GRANT-subset test). Review only: no code edited, no database.
+
+**Status: ✅ Code Approved.** W11d-1 to W11d-11 are met. No High or Medium finding.
+
+### Security and correctness (verified, no finding)
+
+- **Owner path, RLS only.** `listOwnCreditLots` is a method on the owner repository instance that `ownerCreditUsageDeps(ownerClient)` builds on the route's `createAuthenticatedServerClient`; no service-role import added anywhere; the route still takes no input. Both reads `.eq('user_id', accountId)` after the UUID guard (defence in depth). Caller pin: only `ownerCreditUsage.ts` among product files names the method, so the two service-role constructors (8b low line, 11c admin view) never reach it.
+- **Columns inside the grants.** `OWNER_LOT_COLUMNS` = `id, user_id, credits_granted, expires_at, created_at` and `OWNER_LOT_DRAW_COLUMNS` = `id, lot_id, user_id, kind, credits, created_at`, pinned as exact strings and as subsets of the two `20261017` GRANT lines parsed from the migration (non-vacuity asserted). No `source`, `credits_base`, `credits_bonus` or hidden column.
+- **Repository mirrors the admin read (W11d-5).** Oldest first; `.range(0, 999)` then `>= 1000` is an error on the lots and on each draw chunk; no draw query at zero lots; chunks of `MAX_IDS_PER_REQUEST`; own parse and map (decimal strings parsed, timestamps and UUIDs checked, `null` expiry kept); errors through the existing `fail()`; never throws.
+- **Draw-kind tripwire (W11d-7).** `mapOwnerDraw` refuses any `kind` but `'reversal'`; recorded in the repository header and in the requirement's slice 9 scope row (both repositories plus `CreditLotDrawForBalance['kind']`, same PR as the first consumption writer). A `consumption` draw is one of the nine unreadable shapes tested.
+- **One definition, one `now` (W11d-6).** `extraCreditsAt(lots.data, now)` is the only computation; `now` is taken once and passed as `{ ...deps, now: () => now }`; `readCreditPosition`'s signature is unchanged and its two-caller pin in `creditPosition.test.ts` is untouched and green. Nothing that can throw follows the `Promise.all` (`extraCreditsAt` returns `null` rather than throwing).
+- **`remaining` plan-only.** `computeCreditBalance({ …, granted: 0, … })` written literally; a test proves the whole payload is equal with and without a 5,000 lot except `extraCredits` (monthly, trial, over the allowance).
+- **Payload.** Exact key set (`granted` out, `extraCredits` in); S11-AC-7 key-segment walk with planted keys; a lot id, reason, admin id, key, source and the account id fed through the fake never appear in the payload; no `total` / `combined` / `balance` key. No dollars.
+- **Failure (W11d-2, OP-38).** Lot read error, ceiling, unreadable figure, or a rejected promise → `lots_read_failed`; `extraCreditsAt` `null` → `lots_unreadable`; both through `logReadFailure`, codes added to the existing union; the route answers 500 with the generic line. Never a 0. `hasInconsistentLot` → one `warn` `{ accountId, lots }`, no figure.
+- **Card (W11d-1, W11d-9, BQ-11d-1).** The validator requires `extraCredits` finite and `>= 0` (missing / negative / null / string → error line). `toDisplayedExtraCredits`: `null` at 0, negative or non-finite; `less_than_one` for 0 < x < 1; `Math.floor` otherwise. Block hidden at 0, while loading and on the error line (`usage` is set to null on failure); rendered tests for 200, 0.4, 199.6 → 199 and 12,000 grouped, per en / he / es. Rule 6 (planted violations first) pins `extraCredits` to the validator and the helper only, `creditPercentLeft(usage.used, allowance.amount)` on every call, `bandColor` of the position only; the rendered check finds no text equal to plan-left + extra; 0 vs 5,000 extra gives identical headline, `data-band`, arc offset and aria-label.
+- **Strings.** `usage.extra.label` / `usage.extra.explain` in en / es / he, es / he marked for native review; +8 / -0.
+- **Route log (W11d-8).** `hasExtra: boolean` only, tested never to carry the figure.
+- **Slice 8 untouched.** `creditBands.ts`, `creditWindowRule.ts`, `creditLowLine*.ts`, `adminCreditPercent.ts`, `adminCreditPercentDeps.ts`, `aiChargeRecorder.ts` and `app/admin` show no line in `git diff`.
+- **Entitlements.** No added line imports from `lib/business-os/entitlements/` (the only added match is the `package.json` script). `ownerCreditUsage.ts`'s imports from the module are unchanged; no registration change needed.
+- **CI paths (W11d-4).** Both added `test:bos-entitlements` paths exist (`components/business-os/__tests__/UsageCard*` = four suites; `app/api/business-os/usage/__tests__`). No workflow change.
+- **Logging.** `console.*` = 0 in every touched product file.
+
+### §11d.10 deviation rulings
+
+| # | Deviation | Ruling |
+|---|---|---|
+| 1 | One fake line `listOwnCreditLots: async () => ({ data: [], error: null })` plus the `OwnerCreditCardDeps` type in `creditPosition.test.ts`, `ownerCreditHistory.test.ts`, `adminCreditPercent.test.ts` (slice 8a test) and `ownerCreditUsage.crossCheck.test.ts` | ✅ **Accepted.** These suites call `readOwnerCreditUsage` directly, so they need the card's deps; the change is a fixture line and a type, and no assertion, case or source pin moved (verified in the diff). The alternative (a missing method treated as "no lots") would be a 0-on-wiring-fault path against OP-38. W11d-6 / G11d-7's "unedited" meant the assertions and the two-caller pin, which hold. The slice 8a **product** files are untouched |
+| 2 | `ownerCreditSurface.guard.test.ts` added to the G3 allowed list | ✅ **Accepted.** It names `credits/creditLots.ts` in `OWNER_SURFACE` (a guard listing a file, not a caller); W11d-3 said "every file that names any G3 symbol" |
+| 3 | `.catch` on the lot leg of the `Promise.all` | ✅ **Accepted.** Keeps "never throws" true against a fake or a future change; it yields the same `{ data: null, error }` shape and lands in `lots_read_failed` (tested with a rejecting read). The plan leg needs none: `readCreditPosition` catches internally |
+| 4 | `Set` lookup in the payload test instead of an `[…, 'admin', …].includes(s)` literal | ✅ **Accepted.** Same semantics (whole-segment match); the authz guard's R4 pattern targets role decisions, and a test word list is not one. Rewording a test literal is the right fix, not a guard exemption |
+
+### Code Review Comments
+
+1. `lib/repositories/BusinessOsCreditOwnerReadRepository.ts` `listOwnCreditLots` — `drawsByLot.get(owningLot)?.push(draw)` silently drops a draw whose `lot_id` is not among the lots read; a dropped draw would show the figure higher than it is. Unreachable today (the query is `.in('lot_id', chunk)` of the lots just read) and it mirrors the admin repository exactly, so the owner and admin figures stay identical. Not for 11d; if changed, change both repositories in one PR (an unknown lot id → error). — Priority: Low
+2. §11d.10 "backslash + hex scan: none" — true of every **added** line (re-checked). `LanguageContext.tsx` carries two **pre-existing** escapes (lines 1355 and 8057) that 11d does not touch; say "none added" next time so the record is exact. — Priority: Low
+3. `lib/business-os/credits/__tests__/ownerCreditHistory.test.ts` — the new `listOwnCreditLots` fake is a `jest.fn`; one `not.toHaveBeenCalled()` after a history read would prove "the history never reads lots" by behaviour rather than by comment. Optional. — Priority: Low
+
+### Optimisation Suggestions
+
+- The two notes of the workplan review stand (the 1,000-lot ceiling fails the card for that account; one extra small query per card read, none at zero lots).
+
+### Re-run by SA (2026-10-04, this diff)
+
+| Command | Result |
+|---|---|
+| `npx jest lib/business-os/credits lib/repositories/__tests__/BusinessOsCreditOwnerReadRepository.test.ts components/business-os/__tests__/UsageCard app/api/business-os/usage lib/admin/__tests__/admin-authz-surface.guard.test.ts` | **37 suites, 1,144 / 1,144** (= Dev's 36 / 1,025 + authz guard 119) |
+| `npm run test:bos-entitlements` | **176 suites, 4,398 / 4,398**, jest `Time` 97.0 s locally under load (the CI duration against `Build` is QA's W11d-4 record on the PR run) |
+| `git diff --numstat` `LanguageContext.tsx` | +8 / -0 |
+| Added-line backslash-hex scan | none |
+
+### QA
+
+A separate full QA pass is **not needed**: the automated coverage is re-run above and the render suites now run in CI. What remains for QA / TL: (a) the user's browser check as the Eyal_Fitness owner (§11d.6.5: no block with no lots; after an admin grant of a whole number the block shows it, matching the admin Credits block; the % unchanged), and (b) on the PR run, record the `Business OS Entitlements` and `Build` job durations (W11d-4; drop the two paths if the entitlements job ends after `Build`).
+
+### Code Approved for QA: Yes
+
 ## 16. QA Testing Report
 
 See "QA Report — 11a (2026-10-02)" below.
@@ -2190,6 +2685,7 @@ creditWindowRule.ts: absent · console.* in 26 changed app/lib files: 0 · backs
 | 11a | 2026-10-02, after SA code review (CR11a-1 fixed and SA-confirmed) and QA PASS WITH NOTES | 2026-10-02 ("go ahead, commit and open the PR") | `3ffe3e7c` docs, `55f54ce4` feat, `9b737ba1` docs (PR number), `32a5a3be` docs (PROD apply record), `03ff6888` merge of main (slice 7a #174, docs conflicts), `ef17ee8c` fix (Tailwind CSS-escape path in this workplan) | #173 | ✅ `9a7c4fb3`, 2026-10-02 |
 | 11b | 2026-10-03, after SA code review APPROVED and QA PASS WITH NOTES | 2026-10-03 ("approved, commit and create a PR") | `a06c4693` docs, `ae07fec1` feat, `5804b7de` merge of main (#176), `fba3cc51` docs (PR number) | #179 | ✅ `05ca1a55`, 2026-10-03 |
 | 11c | 2026-10-04, saw it working in the browser, including a live 200-credit grant on Eyal_Fitness | 2026-10-04 ("all looks good, continue") | `edcef514` docs, `3f48272a` feat, `d7b88b39` merge of main (`89dbc568`, incl. slice 8a #189), docs commit recording the PR | #194 | ⬜ not merged (held until BD-26) |
+| 11d | 2026-10-04, after SA code review APPROVED (QA folded into the SA re-run) | 2026-10-04 (commit and open the PR) | `92a88563` docs, `5673148f` feat, `80b2574e` merge of main (`50a30939`, incl. CI Jest gate #210 and admin queue cancel #211; package.json and entitlements doc conflicts, both sides kept), docs commit recording the PR | #213 | ⬜ not merged |
 
 ---
 
@@ -2217,3 +2713,7 @@ creditWindowRule.ts: absent · console.* in 26 changed app/lib files: 0 · backs
 | 2026-10-03 | QA (11c): PASS WITH NOTES, one Medium bug to fix before commit | Section "QA Report — 11c (2026-10-03)" added. Independent re-runs match Dev's counts. Named suites: 558 passed, 2 failed (the two pre-existing `creditPeriod.test.ts` source guards; the files are identical to main). The four owner suites (84) are green and unedited. `test:bos-entitlements` 2,404/2,404; authz guard 119/119; `typecheck:bos-llm` 0 new; QA's scoped `tsc` is clean in the touched files. QA's own scratchpad suites: render 32/32 and route black-box 23/23, covering the figures, the lot list, own account, Give and Take back validation, the request-id lifetime, replay figures, all 23 refusal sentences, the gate order, uuid case, platform / tenant, exact keys and no write. **QA11c-1 (= CR11c-1, Medium):** closing the dialog with Escape while a POST is in flight and confirming again sends a second POST with a new request id (reproduced). Low: QA11c-2 (new: a failed re-read after a success unmounts the dialog and hides the result), QA11c-3 (= CR11c-2) and QA11c-4 (= CR11c-3). Info: a thrown lot read would answer 500 (unreachable today); the branch is 10 commits behind main with no overlap; the suites are not CI-covered. A read-only browser checklist for TL is included |
 | 2026-10-03 | 11c review fixes (Dev), uncommitted | §11c.10 "Review fixes". CR11c-1 / QA11c-1: the dialog ignores every close while a POST is in flight; Close and Back disabled while busy (render test: Esc and X ignored, one POST with one request id, closes after the answer; non-vacuous). CR11c-2 / QA11c-3: the take-back description comes from `lotRemainingAfter`. CR11c-3 / QA11c-4: "Take back everything left on this gift from …". QA11c-2: the dialog renders outside the block's `ok` branch on the last good limits, so a failed re-read keeps the success message. `app/admin/users/__tests__` 188 / 188; with the credits routes 268 / 268; eslint, scoped `tsc` clean. Awaiting SA / QA re-check |
 | 2026-10-04 | 11c user UI fixes (Dev), uncommitted | §11c.10 "User UI fixes". "Review" → "Continue"; a success closes the dialog and shows the server's result as a dismissable status line in the Credits block (QA11c-2 and CR11c-1 kept); panel order Credits → Plan & entitlements (collapsed `<details>`, panel only) → AI spend → AI failures; "Set by" in plain words with the raw layer on hover, plus a layer-copy contract test. `app/admin/users/__tests__` 204 / 204; route + escape guard 41 / 41; eslint, scoped `tsc` clean |
+| 2026-10-04 | 11d workplan written (Dev), awaiting SA | 11c merged (PR #194, `15c96605`). New section "11d — Owner sees extra credits" on branch `feature/business-os-credit-deduction-slice-11d` (off `3fde62b2`); the §14 outline marked superseded; title, ToC, branch line and header status updated. Plan: `listOwnCreditLots` on the owner read repository (owner RLS client, columns a tested subset of the `20261017` GRANT lines, no draws read without lots, ceiling = error); `extraCredits` replaces `granted` in the owner payload via `extraCreditsAt` with one `now`, read in parallel; `remaining` stays plan-only (`granted: 0` literal); card-only `OwnerCreditCardDeps`; the card's "Extra credits" figure (rounded down) and S11-D-1's line under the ring, shown only above 0; %, bands, low line untouched (BD-25); no lot list (S11-D-4 label not needed); en / he / es strings (he / es native review); payload pin and S11-AC-7 forbidden-word walk widened; G3 list, owner-surface guard rule 6 and a caller pin; no importer, imports-guard or `SOURCES` change; 0 `console.*`. ≈ 1.0 d. Open points OP-38 to OP-44; one business question BQ-11d-1 (hide the figure at 0). No code; nothing applied |
+| 2026-10-04 | SA workplan review (11d): APPROVED WITH CONDITIONS | Section "SA Workplan Review — 11d (2026-10-04)" added. Owner read via the owner RLS client verified against `20261017` (owner SELECT policy and column grant on both lots and draws; Dev's column lists are subsets). OP-38 fail the whole card, OP-39 card-only deps, OP-40 narrower columns, OP-41 no lot list, OP-43 round down, OP-44 keep `remaining` plan-only: all approved. OP-42 overruled: add the `UsageCard` and owner usage route suites to `test:bos-entitlements` (measured +16 s locally; the job ends about 120 s before `Build`), correcting §11d.6 (11c client suites are CI-run). BQ-11d-1 DECIDED by the user 2026-10-04: hide the figure at 0. Conditions W11d-1 to W11d-11 (hide-at-0 render tests, error codes, exact G3 list incl. comments, CI paths, repository mirror of `listLotsWithDraws`, no-throw / one `now`, slice 9 `kind` tripwire recorded, `hasExtra` only, rendered no-combined check, +8 / -0 and escape scan, docs). No entitlements importer change. ≈ 1.0 d |
+| 2026-10-04 | 11d implemented (Dev): Code Complete, uncommitted | §11d.10 results; T11d.0–T11d.8 ticked; §11d.3.4, §11d.9, G11d-8 and §11d.6 updated for BQ-11d-1 (decided: show nothing at 0), OP-42 overruled (W11d-4) and W11d-11. `listOwnCreditLots` on the owner read repository; `extraCredits` replaces `granted`; the card's "Extra credits" block shown only above 0; `hasExtra` in the route log; six strings (+8 / -0); `test:bos-entitlements` gains the card and owner route suites. Targeted suites 36 / 1,025; `test:bos-entitlements` 176 / 4,398 (64–86 s); authz guard 119; `typecheck:bos-llm` 0 new; scoped `tsc` 0 errors on touched lines; eslint 0 errors; escape guard 6 / 6; backslash-hex none. Deviation: four existing owner tests that call `readOwnerCreditUsage` got a one-line empty lot read in their fakes (assertions unedited). SA code review and QA pending |
+| 2026-10-04 | SA code review (11d): CODE APPROVED | Section "SA Code Review — 11d (2026-10-04)" added. W11d-1 to W11d-11 met; owner lot read on the RLS client with columns inside the `20261017` grants; tripwire recorded; `remaining` plan-only; payload exact keys; failed lot read fails the card. §11d.10 deviations 1 to 4 accepted. Three Low comments (draw for an unknown lot silently dropped, mirrors admin; "no backslash-hex added" wording; optional history no-lot-read assertion). SA re-run: targeted 37 suites / 1,144 (incl. authz guard 119); `test:bos-entitlements` 176 / 4,398. No separate QA pass needed beyond the user's browser check as the Eyal_Fitness owner and the W11d-4 CI duration record |

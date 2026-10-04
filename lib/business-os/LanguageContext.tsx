@@ -1313,6 +1313,8 @@ export const translations = {
     'usage.explain.trial': CREDIT_EXPLANATION.en.trial,
     'usage.refresh': 'Refresh credits',
     'usage.error': "We couldn't load your credits just now. Please try again.",
+    'usage.extra.label': 'Extra credits',
+    'usage.extra.explain': "Extra credits are used after your plan's credits and do not reset monthly.",
     // Credit history (credit deduction slice 7a, D-i to D-q). Neutral wording, never 'AI' (BD-15).
     'credits.history.link': 'Credit history',
     'credits.history.title': 'Credit history',
@@ -5036,6 +5038,9 @@ export const translations = {
     'usage.explain.trial': CREDIT_EXPLANATION.es.trial,
     'usage.refresh': 'Actualizar créditos',
     'usage.error': 'No pudimos cargar tus créditos en este momento. Inténtalo de nuevo.',
+    // Slice 11d (S11-D-1): needs native review.
+    'usage.extra.label': 'Créditos extra',
+    'usage.extra.explain': 'Los créditos extra se usan después de los créditos de tu plan y no se renuevan cada mes.',
     // Credit history (credit deduction slice 7a, D-i to D-q). Neutral wording, never 'AI' (BD-15). Draft — native review before release.
     'credits.history.link': 'Historial de créditos',
     'credits.history.title': 'Historial de créditos',
@@ -10765,6 +10770,9 @@ export const translations = {
     'usage.explain.trial': CREDIT_EXPLANATION.he.trial,
     'usage.refresh': 'רענון קרדיטים',
     'usage.error': 'לא הצלחנו לטעון את הקרדיטים כרגע. נסו שוב.',
+    // Slice 11d (S11-D-1): needs native review.
+    'usage.extra.label': 'קרדיטים נוספים',
+    'usage.extra.explain': 'קרדיטים נוספים מנוצלים אחרי הקרדיטים של התוכנית שלך ואינם מתאפסים מדי חודש.',
     // Credit history (credit deduction slice 7a, D-i to D-q). Neutral wording, never 'AI' (BD-15). Draft — native review before release.
     'credits.history.link': 'היסטוריית קרדיטים',
     'credits.history.title': 'היסטוריית קרדיטים',

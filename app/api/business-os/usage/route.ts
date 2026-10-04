@@ -10,6 +10,11 @@
  * (`lib/business-os/credits/ownerCreditUsageTypes.ts`); it carries no tokens,
  * no dollars, no cost and no account id (FR-28).
  *
+ * Since credit deduction slice 11d it also carries `extraCredits`: credits
+ * added on top of the plan, a SEPARATE figure that never enters `remaining`
+ * or the percentage (boost R-5 (c)). The lots behind it are read with the
+ * same RLS client; nothing about where they came from is in the payload.
+ *
  * ── THE TENANT ISOLATION PROPERTY, AND WHY IT IS STRUCTURAL ────────────────
  * **This handler accepts no input at all.** No path parameter, no query string,
  * no body. The account is `user.id` from the verified session, resolved through
@@ -80,6 +85,8 @@ export async function GET(request: NextRequest) {
         periodKind: result.data.period.kind,
         gauged: result.data.allowance !== null,
         used: result.data.used,
+        // Whether the account has extra credits, never the figure (slice 11d, SA W11d-8).
+        hasExtra: result.data.extraCredits > 0,
       },
       'Owner credits read'
     );

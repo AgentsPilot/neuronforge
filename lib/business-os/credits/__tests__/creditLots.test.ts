@@ -215,6 +215,16 @@ describe('source guards (G3, G6, W11a-7)', () => {
     'lib/business-os/credits/adminCreditPositionDeps.ts',
     'app/api/admin/business-os/credits/accounts/[accountId]/route.ts',
     'app/api/admin/business-os/credits/accounts/[accountId]/__tests__/route.test.ts',
+    // Slice 11d (SA W11d-3): the owner card's payload builder calls the
+    // balance core for the "Extra credits" figure; its test names it for the
+    // cross-check, and the owner repository test imports its lot type for a
+    // type-level assertion. The owner repository, route, wiring and card name
+    // none of the symbols.
+    'lib/business-os/credits/ownerCreditUsage.ts',
+    'lib/business-os/credits/__tests__/ownerCreditUsage.test.ts',
+    'lib/repositories/__tests__/BusinessOsCreditOwnerReadRepository.test.ts',
+    // ...and the owner surface guard lists the balance core in OWNER_SURFACE.
+    'lib/business-os/credits/__tests__/ownerCreditSurface.guard.test.ts',
   ];
   const ALLOWED = new Set(ALLOWED_LIST.map((p) => p.split('/').join(sep)));
 
@@ -263,6 +273,16 @@ describe('source guards (G3, G6, W11a-7)', () => {
 
   it('adminOps.ts names none of the symbols (it goes through creditAdminOps.ts)', () => {
     const source = readFileSync(join(ROOT, 'lib', 'business-os', 'entitlements', 'adminOps.ts'), 'utf8');
+    expect(SYMBOLS.filter((symbol) => source.includes(symbol))).toEqual([]);
+  });
+
+  it.each([
+    'lib/repositories/BusinessOsCreditOwnerReadRepository.ts',
+    'app/api/business-os/usage/route.ts',
+    'lib/business-os/credits/ownerCreditUsageDeps.ts',
+    'components/business-os/UsageCard.tsx',
+  ])('slice 11d: %s names none of the symbols, comments included (SA W11d-3)', (file) => {
+    const source = readFileSync(join(ROOT, ...file.split('/')), 'utf8');
     expect(SYMBOLS.filter((symbol) => source.includes(symbol))).toEqual([]);
   });
 

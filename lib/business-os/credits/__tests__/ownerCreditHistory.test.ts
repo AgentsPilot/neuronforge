@@ -32,7 +32,7 @@ import { AI_ACTION_DECLARATIONS } from '@/lib/business-os/llm/aiActionAudit';
 import { decodeHistoryCursor, encodeHistoryCursor } from '../creditHistoryCursor';
 import type { CreditHistoryPage, OwnerCreditHistoryPage } from '../creditHistoryTypes';
 import { CREDIT_HISTORY_PAGE_SIZE, readOwnerCreditHistory, type OwnerCreditHistoryDeps } from '../ownerCreditHistory';
-import { readOwnerCreditUsage, resolveOwnerCreditWindow } from '../ownerCreditUsage';
+import { readOwnerCreditUsage, resolveOwnerCreditWindow, type OwnerCreditCardDeps } from '../ownerCreditUsage';
 import type { OwnerCreditAllowance } from '../ownerCreditUsageTypes';
 
 const USER = '11111111-1111-4111-8111-111111111111';
@@ -165,6 +165,8 @@ function makeDeps(f: Fixture) {
             error: null,
           }
     ),
+    // Slice 11d: the card also reads the owner's credit lots (none here; the history never does).
+    listOwnCreditLots: jest.fn(async () => ({ data: [], error: null })),
   };
   const ledger = {
     listLedgerRowsForWindow: jest.fn(
@@ -180,7 +182,7 @@ function makeDeps(f: Fixture) {
     // Its own mock (same answers), so a test can tell the history's read from the window's.
     findChargesByActionIds: jest.fn(owner.findChargesByActionIds.getMockImplementation()!),
   };
-  const deps: OwnerCreditHistoryDeps = {
+  const deps: OwnerCreditHistoryDeps & OwnerCreditCardDeps = {
     findPeriodAnchor: jest.fn(async () => ({ data: f.anchor === undefined ? ANCHOR : f.anchor, error: null })),
     periodStartFor: jest.fn(async () => ({ data: f.periodStartFor ?? PERIOD, error: null })),
     owner,

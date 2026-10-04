@@ -29,7 +29,12 @@ import * as path from 'path';
 import type { CreditLedgerRow, CreditTotalsRow } from '@/lib/repositories/BusinessOsCreditLedgerReadRepository';
 import type { OwnerCreditChargeRow, OwnerCreditTotalsRow } from '@/lib/repositories/BusinessOsCreditOwnerReadRepository';
 import { buildCreditReport, type CreditReportDeps } from '../creditReport';
-import { readCreditPosition, readOwnerCreditUsage, type OwnerCreditUsageDeps } from '../ownerCreditUsage';
+import {
+  readCreditPosition,
+  readOwnerCreditUsage,
+  type OwnerCreditCardDeps,
+  type OwnerCreditUsageDeps,
+} from '../ownerCreditUsage';
 
 const A = '11111111-1111-4111-8111-111111111111';
 const ANCHOR = '2026-08-14T09:31:07.123456+00:00';
@@ -118,7 +123,7 @@ function deps(options: {
   anchor?: string | null;
   allowance?: { amount: number; per: 'month' | 'total' } | null;
   anchorError?: boolean;
-} = {}): OwnerCreditUsageDeps {
+} = {}): OwnerCreditCardDeps {
   const anchor = options.anchor === undefined ? ANCHOR : options.anchor;
   return {
     findPeriodAnchor: async () => (options.anchorError ? { data: null, error: new Error('anchor read failed') } : { data: anchor, error: null }),
@@ -137,6 +142,8 @@ function deps(options: {
         data: ROWS.filter((r) => r.kind === 'charge' && ids.includes(r.action_id!)).map(asOwnerRow),
         error: null,
       }),
+      // Slice 11d: the card also reads the owner's credit lots (none here).
+      listOwnCreditLots: async () => ({ data: [], error: null }),
     },
     now: () => NOW,
     readAllowance: async () => (options.allowance === undefined ? { amount: 32250, per: 'month' } : options.allowance),

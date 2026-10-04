@@ -28,7 +28,10 @@
  *
  * Pure: no I/O, no repository, nothing from the entitlements module.
  * Called by the slice 11b admin credit ops (`creditAdminOps.ts`) for the
- * audit's before / after figures; 11c and 11d will read it too.
+ * audit's before / after figures, the slice 11c admin per-account credit view
+ * route, and the slice 11d owner card's payload builder (`ownerCreditUsage.ts`,
+ * the "Extra credits" figure). The G3 guard in `__tests__/creditLots.test.ts`
+ * holds the exact list.
  *
  * @module lib/business-os/credits/creditLots
  */

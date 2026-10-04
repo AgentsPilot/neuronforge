@@ -17,7 +17,7 @@ jest.mock('@/lib/business-os/entitlements/EntitlementService', () => ({
 import type { CreditLedgerRow, CreditTotalsRow } from '@/lib/repositories/BusinessOsCreditLedgerReadRepository';
 import type { OwnerCreditChargeRow, OwnerCreditTotalsRow } from '@/lib/repositories/BusinessOsCreditOwnerReadRepository';
 import { buildCreditReport, type CreditReportDeps } from '../creditReport';
-import { readOwnerCreditUsage, type OwnerCreditUsageDeps } from '../ownerCreditUsage';
+import { readOwnerCreditUsage, type OwnerCreditCardDeps } from '../ownerCreditUsage';
 
 const A = '11111111-1111-4111-8111-111111111111';
 const PERIOD = '2026-09-14T09:31:07.123456+00:00';
@@ -115,7 +115,7 @@ async function report() {
 }
 
 async function card() {
-  const deps: OwnerCreditUsageDeps = {
+  const deps: OwnerCreditCardDeps = {
     findPeriodAnchor: async () => ({ data: PERIOD, error: null }),
     periodStartFor: async () => ({ data: PERIOD, error: null }),
     owner: {
@@ -129,6 +129,8 @@ async function card() {
         data: ROWS.filter((r) => r.kind === 'charge' && ids.includes(r.action_id!)).map(asOwnerRow),
         error: null,
       }),
+      // Slice 11d: no credit lots; the comparison is about the plan figures only.
+      listOwnCreditLots: async () => ({ data: [], error: null }),
     },
     now: () => new Date('2026-09-30T12:00:00.000Z'),
     readAllowance: async () => ({ amount: 32250, per: 'month' }),

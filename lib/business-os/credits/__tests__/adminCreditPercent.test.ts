@@ -24,7 +24,7 @@ const mockOwnerSnapshot = jest.fn();
 
 import { readAdminCreditsLeft, type AdminCreditPercentDeps, type AdminTotalsRow } from '../adminCreditPercent';
 import { creditPercentLeft } from '../creditBands';
-import { readOwnerCreditUsage, type OwnerCreditUsageDeps } from '../ownerCreditUsage';
+import { readOwnerCreditUsage, type OwnerCreditCardDeps } from '../ownerCreditUsage';
 import type { OwnerCreditAllowance } from '../ownerCreditUsageTypes';
 
 const uid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -359,7 +359,7 @@ describe('the admin % equals the owner card % (R-3, AC-43)', () => {
     const totals: AdminTotalsRow[] = total === null ? [] : [{ user_id: A, period_start: period, credits_total: total }];
 
     // The owner card's own read, with the same rows.
-    const ownerDeps: OwnerCreditUsageDeps = {
+    const ownerDeps: OwnerCreditCardDeps = {
       findPeriodAnchor: async () => ({ data: anchor, error: null }),
       periodStartFor: async () => ({ data: period, error: null }),
       readAllowance: async () => allowance,
@@ -390,7 +390,9 @@ describe('the admin % equals the owner card % (R-3, AC-43)', () => {
         }),
         listAdjustmentsForPeriods: async () => ({ data: { rows: [], reachedCeiling: false }, error: null }),
         findChargesByActionIds: async () => ({ data: [], error: null }),
-      } as unknown as OwnerCreditUsageDeps['owner'],
+        // Slice 11d: the card also reads the owner's credit lots (none here).
+        listOwnCreditLots: async () => ({ data: [], error: null }),
+      } as unknown as OwnerCreditCardDeps['owner'],
     };
     const card = await readOwnerCreditUsage(A, ownerDeps, { warn: jest.fn(), error: jest.fn() });
     const cardPercent = creditPercentLeft(card.data!.used, card.data!.allowance!.amount)!;

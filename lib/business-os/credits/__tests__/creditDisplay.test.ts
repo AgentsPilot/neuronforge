@@ -5,7 +5,7 @@
  * up to the allowance, and something used is never shown as nothing.
  */
 
-import { toDisplayedCredits, type DisplayedCreditFigure } from '../creditDisplay';
+import { toDisplayedCredits, toDisplayedExtraCredits, type DisplayedCreditFigure } from '../creditDisplay';
 
 const whole = (value: number): DisplayedCreditFigure => ({ kind: 'whole', value });
 const LESS: DisplayedCreditFigure = { kind: 'less_than_one' };
@@ -84,5 +84,31 @@ describe('toDisplayedCredits', () => {
         expect(shown.left! + counted(shown.used)).toBe(2000);
       }
     }
+  });
+});
+
+/** Slice 11d (SA OP-43, BQ-11d-1): the owner card's "Extra credits" figure. */
+describe('toDisplayedExtraCredits', () => {
+  it.each([
+    ['0: hidden (the user decision: nothing at 0)', 0],
+    ['negative: hidden', -5],
+    ['NaN: hidden', Number.NaN],
+    ['Infinity: hidden', Number.POSITIVE_INFINITY],
+  ])('%s', (_name, value) => {
+    expect(toDisplayedExtraCredits(value)).toBeNull();
+  });
+
+  it.each([0.000001, 0.4, 0.999999])('%s: "less than 1", never hidden (it is not 0)', (value) => {
+    expect(toDisplayedExtraCredits(value)).toEqual(LESS);
+  });
+
+  it.each([
+    [1, 1],
+    [199.6, 199],
+    [199.999999, 199],
+    [200, 200],
+    [12000.5, 12000],
+  ])('%s: rounded DOWN to %s (never shown higher than it is)', (value, shown) => {
+    expect(toDisplayedExtraCredits(value)).toEqual(whole(shown));
   });
 });
