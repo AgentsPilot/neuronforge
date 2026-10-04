@@ -17,6 +17,11 @@
  *
  * A platform account chosen in the picker is refused by the route (409); the
  * tab says why in its own words instead of a generic error (SA-B1-5).
+ *
+ * B2a: each row's Details button opens the drill-down drawer for that action.
+ * Which action is open lives in this component only; it is not in the URL
+ * (the deep link lands in B3, OQ-12). Closing the drawer returns focus to the
+ * button that opened it.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -37,7 +42,9 @@ import {
 } from '../../activityCopy';
 import { resolvePreset, type ActivityPreset } from '../../activityPresets';
 import type { ActivityAreaOption, ActivityPayload } from '../../activityTypes';
+import { readJsonBody } from '../../readJsonBody';
 import { ActivityCountLine } from './ActivityCountLine';
+import { ActivityDrillDown } from './ActivityDrillDown';
 import { ActivityFilters, type ActivityQuery } from './ActivityFilters';
 import { ActivityTable } from './ActivityTable';
 import { AuditSummaryLine } from './AuditSummaryLine';
@@ -85,6 +92,16 @@ export function ActivityTab() {
   const [error, setError] = useState<ActivityError | null>(null);
   const sequence = useRef(0);
   const inFlight = useRef<AbortController | null>(null);
+  // B2a: the action whose drawer is open, and the button that opened it.
+  const [openActionId, setOpenActionId] = useState<string | null>(null);
+  const opener = useRef<HTMLElement | null>(null);
+
+  const openDetails = useCallback((actionId: string, button: HTMLElement) => {
+    opener.current = button;
+    setOpenActionId(actionId);
+  }, []);
+  const closeDetails = useCallback(() => setOpenActionId(null), []);
+  const returnFocus = useCallback(() => opener.current?.focus(), []);
 
   const load = useCallback(async (q: ActivityQuery) => {
     const mine = ++sequence.current;
@@ -97,9 +114,12 @@ export function ActivityTab() {
     setError(null);
     try {
       const response = await fetch(`${ACTIVITY_URL}?${searchOf(q)}`, { signal: controller.signal });
-      const body = await response.json();
+      // QA-B2a-2 (changed with the drawer, per SA): a non-JSON body (a proxy's
+      // HTML error page) reads as NULL, so the tab shows its own words, never a
+      // parser message. A JSON error body still gives the route's reason (400, 409).
+      const body = await readJsonBody(response);
       if (!isCurrent()) return;
-      if (!response.ok || !body?.success) {
+      if (!response.ok || body === null || body.success !== true) {
         setPayload(null);
         setError(
           body?.error === 'platform_account'
@@ -236,7 +256,11 @@ export function ActivityTab() {
                   <p className="text-sm text-slate-200">{ACTIVITY_EMPTY}</p>
                 </div>
               ) : (
-                <ActivityTable rows={payload.rows} settleMinutes={payload.audit?.settleMinutes ?? null} />
+                <ActivityTable
+                  rows={payload.rows}
+                  settleMinutes={payload.audit?.settleMinutes ?? null}
+                  onOpen={openDetails}
+                />
               )}
 
               {payload.audit && payload.rows.length > 0 && (
@@ -248,6 +272,8 @@ export function ActivityTab() {
           )}
         </div>
       )}
+
+      <ActivityDrillDown actionId={openActionId} onClose={closeDetails} onReturnFocus={returnFocus} />
     </div>
   );
 }

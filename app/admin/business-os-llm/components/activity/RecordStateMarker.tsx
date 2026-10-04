@@ -26,7 +26,8 @@ import {
 } from '../../activityCopy';
 import type { ActivityEntryState, ActivityRow } from '../../activityTypes';
 
-function EntryMarker({ entry, settleMinutes }: { entry: ActivityEntryState; settleMinutes: number | null }) {
+/** The audit-entry state alone. Exported for the drill-down's entry section (B2a). */
+export function EntryMarker({ entry, settleMinutes }: { entry: ActivityEntryState; settleMinutes: number | null }) {
   switch (entry.state) {
     case 'found':
       return null;
@@ -68,7 +69,13 @@ function EntryMarker({ entry, settleMinutes }: { entry: ActivityEntryState; sett
   }
 }
 
-export function RecordStateMarker({ row, settleMinutes }: { row: ActivityRow; settleMinutes: number | null }) {
+/**
+ * B2a: the prop is the four fields read, so a list row and a drill-down charge
+ * both fit. Type only; no behaviour change.
+ */
+type MarkedRecord = Pick<ActivityRow, 'isFallbackPriced' | 'corrected' | 'reasonCodes' | 'entry'>;
+
+export function RecordStateMarker({ row, settleMinutes }: { row: MarkedRecord; settleMinutes: number | null }) {
   const markers: React.ReactNode[] = [];
   if (row.isFallbackPriced) {
     markers.push(
