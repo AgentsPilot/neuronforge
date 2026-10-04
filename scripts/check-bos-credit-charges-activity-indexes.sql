@@ -1,4 +1,4 @@
--- Read-only checker for 20261025_business_os_credit_charges_activity_indexes.sql
+-- Read-only checker for 20261026_business_os_credit_charges_activity_indexes.sql
 -- (Admin AI Activity view, slice B0-prime; FR-B11, AC-B16, SA-B1-1, SA-B1-2).
 -- Workplan: docs/workplans/BUSINESS_OS_ADMIN_AI_ACTIVITY_SLICE_B1_WORKPLAN.md
 --

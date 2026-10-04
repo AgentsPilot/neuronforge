@@ -155,7 +155,7 @@ If SA prefers one slice, the task list below runs straight through: T1 to T9 are
 
 **Live state (F-24, check 2, recorded 2026-10-02):** production `business_os_credit_charges` has exactly the repo's four indexes — `business_os_credit_charges_pkey (id)`, `business_os_credit_charges_action_id_key UNIQUE (action_id)`, `business_os_credit_charges_user_period_idx (user_id, period_start, created_at DESC)`, `business_os_credit_charges_group_idx (group_id)`. None leads with `created_at`; none is on `adjusts_action_id`. There is no production-only index to reconcile, so B0′ stands as ruled.
 
-**Planned file:** `supabase/migrations/20261025_business_os_credit_charges_activity_indexes.sql`. The date skips `20261016`, which slice 4c has reserved (V-3).
+**Planned file:** `supabase/migrations/20261026_business_os_credit_charges_activity_indexes.sql`. The date skips `20261016`, which slice 4c has reserved (V-3).
 
 **Planned content (the plan, not the file):**
 
@@ -196,7 +196,7 @@ COMMIT;
 
 | File | Content |
 |---|---|
-| `supabase/SQL Scripts/20261025_business_os_credit_charges_activity_indexes_rollback.sql` | `BEGIN; SET LOCAL lock_timeout = '1s'; DROP INDEX IF EXISTS` × 2`; COMMIT;` (SA-B1-3: `DROP INDEX` takes `ACCESS EXCLUSIVE`). Dropping an index loses no data |
+| `supabase/SQL Scripts/20261026_business_os_credit_charges_activity_indexes_rollback.sql` | `BEGIN; SET LOCAL lock_timeout = '1s'; DROP INDEX IF EXISTS` × 2`; COMMIT;` (SA-B1-3: `DROP INDEX` takes `ACCESS EXCLUSIVE`). Dropping an index loses no data |
 | `scripts/check-bos-credit-charges-activity-indexes.sql` | Read-only (SA-B1-2). **Section 1**: `SET default_transaction_read_only = on;` then ONE result set with a VERDICT row and a PASS/FAIL row per expected index comparing the exact `indexdef` (all six), plus "no other index", "both new indexes valid and ready", ledger size and the busiest account id, for block E6. Before the apply it reads FAIL with the two new rows "missing" — that is the "before" record (SA-B1-4). **Section 2**: E1–E6, each its own `BEGIN READ ONLY; SET LOCAL enable_seqscan = off; EXPLAIN (ANALYZE, BUFFERS) …; ROLLBACK;` block with literal values, labelled "run this block alone". **Section 3**: generic-plan blocks G1/G2/G4 (`PREPARE`, `SET LOCAL plan_cache_mode = force_generic_plan`, `EXPLAIN EXECUTE`, `DEALLOCATE`). **Section 4**: E1/E2 at default settings for today's latency |
 | `supabase/migrations/__tests__/business-os-credit-charges-activity-indexes.migration.test.ts` | Pins: exactly two `CREATE INDEX IF NOT EXISTS`; index (a) is `(kind, created_at DESC, id DESC)` and **not** partial; index (b) is partial on `adjusts_action_id IS NOT NULL`; no `FUNCTION`, `GRANT`, `REVOKE`, `ALTER`, `DROP`, `CONCURRENTLY`, `TRIGGER`, `POLICY` or write; `lock_timeout` 1 s (below 1.5 s) in the migration **and** the rollback, set before the first statement; the filename is not `20261016*`; the rollback drops exactly both names; the checker is read-only, compares both exact `indexdef`s, has a single-result-set section 1 with a VERDICT, 11 self-contained blocks, and three `force_generic_plan` blocks |
 
@@ -603,8 +603,8 @@ Counted on 2026-10-02 (`grep -c 'console\.'`). **Every file this plan modifies o
 
 | File | Action | Slice | Change |
 |---|---|---|---|
-| `supabase/migrations/20261025_business_os_credit_charges_activity_indexes.sql` | create | B1a | Two partial indexes, no function ([§ A](#a-b0--the-index-migration)) |
-| `supabase/SQL Scripts/20261025_business_os_credit_charges_activity_indexes_rollback.sql` | create | B1a | `DROP INDEX IF EXISTS` × 2 |
+| `supabase/migrations/20261026_business_os_credit_charges_activity_indexes.sql` | create | B1a | Two partial indexes, no function ([§ A](#a-b0--the-index-migration)) |
+| `supabase/SQL Scripts/20261026_business_os_credit_charges_activity_indexes_rollback.sql` | create | B1a | `DROP INDEX IF EXISTS` × 2 |
 | `scripts/check-bos-credit-charges-activity-indexes.sql` | create | B1a | Read-only `pg_indexes` + E1 to E6 `EXPLAIN` |
 | `supabase/migrations/__tests__/business-os-credit-charges-activity-indexes.migration.test.ts` | create | B1a | SQL-text pins |
 | `lib/repositories/BusinessOsCreditLedgerReadRepository.ts` | modify | B1a | Header `:17-36`; types; `CHARGE_LIST_LIMITS`; two guards; private `chargeQuery`; four methods |
@@ -1282,6 +1282,7 @@ PR: opened to `main` by RM (see the PR for its number). Not merged; merge needs 
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-10-04 | **B0′ migration renamed 20261025 → 20261026** | `main` gained `20261025_business_os_billing_accounts.sql` (62048d63) after this branch was cut, and the migration test pins ours as the only file with its date prefix. Renamed the migration and its rollback to `20261026_…` (no other branch uses that prefix) and updated the checker, the migration test and this workplan. Repo filename only: the indexes were already applied on production on 2026-10-04 and are unchanged. Earlier rows and review sections keep the old name as the record |
 | 2026-10-04 | B1a committed (RM) | Three commits on `feature/admin-ai-activity-b1a` (`0c03f55f`, `e74f549b`, `077b3de2`); PR opened to `main`. See § Commit Info |
 | 2026-10-02 | QA of B1a: PASS WITH NOTES | "QA Report — B1a — 2026-10-02" added under § QA Testing Report (targeted edit). Tested the tree before SA-CR-1 to SA-CR-3. Every in-scope AC is mapped to a test; AC-B16 and the keyboard pass are owed by the user. Eight mutation checks all went red, and restoration was confirmed byte-exact by sha256. Edge probes covered window bounds, limit, keys, UUIDs, empty and null-count results, the deleted-bucket ceiling and UTC presets. No bugs. E-1 duplicates SA-CR-2; E-2 to E-4 are Low. M-5 shows the authz CI guard does not enforce gate-first (OI-20). `creditPeriod` red is confirmed as CRLF, identical to `main` |
 | 2026-10-02 | SA code review of B1a: APPROVED WITH CHANGES | "SA Code Review — B1a — 2026-10-02" added under § SA Review Notes (targeted edit). SA-B1-1 to SA-B1-6, SA-B1-8, SA-B1-9 verified in code. D-1 to D-11 all accepted. Security, tenant isolation, CLAUDE.md and migration safety clean. Gates re-run: `typecheck:bos-llm` exit 0 (0 new), `lint:hooks` exit 0, authz guard green, scoped `tsc` with canary clean on touched files; Jest 33/34 (the one red suite is pre-existing `creditPeriod` CRLF). Build owed to CI. Three fixes for Dev: SA-CR-1 (Medium, typed ledger fakes in the builder test), SA-CR-2 and SA-CR-3 (Low) |

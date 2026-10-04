@@ -1,4 +1,4 @@
--- Rollback of 20261025_business_os_credit_charges_activity_indexes.sql
+-- Rollback of 20261026_business_os_credit_charges_activity_indexes.sql
 -- (Admin AI Activity view, slice B0-prime).
 --
 -- Dropping an index loses no data. The Activity view keeps working without

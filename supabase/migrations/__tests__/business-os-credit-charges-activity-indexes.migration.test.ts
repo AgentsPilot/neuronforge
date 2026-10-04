@@ -16,8 +16,8 @@ import { existsSync, readdirSync, readFileSync } from 'fs';
 import { basename, join } from 'path';
 
 const ROOT = process.cwd();
-const MIGRATION = join(ROOT, 'supabase', 'migrations', '20261025_business_os_credit_charges_activity_indexes.sql');
-const ROLLBACK = join(ROOT, 'supabase', 'SQL Scripts', '20261025_business_os_credit_charges_activity_indexes_rollback.sql');
+const MIGRATION = join(ROOT, 'supabase', 'migrations', '20261026_business_os_credit_charges_activity_indexes.sql');
+const ROLLBACK = join(ROOT, 'supabase', 'SQL Scripts', '20261026_business_os_credit_charges_activity_indexes_rollback.sql');
 const CHECKER = join(ROOT, 'scripts', 'check-bos-credit-charges-activity-indexes.sql');
 
 /** Line comments removed, CRLF normalised: prose about a verb is not the verb. */
@@ -49,7 +49,7 @@ describe('the files exist where the apply procedure points', () => {
   it('does not take 20261016, which slice 4c has reserved', () => {
     expect(basename(MIGRATION).startsWith('20261016')).toBe(false);
     const migrations = readdirSync(join(ROOT, 'supabase', 'migrations'));
-    expect(migrations.filter((name) => name.startsWith('20261025_'))).toEqual([basename(MIGRATION)]);
+    expect(migrations.filter((name) => name.startsWith('20261026_'))).toEqual([basename(MIGRATION)]);
   });
 });
 
