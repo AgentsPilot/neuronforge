@@ -17,6 +17,7 @@ DECLARE
   v_own_period bigint;
   v_own_low_line bigint;
   v_own_ai bigint;
+  v_own_queue_item bigint;
   v_own_stranger bigint;
   v_own_total bigint;
   v_stranger_own bigint;
@@ -52,6 +53,7 @@ BEGIN
            (v_owner, 'BOS_ENTITLEMENT_TIER_ASSIGNED', 'business_os_account_plan', v_tag),
            (v_owner, 'BOS_CREDIT_LOT_GRANTED', 'business_os_credit_lot', v_tag),
            (v_owner, 'BOS_CREDIT_LOW_LINE_CROSSED', 'business_os_credit_period', v_tag),
+           (v_owner, 'BOS_QUEUE_ITEM_CANCELLED', 'bos_queue_item', v_tag),
            (v_stranger, 'SETTINGS_PROFILE_UPDATED', 'settings', v_tag);
   EXCEPTION WHEN OTHERS THEN
     RAISE EXCEPTION USING MESSAGE = 'PROBE SKIPPED  the probe rows could not be inserted ' || SQLSTATE || ' ' || SQLERRM;
@@ -74,9 +76,10 @@ BEGIN
            count(*) FILTER (WHERE audit_row.entity_type = 'business_os_credit_period'),
            count(*) FILTER (WHERE audit_row.action = 'BOS_CREDIT_LOW_LINE_CROSSED'),
            count(*) FILTER (WHERE audit_row.entity_type = 'ai_action'),
+           count(*) FILTER (WHERE audit_row.entity_type = 'bos_queue_item'),
            count(*) FILTER (WHERE audit_row.user_id = v_stranger),
            count(*)
-    INTO v_own_ordinary, v_own_lot, v_own_plan, v_own_period, v_own_low_line, v_own_ai, v_own_stranger, v_own_total
+    INTO v_own_ordinary, v_own_lot, v_own_plan, v_own_period, v_own_low_line, v_own_ai, v_own_queue_item, v_own_stranger, v_own_total
     FROM public.audit_trail AS audit_row
     WHERE audit_row.details @> v_tag;
   EXCEPTION WHEN OTHERS THEN
@@ -118,6 +121,13 @@ BEGIN
     v_report := v_report || chr(10) || 'P05 FAIL the owner saw ' || v_own_ai || ' ai_action rows';
   END IF;
 
+  IF v_own_queue_item = 0 THEN
+    v_report := v_report || chr(10) || 'P10 PASS the owner cannot see the bos_queue_item row';
+  ELSE
+    v_fail := true;
+    v_report := v_report || chr(10) || 'P10 FAIL the owner saw ' || v_own_queue_item || ' bos_queue_item rows';
+  END IF;
+
   IF v_own_stranger = 0 AND v_own_total = 1 THEN
     v_report := v_report || chr(10) || 'P06 PASS the owner sees none of the stranger rows and exactly 1 probe row in all';
   ELSE
@@ -157,11 +167,11 @@ BEGIN
     RAISE EXCEPTION USING MESSAGE = 'PROBE FAIL  the service_role read raised ' || SQLSTATE || ' ' || SQLERRM;
   END;
 
-  IF v_service_total = 6 THEN
-    v_report := v_report || chr(10) || 'P08 PASS service_role sees all 6 probe rows';
+  IF v_service_total = 7 THEN
+    v_report := v_report || chr(10) || 'P08 PASS service_role sees all 7 probe rows';
   ELSE
     v_fail := true;
-    v_report := v_report || chr(10) || 'P08 FAIL service_role saw ' || v_service_total || ' of 6 probe rows';
+    v_report := v_report || chr(10) || 'P08 FAIL service_role saw ' || v_service_total || ' of 7 probe rows';
   END IF;
 
   IF v_live_ready THEN
