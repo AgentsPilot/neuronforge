@@ -6,8 +6,8 @@
 **Requirement:** [BUSINESS_OS_ADMIN_AI_ACTIVITY_VIEW_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_ADMIN_AI_ACTIVITY_VIEW_REQUIREMENT.md) — Gap B, slices **B0′** and **B1** (re-plan 2026-10-02)
 **SA rulings this plan implements:** SA-R1 to SA-R13 and SA-RC-1 to SA-RC-17 (requirement § SA Re-plan Review and § SA Re-plan Re-check). The superseded B0 workplan is **not** used as a design; only its verification log was read as background.
 **Date:** 2026-10-02
-**Branch:** B1a: **`feature/admin-ai-activity-b1a`** (cut by RM from `origin/main` `03b62c3c`; confirmed by Dev with `git branch --show-current`, worktree `neuronforge-ai-activity`). B1b: to be cut by RM after B1a merges.
-**Status:** B1a committed and PR opened (2026-10-04), awaiting CI and merge. B0′ applied on production 2026-10-04 and verified. B1b not started.
+**Branch:** B1a: **`feature/admin-ai-activity-b1a`** (cut by RM from `origin/main` `03b62c3c`; confirmed by Dev with `git branch --show-current`, worktree `neuronforge-ai-activity`). B1b: **`feature/admin-ai-activity-b1b`** (cut by RM from `origin/main` `8c8b5d08`, which contains merged B1a, PR #195; confirmed by Dev, same worktree).
+**Status:** B1a merged (PR #195). B0′ applied on production 2026-10-04 and verified. **B1b committed (2026-10-04) after SA code review APPROVED and QA PASS WITH NOTES; PR open to `main`, not merged.**
 
 ## Overview
 
@@ -47,6 +47,7 @@ The view is **read-only**. It writes nothing, makes no LLM call and writes no au
 - [Non-Goals](#non-goals)
 - [Open Questions for SA](#open-questions-for-sa)
 - [Implementation Notes (B1a)](#implementation-notes-b1a)
+- [Implementation Notes (B1b)](#implementation-notes-b1b)
 - [SA Review Notes](#sa-review-notes)
 - [QA Testing Report](#qa-testing-report)
 - [Commit Info](#commit-info)
@@ -676,24 +677,25 @@ Counted on 2026-10-02 (`grep -c 'console\.'`). **Every file this plan modifies o
 ### B1b
 
 **T10 — Branch.**
-- [ ] RM cuts `feature/admin-ai-activity-slice-b1b` from `main` after B1a merges.
+- ✅ RM cut `feature/admin-ai-activity-b1b` (the proposed `…-slice-b1b` shortened, as for B1a) from `origin/main` `8c8b5d08` after B1a merged. Dev confirmed it with `git branch --show-current`.
 
 **T11 — Audit-trail repository.**
-- [ ] Method, column list, limits, header amendment ([§ C](#c-the-audit-trail-repository-b1b)).
-- [ ] `ADMIN_METHODS` entry and query-shape tests; `listOwnerEntries` regression.
+- ✅ `listAiActionEntriesAllAccountsByGroupIds`, `ADMIN_AI_ACTION_ENTRY_COLUMNS`, `ADMIN_AI_ENTRY_LIMITS`, row and page types, header amendment ([§ C](#c-the-audit-trail-repository-b1b)).
+- ✅ `ADMIN_METHODS` entry and query-shape tests. `listOwnerEntries` regression: the existing exclusion suite in `AuditTrailRepository.test.ts` is unchanged and green (D-B6).
 
 **T12 — Builder join.**
-- [ ] Step 8: the match, the projection, the six states, the archive cutoff, the counts. Archive wiring in `aiActivityDeps.ts`.
-- [ ] Builder tests for B1b.
+- ✅ Step 8: the match (SA-B1-7), the projection, the six states, the archive cutoff, the counts. Archive wiring in `aiActivityDeps.ts` (`aiActivityArchive()`).
+- ✅ Builder tests for B1b (25 new).
 
 **T13 — Route wiring.**
-- [ ] Inject `listAuditEntries` with the admin read context; add audit fields to the log line; route tests.
+- ✅ `listAuditEntries` injected with the admin read context; `archive` from `aiActivityArchive()`; audit status and counts on the log line; route tests (5 new).
 
 **T14 — Tab columns and markers.**
-- [ ] Entry columns, the B1b state labels, the "over the rows shown" counts; render tests.
+- ✅ Four entry columns, the five B1b state labels, the "over the rows shown" counts with the 15-minute boundary (new `AuditSummaryLine.tsx`); render tests (9 new, 1 updated).
 
 **T15 — Verification.**
-- [ ] Local gates re-run; P-7 and P-8 recorded.
+- ✅ Local gates re-run; results in [Implementation Notes (B1b)](#implementation-notes-b1b).
+- [ ] **P-7 and P-8 owed after B1b deploys** (QA / user).
 
 ---
 
@@ -939,6 +941,91 @@ Results: builder, repository, route, render, presets, source guard, service-colu
 | L-7 `test:bos-entitlements` | 103 suites / 2,226 tests pass |
 | L-6, L-8 | QA |
 
+## Implementation Notes (B1b)
+
+**Dev, 2026-10-04.** Branch `feature/admin-ai-activity-b1b`, worktree `neuronforge-ai-activity`, base `origin/main` `8c8b5d08`. **Everything is uncommitted and unstaged**, per the standing rule that the user reads the diff before any commit. No database was read or written. No SQL file was added (the credit-lots L8 guard stays green).
+
+### What was built
+
+| Part | Where | Notes |
+|---|---|---|
+| Repository method | `lib/repositories/AuditTrailRepository.ts` | `listAiActionEntriesAllAccountsByGroupIds(context, groupIds, window)`. Filters `entity_type = 'ai_action'` and `action IN (BUSINESS_AI_ACTION_COMPLETED, BUSINESS_AI_ACTION_FAILED)`, never severity; `entity_id IN` every id in lower AND upper case, de-duplicated (at most 200); `created_at` in `[start, end)`; newest first; `.limit(1000)`; `reachedLimit` is `rows >= 1000`. Guards before any query: an admin read context, 1 to 100 UUID group ids, a valid half-open window. Logs `info` with counts only (no id, no details); a failure logs `warn` and returns `{ data: null, error }`. Header gains a third-exception paragraph; the closing paragraph now says the OWNER read excludes AI entries, which stays literally true. The `MAX_ROWS` comment says the cap follows PostgREST max-rows (OQ-7) |
+| Builder join (step 8) | `lib/business-os/credits/aiActivity.ts` | Group ids come from the page's charge rows (lower-cased, distinct), never the request. Window `[earliest charge − 1 h, latest charge + 1 h)` using `LEAK_CHECK_LIMITS.SLACK_MS`. Archive cutoff = max of `getLatestCutoff('audit_trail')` and every `listRuns({ limit: 100 })` row with `source = 'audit_trail'` and `rows_archived > 0` (OQ-8). The match, the precedence and the projection follow SA-B1-7 (below). Both reads run in parallel with the adjustments, names and deleted bucket, and each fails only itself |
+| Wire types | `aiActivityTypes.ts` + client mirror `activityTypes.ts` | `AiActivityRow.entry: AiActivityEntryState`; `AiActivityPayload.audit: AiActivityAuditSummary \| null`. The two-way wire pin compiles under `typecheck:bos-llm` |
+| Production wiring | `aiActivityDeps.ts` | `aiActivityArchive()` wraps the two existing `ArchiveRepository` reads. The admin-pinned audit read is injected by the route |
+| Route | `app/api/admin/business-os/ai-activity/route.ts` | `listAuditEntries` bound to `{ correlationId, adminId: gate.user.id }`; the log line gains `audit: { status, archive, noEntry }`. `requireAdmin` is still the first statement (its source test passes unchanged). Zod unchanged |
+| Tab | `ActivityTable.tsx`, `RecordStateMarker.tsx`, `ActivityTab.tsx`, new `AuditSummaryLine.tsx`, `activityCopy.ts` | Columns Calls / failed, Tokens (in/out on hover), Models, Error code, after Credits charged. A row with no found entry reads "Unknown" in all four. Record state gains five text-plus-icon chips. The summary line says "over the N rows shown", gives the five counts, states the 15-minute boundary, and names a failed or cut audit read and an unreadable archive cutoff |
+
+### SA-B1-7 — how each rule is met
+
+| Rule | Code | Test |
+|---|---|---|
+| (i) `String(details.actionId).toLowerCase() === charge.action_id` and `entry.user_id === charge.user_id` | `joinAuditEntries`: only a string `actionId` is considered; it is lower-cased and looked up among the page's action ids; `user_id` compared exactly (both are `uuid` columns) | "(i) compares the actionId lower-cased"; mutation M2a |
+| (ii) own entry ⇒ `found`; a wrong-account entry with the same id only adds to `accountMismatch`; `account_mismatch` only when no own entry | Own and foreign entries are kept apart; foreign entries are counted per charge and never projected | the two "(ii)" tests, AC-B5 tests, route AC-B5 test; mutation M1 |
+| (iii) two own entries: newest `created_at`, then higher `id`; `warn` with ids only | `newestEntry`; `log.warn({ actionId, entryIds, read })` | "(iii) two own entries…" (both orders of a time tie) |
+
+**Precedence for a row without an own entry:** audit read failed → `unknown (audit_read_failed)`; read cut at 1,000 → `unknown (audit_read_incomplete)`; another account's entry → `account_mismatch`; younger than 15 minutes → `too_recent`; archive cutoff unreadable → `unknown (archive_unread)`; older than the cutoff → `may_be_archived`; otherwise `lost`. "Lost" is reached only on complete evidence.
+
+### Deviations from the plan, and why
+
+| # | Deviation | Why |
+|---|---|---|
+| D-B1 | `entry` is **required** on a row and `audit` is **required but nullable** on the payload (plan: `entry?`, `audit?`). `audit` is `null` when no row is shown, and then neither audit read is made | Same reasoning as D-8: an optional field weakens the two-way wire pin. With no row there is nothing to join, and `null` says so honestly |
+| D-B2 | `unknown` carries one of three named reasons: `audit_read_failed`, `audit_read_incomplete`, `archive_unread`. The screen shows one label ("Audit entry unknown — read incomplete") with the reason as hover text | The plan said `{ state: 'unknown', reason }` without naming the reasons |
+| D-B3 | When the audit read is cut, a row with only a wrong-account entry is `unknown`, not `account_mismatch` (it still adds to the mismatch count) | Its own entry may sit in the part that was not read; SA-B1-7 (ii) makes `account_mismatch` conditional on there being no own entry, which a cut read cannot establish |
+| D-B4 | `noEntry.accountMismatch` counts **rows** with at least one wrong-account entry (found or not), not entries | It is a per-row count like the other four, all "over the rows shown" |
+| D-B5 | The archive cutoff is read on every non-empty page, in parallel, not only when a row needs it. A failure is reported as `archive: 'failed'`, but it changes only rows it would decide | One cheap read (≤ 100 `archive_runs` rows) in parallel keeps the builder single-pass; a found or too-recent row is unaffected (tested) |
+| D-B6 | `lib/repositories/__tests__/AuditTrailRepository.test.ts` is **unchanged**, and `lib/repositories/index.ts` is **unchanged** | The existing suite already pins `listOwnerEntries`' AI exclusion in the query (AC-B18) and stays green. `AuditTrailRepository` is not exported from the barrel at all, so there is no "AuditTrail block" to extend |
+| D-B7 | The slack is **imported** (`LEAK_CHECK_LIMITS.SLACK_MS`), so `aiActivity.ts` now value-imports `creditLeakCheck.ts` | Reuse, as § C planned. `creditLeakCheck.ts` imports `TokenUsageRepository` **types only**; nothing reads `token_usage`, and the AC-B7 source tests stay green. If SA prefers the builder's module graph to stay clear of the leak check, the alternative is a local `60 * 60_000` pinned equal to it by a test — a one-line change |
+| D-B8 | Models longer than 64 characters, or not strings, are **dropped**, not truncated; an error code that fails `sanitizeErrorCode` (imported from `aiActionAudit.ts`, the writer's own rule) is `null`; a count that is not a finite non-negative number is `null` and renders "Unknown" | A truncated model id would be a wrong model id. Reusing the writer's sanitiser keeps the reader and writer on one definition of "a code" |
+| D-B9 | For a found entry, an empty model list renders "None recorded" and a null error code "None" | Those are real values of a found entry, unlike a missing entry, which renders "Unknown" (FR-B1) |
+| D-B10 | An eighth component, `AuditSummaryLine.tsx` | The counts and the read notices are their own block; the page's source guard walks the folder and covers it |
+| D-B11 | The scoped `tsc` comparison with `origin/main` was not run on a separate clean export | An export would need the shared `node_modules` junction (a known deletion hazard). Touched files have **0** diagnostics; the only diagnostics (6) are in `lib/analytics/aiAnalytics.ts`, which is byte-identical to `origin/main` and was already in B1a's recorded baseline |
+
+### Guards checked
+
+| Guard | Result |
+|---|---|
+| Ledger read repository importer list | Unchanged and green: no new file names the repository (`aiActivityDeps.ts` was already listed) |
+| `serviceColumn.guard.test.ts` | Unchanged and green: the route is listed, `components/activity/` is walked (so `AuditSummaryLine.tsx` is covered), and no new code reads `.service` |
+| `adminReadMethods.guard.test.ts` | Extended: `listAiActionEntriesAllAccountsByGroupIds` in `ADMIN_METHODS` (only caller: the Activity route), `lt` added to the recording client, 14 query-shape tests plus the caller-pin case |
+| Page source guard | Unchanged and green over the new component (no `@/lib/` import, no provider or model literal, no `console.*`) |
+| Admin authz surface guard | Green; no cap change |
+| Credit-lots L8 migration guard | Green (inside `test:bos-entitlements`); no SQL file added |
+
+### Local verification (T15)
+
+| # | Result |
+|---|---|
+| L-1 Jest | 70 suites / 2,268 tests: **69 pass; 1 fails with 2 tests — `lib/business-os/credits/__tests__/creditPeriod.test.ts`, PRE-EXISTING (CRLF, see the B1a QA report), untouched** (`git diff` empty). New or extended: builder 60/60 (25 new), route 52/52 (5 new), render 387/387 across the page folder (9 new, 1 updated), `adminReadMethods` + `AuditTrailRepository` 53/53 (15 new: 14 query-shape, 1 caller pin) |
+| L-2 `typecheck:bos-llm` (**required**) | **Passed: "402 files in scope, 28 errors, 0 new"**. Same unrelated "1 baseline entry is fixed" notice for `app/api/onboarding/build/route.ts`; baseline not edited |
+| L-3 scoped `tsc` | Throwaway `tsconfig` over the 15 touched/new TS files plus the wire pin. **Canary** (`const b1bCanary: number = "not a number"` appended to `AuditSummaryLine.tsx`) reported at `AuditSummaryLine.tsx(63,7) TS2322`, exit 2 — the run checks. File restored (`cmp` clean). Real run: **0 diagnostics in any touched file**; 6 in `lib/analytics/aiAnalytics.ts` (untouched, see D-B11). Config deleted |
+| L-4 | `npx eslint` on every touched file: 0 errors, 0 warnings. `npm run lint:hooks` (**required**): exit 0 |
+| L-5 build | **Not run to completion locally**: this worktree has no `.env.local`, so `next build` stops at page-data collection (B1a's L-5 note). **The PR's Build check is the gate** |
+| L-7 `test:bos-entitlements` | 108 suites / 2,578 tests pass |
+| Mutation checks | M1 builder treats every entry as own-account (`if (true)`): 3 builder tests red. M2a builder does not lower-case `actionId`: 1 red. M2b repository drops the upper-case variant: 3 red. M3 builder does not treat a cut read as unknown: 1 red. Both files restored; `sha256` before and after identical |
+| console.* | 0 in every created, modified or newly imported file (`ArchiveRepository.ts`, `creditLeakCheck.ts`, `aiActionAudit.ts` included). Nothing to convert |
+
+### SA-CR-B / QA fixes (2026-10-04)
+
+Applied after the SA code review (APPROVED, three optional Lows) and QA (PASS WITH NOTES). Still uncommitted.
+
+| Item | Fix |
+|---|---|
+| QA T-1 | Behavioural boundary test: a charge 14m59s old is `too_recent`; exactly 15m00s and 15m01s are `lost`. The code's intent is "strictly younger than 15 minutes", matching the screen's "under 15 min", and a comment at the branch now says so. QA's **M7** (`>` → `>=`) and **M9** (10-minute floor) were re-run: **both now go red** (1 test each). Restored byte-exact (sha256) |
+| SA-CR-B-1 | An unparseable charge `created_at` is now `unknown` with a new reason `charge_time_unreadable` (both wire-type unions extended), never `too_recent`. Test added |
+| QA E-B2 | A `models` that is not an array projects to `null` (wire type `string[] \| null` on both sides) and renders "Unknown", not "None recorded". An empty array still renders "None recorded". Builder and render tests added |
+| SA-CR-B-2 | `AuditSummaryLine` shows the archive cutoff as a date: "Audit entries from before <YYYY-MM-DD HH:MM UTC> may have been archived…", only when a cutoff exists. Render test covers present and absent |
+| SA-CR-B-3 / QA E-B3 | The chip label is the neutral "Audit entry unknown", followed by the reason as **visible** short text (`ENTRY_UNKNOWN_SHORT`: "audit read failed", "audit read cut short", "archive cutoff unreadable", "charge time unreadable"). The full sentence stays as hover text. Render test checks every reason |
+| QA E-B1 | Margin added: "may be archived" now means `charge created_at < cutoff + ARCHIVE_CUTOFF_MARGIN_MS`, where the margin reuses `LEAK_CHECK_LIMITS.SLACK_MS` (1 h), the same "entry at or before its charge" slack as the audit read window. The margin only affects rows with **no** entry (a found entry still wins), so the worst case is that a genuinely lost entry within an hour after a cutoff reads "may be archived" rather than "lost". That errs toward not claiming loss, and can only happen within an hour after an archive cutoff (archive runs are manual, about one a quarter). Test: 5 s and 59m59s after the cutoff → may be archived; exactly 1 h → lost. A mutation that removes the margin goes red |
+
+**Re-run results:** builder 64/64; builder, route, render (whole page folder), `adminReadMethods`, `AuditTrailRepository`, service-column guard and admin authz guard: **16 suites / 725 tests pass**. `typecheck:bos-llm`, `lint:hooks`, eslint and `test:bos-entitlements`: `typecheck:bos-llm` passed (402 files, 28 errors, 0 new); `lint:hooks` exit 0; eslint on touched files clean; `test:bos-entitlements` 108 suites / 2,578 tests pass. Scoped `tsc` over the touched files (canary in `ActivityTable.tsx` reported TS2322, then removed): 0 diagnostics in touched files, only the 6 known ones in the unchanged `lib/analytics/aiAnalytics.ts`.
+
+### Owed after deploy
+
+- **P-7**: a recent row's calls, tokens and models match its entry on `/admin/audit-trail`.
+- **P-8**: QA records the "lost" count over the rows shown for a recent window and splits it with the two error lines (`aiActionAudit.ts:478-481`, `:585`). A QA note, never a screen feature.
+
 ## SA Review Notes
 
 ### SA Review — 2026-10-02
@@ -1144,6 +1231,94 @@ The plan is safe to hand-apply, with the shape change and rollback fix below. Pl
 - [ ] **Code Approved for QA:** **Yes, once SA-CR-1 to SA-CR-3 are in.** QA owns L-6 (`schema:check` plus the column check against the `20261015` body) and L-8 (the manual and keyboard pass).
 - **Before merge:** the CI Build check must be green (§ 7). SA recommends that the user hand-apply B0′ (T2) and that its checker evidence is pasted **before** the PR merges, so `main` never carries a migration production does not have. The code is correct without the indexes, so this is about ordering, not a blocker on correctness.
 
+### SA Code Review — B1b — 2026-10-04
+
+**Reviewed by SA — 2026-10-04.** Worktree `neuronforge-ai-activity`, branch `feature/admin-ai-activity-b1b`, base `8c8b5d08`. Reviewed `git diff` (15 files) plus the untracked `AuditSummaryLine.tsx`. Nothing staged or committed; no database access.
+**Status:** ✅ **Code Approved.** No required changes. Three Low, optional items below; none blocks QA.
+
+#### 1. SA-B1-7 and OQ-5 to OQ-8, as ruled
+
+| Ruling | Verdict | Evidence |
+|---|---|---|
+| SA-B1-7 (i) case-normalised match on `actionId` AND `user_id` | ✅ | `aiActivity.ts` `joinAuditEntries`: only a string `actionId`, lower-cased, looked up among the page's own action ids; `user_id` compared exactly. Test "(i)…", mutation M2a |
+| SA-B1-7 (ii) own entry ⇒ `found`; foreign only counts; `account_mismatch` only without an own entry | ✅ | Own and foreign kept apart; foreign is a counter, never projected. Two "(ii)" tests, two AC-B5 builder tests, route AC-B5 test (response body checked, not just the builder) |
+| SA-B1-7 (iii) deterministic duplicate, `warn` with ids only | ✅ | `newestEntry` (newest `created_at`, then higher id; a NaN time falls through to the id). The warn carries `actionId` + `entryIds` only. Tested in both tie orders |
+| OQ-5 15 minutes, on screen, pinned | ✅ | `AUDIT_SETTLE_MS: 15 * 60_000`, sent as `settleMinutes`, rendered in the chip and the settle note; pinned by "the settle window is 15 minutes" |
+| OQ-6 both canonical cases, never `lower()`, ≤ 200 ids | ✅ | Repository `variants` = lower + upper, `Set`-deduplicated, `MAX_GROUP_IDS: 100` guarded before the query; the Node side lower-cases. Tests for an upper-case input and the 100 cap |
+| OQ-7 `[earliest − 1 h, latest + 1 h)`, 1,000 cap, `>=` is cut, `unknown` when cut | ✅ | `.gte(start).lt(end)`, `.limit(1000)`, `reachedLimit = rows >= 1000`; the cap's comment ties it to PostgREST max-rows as ruled. Cut read: own entries still `found`, everything else `unknown (audit_read_incomplete)` |
+| OQ-8 `getLatestCutoff('audit_trail')` + `listRuns({ limit: 100 })`, `source = 'audit_trail'`, `rows_archived > 0` | ✅ | `readArchiveCutoff`; `Number(rows_archived) > 0` handles the `number \| string` column type. Partial-run, zero-row-run and failure cases tested. An unparseable cutoff fails closed to `archive: 'failed'` |
+
+**Precedence** (no own entry): read failed → cut → foreign → too recent → archive unreadable → before cutoff → lost. Matches § D step 8; "lost" is reached only on complete evidence. **Projection**: field by field, never a spread of `details`; `callNames`, `estimatedCostUsd`, `area`, `correlationId` are not sent. The AC-B13 test asserts that prompt, owner text, output, error message and email never reach the payload.
+
+#### 2. Deviation rulings
+
+| # | Ruling |
+|---|---|
+| D-B1 | ✅ Accepted. Required `entry` and required-nullable `audit` keep the two-way wire pin strict, as D-8 did for B1a |
+| D-B2 | ✅ Accepted. Three named reasons are the right granularity. One visible label with the reason as hover text is fine, because the summary line also names a failed or cut read and an unreadable cutoff in text |
+| D-B3 | ✅ **Accepted — decision below** |
+| D-B4 | ✅ Accepted. Per-row is consistent with the other four counts and the "over the rows shown" label |
+| D-B5 | ✅ Accepted. One bounded read in parallel; a found or too-recent row is provably unaffected (tested) |
+| D-B6 | ✅ Accepted. Verified: `lib/repositories/index.ts` has no `AuditTrail` export; the existing `listOwnerEntries` exclusion tests stand (AC-B15's "still excludes AI entries" holds) |
+| D-B7 | ✅ **Accepted — decision below** |
+| D-B8 | ✅ Accepted. Drop-not-truncate is correct for model ids; reusing the writer's `sanitizeErrorCode` (`aiActionAudit.ts:286`) keeps one definition of "a code"; malformed counts are `null` and render "Unknown", never 0 |
+| D-B9 | ✅ Accepted. "None recorded" / "None" are true values of a found entry; "Unknown" is reserved for no entry or an unreadable field (FR-B1) |
+| D-B10 | ✅ Accepted. `AuditSummaryLine.tsx` has no `@/lib/` import, no `console.*`, no provider or model literal; covered by the page source guard and the `serviceColumn` folder walk |
+| D-B11 | ✅ Accepted. SA re-ran the scoped `tsc` independently (§ 5): the same 6 diagnostics, all in untouched `lib/analytics/aiAnalytics.ts` |
+
+**Decision on D-B7: keep the import of `LEAK_CHECK_LIMITS.SLACK_MS`.** It is what § C planned and SA approved. The module-graph cost is nil: `creditLeakCheck.ts` imports `TokenUsageRepository` as **types only**, and its value imports (`callCatalog`, `aiChargeRecorder`, `effectiveFields`, the logger) are already in the builder's graph. The coupling is already pinned: the builder test "is keyed on … [earliest − 1 h, latest + 1 h)" asserts the literal one-hour bounds, so a future change to the leak check's slack turns that test red instead of silently moving this window. A local constant would buy nothing the test does not already give.
+
+**Decision on D-B3: a cut read shows `unknown`, not `account_mismatch`.** Correct, and the only reading consistent with SA-B1-7 (ii): `account_mismatch` asserts the absence of an own-account entry, which a truncated read cannot establish. The defect is not hidden: the row still adds to `noEntry.accountMismatch`, the builder logs the defect marker at `warn`, and the summary line names the cut read.
+
+#### 3. Tenant isolation (`tenant-isolation-guard`)
+
+| Check | Result |
+|---|---|
+| Keys come from the server, never the request | ✅ Group ids are taken from the page's charge rows (`group_id` is `NOT NULL` on a charge by `charge_shape`, `20261015:34`), lower-cased, distinct. The route passes no query value to the read. Route test "never request values" |
+| Matched server-side on `actionId` + account | ✅ § 1 |
+| Other accounts' entries never serialised | ✅ Checked at the **type** level (`AiActivityEntryState` has no slot for a foreign entry; `account_mismatch` carries no field), in the builder (a foreign entry is a counter only), and in the **route response** (the route AC-B5 test inspects the JSON body) |
+| No severity filter | ✅ `.eq('entity_type')` + `.in('action', [COMPLETED, FAILED])` only; the repository test asserts there is no severity filter |
+| Column allow-list | ✅ `ADMIN_AI_ACTION_ENTRY_COLUMNS = 'id, user_id, created_at, entity_id, details'`: no `hash`, `user_email`, `ip_address`, `user_agent`; tested |
+| Admin pin | ✅ Added to `ADMIN_METHODS`; the only caller is `app/api/admin/business-os/ai-activity/route.ts`. The builder imports the repository's **types only** and receives the method by injection. The method requires the admin context `{ correlationId, adminId: gate.user.id }` |
+| `requireAdmin` first | ✅ Unchanged from B1a (`route.ts:140`, preceded only by the correlation-id lines); the authz surface guard passes with no cap change |
+| Logs | ✅ Repository `info`: counts, correlationId and adminId only. Builder: ids and counts only. Route log line: `audit.status`, `archive` and the `noEntry` counts; no entry, no business name. Error responses unchanged and sanitised (`NODE_ENV === 'development'` guard) |
+
+#### 4. CLAUDE.md and the repository header
+
+- Repositories only ✅ (`AuditTrailRepository`; `ArchiveRepository` reused unchanged). Pino with correlationId ✅. `console.*`: 0 in every touched, new or newly imported file ✅. Strict TS ✅. The one `as unknown as AdminAiActionEntryRow[]` is in the repository, on the Supabase result, the same idiom as the two sibling methods (`:222`, `:256`); it is not a test signature cast. **No** `as unknown as` / `as never` / `any` was added in any test ✅. No new pattern: injecting an admin-pinned read is the B1a `findNames` precedent ✅.
+- **The header's "third exception" paragraph is accurate.** It is the third admin method, after `listAdminAiFailures` (account-scoped) and `countAdminEventsAllAccountsInWindow` (unscoped, but `head: true`, so no rows). "The first unscoped read of entry content" is therefore literally true. The reworded closing paragraph ("the OWNER read … excludes them IN THE QUERY … Only the admin exceptions above read them") is true. NFR-4.4 and AC-B15's header-amendment clause are met.
+
+#### 5. Gates (re-run by SA, 2026-10-04)
+
+| Gate | Result |
+|---|---|
+| `npm run typecheck:bos-llm` (**required**) | **Passed**: "402 files in scope, 28 errors, 0 new". Same unrelated "1 baseline entry is fixed" notice (`app/api/onboarding/build/route.ts`) |
+| `npm run lint:hooks` (**required**) | **Exit 0**, 0 warnings |
+| `npm run test:authz-guard` (**required**, Admin authz surface guard) | 1 suite / 119 tests pass |
+| `npm run test:bos-entitlements` | 108 suites / 2,578 tests pass |
+| Relevant Jest: `lib/business-os/credits`, the route, `app/admin/business-os-llm`, `adminReadMethods.guard`, `AuditTrailRepository`, `ArchiveRepository` | 42 suites / 1,206 tests: 41 suites pass. **1 fails with 2 tests: `creditPeriod.test.ts`, pre-existing (CRLF, recorded in the B1a QA report); `git diff` on it and on `creditPeriod.ts` is empty** |
+| Scoped `tsc` (SA's own throwaway config in the session scratchpad, not in the repo; `--listFilesOnly` confirms the touched files, `AuditSummaryLine.tsx` included, are root files; `strict: true` inherited) | 6 diagnostics, all in untouched `lib/analytics/aiAnalytics.ts`; **0 in any touched or new file** |
+| Build (**required**) | Not runnable locally (no `.env.local`); the PR's Build check is the gate. The icons used (`FileQuestionMark`, `FileX`, `ShieldAlert`, `Archive`, `Clock`, `FileSearch`) exist in the installed `lucide-react@0.525.0`, and `Chip` accepts `title` |
+
+#### 6. Code Review Comments (all Low and optional; not conditions of approval)
+
+| # | Where | Comment | Priority |
+|---|---|---|---|
+| **SA-CR-B-1** | `lib/business-os/credits/aiActivity.ts`, `joinAuditEntries`, the `!Number.isFinite(createdMs) \|\| createdMs > settleFloorMs` branch | A charge whose `created_at` cannot be parsed is classed `too_recent`. That is a claim made on unreadable evidence; `unknown` would follow the file's own rule. Unreachable in practice (`timestamptz`), so no test is owed. Either change it, or add a one-line comment saying why `too_recent` is acceptable | Low |
+| **SA-CR-B-2** | `archiveCutoff` on the audit summary (`aiActivityTypes.ts`, `activityTypes.ts:77`); `AuditSummaryLine.tsx` | `archiveCutoff` is sent but not rendered. Showing it ("may be archived" = older than a date) would let the operator read the class without a second screen; otherwise it is an unused wire field. Either render it in the summary line or note that it is reserved | Low |
+| **SA-CR-B-3** | `activityCopy.ts`, `MARKER_ENTRY_UNKNOWN` | "read incomplete" reads slightly off for `archive_unread`: the entry read was complete, the cutoff read failed. The hover text is correct. A neutral "Audit entry unknown" fits all three reasons | Low |
+
+#### 7. Observations (no action)
+
+- **The insight cron's shared group id** (requirement evidence: `insight-detect/route.ts:143, 217`): one `runId` is the group id for every business in a run, so an insight row's group fetches one entry per business per insight action. Correctness holds: the match is on `actionId` + account, other businesses' entries are dropped, and they do not count as mismatches because their `actionId` differs. If a run ever puts more than ~1,000 entries in the window, the read is reported as cut and undecided rows show `unknown`, never `lost`: the intended fail-closed path. Worth one line in QA's P-8 note if insight rows dominate the "unknown" count.
+- The archive notice can appear on a page where every row is `found` (D-B5). Harmless and truthful.
+
+#### 8. Approval
+
+- [x] **Code Approved for QA: Yes.** SA-CR-B-1 to SA-CR-B-3 are optional. If Dev applies any of them, re-run the builder and render suites and `typecheck:bos-llm`; no further SA pass is needed.
+- **QA owns:** P-7 and P-8 after deploy, the keyboard and no-colour pass over the five new chips (AC-B17), and a check that the summary's "over the N rows shown" equals the rows on the page.
+- **Before merge:** Build, Type check (Business OS LLM attribution), React hooks rules guard and Admin authz surface guard green, and Business OS entitlements invariants green too (it bit B1a).
+
 ---
 
 ## QA Testing Report
@@ -1262,6 +1437,94 @@ L-4  npm run lint:hooks                          exit 0
 - [ ] All acceptance criteria pass — ready for commit
 - [x] **PASS WITH NOTES.** No bug blocks the commit. Dev applies SA-CR-1 to SA-CR-3 (SA-CR-2 also closes E-1; E-2 is optional). After that, re-run the builder and render suites and `typecheck:bos-llm`. AC-B16 (T2) and the click-through above are owed by the user before B1a counts as verified.
 
+### QA Report — B1b — 2026-10-04
+
+**QA — 2026-10-04**, worktree `neuronforge-ai-activity`, branch `feature/admin-ai-activity-b1b` (uncommitted, base `8c8b5d08`). Tested the tree as SA approved it (SA-CR-B-1 to SA-CR-B-3 not applied).
+**Test mode:** full
+**Strategy used:** A (Jest unit: builder, projection, render) + B (route integration with mocked repositories; repository query shape with a recording client) + throwaway edge probes + mutation checks. D (browser) is owed after deploy — see the checklist below.
+**Focus:** api, security, schema, ui
+**Skipped:** live database reads (forbidden in this pass); `next build` (no `.env.local` in the worktree — the PR's Build check is the gate, as for B1a)
+**Input source:** prompt (TL) + QA judgment
+
+#### Test Coverage
+
+| Acceptance criterion (B1b part) | Tested? | Result | Proving tests / notes |
+|---|---|---|---|
+| **Audit-join row** (FR-B1: entry joined by `actionId` + account, both case forms, entry columns) | ✅ | Pass | Builder: "is keyed on the page grouping ids…", "(i) compares the actionId lower-cased", "an entry on the right account is found, projected field by field". Repository: `adminReadMethods.guard.test.ts` query shape (`entity_type`, both actions, `in('entity_id', [lower, upper])`, `gte`/`lt`, order, limit 1000, no `user_id`, no `severity`), 100 ids → 200 values. Render: "a found entry fills the four columns" |
+| **AC-B5** (audit half): another account's entry is never serialised | ✅ | Pass | Builder "(ii)…never sent", "(ii) only another account…account_mismatch", "AC-B5: two accounts sharing one group…", "AC-B5: two charged actions of one account…". Route "AC-B5: …never reaches the response" asserts the other account's markers **and its account id** are absent from the HTTP body. Dev mutation M1 went red |
+| **AC-B6** (Q1 half): too recent / may be archived / lost; unknown on incomplete evidence | ✅ | Pass, with a test gap | Builder `describe('B1b / AC-B6…')` (9 tests) covers each class, partial runs, runs that moved nothing, failed / cut / thrown reads, archive unreadable. **Gap T-1:** the 15-minute boundary is pinned only as a constant; classification is tested at 5 min vs 20 min, so a floor anywhere between them passes (M9 survived). The live "lost" figure and its split (P-8) are owed after deploy |
+| **AC-B13** (entry half): allow-listed projection | ✅ | Pass | Builder "no prompt, owner text, output, error message or email reaches the payload…" and "keeps an identifier error code, caps the models…". M6 (spreading `details`) went red |
+| **AC-B15** (AuditTrail part) | ✅ | Pass | Header third-exception paragraph present and accurate; method filters by action + entity type, never severity (asserted); `ADMIN_METHODS` caller pin extended and green — only caller is `app/api/admin/business-os/ai-activity/route.ts` (grep confirms); `AuditTrailRepository.test.ts` `listOwnerEntries` exclusion suite unchanged and green (AC-B18). Column list excludes hash, email, ip, user agent (asserted) |
+| **AC-B17** (B1b states) | ✅ (Jest) / ⬜ (keyboard) | Pass | Render: "every no-entry state renders as TEXT, with the 15-minute boundary on screen" (each state has text + icon), unknown reason in `title`, summary-line notices for failed / cut / archive-unread, "Unknown" never blank. M10 (lost chip shows the archived label) went red. No new control was added, so the B1a keyboard pass still applies; the user re-checks it once (checklist item 7) |
+
+#### Mutation checks (QA's own; none overlaps Dev's M1–M3)
+
+Each applied with `sed` to one line, the suite run, the file restored from a scratch copy, and `sha256` confirmed identical to the pre-mutation hash (`aiActivity.ts` `7492ac3a…`, `RecordStateMarker.tsx` `455ba9eb…`).
+
+| # | Mutation | Suite | Result |
+|---|---|---|---|
+| M4 | Archive cutoff counts runs with `rows_archived = 0` (`> 0` → `>= 0`) | builder | **Red** (2 tests) |
+| M5 | Duplicate own entries resolve oldest-first | builder | **Red** (1) |
+| M6 | Projection spreads `details` into the found entry | builder | **Red** (3) |
+| M7 | Too-recent boundary inclusive (`>` → `>=`) | builder | **Survived** — 1 ms difference, untested (see T-1) |
+| M8 | Archive cutoff ignores `source` (other sources' runs count) | builder | **Red** (1) |
+| M9 | Settle floor `now − 10 min` instead of `AUDIT_SETTLE_MS` | builder | **Survived** — real gap, see T-1 |
+| M10 | "Lost" chip renders the "may be archived" label | render | **Red** (1) |
+
+Other accounts' entries not reaching the route response is covered by Dev's M1 (builder) plus the route-level body assertion; not re-mutated.
+
+#### Edge probes (throwaway `zzQaB1bProbe.test.ts`, 8 tests, all passed, file deleted)
+
+| Probe | Result |
+|---|---|
+| Page spanning ~2.5 days (well over 2 h) | One audit read, window `[min − 1 h, max + 1 h)` exactly; the repository accepts any `start < end` |
+| Exactly 100 rows, 100 distinct group ids | Builder sends 100 ids; real repository (fake client) sends 200 `IN` values and succeeds; 101 ids refused with `{ data: null, error }` and no query |
+| Window edges | Query uses `gte(start)` / `lt(end)`; `start == end` is refused |
+| Charge 14m59s / exactly 15m00s / 15m01s old, no entry | `too_recent` / `lost` / `lost` — correct for "under 15 min" |
+| Archive cutoff unreadable, audit read OK | `getLatestCutoff` error → `archive: 'failed'`, settled row `unknown (archive_unread)`, too-recent row unchanged; an unparseable cutoff string → `failed`; a run with rows moved but `cutoff: null` → ignored, not a failure; cutoff exactly equal to the charge time → `lost` (strict `<`) |
+| Mixed-case | Mixed-case `details.actionId` matches (lower-cased). A mixed-case **group id** input yields only lower + upper variants, so a mixed-case `entity_id` is not fetched — the documented R-6 gap, shows as "lost" |
+| `actionId` missing / null / number / array / object / padded with spaces; `details` a string, array or null | All dropped; row `lost`; no marker from any of them in the payload |
+| Models: 64 chars kept, 65 dropped, `""` dropped, >10 capped at 10; `models` not an array | As specified; a non-array `models` becomes `[]` (see E-B2) |
+| Counts −1, NaN, Infinity, `'5'`, `null` → `null`; `2.9` → `2`; `0` kept; numeric `errorCode: 429` → `'429'` | As specified (D-B8) |
+
+#### Issues Found
+
+**Bugs (must fix before commit):** none.
+
+**Test gaps (should fix, Low):**
+1. **T-1 — the 15-minute classification is not pinned at its boundary.** `aiActivity.ts:594`/`:618` use `AUDIT_SETTLE_MS`, but the only behavioural test (`aiActivity.test.ts:800`) uses 5 and 20 minutes, so M9 (a 10-minute floor) survives while the screen still says "under 15 min". Add one case: a charge 14m59s old is `too_recent`, 15m01s is `lost` (the probe above, two lines). Optionally an exact-15m case to fix the inclusive/exclusive choice (M7).
+
+**Edge cases (nice to fix, Low):**
+1. **E-B1 — archive cutoff vs. entry stamp.** "May be archived" compares the **charge's** `created_at` with the cutoff (`aiActivity.ts:622`), but the archive moves the **entry**, stamped at or just before the charge (V-15). A charge a few seconds after a cutoff whose entry fell just before it shows "lost". At most a handful of rows per archive run; acceptable, worth one comment.
+2. **E-B2 — a malformed `models` field reads "None recorded".** `aiActivity.ts:515` turns a non-array `models` into `[]`, and `ActivityTable.tsx:79` then renders "None recorded", a claim on unreadable evidence (unlike counts, which become "Unknown"). Unreachable from the current writer. Same family as SA-CR-B-1.
+3. **E-B3 — the unknown reason is hover-only.** The chip text is the same for all three reasons (overlaps SA-CR-B-3); the reason is in `title`, which keyboard and screen-reader users do not reliably get. The summary line names a failed / cut / archive read in text, so AC-B17 holds; noted for B2's drill-down.
+
+#### Test Outputs / Logs
+
+| Gate | Result |
+|---|---|
+| Jest, 43 relevant suites (`lib/business-os/credits`, the route, `app/admin/business-os-llm`, `adminReadMethods.guard`, `AuditTrailRepository`, `BusinessOsCreditLedgerReadRepository`, `ArchiveRepository*`) | **42 pass, 1 fail — 1,289 / 1,291 tests.** The 2 reds are `creditPeriod.test.ts` source guard, pre-existing CRLF (B1a QA report), file untouched. Builder 60/60, render 40/40 in `activityTab.render`. Evidence only — ts-jest does not type-check |
+| `npm run typecheck:bos-llm` (required) | `402 files in scope, 28 errors, 0 new` — **passed** (same "1 baseline entry is fixed" notice) |
+| `npm run lint:hooks` (required) | exit 0 |
+| `npm run test:bos-entitlements` | 108 suites / 2,578 tests pass. No touched code imports `lib/business-os/entitlements/` |
+| `console.*` | 0 in every touched and new source file |
+| Clean-up | Probe file deleted; scratch copies deleted; `git status --short` matches Dev's list exactly; nothing staged |
+
+#### Manual post-deploy click-through (user, after B1b deploys)
+
+1. Signed in as an admin, open `/admin/business-os-llm?tab=activity` ("This month"). Four new columns sit after "Credits charged": **Calls / failed, Tokens, Models, Error code**. No cell is blank.
+2. **P-7.** Pick a row older than 15 minutes with no record-state chip. Note its grouping id (hover) and time. On `/admin/audit-trail?entity_type=ai_action`, open the entry with that `entity_id` and the same `actionId`: calls, failed calls, total tokens (hover shows in/out) and models match the row. A failed action's error code matches too.
+3. Trigger one Business OS AI action (for example, a chat turn), then refresh within 15 minutes: its row shows **"No audit entry — too recent (under 15 min)"** or a found entry, never "lost". Refresh after 15 minutes: it shows a found entry.
+4. Under the table, the summary reads "Audit entries, over the N rows shown: … lost, … may be archived, … too recent, … unknown, … with an entry on another account", plus the 15-minute note. No failed / cut / archive notice shows on a healthy read.
+5. **P-8.** Pick a recent settled window (for example yesterday, one business at a time and then all accounts). Record the **lost** count over the rows shown. For each lost row, search the Vercel logs around its time for the two audit-writer error lines (`aiActionAudit.ts:478-481` and `:585`), and split the count into "writer logged an error" vs. "no error line". Record both figures in this report as an **upper bound** on KI-B, never as a screen feature.
+6. **Account mismatch.** Expect **0** "with an entry on another account". Any non-zero figure is a defect: record the row's action id only (no business name) and raise it.
+7. Keyboard: Tab across a row's record-state chips — each state is readable as text, not colour alone (AC-B17). No new control was added.
+8. In the Vercel logs, the "Admin read the Business OS AI activity" line now carries `audit: { status, archive, noEntry }` and still no company name; the "Admin AI action entries read across all accounts" line carries counts only (no group id, no entry). Record `durationMs` for "This month" next to B1a's P-6 figure.
+
+#### Final Status
+- [ ] All acceptance criteria pass — ready for commit
+- [x] **PASS WITH NOTES.** No bug. Every in-scope AC is proven by a test, and 5 of QA's 7 mutations went red. T-1 is a Low test gap (the 15-minute boundary is not pinned behaviourally): Dev should add the two-line case before commit; it needs no further SA pass. E-B1 to E-B3 are optional. P-7, P-8 and the click-through above are owed by the user after deploy.
+
 ---
 
 ## Commit Info
@@ -1276,12 +1539,26 @@ L-4  npm run lint:hooks                          exit 0
 
 PR: opened to `main` by RM (see the PR for its number). Not merged; merge needs the CI Build check green and the user's explicit instruction. B1b: branch to be cut after B1a merges.
 
+**B1b** (RM, 2026-10-04), branch `feature/admin-ai-activity-b1b`, base `origin/main` `8c8b5d08`:
+
+| Commit | Message |
+|---|---|
+| `a371c3a1` | feat(admin): AI Activity tab audit join, slice B1b |
+| (this commit) | docs(admin): B1b workplan, SA code review, QA report, commit info |
+
+PR: opened to `main` by RM (see the PR for its number). Not merged; merge needs the CI Build check green and the user's explicit instruction. Post-deploy checks P-7, P-8 and the QA click-through are owed by the user.
+
 ---
 
 ## Change History
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-10-04 | B1b committed (RM) | Code commit `a371c3a1` plus this docs commit on `feature/admin-ai-activity-b1b`; PR opened to `main`. See § Commit Info |
+| 2026-10-04 | **B1b SA-CR-B / QA fixes applied (Dev), uncommitted** | QA T-1 boundary tests (14m59s / 15m00s / 15m01s); QA M7 and M9 re-run and now red. SA-CR-B-1: an unreadable charge time gives `unknown` (`charge_time_unreadable`). QA E-B2: a non-array `models` gives `null` / "Unknown". SA-CR-B-2: archive cutoff shown as a date in the summary. SA-CR-B-3 / E-B3: neutral "Audit entry unknown" with the reason as visible text. QA E-B1: a 1 h margin (`LEAK_CHECK_LIMITS.SLACK_MS`) after the archive cutoff. See "SA-CR-B / QA fixes" under Implementation Notes (B1b) |
+| 2026-10-04 | **QA of B1b: PASS WITH NOTES** | "QA Report — B1b — 2026-10-04" added under § QA Testing Report (targeted edit). Every in-scope AC (audit-join row, AC-B5 audit half, AC-B6 Q1, AC-B13 entry half, AC-B15 AuditTrail part, AC-B17) mapped to tests. 7 QA mutations: 5 red, 2 survived (M7, M9 — the 15-minute boundary is pinned only as a constant: test gap T-1, Low). 8 edge probes all passed, then deleted. No bugs. Gates: Jest 1,289/1,291 (2 pre-existing `creditPeriod` CRLF reds), `typecheck:bos-llm` 0 new, `lint:hooks` exit 0, `test:bos-entitlements` 2,578/2,578. Edge cases E-B1 to E-B3 (Low). Post-deploy click-through incl. P-7 and P-8 owed by the user |
+| 2026-10-04 | **SA code review, B1b: APPROVED** | SA Code Review — B1b — 2026-10-04 added to § SA Review Notes. SA-B1-7 and OQ-5 to OQ-8 implemented as ruled; D-B1 to D-B11 accepted; D-B7: keep the `LEAK_CHECK_LIMITS.SLACK_MS` import (already pinned by the window test); D-B3: a cut read shows `unknown`. Tenant isolation verified at the type, builder and route-response level. Gates re-run by SA: `typecheck:bos-llm` 0 new, `lint:hooks` exit 0, authz guard 119/119, `test:bos-entitlements` 2,578/2,578, relevant Jest 1,204/1,206 (2 pre-existing `creditPeriod` CRLF reds), scoped `tsc` 0 on touched files. Three optional Low items, SA-CR-B-1 to SA-CR-B-3 |
+| 2026-10-04 | **B1b implemented (Dev), uncommitted** | T10–T14 done on `feature/admin-ai-activity-b1b` (base `8c8b5d08`); T15 local gates run, P-7/P-8 owed after deploy. `AuditTrailRepository.listAiActionEntriesAllAccountsByGroupIds` (entity type + two actions, never severity, both id cases, half-open ±1 h window, 1,000-row cap) with header amendment and `ADMIN_METHODS` pin; builder step 8 with SA-B1-7's match and precedence, the projection, the six states and the archive cutoff (OQ-8); route injection and log fields; four entry columns, five state labels and the "over the rows shown" summary with the 15-minute boundary. Deviations D-B1 to D-B11 in Implementation Notes (B1b). `typecheck:bos-llm` 0 new, `lint:hooks` exit 0, scoped `tsc` with canary clean on touched files, four mutations red and restored byte-exact |
 | 2026-10-04 | **B0′ migration renamed 20261025 → 20261026** | `main` gained `20261025_business_os_billing_accounts.sql` (62048d63) after this branch was cut, and the migration test pins ours as the only file with its date prefix. Renamed the migration and its rollback to `20261026_…` (no other branch uses that prefix) and updated the checker, the migration test and this workplan. Repo filename only: the indexes were already applied on production on 2026-10-04 and are unchanged. Earlier rows and review sections keep the old name as the record |
 | 2026-10-04 | B1a committed (RM) | Three commits on `feature/admin-ai-activity-b1a` (`0c03f55f`, `e74f549b`, `077b3de2`); PR opened to `main`. See § Commit Info |
 | 2026-10-02 | QA of B1a: PASS WITH NOTES | "QA Report — B1a — 2026-10-02" added under § QA Testing Report (targeted edit). Tested the tree before SA-CR-1 to SA-CR-3. Every in-scope AC is mapped to a test; AC-B16 and the keyboard pass are owed by the user. Eight mutation checks all went red, and restoration was confirmed byte-exact by sha256. Edge probes covered window bounds, limit, keys, UUIDs, empty and null-count results, the deleted-bucket ceiling and UTC presets. No bugs. E-1 duplicates SA-CR-2; E-2 to E-4 are Low. M-5 shows the authz CI guard does not enforce gate-first (OI-20). `creditPeriod` red is confirmed as CRLF, identical to `main` |

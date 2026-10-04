@@ -34,6 +34,7 @@ const ALLOWED_FILES: Record<string, string> = {
   'lib/archiving/config.ts': 'archive source configuration, not a read',
   'lib/business-os/purge/descriptors.ts': 'purge descriptor, not an owner read',
   'hooks/useLatestArchiveCutoff.ts': 'an archive source key sent to an admin route, not a read',
+  'lib/business-os/credits/aiActivity.ts': 'an archive source key passed to ArchiveRepository for the cutoff, not a read; its only caller is app/api/admin/business-os/ai-activity behind requireAdmin (admin AI Activity B1b)',
 };
 
 /**

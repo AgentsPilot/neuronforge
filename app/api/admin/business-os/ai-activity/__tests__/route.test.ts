@@ -4,7 +4,10 @@
  * query (a missing window, a span over 92 days, a limit over 100, an unknown
  * key including `actionId`, a repeated key), 409 on a platform account, 200
  * with the filters reaching the reads, one accountability log line with no
- * business name, and 500 without internals.
+ * business name, and 500 without internals. Slice B1b: the audit join is
+ * read with the admin's context and the page's own grouping ids, another
+ * account's entry never reaches the response (AC-B5), and the log line
+ * carries the audit counts.
  */
 
 import * as fs from 'fs';
@@ -40,7 +43,16 @@ const mockLedger = {
   listAdjustmentsForActionIds: jest.fn(),
   listChargesOfDeletedAccountsInWindow: jest.fn(),
 };
-jest.mock('@/lib/business-os/credits/aiActivityDeps', () => ({ aiActivityLedger: () => mockLedger }));
+const mockArchive = { getLatestCutoff: jest.fn(), listRuns: jest.fn() };
+jest.mock('@/lib/business-os/credits/aiActivityDeps', () => ({
+  aiActivityLedger: () => mockLedger,
+  aiActivityArchive: () => mockArchive,
+}));
+
+const mockListEntries = jest.fn();
+jest.mock('@/lib/repositories/AuditTrailRepository', () => ({
+  auditTrailRepository: { listAiActionEntriesAllAccountsByGroupIds: (...a: unknown[]) => mockListEntries(...a) },
+}));
 
 const mockFindNames = jest.fn();
 jest.mock('@/lib/repositories/BusinessProfileRepository', () => ({
@@ -91,11 +103,16 @@ function seedLedger() {
     error: null,
   });
   mockFindNames.mockResolvedValue({ data: [{ user_id: ACCOUNT, company_name: 'Alpha Studio' }], error: null });
+  mockListEntries.mockResolvedValue({ data: { rows: [], reachedLimit: false }, error: null });
+  mockArchive.getLatestCutoff.mockResolvedValue({ data: null, error: null });
+  mockArchive.listRuns.mockResolvedValue({ data: [], error: null });
 }
 
 const noReadHappened = () => {
   for (const fn of Object.values(mockLedger)) expect(fn).not.toHaveBeenCalled();
   expect(mockFindNames).not.toHaveBeenCalled();
+  expect(mockListEntries).not.toHaveBeenCalled();
+  for (const fn of Object.values(mockArchive)) expect(fn).not.toHaveBeenCalled();
 };
 
 beforeEach(() => {
@@ -292,6 +309,89 @@ describe('200: the list', () => {
     const res = await call(WINDOW);
     expect(res.status).toBe(200);
     expect((await res.json()).data.names).toBe('failed');
+  });
+});
+
+describe('200: the audit join (B1b)', () => {
+  beforeEach(asAdmin);
+
+  const ACTION = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001';
+  const OTHER = '88888888-8888-4888-8888-888888888888';
+  const entryRow = (user: string, details: Record<string, unknown>) => ({
+    id: `e-${user}`,
+    user_id: user,
+    created_at: '2026-10-01T09:59:59+00:00',
+    entity_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    details: { schema: 2, actionId: ACTION, callCount: 2, failedCallCount: 0, inputTokens: 10, outputTokens: 5, totalTokens: 15, models: ['model-alpha'], ...details },
+  });
+
+  it('reads the entries with the admin context and the page grouping ids, never request values', async () => {
+    const res = await call(`${WINDOW}&accountId=${ACCOUNT}`);
+    expect(res.status).toBe(200);
+    expect(mockListEntries).toHaveBeenCalledTimes(1);
+    const [context, groupIds, window] = mockListEntries.mock.calls[0];
+    expect(context).toEqual({ correlationId: expect.any(String), adminId: ADMIN.id });
+    expect(groupIds).toEqual(['bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb']);
+    expect(window).toEqual({ start: '2026-10-01T09:00:00.000Z', end: '2026-10-01T11:00:00.000Z' });
+    expect(mockArchive.getLatestCutoff).toHaveBeenCalledWith('audit_trail');
+  });
+
+  it('AC-B5: an entry of the right account is shown; another account entry with the same action id never reaches the response', async () => {
+    mockListEntries.mockResolvedValue({
+      data: {
+        rows: [entryRow(OTHER, { callCount: 987654, models: ['marker-other-account-model'] }), entryRow(ACCOUNT, {})],
+        reachedLimit: false,
+      },
+      error: null,
+    });
+    const res = await call(WINDOW);
+    const body = await res.json();
+    expect(body.data.rows[0].entry).toEqual({
+      state: 'found',
+      callCount: 2,
+      failedCallCount: 0,
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      models: ['model-alpha'],
+      errorCode: null,
+    });
+    expect(body.data.audit.noEntry.accountMismatch).toBe(1);
+    const json = JSON.stringify(body);
+    expect(json).not.toContain('987654');
+    expect(json).not.toContain('marker-other-account-model');
+    expect(json).not.toContain(OTHER);
+  });
+
+  it('a failed audit read keeps the list (200) and marks the entry unknown, never lost', async () => {
+    mockListEntries.mockResolvedValue({ data: null, error: new Error('secret internal detail') });
+    const res = await call(WINDOW);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.rows[0].entry).toEqual({ state: 'unknown', reason: 'audit_read_failed' });
+    expect(body.data.audit.status).toBe('failed');
+    expect(JSON.stringify(body)).not.toContain('secret internal detail');
+  });
+
+  it('the log line carries the audit status and counts, never an entry', async () => {
+    mockListEntries.mockResolvedValue({ data: { rows: [entryRow(ACCOUNT, { models: ['marker-logged-model'] })], reachedLimit: false }, error: null });
+    await call(WINDOW);
+    const lines = mockLog.info.mock.calls.filter(([, msg]) => msg === 'Admin read the Business OS AI activity');
+    expect(lines).toHaveLength(1);
+    expect(lines[0][0].audit).toEqual({
+      status: 'ok',
+      archive: 'ok',
+      noEntry: { tooRecent: 0, mayBeArchived: 0, lost: 0, unknown: 0, accountMismatch: 0 },
+    });
+    const logged = JSON.stringify([mockLog.info.mock.calls, mockLog.warn.mock.calls, mockLog.error.mock.calls]);
+    expect(logged).not.toContain('marker-logged-model');
+    expect(logged).not.toContain('Alpha Studio');
+  });
+
+  it('the route source wires the admin-pinned read with its context (adminReadMethods caller pin)', () => {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'route.ts'), 'utf8');
+    expect(source).toContain('auditTrailRepository.listAiActionEntriesAllAccountsByGroupIds(');
+    expect(source).toContain('{ correlationId, adminId: gate.user.id }');
   });
 });
 

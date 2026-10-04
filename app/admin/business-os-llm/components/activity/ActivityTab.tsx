@@ -1,8 +1,9 @@
 'use client';
 
 /**
- * The Activity tab of the Business OS AI admin page (Gap B slice B1a): one row
- * per Business OS AI action, read from the credit ledger.
+ * The Activity tab of the Business OS AI admin page (Gap B slices B1a and
+ * B1b): one row per Business OS AI action, read from the credit ledger, with
+ * its audit entry attached server-side (B1b).
  *
  * Read-only: one `GET` to `/api/admin/business-os/ai-activity`, plus the
  * reused business picker's own `GET`. No `@/lib/` import (the page's source
@@ -39,6 +40,7 @@ import type { ActivityAreaOption, ActivityPayload } from '../../activityTypes';
 import { ActivityCountLine } from './ActivityCountLine';
 import { ActivityFilters, type ActivityQuery } from './ActivityFilters';
 import { ActivityTable } from './ActivityTable';
+import { AuditSummaryLine } from './AuditSummaryLine';
 import { CutoverNotice } from './CutoverNotice';
 import { DeletedAccountsBucket } from './DeletedAccountsBucket';
 
@@ -234,7 +236,11 @@ export function ActivityTab() {
                   <p className="text-sm text-slate-200">{ACTIVITY_EMPTY}</p>
                 </div>
               ) : (
-                <ActivityTable rows={payload.rows} />
+                <ActivityTable rows={payload.rows} settleMinutes={payload.audit?.settleMinutes ?? null} />
+              )}
+
+              {payload.audit && payload.rows.length > 0 && (
+                <AuditSummaryLine audit={payload.audit} shown={payload.rows.length} />
               )}
 
               {payload.deletedAccounts && <DeletedAccountsBucket bucket={payload.deletedAccounts} />}

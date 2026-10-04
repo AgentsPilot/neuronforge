@@ -1,6 +1,7 @@
 /**
- * The words of the Activity tab (admin AI Activity view, Gap B slice B1a), in
- * one place so the render tests assert the same strings the screen shows.
+ * The words of the Activity tab (admin AI Activity view, Gap B slices B1a and
+ * B1b), in one place so the render tests assert the same strings the screen
+ * shows.
  */
 
 import type { ActivityOutcome, ActivitySort, ActivityTrigger } from './activityTypes';
@@ -101,6 +102,59 @@ export const MARKER_FALLBACK = 'Priced from a fallback rate — pending reconcil
 export const MARKER_CORRECTED = 'Corrected';
 export const MARKER_NONE = 'None';
 
+// ---- B1b: the audit entry (FR-B5 question 1, AC-B17: text, never colour alone) ----
+
+/** OQ-5: the boundary is stated on screen, from the payload's own figure. */
+export const MARKER_TOO_RECENT = (minutes: number | null) =>
+  minutes === null ? 'No audit entry — too recent' : `No audit entry — too recent (under ${minutes} min)`;
+export const MARKER_MAY_BE_ARCHIVED = 'No audit entry — may be archived';
+export const MARKER_LOST = 'No audit entry — lost';
+/** Neutral for every reason (SA-CR-B-3); the reason follows as visible text. */
+export const MARKER_ENTRY_UNKNOWN = 'Audit entry unknown';
+export const MARKER_ACCOUNT_MISMATCH = 'Audit entry on another account — defect';
+
+/** The reason, short, shown as visible text in the chip (QA E-B3: never hover-only). */
+export const ENTRY_UNKNOWN_SHORT = {
+  audit_read_failed: 'audit read failed',
+  audit_read_incomplete: 'audit read cut short',
+  archive_unread: 'archive cutoff unreadable',
+  charge_time_unreadable: 'charge time unreadable',
+} as const;
+
+/** The reason, in full, as hover text. The short form above is always visible too. */
+export const ENTRY_UNKNOWN_REASONS = {
+  audit_read_failed: 'The audit trail could not be read.',
+  audit_read_incomplete: 'The audit read reached its row limit, so this entry may be in the part not read.',
+  archive_unread: 'The audit archive cutoff could not be read, so "may be archived" and "lost" cannot be told apart.',
+  charge_time_unreadable: 'The charge time could not be read, so its age cannot be judged.',
+} as const;
+
+/** An entry field that is not known: never blank, never "none" (FR-B1). */
+export const ENTRY_FIELD_UNKNOWN = 'Unknown';
+export const ENTRY_MODELS_NONE = 'None recorded';
+export const ENTRY_ERROR_NONE = 'None';
+
+export const AUDIT_SUMMARY_LABEL = (shown: string) => `Audit entries, over the ${shown} rows shown:`;
+export const AUDIT_SUMMARY_COUNTS = (c: {
+  lost: string;
+  mayBeArchived: string;
+  tooRecent: string;
+  unknown: string;
+  accountMismatch: string;
+}) =>
+  `${c.lost} lost, ${c.mayBeArchived} may be archived, ${c.tooRecent} too recent, ${c.unknown} unknown, ` +
+  `${c.accountMismatch} with an entry on another account.`;
+export const AUDIT_SETTLE_NOTE = (minutes: number) =>
+  `“Too recent” means under ${minutes} minutes old: audit entries are written in batches, so a newer action may not have one yet.`;
+export const AUDIT_READ_FAILED = 'The audit trail could not be read, so every row shows its audit entry as unknown.';
+export const AUDIT_READ_INCOMPLETE =
+  'The audit read reached its row limit, so rows without a matched entry show it as unknown rather than lost.';
+/** SA-CR-B-2: what "may be archived" means, as a date. */
+export const AUDIT_ARCHIVE_CUTOFF_NOTE = (cutoff: string) =>
+  `Audit entries from before ${cutoff} may have been archived, so an older action without one is “may be archived”, not lost.`;
+export const AUDIT_ARCHIVE_FAILED =
+  'The audit archive cutoff could not be read, so older rows without an entry show it as unknown.';
+
 // ---- The deleted-account bucket (FR-B8) ----
 
 export const DELETED_BUCKET_LABEL = 'Account deleted';
@@ -119,6 +173,10 @@ export const COLUMNS = {
   outcome: 'Outcome',
   cost: 'Cost (USD)',
   credits: 'Credits charged',
+  calls: 'Calls / failed',
+  tokens: 'Tokens',
+  models: 'Models',
+  errorCode: 'Error code',
   groupId: 'Grouping id',
   state: 'Record state',
 } as const;

@@ -1,7 +1,8 @@
 /**
  * The admin AI Activity view — one row per Business OS AI action, with what it
  * was, whether it worked and what it cost (Gap B slice B1a: FR-B1, FR-B3,
- * FR-B8, FR-B10, FR-B12, FR-B13). Workplan
+ * FR-B8, FR-B10, FR-B12, FR-B13), and its audit entry or why there is none
+ * (slice B1b: FR-B1, FR-B5 question 1, SA-B1-7). Workplan
  * docs/workplans/BUSINESS_OS_ADMIN_AI_ACTIVITY_SLICE_B1_WORKPLAN.md § D.
  *
  * THE BACKBONE IS THE CREDIT LEDGER. `business_os_credit_charges` holds one
@@ -17,9 +18,19 @@
  * is used only when no account was chosen. Every second read is keyed on
  * SERVER-DERIVED values: adjustments by the page's own action ids (and each
  * one's account checked against its charge's by `resolveEffectiveFields`),
- * names by the page's own account ids. Business names are looked up by the
- * ROUTE (`findNames`, injected): the admin identity reads may be called only
- * from `app/api/admin/**` (repository guard `adminReadMethods`).
+ * names by the page's own account ids, audit entries by the page's own
+ * grouping ids. Business names and audit entries are read by the ROUTE
+ * (`findNames`, `listAuditEntries`, injected): those admin reads may be called
+ * only from `app/api/admin/**` (repository guard `adminReadMethods`).
+ *
+ * THE AUDIT JOIN (B1b, SA-RC-12, SA-B1-7). Entries are fetched by the page's
+ * grouping ids across ALL accounts (a chat turn id comes from a client header,
+ * so two accounts can share one, F-28), then matched HERE on
+ * `details.actionId` (lower-cased) AND `user_id`. An entry of another account
+ * is never sent: it only marks the row (`account_mismatch`) or adds to the
+ * mismatch count. Entries with no `actionId` (schema 1) or for a charge not on
+ * the page are dropped. A missing entry is classified (too recent / may be
+ * archived / lost), and is "unknown" whenever the evidence is incomplete.
  *
  * THE CUT-OVER (FR-B13). The ledger has no row before charging went live. A
  * window that ends before it reads nothing; one that straddles it is clamped
@@ -50,7 +61,9 @@ import {
   type ChargeListFilter,
   type CreditLedgerRow,
 } from '@/lib/repositories/BusinessOsCreditLedgerReadRepository';
-import { AI_ACTION_DECLARATIONS } from '@/lib/business-os/llm/aiActionAudit';
+import type { AdminAiActionEntriesPage, AdminAiActionEntryRow } from '@/lib/repositories/AuditTrailRepository';
+import type { ArchiveRepository } from '@/lib/repositories/ArchiveRepository';
+import { AI_ACTION_DECLARATIONS, sanitizeErrorCode } from '@/lib/business-os/llm/aiActionAudit';
 import { AI_CHARGE_SERVICE } from '@/lib/business-os/llm/aiChargeRecorder';
 import {
   COST_SCALE,
@@ -62,11 +75,15 @@ import {
   type CreditReportLogger,
   type CreditReportWindow,
 } from './creditReport';
+import { LEAK_CHECK_LIMITS } from './creditLeakCheck';
 import { areaFor, resolveEffectiveFields } from './effectiveFields';
 import type {
   AiActivityAreaOption,
+  AiActivityAuditSummary,
   AiActivityCoverage,
   AiActivityDeletedBucket,
+  AiActivityEntryState,
+  AiActivityNoEntryCounts,
   AiActivityOutcome,
   AiActivityPayload,
   AiActivityReadStatus,
@@ -85,7 +102,35 @@ export const AI_ACTIVITY_LIMITS = {
   DELETED_BUCKET_CEILING: 2000,
   /** Ids per adjustment lookup (the repository's own per-request limit). */
   ADJUSTMENT_IDS_PER_REQUEST: 200,
+  /**
+   * B1b: a charge younger than this with no entry is "too recent", not lost.
+   * Minutes, NOT the audit batch interval (SA re-check §4 Q4, OQ-5): sized
+   * against a serverless instance dying before its queued batch flushes.
+   * Shown on screen.
+   */
+  AUDIT_SETTLE_MS: 15 * 60_000,
+  /**
+   * B1b: slack on both sides of the audit read's window, around the page's
+   * earliest and latest charge (OQ-7). Entries are stamped when QUEUED, at or
+   * just before their charge (V-15). The same slack as the leak check.
+   */
+  AUDIT_WINDOW_SLACK_MS: LEAK_CHECK_LIMITS.SLACK_MS,
+  /**
+   * B1b (QA E-B1): an entry is stamped at or just BEFORE its charge (V-15), and
+   * the archive moves the ENTRY. So a charge up to this long after the cutoff
+   * may have lost its entry to the archive, and is "may be archived", not
+   * "lost". The same "entry at or before its charge" slack as the read window.
+   */
+  ARCHIVE_CUTOFF_MARGIN_MS: LEAK_CHECK_LIMITS.SLACK_MS,
+  /** B1b: archive runs inspected for the highest cutoff that moved rows (OQ-8, R-11). */
+  ARCHIVE_RUNS_INSPECTED: 100,
+  /** B1b: projection caps for an entry's model list. */
+  ENTRY_MAX_MODELS: 10,
+  ENTRY_MAX_MODEL_LENGTH: 64,
 } as const;
+
+/** The archive source whose cutoff decides "may be archived". */
+const AUDIT_ARCHIVE_SOURCE = 'audit_trail';
 
 /**
  * The first charge row, read once on production (F-21, SA-RC-9 check 1):
@@ -98,6 +143,9 @@ export const CHARGING_CUTOVER_FLOOR_MS = Date.UTC(2026, 8, 29, 16, 50, 53, 914);
 
 type RepoResult<T> = { data: T | null; error: Error | null };
 
+/** A charge row of a live account, as kept for the page (action id and account always set). */
+type PageCharge = CreditLedgerRow & { action_id: string; user_id: string };
+
 export interface AiActivityDeps {
   /** The four Activity reads. Production wiring: `aiActivityDeps.ts`. */
   ledger: Pick<
@@ -109,6 +157,17 @@ export interface AiActivityDeps {
   >;
   /** Business names for display. Supplied by the admin route; required, no default (see header). */
   findNames: (accountIds: readonly string[]) => Promise<RepoResult<AccountName[]>>;
+  /**
+   * B1b: the AI audit entries of these grouping ids, ALL accounts, in the
+   * half-open window. Supplied by the admin route with its read context
+   * (`listAiActionEntriesAllAccountsByGroupIds`); required, no default.
+   */
+  listAuditEntries: (
+    groupIds: readonly string[],
+    window: { start: string; end: string }
+  ) => Promise<RepoResult<AdminAiActionEntriesPage>>;
+  /** B1b: the audit archive cutoff reads (OQ-8). Production wiring: `aiActivityDeps.ts`. */
+  archive: Pick<ArchiveRepository, 'getLatestCutoff' | 'listRuns'>;
   now?: () => Date;
 }
 
@@ -249,6 +308,7 @@ export async function buildAiActivity(
     unresolvedAdjustments: 0,
     unreadableAmounts: 0,
     deletedAccounts: bucket,
+    audit: null,
   });
 
   // ---- 1. The cut-over: nothing before it is ever read (AC-B20) ----
@@ -285,7 +345,7 @@ export async function buildAiActivity(
   const { total } = pageResult.data;
 
   const chargesByActionId = new Map<string, CreditLedgerRow>();
-  const pageRows: (CreditLedgerRow & { action_id: string; user_id: string })[] = [];
+  const pageRows: PageCharge[] = [];
   for (const row of pageResult.data.rows) {
     // The query asks for charge rows of live accounts, and a charge row always
     // carries an action id (CHECK charge_shape). Anything else is an invariant
@@ -294,16 +354,16 @@ export async function buildAiActivity(
       log.warn({ rowId: row.id, read: 'activity charges' }, 'AI activity skipped a row that is not a live charge');
       continue;
     }
-    pageRows.push(row as CreditLedgerRow & { action_id: string; user_id: string });
+    pageRows.push(row as PageCharge);
     chargesByActionId.set(row.action_id, row);
   }
 
-  // ---- 4. Adjustments, names and the deleted bucket, in parallel ----
+  // ---- 4. Adjustments, names, the deleted bucket and the audit join, in parallel ----
   // Each read starts inside its own promise, so a synchronous throw fails only
   // its own part (the cost report's QA edge 7).
   const actionIds = [...chargesByActionId.keys()];
   const accountIds = [...new Set(pageRows.map((r) => r.user_id))];
-  const [adjustmentsResult, namesResult, bucket] = await Promise.all([
+  const [adjustmentsResult, namesResult, bucket, auditRead, archiveRead] = await Promise.all([
     actionIds.length === 0
       ? Promise.resolve<RepoResult<{ rows: CreditLedgerRow[]; reachedCeiling: boolean }>>({
           data: { rows: [], reachedCeiling: false },
@@ -314,6 +374,8 @@ export async function buildAiActivity(
       ? Promise.resolve<RepoResult<AccountName[]>>({ data: [], error: null })
       : settle(() => deps.findNames(accountIds)),
     allAccounts ? readDeletedBucket(filter, log, deps, units) : Promise.resolve(null),
+    pageRows.length === 0 ? Promise.resolve(null) : readAuditEntries(pageRows, deps),
+    pageRows.length === 0 ? Promise.resolve(null) : readArchiveCutoff(deps),
   ]);
 
   let adjustmentsStatus: AiActivityReadStatus = 'ok';
@@ -340,7 +402,11 @@ export async function buildAiActivity(
     for (const n of namesResult.data) names.set(n.user_id, n.company_name);
   }
 
-  // ---- 5. The rows ----
+  // ---- 5. The audit join (B1b, step 8): one state per row, decided server-side ----
+  const join =
+    auditRead === null || archiveRead === null ? null : joinAuditEntries(pageRows, auditRead, archiveRead, now, log);
+
+  // ---- 6. The rows ----
   const rows: AiActivityRow[] = pageRows.map((row) => {
     const grossCost = units(row.cost_usd, COST_SCALE);
     const grossCredits = units(row.credits, CREDIT_SCALE);
@@ -370,6 +436,8 @@ export async function buildAiActivity(
       corrected: (adjustments?.count ?? 0) > 0,
       adjustmentCount: adjustments?.count ?? 0,
       reasonCodes: adjustments ? [...adjustments.reasons].sort() : [],
+      // `join` is null only when the page is empty, and then there is no row.
+      entry: join?.entries.get(row.action_id) ?? { state: 'unknown', reason: 'audit_read_failed' },
     };
   });
 
@@ -383,6 +451,230 @@ export async function buildAiActivity(
     adjustments: adjustmentsStatus,
     unresolvedAdjustments: netted.unresolved,
     unreadableAmounts: unreadable,
+    audit: join?.summary ?? null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// B1b: the audit join
+// ---------------------------------------------------------------------------
+
+type AuditRead = { status: 'ok'; page: AdminAiActionEntriesPage } | { status: 'failed' };
+type ArchiveRead = { status: 'ok'; cutoffMs: number | null; cutoff: string | null } | { status: 'failed' };
+
+/**
+ * The page's grouping ids (from the CHARGE rows, never the request), read in
+ * one call over `[earliest - slack, latest + slack)`. At most 100 distinct
+ * ids, because the page holds at most 100 rows.
+ */
+async function readAuditEntries(pageRows: readonly PageCharge[], deps: AiActivityDeps): Promise<AuditRead> {
+  const groupIds = [
+    ...new Set(
+      pageRows
+        .map((r) => r.group_id)
+        .filter((g): g is string => typeof g === 'string' && g.length > 0)
+        .map((g) => g.toLowerCase())
+    ),
+  ];
+  const times = pageRows.map((r) => Date.parse(r.created_at)).filter((t) => Number.isFinite(t));
+  if (groupIds.length === 0 || times.length === 0) return { status: 'failed' };
+  const window = {
+    start: new Date(Math.min(...times) - AI_ACTIVITY_LIMITS.AUDIT_WINDOW_SLACK_MS).toISOString(),
+    end: new Date(Math.max(...times) + AI_ACTIVITY_LIMITS.AUDIT_WINDOW_SLACK_MS).toISOString(),
+  };
+  const result = await settle(() => deps.listAuditEntries(groupIds, window));
+  if (result.error || !result.data) return { status: 'failed' };
+  return { status: 'ok', page: result.data };
+}
+
+/**
+ * The audit archive cutoff (FR-B5, SA-R7, OQ-8): the highest of the latest
+ * SUCCEEDED run's cutoff and the cutoff of any recent run of this source that
+ * moved rows (a partial run moves rows too). NULL when no run has moved any.
+ */
+async function readArchiveCutoff(deps: AiActivityDeps): Promise<ArchiveRead> {
+  const [latest, runs] = await Promise.all([
+    settle(() => deps.archive.getLatestCutoff(AUDIT_ARCHIVE_SOURCE)),
+    settle(() => deps.archive.listRuns({ limit: AI_ACTIVITY_LIMITS.ARCHIVE_RUNS_INSPECTED })),
+  ]);
+  if (latest.error || runs.error || !runs.data) return { status: 'failed' };
+
+  const candidates: string[] = [];
+  if (latest.data) candidates.push(latest.data);
+  for (const run of runs.data) {
+    if (run.source === AUDIT_ARCHIVE_SOURCE && Number(run.rows_archived) > 0 && run.cutoff) candidates.push(run.cutoff);
+  }
+  let best: { ms: number; iso: string } | null = null;
+  for (const candidate of candidates) {
+    const ms = Date.parse(candidate);
+    // An unreadable cutoff decides nothing: the rows it would decide become "unknown".
+    if (!Number.isFinite(ms)) return { status: 'failed' };
+    if (best === null || ms > best.ms) best = { ms, iso: candidate };
+  }
+  return { status: 'ok', cutoffMs: best?.ms ?? null, cutoff: best?.iso ?? null };
+}
+
+const finiteCount = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : null;
+
+/** The entry's allow-listed fields, one by one. Never a spread of `details` (AC-B13). */
+function projectEntry(details: Record<string, unknown>): AiActivityEntryState {
+  // A `models` that is not a list is unreadable: NULL ("Unknown"), never [] (QA E-B2).
+  const models = Array.isArray(details.models)
+    ? details.models
+        .filter(
+          (m): m is string => typeof m === 'string' && m.length > 0 && m.length <= AI_ACTIVITY_LIMITS.ENTRY_MAX_MODEL_LENGTH
+        )
+        .slice(0, AI_ACTIVITY_LIMITS.ENTRY_MAX_MODELS)
+    : null;
+  return {
+    state: 'found',
+    callCount: finiteCount(details.callCount),
+    failedCallCount: finiteCount(details.failedCallCount),
+    inputTokens: finiteCount(details.inputTokens),
+    outputTokens: finiteCount(details.outputTokens),
+    totalTokens: finiteCount(details.totalTokens),
+    models,
+    // The writer's own shape for a code: a short identifier, never free text.
+    errorCode: sanitizeErrorCode(details.errorCode) ?? null,
+  };
+}
+
+const detailsOf = (row: AdminAiActionEntryRow): Record<string, unknown> | null =>
+  row.details && typeof row.details === 'object' && !Array.isArray(row.details)
+    ? (row.details as Record<string, unknown>)
+    : null;
+
+/** Newest `created_at` first, then the higher id: deterministic (SA-B1-7 iii). */
+function newestEntry(entries: readonly AdminAiActionEntryRow[]): AdminAiActionEntryRow {
+  return [...entries].sort((a, b) => {
+    const byTime = Date.parse(b.created_at) - Date.parse(a.created_at);
+    if (Number.isFinite(byTime) && byTime !== 0) return byTime;
+    return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+  })[0];
+}
+
+/**
+ * One state per charge, decided here, on the server (SA-B1-7):
+ *  (i)   the match is `details.actionId` lower-cased === the charge's action id
+ *        (a uuid, read back lower-case) AND `user_id` === the charge's account;
+ *  (ii)  an own-account entry means `found`, whatever else exists; an entry of
+ *        another account with the same action id only adds to the mismatch
+ *        count, and is the row's state only when no own entry exists;
+ *  (iii) two own entries (impossible by construction) resolve to the newest,
+ *        then the higher id, and are logged at warn with ids only.
+ * Precedence for a row with no own entry: read failed or cut -> unknown;
+ * another account -> account_mismatch; charge time unreadable -> unknown;
+ * strictly younger than the settle window -> too_recent; archive cutoff
+ * unreadable -> unknown; older than the cutoff plus its margin (E-B1) ->
+ * may_be_archived; otherwise lost.
+ */
+function joinAuditEntries(
+  pageRows: readonly PageCharge[],
+  auditRead: AuditRead,
+  archiveRead: ArchiveRead,
+  now: Date,
+  log: CreditReportLogger
+): { entries: Map<string, AiActivityEntryState>; summary: AiActivityAuditSummary } {
+  const own = new Map<string, AdminAiActionEntryRow[]>();
+  const foreign = new Map<string, number>();
+  const chargeByActionId = new Map(pageRows.map((r) => [r.action_id, r]));
+
+  if (auditRead.status === 'ok') {
+    for (const entry of auditRead.page.rows) {
+      const details = detailsOf(entry);
+      // Schema 1 entries carry no actionId and cannot be matched: dropped.
+      if (!details || typeof details.actionId !== 'string') continue;
+      const charge = chargeByActionId.get(details.actionId.toLowerCase());
+      // Not a charge on this page: dropped, never sent.
+      if (!charge) continue;
+      if (entry.user_id === charge.user_id) {
+        own.set(charge.action_id, [...(own.get(charge.action_id) ?? []), entry]);
+      } else {
+        // Another account's entry: counted, never sent (SA-RC-12).
+        foreign.set(charge.action_id, (foreign.get(charge.action_id) ?? 0) + 1);
+      }
+    }
+  }
+
+  const incomplete = auditRead.status === 'ok' && auditRead.page.reachedLimit;
+  const noEntry: AiActivityNoEntryCounts = { tooRecent: 0, mayBeArchived: 0, lost: 0, unknown: 0, accountMismatch: 0 };
+  const entries = new Map<string, AiActivityEntryState>();
+  const settleFloorMs = now.getTime() - AI_ACTIVITY_LIMITS.AUDIT_SETTLE_MS;
+
+  for (const charge of pageRows) {
+    if (foreign.has(charge.action_id)) noEntry.accountMismatch += 1;
+    const mine = own.get(charge.action_id) ?? [];
+    const createdMs = Date.parse(charge.created_at);
+    let state: AiActivityEntryState;
+
+    if (auditRead.status === 'failed') {
+      state = { state: 'unknown', reason: 'audit_read_failed' };
+    } else if (mine.length > 0) {
+      if (mine.length > 1) {
+        log.warn(
+          { actionId: charge.action_id, entryIds: mine.map((e) => e.id), read: 'activity audit entries' },
+          'AI activity found more than one audit entry for one action on one account; showing the newest'
+        );
+      }
+      // `mine` holds only entries whose details parsed, so this is never null.
+      state = projectEntry(detailsOf(newestEntry(mine)) ?? {});
+    } else if (incomplete) {
+      // The entry may sit in the part of the read that was cut: never "lost".
+      state = { state: 'unknown', reason: 'audit_read_incomplete' };
+    } else if (foreign.has(charge.action_id)) {
+      state = { state: 'account_mismatch' };
+    } else if (!Number.isFinite(createdMs)) {
+      // An unreadable charge time decides nothing (SA-CR-B-1).
+      state = { state: 'unknown', reason: 'charge_time_unreadable' };
+    } else if (createdMs > settleFloorMs) {
+      // Strictly younger than 15 minutes; exactly 15 minutes old is settled.
+      state = { state: 'too_recent' };
+    } else if (archiveRead.status === 'failed') {
+      state = { state: 'unknown', reason: 'archive_unread' };
+    } else if (
+      archiveRead.cutoffMs !== null &&
+      createdMs < archiveRead.cutoffMs + AI_ACTIVITY_LIMITS.ARCHIVE_CUTOFF_MARGIN_MS
+    ) {
+      state = { state: 'may_be_archived' };
+    } else {
+      state = { state: 'lost' };
+    }
+
+    if (state.state === 'too_recent') noEntry.tooRecent += 1;
+    else if (state.state === 'may_be_archived') noEntry.mayBeArchived += 1;
+    else if (state.state === 'lost') noEntry.lost += 1;
+    else if (state.state === 'unknown') noEntry.unknown += 1;
+    entries.set(charge.action_id, state);
+  }
+
+  if (auditRead.status === 'failed') {
+    log.error({ read: 'activity audit entries' }, 'AI activity audit read failed; rows show their entry as unknown');
+  } else if (incomplete) {
+    log.warn(
+      { rows: auditRead.page.rows.length, read: 'activity audit entries' },
+      'AI activity audit read reached its cap; undecided rows show their entry as unknown'
+    );
+  }
+  if (archiveRead.status === 'failed') {
+    log.error({ read: 'audit archive cutoff' }, 'AI activity archive cutoff read failed');
+  }
+  if (noEntry.accountMismatch > 0) {
+    log.warn(
+      { rows: noEntry.accountMismatch, read: 'activity audit entries' },
+      'AI activity found audit entries on another account for a shown action (defect marker)'
+    );
+  }
+
+  return {
+    entries,
+    summary: {
+      status: auditRead.status === 'failed' ? 'failed' : incomplete ? 'incomplete' : 'ok',
+      settleMinutes: AI_ACTIVITY_LIMITS.AUDIT_SETTLE_MS / 60_000,
+      archiveCutoff: archiveRead.status === 'ok' ? archiveRead.cutoff : null,
+      archive: archiveRead.status,
+      noEntry,
+    },
   };
 }
 

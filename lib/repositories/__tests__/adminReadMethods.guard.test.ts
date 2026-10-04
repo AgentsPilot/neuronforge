@@ -5,6 +5,7 @@
  *   BusinessProfileRepository.findAdminIdentity / findAdminIdentitiesByUserIds
  *   AuditTrailRepository.listAdminAiFailures
  *   AuditTrailRepository.countAdminEventsAllAccountsInWindow (slice 4, SA C-5)
+ *   AuditTrailRepository.listAiActionEntriesAllAccountsByGroupIds (Gap B B1b, NFR-4.4)
  *   UserProfileRepository.listForAdmin
  *   UserProfileRepository.findAdminNamesByIds (ADMIN_BOS_CLEANUP slice 4)
  *
@@ -39,7 +40,12 @@ import {
   BUSINESS_ADMIN_IDENTITY_COLUMNS,
   ADMIN_IDENTITY_CHUNK,
 } from '../BusinessProfileRepository';
-import { AuditTrailRepository, ADMIN_AI_FAILURE_COLUMNS } from '../AuditTrailRepository';
+import {
+  AuditTrailRepository,
+  ADMIN_AI_ACTION_ENTRY_COLUMNS,
+  ADMIN_AI_ENTRY_LIMITS,
+  ADMIN_AI_FAILURE_COLUMNS,
+} from '../AuditTrailRepository';
 import {
   UserProfileRepository,
   ADMIN_PROFILE_LIST_COLUMNS,
@@ -58,7 +64,7 @@ function recordingClient(result: (calls: Call[]) => { data: unknown; error: unkn
       const calls: Call[] = [{ method: 'from', args: [table] }];
       queries.push(calls);
       const builder: Record<string, unknown> = {};
-      for (const method of ['select', 'eq', 'in', 'gte', 'lte', 'order', 'limit', 'ilike', 'or', 'maybeSingle', 'abortSignal']) {
+      for (const method of ['select', 'eq', 'in', 'gte', 'lte', 'lt', 'order', 'limit', 'ilike', 'or', 'maybeSingle', 'abortSignal']) {
         builder[method] = (...args: unknown[]) => {
           calls.push({ method, args });
           return builder;
@@ -180,6 +186,124 @@ describe('AuditTrailRepository.countAdminEventsAllAccountsInWindow (slice 4, SA 
   it('returns { data: null, error } on a database error', async () => {
     const { client } = recordingClient(() => ({ data: null, error: { message: 'boom' } }));
     const result = await new AuditTrailRepository(client).countAdminEventsAllAccountsInWindow(CTX, { severity: 'critical' }, WINDOW);
+    expect(result.data).toBeNull();
+    expect(result.error).toBeTruthy();
+  });
+});
+
+describe('AuditTrailRepository.listAiActionEntriesAllAccountsByGroupIds (Gap B slice B1b, NFR-4.4)', () => {
+  const CTX = { correlationId: 'corr-1', adminId: '11111111-1111-4111-8111-111111111111' };
+  const WINDOW = { start: '2026-10-01T09:00:00.000Z', end: '2026-10-01T13:30:00.000Z' };
+  const G1 = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const G2 = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+  beforeEach(() => {
+    mockRepoLogCalls.length = 0;
+  });
+
+  it('reads only AI entries (entity type + the two actions, NEVER severity), all accounts, half-open window, capped', async () => {
+    const rows = [{ id: 'e1', user_id: ACCOUNT, created_at: '2026-10-01T10:00:00Z', entity_id: G1, details: {} }];
+    const { client, queries } = recordingClient(() => ({ data: rows, error: null }));
+    const result = await new AuditTrailRepository(client).listAiActionEntriesAllAccountsByGroupIds(CTX, [G1, G2], WINDOW);
+
+    expect(result).toEqual({ data: { rows, reachedLimit: false }, error: null });
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toEqual([
+      { method: 'from', args: ['audit_trail'] },
+      { method: 'select', args: [ADMIN_AI_ACTION_ENTRY_COLUMNS] },
+      { method: 'eq', args: ['entity_type', 'ai_action'] },
+      { method: 'in', args: ['action', ['BUSINESS_AI_ACTION_COMPLETED', 'BUSINESS_AI_ACTION_FAILED']] },
+      { method: 'in', args: ['entity_id', [G1, G1.toUpperCase(), G2, G2.toUpperCase()]] },
+      { method: 'gte', args: ['created_at', WINDOW.start] },
+      { method: 'lt', args: ['created_at', WINDOW.end] },
+      { method: 'order', args: ['created_at', { ascending: false }] },
+      { method: 'limit', args: [ADMIN_AI_ENTRY_LIMITS.MAX_ROWS] },
+    ]);
+    // Deliberately unscoped by account (F-28: the caller matches on actionId AND account).
+    expect(queries[0].some((c) => c.args[0] === 'user_id')).toBe(false);
+    expect(queries[0].some((c) => c.args[0] === 'severity')).toBe(false);
+  });
+
+  it('selects no hash, no email, no ip and no user agent', () => {
+    expect(ADMIN_AI_ACTION_ENTRY_COLUMNS).toBe('id, user_id, created_at, entity_id, details');
+    const columns = ADMIN_AI_ACTION_ENTRY_COLUMNS.split(',').map((c) => c.trim());
+    for (const forbidden of ['*', 'hash', 'user_email', 'ip_address', 'user_agent']) expect(columns).not.toContain(forbidden);
+  });
+
+  it('queries both canonical cases of every id, de-duplicated, never lower() (OQ-6): an upper-case input is covered too', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    await new AuditTrailRepository(client).listAiActionEntriesAllAccountsByGroupIds(CTX, [G1.toUpperCase(), G1], WINDOW);
+    const inEntity = queries[0].find((c) => c.method === 'in' && c.args[0] === 'entity_id');
+    expect(inEntity?.args[1]).toEqual([G1, G1.toUpperCase()]);
+  });
+
+  it('caps at 100 group ids, so at most 200 values reach the IN', async () => {
+    const ids = Array.from({ length: ADMIN_AI_ENTRY_LIMITS.MAX_GROUP_IDS }, (_, i) =>
+      `abcdef00-0000-4000-8000-${String(i).padStart(12, '0')}`
+    );
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const result = await new AuditTrailRepository(client).listAiActionEntriesAllAccountsByGroupIds(CTX, ids, WINDOW);
+    expect(result.error).toBeNull();
+    const inEntity = queries[0].find((c) => c.method === 'in' && c.args[0] === 'entity_id');
+    expect((inEntity?.args[1] as string[]).length).toBe(200);
+    expect(ADMIN_AI_ENTRY_LIMITS.MAX_GROUP_IDS).toBe(100);
+  });
+
+  it('a read that reaches the 1,000-row cap is reported as cut (reachedLimit, the >= rule)', async () => {
+    const rows = Array.from({ length: ADMIN_AI_ENTRY_LIMITS.MAX_ROWS }, (_, i) => ({
+      id: `e${i}`,
+      user_id: ACCOUNT,
+      created_at: '2026-10-01T10:00:00Z',
+      entity_id: G1,
+      details: {},
+    }));
+    const { client } = recordingClient(() => ({ data: rows, error: null }));
+    const result = await new AuditTrailRepository(client).listAiActionEntriesAllAccountsByGroupIds(CTX, [G1], WINDOW);
+    expect(result.data?.reachedLimit).toBe(true);
+    expect(ADMIN_AI_ENTRY_LIMITS.MAX_ROWS).toBe(1000);
+  });
+
+  it('logs the cross-tenant read at info with counts only: no group id, no entry, no details', async () => {
+    const rows = [
+      { id: 'e1', user_id: ACCOUNT, created_at: '2026-10-01T10:00:00Z', entity_id: G1, details: { models: ['marker-model'] } },
+    ];
+    const { client } = recordingClient(() => ({ data: rows, error: null }));
+    await new AuditTrailRepository(client).listAiActionEntriesAllAccountsByGroupIds(CTX, [G1], WINDOW);
+    expect(mockRepoLogCalls).toContainEqual([
+      {
+        correlationId: CTX.correlationId,
+        adminId: CTX.adminId,
+        method: 'listAiActionEntriesAllAccountsByGroupIds',
+        groupIds: 1,
+        rows: 1,
+        reachedLimit: false,
+      },
+      expect.any(String),
+    ]);
+    const logged = JSON.stringify(mockRepoLogCalls);
+    expect(logged).not.toContain(G1);
+    expect(logged).not.toContain('marker-model');
+  });
+
+  it.each([
+    ['no admin context', { correlationId: '', adminId: '' }, [G1], WINDOW],
+    ['no group id', CTX, [], WINDOW],
+    ['101 group ids', CTX, Array.from({ length: 101 }, () => G1), WINDOW],
+    ['a group id that is not a UUID', CTX, [G1, 'x%),id.neq.(y'], WINDOW],
+    ['a reversed window', CTX, [G1], { start: WINDOW.end, end: WINDOW.start }],
+    ['an empty window', CTX, [G1], { start: WINDOW.start, end: WINDOW.start }],
+    ['an unreadable window', CTX, [G1], { start: 'yesterday', end: WINDOW.end }],
+  ])('refuses %s before any query', async (_, ctx, ids, window) => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const result = await new AuditTrailRepository(client).listAiActionEntriesAllAccountsByGroupIds(ctx, ids, window);
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+    expect(queries).toHaveLength(0);
+  });
+
+  it('returns { data: null, error } on a database error, without throwing', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: { message: 'boom' } }));
+    const result = await new AuditTrailRepository(client).listAiActionEntriesAllAccountsByGroupIds(CTX, [G1], WINDOW);
     expect(result.data).toBeNull();
     expect(result.error).toBeTruthy();
   });
@@ -361,6 +485,8 @@ const ADMIN_METHODS = [
   'findAdminNamesByIds',
   // Slice 4: the first unscoped (all-accounts) audit read.
   'countAdminEventsAllAccountsInWindow',
+  // Gap B slice B1b: the cross-account AI-entry join of the Activity view.
+  'listAiActionEntriesAllAccountsByGroupIds',
 ];
 
 function walk(dir: string, out: string[] = []): string[] {

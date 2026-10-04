@@ -1,6 +1,6 @@
 /**
  * The wire shape of `GET /api/admin/business-os/ai-activity`, as the CLIENT
- * sees it (admin AI Activity view, Gap B slice B1a).
+ * sees it (admin AI Activity view, Gap B slices B1a and B1b).
  *
  * ── Why these are re-declared instead of imported ─────────────────────────
  * The server declares this shape in `lib/business-os/credits/aiActivityTypes.ts`,
@@ -39,6 +39,49 @@ export interface ActivityRow {
   corrected: boolean;
   adjustmentCount: number;
   reasonCodes: string[];
+  /** B1b: the audit entry, or why there is none. */
+  entry: ActivityEntryState;
+}
+
+export type ActivityEntryUnknownReason =
+  | 'audit_read_failed'
+  | 'audit_read_incomplete'
+  | 'archive_unread'
+  | 'charge_time_unreadable';
+
+export type ActivityEntryState =
+  | {
+      state: 'found';
+      callCount: number | null;
+      failedCallCount: number | null;
+      inputTokens: number | null;
+      outputTokens: number | null;
+      totalTokens: number | null;
+      /** NULL when the entry's list is unreadable. */
+      models: string[] | null;
+      errorCode: string | null;
+    }
+  | { state: 'account_mismatch' }
+  | { state: 'too_recent' }
+  | { state: 'may_be_archived' }
+  | { state: 'lost' }
+  | { state: 'unknown'; reason: ActivityEntryUnknownReason };
+
+/** Over the ROWS SHOWN, not the window. */
+export interface ActivityNoEntryCounts {
+  tooRecent: number;
+  mayBeArchived: number;
+  lost: number;
+  unknown: number;
+  accountMismatch: number;
+}
+
+export interface ActivityAuditSummary {
+  status: 'ok' | 'failed' | 'incomplete';
+  settleMinutes: number;
+  archiveCutoff: string | null;
+  archive: ActivityReadStatus;
+  noEntry: ActivityNoEntryCounts;
 }
 
 export interface ActivityDeletedBucket {
@@ -76,4 +119,6 @@ export interface ActivityPayload {
   unresolvedAdjustments: number;
   unreadableAmounts: number;
   deletedAccounts: ActivityDeletedBucket | null;
+  /** B1b. NULL when no row is shown. */
+  audit: ActivityAuditSummary | null;
 }

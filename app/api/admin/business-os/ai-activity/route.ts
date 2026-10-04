@@ -1,6 +1,7 @@
 /**
  * The admin AI Activity view (Gap B slice B1a: FR-B1, FR-B3, FR-B8, FR-B10,
- * FR-B12, FR-B13, NFR-1, NFR-10, AC-B14). Workplan
+ * FR-B12, FR-B13, NFR-1, NFR-10, AC-B14; slice B1b: the audit join, FR-B5
+ * question 1, NFR-4.4, AC-B5, AC-B6). Workplan
  * docs/workplans/BUSINESS_OS_ADMIN_AI_ACTIVITY_SLICE_B1_WORKPLAN.md § E.
  *
  *   GET /api/admin/business-os/ai-activity?from=YYYY-MM-DD&to=YYYY-MM-DD
@@ -10,7 +11,10 @@
  *
  * ADMIN ONLY, and a deliberate CROSS-ACCOUNT READ of the credit ledger: one
  * row per Business OS AI action, with what it was, whether it worked and what
- * it cost. Business names are read for display only and never logged.
+ * it cost. Business names are read for display only and never logged. The
+ * audit entries of the page's grouping ids are read across all accounts
+ * (B1b) and matched to each charge by the builder on action id AND account;
+ * another account's entry never leaves the server.
  *
  * Order, and nothing before it: requireAdmin (401/403) → repeated key (400) →
  * Zod, strict (400) → platform account (409, pure, no read) → the reads.
@@ -31,7 +35,8 @@ import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import { createLogger } from '@/lib/logger';
 import { BOS_LLM_AREAS, isPlatformAccount } from '@/lib/business-os/llm/callCatalog';
 import { AI_ACTIVITY_LIMITS, AiActivityListReadError, buildAiActivity } from '@/lib/business-os/credits/aiActivity';
-import { aiActivityLedger } from '@/lib/business-os/credits/aiActivityDeps';
+import { aiActivityArchive, aiActivityLedger } from '@/lib/business-os/credits/aiActivityDeps';
+import { auditTrailRepository } from '@/lib/repositories/AuditTrailRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 
 const logger = createLogger({ module: 'AdminBosAiActivityAPI' });
@@ -179,6 +184,14 @@ export async function GET(request: NextRequest) {
       ledger: aiActivityLedger(),
       // Admin identity reads are called only from app/api/admin/** (repository guard).
       findNames: (ids) => businessProfileRepository.findAdminIdentitiesByUserIds(ids),
+      // B1b. Admin-pinned too; the group ids come from the page's charge rows, never the request.
+      listAuditEntries: (groupIds, auditWindow) =>
+        auditTrailRepository.listAiActionEntriesAllAccountsByGroupIds(
+          { correlationId, adminId: gate.user.id },
+          groupIds,
+          auditWindow
+        ),
+      archive: aiActivityArchive(),
       now: () => now,
     });
 
@@ -200,6 +213,10 @@ export async function GET(request: NextRequest) {
         unreadableAmounts: payload.unreadableAmounts,
         deletedAccounts: payload.deletedAccounts
           ? { status: payload.deletedAccounts.status, count: payload.deletedAccounts.count, atLeast: payload.deletedAccounts.atLeast }
+          : null,
+        // B1b: counts over the rows shown, never an entry.
+        audit: payload.audit
+          ? { status: payload.audit.status, archive: payload.audit.archive, noEntry: payload.audit.noEntry }
           : null,
         durationMs: Date.now() - startedAt,
       },
