@@ -141,7 +141,12 @@ describe('invite columns and CHECKs', () => {
     expect(checkerList('pg_attribute.attname').sort()).toEqual([...NEW_INVITE_COLUMNS].sort());
     expect(checkerList('pg_constraint.conname', 'business_os_invites_').sort()).toEqual([...NEW_INVITE_CHECKS].sort());
     expect(NEW_INVITE_CHECKS).toHaveLength(7);
-    expect(checker).toContain('invite_checks.all_checks = 23');
+    // The table TOTAL is information only (as in the 20261020 checker's M03):
+    // later migrations add checks of their own, so a pinned total turned this
+    // checker FAIL by design once 20261020 landed. Only the seven named checks gate.
+    expect(checker).toContain('CASE WHEN invite_checks.named_checks = 7 THEN');
+    expect(checker).not.toContain('invite_checks.all_checks = 23');
+    expect(checker).toContain('23 expected at apply time');
   });
 });
 
