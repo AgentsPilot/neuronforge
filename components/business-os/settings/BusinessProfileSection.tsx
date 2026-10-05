@@ -22,6 +22,15 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { CountrySelect } from '@/components/ui/CountrySelect';
+import { AdminAreaField } from '@/components/ui/AdminAreaField';
+import { AddressAutocomplete } from '@/components/ui/AddressAutocomplete';
+import { legacyCountryToCode } from '@/lib/geo/countries';
+import {
+  formatAddressOneLine,
+  hasAddressContent,
+  type StructuredAddress,
+} from '@/lib/geo/address';
 import { useAuth } from '@/components/UserProvider';
 import { supabase } from '@/lib/supabaseClient';
 import {
@@ -192,6 +201,14 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
   const { user } = useAuth();
   const { t, isRTL, language } = useLanguage();
 
+  /** One part of the display address, leaving the rest alone. */
+  const updateAddressPart = (field: keyof StructuredAddress, value: string) =>
+    setBusinessProfile(b => ({
+      ...b,
+      address_parts: { ...b.address_parts, [field]: value },
+    }));
+
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
@@ -222,9 +239,40 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
     phone: '',
     email: '',
     address: '',
+    /*
+     * The display address in parts.
+     *
+     * `address` is kept beside it as the rendered line, because the public
+     * pages, the website address block and the privacy policy all read that
+     * column as a string. It is composed from these on save, so the two cannot
+     * drift apart.
+     */
+    address_parts: {
+      line1: '',
+      line2: '',
+      city: '',
+      state: '',
+      postal_code: '',
+      country: '',
+    } as StructuredAddress,
     clients_per_week: 0,
     revenue_tier: '',
   });
+
+  /*
+   * An address with something in it has to say which country.
+   *
+   * Not an address that is simply empty — a business that has not filled this in
+   * yet must still be able to save the rest of its profile. It is only once
+   * there is an address at all that a missing country becomes the gap this
+   * change exists to close.
+   *
+   * Legacy free text does not satisfy it: picking from the list is what turns
+   * "Israel" into something the refund disclaimer and tax rules can read.
+   */
+  const addressCountryMissing =
+    hasAddressContent(businessProfile.address_parts) &&
+    !legacyCountryToCode(businessProfile.address_parts.country);
   const [branding, setBranding] = useState<{ logo_url: string; show_logo_on_smart_links: boolean }>({
     logo_url: '',
     show_logo_on_smart_links: true,
@@ -286,7 +334,7 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
         setLoading(true);
 
         const [businessRes, orgRes, brandingRes] = await Promise.all([
-          supabase.from('business_profiles').select('vertical, sub_vertical, company_name, description, website_url, clients_per_week, revenue_tier, phone, email, address, extracted_data, website_analysis').eq('user_id', user.id).maybeSingle(),
+          supabase.from('business_profiles').select('vertical, sub_vertical, company_name, description, website_url, clients_per_week, revenue_tier, phone, email, address, address_parts, extracted_data, website_analysis').eq('user_id', user.id).maybeSingle(),
           supabase.from('organizations').select('id, name, settings').eq('owner_user_id', user.id).maybeSingle(),
           // Logo columns arrive with the business-logo migration. Asked for
           // separately because PostgREST rejects an entire select when one named
@@ -310,6 +358,19 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
           phone: businessRes.data.phone || '',
           email: businessRes.data.email || '',
           address: businessRes.data.address || '',
+          /*
+           * An address that predates the structured form keeps every character,
+           * in `line1`.
+           *
+           * Splitting "2nd floor, above the bakery" into street/city/postcode is
+           * a guess, and this line is printed on public pages — so it is moved
+           * across whole instead. The rendered result is identical to what
+           * clients see today, and the owner can break it up when they next
+           * edit. Blanking it would look like their settings had been lost.
+           */
+          address_parts: hasAddressContent(businessRes.data.address_parts)
+            ? { ...businessRes.data.address_parts }
+            : { line1: businessRes.data.address || '', country: '' },
           clients_per_week: businessRes.data.clients_per_week || 0,
           revenue_tier: businessRes.data.revenue_tier || '',
         });
@@ -494,7 +555,13 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
         body: JSON.stringify({
           phone: businessProfile.phone.trim(),
           email: businessProfile.email.trim(),
-          address: businessProfile.address.trim(),
+          /*
+           * BOTH are sent: the parts are the truth, the line is what every
+           * public reader already consumes. Composed here rather than in the
+           * API so the owner sees exactly the string that will be stored.
+           */
+          address: formatAddressOneLine(businessProfile.address_parts) ?? '',
+          address_parts: businessProfile.address_parts,
           organization: {
             name: orgSettings.name,
             // Null, not undefined: an answer the owner cleared has to be
@@ -745,7 +812,22 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
           <label htmlFor="business-address" className={FIELD_LABEL}>
             {t('settings.business.public_address')}
           </label>
-          <div className="relative">
+          {/* Type once, fill the lot. Renders nothing without an API key, and
+              the fields below remain the real record either way. */}
+          <AddressAutocomplete
+            onSelect={(address) =>
+              setBusinessProfile(b => ({ ...b, address_parts: { ...b.address_parts, ...address } }))
+            }
+            country={businessProfile.address_parts.country}
+            language={language}
+            isRTL={isRTL}
+            placeholder={t('settings.address.lookup') || 'Start typing your address…'}
+            hint={t('settings.address.lookup_hint') || undefined}
+            className={`${FIELD_BASE}`}
+            style={FIELD_RADIUS}
+          />
+
+          <div className="relative mt-2">
             <MapPin className={`w-4 h-4 absolute ${isRTL ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 text-[var(--v2-text-muted)]`} />
             <input
               id="business-address"
@@ -762,13 +844,83 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
                * field flips as the owner types.
                */
               dir="auto"
-              value={businessProfile.address}
-              onChange={(e) => setBusinessProfile(b => ({ ...b, address: e.target.value }))}
+              value={businessProfile.address_parts.line1 || ''}
+              onChange={(e) => updateAddressPart('line1', e.target.value)}
               placeholder={t('settings.business.public_address_placeholder')}
               className={`${FIELD_BASE} ${isRTL ? 'pr-10 pl-3' : 'pl-10 pr-3'}`}
               style={FIELD_RADIUS}
             />
           </div>
+          {/*
+            The rest of the address.
+            ──────────────────────────────────────────────────────────────────
+            City, state and postcode stay free text: no package here supplies
+            subdivisions, and a hand-written list of states would be exactly the
+            invented data this change exists to remove.
+
+            The country is the one that is picked, because it is the one the
+            platform reasons about — the refund disclaimer, tax, currency — and
+            the only one with a real list behind it.
+          */}
+          <div className="grid grid-cols-2 gap-2 mt-2">
+            <input
+              type="text"
+              dir="auto"
+              value={businessProfile.address_parts.line2 || ''}
+              onChange={(e) => updateAddressPart('line2', e.target.value)}
+              placeholder={t('settings.business.address_line2') || 'Suite, unit, floor (optional)'}
+              className={`${FIELD_BASE} px-3`}
+              style={FIELD_RADIUS}
+            />
+            <input
+              type="text"
+              dir="auto"
+              value={businessProfile.address_parts.city || ''}
+              onChange={(e) => updateAddressPart('city', e.target.value)}
+              placeholder={t('settings.business.address_city') || 'City'}
+              className={`${FIELD_BASE} px-3`}
+              style={FIELD_RADIUS}
+            />
+            {/* Only for countries whose addresses carry one — nothing is
+                rendered for Israel, the UK or most of Europe. */}
+            <AdminAreaField
+              country={businessProfile.address_parts.country}
+              value={businessProfile.address_parts.state || ''}
+              onChange={(value) => updateAddressPart('state', value)}
+              label={(key) => t(`settings.address.admin.${key}`) || key}
+              emptyLabel={t('settings.address.admin_none') || 'No matches'}
+              isRTL={isRTL}
+              className={`${FIELD_BASE} px-3`}
+              style={FIELD_RADIUS}
+            />
+            <input
+              type="text"
+              dir="auto"
+              value={businessProfile.address_parts.postal_code || ''}
+              onChange={(e) => updateAddressPart('postal_code', e.target.value)}
+              placeholder={t('settings.business.address_postal_code') || 'Postal code'}
+              className={`${FIELD_BASE} px-3`}
+              style={FIELD_RADIUS}
+            />
+            <div className="col-span-2">
+              <CountrySelect
+                value={businessProfile.address_parts.country || ''}
+                onChange={(code) => updateAddressPart('country', code)}
+                locale={language === 'he' ? 'he' : language === 'es' ? 'es' : 'en'}
+                isRTL={isRTL}
+                placeholder={t('settings.business.address_country') || 'Country'}
+                emptyLabel={t('settings.business.address_country_none') || 'No countries found'}
+              />
+            </div>
+          </div>
+
+          {addressCountryMissing && (
+            <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1 leading-snug">
+              {t('settings.business.address_country_required') ||
+                'Choose the country for this address.'}
+            </p>
+          )}
+
           <p className="text-[11px] text-[var(--v2-text-muted)] mt-1 leading-snug">
             {t('settings.business.public_contact_hint')}
           </p>
@@ -1015,7 +1167,7 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
       >
         <button
           onClick={saveBusiness}
-          disabled={saving}
+          disabled={saving || addressCountryMissing}
           className="flex items-center gap-2 px-6 py-2.5 text-sm font-medium border transition-all disabled:opacity-50"
           style={configAccentButton}
         >

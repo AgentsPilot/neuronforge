@@ -951,6 +951,60 @@ export function InsightAdvisorCard({
           )}
         </div>
 
+        {/*
+          * ALREADY SORTED, SAID WHERE IT IS READ.
+          *
+          * A resolved insight rides the carousel for a day so the owner sees
+          * what happened to something they were told about. Until now the only
+          * sign of that was the secondary button reading "Got it" instead of
+          * "Not now" — the headline and the body rendered identically to a live
+          * problem.
+          *
+          * So "1 contact stuck in your pipeline" looked exactly the same
+          * whether somebody was stuck right now or had been unstuck yesterday.
+          * An owner read it as current, went looking at the pipeline diagram,
+          * found nothing marked, and concluded the dashboard was broken. That
+          * is the report this fixes.
+          *
+          * A chip rather than a tense change: the stored title is written by
+          * the detector in the owner's language and is not ours to rewrite
+          * here.
+          */}
+        {isResolved && (
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              marginBottom: '8px',
+              padding: '3px 9px',
+              borderRadius: '999px',
+              fontSize: '11.5px',
+              fontWeight: 600,
+              letterSpacing: '0.02em',
+              color: 'var(--v2-success-text, #065F46)',
+              background: 'var(--v2-success-bg, #ECFDF5)',
+              border: '1px solid var(--v2-success-border, #BBF7D0)',
+              fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+            }}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="12"
+              height="12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M20 6L9 17l-5-5" />
+            </svg>
+            {t('insight.badge.resolved') || 'Already sorted'}
+          </div>
+        )}
+
         {/* Headline: .adv-h */}
         <div
           className="adv-h"
@@ -961,7 +1015,12 @@ export function InsightAdvisorCard({
             letterSpacing: '-0.025em',
             marginBottom: '7px',
             lineHeight: 1.25,
-            color: 'var(--v2-text-primary)',
+            /*
+             * Softened, not greyed out. A resolved insight is still worth
+             * reading — it is the record of something that got dealt with — so
+             * it must not look disabled, only settled.
+             */
+            color: isResolved ? 'var(--v2-text-secondary)' : 'var(--v2-text-primary)',
           }}
         >
           {displayTitle}

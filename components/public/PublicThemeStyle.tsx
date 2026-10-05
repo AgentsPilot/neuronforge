@@ -9,6 +9,28 @@ import { baseCss, compositionFor, templateCss } from '@/components/public/compos
 const SPACING_SCALE = { compact: 0.85, normal: 1, spacious: 1.25 } as const;
 
 /**
+ * What a form says when something is wrong, on a light page and on a dark one.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The public forms had no token for this and reached for Tailwind's
+ * "text-red-600" — a colour from the signed-in app's palette, on pages painted
+ * entirely in the business's own. On a dark template it was barely legible; on
+ * a warm one it was simply a colour from another website.
+ *
+ * NOT derived from the brand, which is the obvious idea and is wrong twice
+ * over: a business whose brand IS red would make its errors invisible as
+ * errors, and one with a green brand would announce failures in green. "This
+ * needs your attention" has to read as that whoever the tenant is, so the hue
+ * is fixed and only its LIGHTNESS follows the palette — the same light/dark
+ * decision every other token here already makes.
+ *
+ * The two values are Material's error roles, which are chosen for contrast
+ * against a light and a dark surface respectively.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const DANGER_INK = { light: '#B3261E', dark: '#F2B8B5' } as const;
+
+/**
  * Fonts a public page can request without a network round trip.
  *
  * Heebo is loaded by the root layout through `next/font`, and everything else
@@ -169,6 +191,13 @@ export function PublicThemeStyle(props: PublicThemeStyleProps) {
       --ap-border: ${mix(colors.background, colors.text, dark ? 0.16 : 0.12)};
       --ap-text: ${colors.text};
       --ap-text-muted: ${colors.textSecondary};
+
+      /* What a form says when something is wrong. A fixed hue whose lightness
+         follows the palette, never the brand: see the note in globals.css
+         beside the classes that resolve through these. */
+      --ap-danger: ${DANGER_INK[dark ? 'dark' : 'light']};
+      --ap-danger-tint: ${withAlpha(DANGER_INK[dark ? 'dark' : 'light'], 0.12)};
+      --ap-danger-border: ${withAlpha(DANGER_INK[dark ? 'dark' : 'light'], 0.55)};
 
       --ap-radius-sm: ${radius / 2}${radiusUnit};
       --ap-radius-md: ${radius}${radiusUnit};

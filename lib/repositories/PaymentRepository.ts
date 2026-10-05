@@ -1160,6 +1160,37 @@ export class PaymentInvoiceRepository {
         })
         .eq('user_id', userId)
         .eq('status', 'sent')
+        /*
+         * NEVER AN INVOICE WHOSE MONEY HAS MOVED.
+         *
+         * ─────────────────────────────────────────────────────────────────────
+         * `status` alone is not enough to say an invoice is still owed — the
+         * refund migration says so outright: `refund_status` is the field to
+         * read, and `status` is a projection. An invoice can be paid, or paid
+         * and refunded, while its status still reads `sent`, and this stamped
+         * it `overdue`.
+         *
+         * Once it says `overdue` the invoice becomes a receivable on the
+         * dashboard and a target for the chase, so the client is emailed asking
+         * for money they already paid — and the Stripe link in that email shows
+         * PAID, which is how it was found.
+         *
+         * `paid_at` and the refund fields are checked rather than inferred from
+         * the status this very statement is about to overwrite.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        .is('paid_at', null)
+        .is('refunded_at', null)
+        /*
+         * `.eq`, NOT `.or('refund_status.is.null,refund_status.eq.none')`.
+         *
+         * The column is `NOT NULL DEFAULT 'none'` (20260828d), so the null arm
+         * was unreachable — and `mutationOrSelect.guard` exists because an
+         * `.or()` on a mutation that also asks for its rows back fails on
+         * production PostgREST with 42703. That guard caught this before it
+         * shipped; without it the overdue cron would have thrown on every run.
+         */
+        .eq('refund_status', 'none')
         .lt('due_date', today)
         .select();
 

@@ -18,6 +18,10 @@ import {
   Percent,
 } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { CountrySelect } from '@/components/ui/CountrySelect';
+import { AdminAreaField } from '@/components/ui/AdminAreaField';
+import { AddressAutocomplete } from '@/components/ui/AddressAutocomplete';
+import { legacyCountryToCode } from '@/lib/geo/countries';
 import { CONFIG_ACCENT, configAccentButton } from '@/components/business-os/configAccent';
 import { TabFooter } from '@/components/business-os/settings/TabFooter';
 import { StripeConnectStatus } from '@/components/payments/StripeConnectStatus';
@@ -107,7 +111,7 @@ export function InvoiceSettingsSection({
 }: InvoiceSettingsSectionProps) {
   // Without the accordion there is nothing to collapse, so the panel is open.
   const expanded = chrome ? expandedProp === true : true;
-  const { t, isRTL } = useLanguage();
+  const { t, isRTL, language } = useLanguage();
 
   /*
    * Shared field styling.
@@ -153,6 +157,17 @@ export function InvoiceSettingsSection({
    * chosen terms it never saw, on the one number that decides when its clients
    * are chased.
    */
+  /*
+   * The country is required, and the save is blocked without it.
+   *
+   * It is no longer a label on an invoice: it decides which legal sentence goes
+   * on a refund email and which tax rules apply. A blank one leaves those
+   * silently unanswerable, so it is asked for once rather than guessed at
+   * forever. Legacy free text does NOT satisfy it — picking from the list is
+   * what turns "Israel" into something the rest of the platform can read.
+   */
+  const countryMissing = !legacyCountryToCode(settings.invoice_address?.country);
+
   const termsMissing =
     settings.invoice_payment_terms_days === null ||
     settings.invoice_payment_terms_days === undefined ||
@@ -174,7 +189,22 @@ export function InvoiceSettingsSection({
         if (data.success && data.data) {
           setSettings({
             invoice_company_name: data.data.invoice_company_name || '',
-            invoice_address: data.data.invoice_address || {},
+            /*
+             * The country is resolved to a CODE on the way in.
+             *
+             * The column still holds what businesses typed before the picker
+             * existed — "Israel", "USA". Left alone, the dropdown would show
+             * nothing and the owner would think their address had been lost.
+             * Anything unrecognised stays as it is and the picker shows it as
+             * text until they choose from the list.
+             */
+            invoice_address: {
+              ...(data.data.invoice_address || {}),
+              country:
+                legacyCountryToCode(data.data.invoice_address?.country) ??
+                data.data.invoice_address?.country ??
+                '',
+            },
             invoice_tax_id: data.data.invoice_tax_id || '',
             invoice_bank_name: data.data.invoice_bank_name || '',
             invoice_bank_account: data.data.invoice_bank_account || '',
@@ -667,6 +697,22 @@ export function InvoiceSettingsSection({
                   {t('settings.invoice.address') || 'Business Address'}
                 </label>
 
+                <AddressAutocomplete
+                  onSelect={(address) =>
+                    setSettings(prev => ({
+                      ...prev,
+                      invoice_address: { ...prev.invoice_address, ...address },
+                    }))
+                  }
+                  country={settings.invoice_address.country}
+                  language={language}
+                  isRTL={isRTL}
+                  placeholder={t('settings.address.lookup') || 'Start typing your address…'}
+                  hint={t('settings.address.lookup_hint') || undefined}
+                  className={`w-full py-2.5 text-sm ${FIELD}`}
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                />
+
                 <input
                   type="text"
                   value={settings.invoice_address.line1 || ''}
@@ -685,7 +731,12 @@ export function InvoiceSettingsSection({
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 />
 
-                <div className="grid grid-cols-2 gap-3">
+                {/* FLEX, not a 2-column grid.
+                    The state field renders nothing for Israel, the UK and most
+                    of Europe — and in a fixed grid that left City at half width
+                    with a blank cell beside it. Flexed, City simply takes the
+                    whole row when there is no state to share it with. */}
+                <div className="flex gap-3 [&>*]:min-w-0 [&>*]:flex-1">
                   <input
                     type="text"
                     value={settings.invoice_address.city || ''}
@@ -694,11 +745,13 @@ export function InvoiceSettingsSection({
                     className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   />
-                  <input
-                    type="text"
+                  <AdminAreaField
+                    country={settings.invoice_address.country}
                     value={settings.invoice_address.state || ''}
-                    onChange={(e) => updateAddress('state', e.target.value)}
-                    placeholder={t('settings.invoice.state') || 'State/Province'}
+                    onChange={(value) => updateAddress('state', value)}
+                    label={(key) => t(`settings.address.admin.${key}`) || key}
+                    emptyLabel={t('settings.address.admin_none') || 'No matches'}
+                    isRTL={isRTL}
                     className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   />
@@ -713,13 +766,13 @@ export function InvoiceSettingsSection({
                     className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   />
-                  <input
-                    type="text"
+                  <CountrySelect
                     value={settings.invoice_address.country || ''}
-                    onChange={(e) => updateAddress('country', e.target.value)}
+                    onChange={(code) => updateAddress('country', code)}
+                    locale={language === 'he' ? 'he' : language === 'es' ? 'es' : 'en'}
+                    isRTL={isRTL}
                     placeholder={t('settings.invoice.country') || 'Country'}
-                    className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    emptyLabel={t('settings.invoice.country_none') || 'No countries found'}
                   />
                 </div>
               </div>
@@ -832,7 +885,7 @@ export function InvoiceSettingsSection({
               >
                 <button
                   onClick={saveSettings}
-                  disabled={saving || termsMissing}
+                  disabled={saving || termsMissing || countryMissing}
                   className={`text-sm font-medium disabled:opacity-50 flex items-center gap-2 ${
                     chrome
                       ? 'px-4 py-2 bg-[var(--v2-primary)] text-white'

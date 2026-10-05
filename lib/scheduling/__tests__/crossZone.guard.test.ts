@@ -19,6 +19,7 @@ import {
   businessInstant,
   businessClock,
   shiftBusinessDateKey,
+  endOfBusinessLocal,
 } from '../businessTime';
 
 /** The owner's laptop, deliberately nowhere near any business under test. */
@@ -61,6 +62,84 @@ describe('a wall clock is read on the business clock, not the machine clock', ()
     expect(end.getTime()).toBeGreaterThan(start.getTime());
     expect(end.getTime() - start.getTime()).toBe(60 * 60 * 1000);
   });
+});
+
+/**
+ * The owner-reported bug, in the only conditions that show it.
+ *
+ * An owner in Israel with the business on New York typed 10:00 for an
+ * hour-long service and the dialog filled the end in as 04:00 — seven hours
+ * out, before the start, so the (correct) validator then refused the booking.
+ * `handleStartTimeChange` read the typed clock with `new Date(...)`, which is
+ * the MACHINE's, and wrote the end back on the business's.
+ *
+ * Both reads happen inside `endOfBusinessLocal` now, which is why this can be
+ * pinned here with the process clock deliberately somewhere else. Under
+ * `TZ=UTC` against a UTC business the broken version passes every one of these.
+ */
+describe('a slot ends where the business says, not where the machine does', () => {
+  it('adds the duration on the business clock', () => {
+    expect(endOfBusinessLocal('2026-10-02T10:00', 60, 'America/New_York'))
+      .toBe('2026-10-02T11:00');
+  });
+
+  it('gives the same answer for the reporter\'s own business', () => {
+    expect(endOfBusinessLocal('2026-10-02T10:00', 60, 'Asia/Jerusalem'))
+      .toBe('2026-10-02T11:00');
+  });
+
+  it('and for a business genuinely on UTC', () => {
+    expect(endOfBusinessLocal('2026-10-02T10:00', 90, 'UTC')).toBe('2026-10-02T11:30');
+  });
+
+  it('carries a slot over midnight on the business calendar', () => {
+    expect(endOfBusinessLocal('2026-10-02T23:30', 60, 'America/New_York'))
+      .toBe('2026-10-03T00:30');
+  });
+
+  it('keeps the wall clock right across a daylight-saving change', () => {
+    // 01:30 EDT + 60 min is 01:30 EST: the same wall clock an hour later,
+    // which is what adding to the INSTANT gets right and string arithmetic
+    // does not.
+    expect(endOfBusinessLocal('2026-11-01T01:30', 60, 'America/New_York'))
+      .toBe('2026-11-01T01:30');
+  });
+
+  it('answers null for a start that is not a wall clock', () => {
+    /*
+     * An empty start is what a service with no date step leaves behind, and
+     * failing to parse is NOT what used to happen to it: V8 reads
+     * `new Date(':00Z')` as 31 December 1999 rather than rejecting it, so the
+     * end field was quietly filled in with a 1999 date. Hence the shape check,
+     * and hence this test — `toBeNull` here is what the old code could not do.
+     */
+    expect(endOfBusinessLocal('', 60, 'America/New_York')).toBeNull();
+    expect(endOfBusinessLocal('not a time', 60, 'America/New_York')).toBeNull();
+    expect(endOfBusinessLocal('2026-10-02', 60, 'America/New_York')).toBeNull();
+    expect(() => endOfBusinessLocal('', 60, 'America/New_York')).not.toThrow();
+
+    /*
+     * The leniency it is guarding against, stated so it cannot surprise the
+     * next reader: this is `fromBusinessLocalInput`, unchanged and untouched.
+     *
+     * Asserted as the INSTANT, not a local year. `getFullYear()` reads the
+     * machine's calendar, so the same date is 1999 in New York and 2000 on a
+     * UTC+14 machine — and a test of a timezone helper must not depend on where
+     * it runs. That is the whole premise of this file.
+     */
+    const fromNothing = fromBusinessLocalInput('', 'America/New_York');
+    expect(Number.isNaN(fromNothing.getTime())).toBe(false);   // ← the hazard
+    // `:00Z` parses as 2000-01-01T00:00Z, then the zone correction moves it by
+    // New York's offset. Derived from the business zone alone, so this holds
+    // wherever the test runs.
+    expect(fromNothing.toISOString()).toBe('2000-01-01T05:00:00.000Z');
+  });
+
+  it('survives a duration the service never set', () => {
+    expect(endOfBusinessLocal('2026-10-02T10:00', NaN, 'America/New_York'))
+      .toBe('2026-10-02T10:00');
+  });
+
 });
 
 describe('the calendar day is the business day, not the machine day', () => {

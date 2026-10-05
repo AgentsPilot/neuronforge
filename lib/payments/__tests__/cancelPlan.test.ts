@@ -33,6 +33,16 @@ jest.mock('@/lib/supabaseServer', () => ({
       // `cancelPlan`, so the harness has to be able to answer it — a thrown
       // TypeError here would read as a cancellation failure.
       builder.in = () => Promise.resolve({ data: [], error: null });
+      /*
+       * `.not(column, op, value)` — the status scope moved into it when the
+       * close widened from `pending` to "everything unsettled". Recorded rather
+       * than ignored, so a test can tell a narrowed scope from no scope at all:
+       * without one, a PAID period would be rewritten to cancelled.
+       */
+      builder.not = (column: string, op: string, value: unknown) => {
+        filters[`not:${column}`] = `${op} ${value}`;
+        return builder;
+      };
       builder.maybeSingle = async () => ({ data: dbState.plan, error: null });
       builder.update = (row: Record<string, unknown>) => {
         if (table === 'payment_plan_installments') {
@@ -172,13 +182,27 @@ describe('cancelPlan', () => {
      * been sold to the same contact twice, and cancelling by offer would void a
      * live plan alongside the stopped one.
      */
-    expect(update.filters).toMatchObject({ subscription_id: 'plan-1', status: 'pending' });
+    expect(update.filters).toMatchObject({
+      subscription_id: 'plan-1',
+      // Everything unsettled, not just `pending`: a billed-but-unpaid period
+      // stayed in receivables on a stopped plan, which is the one thing
+      // cancelling is supposed to fix.
+      'not:status': 'in (paid,cancelled)',
+    });
   });
 
   it('does not rewrite periods that were already paid', async () => {
     await cancelPlan({ planId: 'plan-1', userId: 'user-1', stripe });
 
-    expect(dbState.installmentUpdates[0].filters.status).toBe('pending');
+    /*
+     * The guarantee, not its old spelling. A paid period records money that
+     * arrived; rewriting it to `cancelled` would delete the evidence.
+     *
+     * Asserted on the scope itself rather than on its absence — a close with NO
+     * status scope would pass a `not.toBe('pending')` check and quietly rewrite
+     * every paid period on the plan.
+     */
+    expect(dbState.installmentUpdates[0].filters['not:status']).toBe('in (paid,cancelled)');
   });
 
   it('falls back to the subscription when no schedule was attached', async () => {

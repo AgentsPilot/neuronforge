@@ -175,6 +175,8 @@ export function InstallmentSchedule({
           total: t('crm.payment.total'),
           collected: t('crm.payment.collected'),
           outstanding: t('crm.payment.outstanding'),
+          // Only rendered when a period has actually been called off.
+          cancelled: t('payments.plan.status.cancelled') || 'Stopped',
         }}
       />
 

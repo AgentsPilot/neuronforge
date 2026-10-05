@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAuth } from '@/components/UserProvider';
 import { intakeReachesClient } from '@/lib/business-os/intakeReach';
 import { configTabsForShape, shapeFromServices } from '@/lib/business-os/businessShape';
@@ -8,6 +8,7 @@ import { X, Settings, Clock, CreditCard, Loader2, Check, AlertTriangle, Clipboar
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { SchedulingServicesList } from '@/components/scheduling/SchedulingServicesList';
 import { AvailabilityEditor, DEFAULT_AVAILABILITY, parseAvailability, type WeeklyAvailability } from '@/components/scheduling/AvailabilityEditor';
+import { TimeOffEditor } from '@/components/scheduling/TimeOffEditor';
 import { IntakeSettingsPanel } from '@/components/scheduling/IntakeSettingsPanel';
 import { CalendarSyncSettings } from '@/components/scheduling/CalendarSyncSettings';
 import { BusinessProfileSection } from '@/components/business-os/settings/BusinessProfileSection';
@@ -144,6 +145,15 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
   const [availabilitySaved, setAvailabilitySaved] = useState(false);
   /** Why the last availability save did not take. See `saveAvailability`. */
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+  /**
+   * The time-off section, so the working-days row can point at it.
+   *
+   * Time off saves its own rows and therefore sits as a separate component below
+   * the weekly hours — correct, but below the fold, where owners never found it.
+   * The link is rendered by `AvailabilityEditor` and the scrolling happens here,
+   * because this is the component that decided the two sit one above the other.
+   */
+  const timeOffRef = useRef<HTMLDivElement>(null);
 
   // Stripe state
   const [stripeConnected, setStripeConnected] = useState(false);
@@ -851,7 +861,42 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                   availability={availability}
                   onChange={setAvailability}
                   daysToAdd={availabilityDaysToAdd}
+                  /*
+                   * The scroll lives here because the layout does.
+                   *
+                   * `AvailabilityEditor` renders the link only when given this,
+                   * so it never points at a section that is not on screen — it
+                   * is used in one place today, and a hardcoded element lookup
+                   * inside it would become a link to nothing the moment it is
+                   * used in another.
+                   *
+                   * `block: 'nearest'` rather than `'start'`: the tab body is
+                   * the scrolling element, and `'start'` drags the section to
+                   * the very top, pushing the working hours the owner was just
+                   * editing out of view entirely. `'nearest'` brings it just
+                   * into frame, so both halves stay visible and the relationship
+                   * between them is still legible.
+                   */
+                  onJumpToTimeOff={() =>
+                    timeOffRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+                  }
                 />
+
+                {/* Divider */}
+                <div className="border-t border-[var(--v2-border)]" />
+
+                {/*
+                  Time off: the exceptions to the week above.
+                  Its own component because it saves its own rows — the weekly
+                  hours are one JSON column with one Save button below, and the
+                  closed days are rows in their own table with their own create
+                  and delete. Sharing a save button would mean one of them saving
+                  when the owner pressed the other.
+                */}
+                {/* Wrapped only to give the link above somewhere to scroll to. */}
+                <div ref={timeOffRef} className="scroll-mt-4">
+                  <TimeOffEditor />
+                </div>
                 <TabFooter
                   message={availabilityError ? (
                     <span className="text-sm font-medium text-red-600 dark:text-red-400">
@@ -1152,8 +1197,6 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
             onPointerDown={(e) => e.stopPropagation()}
             onWheel={(e) => e.stopPropagation()}
             onTouchMove={(e) => e.stopPropagation()}
-        onWheel={(e) => e.stopPropagation()}
-        onTouchMove={(e) => e.stopPropagation()}
           >
             <div
               className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6 max-w-md w-full shadow-2xl"
@@ -1212,8 +1255,6 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
             onPointerDown={(e) => e.stopPropagation()}
             onWheel={(e) => e.stopPropagation()}
             onTouchMove={(e) => e.stopPropagation()}
-        onWheel={(e) => e.stopPropagation()}
-        onTouchMove={(e) => e.stopPropagation()}
           >
             <div
               className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6 max-w-md w-full shadow-2xl"
@@ -1272,8 +1313,6 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
             onPointerDown={(e) => e.stopPropagation()}
             onWheel={(e) => e.stopPropagation()}
             onTouchMove={(e) => e.stopPropagation()}
-        onWheel={(e) => e.stopPropagation()}
-        onTouchMove={(e) => e.stopPropagation()}
           >
             <div
               className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6 max-w-md w-full shadow-2xl"

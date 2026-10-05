@@ -9,7 +9,8 @@ import { platformOrigin } from '@/lib/utils/origins';
 import { notFound } from 'next/navigation';
 import { PublicBookingPage } from '@/components/public/PublicBookingPage';
 import { resolveBusinessByPrefix } from '@/lib/business-os/resolveBusinessByPrefix';
-import { BookingWidget } from './BookingWidget';
+import { StandaloneBookingWidget } from '@/components/public/StandaloneBookingWidget';
+import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 import { isValidLocale, getDirection, type Locale } from '@/lib/i18n/config';
 import { PublicThemeStyle } from '@/components/public/PublicThemeStyle';
 import { PublicFontLinks } from '@/components/public/PublicFontLinks';
@@ -50,11 +51,23 @@ interface BusinessData {
     id: string;
     name: string;
     description: string | null;
+    /** Null on a product, which has no duration to pick a slot within. */
     duration_minutes: number | null;
     price: number | null;
     currency: string;
-    is_scheduled?: boolean;
+    is_scheduled?: boolean | null;
     collection?: 'online' | 'invoice' | null;
+    /**
+     * Bought outright, or quoted first. The modal's resolver reads it.
+     *
+     * Declared here for the reason `PublicBookingPage` gives about the same two
+     * fields: the TYPE was the narrowest point in the chain. The endpoint
+     * returns them and the modal acts on them, and a service typed without them
+     * arrived looking like a direct sale at a single price.
+     */
+    sale_mode?: 'direct' | 'proposal';
+    /** How this service may be paid over time, where the business offers one. */
+    paymentPlan?: ServicePaymentPlan;
   }>;
   theme?: {
     colors?: {
@@ -262,14 +275,29 @@ export default async function SiteBookingPage({ params, searchParams }: PageProp
 
         {/* Booking Content */}
         <div className="max-w-3xl mx-auto px-4 py-8">
-          <BookingWidget
+          {/*
+            The SAME flow the website, the landing pages and the smart links run.
+
+            This page had its own 1,500-line implementation of the same five
+            steps, built the same day as the shared one for a different container
+            — a page that IS booking, rather than booking inside a page. The
+            shared one won everywhere else; this never migrated. So a fix landed
+            on three surfaces and missed the fourth, which is how "first payment
+            N days after booking" came to be honoured on the website and ignored
+            here, and how the plan breakdown was shown on a smart link and not on
+            the business's own booking page.
+
+            `StandaloneBookingWidget` is the precedent: the smart link already
+            wraps the shared modal outside a website page. It accepts either
+            identifier, so this page hands it the subdomain.
+          */}
+          <StandaloneBookingWidget
             subdomain={subdomain}
             services={businessData.services}
             timezone={businessData.timezone}
             primaryColor={primaryColor}
             locale={language}
             initialServiceId={initialServiceId}
-            // The journey follows the service now, so no flow is passed.
             processorReady={businessData.processorReady === true}
           />
         </div>

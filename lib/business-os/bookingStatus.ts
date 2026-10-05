@@ -98,3 +98,32 @@ export const SLOT_HOLDING_STATUSES = ['confirmed', 'pending', 'completed'] as co
 export function holdsSlot(status: unknown): boolean {
   return typeof status === 'string' && (SLOT_HOLDING_STATUSES as readonly string[]).includes(status);
 }
+
+/**
+ * Did the DATABASE refuse this write because the slot was taken?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `scheduling_bookings_no_overlap` (20261001) is an exclusion constraint, and it
+ * exists because every overlap check in the platform is SELECT-then-INSERT with
+ * no lock: two requests arriving together both read a free slot and both write.
+ * The constraint is the one check that cannot be raced.
+ *
+ * So a `23P01` here is not a defect — it is the race actually happening, and the
+ * client must be told their time has gone rather than shown an internal error.
+ * Callers map it onto the same `BookingSlotUnavailableError` the pre-check
+ * raises, so every surface that already handles a clash handles this too.
+ *
+ * Matched on the code, with the constraint name as a fallback: PostgREST
+ * surfaces `code`, but a driver that only carries a message must still be
+ * readable.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function isSlotTakenError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+
+  const code = (error as { code?: unknown }).code;
+  if (code === '23P01') return true;
+
+  const message = (error as { message?: unknown }).message;
+  return typeof message === 'string' && message.includes('scheduling_bookings_no_overlap');
+}

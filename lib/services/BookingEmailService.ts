@@ -97,9 +97,13 @@ interface EmailResult {
 }
 
 /**
- * Generate a signed token for booking management URLs
+ * Generate a signed token for booking management URLs.
+ *
+ * Exported because a route that has already verified one token may need to mint
+ * a sibling — the package manage page signs each meeting of the block for the
+ * same address, which grants nothing the caller did not already hold.
  */
-function generateBookingToken(bookingId: string, email: string): string {
+export function generateBookingToken(bookingId: string, email: string): string {
   return jwt.sign(
     { bookingId, email },
     bookingTokenSecret(),
@@ -408,7 +412,25 @@ export class BookingEmailService {
   static async sendBookingConfirmation(
     bookingId: string,
     userId: string,
-    options?: { skipInvoice?: boolean; invoiceId?: string; stripeHostedInvoiceUrl?: string }
+    options?: {
+      skipInvoice?: boolean;
+      invoiceId?: string;
+      stripeHostedInvoiceUrl?: string;
+      /**
+       * A PACKAGE's meetings, when this confirmation covers several.
+       *
+       * Sent for the FIRST meeting of the block with all of its dates attached,
+       * rather than through a sender of its own: everything this method does —
+       * the branding, the locale, the invoice attachment, the manage links, the
+       * calendar file — is wanted unchanged, and only the dates differ. The
+       * template then lists them all and the invite carries one event each.
+       *
+       * The manage links are the first meeting's, which is what they should be:
+       * a client rescheduling from this email moves session one, and each later
+       * session carries its own links on its own reminder.
+       */
+      sessions?: Array<{ start: Date; end: Date }>;
+    }
   ): Promise<EmailResult> {
     const requestLogger = logger.child({ bookingId, userId, action: 'sendBookingConfirmation' });
 
@@ -496,6 +518,35 @@ export class BookingEmailService {
       // Build email data
       const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
 
+      /*
+       * The instalment schedule, if this booking has one.
+       *
+       * Non-fatal by construction: a confirmation that reaches the client
+       * without its plan table is a worse email, and one that never arrives
+       * because a secondary read failed is a worse outcome. The `?? []` below
+       * makes an unreadable schedule indistinguishable from no schedule, which
+       * is the safe direction — the email then behaves exactly as it did before
+       * plans were shown at all.
+       */
+      const { data: periodRows } = await supabaseServer
+        .from('payment_plan_installments')
+        .select('installment_number, amount, due_date, status')
+        .eq('booking_id', bookingId)
+        .eq('user_id', userId)
+        .order('installment_number');
+
+      const bookingPlan = (periodRows ?? []).length
+        ? {
+            totalAmount: Number(service.price ?? 0),
+            periods: (periodRows ?? []).map(row => ({
+              number: Number(row.installment_number),
+              amount: Number(row.amount),
+              dueDate: (row.due_date as string | null) ?? null,
+              status: String(row.status),
+            })),
+          }
+        : undefined;
+
       const emailData = {
         clientName,
         clientEmail,
@@ -507,6 +558,15 @@ export class BookingEmailService {
         location: undefined, // TODO: add location support
         price: service.price || undefined,
         currency: service.currency,
+        /*
+         * The plan's real periods, so the email asks for the first one.
+         *
+         * Read from `payment_plan_installments` rather than projected from the
+         * service, because those rows are what the money is actually billed
+         * from — and because a period already paid must read as paid. Undefined
+         * for an ordinary booking, and the template then renders as before.
+         */
+        plan: bookingPlan,
         paymentStatus: booking.payment_status as 'pending' | 'paid' | 'refunded' | undefined,
         paymentUrl,
         rescheduleUrl,
@@ -525,6 +585,11 @@ export class BookingEmailService {
          * invitation and a reschedule link for a meeting that does not exist.
          */
         hasSchedule: Boolean(booking.start_time),
+        /*
+         * The whole block, for a package. Undefined for an ordinary booking,
+         * and the template then renders exactly as it did before.
+         */
+        sessions: options?.sessions,
         branding,
         locale
       };
@@ -644,6 +709,46 @@ export class BookingEmailService {
           clientEmail,
           invoiceAttached: attachments.length > 0
         }, 'Booking confirmation sent');
+
+        /*
+         * The invoice has now reached the client, so it may say so.
+         *
+         * `createBookingInvoice` writes it as a draft precisely so this line can
+         * be the thing that marks it sent — the same order `sendInvoiceEmail`
+         * uses, and for the same reason it gives: an invoice marked sent that
+         * nobody received is the bug that module exists to prevent.
+         *
+         * It also decides the COPY watermark. `alreadyWithTheClient` reads the
+         * status, so marking it sent BEFORE this point stamped the client's
+         * first copy as a duplicate.
+         *
+         * Non-blocking: the mail is away, and a bookkeeping write must not
+         * report that as a failure.
+         */
+        if (invoiceIdToAttach && attachments.length > 0) {
+          const invoiceId = invoiceIdToAttach;
+          paymentInvoiceRepository
+            .update(invoiceId, userId, {
+              status: 'sent',
+              sent_at: new Date().toISOString(),
+            })
+            // The repository reports failure in `error` rather than throwing, so
+            // both have to be handled or a stuck draft passes silently.
+            .then(({ error }) => {
+              if (error) {
+                requestLogger.error(
+                  { err: error, invoiceId },
+                  'Confirmation sent but the invoice was not marked sent'
+                );
+              }
+            })
+            .catch(err =>
+              requestLogger.error(
+                { err, invoiceId },
+                'Confirmation sent but the invoice was not marked sent'
+              )
+            );
+        }
       } else {
         requestLogger.warn({ error: result.error }, 'Failed to send booking confirmation');
       }
@@ -721,6 +826,59 @@ export class BookingEmailService {
    * Send payment receipt
    * Called from: Stripe webhook
    */
+  /**
+   * The plan behind a receipt, and which period it settles.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `settleInvoicePaid` marks the period paid before this email is sent — keyed
+   * on `invoice_id`, in the same call — so by now the row genuinely says paid.
+   * The period being receipted is therefore the most recently paid one, which
+   * is more reliable than matching on amount: two periods of an even split are
+   * the same number.
+   *
+   * Non-fatal throughout. A receipt that reaches the client without its
+   * schedule is worse than one with it; a receipt that never arrives because a
+   * secondary read failed is worse than both.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private static async planForReceipt(
+    userId: string,
+    bookingId: string | undefined,
+    // Only `warn` is used, and naming the child-logger type here pinned a
+    // generic parameter the caller's logger does not satisfy.
+    log: { warn: (obj: object, msg: string) => void }
+  ) {
+    if (!bookingId) return undefined;
+
+    const { data, error } = await supabaseServer
+      .from('payment_plan_installments')
+      .select('installment_number, amount, due_date, status, paid_at')
+      .eq('booking_id', bookingId)
+      .eq('user_id', userId)
+      .order('installment_number');
+
+    if (error) {
+      log.warn({ err: error, bookingId }, 'Receipt sent without its plan schedule');
+      return undefined;
+    }
+    if (!data?.length) return undefined;
+
+    const paidPeriodNumber = [...data]
+      .filter(row => row.status === 'paid' && row.paid_at)
+      .sort((a, b) => String(b.paid_at).localeCompare(String(a.paid_at)))[0]?.installment_number;
+
+    return {
+      totalAmount: data.reduce((sum, row) => sum + Number(row.amount ?? 0), 0),
+      paidPeriodNumber: paidPeriodNumber ? Number(paidPeriodNumber) : undefined,
+      periods: data.map(row => ({
+        number: Number(row.installment_number),
+        amount: Number(row.amount),
+        dueDate: (row.due_date as string | null) ?? null,
+        status: String(row.status),
+      })),
+    };
+  }
+
   static async sendPaymentReceipt(
     userId: string,
     paymentData: {
@@ -796,6 +954,19 @@ export class BookingEmailService {
         appointmentDate,
         timezone,
         bookingManageUrl,
+        /*
+         * The schedule this payment belongs to.
+         *
+         * A receipt saying "₪400.00 paid" is complete about the money and
+         * silent about the ₪400 still due — which is the one thing a client
+         * paying in instalments wants to know. Read from the plan rows, so a
+         * period already settled reads as settled.
+         */
+        plan: await BookingEmailService.planForReceipt(
+          userId,
+          paymentData.bookingId,
+          requestLogger
+        ),
         branding,
         locale
       });
@@ -901,6 +1072,17 @@ export class BookingEmailService {
        */
       shareNoteWithClient?: boolean;
       /**
+       * A PACKAGE's cancelled meetings, when a whole block is called off.
+       *
+       * Sent ONCE, from the purchase, with every date listed — rather than one
+       * cancellation per meeting, which is six times the alarm for one piece of
+       * news. The purchase has no hour of its own, so without this the email
+       * would name no date at all.
+       */
+      sessions?: Date[];
+      /** The meetings of that block that already took place. See the template. */
+      heldSessions?: Date[];
+      /**
        * Money the business is still holding for this booking, if any.
        *
        * Supplied by `cancelBooking`, which has already worked it out from the
@@ -985,6 +1167,10 @@ export class BookingEmailService {
         clientName,
         serviceName: service.service_name,
         dateTime: startTime,
+        // The whole block, for a package. Undefined for an ordinary booking,
+        // and the template then renders exactly as it did before.
+        sessions: options?.sessions,
+        heldSessions: options?.heldSessions,
         timezone: await getBusinessTimezone(userId, booking.timezone),
         /*
          * The free text, or ONLY the reason — the owner's choice.

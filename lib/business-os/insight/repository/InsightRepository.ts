@@ -18,6 +18,9 @@ import type { CorrelatedInsight, CorrelationSummary } from '../correlation/types
 import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
 import { buildBosCallContext } from '@/lib/business-os/llm/callCatalog';
 import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
+// One card per problem where two detectors found the same one. Pure, declared
+// precedence, tested without fixtures.
+import { dedupeOverlapping } from '../dedupe/overlappingInsights';
 import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
 import { getVerticalConfig, buildTerminologyInstruction, getVerticalDescriptor } from '../vertical-config';
 import { OPERATIONAL_AUTOMATIONS } from '@/lib/business-os/gaps/automations';
@@ -927,6 +930,8 @@ export class InsightRepository {
         cash_booking_unpaid: 'upcoming appointments that were supposed to be paid for in advance and have not been',
         cash_work_unbilled: 'completed appointments that were never invoiced and never paid for',
         cash_cancelled_unrefunded: 'cancelled appointments the client paid for where nothing has been given back',
+        conv_decline_reason: 'the reason clients gave most often when turning a quote down, and the service it concentrates in',
+        ret_cancel_pattern: 'the reason bookings get called off most often, and whether it is the client or the business calling them off',
         cash_income_drop: 'money received over the last four weeks falling well below the four weeks before',
         cash_client_concentration: 'a single client accounting for an outsized share of everything received',
         conv_quote_acceptance_drop: 'the share of answered quotes that were accepted falling against the previous quarter',
@@ -1167,13 +1172,50 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
           { err: resolvedResult.error, userId },
           'Could not read resolved insights; showing open ones only'
         );
-        return { data: openResult.data || [], error: null };
+        return { data: this.withoutDuplicates(openResult.data || [], userId), error: null };
       }
 
-      return { data: [...(openResult.data || []), ...(resolvedResult.data || [])], error: null };
+      /*
+       * Deduplicated across the OPEN set only.
+       *
+       * A resolved card is a record of something that got dealt with, so it is
+       * not competing for the owner's attention with the open one beside it —
+       * and hiding it would erase the history the carousel carries it for.
+       */
+      return {
+        data: [
+          ...this.withoutDuplicates(openResult.data || [], userId),
+          ...(resolvedResult.data || []),
+        ],
+        error: null,
+      };
     } catch (error) {
       return { data: null, error: error as Error };
     }
+  }
+
+  /**
+   * One card per problem, where two detectors found the same one.
+   *
+   * Applied at the READ rather than in the detectors: a detector that had to
+   * know about the other forty-three would couple them all together, and
+   * whichever ran first would win by accident. Here the precedence is declared
+   * in `OVERLAP_GROUPS` and the same two cards resolve the same way every day.
+   *
+   * Logged when it fires. A card that never appears is a loss nobody can see,
+   * so the one record that it was a deliberate choice is this line.
+   */
+  private withoutDuplicates(insights: Insight[], userId: string): Insight[] {
+    const { kept, suppressed } = dedupeOverlapping(insights);
+
+    if (suppressed.length > 0) {
+      logger.info(
+        { userId, suppressed },
+        'Hid insights already covered by a more specific card'
+      );
+    }
+
+    return kept;
   }
 
   /**
@@ -1598,6 +1640,8 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         cash_booking_unpaid: `${count} פגישות שטרם שולמו - ${formatMoney(impact, currency)}`,
         cash_work_unbilled: `${count} פגישות שהסתיימו ולא חויבו - ${formatMoney(impact, currency)}`,
         cash_cancelled_unrefunded: `${formatMoney(impact, currency)} אצלך על ${count} פגישות שבוטלו`,
+        conv_decline_reason: `${count} הצעות מחיר נדחו מאותה סיבה`,
+        ret_cancel_pattern: `${count} ביטולים חוזרים על אותה סיבה`,
         cash_income_drop: `ההכנסות ירדו - ${formatMoney(impact, currency)}`,
         cash_client_concentration: `לקוח אחד מהווה חלק גדול מההכנסה - ${formatMoney(impact, currency)}`,
         conv_quote_acceptance_drop: `פחות הצעות מחיר מאושרות - ${formatMoney(impact, currency)}`,
@@ -1650,6 +1694,8 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       cash_booking_unpaid: `${count} Appointment${count === 1 ? '' : 's'} Not Paid For`,
       cash_work_unbilled: `${count} Completed Session${count === 1 ? '' : 's'} Never Billed`,
       cash_cancelled_unrefunded: `${formatMoney(impact, currency)} Held On ${count} Cancelled Appointment${count === 1 ? '' : 's'}`,
+      conv_decline_reason: `${count} Quote${count === 1 ? '' : 's'} Turned Down For The Same Reason`,
+      ret_cancel_pattern: `${count} Cancellation${count === 1 ? '' : 's'} With The Same Cause`,
       cash_income_drop: `Income Down ${formatMoney(impact, currency)} On Last Month`,
       cash_client_concentration: `One Client Is ${count}% Of Your Income`,
       conv_quote_acceptance_drop: `Fewer Quotes Are Being Accepted`,
@@ -1786,6 +1832,8 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         cash_booking_unpaid: `${count} פגישות קרובות היו אמורות להיות משולמות מראש והתשלום טרם הגיע. סה\"כ ${formatMoney(impact, currency)}.`,
         cash_work_unbilled: `${count} פגישות הסתיימו ומעולם לא נשלחה עליהן חשבונית. סה\"כ ${formatMoney(impact, currency)}.`,
         cash_cancelled_unrefunded: `${count} פגישות בוטלו אחרי שהלקוח שילם, ושום סכום לא הוחזר. ${formatMoney(impact, currency)} עדיין אצלך.`,
+        conv_decline_reason: `${count} מתוך הצעות המחיר שנדחו ברבעון האחרון ציינו את אותה סיבה.`,
+        ret_cancel_pattern: `${count} מתוך הביטולים ברבעון האחרון חוזרים על אותה סיבה.`,
         cash_income_drop: `נכנס פחות כסף בארבעה השבועות האחרונים מאשר בארבעה שלפניהם, הפרש של ${formatMoney(impact, currency)}.`,
         cash_client_concentration: `לקוח אחד אחראי ל-${count}% מכל הכסף שנכנס בחצי השנה האחרונה, ${formatMoney(impact, currency)}.`,
         conv_quote_acceptance_drop: `${count} הצעות מחיר לא אושרו ברבעון האחרון, בשווי ${formatMoney(impact, currency)}.`,
@@ -1839,6 +1887,8 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       cash_booking_unpaid: `${count} upcoming appointment${plural ? 's were' : ' was'} due to be paid for in advance and ${plural ? 'have' : 'has'} not been. ${formatMoney(impact, currency)} outstanding.`,
       cash_work_unbilled: `${count} completed appointment${plural ? 's were' : ' was'} never invoiced and never paid for. ${formatMoney(impact, currency)} never asked for.`,
       cash_cancelled_unrefunded: `${count} cancelled appointment${plural ? 's were' : ' was'} paid for and nothing has been given back. ${formatMoney(impact, currency)} is still with you.`,
+      conv_decline_reason: `${count} of the quotes turned down in the last quarter gave the same reason.`,
+      ret_cancel_pattern: `${count} of the cancellations in the last quarter share the same cause.`,
       cash_income_drop: `Less money came in over the last four weeks than the four before, a difference of ${formatMoney(impact, currency)}.`,
       cash_client_concentration: `One client accounts for ${count}% of everything received in the last six months, ${formatMoney(impact, currency)}.`,
       conv_quote_acceptance_drop: `${count} quote${count === 1 ? ' was' : 's were'} turned down this quarter, worth ${formatMoney(impact, currency)}.`,
@@ -1962,6 +2012,8 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         cash_booking_unpaid: `בקש את התשלום לפני הפגישה. מומלץ להתחיל מהפגישה הקרובה ביותר.`,
         cash_work_unbilled: `שלח חשבונית על העבודה שכבר בוצעה, החל מהוותיקה ביותר.`,
         cash_cancelled_unrefunded: `עבור על כל אחת והחלט אם להחזיר את הכסף או להשאיר אותו לפי מדיניות הביטול שלך.`,
+        conv_decline_reason: `עבור על ההצעות שנדחו וראה אם משהו בהצגת המחיר או בהיקף העבודה כדאי לבדוק.`,
+        ret_cancel_pattern: `בדוק את הביטולים האחרונים וראה אם יש כאן דפוס שאפשר לשנות.`,
         cash_income_drop: `בדוק מה השתנה: פחות עבודה, פחות פניות, או תשלומים שטרם נגבו.`,
         cash_client_concentration: `שווה לחזק את הקשר איתם, ובמקביל להרחיב את בסיס הלקוחות.`,
         conv_quote_acceptance_drop: `בדוק מה השתנה: המחיר, ההיקף, או כמה מהר חוזרים ללקוח.`,
@@ -2012,6 +2064,8 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       cash_booking_unpaid: `Request payment before the appointment, starting with the soonest one.`,
       cash_work_unbilled: `Invoice the work you have already done, starting with the oldest.`,
       cash_cancelled_unrefunded: `Go through each one and decide whether to refund it or keep it under your cancellation policy.`,
+      conv_decline_reason: `Look at the quotes that were turned down and see whether the pricing or the scope is worth revisiting.`,
+      ret_cancel_pattern: `Look through the recent cancellations and see whether there is something here you can change.`,
       cash_income_drop: `Look at what changed: less work booked, fewer enquiries, or payments not yet collected.`,
       cash_client_concentration: `Worth looking after that relationship, and worth widening the base alongside it.`,
       conv_quote_acceptance_drop: `Look at what changed: the price, the scope, or how quickly you get back to people.`,

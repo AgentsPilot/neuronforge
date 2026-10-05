@@ -15,9 +15,38 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
 import { CATALOG, resolveSemanticTerm } from '../index';
 
 const proposals = CATALOG.entities.proposals;
+
+/**
+ * The statuses a proposal can actually hold, read from the type that defines
+ * them.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * This list used to be typed out here, and it rotted the moment `stopped` was
+ * added — the catalog gained it, the test did not, and the suite failed for
+ * days against a catalog that was right.
+ *
+ * Derived instead, so the real failure is the one worth having: a status added
+ * to the repository and NOT declared to the planner, which is a value the chat
+ * can neither filter on nor name.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function statusesInTheModel(): string[] {
+  const source = readFileSync(
+    join(process.cwd(), 'lib', 'repositories', 'ProposalRepository.ts'),
+    'utf8'
+  );
+
+  const from = source.indexOf('export type ProposalStatus');
+  const union = source.slice(from, source.indexOf(';', from));
+
+  return [...union.matchAll(/'([a-z_]+)'/g)].map(match => match[1]);
+}
 
 describe('the quotes entity', () => {
   it('is exposed and readable', () => {
@@ -71,10 +100,22 @@ describe('the two status rules', () => {
     expect(awaiting).not.toContain('draft');
   });
 
-  it('declares every status the database allows', () => {
-    expect(proposals.fields.status.enumValues).toEqual([
-      'draft', 'sent', 'viewed', 'accepted', 'declined', 'expired', 'withdrawn', 'superseded',
-    ]);
+  it('declares every status the model allows', () => {
+    const declared = proposals.fields.status.enumValues ?? [];
+    const real = statusesInTheModel();
+
+    // Sanity: a reader that found nothing would pass this silently.
+    expect(real.length).toBeGreaterThan(5);
+    expect([...declared].sort()).toEqual([...real].sort());
+  });
+
+  it('labels every one of them', () => {
+    // An undeclared label is a value the planner can filter on and cannot name,
+    // which reads to the client as a blank where a status should be.
+    const labels = proposals.fields.status.enumLabels ?? {};
+    for (const status of statusesInTheModel()) {
+      expect(Object.keys(labels)).toContain(status);
+    }
   });
 
   it('labels each one, which is what the planner now matches on', () => {

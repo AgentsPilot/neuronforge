@@ -14,7 +14,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { loadServicePaymentPlans } from '@/lib/business-os/servicePaymentPlan';
 import { createLogger } from '@/lib/logger';
-import { windowsForDay, hasAnyAvailability } from '@/lib/scheduling/availabilityWindows';
+import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
+import { windowsForDate, hasAnyAvailability } from '@/lib/scheduling/availabilityWindows';
+import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
 
 const logger = createLogger({ module: 'ConversionBookingAvailabilityAPI' });
@@ -89,28 +91,17 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const hasAvailabilityConfigured = hasAnyAvailability(businessProfile.scheduling_availability);
 
     // Fetch active services
-    const { data: services, error: servicesError } = await supabaseServer
-      .from('scheduling_services')
-      // Both flags, always.
-      //
-      // `is_active` is the Power toggle and `status` is draft/published — two
-      // different questions, and the toggle sets only the first. Filtering on
-      // `status` alone left a deactivated service off the website (which checks
-      // both) while every smart link went on selling it.
-      // `is_scheduled` and `collection` are what decide this service's client
-      // journey, and leaving them out is why the public page showed the same
-      // journey for everything. The widget asks `is_scheduled !== false`, so an
-      // ABSENT field reads as scheduled — a product with no date step was still
-      // sent to pick a time, and a service collected online had no payment step
-      // because its collection never arrived either.
-      //
-      // The sibling route /api/conversion/[userCode] already selected both. The
-      // page happens to take its services from THIS one.
-      .select('id, service_name, description, duration_minutes, price, currency, is_scheduled, collection, sale_mode')
-      .eq('user_id', ownerId)
-      .eq('status', 'active')
-      .eq('is_active', true)
-      .order('created_at', { ascending: true });
+    /*
+     * What this business publicly sells — the shared base set.
+     *
+     * The `.eq('is_active').eq('status')` pair this repeated is `BOOKABLE`, and
+     * restating it per surface is what let the website and the smart links
+     * disagree about a deactivated service in the first place. Which services
+     * THIS link then offers is still its own business, decided below by
+     * `servicesForLink`.
+     */
+    const { data: services, error: servicesError } =
+      await schedulingServiceRepository.listBookable(ownerId);
 
     if (servicesError) {
       requestLogger.error({ err: servicesError }, 'Failed to fetch services');
@@ -237,6 +228,25 @@ async function calculateAvailableSlots(
   const slots: TimeSlot[] = [];
   const now = new Date();
 
+  /*
+   * The closed days, once, for the whole window the loop below walks.
+   *
+   * Unreadable leaves it empty, which publishes the ordinary weekly hours —
+   * what this endpoint has always done, and the safer of the two wrongs for a
+   * page whose job is to take bookings.
+   */
+  const endKey = [
+    new Date(new Date(startDate).getTime() + daysAhead * 86400000).getFullYear(),
+    String(new Date(new Date(startDate).getTime() + daysAhead * 86400000).getMonth() + 1).padStart(2, '0'),
+    String(new Date(new Date(startDate).getTime() + daysAhead * 86400000).getDate()).padStart(2, '0'),
+  ].join('-');
+
+  const offResult = await schedulingTimeOffRepository.list(userId, {
+    from: startDate.slice(0, 10),
+    to: endKey,
+  });
+  const timeOff = offResult.data ?? [];
+
   // Get existing bookings for the date range
   const endDate = new Date(startDate);
   endDate.setDate(endDate.getDate() + daysAhead);
@@ -249,20 +259,32 @@ async function calculateAvailableSlots(
     .gte('start_time', startDate)
     .lt('start_time', endDate.toISOString());
 
-  // Day name mapping
-  const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-
   // Generate slots for each day
   for (let i = 0; i < daysAhead; i++) {
     const currentDate = new Date(startDate);
     currentDate.setDate(currentDate.getDate() + i);
 
-    const dayOfWeek = dayNames[currentDate.getDay()];
+    /*
+     * This DATE's windows: the weekday's hours with time off applied.
+     *
+     * Was the weekday alone, which is why a smart link went on offering slots
+     * on a day the business was closed — `scheduling_availability_exceptions`
+     * was read by nothing at all.
+     *
+     * The date key is built from the local date parts rather than
+     * `toISOString()`, which would name the UTC day and, for a business ahead of
+     * UTC, subtract a day from every closed-day comparison.
+     */
+    const dateKey = [
+      currentDate.getFullYear(),
+      String(currentDate.getMonth() + 1).padStart(2, '0'),
+      String(currentDate.getDate()).padStart(2, '0'),
+    ].join('-');
 
     // A day is a LIST of windows — a morning and an evening are two, with a gap
     // the client cannot book. Reading only the first would quietly hide the
     // second; reading `.start` off the list, which is what this did, hid both.
-    for (const window of windowsForDay(availability, dayOfWeek)) {
+    for (const window of windowsForDate(availability, dateKey, timeOff)) {
       const [startHour, startMin] = window.start.split(':').map(Number);
       const [endHour, endMin] = window.end.split(':').map(Number);
 

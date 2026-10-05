@@ -115,7 +115,21 @@ export function HeaderSection({
   return (
     <header dir={isRTL ? 'rtl' : 'ltr'} className={`apc-bar ${className ?? ''}`}>
       <div className="apc-nav">
-        <a href="#" className="apc-wm">
+        {/*
+          The wordmark goes to the top of the page, which is this header.
+
+          It was `href="#"` — a fragment naming nothing. Browsers treat that as
+          "the top of the document" only by convention and some simply append a
+          `#` to the address and stay put; either way it is a link with no
+          destination on every templated page the platform generates, which is
+          what an audit of the live pages found first.
+
+          `#header` rather than a page path: the wordmark only ever renders
+          INSIDE the header, so the section it points at is present by
+          construction, on a homepage and a landing page alike, with nothing to
+          look up and nothing that can go stale.
+        */}
+        <a href="#header" className="apc-wm">
           {c.logo_url ? (
             <img src={c.logo_url} alt={c.logo_text ?? ''} className="apc-wm-img" />
           ) : (

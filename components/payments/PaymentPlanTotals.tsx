@@ -40,7 +40,13 @@ interface PaymentPlanTotalsProps {
   /** The agreed figure, when the plan carries one. */
   totalAmount?: number;
   /** Translations, so this carries no English of its own. */
-  labels: { total: string; collected: string; outstanding: string };
+  labels: {
+    total: string;
+    collected: string;
+    outstanding: string;
+    /** Shown only when a period has been called off. Omit and the cell is too. */
+    cancelled?: string;
+  };
   locale?: string;
   /** `compact` for the booking journey, where it sits inside a timeline row. */
   size?: 'default' | 'compact';
@@ -63,11 +69,37 @@ interface PaymentPlanTotalsProps {
 export function planTotals(stages: PlanStage[], totalAmount?: number) {
   const summed = stages.reduce((sum, stage) => sum + Number(stage.amount || 0), 0);
   const total = totalAmount ?? summed;
-  const collected = stages
-    .filter(stage => stage.status === 'paid')
-    .reduce((sum, stage) => sum + Number(stage.amount || 0), 0);
 
-  return { total, collected, outstanding: Math.max(total - collected, 0) };
+  const sumOf = (status: string) =>
+    stages
+      .filter(stage => stage.status === status)
+      .reduce((sum, stage) => sum + Number(stage.amount || 0), 0);
+
+  const collected = sumOf('paid');
+
+  /*
+   * A CANCELLED PERIOD IS NOT OUTSTANDING.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Outstanding was `total - collected`, which is every period that has not been
+   * paid — including the ones deliberately called off. So stopping a plan
+   * changed nothing the owner could see: ₪800 agreed, ₪400 collected, ₪400
+   * "still to collect", for money that will never be asked for again.
+   *
+   * It is reported separately rather than subtracted silently, because the two
+   * are different facts and the owner needs both: ₪400 arrived, ₪400 was given
+   * up on. Folding the second into the first would make a stopped plan look
+   * like a completed one.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const cancelled = sumOf('cancelled');
+
+  return {
+    total,
+    collected,
+    cancelled,
+    outstanding: Math.max(total - collected - cancelled, 0),
+  };
 }
 
 export function PaymentPlanTotals({
@@ -83,7 +115,7 @@ export function PaymentPlanTotals({
 }: PaymentPlanTotalsProps) {
   if (!stages.length) return null;
 
-  const { total, collected, outstanding } = planTotals(stages, totalAmount);
+  const { total, collected, cancelled, outstanding } = planTotals(stages, totalAmount);
 
   const money = (value: number) =>
     new Intl.NumberFormat(locale, {
@@ -109,10 +141,25 @@ export function PaymentPlanTotals({
     },
   ];
 
+  /*
+   * The fourth figure, and only when there is one.
+   *
+   * Without it the row does not add up — ₪800 agreed, ₪400 collected, ₪0
+   * outstanding — and the reader is left to work out where the other ₪400 went.
+   * Amber-brown rather than red: money given up on is not money lost to a
+   * failure, and this is the same reading the cancelled-money figures use
+   * elsewhere.
+   */
+  if (cancelled > 0 && labels.cancelled) {
+    cells.push({ label: labels.cancelled, value: cancelled, tone: '#B54708' });
+  }
+
   return (
     <div
-      className={`grid grid-cols-3 gap-px overflow-hidden ${className ?? ''}`}
+      className={`grid gap-px overflow-hidden ${className ?? ''}`}
       style={{
+        // Follows the cell count: three normally, four once a period is cancelled.
+        gridTemplateColumns: `repeat(${cells.length}, minmax(0, 1fr))`,
         borderRadius: compact ? '10px' : '12px',
         border: '1px solid var(--v2-border)',
         background: 'var(--v2-border)',

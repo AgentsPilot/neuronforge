@@ -137,6 +137,62 @@ export function fromBusinessLocalInput(local: string, timezone: string): Date {
 }
 
 /**
+ * Where a slot ends, given the wall clock it starts at and how long it runs.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * BOTH ENDS ON THE BUSINESS CLOCK, WHICH IS THE WHOLE POINT.
+ *
+ * The booking dialog computed this itself, and read the typed start with
+ * `new Date(...)` — the browser's clock — before writing the end back on the
+ * business's. The two cancel out only when the owner happens to be sitting in
+ * their own business's zone, so an owner in Israel running a New York business
+ * typed 10:00 for an hour-long service and was shown an end of 04:00: seven
+ * hours out, the exact gap between the zones, and before the start. Every
+ * appointment, for exactly the owners the timezone setting exists for.
+ *
+ * It lives here rather than in the dialog because two handlers there need the
+ * same answer, and because a calculation that can only be got wrong when the
+ * machine is somewhere unusual has to be testable with the machine moved —
+ * which `__tests__/crossZone.guard.test.ts` does and a component cannot.
+ *
+ * NOT `start + duration` on the string: the duration is added to the INSTANT,
+ * so an appointment that runs across a daylight-saving change ends at the right
+ * wall clock rather than an hour out.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * @returns The end as a `datetime-local` string on the business's clock, or
+ *   `null` when the start is not a usable wall clock.
+ */
+export function endOfBusinessLocal(
+  startLocal: string,
+  durationMinutes: number,
+  timezone: string
+): string | null {
+  const zone = safeTimezone(timezone);
+
+  /*
+   * THE SHAPE IS CHECKED HERE, because failing to parse is not what happens.
+   *
+   * `fromBusinessLocalInput('')` builds `new Date(':00Z')`, and V8 does not
+   * reject that — it answers **31 December 1999**. So does `'not a time:00Z'`.
+   * An absent start therefore did not produce an Invalid Date anyone could test
+   * for; it quietly produced an end in 1999 and wrote it into the field.
+   *
+   * `datetime-local` emits exactly `YYYY-MM-DDTHH:mm`, with seconds only where a
+   * `step` asks for them. Anything else is not a wall clock this can add to.
+   */
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(startLocal ?? '')) return null;
+
+  const start = fromBusinessLocalInput(startLocal, zone);
+  // Belt and braces: a well-shaped string can still name a date that is not
+  // real (month 19), and `Intl` throws when asked to format an Invalid Date.
+  if (Number.isNaN(start.getTime())) return null;
+
+  const minutes = Number.isFinite(durationMinutes) ? durationMinutes : 0;
+  return toBusinessLocalInput(new Date(start.getTime() + minutes * 60 * 1000), zone);
+}
+
+/**
  * An instant as a human-readable time on the business's clock.
  *
  * For lists and summaries, where a `datetime-local` string would be unreadable.
@@ -201,6 +257,19 @@ export function businessClock(date: Date, timezone: string): { hour: number; min
 }
 
 /** The same calendar date, `offset` days later, on the business's clock. */
+/**
+ * `HH:MM` on the business's clock.
+ *
+ * The form every rule about opening hours is written in — `scheduling_services.
+ * availability` and `scheduling_availability_exceptions.custom_hours` both store
+ * `'09:00'` strings — so comparing an instant against them needs exactly this
+ * and nothing else. Three call sites had written the pad out by hand.
+ */
+export function businessHhmm(date: Date, timezone: string): string {
+  const { hour, minute } = businessClock(date, timezone);
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
 export function shiftBusinessDateKey(dateKey: string, offset: number): string {
   const [y, m, d] = dateKey.split('-').map(Number);
   // Built and read in UTC so the arithmetic cannot pick up a host offset.

@@ -442,6 +442,110 @@ export function emailDetailsTable(rows: string[], branding?: BrandingData): stri
 /**
  * Generate an info/notice box
  */
+/** One period of an instalment plan, as an email renders it. */
+export interface EmailPlanPeriod {
+  number: number;
+  amount: number;
+  /** `YYYY-MM-DD`. A DATE — see the note in `emailPlanSchedule`. */
+  dueDate: string | null;
+  status: string;
+}
+
+export interface EmailPlanScheduleLabels {
+  title: string;
+  paid: string;
+  /** Marks the period being asked for, or the one just settled. */
+  highlight: string;
+  total: string;
+}
+
+/**
+ * A payment plan as the dated list the client agreed to.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ONE RENDERER, BECAUSE TWO EMAILS DESCRIBE THE SAME PLAN.
+ *
+ * The confirmation says "here is what you have agreed to" and the receipt says
+ * "here is what you have just paid, and what is left". Both are the same list,
+ * and written twice they drift — which is exactly how the receipt came to show
+ * ₪400 paid with no mention of the ₪400 still due on the 7th.
+ *
+ * DATES ARE RENDERED IN UTC, NOT IN THE READER'S ZONE. `due_date` is a SQL DATE
+ * with no time and no zone. Parsing it as midnight UTC and formatting it
+ * anywhere west of UTC moves it a day earlier — which printed "due 29 September"
+ * on an invoice raised on the 30th. The usual noon-UTC anchor is not enough
+ * either: noon UTC on the 30th is already the 1st in Auckland. So the stored
+ * date is shown as itself. `dateOnlyIsNotMidnightUTC.guard` pins this.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function emailPlanSchedule(params: {
+  periods: EmailPlanPeriod[];
+  totalAmount: number;
+  currency: string;
+  labels: EmailPlanScheduleLabels;
+  branding: BrandingData;
+  /** The period to emphasise — the one due now, or the one just paid. */
+  highlightNumber?: number;
+}): string {
+  const { periods, totalAmount, currency, labels, branding, highlightNumber } = params;
+  if (!periods.length) return '';
+
+  const c = emailPalette(branding);
+  const isRTL = branding.locale === 'he';
+  const align = isRTL ? 'left' : 'right';
+  const intlLocale = branding.locale === 'he' ? 'he-IL' : branding.locale === 'es' ? 'es-ES' : 'en-US';
+
+  const rows = periods
+    .map(period => {
+      const paid = period.status === 'paid';
+      const highlighted = period.number === highlightNumber;
+
+      const when = period.dueDate
+        ? new Date(`${period.dueDate}T00:00:00Z`).toLocaleDateString(intlLocale, {
+            timeZone: 'UTC',
+            day: 'numeric',
+            month: 'short',
+          })
+        : '';
+
+      const note = paid ? labels.paid : highlighted ? labels.highlight : '';
+      const ink = highlighted || paid ? c.ink : c.inkMuted;
+
+      return `
+        <tr>
+          <td style="padding: 5px 0; font-size: 14px; color: ${ink};">
+            ${period.number}. ${when}${note ? ` · <span style="color: ${branding.primaryColor};">${note}</span>` : ''}
+          </td>
+          <td align="${align}" style="padding: 5px 0; font-size: 14px; font-weight: ${highlighted ? '600' : '400'}; color: ${ink};">
+            ${formatCurrency(period.amount, currency)}
+          </td>
+        </tr>`;
+    })
+    .join('');
+
+  return `
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 18px 0 0; border-top: 1px solid ${c.line};">
+      <tr>
+        <td style="padding: 16px 0 8px;">
+          <p style="margin: 0 0 10px; font-size: 13px; font-weight: 600; color: ${c.ink};">
+            ${labels.title}
+          </p>
+          <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+            ${rows}
+            <tr>
+              <td style="padding: 10px 0 0; border-top: 1px solid ${c.line}; font-size: 14px; font-weight: 600; color: ${c.ink};">
+                ${labels.total}
+              </td>
+              <td align="${align}" style="padding: 10px 0 0; border-top: 1px solid ${c.line}; font-size: 14px; font-weight: 600; color: ${c.ink};">
+                ${formatCurrency(totalAmount, currency)}
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>`;
+}
+
 export function emailNoticeBox(
   content: string,
   type: EmailTone = 'info',

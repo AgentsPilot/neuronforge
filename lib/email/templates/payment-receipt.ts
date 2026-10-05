@@ -11,7 +11,9 @@ import {
   formatEmailDate,
   emailPalette,
   emailTone,
-  type BrandingData
+  emailPlanSchedule,
+  type BrandingData,
+  type EmailPlanPeriod
 } from './base-template';
 import { emailTranslations } from './translations';
 
@@ -26,6 +28,26 @@ export interface PaymentReceiptData {
   appointmentDate?: Date;
   timezone?: string;
   bookingManageUrl?: string;
+  /**
+   * The instalment plan this payment is one period of.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A RECEIPT FOR ONE PERIOD LOOKED LIKE A RECEIPT FOR THE WHOLE SALE.
+   *
+   * "₪400.00 paid" is true and complete about the money that arrived, and says
+   * nothing about the ₪400 still due on the 7th. The client has no way to tell
+   * whether they have finished paying — which is the one question a receipt for
+   * an instalment is asked.
+   *
+   * Absent on an ordinary payment, and then the receipt is unchanged.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  plan?: {
+    totalAmount: number;
+    /** The period this receipt is for, so it can be marked among the rest. */
+    paidPeriodNumber?: number;
+    periods: EmailPlanPeriod[];
+  };
   branding: BrandingData;
   /** Locale for email content (defaults to 'en') */
   locale?: Locale;
@@ -40,6 +62,9 @@ export function generatePaymentReceiptEmail(data: PaymentReceiptData): {
 } {
   const locale = data.locale || 'en';
   const t = emailTranslations.paymentReceipt;
+  // The same four words the confirmation uses, so one plan is not described
+  // two ways across two emails about it.
+  const tPlan = emailTranslations.bookingConfirmation;
 
   // Map locale to Intl locale codes
   const intlLocales: Record<Locale, string> = {
@@ -94,6 +119,7 @@ export function generatePaymentReceiptEmail(data: PaymentReceiptData): {
     detailRows.push(emailDetailRow(t.appointmentLabel[locale], formattedAppointmentDate, brandingWithLocale));
   }
 
+
   const content = `
     <!-- Success Header -->\
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 24px;">
@@ -134,6 +160,24 @@ export function generatePaymentReceiptEmail(data: PaymentReceiptData): {
             ${t.receiptDetails[locale]}
           </p>
           ${emailDetailsTable(detailRows, brandingWithLocale)}
+
+          ${data.plan?.periods?.length
+            ? emailPlanSchedule({
+                periods: data.plan.periods,
+                totalAmount: data.plan.totalAmount,
+                currency: data.currency,
+                branding: brandingWithLocale,
+                // The period this receipt is FOR, so the client can see which
+                // one of the schedule they have just settled.
+                highlightNumber: data.plan.paidPeriodNumber,
+                labels: {
+                  title: tPlan.planTitle[locale],
+                  paid: tPlan.planPaid[locale],
+                  highlight: tPlan.planPaid[locale],
+                  total: tPlan.planTotal[locale],
+                },
+              })
+            : ''}
         </td>
       </tr>
     </table>

@@ -147,9 +147,27 @@ export async function buildContactStatement(params: {
       .eq('user_id', userId)
       .maybeSingle(),
 
+    /*
+     * `description` is NOT selected, and must not be: the column does not
+     * exist on this table.
+     *
+     * `payment_transactions.description` does — the select below reads it
+     * correctly — and the name was carried across to invoices, where it has
+     * never existed. PostgREST rejects the WHOLE select for one unknown
+     * column, and the result's error is not bound below, so a 42703 left
+     * `data` null and `openInvoices` an empty array: every statement reported
+     * the client owing NOTHING, however many invoices were outstanding. The
+     * chat builds statements from this (`MutateExecutor`), so that is what it
+     * has been telling owners.
+     *
+     * Dropping it costs nothing that ever worked, because the query never
+     * returned a row. If a statement should carry a per-invoice line, the
+     * candidate is `notes` — but what a client reads on a statement is a
+     * product decision, not a repair.
+     */
     supabaseServer
       .from('payment_invoices')
-      .select('id, invoice_number, amount, currency, status, due_date, created_at, description')
+      .select('id, invoice_number, amount, currency, status, due_date, created_at')
       .eq('user_id', userId)
       .eq('contact_id', contactId)
       .in('status', openStatuses)
@@ -187,6 +205,20 @@ export async function buildContactStatement(params: {
     last_name?: string | null;
     email?: string | null;
   };
+
+  /*
+   * A failed read is not an empty statement.
+   *
+   * This was `invoicesResult.data ?? []` with the error unbound, which is how a
+   * phantom column turned into "this client owes nothing" for every statement
+   * ever built. An owner acting on that under-bills; the client is simply not
+   * asked for money they owe. Saying so out loud is the only safe behaviour.
+   */
+  if (invoicesResult.error) {
+    throw new ContactStatementError(
+      `Could not read this contact's open invoices: ${invoicesResult.error.message}`
+    );
+  }
 
   const openInvoices: StatementInvoice[] = ((invoicesResult.data ?? []) as unknown[]).map(i => {
     const row = i as Record<string, unknown>;

@@ -82,6 +82,46 @@ const brandingSchema = z.object({
     .optional(),
 
   /**
+   * The display address in parts.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The comment above used to say this address was free text ON PURPOSE, and
+   * that the structured one lived only on the invoice. That was true until the
+   * country started deciding things — which legal sentence goes on a refund
+   * email, which tax rules apply — and a free-text line cannot be asked what
+   * country it is in.
+   *
+   * `country` is an ISO 3166-1 alpha-2 code picked from a list, which is why it
+   * is length-2 rather than free text: there is nothing to normalise, and
+   * anything else is a bug upstream rather than a value to be lenient about.
+   *
+   * REQUIRED ONCE THE ADDRESS HAS ANY CONTENT. An address with no country is
+   * the state this change exists to end; an address with nothing in it at all
+   * is simply not filled in yet, and must stay savable.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  address_parts: z
+    .object({
+      line1: z.string().trim().max(200).optional(),
+      line2: z.string().trim().max(200).optional(),
+      city: z.string().trim().max(100).optional(),
+      state: z.string().trim().max(100).optional(),
+      postal_code: z.string().trim().max(30).optional(),
+      country: z.string().trim().length(2).toUpperCase().optional().or(z.literal('')),
+    })
+    .refine(
+      parts => {
+        const filled = [parts.line1, parts.city, parts.postal_code, parts.state].some(
+          value => value && value.trim().length > 0
+        );
+        return !filled || Boolean(parts.country && parts.country.trim());
+      },
+      { message: 'Choose the country for this address', path: ['country'] }
+    )
+    .nullable()
+    .optional(),
+
+  /**
    * Send the morning briefing by email as well as showing it on the dashboard.
    *
    * Off unless the owner turns it on. Meaningful only once a timezone is
@@ -153,7 +193,7 @@ export async function GET(request: NextRequest) {
     // 2. Fetch business profile
     const { data: profile, error } = await supabaseServer
       .from('business_profiles')
-      .select('vertical, sub_vertical, language, company_size, logo_url, show_logo_on_smart_links, phone, email, address')
+      .select('vertical, sub_vertical, language, company_size, logo_url, show_logo_on_smart_links, phone, email, address, address_parts')
       .eq('user_id', user.id)
       .single();
 
@@ -219,6 +259,9 @@ export async function GET(request: NextRequest) {
       phone: profile?.phone || null,
       email: profile?.email || null,
       address: profile?.address || null,
+      // `{}` rather than null: the form needs an object to spread into, and the
+      // column defaults to `{}` for every row that predates the structured form.
+      address_parts: profile?.address_parts || {},
     });
   } catch (error) {
     requestLogger.error({ err: error }, 'Business profile request failed');
@@ -267,13 +310,14 @@ export async function PUT(request: NextRequest) {
       phone,
       email,
       address,
+      address_parts,
       daily_briefing_email_enabled,
       lead_alert_email_enabled,
       lead_autosend_enabled,
       organization,
       ...branding
     } = validated;
-    const contact = { phone, email, address };
+    const contact = { phone, email, address, address_parts };
     const hasContact = Object.values(contact).some(value => value !== undefined);
 
     let error: Error | null = null;

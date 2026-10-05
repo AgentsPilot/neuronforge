@@ -417,6 +417,31 @@ export const emailTranslations = {
       es: '💰 Precio',
       he: '💰 מחיר'
     },
+    /*
+     * A plan's own words. The client agreed to a schedule, so the confirmation
+     * names the schedule rather than the total — the same list, in the same
+     * order, that the booking dialog showed them before they paid.
+     */
+    planTitle: {
+      en: 'Payment plan',
+      es: 'Plan de pagos',
+      he: 'תוכנית תשלומים'
+    },
+    planDueToday: {
+      en: 'due today',
+      es: 'a pagar hoy',
+      he: 'לתשלום היום'
+    },
+    planPaid: {
+      en: 'paid',
+      es: 'pagado',
+      he: 'שולם'
+    },
+    planTotal: {
+      en: 'Total',
+      es: 'Total',
+      he: 'סה״כ'
+    },
     paymentRequired: {
       en: (amount: string) =>
         `<strong>Payment Required:</strong> Please complete your payment of ${amount} to confirm your appointment.`,
@@ -525,6 +550,28 @@ export const emailTranslations = {
   },
 
   bookingCancellation: {
+    /*
+     * A PACKAGE cancelled part-way through.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * "Your appointment has been cancelled" is not enough when a block of six
+     * ends after two: the client has HAD two sessions and paid for them, and an
+     * email that mentions only the four that are off reads as though the whole
+     * thing was undone. That is the version a dispute is argued from.
+     *
+     * So both halves are stated: what took place, and what will not.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    sessionsHeldTitle: {
+      en: 'These meetings took place',
+      es: 'Estas sesiones se realizaron',
+      he: 'הפגישות שהתקיימו',
+    },
+    sessionsCancelledTitle: {
+      en: 'These meetings are cancelled',
+      es: 'Estas sesiones quedan canceladas',
+      he: 'הפגישות שבוטלו',
+    },
     /*
      * Money the business is still holding.
      *
@@ -1142,6 +1189,25 @@ export const emailTranslations = {
     },
   },
   proposal: {
+    /*
+     * A PACKAGE's meetings. The email listed their amounts with no dates, so a
+     * client could see what each session cost and not when any of them was.
+     */
+    sessionsTitle: {
+      en: '{count} meetings, {minutes} minutes each',
+      es: '{count} sesiones de {minutes} minutos cada una',
+      he: '{count} פגישות, {minutes} דקות כל אחת',
+    },
+    sessionsTimezone: {
+      en: 'Times shown in {zone}.',
+      es: 'Horas en {zone}.',
+      he: 'השעות לפי {zone}.',
+    },
+    sessionsBilledAfter: {
+      en: 'Nothing to pay now. Each meeting is invoiced after it has taken place.',
+      es: 'Nada que pagar ahora. Cada sesión se factura después de celebrarse.',
+      he: 'אין מה לשלם עכשיו. כל פגישה מחויבת לאחר שהתקיימה.',
+    },
     paymentTermsLabel: {
       en: 'Payment terms',
       es: 'Plazo de pago',

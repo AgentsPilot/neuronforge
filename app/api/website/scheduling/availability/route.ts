@@ -10,21 +10,35 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SLOT_HOLDING_STATUSES } from '@/lib/business-os/bookingStatus';
 import { getUser } from '@/lib/auth';
+import { resolvePublicOwner } from '@/lib/business-os/publicOwner';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
-import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 import { schedulingServiceRepository, schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { externalCalendarEventRepository } from '@/lib/repositories/ExternalCalendarEventRepository';
+import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
+import { windowsForDate } from '@/lib/scheduling/availabilityWindows';
 import { safeTimezone, businessClock, businessDateKey } from '@/lib/scheduling/businessTime';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'WebsiteAvailabilityAPI' });
 
-// Subdomain is optional - if not provided, authenticated user is used
+/*
+ * An address is optional; a BUSINESS is not.
+ *
+ * `user_code` was missing from this schema while `ProcessFlowSection` has always
+ * sent it (`&user_code=`), so on a smart link the code was parsed away, the
+ * subdomain branch was skipped, and resolution fell through to the signed-in
+ * owner — which an anonymous client is not. The calendar answered 401 on the one
+ * surface that cannot possibly have a session.
+ *
+ * Same three ways in as `website/booking/availability` and `payment-intent`:
+ * subdomain, user code, or the owner in a preview.
+ */
 const AvailabilityQuerySchema = z.object({
   subdomain: z.string().optional(),
+  user_code: z.string().optional(),
   service_id: z.string().uuid('Invalid service ID'),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format')
 });
@@ -172,8 +186,10 @@ export async function GET(request: NextRequest) {
     // Parse query parameters
     const { searchParams } = new URL(request.url);
     const subdomainParam = searchParams.get('subdomain');
+    const userCodeParam = searchParams.get('user_code');
     const queryParams = {
       subdomain: subdomainParam && subdomainParam.trim() ? subdomainParam.trim() : undefined,
+      user_code: userCodeParam && userCodeParam.trim() ? userCodeParam.trim() : undefined,
       service_id: searchParams.get('service_id') || '',
       date: searchParams.get('date') || ''
     };
@@ -187,46 +203,66 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const { subdomain, service_id, date } = validationResult.data;
+    const { subdomain, user_code: userCode, service_id, date } = validationResult.data;
 
     let ownerId: string;
 
     // Track hidden service names for validation (only used for public access)
     let hiddenServiceNames: Set<string> = new Set();
 
-    // If subdomain is provided, look up website owner (public access)
-    // Otherwise, use authenticated user (preview mode)
-    if (subdomain) {
-      const pageRepo = new WebsitePageRepository(supabaseServer);
-      const { data: websitePage, error: pageError } = await pageRepo.findBySubdomainAny(subdomain);
+    /*
+     * Subdomain, user code, or the signed-in owner — the same three, in the same
+     * order, as `website/booking/availability` and `payment-intent`.
+     *
+     * Through `resolvePublicOwner` rather than a fourth hand-rolled lookup: a
+     * smart link carries a user code and no subdomain, and this route used to
+     * skip straight past it to the authenticated branch, so a public client got
+     * 401 for a calendar they were entitled to see.
+     */
+    let pageId: string | null = null;
 
-      if (pageError || !websitePage) {
+    if (subdomain || userCode) {
+      const owner = await resolvePublicOwner({ subdomain, userCode });
+
+      if (!owner) {
         return NextResponse.json(
           { success: false, error: 'Website not found' },
           { status: 404 }
         );
       }
-      ownerId = websitePage.user_id;
 
-      // Fetch hidden service names from the services block content
-      try {
-        const blockRepo = new WebsiteBlockRepository(supabaseServer);
-        const blocksResult = await blockRepo.findByPageId(websitePage.id);
-        if (blocksResult.data) {
-          const servicesBlock = blocksResult.data.find(b => b.block_type === 'services');
-          if (servicesBlock) {
-            const savedServices = (servicesBlock.content as Record<string, unknown>)?.services as Array<{ name: string; hidden?: boolean }> | undefined;
-            if (savedServices && Array.isArray(savedServices)) {
-              savedServices.forEach(s => {
-                if (s.name && s.hidden === true) {
-                  hiddenServiceNames.add(s.name);
-                }
-              });
+      ownerId = owner.userId;
+      pageId = owner.pageId ?? null;
+
+      /*
+       * Hidden services come off the page's own services block, so this only
+       * applies where a PAGE was resolved.
+       *
+       * A smart link resolves an owner and NO page — it does its own narrowing
+       * through `servicesForLink` — so the absence of one is normal here, not a
+       * failure. Guarded rather than left to throw into the catch, which would
+       * log a warning on every smart-link request.
+       */
+      if (pageId) {
+        try {
+          const blockRepo = new WebsiteBlockRepository(supabaseServer);
+          const blocksResult = await blockRepo.findByPageId(pageId);
+          if (blocksResult.data) {
+            const servicesBlock = blocksResult.data.find(b => b.block_type === 'services');
+            if (servicesBlock) {
+              const savedServices = (servicesBlock.content as Record<string, unknown>)?.services as Array<{ name: string; hidden?: boolean }> | undefined;
+              if (savedServices && Array.isArray(savedServices)) {
+                savedServices.forEach(s => {
+                  if (s.name && s.hidden === true) {
+                    hiddenServiceNames.add(s.name);
+                  }
+                });
+              }
             }
           }
+        } catch (err) {
+          requestLogger.warn({ err }, 'Failed to fetch hidden service flags');
         }
-      } catch (err) {
-        requestLogger.warn({ err }, 'Failed to fetch hidden service flags');
       }
     } else {
       // Authenticated access - use current user
@@ -334,7 +370,37 @@ export async function GET(request: NextRequest) {
     const [year, month, day] = date.split('-').map(Number);
     const dateObj = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
     const dayOfWeek = DAYS_OF_WEEK[dateObj.getUTCDay()];
-    const dayAvailability = availability[dayOfWeek] || [];
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE CLOSED DAYS, WHICH THIS ROUTE DID NOT READ.
+     *
+     * It resolved hours from the weekday alone, so a business closed for a
+     * holiday went on offering that day's slots here — and this is the route
+     * the CLIENT's reschedule page asks. A client could therefore move their
+     * appointment onto a day the business was shut, which is now refused at the
+     * write: offering a time that is then refused is a dead end, so the slots
+     * have to agree with the rule.
+     *
+     * `windowsForDate` is that rule, and the same function the public booking
+     * page and the smart link already use. An unreadable list leaves the
+     * ordinary hours published — the conservative choice for a page whose job
+     * is to take bookings, and the same one its siblings make.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const { data: timeOff, error: timeOffError } = await schedulingTimeOffRepository.list(ownerId, {
+      from: date,
+      to: date,
+    });
+
+    if (timeOffError) {
+      requestLogger.warn(
+        { err: timeOffError, ownerId, date },
+        'Time off unreadable; publishing the ordinary hours'
+      );
+    }
+
+    const dayAvailability = windowsForDate(availability, date, timeOff ?? []);
 
     requestLogger.info(
       { date, dayOfWeek, dayAvailability, allAvailability: availability },

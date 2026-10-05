@@ -310,7 +310,26 @@ export class WebsitePageRepository {
   }
 
   /**
-   * Find page by subdomain regardless of status (for analytics tracking)
+   * The business at this address, whatever state its pages are in.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * NOT `.single()`, for the reason `findBySubdomain` above documents — and this
+   * variant needed it more, not less.
+   *
+   * `.single()` ERRORS on more than one row, and this lookup applies no status
+   * filter at all, so it matches a draft AND a live page where the sibling above
+   * would only ever see the live one. A business mid-edit routinely has both.
+   * Live data has subdomain `0kgjcy` carrying two rows, and every caller of this
+   * method read the resulting error as "no such business": `resolvePublicOwner`
+   * returns null, and the public surfaces built on it answer 404 for a business
+   * whose site is fine.
+   *
+   * Same tie-break as `findBySubdomain` so the two cannot disagree about which
+   * page an address means: the homepage where there is one, the oldest
+   * otherwise. Only `user_id` is load-bearing for the callers that resolve an
+   * OWNER, and every row for a subdomain carries the same one — but the answer
+   * is made stable anyway rather than left to whatever the database returned
+   * first.
    */
   async findBySubdomainAny(subdomain: string): Promise<RepositoryResult<WebsitePage>> {
     try {
@@ -318,10 +337,15 @@ export class WebsitePageRepository {
         .from('website_pages')
         .select('*')
         .eq('subdomain', subdomain)
-        .single();
+        .order('page_type', { ascending: true })   // 'homepage' before 'landing'
+        .order('created_at', { ascending: true })
+        .limit(1);
 
       if (error) throw error;
-      return { data, error: null };
+      if (!data || data.length === 0) {
+        return { data: null, error: new Error('No page for this subdomain') };
+      }
+      return { data: data[0], error: null };
     } catch (error) {
       logger.error({ err: error, subdomain }, 'Failed to find page by subdomain (any status)');
       return { data: null, error: error as Error };

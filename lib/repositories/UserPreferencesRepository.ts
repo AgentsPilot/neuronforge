@@ -19,6 +19,9 @@
 // writes, and a second writer would be a second place the "both columns
 // together" rule lives (see `lib/business-os/userLanguage.ts`).
 //
+// `findTimezone` was added for the package-acceptance wire, which creates
+// bookings off-request and so has no browser zone to fall back on.
+//
 // Methods never throw: they return `{ data, error }`, with a database error
 // reduced to `{ code, message }` before it is logged or returned (the invite
 // repository's `safeDbError`, SA M-1).
@@ -66,6 +69,42 @@ export class UserPreferencesRepository {
     } catch (error) {
       const safe = safeDbError(error);
       methodLogger.error({ dbError: safe }, 'Failed to read the preferred language');
+      const out = new Error(safe.message) as Error & { code?: string };
+      if (safe.code) out.code = safe.code;
+      return { data: null, error: out };
+    }
+  }
+
+  /**
+   * The business's own clock, or `null` when nothing usable is stored.
+   *
+   * `user_preferences.timezone` is the authority for every hour the platform
+   * shows a client (CLAUDE.md § Currency & Timezone;
+   * `business_profiles.timezone` does not exist). Every caller so far has read
+   * it inline — eight routes do — and the one that forgot stamped bookings with
+   * an empty zone, so the same appointment read 12:00 AM in the drawer, 4:00 AM
+   * in the email and 7:00 AM where the work happens.
+   *
+   * `null` is "not asked", kept distinguishable from a stored `'UTC'`, which is
+   * a choice somebody made. Validate it with `safeTimezone` before formatting:
+   * a stored zone can be an old IANA name or a hand-edited row.
+   */
+  async findTimezone(userId: string): Promise<RepositoryResult<string>> {
+    const methodLogger = this.logger.child({ method: 'findTimezone', userId });
+    try {
+      const { data, error } = await this.supabase
+        .from(USER_PREFERENCES)
+        .select('timezone')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      const stored = (data as { timezone?: unknown } | null)?.timezone;
+      const zone = typeof stored === 'string' ? stored.trim() : '';
+      return { data: zone || null, error: null };
+    } catch (error) {
+      const safe = safeDbError(error);
+      methodLogger.error({ dbError: safe }, 'Failed to read the timezone');
       const out = new Error(safe.message) as Error & { code?: string };
       if (safe.code) out.code = safe.code;
       return { data: null, error: out };

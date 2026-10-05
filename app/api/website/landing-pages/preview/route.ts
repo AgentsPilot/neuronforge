@@ -11,6 +11,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { resolveBusinessLogo } from '@/lib/branding/businessLogo';
 import { imageForSection } from '@/lib/services/StockImageService';
+import { repairBlockLinks } from '@/lib/website-builder/linkIntegrity';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { getBusinessTemplate } from '@/lib/business-os/businessTemplate';
 import { completeTheme } from '@/lib/branding/theme';
@@ -376,15 +377,26 @@ export async function POST(request: NextRequest) {
       designId
     );
 
+    /*
+     * The preview shows what will be SAVED, buttons included.
+     *
+     * The same check the landing-page route runs before it stores these blocks
+     * and the website generator runs after the recipe. Here too, so the wizard
+     * cannot demonstrate a destination the saved page will not have — which is
+     * where this was first noticed.
+     */
+    const { blocks: checkedBlocks, repairs: linkRepairs } = repairBlockLinks(blocks);
+
     requestLogger.info({
       userId: user.id,
       serviceName: validated.serviceName,
-      blockCount: blocks.length
+      blockCount: checkedBlocks.length,
+      linkRepairs: linkRepairs.length
     }, 'Generated preview blocks');
 
     return NextResponse.json({
       success: true,
-      blocks,
+      blocks: checkedBlocks,
       theme,
       language: validated.language,
       subdomain: validated.subdomain

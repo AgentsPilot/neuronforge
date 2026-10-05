@@ -33,6 +33,21 @@ export interface ServicePaymentPlan {
   installmentCount: number;
   installmentAmount: number;
   frequency: InstallmentFrequency;
+  /**
+   * WHEN the first payment falls, which decides what the client is told.
+   *
+   * Without these the dialog had no way to know a plan starts later, so it said
+   * "Due today" beside the first instalment on every plan — including one whose
+   * subscription now runs a trial and charges nothing today. A price that is
+   * wrong about its date is as wrong as one that is wrong about its amount.
+   *
+   * They come from `scheduling_services`, not from `payment_plans`: that table
+   * has no such columns, and the service is the authority the server already
+   * reads them from (`isInstallmentPlan`, `planStartDate`). Adding columns to
+   * mirror them would be a third copy of a fact that already has two homes.
+   */
+  firstPaymentDue: 'on_booking' | 'days_after';
+  firstPaymentDays: number;
 }
 
 /**
@@ -49,15 +64,42 @@ export async function loadServicePaymentPlans(
   userId: string
 ): Promise<Record<string, ServicePaymentPlan>> {
   try {
-    const { data, error } = await supabaseServer
-      .from('payment_plans')
-      .select('id, service_id, name, total_amount, currency, installment_count, installment_amount, installment_frequency')
-      .eq('user_id', userId)
-      .eq('is_active', true)
-      .not('service_id', 'is', null)
-      .order('created_at', { ascending: true });
+    /*
+     * Two reads, because the answer lives in two tables.
+     *
+     * `payment_plans` holds the amounts the client is quoted;
+     * `scheduling_services` holds WHEN the first one falls. Asked together
+     * rather than per service, for the same reason the plans are: the public
+     * routes build a whole catalogue in one pass.
+     */
+    const [{ data, error }, timing] = await Promise.all([
+      supabaseServer
+        .from('payment_plans')
+        .select('id, service_id, name, total_amount, currency, installment_count, installment_amount, installment_frequency')
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .not('service_id', 'is', null)
+        .order('created_at', { ascending: true }),
+      supabaseServer
+        .from('scheduling_services')
+        .select('id, first_payment_due, first_payment_days')
+        .eq('user_id', userId),
+    ]);
 
     if (error) throw error;
+    if (timing.error) throw timing.error;
+
+    const timingByService = new Map(
+      (timing.data ?? []).map(row => [
+        row.id as string,
+        {
+          firstPaymentDue: (row.first_payment_due === 'days_after' ? 'days_after' : 'on_booking') as
+            | 'on_booking'
+            | 'days_after',
+          firstPaymentDays: Number(row.first_payment_days ?? 0),
+        },
+      ])
+    );
 
     const byService: Record<string, ServicePaymentPlan> = {};
     for (const plan of data || []) {
@@ -74,6 +116,9 @@ export async function loadServicePaymentPlans(
         installmentCount: plan.installment_count,
         installmentAmount: Number(plan.installment_amount),
         frequency: plan.installment_frequency as InstallmentFrequency,
+        // An unknown service defaults to charging on booking, which is what
+        // every plan did before a deferred start existed.
+        ...(timingByService.get(serviceId) ?? { firstPaymentDue: 'on_booking' as const, firstPaymentDays: 0 }),
       };
     }
 

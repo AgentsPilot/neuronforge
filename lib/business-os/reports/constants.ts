@@ -37,6 +37,18 @@ export const REPORTS_COLORS = {
   /** Muted grey for the unattributed revenue row */
   UNATTRIBUTED: '#94A3B8',
 
+  /** Late — money being chased. Distinct from WARNING, which merely waits. */
+  DANGER: '#F04438',
+
+  /**
+   * Asked for and never arriving: a stopped plan's periods, a voided invoice.
+   *
+   * Deliberately not red. It is not a failure to chase — the owner decided it —
+   * and colouring it like an overdue invoice would put a permanent alarm beside
+   * a closed decision.
+   */
+  LOST: '#B54708',
+
   /** Service revenue color palette (cycles through for multiple services) */
   SERVICE_PALETTE: [
     '#22C58B', // Green

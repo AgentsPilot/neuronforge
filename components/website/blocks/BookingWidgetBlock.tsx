@@ -6,6 +6,7 @@ import { Calendar, Clock, ArrowRight, Loader2 } from 'lucide-react';
 import type { BlockRendererProps, CapabilityConfig } from './types';
 import { businessDateKey, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
 import { createLogger } from '@/lib/logger';
+import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 
 const logger = createLogger({ module: 'BookingWidgetBlock' });
 
@@ -89,9 +90,54 @@ interface ServiceOption {
   currency?: string;
   is_scheduled?: boolean;
   collection?: 'online' | 'invoice' | null;
+  /**
+   * The two that were dropped a second time.
+   *
+   * The note above records this widget dropping `is_scheduled` and `collection`
+   * and the journey going wrong for it. `paymentPlan` and `sale_mode` then went
+   * the same way: the endpoint publishes both, and this widget carried neither —
+   * so a client who picked an instalment service here reached the dialog with no
+   * plan attached and was quoted, and charged, the whole price.
+   */
+  sale_mode?: 'direct' | 'proposal';
+  paymentPlan?: ServicePaymentPlan;
 }
 
-export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, className, subdomain, clientFlow, onOpenBooking }: BlockRendererProps) {
+export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, className, subdomain, isPreview, clientFlow, onOpenBooking }: BlockRendererProps) {
+  /*
+   * Can this block ask the server who the business is?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The two effects below used to return early on `!subdomain`, and a DRAFT page
+   * has no subdomain — so in the preview they never fetched at all. No request,
+   * no error, an empty calendar and a clean console. Meanwhile the smart link
+   * worked, because its identity is a path segment rather than a query
+   * parameter.
+   *
+   * In preview the owner is signed in, and the availability route now resolves
+   * by session when no address is given — the same fallback `payment-intent`
+   * has always had. So the question is not "do I have a subdomain" but "can the
+   * business be identified at all", and in preview it always can.
+   *
+   * `isPreview` has reached every block since it was added to the renderer
+   * (`blocks/index.tsx`); this one simply never read it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const canResolveBusiness = Boolean(subdomain) || Boolean(isPreview);
+
+  /**
+   * The owner part of an availability query, and nothing when there is none.
+   *
+   * Absent in preview, which is precisely how the route knows to fall back to
+   * the session. Composed rather than interpolated so the preview does not send
+   * `?&service_id=…` — harmless, but the kind of thing that gets "fixed" later
+   * by putting the subdomain back.
+   */
+  const availabilityUrl = (extra: Record<string, string> = {}) => {
+    const params = new URLSearchParams(extra);
+    if (subdomain) params.set('subdomain', subdomain);
+    return `/api/website/booking/availability?${params.toString()}`;
+  };
   const {
     title,
     subtitle,
@@ -134,14 +180,14 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
 
   // Fetch availability data from API
   useEffect(() => {
-    if (!subdomain) {
+    if (!canResolveBusiness) {
       setLoading(false);
       return;
     }
 
     const fetchAvailability = async () => {
       try {
-        const response = await fetch(`/api/website/booking/availability?subdomain=${subdomain}`);
+        const response = await fetch(availabilityUrl());
         const data = await response.json();
 
         if (data.success) {
@@ -161,6 +207,8 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
               currency?: string;
               is_scheduled?: boolean;
               collection?: 'online' | 'invoice' | null;
+              sale_mode?: 'direct' | 'proposal';
+              paymentPlan?: ServicePaymentPlan;
             };
             let live = data.services as ApiService[];
 
@@ -204,7 +252,9 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
               priceRaw: s.price ?? null,
               currency: s.currency || 'USD',
               is_scheduled: s.is_scheduled,
-              collection: s.collection ?? null
+              collection: s.collection ?? null,
+              sale_mode: s.sale_mode,
+              paymentPlan: s.paymentPlan
             })));
           }
         }
@@ -220,11 +270,11 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
     // `services` is a stable array from block content, joined so a new array
     // identity on each render does not refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subdomain, services.join(','), service_id]);
+  }, [canResolveBusiness, subdomain, services.join(','), service_id]);
 
   // Fetch slots when service and date are selected
   useEffect(() => {
-    if (!selectedDate || !selectedService || !subdomain || !availabilityConfigured) {
+    if (!selectedDate || !selectedService || !canResolveBusiness || !availabilityConfigured) {
       return;
     }
 
@@ -233,7 +283,7 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
       try {
         const dateStr = selectedDate;
         const response = await fetch(
-          `/api/website/booking/availability?subdomain=${subdomain}&service_id=${selectedService}&date=${dateStr}`
+          availabilityUrl({ service_id: selectedService, date: dateStr })
         );
         const data = await response.json();
 
@@ -260,7 +310,7 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
     };
 
     fetchSlots();
-  }, [selectedDate, selectedService, subdomain, availabilityConfigured, locale]);
+  }, [selectedDate, selectedService, canResolveBusiness, subdomain, availabilityConfigured, locale]);
 
 
   const handleBook = () => {
@@ -294,6 +344,10 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
               currency: picked.currency || 'USD',
               is_scheduled: picked.is_scheduled,
               collection: picked.collection ?? null,
+              sale_mode: picked.sale_mode,
+              // Without this the dialog opens on a plan service with no plan,
+              // and quotes the total instead of one period.
+              paymentPlan: picked.paymentPlan,
             }
           : // Nothing picked: the dialog opens on its catalogue and the client
             // chooses there, which is the same list this widget is showing.

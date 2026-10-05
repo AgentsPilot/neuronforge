@@ -410,6 +410,7 @@ export function RefundModal({
 
   const refundAmount = effectiveType === 'full' ? maxRefundable : parseFloat(partialAmount) || 0;
 
+
   /**
    * Money, without the crash.
    *

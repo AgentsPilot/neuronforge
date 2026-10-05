@@ -47,8 +47,28 @@ import { useLanguage } from '@/lib/business-os/LanguageContext';
 interface Props {
   isOpen: boolean;
   onClose: () => void;
-  /** The `payment_plan_subscriptions` row — the sale, not the plan offer. */
+  /**
+   * The `payment_plan_subscriptions` row — the sale, not the plan offer.
+   *
+   * Empty when `bookingId` is given instead: an invoice-billed plan has no
+   * subscription row to name, which is precisely why it needed its own route.
+   */
   planId: string;
+  /**
+   * Stop by BOOKING rather than by subscription.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * "Payment plan" is three shapes, and only one of them is a Stripe
+   * subscription. The other two — a quote's milestones and a booking's dated
+   * instalments — have no `payment_plan_subscriptions` row, so `planId` cannot
+   * address them and this modal could not be opened on them at all.
+   *
+   * The booking is the one handle every shape has. `stopBookingPlan` behind the
+   * route below decides whether Stripe is involved, so this component does not
+   * have to know which shape it is looking at.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  bookingId?: string;
   /** For the sentence that says what stopping actually stops. */
   periodsRemaining: number;
   collectedAmount: number;
@@ -61,6 +81,7 @@ export function CancelPlanModal({
   isOpen,
   onClose,
   planId,
+  bookingId,
   periodsRemaining,
   collectedAmount,
   currency,
@@ -111,18 +132,37 @@ export function CancelPlanModal({
     setLoading(true);
 
     try {
-      const response = await fetch(`/api/payments/plans/${planId}/cancel`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          refund_collected: refundCollected,
-          // Only for a partial: omitted means everything collected, which is
-          // already what the server does with no amount.
-          refund_amount: refundCollected && refundType === 'partial' ? refundAmount : undefined,
-          reason: reason || undefined,
-          reason_code: reasonCode,
-        }),
-      });
+      /*
+       * Two routes, because they address two different things.
+       *
+       * The plans route takes a subscription id and can refund what Stripe
+       * collected in the same call. The booking route takes a booking and
+       * covers every shape — but it deliberately does NOT refund: an
+       * invoice-billed plan's money sits in the ledger, and returning it is the
+       * refund dialog's decision, made against that ledger with the
+       * over-refund guard behind it.
+       */
+      const response = bookingId
+        ? await fetch(`/api/scheduling/bookings/${bookingId}/stop-plan`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              reason: reason || undefined,
+              reason_code: reasonCode,
+            }),
+          })
+        : await fetch(`/api/payments/plans/${planId}/cancel`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              refund_collected: refundCollected,
+              // Only for a partial: omitted means everything collected, which is
+              // already what the server does with no amount.
+              refund_amount: refundCollected && refundType === 'partial' ? refundAmount : undefined,
+              reason: reason || undefined,
+              reason_code: reasonCode,
+            }),
+          });
 
       const data = await response.json();
       if (!response.ok || !data.success) {
@@ -207,7 +247,16 @@ export function CancelPlanModal({
             </div>
           )}
 
-          {collectedAmount > 0 && (
+          {/*
+            Refunding is offered only on the subscription route.
+            ───────────────────────────────────────────────────────────────────
+            The booking route stops future periods and touches collected money
+            not at all. Showing the toggle there would offer a refund the
+            request cannot carry — the worst kind of control, one that looks
+            like it worked. Returning that money is the refund dialog's job,
+            where the ledger and the over-refund guard are.
+          */}
+          {collectedAmount > 0 && !bookingId && (
             <div
               className="border border-[var(--v2-border)]"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
@@ -339,7 +388,24 @@ export function CancelPlanModal({
               value={reason}
               onChange={e => setReason(e.target.value)}
               rows={2}
-              placeholder={t('payments.refund.reason_placeholder')}
+              /*
+                This note is the STOP's reason, not the refund's.
+                ─────────────────────────────────────────────────────────────
+                It asked for "the refund reason" on every stop, including the
+                many that refund nothing — and on the booking route, which
+                cannot refund at all. The two are separate fields by design:
+                `cancel_note` records why the plan ended, and a refund carries
+                its own reason on the refund itself.
+
+                The refund wording survives only where a refund is actually
+                being issued in this same submission, because there the one
+                sentence genuinely does both jobs.
+              */
+              placeholder={
+                refundCollected
+                  ? t('payments.refund.reason_placeholder')
+                  : t('payments.plan.stop_note_placeholder')
+              }
               className="w-full resize-none border border-[var(--v2-border)] bg-transparent px-3 py-2 text-[13px] text-[var(--v2-text-primary)] outline-none transition-colors placeholder:text-[var(--v2-text-muted)] focus:border-[var(--v2-text-muted)]"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
             />

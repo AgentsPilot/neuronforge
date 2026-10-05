@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { X } from 'lucide-react';
+import { CalendarX2, Mail, X } from 'lucide-react';
 
 import { AppointmentCard, type PublicBookingSummary } from '@/components/public/AppointmentCard';
 import { BrandButton } from '@/components/public/BrandButton';
+import { PortalHero } from '@/components/public/PortalHero';
 import { PublicPageSpinner } from '@/components/public/PublicSpinner';
 import { PublicShell } from '@/components/public/PublicShell';
 import { StatusCard } from '@/components/public/StatusCard';
@@ -190,23 +191,28 @@ export default function CancelBookingPage() {
   const alreadyCancelled = booking.status === 'cancelled';
 
   return (
-    <PublicShell
-      brand={brand}
-      width="narrow"
-      header={{
-        compact: true,
-        backHref: `/book/manage/${token}`,
-        backLabel: t('backToBooking'),
-      }}
-    >
-      <div className="space-y-4">
-        <h1
-          className="text-xl font-bold"
-          style={{ color: 'var(--ap-text)', fontFamily: 'var(--ap-font-heading)' }}
-        >
-          {t('cancelTitle')}
-        </h1>
+    <>
+      {/*
+        ─────────────────────────────────────────────────────────────────────
+        THE QUESTION IS THE HERO.
 
+        It was a page title that only repeated the URL, with the real question
+        in an amber card below the appointment — so the screen spent its first
+        200px saying "cancel" twice and asking nothing. The question leads now
+        and the warning is its subtitle, which is the one sentence nobody
+        disputes and does not need a panel of its own.
+        ─────────────────────────────────────────────────────────────────────
+      */}
+      <PortalHero
+        brand={brand}
+        title={alreadyCancelled ? t('cancelledTitle') : t('cancelConfirm')}
+        subtitle={alreadyCancelled ? t('cancelledDesc') : t('cancelWarning')}
+        back={{ href: `/book/manage/${token}`, label: t('backToBooking') }}
+      />
+
+      <>
+        {/* What they are cancelling, first and briefly: on this screen a
+            client is confirming they mean the right booking, not reading it. */}
         <AppointmentCard booking={booking} brand={brand} variant="summary" />
 
         {alreadyCancelled ? (
@@ -214,69 +220,90 @@ export default function CancelBookingPage() {
         ) : !booking.canCancel ? (
           <StatusCard tone="info" title={t('cannotCancel')} description={t('cannotModify')} />
         ) : (
-          <>
-            <StatusCard tone="warning" title={t('cancelConfirm')} description={t('cancelWarning')} />
+          <section
+            className="p-5"
+            style={{
+              background: 'var(--ap-surface)',
+              border: '1px solid var(--ap-border)',
+              borderRadius: 'var(--ap-radius-lg)',
+            }}
+          >
+            <p className="mb-2.5 text-sm font-semibold" style={{ color: 'var(--ap-text)' }}>
+              {t('cancelReasonWhy')}
+            </p>
 
-            <div>
-              <p className="mb-1.5 text-sm font-medium" style={{ color: 'var(--ap-text)' }}>
-                {t('cancelReasonWhy')}
-              </p>
-              {/*
-                Radios, not a dropdown. Five options on a phone are faster to tap
-                than to open, and the whole list being visible is what stops the
-                first one being chosen by default.
-              */}
-              <div className="mb-4 space-y-2">
-                {CLIENT_CANCEL_REASONS.map(value => (
+            {/*
+              ───────────────────────────────────────────────────────────────
+              CHIPS, NOT A COLUMN OF RADIOS.
+
+              Six full-width bordered rows with a radio each ran to about
+              330px — more than a third of a phone screen to ask one question
+              — and pushed the button that the client came to press below the
+              fold. The same six wrap into three short rows at about 110px.
+
+              Nothing about the choice changes: still one answer, still every
+              option visible (which is what stops the first being taken by
+              default), still mandatory. They are `radio` inputs underneath,
+              visually hidden rather than replaced, so the group keeps its
+              keyboard behaviour and its name for a screen reader.
+              ───────────────────────────────────────────────────────────────
+            */}
+            <div className="mb-4 flex flex-wrap gap-2">
+              {CLIENT_CANCEL_REASONS.map(value => {
+                const chosen = reasonCode === value;
+
+                return (
                   <label
                     key={value}
-                    className="flex cursor-pointer items-center gap-2.5 px-3 py-2.5 text-sm"
+                    className="cursor-pointer px-3.5 py-2 text-sm transition-colors"
                     style={{
-                      color: 'var(--ap-text)',
-                      borderRadius: 'var(--ap-radius-md)',
-                      // Tinted as well as outlined: a 1px border change is easy
-                      // to miss on a phone, and this is the answer being sent.
-                      border: `1px solid ${reasonCode === value ? 'var(--ap-brand)' : 'var(--ap-border)'}`,
-                      background: reasonCode === value ? 'var(--ap-brand-tint)' : 'transparent',
+                      color: chosen ? 'var(--ap-brand)' : 'var(--ap-text)',
+                      fontWeight: chosen ? 600 : 500,
+                      borderRadius: '9999px',
+                      border: `1px solid ${chosen ? 'var(--ap-brand)' : 'var(--ap-border)'}`,
+                      background: chosen ? 'var(--ap-brand-tint)' : 'var(--ap-surface)',
                     }}
                   >
                     <input
                       type="radio"
                       name="cancel-reason-code"
-                      checked={reasonCode === value}
+                      checked={chosen}
                       onChange={() => setReasonCode(value)}
-                      className="h-3.5 w-3.5"
-                      style={{ accentColor: 'var(--ap-brand)' }}
+                      className="sr-only"
                     />
                     {t(`cancelReason_${value}`)}
                   </label>
-                ))}
-              </div>
-
-              <label
-                htmlFor="cancel-reason"
-                className="mb-1.5 block text-sm font-medium"
-                style={{ color: 'var(--ap-text)' }}
-              >
-                {t('cancelReason')}
-              </label>
-              <textarea
-                id="cancel-reason"
-                value={reason}
-                onChange={e => setReason(e.target.value)}
-                rows={3}
-                placeholder={t('cancelReasonPlaceholder')}
-                className="w-full px-3 py-2.5 text-sm outline-none transition-colors"
-                style={{
-                  background: 'var(--ap-surface)',
-                  border: '1px solid var(--ap-border)',
-                  borderRadius: 'var(--ap-radius-md)',
-                  color: 'var(--ap-text)',
-                }}
-              />
+                );
+              })}
             </div>
 
-            {error && <StatusCard tone="error" title={error} />}
+            <label
+              htmlFor="cancel-reason"
+              className="mb-1.5 block text-sm font-medium"
+              style={{ color: 'var(--ap-text)' }}
+            >
+              {t('cancelReason')}
+            </label>
+            <textarea
+              id="cancel-reason"
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+              rows={3}
+              placeholder={t('cancelReasonPlaceholder')}
+              className="w-full px-3 py-2.5 text-sm outline-none transition-colors"
+              style={{
+                background: 'var(--ap-surface)',
+                border: '1px solid var(--ap-border)',
+                borderRadius: 'var(--ap-radius-md)',
+                color: 'var(--ap-text)',
+              }}
+            />
+
+            {error && (
+              <div className="mt-4">
+                <StatusCard tone="error" title={error} />
+              </div>
+            )}
 
             {/*
               A refusal with a way through it.
@@ -287,7 +314,7 @@ export default function CancelBookingPage() {
               ask, and the brand already carries it.
             */}
             {errorCode === 'too_late' && (brand?.info?.email || brand?.info?.phone) && (
-              <p className="text-sm text-center opacity-80">
+              <p className="mt-4 text-center text-sm opacity-80">
                 {t('cancelAskBusiness')}{' '}
                 {brand.info.email && (
                   <a href={`mailto:${brand.info.email}`} className="underline">
@@ -303,7 +330,9 @@ export default function CancelBookingPage() {
               </p>
             )}
 
-            <div className="space-y-2">
+            {/* Side by side: the whole form fits now, so the decision sits at
+                the end of it rather than as two stacked slabs. */}
+            <div className="mt-5 grid gap-2 sm:grid-cols-2">
               <BrandButton
                 variant="danger"
                 size="lg"
@@ -322,9 +351,43 @@ export default function CancelBookingPage() {
                 {t('keepAppointment')}
               </BrandButton>
             </div>
-          </>
+          </section>
         )}
-      </div>
-    </PublicShell>
+
+        {/* The questions a client asks BEFORE cancelling, answered under the
+            form rather than after the fact. */}
+        {!alreadyCancelled && booking.canCancel && (
+          <section
+            className="p-5"
+            style={{
+              background: 'var(--ap-surface-2)',
+              border: '1px solid var(--ap-border)',
+              borderRadius: 'var(--ap-radius-lg)',
+            }}
+          >
+            <h2
+              className="mb-3 text-xs font-semibold"
+              style={{
+                color: 'var(--ap-text-muted)',
+                letterSpacing: locale === 'he' ? 'normal' : '0.05em',
+                textTransform: locale === 'he' ? 'none' : 'uppercase',
+              }}
+            >
+              {t('portal.cancel_what_next')}
+            </h2>
+            <ul className="space-y-2.5">
+              <li className="flex items-start gap-2.5 text-sm" style={{ color: 'var(--ap-text)' }}>
+                <Mail className="mt-0.5 h-4 w-4 shrink-0" style={{ color: 'var(--ap-brand)' }} aria-hidden />
+                {t('portal.cancel_next_email')}
+              </li>
+              <li className="flex items-start gap-2.5 text-sm" style={{ color: 'var(--ap-text)' }}>
+                <CalendarX2 className="mt-0.5 h-4 w-4 shrink-0" style={{ color: 'var(--ap-brand)' }} aria-hidden />
+                {t('portal.cancel_next_slot')}
+              </li>
+            </ul>
+          </section>
+        )}
+      </>
+    </>
   );
 }

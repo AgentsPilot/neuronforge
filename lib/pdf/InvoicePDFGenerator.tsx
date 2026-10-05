@@ -28,6 +28,7 @@ import {
 import type { PaymentInvoice, InvoiceLineItem, InvoiceAddress } from '@/lib/repositories/PaymentRepository';
 import type { InvoiceSettings } from '@/lib/repositories/BusinessProfileRepository';
 import { createLogger } from '@/lib/logger';
+import { formatAddressLines } from '@/lib/geo/address';
 import { registerThemeFont } from './themeFonts';
 import { taxLineFor } from '@/lib/payments/taxLine';
 import { documentTitle } from '@/lib/payments/documentType';
@@ -74,6 +75,11 @@ const PDF_LABELS: Record<Language, Record<string, string>> = {
     account: 'Account',
     routing: 'Routing',
     notes: 'Notes',
+    planTitle: 'Payment plan',
+    planPaid: 'paid',
+    planDue: 'due',
+    planThisInvoice: 'this invoice',
+    planTotal: 'Plan total',
     taxId: 'Tax ID',
     currency: 'Currency',
     service: 'Service',
@@ -109,6 +115,11 @@ const PDF_LABELS: Record<Language, Record<string, string>> = {
     account: 'Cuenta',
     routing: 'CLABE/Ruta',
     notes: 'Notas',
+    planTitle: 'Plan de pagos',
+    planPaid: 'pagado',
+    planDue: 'a pagar',
+    planThisInvoice: 'esta factura',
+    planTotal: 'Total del plan',
     taxId: 'NIF/CIF',
     currency: 'Moneda',
     service: 'Servicio',
@@ -144,6 +155,11 @@ const PDF_LABELS: Record<Language, Record<string, string>> = {
     account: 'חשבון',
     routing: 'סניף',
     notes: 'הערות',
+    planTitle: 'תוכנית תשלומים',
+    planPaid: 'שולם',
+    planDue: 'לתשלום',
+    planThisInvoice: 'החשבונית הזו',
+    planTotal: 'סה״כ בתוכנית',
     taxId: 'ח.פ',
     currency: 'מטבע',
     service: 'שירות',
@@ -242,6 +258,32 @@ export interface InvoicePDFData {
    * ───────────────────────────────────────────────────────────────────────────
    */
   isCopy?: boolean;
+  /**
+   * The instalment plan this invoice is one period OF.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WITHOUT IT THE DOCUMENT LOOKED LIKE THE WHOLE SALE.
+   *
+   * A period invoice is correct and complete on its own — INV-00013 asks for
+   * ₪400 and ₪400 is what is owed — but read alone it describes a ₪400 sale.
+   * The client has agreed to ₪800 across two dates, and nothing on the page
+   * said so: not which period this is, not what is still to come, not when.
+   *
+   * The line item carries "(1/2)" only because the caller happened to write it
+   * into the description. That is a string, not a schedule.
+   *
+   * Absent on every ordinary invoice, and then nothing below is drawn.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  planPeriods?: Array<{
+    number: number;
+    amount: number;
+    /** `YYYY-MM-DD`. */
+    dueDate: string | null;
+    status: string;
+    /** True for the period this very invoice bills. */
+    isThisInvoice: boolean;
+  }>;
   businessName?: string;
   businessVertical?: string;
   contactName?: string;
@@ -287,23 +329,26 @@ function getThankYouMessage(language: Language, vertical?: string): string {
 }
 
 /**
- * Format address for display
+ * Format address for display.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Delegates to the shared formatter because the COUNTRY IS NOW A CODE.
+ *
+ * This pushed `address.country` onto the page verbatim, which was right while
+ * the column held "Israel" and became wrong the moment the field became a
+ * picker storing 'IL' — this is a tax document, and it would have started
+ * printing "IL" to clients.
+ *
+ * `formatAddressLines` translates a real code into the invoice's own language
+ * and passes anything else through untouched, so a business that has not
+ * re-saved its settings keeps printing exactly what it typed.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
-function formatAddress(address: InvoiceAddress | null | undefined): string[] {
-  if (!address) return [];
-
-  const lines: string[] = [];
-  if (address.line1) lines.push(address.line1);
-  if (address.line2) lines.push(address.line2);
-
-  const cityLine = [address.city, address.state, address.postal_code]
-    .filter(Boolean)
-    .join(', ');
-  if (cityLine) lines.push(cityLine);
-
-  if (address.country) lines.push(address.country);
-
-  return lines;
+function formatAddress(
+  address: InvoiceAddress | null | undefined,
+  language: Language = 'en'
+): string[] {
+  return formatAddressLines(address, language === 'he' ? 'he' : language === 'es' ? 'es' : 'en');
 }
 
 /**
@@ -323,18 +368,58 @@ function formatCurrency(amount: number, currency: string, language: Language): s
 /**
  * Format date for display
  */
+/** `YYYY-MM-DD` with nothing after it — a DATE, not an instant. */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Hoisted so the date-only branch and the instant branch name one list. */
+const HEBREW_MONTHS = [
+  'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
+  'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר',
+];
+
 function formatDate(dateString: string | null | undefined, language: Language): string {
   if (!dateString) return '-';
-  const date = new Date(dateString);
+
+  /*
+   * A DATE-ONLY COLUMN HAS NO TIMEZONE, SO NONE IS APPLIED.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `due_date` is a SQL DATE — `2026-09-30`, no time, no zone.
+   * `new Date('2026-09-30')` makes it midnight UTC, and every read below then
+   * resolves it wherever the renderer happens to be. One hour west of UTC turns
+   * it into the 29th: INV-00013, raised on the 30th and payable on receipt,
+   * printed "due 29 September", a day before the invoice existed.
+   *
+   * The common workaround is to anchor at noon UTC. That is not enough — a test
+   * in `dateOnlyIsNotMidnightUTC.guard` shows noon UTC on the 30th is already
+   * the 1st in Auckland (UTC+13). So the value is rendered AS the calendar date
+   * it is: built in UTC and formatted in UTC, which returns the stored date in
+   * every zone rather than in most of them.
+   *
+   * Timestamps keep their old treatment — `created_at` is a real instant and
+   * must be resolved, not frozen.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const dateOnly = DATE_ONLY.test(dateString);
+  const date = dateOnly ? new Date(`${dateString}T00:00:00Z`) : new Date(dateString);
+
+  if (dateOnly && language === 'he') {
+    const [y, m, d] = dateString.split('-').map(Number);
+    return `${d} ב${HEBREW_MONTHS[m - 1]} ${y}`;
+  }
+
+  if (dateOnly) {
+    return date.toLocaleDateString(language === 'es' ? 'es-ES' : 'en-US', {
+      timeZone: 'UTC',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+  }
 
   if (language === 'he') {
-    // Hebrew months for proper display
-    const hebrewMonths = [
-      'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
-      'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'
-    ];
     const day = date.getDate();
-    const month = hebrewMonths[date.getMonth()];
+    const month = HEBREW_MONTHS[date.getMonth()];
     const year = date.getFullYear();
     return `${day} ב${month} ${year}`;
   }
@@ -443,9 +528,11 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
    * a "VAT 0.00" row would read to their client as a mistake.
    */
   const taxLine = taxLineFor(invoice.amount, invoice.currency, businessSettings);
-  const businessAddressLines = formatAddress(businessSettings.invoice_address);
+  // The invoice's own language, so a Hebrew invoice says ישראל and the same
+  // business's English one says Israel.
+  const businessAddressLines = formatAddress(businessSettings.invoice_address, language);
   const clientAddress = invoice.client_address || data.contactAddress;
-  const clientAddressLines = formatAddress(clientAddress);
+  const clientAddressLines = formatAddress(clientAddress, language);
 
   const subtotal = lineItems.reduce(
     (sum: number, item: InvoiceLineItem) => sum + (item.quantity || 1) * (item.unit_price || 0),
@@ -669,6 +756,42 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
       fontWeight: 700,
       color: config.primaryColor,
       textAlign: isRTL ? 'left' : 'right',
+    },
+    /* The plan block: quieter than the payment box, which is the call to
+       action. This is context for the figure above it, not a second demand. */
+    planSection: {
+      backgroundColor: '#F9FAFB',
+      padding: 10,
+      marginBottom: 20,
+    },
+    planHeader: {
+      fontSize: 10,
+      fontWeight: 700,
+      color: '#374151',
+      marginBottom: 5,
+      textAlign: isRTL ? 'right' : 'left',
+    },
+    planRow: {
+      flexDirection: isRTL ? 'row-reverse' : 'row',
+      justifyContent: 'space-between',
+      marginBottom: 3,
+    },
+    planTotalRow: {
+      flexDirection: isRTL ? 'row-reverse' : 'row',
+      justifyContent: 'space-between',
+      marginTop: 5,
+      paddingTop: 5,
+      borderTopWidth: 1,
+      borderTopColor: '#E5E7EB',
+    },
+    planRowText: {
+      fontSize: 9,
+      color: '#6B7280',
+    },
+    planRowTextStrong: {
+      fontSize: 9,
+      fontWeight: 700,
+      color: '#1F2937',
     },
     paymentSection: {
       backgroundColor: '#FFFBEB',
@@ -894,6 +1017,64 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
             )}
           </View>
         </View>
+
+        {/* The plan this invoice is one period of.
+
+            A period invoice is complete on its own — this one asks for ₪400 and
+            ₪400 is owed — but read alone it describes a ₪400 sale. The client
+            agreed to a schedule, so the schedule is shown: which period this is,
+            what has been paid, and what is still to come with its date.
+
+            Drawn only when the caller supplies it, so every ordinary invoice is
+            byte-identical to before. */}
+        {data.planPeriods && data.planPeriods.length > 1 && (
+          <View style={styles.planSection}>
+            <SmartText style={styles.planHeader} isRTL={isRTL}>
+              {labels.planTitle}
+            </SmartText>
+
+            {data.planPeriods.map(period => {
+              const note = period.isThisInvoice
+                ? labels.planThisInvoice
+                : period.status === 'paid'
+                  ? labels.planPaid
+                  : labels.planDue;
+
+              // `formatDate` anchors a date-only value itself now, so the raw
+              // column goes in — one rule, in one place.
+              const when = period.dueDate ? formatDate(period.dueDate, language) : '';
+
+              return (
+                <View style={styles.planRow} key={period.number}>
+                  <SmartText
+                    style={period.isThisInvoice ? styles.planRowTextStrong : styles.planRowText}
+                    isRTL={isRTL}
+                  >
+                    {`${period.number}. ${when}${when ? ' · ' : ''}${note}`}
+                  </SmartText>
+                  <Text
+                    style={period.isThisInvoice ? styles.planRowTextStrong : styles.planRowText}
+                  >
+                    {formatCurrency(period.amount, invoice.currency, language)}
+                  </Text>
+                </View>
+              );
+            })}
+
+            <View style={styles.planTotalRow}>
+              <SmartText style={styles.planRowTextStrong} isRTL={isRTL}>
+                {labels.planTotal}
+              </SmartText>
+              <Text style={styles.planRowTextStrong}>
+                {formatCurrency(
+                  data.planPeriods.reduce((sum, p) => sum + p.amount, 0),
+                  invoice.currency,
+                  language
+                )}
+              </Text>
+            </View>
+          </View>
+        )}
 
         {/* Payment Information.
 

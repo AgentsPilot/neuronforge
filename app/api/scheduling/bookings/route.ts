@@ -14,7 +14,8 @@ import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import {
   createBooking,
-  BookingSlotUnavailableError
+  BookingSlotUnavailableError,
+  BookingOnClosedDayError
 } from '@/lib/services/BookingLifecycleService';
 import { z } from 'zod';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -64,7 +65,15 @@ const createBookingSchema = z.object({
   create_invoice: z.boolean().optional().default(true),
   payment_plan_id: z.string().uuid().optional(),
   // Intake form option
-  send_intake_form: z.boolean().optional().default(false)
+  send_intake_form: z.boolean().optional().default(false),
+  /*
+   * The owner was shown "you are closed that day" and said book it anyway.
+   *
+   * Never defaulted true, and never sent by a surface that did not ask: the bug
+   * this exists for was a client confirmed into a closed day with nobody having
+   * decided that.
+   */
+  allow_closed_day: z.boolean().optional().default(false)
 }).refine(
   data => data.contact_id || (data.client_first_name && data.client_email),
   { message: 'Either contact_id or (client_first_name + client_email) is required' }
@@ -306,6 +315,7 @@ export async function POST(request: NextRequest) {
       bookingSource: validated.booking_source,
       createInvoice: validated.create_invoice,
       sendIntakeForm: validated.send_intake_form,
+      allowClosedDay: validated.allow_closed_day,
       contactName,
       contactEmail,
       request,
@@ -313,6 +323,31 @@ export async function POST(request: NextRequest) {
     });
 
     if (result.error) {
+      /*
+       * A day the owner closed is a question, not a conflict.
+       *
+       * Reported apart from the slot conflicts below because the remedy is
+       * different: nobody else has the hour, and the dialog's answer is to ask
+       * the owner and send `allow_closed_day` if they mean it. `code` is what
+       * the dialog switches on — the message is for a human reading a log.
+       */
+      if (result.error instanceof BookingOnClosedDayError) {
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'closed_day',
+            error: result.error.message,
+            closed: {
+              kind: result.error.kind,
+              date: result.error.dateKey,
+              reason: result.error.closedReason,
+              hours: result.error.hours ?? null
+            }
+          },
+          { status: 409 }
+        );
+      }
+
       // A taken slot is not a failure of the system — it is an answer, and the
       // client needs the conflicting booking to choose another time.
       if (result.error instanceof BookingSlotUnavailableError) {

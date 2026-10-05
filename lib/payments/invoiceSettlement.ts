@@ -40,6 +40,35 @@ export function isSettledInvoice(invoice: SettleableInvoice | null | undefined):
 }
 
 /**
+ * Has any of this invoice's money been given back?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * READS `refund_status`, NOT `status`.
+ *
+ * `20260828d_invoice_refund_state.sql` says it outright: "`refund_status` is the
+ * field to read. `status` gains 'refunded' and 'partially_refunded' because that
+ * is what the invoice list renders, but it is a projection." A first version of
+ * this guard checked `status` and let a refunded invoice straight through —
+ * live data proves why: INV-00011 carries `refund_status: 'full'` and
+ * `refunded_amount: 300` while its `status` still reads `sent`, because it was
+ * refunded without ever having been marked paid.
+ *
+ * `refunded_amount` is checked too, so a row whose projection and ledger have
+ * drifted is still caught by whichever of them noticed.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function hasBeenRefunded(invoice: {
+  status?: string | null;
+  refund_status?: string | null;
+  refunded_amount?: number | string | null;
+}): boolean {
+  if (invoice.refund_status === 'full' || invoice.refund_status === 'partial') return true;
+  if (Number(invoice.refunded_amount ?? 0) > 0) return true;
+  // The projection, for completeness — it is the least reliable of the three.
+  return invoice.status === 'refunded' || invoice.status === 'partially_refunded';
+}
+
+/**
  * Record that an invoice was paid.
  *
  * ─────────────────────────────────────────────────────────────────────────────
@@ -113,13 +142,36 @@ export interface SettlementDb {
           limit: (n: number) => { maybeSingle: () => Promise<{ data: unknown }> };
         };
         limit?: (n: number) => { maybeSingle: () => Promise<{ data: unknown }> };
+        /*
+         * NOT declared here, deliberately.
+         *
+         * The receipt-email read ends in `.maybeSingle()` on this shape, so the
+         * obvious fix is to add it. Adding it as OPTIONAL is worse than leaving
+         * it out: one error becomes nine. Absent, TypeScript infers `any` for
+         * the call and the seven property reads after it go unchecked; present
+         * but optional, the call is "possibly undefined" and the result is
+         * `unknown`, so every one of those reads fails instead.
+         *
+         * Declaring it required with the real row shape is the actual fix. That
+         * is a change to what every implementor of this interface must provide,
+         * which is a wider edit than the bug being chased here.
+         */
       };
     };
     insert: (row: Record<string, unknown>) => {
       select: (columns: string) => { single: () => Promise<{ data: { id: string } | null; error: unknown }> };
     };
     update: (row: Record<string, unknown>) => {
-      eq: (column: string, value: unknown) => Promise<{ error: unknown }>;
+      /*
+       * Awaitable AND still chainable — which is what a PostgREST builder is.
+       * Typing it as a bare Promise said the first filter had to be the last,
+       * so `.eq(...).neq('status', 'paid')` — the filter that stops a stage
+       * already marked paid from being restamped — was an error on a correct
+       * line.
+       */
+      eq: (column: string, value: unknown) => Promise<{ error: unknown }> & {
+        neq: (column: string, value: unknown) => Promise<{ error: unknown }>;
+      };
     };
   };
 }
@@ -240,6 +292,36 @@ export async function settleInvoicePaid(
       'Invoice settled but its plan stage could not be marked paid'
     );
   }
+
+  /*
+   * A PACKAGE'S MEETINGS, which this payment is what confirms.
+   *
+   * Here because this is where every payment path converges — the Stripe
+   * webhook, a manual mark-paid, bizql, a retry — exactly as the receipt below
+   * is. Hung off one caller, the others would settle a package and leave six
+   * meetings `pending` with their client never told.
+   *
+   * Non-fatal, and not awaited for its result: the money is recorded and the
+   * invoice is paid. A failure leaves the meetings pending with their slots
+   * still held, which is recoverable; failing a settled payment is not.
+   *
+   * The client is cast to the real client because this reads two tables
+   * `SettlementDb` does not describe. Widening that interface for it would
+   * spread the problem — its own comments record what adding one optional
+   * method already cost — so the cast is here, in the one place that knows the
+   * fake database in the tests answers these calls too.
+   */
+  void (async () => {
+    try {
+      const { confirmPackageOnPayment } = await import('@/lib/payments/confirmPackageOnPayment');
+      await confirmPackageOnPayment(client as SupabaseClient, input.invoiceId, paidAt);
+    } catch (err) {
+      logger.error(
+        { err, invoiceId: input.invoiceId },
+        'Payment settled but a package it may have paid for was not confirmed'
+      );
+    }
+  })();
 
   /*
    * The receipt.

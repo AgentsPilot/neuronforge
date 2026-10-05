@@ -59,6 +59,8 @@ function facts(overrides: DeepPartial<BriefingFacts> = {}): BriefingFacts {
     },
     isQuiet: false,
     outlook: {
+      quotesAccepted: { count: 0, people: [] },
+      quotesDeclined: { count: 0, people: [] },
       unanswered: { count: 0, people: [] },
       refunded: { count: 0, people: [] },
       newLeads: { count: 0, people: [] },
@@ -416,5 +418,96 @@ describe('the prompt', () => {
     // The dictionary and the JSON payload are both gone.
     expect(prompt).not.toContain('awaitingIntake');
     expect(prompt).not.toContain('WHAT THE FIELDS MEAN');
+  });
+});
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * QUOTES THE CLIENT ANSWERED TODAY.
+ *
+ * The briefing reported appointments, money owed and money in, and never once
+ * said that a client had agreed to the work. An owner who won ₪8,500 that
+ * morning read a summary about unpaid invoices.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('a quote answered today', () => {
+  const lines = (f: BriefingFacts) => buildStatements(f, 'en');
+
+  it('leads the outlook when it was accepted', () => {
+    /*
+     * Ahead of the unanswered enquiries, which are the most actionable thing
+     * but not the best. Ordering good news below chores takes the order from
+     * the database rather than from the person reading it.
+     */
+    const day = facts({
+      outlook: {
+        quotesAccepted: { count: 1, people: [{ name: 'אופיר עומר' }], value: 8500, currency: 'ILS' },
+        unanswered: { count: 2, people: [{ name: 'Rivka' }, { name: 'Tom' }] },
+      },
+    });
+
+    const out = lines(day);
+    expect(out[0]).toBe('אופיר עומר accepted your quote, ₪8,500.');
+    expect(out[1]).toContain('waiting for a reply');
+  });
+
+  it('names two and counts more, like every other fact here', () => {
+    const two = facts({
+      outlook: { quotesAccepted: { count: 2, people: [{ name: 'Ana' }, { name: 'Ben' }] } },
+    });
+
+    expect(lines(two)[0]).toBe('Ana and Ben accepted your quote.');
+  });
+
+  it('still says it when no name came back', () => {
+    const anon = facts({ outlook: { quotesAccepted: { count: 1, people: [] } } });
+    expect(lines(anon)[0]).toBe('A client accepted your quote.');
+  });
+
+  it('reports a decline without naming the client', () => {
+    /*
+     * Deliberate. Being named in your supplier's morning summary for saying
+     * no is not something the client agreed to, and the count is the whole
+     * content of the line.
+     */
+    const turned = facts({
+      outlook: {
+        quotesDeclined: { count: 1, people: [{ name: 'Ana' }], value: 2000, currency: 'ILS' },
+      },
+    });
+
+    const out = lines(turned).join('\n');
+    expect(out).toContain('One quote was turned down, ₪2,000.');
+    expect(out).not.toContain('Ana');
+  });
+
+  it('gives the reason only when every decline today agrees on it', () => {
+    /*
+     * One day is not a sample. Two declines, one on price and one on timing,
+     * are two anecdotes and picking the first would be arbitrary — whether
+     * declines form a PATTERN is `ConvDeclineReasonDetector`'s question, and
+     * it has a quarter of evidence behind it.
+     */
+    const agreed = facts({
+      outlook: { quotesDeclined: { count: 2, people: [], topReason: 'too_expensive' } },
+    });
+    expect(lines(agreed).join('\n')).toContain('(too_expensive)');
+
+    const split = facts({ outlook: { quotesDeclined: { count: 2, people: [] } } });
+    expect(lines(split).join('\n')).toContain('2 quotes were turned down.');
+  });
+
+  it('says nothing when no quote was answered', () => {
+    const out = lines(facts()).join('\n');
+    expect(out).not.toContain('quote');
+  });
+
+  it('carries both in the languages the owner may read', () => {
+    const won = facts({
+      outlook: { quotesAccepted: { count: 1, people: [{ name: 'אופיר' }], value: 8500, currency: 'ILS' } },
+    });
+
+    expect(buildStatements(won, 'he')[0]).toBe('אופיר אישר את הצעת המחיר, ₪8,500.');
+    expect(buildStatements(won, 'es')[0]).toBe('אופיר aceptó tu presupuesto, ₪8,500.');
   });
 });

@@ -24,6 +24,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SchedulingBookingModal } from '@/components/scheduling/SchedulingBookingModal';
 import { createLogger } from '@/lib/logger';
+import { fromBusinessLocalInput } from '@/lib/scheduling/businessTime';
 import { fetchContactMoney } from '@/lib/payments/fetchContactMoney';
 import { transactionMoneyArrived } from '@/lib/payments/bookingPaymentState';
 import type { EmailSendStatus } from '@/lib/business-os/emailSendStatus';
@@ -45,6 +46,7 @@ import { BookingsTab } from './BookingsTab';
 import { FormSubmissionsSection } from './FormSubmissionsSection';
 import { PaymentManagementModal } from './PaymentManagementModal';
 import { ProposalBuilderModal } from './ProposalBuilderModal';
+import { quoteGate, quoteWaitingOn } from '@/lib/business-os/quoteGate';
 import { StopQuoteDialog } from './StopQuoteDialog';
 import {
   OWNER_CANCEL_REASONS,
@@ -147,6 +149,26 @@ export interface DrawerProposal {
   booking_id: string | null;
   /** Days to pay agreed on this version. Null inherits the business default. */
   payment_terms_days: number | null;
+  /**
+   * The meetings this version sold, for a package.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * CARRIED SO A REVISION STAYS A PACKAGE.
+   *
+   * Without it a revision of "six sessions, billed after each" opened as a
+   * six-STAGE job: the dialog inherits `payment_shape`, which for a
+   * per-session package is `milestones` with the stages labelled "Meeting
+   * 1"…"Meeting 6", and with no `sessions` to tell it otherwise it drew them as
+   * phases of work and the six dates were gone.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  sessions: {
+    dates: string[];
+    duration_minutes: number;
+    bill_per_session?: boolean;
+  } | null;
+  /** The purchase this accepted quote created, for a package. */
+  package_booking_id: string | null;
   /** The proposal document sent with THIS version, when there was one. */
   document: { name: string; size: number | null } | null;
   created_invoice_id: string | null;
@@ -316,6 +338,128 @@ function quotedPayment(
 }
 
 /** The offer that stands — the newest that has not been replaced. */
+/**
+ * A package's meetings, folded into the journey that sold them.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ONE AGREEMENT IS ONE JOURNEY, AND THE JOURNEY IS THE QUOTE'S.
+ *
+ * Flat, an accepted six-session package produced seven cards. Grouping the
+ * meetings under their container left two: the consultation where the quote was
+ * agreed, and the container — which carries no quote of its own, so it drew a
+ * SECOND journey asking for one. "Waiting for a quote", on the thing a quote
+ * had just created.
+ *
+ * So the meetings travel one step further: to the booking the quote came out
+ * of, where the client's journey already is. They arrive as a STAGE in that
+ * journey — "the meetings" — listed under it, each with its own date, status
+ * and actions, because each is a real appointment that can be held, missed,
+ * moved or called off alone.
+ *
+ * Two fallbacks, both deliberate:
+ *   · a quote sold COLD has no booking to attach to, so its container stays as
+ *     the card. It is the only row representing that purchase.
+ *   · a meeting whose container is missing from the list stays where it is.
+ *     That happens mid-refetch, and a vanishing appointment is worse than an
+ *     ungrouped one.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function foldPackageMeetings(
+  cards: SessionCardData[],
+  proposals: DrawerProposal[] = []
+): SessionCardData[] {
+  const byId = new Map(cards.map(card => [card.booking.id, card]));
+
+  const meetingsByParent = new Map<string, SessionCardData[]>();
+
+  for (const card of cards) {
+    const parent = card.booking.parent_booking_id;
+    if (!parent || !byId.has(parent)) continue;
+
+    const siblings = meetingsByParent.get(parent) ?? [];
+    siblings.push(card);
+    meetingsByParent.set(parent, siblings);
+  }
+
+  if (meetingsByParent.size === 0) return cards;
+
+  /*
+   * Where each container's meetings should end up: the booking its quote came
+   * out of, when that booking is on screen — otherwise the container itself.
+   */
+  const hostOf = new Map<string, string>();
+
+  for (const containerId of meetingsByParent.keys()) {
+    const sold = proposals.find(proposal => proposal.package_booking_id === containerId);
+    const host = sold?.booking_id && byId.has(sold.booking_id) ? sold.booking_id : containerId;
+    hostOf.set(containerId, host);
+  }
+
+  const absorbed = new Set(
+    [...hostOf.entries()].filter(([container, host]) => container !== host).map(([container]) => container)
+  );
+
+  return cards
+    // The meetings themselves, and any container whose journey has a better home.
+    .filter(card => !meetingsByParent.has(card.booking.id) || !absorbed.has(card.booking.id))
+    .filter(card => !card.booking.parent_booking_id || !byId.has(card.booking.parent_booking_id))
+    .map(card => {
+      const containerId = [...hostOf.entries()].find(([, host]) => host === card.booking.id)?.[0];
+      const meetings = containerId ? meetingsByParent.get(containerId) : undefined;
+      if (!meetings?.length) return card;
+
+      // In the order they were sold, which is the order the client agreed to.
+      const ordered = [...meetings].sort(
+        (a, b) => (a.booking.occurrence_number ?? 0) - (b.booking.occurrence_number ?? 0)
+      );
+
+      /*
+       * A STAGE in the journey, not a panel beside it. The meetings are what
+       * the agreement produced, so they belong on the same timeline as the
+       * quote that produced them — after it, which is when they happen.
+       */
+      const nextUp = ordered.find(meeting => meeting.booking.status === 'confirmed');
+
+      const packageStep: BookingJourneyStep = {
+        id: `${card.booking.id}-package`,
+        key: 'package',
+        status: nextUp ? 'active' : 'completed',
+        timestamp: ordered[0]?.booking.start_time ?? undefined,
+        metadata: { count: ordered.length, containerId },
+      };
+
+      const steps = card.journeySteps ? [...card.journeySteps] : [];
+      const afterQuote = steps.findIndex(step => step.key === 'proposal');
+
+      // Straight after the quote where there is one; at the end otherwise.
+      if (afterQuote >= 0) steps.splice(afterQuote + 1, 0, packageStep);
+      else steps.push(packageStep);
+
+      return { ...card, meetings: ordered, journeySteps: steps };
+    });
+}
+
+/**
+ * Does this booking's journey involve a quote at all?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `sale_mode: 'proposal'` is a fact about the SERVICE, and a package is sold
+ * through exactly such a service — so every one of its six meetings answered
+ * yes, took the quoting journey, and said "the quote will be sent after the
+ * meeting" about a meeting that quote had already created, sold and billed.
+ *
+ * A session of a package is what a quote PRODUCED. The quote belongs to the
+ * purchase it created, which is the container, and the container is the row
+ * with no parent.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function isQuotedJob(booking: {
+  parent_booking_id?: string | null;
+  service?: { sale_mode?: 'direct' | 'proposal' | null } | null;
+}): boolean {
+  return booking.service?.sale_mode === 'proposal' && !booking.parent_booking_id;
+}
+
 function pickProposal(bookingId: string, proposals: DrawerProposal[]): DrawerProposal | null {
   return proposalsFor(bookingId, proposals).find(p => p.status !== 'superseded') ?? null;
 }
@@ -344,7 +488,30 @@ function buildJourneySteps(
 ): BookingJourneyStep[] {
   const { booking, payment, confirmationEmail } = data;
   const steps: BookingJourneyStep[] = [];
-  const isProduct = !booking.start_time || booking.service?.is_product;
+  /*
+   * WHAT IT IS, NOT WHETHER A TIMESTAMP TURNED UP.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * This read `!booking.start_time || booking.service?.is_product`, and
+   * `scheduling_services.is_product` DOES NOT EXIST — it is declared in this
+   * file's local service type and nowhere in the database. So the second half
+   * was permanently `undefined` and the whole test collapsed to "has no start
+   * time".
+   *
+   * That is a proxy, and it fails in the direction that hides a problem: a
+   * SCHEDULED service whose booking is missing its time is silently reclassified
+   * as a product. Its final step becomes "fulfilment" instead of the session,
+   * and the journey now says "No appointment" about a sale that is supposed to
+   * have one — reassuring the owner about the exact thing that is wrong.
+   *
+   * `is_scheduled` is the authoritative fact and one of the three the service
+   * model is built on. The start-time proxy survives only as a fallback for a
+   * row that did not carry it, so nothing regresses where the field is absent.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const isUnscheduled =
+    booking.service?.is_scheduled === false ||
+    (booking.service?.is_scheduled == null && !booking.start_time);
   const hasIntake = booking.intake_responses && Object.keys(booking.intake_responses.responses || {}).length > 0;
   const bookingDate = booking.start_time ? new Date(booking.start_time) : null;
   const isUpcoming = booking.status === 'confirmed' && bookingDate && bookingDate > new Date();
@@ -358,7 +525,16 @@ function buildJourneySteps(
    * other respect — what makes it part of a quoted journey is what is being
    * sold, not how the row was created.
    */
-  const isQuotedBooking = booking.service?.sale_mode === 'proposal';
+  /*
+   * A SESSION OF A PACKAGE IS NOT A JOB AWAITING A QUOTE.
+   *
+   * The service is still `sale_mode: 'proposal'` — that is how the block was
+   * sold — so every one of the six meetings drew the quoting journey and said
+   * "the quote will be sent after the meeting", about a meeting the quote had
+   * already created, been accepted and billed. The quote belongs to the
+   * PURCHASE, which is the container, and these are what it bought.
+   */
+  const isQuotedBooking = isQuotedJob(booking);
 
   // Helper to format date and time, on the business's clock — the same one the
   // calendar, the booking dialog and the client's email use.
@@ -376,10 +552,24 @@ function buildJourneySteps(
     return new Intl.NumberFormat(language, { style: 'currency', currency }).format(amount);
   };
 
-  // Step 1: Service/Product (always completed - they booked it)
+  /*
+   * Step 1: what was bought. Always a SERVICE.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * This chose between 'product' and 'service', and the platform has no product
+   * status: everything sold lives in `scheduling_services`, and the three facts
+   * that describe one are `is_scheduled`, `collection` and `sale_mode`. A
+   * service you do not book a time for is still a service.
+   *
+   * So a client who bought a course saw their journey open with "מוצר", a word
+   * for a thing this platform does not sell. The distinction that IS real —
+   * whether a time was booked — is carried by the final step below, which is
+   * the session for a scheduled service and the delivery for one without.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   steps.push({
     id: `${booking.id}-service`,
-    key: isProduct ? 'product' : 'service',
+    key: 'service',
     status: 'completed',
     details: booking.service?.service_name,
     timestamp: booking.created_at
@@ -454,22 +644,32 @@ function buildJourneySteps(
     const proposal = data.proposal;
 
     /*
-     * The consultation has to happen before the quote can.
+     * When the owner may send the quote — five states, in `quoteGate`.
      *
-     * A site visit booked for Thursday is where the work gets scoped, and on
-     * Monday there is nothing to price. The step said "waiting on you" anyway —
-     * which is simply false: nobody is waiting on the owner, the journey is
-     * waiting on the meeting. It read as an overdue task in the one list an
-     * owner uses to decide what to do today.
+     * ───────────────────────────────────────────────────────────────────────────
+     * This was a boolean: waiting on the meeting, or your move. It flipped on the
+     * clock alone, so the moment a consultation's start time passed the journey
+     * said the owner owed a price — for a site visit nobody attended, which is
+     * simply false and read as an overdue task.
      *
-     * The gate opens when the meeting STARTS rather than when it is marked
-     * complete. Owners quote from the van on the way back, and few of them mark
-     * an appointment done before they do — a gate on the status flag would have
-     * held the button shut for the whole population it was meant to serve.
+     * The clock is still the trigger rather than the completion flag, for the
+     * reason it always was: owners quote from the van and rarely mark an
+     * appointment done first. What changed is that the state between "ahead" and
+     * "your move" now EXISTS and asks — `unmarked` — instead of assuming.
+     *
+     * The rules live in `lib/business-os/quoteGate.ts` with their own tests. Five
+     * states inside this component is how the first version came to contradict
+     * its own comment about no-shows.
+     * ───────────────────────────────────────────────────────────────────────────
      */
-    const awaitingMeeting = Boolean(
-      !proposal && !isProduct && bookingDate && !isCompleted && !isCancelled && bookingDate > new Date()
-    );
+    const gate = quoteGate({
+      bookingStatus: booking.status,
+      startTime: bookingDate,
+      isUnscheduled,
+      proposalStatus: proposal?.status ?? null,
+    });
+
+    const awaitingMeeting = gate === 'ahead';
 
     /*
      * Cancelling ends a quoted job — it is the only mark that does.
@@ -500,12 +700,29 @@ function buildJourneySteps(
      * the "Send a quote" button — gated on `waitingOn === 'owner'` — stops
      * inviting a new price for work that has ended.
      */
-    const jobClosed = isCancelled || proposal?.status === 'stopped';
+    /*
+     * `gate` already weighed both: a cancelled booking and a stopped quote.
+     *
+     * It deliberately does NOT include `no_show`, which `isCancelled` above
+     * does — that variable is read by the payment and intake steps, where it
+     * means "the job is off", and folding a missed meeting into it took the
+     * quote button away from a client who simply did not turn up. The comment
+     * below has always said cancelling is the only mark that ends a job; now
+     * the code agrees.
+     */
+    const jobClosed = gate === 'closed';
 
+    /*
+     * `unmarked` and `missed` are ACTIVE, not failed.
+     *
+     * Both need something from the owner — an answer, or a new time — and a
+     * failed step offers nothing and invites nothing. Only a cancelled job and
+     * a dead quote are failures.
+     */
     const status: BookingJourneyStep['status'] = jobClosed
       ? 'failed'
       : !proposal
-        ? awaitingMeeting
+        ? gate === 'ahead'
           ? 'pending'
           : 'active'
         : proposal.status === 'accepted'
@@ -536,13 +753,12 @@ function buildJourneySteps(
          * button read, so the strip cannot say "waiting on the meeting" beside
          * a button inviting you to skip it.
          */
-        waitingOn: jobClosed
-          ? 'closed'
-          : awaitingMeeting
-            ? 'meeting'
-            : !proposal || proposal.status === 'declined'
-              ? 'owner'
-              : 'client',
+        /*
+         * Derived by `quoteWaitingOn` from the same state the status above
+         * used, so the strip's label and the "Send a quote" button — which is
+         * gated on this value — cannot describe different situations.
+         */
+        waitingOn: quoteWaitingOn(gate, proposal?.status ?? null),
         meetingAt: awaitingMeeting && bookingDate ? formatDateTime(bookingDate) : null,
         declineReason: proposal?.decline_reason ?? null,
         declineNote: proposal?.decline_note ?? null,
@@ -615,10 +831,31 @@ function buildJourneySteps(
       he: 'באיחור'
     };
 
-    // Check if payment is overdue (invoice due date passed and not paid)
-    const isOverdue = payment.status === 'pending' &&
-                      payment.invoiceDueDate &&
-                      new Date(payment.invoiceDueDate) < new Date();
+    /*
+     * Overdue means the DAY has passed, not the instant.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This was `new Date(dueDate) < new Date()`, which compares a DATE against
+     * an INSTANT and gets both halves wrong:
+     *
+     *   · `new Date('2026-09-30')` is midnight UTC, so an invoice due on the
+     *     30th was already "past" at 00:00 UTC — before the day had started
+     *     anywhere west of London.
+     *   · An invoice due TODAY is not late. It was reported overdue from the
+     *     first second of its own due date, so INV-00013, raised at 14:46 and
+     *     payable on receipt, showed as overdue the moment it existed.
+     *
+     * Compared as calendar days instead. `en-CA` renders `YYYY-MM-DD`, which
+     * sorts lexicographically, so no instant arithmetic is involved at all.
+     * The owner's own zone is the right one here: this is their screen, and it
+     * is the calendar they are looking at.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const todayKey = new Date().toLocaleDateString('en-CA');
+    const isOverdue =
+      payment.status === 'pending' &&
+      Boolean(payment.invoiceDueDate) &&
+      String(payment.invoiceDueDate).slice(0, 10) < todayKey;
 
     /*
      * Say which arrangement this is, not just a number.
@@ -803,7 +1040,7 @@ function buildJourneySteps(
   // Step 6: Final status (Session for services, Fulfillment for products)
   steps.push({
     id: `${booking.id}-final`,
-    key: isProduct ? 'fulfillment' : 'session',
+    key: isUnscheduled ? 'fulfillment' : 'session',
     status: isCompleted ? 'completed' :
             isCancelled ? 'failed' :
             isUpcoming ? 'pending' : 'active',
@@ -1135,7 +1372,7 @@ type BookingWithService = SchedulingBooking & {
     service_name: string;
     price?: number | null;
     currency?: string;
-    is_product?: boolean;
+    is_scheduled?: boolean | null;
     sale_mode?: 'direct' | 'proposal' | null;
   } | null;
 };
@@ -1174,6 +1411,9 @@ function toAppointment(booking: BookingWithService): Appointment {
     timezone: booking.timezone ?? undefined,
     status: booking.status,
     notes: booking.notes ?? undefined,
+    // A package's meeting, and which one. Null on every ordinary booking.
+    parent_booking_id: booking.parent_booking_id ?? null,
+    occurrence_number: booking.occurrence_number ?? null,
     /*
      * Why it was cancelled, and by whom.
      *
@@ -1193,7 +1433,7 @@ function toAppointment(booking: BookingWithService): Appointment {
     service: booking.service
       ? {
           service_name: booking.service.service_name,
-          is_product: booking.service.is_product,
+          is_scheduled: booking.service.is_scheduled,
           sale_mode: booking.service.sale_mode,
           currency: booking.service.currency,
         }
@@ -1231,6 +1471,25 @@ export function CRMContactDrawerV2({
 
   // Data states
   const [sessions, setSessions] = useState<SessionCardData[]>([]);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * EVERY BOOKING ON SCREEN, a package's meetings included.
+   *
+   * `sessions` is the CARD list, and since a package's meetings became a step
+   * inside their quote's journey they are no longer in it — they hang off
+   * `card.meetings`. Every lookup by booking id then quietly found nothing:
+   * the reschedule button on a meeting row did nothing at all, the cancel
+   * dialog could not tell whether the thing being cancelled had an hour, and
+   * the drawer's count of upcoming appointments dropped six.
+   *
+   * One flat view, so a card action against any booking id works wherever that
+   * booking is drawn.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const everyBooking = () => sessions.flatMap(card => [card, ...(card.meetings ?? [])]);
+  const findSession = (bookingId: string) =>
+    everyBooking().find(card => card.booking.id === bookingId);
   /** The contact's quotes. Empty for every business that does not quote. */
   const [proposals, setProposals] = useState<DrawerProposal[]>([]);
   /** A milestone awaiting confirmation before it bills the client. */
@@ -1597,20 +1856,128 @@ export function CRMContactDrawerV2({
        * remainder lands on the final period rather than silently going missing.
        */
       const service = bookingWithService.service;
+
+      /*
+       * THE BOOKING SAYS WHETHER IT IS ON A PLAN. THE SERVICE ONLY SAYS HOW IT
+       * IS MEANT TO BE SOLD.
+       *
+       * ─────────────────────────────────────────────────────────────────────────
+       * This asked the service's CONFIGURATION alone, and so claimed a plan for
+       * any booking of a service configured for one — whether or not a plan had
+       * been created. The owner's own booking path did not create them, so a
+       * ₪800 service sold as "2 × ₪400" was charged in full and displayed here
+       * as ₪400: the card showed the instalment the owner expected while twice
+       * that had left the client's account, and the refund offered followed the
+       * card rather than the charge.
+       *
+       * `payment_plan_id` is written by both paths that genuinely create a plan
+       * — `createBookingPaymentPlan` on the invoice path and
+       * `bindPlanSubscription` on the Stripe one — so a booking that was billed
+       * in full now correctly shows what was billed.
+       * ─────────────────────────────────────────────────────────────────────────
+       */
+      /*
+       * What actually arrived, before anything is projected. A booking can carry
+       * money as a transaction, an invoice, or both.
+       */
+      const money = booking as SchedulingBooking & {
+        invoice?: { amount?: number | null; paid_at?: string | null } | null;
+        payments?: Array<{ amount?: number | null; status?: string | null }>;
+        planPeriods?: Array<{
+          id: string;
+          installment_number: number;
+          amount: number | string;
+          currency?: string | null;
+          status: string;
+          trigger?: 'date' | 'manual' | null;
+          due_date: string | null;
+          paid_at?: string | null;
+          invoice_id?: string | null;
+          label?: string | null;
+        }>;
+      };
+
+      /*
+       * The plan's REAL periods, in order.
+       *
+       * A quoted job has shown its stages here all along — what each one is
+       * worth, what has been paid, what falls due next. An instalment plan had
+       * only "1 of 2" and a single figure, so the owner could not answer the
+       * client's obvious question: when is the next payment, and how much?
+       *
+       * These are the rows the money is actually billed from
+       * (`payment_plan_installments`), not a projection of the service's
+       * configuration — so a period that has been paid, one that has been
+       * invoiced and one still to come each read as what they are.
+       */
+      const planPeriods = [...(money.planPeriods ?? [])].sort(
+        (a, b) => a.installment_number - b.installment_number
+      );
+
+      const collected =
+        (money.payments ?? [])
+          .filter(pay => transactionMoneyArrived(pay.status))
+          .reduce((sum, pay) => sum + Number(pay.amount ?? 0), 0) ||
+        (money.invoice?.paid_at ? Number(money.invoice.amount ?? 0) : 0);
+
+      /*
+       * Billed in full, whatever the service was configured to do. A path that
+       * ignored the plan and charged the whole price leaves exactly this trace,
+       * and the card must follow it rather than the configuration.
+       */
+      const billedInFull = collected > 0 && collected >= servicePrice;
+
       const isPlan =
         service?.payment_type === 'installments' &&
         (service.installment_count ?? 1) > 1 &&
-        servicePrice > 0;
+        servicePrice > 0 &&
+        !billedInFull;
+
+      const paidPeriods = planPeriods.filter(p => p.status === 'paid');
+
+      /*
+       * The next period the client owes, which is what the owner is asked about.
+       * Falls back to the last period so a finished plan still names one.
+       */
+      const nextPeriod = planPeriods.find(p => p.status !== 'paid' && p.status !== 'cancelled');
 
       const sessionPlan: SessionPaymentPlan | undefined = isPlan
         ? {
-            installmentCount: service!.installment_count!,
-            installmentAmount: fromMinorUnits(
-              planPhases(servicePrice, serviceCurrency, service!.installment_count!)[0].amountMinor,
-              serviceCurrency
-            ),
+            installmentCount: planPeriods.length || service!.installment_count!,
+            /*
+             * The period the plan is ON. Taken from the real rows where they
+             * exist — the first period's projected amount is only right until
+             * one has been paid — and from the projection before the schedule
+             * has been written, which is the window between booking and the
+             * processor confirming.
+             */
+            installmentAmount: planPeriods.length
+              ? Number((nextPeriod ?? planPeriods[planPeriods.length - 1]).amount)
+              : fromMinorUnits(
+                  planPhases(servicePrice, serviceCurrency, service!.installment_count!)[0].amountMinor,
+                  serviceCurrency
+                ),
             totalAmount: servicePrice,
             frequency: (service!.installment_frequency || 'monthly') as SessionPaymentPlan['frequency'],
+            periodsPaid: planPeriods.length ? paidPeriods.length : undefined,
+            /*
+             * The dated list, exactly as a quoted job shows its stages — same
+             * shape, same renderer. Omitted entirely when no schedule has been
+             * written yet, so the card falls back to its summary rather than
+             * showing an empty list.
+             */
+            stages: planPeriods.length
+              ? planPeriods.map(p => ({
+                  id: p.id,
+                  label: p.label ?? null,
+                  amount: Number(p.amount),
+                  status: p.status,
+                  trigger: p.trigger ?? 'date',
+                  invoiceId: p.invoice_id ?? null,
+                  dueDate: p.due_date,
+                  paidAt: p.paid_at ?? null,
+                }))
+              : undefined,
           }
         : undefined;
 
@@ -1667,9 +2034,7 @@ export function CRMContactDrawerV2({
        * up showing ₪0.00 and "no payment required" for a job with a paid deposit.
        */
       const quotedMoney = quotedPayment(
-        bookingWithService.service?.sale_mode === 'proposal'
-          ? pickProposal(booking.id, proposalsList)
-          : null,
+        isQuotedJob(bookingWithService) ? pickProposal(booking.id, proposalsList) : null,
         serviceCurrency
       );
 
@@ -1717,10 +2082,10 @@ export function CRMContactDrawerV2({
               openedAt: confirmationEmail.opened_at || undefined,
               subject: confirmationEmail.subject
             } : undefined,
-            proposal: bookingWithService.service?.sale_mode === 'proposal'
+            proposal: isQuotedJob(bookingWithService)
               ? pickProposal(booking.id, proposalsList)
               : undefined,
-            proposalHistory: bookingWithService.service?.sale_mode === 'proposal'
+            proposalHistory: isQuotedJob(bookingWithService)
               ? proposalsFor(booking.id, proposalsList)
               : undefined
           },
@@ -1730,7 +2095,7 @@ export function CRMContactDrawerV2({
         )
       };
     });
-    setSessions(sessionCards);
+    setSessions(foldPackageMeetings(sessionCards, proposalsList));
     // Both builders, per the warning above: a plan's state must not depend on
     // which path loaded the drawer.
     void loadPlanStates(sessionCards, contact.id);
@@ -2114,10 +2479,10 @@ export function CRMContactDrawerV2({
             bookingMoney.payments?.find(pay => transactionMoneyArrived(pay.status) && pay.paid_at)?.paid_at ||
             undefined;
 
-          // Same rule as the primary path: the quote decides, not the service.
+          // Same rule as the primary path: the quote decides, not the service —
+          // and a package's session is not a job a quote is still owed for.
           const quotedMoney = quotedPayment(
-            (booking as SchedulingBooking & { service?: { sale_mode?: string | null } })
-              .service?.sale_mode === 'proposal'
+            isQuotedJob(booking as BookingWithService)
               ? pickProposal(booking.id, freshProposals)
               : null,
             serviceCurrency
@@ -2174,12 +2539,10 @@ export function CRMContactDrawerV2({
                   openedAt: confirmationEmail.opened_at || undefined,
                   subject: confirmationEmail.subject
                 } : undefined,
-                proposal: (booking as SchedulingBooking & { service?: { sale_mode?: string | null } })
-                  .service?.sale_mode === 'proposal'
+                proposal: isQuotedJob(booking as BookingWithService)
                   ? pickProposal(booking.id, freshProposals)
                   : undefined,
-                proposalHistory: (booking as SchedulingBooking & { service?: { sale_mode?: string | null } })
-                  .service?.sale_mode === 'proposal'
+                proposalHistory: isQuotedJob(booking as BookingWithService)
                   ? proposalsFor(booking.id, freshProposals)
                   : undefined
               },
@@ -2189,7 +2552,9 @@ export function CRMContactDrawerV2({
             )
           };
         });
-        setSessions(sessionCards);
+        // `freshProposals` on this path: it is the refetch's own list, and the
+        // fold needs the same quotes the cards were built from.
+        setSessions(foldPackageMeetings(sessionCards, freshProposals));
         void loadPlanStates(sessionCards, contactId);
 
         // Extract intake responses for Files tab (exclude pending intakes with no actual data)
@@ -2500,7 +2865,7 @@ export function CRMContactDrawerV2({
   };
 
   const handleEditSession = (bookingId: string) => {
-    const session = sessions.find(s => s.booking.id === bookingId);
+    const session = findSession(bookingId);
     if (session) {
       // Convert to SchedulingBooking format for modal (matching old drawer format)
       setEditingBooking({
@@ -2690,7 +3055,7 @@ export function CRMContactDrawerV2({
      upcoming. It was passed to `new Date()` anyway — `new Date(null)` is the
      epoch, so products happened to fall out of the count by being dated 1970.
      Asked directly instead, which is the same answer for an honest reason. */
-  const upcomingSessions = sessions.filter(s =>
+  const upcomingSessions = everyBooking().filter(s =>
     s.booking.status === 'confirmed' &&
     !!s.booking.start_time &&
     new Date(s.booking.start_time) > new Date()
@@ -2855,6 +3220,42 @@ export function CRMContactDrawerV2({
               {/* Bookings Section - Timeline flow with cards */}
               <BookingsTab
                 sessions={sessions}
+                /*
+                 * Add a meeting to a package already under way. The money is the
+                 * owner's answer — see the route — and it is only asked where it
+                 * means anything, which `packageBillsPerMeeting` decides.
+                 */
+                onAddPackageMeeting={async (containerId, startTime, charge) => {
+                  const response = await fetch(`/api/scheduling/bookings/${containerId}/meetings`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      // The input holds the business's wall clock; the column
+                      // holds an instant, as everywhere else in this drawer.
+                      start_time: fromBusinessLocalInput(startTime, timezone).toISOString(),
+                      charge,
+                    }),
+                  });
+
+                  const data = await response.json();
+
+                  if (!response.ok || !data.success) {
+                    throw new Error(data.error || t('crm.booking.package.add_failed'));
+                  }
+
+                  await fetchSessions(contact.id, { silent: true });
+                  await fetchActivities(contact.id, { silent: true });
+                }}
+                packageBillsPerMeeting={containerId => {
+                  /*
+                   * Billed per meeting when its stages are the meetings: each
+                   * waiting on the owner and bound to a booking of its own.
+                   * Read from the quote that sold it, which is what the drawer
+                   * already has.
+                   */
+                  const sold = proposals.find(p => p.package_booking_id === containerId);
+                  return Boolean(sold?.sessions?.bill_per_session);
+                }}
                 /* What became of each plan — stopped, completed, still running.
                    The journey derives the plan from the service, which is the
                    agreement rather than its fate. */
@@ -3585,9 +3986,7 @@ export function CRMContactDrawerV2({
                   there is no meeting to cancel and no time to give back. Which
                   booking this is decides which sentence is honest. */}
               {(() => {
-                const pending = sessions.find(
-                  session => session.booking.id === pendingCancelBookingId
-                );
+                const pending = findSession(pendingCancelBookingId ?? '');
                 // No start time is the same test the rest of the drawer uses.
                 const hasSchedule = Boolean(pending?.booking.start_time);
 

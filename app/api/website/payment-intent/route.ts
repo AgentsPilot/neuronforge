@@ -11,7 +11,7 @@ import { resolvePublicOwner } from '@/lib/business-os/publicOwner';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
-import { isInstallmentPlan, type PlanTerms } from '@/lib/payments/PaymentPlanService';
+import { isInstallmentPlan, planStartDate, type PlanTerms } from '@/lib/payments/PaymentPlanService';
 import { stripeIntervalFor, planPhases, type PlanFrequency } from '@/lib/payments/planSchedule';
 import { z } from 'zod';
 import Stripe from 'stripe';
@@ -208,30 +208,51 @@ export async function POST(request: NextRequest) {
 
     if (planTerms && stripeAccountId) {
       /*
-       * A deferred first payment cannot be collected by this surface.
+       * A deferred first payment: nothing is owed today, and the card is still
+       * collected so Stripe can charge on the agreed day.
        *
-       * `first_payment_due: 'days_after'` means nothing is owed today, so there
-       * is no invoice to pay and no amount to put on the button — collecting the
-       * card would need a SetupIntent and a trialling subscription, which is a
-       * different form than the one this endpoint serves.
+       * ─────────────────────────────────────────────────────────────────────
+       * This branch used to REFUSE the booking outright
+       * (`PLAN_DEFERRED_START_UNSUPPORTED`), and the comment here said a
+       * deferred start "would need a SetupIntent and a trialling
+       * subscription". That was the right diagnosis; this is that design.
        *
-       * Refused rather than approximated. Charging today would ignore the
-       * owner's configuration in exactly the way this whole branch exists to
-       * stop, and it would take the client's money earlier than they agreed.
+       * The owner could configure "first payment N days after booking" in the
+       * Services settings, it saved, and then the client could not book at
+       * all. `planStartDate` — the function that computes the date — had no
+       * caller anywhere in production, and no cron scanned for a plan payment
+       * becoming due, so nothing would ever have collected it.
+       *
+       * A trialling subscription keeps collection with STRIPE: the trial ends
+       * on the agreed day and Stripe charges the saved card itself. The
+       * alternative — our own scheduler raising the first charge — would be a
+       * new cron holding a card, which is more machinery and more ways to miss
+       * a payment.
+       * ─────────────────────────────────────────────────────────────────────
        */
-      if (planTerms.firstPaymentDue === 'days_after') {
-        requestLogger.warn(
-          { serviceId: data.service_id, days: planTerms.firstPaymentDays },
-          'Plan defers the first payment — embedded checkout cannot collect it'
-        );
+      const bookedAt = new Date();
+      const planStartsAt = planStartDate(planTerms, bookedAt);
 
-        return NextResponse.json(
+      /*
+       * Deferred only if the date is genuinely in the future.
+       *
+       * `first_payment_due: 'days_after'` with `first_payment_days: 0` resolves
+       * to now, and `planStartDate` clamps a negative day count to zero. Asking
+       * Stripe for a trial that has already ended is an error, and it would also
+       * be a lie to the client: the honest reading of "0 days after booking" is
+       * "on booking", which is the immediate path below.
+       */
+      const deferred =
+        planTerms.firstPaymentDue === 'days_after' && planStartsAt.getTime() > bookedAt.getTime();
+
+      if (deferred) {
+        requestLogger.info(
           {
-            success: false,
-            error: 'This service cannot be booked online yet. Please contact the business to arrange payment.',
-            code: 'PLAN_DEFERRED_START_UNSUPPORTED'
+            serviceId: data.service_id,
+            days: planTerms.firstPaymentDays,
+            startsAt: planStartsAt.toISOString(),
           },
-          { status: 400 }
+          'Plan defers its first payment — collecting the card now and letting Stripe charge on the day'
         );
       }
 
@@ -300,7 +321,29 @@ export async function POST(request: NextRequest) {
               save_default_payment_method: 'on_subscription',
               payment_method_types: ['card'],
             },
-            expand: ['latest_invoice.confirmation_secret'],
+            /*
+             * A trial is what makes the first payment land on the agreed day.
+             *
+             * Stripe raises no invoice during a trial, so there is nothing to
+             * pay today; it charges the saved card when the trial ends. With
+             * `default_incomplete` the subscription hands back a
+             * `pending_setup_intent` instead of an invoice secret, which is the
+             * form the client confirms — see `intentKind` below.
+             */
+            ...(deferred
+              ? {
+                  trial_end: Math.floor(planStartsAt.getTime() / 1000),
+                  /*
+                   * No card by the time the trial ends means no plan.
+                   *
+                   * The default leaves the subscription active and unpaid,
+                   * which reads locally as a live plan collecting nothing —
+                   * the state hardest to notice. Cancelling says so.
+                   */
+                  trial_settings: { end_behavior: { missing_payment_method: 'cancel' as const } },
+                }
+              : {}),
+            expand: deferred ? ['pending_setup_intent'] : ['latest_invoice.confirmation_secret'],
             metadata: {
               owner_id: ownerId,
               booking_id: data.booking_id || '',
@@ -318,14 +361,33 @@ export async function POST(request: NextRequest) {
           accountOptions
         );
 
-        // On this API version the Invoice carries no `payment_intent`; the
-        // secret is `confirmation_secret`, expanded above.
-        const invoice = subscription.latest_invoice as Stripe.Invoice | null;
-        const clientSecret = invoice?.confirmation_secret?.client_secret;
+        /*
+         * Which secret the client confirms, and with which call.
+         *
+         * A trialling subscription raises no invoice, so there is no payment to
+         * confirm — only a card to store, carried by `pending_setup_intent`.
+         * The immediate path is unchanged: on this API version the Invoice has
+         * no `payment_intent` and the secret is `confirmation_secret`.
+         *
+         * The KIND travels with the secret rather than being guessed from its
+         * prefix at the other end. `stripe.confirmPayment` on a SetupIntent
+         * secret fails at the last step of a booking, which is the worst place
+         * to discover a mismatch, and a prefix check is a rule written in two
+         * places that can disagree.
+         */
+        const invoice = deferred ? null : (subscription.latest_invoice as Stripe.Invoice | null);
+        const setupIntent = deferred
+          ? (subscription.pending_setup_intent as Stripe.SetupIntent | null)
+          : null;
+
+        const clientSecret = deferred
+          ? setupIntent?.client_secret
+          : invoice?.confirmation_secret?.client_secret;
+        const intentKind: 'payment' | 'setup' = deferred ? 'setup' : 'payment';
 
         if (!clientSecret) {
           requestLogger.error(
-            { subscriptionId: subscription.id, invoiceId: invoice?.id },
+            { subscriptionId: subscription.id, invoiceId: invoice?.id, deferred, intentKind },
             'Plan subscription created without a confirmable secret'
           );
 
@@ -340,8 +402,11 @@ export async function POST(request: NextRequest) {
             subscriptionId: subscription.id,
             periods: planTerms.installmentCount,
             frequency: planTerms.frequency,
-            dueNow: period.amountMinor,
+            // Zero on a deferred plan, and that is the point of saying it.
+            dueNow: deferred ? 0 : period.amountMinor,
             currency: planTerms.currency,
+            intentKind,
+            firstChargeAt: planStartsAt.toISOString(),
           },
           'Payment plan subscription created for embedded checkout'
         );
@@ -351,6 +416,19 @@ export async function POST(request: NextRequest) {
           clientSecret,
           subscriptionId: subscription.id,
           isPlan: true,
+          /*
+           * What the form must do with `clientSecret`, and when the first
+           * payment lands.
+           *
+           * `intentKind` alone decides the button's words — a setup secret
+           * means nothing is charged today. A zero due-now amount was also
+           * returned here once and read by nobody: the form already has the period
+           * amount, and a second figure in a money response that no caller
+           * consults is one more thing that can drift out of agreement with
+           * the charge.
+           */
+          intentKind,
+          firstChargeAt: planStartsAt.toISOString(),
           publishableKey: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
           connectedAccountId: stripeAccountId,
         });
