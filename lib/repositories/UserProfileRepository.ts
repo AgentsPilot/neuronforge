@@ -17,6 +17,17 @@ import type { AgentRepositoryResult as RepositoryResult } from './types';
 import { ADMIN_IDENTITY_CHUNK, ilikeContainsPattern, matchesLiterally } from './BusinessProfileRepository';
 
 /**
+ * The columns the GDPR export reads from `profiles` (findForUserDataExport;
+ * DATA_EXPORT_FOLLOWUPS_WORKPLAN.md §4.1). Today that is every column: each is
+ * the person's own profile or onboarding answer. Listed by name so a column
+ * added later is NOT exported until someone decides it should be. Changing this
+ * changes what the export holds: a privacy decision.
+ */
+const PROFILE_DATA_EXPORT_COLUMNS =
+  'id, full_name, avatar_url, plan, company, job_title, timezone, language, created_at, updated_at, ' +
+  'role, domain, onboarding, onboarding_goal, onboarding_mode, onboarding_data, hourly_rate_usd, org_id';
+
+/**
  * Subset of the `profiles` table columns used for building UserContext.
  * Add fields as new callers need them — keep this narrow on purpose.
  */
@@ -224,21 +235,21 @@ export class UserProfileRepository {
 
   /**
    * GDPR export only (GET /api/user/data-export, Art. 15 / 20). The caller's
-   * whole profile row, every column. The column set and `.single()` are fixed:
-   * changing either changes what the export holds, which is a privacy decision.
-   * A missing row is an error here (PGRST116), as it always was; the route
-   * ignores it and exports the auth fields alone.
+   * profile row, PROFILE_DATA_EXPORT_COLUMNS only. The column set and `.single()`
+   * are fixed: changing either changes what the export holds, which is a privacy
+   * decision. A missing row is an error here (PGRST116), as it always was; the
+   * route ignores it and exports the auth fields alone.
    */
   async findForUserDataExport(userId: string): Promise<RepositoryResult<Record<string, unknown>>> {
     try {
       const { data, error } = await this.supabase
         .from('profiles')
-        .select('*')
+        .select(PROFILE_DATA_EXPORT_COLUMNS)
         .eq('id', userId)
         .single();
 
       if (error) throw error;
-      return { data: data as Record<string, unknown>, error: null };
+      return { data: data as unknown as Record<string, unknown>, error: null };
     } catch (error) {
       this.logger.error({ err: error, userId }, 'Failed to read the profile for the data export');
       return { data: null, error: error as Error };

@@ -62,10 +62,19 @@ The **route** keeps the auth block, the `exportData` assembly, the plugin-connec
 **Errors must stay ignored.** If a repository error failed the route instead, R8's permanent 42703 would turn every export into a 500. Not a fix for this slice.
 
 **Not changed (called out, not fixed here):**
-- FU-1: the `timestamp` filter on R8 stays broken. A test pins it.
-- `select('*')` on R1, R2, R3, R4, R6, R7 and R8 stays as it is. A **privacy follow-up** (FU-P1) should decide on explicit column lists, for example the internal fields in `audit_trail.*` and `user_subscriptions.*`.
-- The 500 body returns `error.message` in production, which breaks the security rule in CLAUDE.md. Follow-up FU-P2. The response shape is pinned as is.
-- `exportData: any` and `catch (error: any)` (rule 6). They stay untouched, and adding types is left for the follow-up so this diff stays mechanical.
+- FU-1: the `timestamp` filter on R8 stays broken. A test pins it. *(✅ Closed by the data export follow-ups PR, branch `fix/data-export-history-and-columns`: `created_at`.)*
+- `select('*')` on R1, R2, R3, R4, R6, R7 and R8 stays as it is. A **privacy follow-up** (FU-P1) should decide on explicit column lists, for example the internal fields in `audit_trail.*` and `user_subscriptions.*`. *(✅ Closed by the same PR: explicit column constants, plus NF-1, plugin connections were never exported because `metadata` does not exist.)*
+- The 500 body returns `error.message` in production, which breaks the security rule in CLAUDE.md. Follow-up FU-P2. The response shape is pinned as is. *(✅ Closed by the same PR.)*
+- `exportData: any` and `catch (error: any)` (rule 6). They stay untouched, and adding types is left for the follow-up so this diff stays mechanical. *(`catch` typed `unknown` by the same PR; `exportData: any` still open.)*
+
+**Follow-up status** (updated 2026-10-04, [DATA_EXPORT_FOLLOWUPS_WORKPLAN.md](/docs/workplans/DATA_EXPORT_FOLLOWUPS_WORKPLAN.md)):
+
+| # | Follow-up | Status | Owner |
+|---|---|---|---|
+| FU-1 | Export audit history (`timestamp` → `created_at`) | ✅ Closed by the data export follow-ups PR | — |
+| FU-P1 | Explicit export column lists | ✅ Closed by the data export follow-ups PR | — |
+| FU-P2 | No `error.message` in the production 500 | ✅ Closed by the data export follow-ups PR | — |
+| FU-P3 | **Business OS data is not in the GDPR export.** The export covers only the 8 agent-platform tables; Business OS data (account and plan, credit charges / lots, invoices, CRM contacts, bookings, intake answers, …) is not in it at all. The requirement must separate the owner's own personal data from data the owner holds about their clients (where we are the processor), and settle size limits and whether it is the same download. **Until it is built, a Business OS owner's access request is answered by hand** | ⬜ Open | BA (requirement), routed by TL |
 
 ---
 
@@ -233,7 +242,7 @@ None.
 4. **CRX-4** R1 / R6 `.single()` — an account with no `profiles` or `user_subscriptions` row now logs PGRST116 at `error` on every export, and R8 logs 42703 on every export until FU-1. Accepted under OP-5 and pinned only as route behaviour. Recorded so the logs are not mistaken for a regression after deploy. — Priority: Low (accepted)
 
 ### Optimisation Suggestions
-- When this merges: mark the repository half of FU-1 done in the BD-26 workplan (housekeeping from the workplan review), and keep FU-P1 / FU-P2 / the `any` typing tracked as follow-ups.
+- When this merges: mark the repository half of FU-1 done in the BD-26 workplan (housekeeping from the workplan review), and keep FU-P1 / FU-P2 / the `any` typing tracked as follow-ups. *(2026-10-04: FU-1, FU-P1 and FU-P2 closed by the data export follow-ups PR; FU-P3 added; see "Follow-up status" in §2.)*
 
 ### QA-style pass (SA, 2026-10-04)
 | Run | Result |
@@ -263,3 +272,4 @@ _(RM)_
 | 2026-10-04 | SA workplan review | Approved with conditions C-1 to C-6. OP-1 new read-only `CreditTransactionRepository`; OP-2 `ExecutionRepository` with injected `supabaseServer`; OP-3 guard retarget approved; OP-4 approved; OP-5 `error`; OP-6 follow-ups stay out. Blocking C-1: the pin must mock `createBrowserClient` from the start |
 | 2026-10-04 | Implemented (Dev) | Characterization pin written first (C-1/C-2) and green on the original route; 7 repository reads + read-only `CreditTransactionRepository` (C-3/C-4); route switched with errors still ignored (C-5); C-6 table-driven repository test; `route.test.ts` C-1 mock + OP-4; BD-26 guard retargeted to the repository method body with negative controls (OP-3); OP-1 line struck in §7. All checks green; deviations D-1 to D-4. Status Code Complete, uncommitted |
 | 2026-10-04 | SA code review | Code Approved, no blocking findings (CRX-1 to CRX-4, all Low). The pin was re-verified by SA against the original route via a scratch mapping, with a mutation control. QA-style pass folded in: 4 named files 69/69, `test:bos-entitlements` 162 suites / 3803 tests green |
+| 2026-10-04 | Follow-ups closed (Dev) | FU-1, FU-P1 and FU-P2 marked closed by the data export follow-ups PR (`fix/data-export-history-and-columns`); FU-P3 (Business OS data is not in the GDPR export) added, routed to BA |
