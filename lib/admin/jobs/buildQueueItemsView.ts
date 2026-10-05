@@ -49,11 +49,11 @@ export const QUEUE_ITEM_QUEUE_IDS = [
 ] as const satisfies readonly BosQueueId[];
 
 /**
- * The actions `POST /api/admin/jobs-queues/items/action` performs (slice 7b:
- * cancel only), the one list its Zod enum is built from. 7c adds 'retry' here,
- * to the QueueItemAction union, and one `case` in the route (OP-16).
+ * The actions `POST /api/admin/jobs-queues/items/action` performs (slice 7b
+ * cancel, slice 7c retry), the one list its Zod enum is built from. Each has
+ * one `case` in the route's exhaustive switch (OP-16).
  */
-export const QUEUE_ITEM_ACTIONS = ['cancel'] as const satisfies readonly QueueItemAction[];
+export const QUEUE_ITEM_ACTIONS = ['cancel', 'retry'] as const satisfies readonly QueueItemAction[];
 
 /** The list's states, in tab order. Equal to the repository's (pinned by test). */
 export const QUEUE_ITEM_STATES = ['stuck', 'failed', 'dead_lettered', 'waiting'] as const satisfies readonly QueueItemState[];

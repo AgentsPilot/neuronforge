@@ -253,6 +253,15 @@ export const AUDIT_EVENTS = {
   // nothing. The details carry exactly the reason, the queue, the action, the
   // correlation id and the due anchor; never content, error text or a name.
   BOS_QUEUE_ITEM_CANCELLED: 'BOS_QUEUE_ITEM_CANCELLED',
+  // ADMIN_BOS_CLEANUP slice 7c: an admin put ONE failed queue item back to
+  // pending for exactly one more send attempt (POST
+  // /api/admin/jobs-queues/items/action, action 'retry'). Same entity type,
+  // account and actor rules as the cancel above ('bos_queue_item', owner-hidden
+  // by migration 20261035). Written only AFTER the compare-and-set won; the
+  // send itself happens later, through the queue's own claim. changes.after
+  // carries the reminder's next sending-hours time (null on other queues); the
+  // details carry exactly the reason, queue, action, correlation id and due anchor.
+  BOS_QUEUE_ITEM_RETRIED: 'BOS_QUEUE_ITEM_RETRIED',
 
   // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
@@ -787,6 +796,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'An admin cancelled one Business OS queue item; it will not be sent',
+  },
+  // ADMIN_BOS_CLEANUP slice 7c. 'warning': an admin added one more send
+  // attempt to a real client's queued message.
+  [AUDIT_EVENTS.BOS_QUEUE_ITEM_RETRIED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An admin put one failed Business OS queue item back for exactly one more send attempt',
   },
   // Slice 5a: a champion's friend invites (FR-28 to FR-32, F5a-13).
   [AUDIT_EVENTS.BOS_FRIEND_INVITE_CREATED]: {

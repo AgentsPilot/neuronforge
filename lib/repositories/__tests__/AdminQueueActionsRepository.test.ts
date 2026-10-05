@@ -342,9 +342,11 @@ describe('R-9: isolation — only the action route names the write repository', 
 describe('R-10 / W7B-6: source pins on the repository file (comments stripped)', () => {
   const code = codeOf(fs.readFileSync(path.join(process.cwd(), REPO_FILE), 'utf8'));
 
-  it('exactly one .update(, with count exact; no other write, select, or, single or rpc', () => {
-    expect(code.match(/\.update\(/g)).toHaveLength(1);
-    expect(code).toMatch(/count:\s*'exact'/);
+  // Amended by slice 7c (OP-16, R-8): exactly TWO updates, cancel and retry,
+  // each with count exact. Nothing else may write.
+  it('exactly two .update( (cancel, retry), each with count exact; no other write, select, or, single or rpc', () => {
+    expect(code.match(/\.update\(/g)).toHaveLength(2);
+    expect(code.match(/\.update\([^)]*\{\s*count:\s*'exact'\s*\}\)/g)).toHaveLength(2);
     for (const forbidden of [/\.or\(/, /\.select\(/, /\.insert\(/, /\.upsert\(/, /\.delete\(/, /\.rpc\(/, /\.single\(/, /\.maybeSingle\(/]) {
       expect(code).not.toMatch(forbidden);
     }
