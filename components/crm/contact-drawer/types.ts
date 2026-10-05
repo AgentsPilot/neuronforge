@@ -60,6 +60,18 @@ export interface Appointment {
    */
   cancel_reason?: string | null;
   cancel_note?: string | null;
+  /**
+   * A PACKAGE's meeting: the purchase it belongs to, and which of the N it is.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Carried so the drawer can tell a session from a job. Without it each of the
+   * six meetings of an accepted package drew its own client journey, quote step
+   * and all — "the quote will be sent after the meeting", on a meeting the
+   * quote had already created and been paid for.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  parent_booking_id?: string | null;
+  occurrence_number?: number | null;
   cancelled_by?: 'client' | 'owner' | 'system' | null;
   cancellation_reason?: string | null;
   intake_responses?: IntakeResponses;
@@ -67,7 +79,19 @@ export interface Appointment {
   created_at?: string;  // For product purchases, use created_at as the order date
   service?: {
     service_name: string;
-    is_product?: boolean;  // true for products (no scheduling)
+    /**
+     * Does booking this involve picking a time?
+     *
+     * Replaces `is_product`, which was declared here and in two component-local
+     * types and exists in NO table — so every read of it was `undefined`, and
+     * the journey fell back to "has no start time" as its only test. That proxy
+     * reclassified a scheduled booking whose time was missing, hiding the fault
+     * instead of showing it.
+     *
+     * `is_scheduled` is one of the three facts the service model is built on,
+     * beside `collection` and `sale_mode`. The platform has no product status.
+     */
+    is_scheduled?: boolean | null;
     /** Sold outright, or quoted first. Decides whether a quote step appears. */
     sale_mode?: 'direct' | 'proposal' | null;
     /** The service's own currency — the only currency a quote can inherit. */
@@ -300,6 +324,24 @@ export interface SessionCardData {
   journeyData?: BookingJourneyData;
   // Journey steps - the actual client journey for this booking (optional, can be derived from journeyData)
   journeySteps?: BookingJourneyStep[];
+  /**
+   * The meetings this PURCHASE bought, for a package.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A package is one client journey, not six. Left flat, an accepted
+   * six-session package drew six cards — six "jobs" for one agreement, each
+   * with its own quote step and its own history, and nothing on screen saying
+   * they were the same block.
+   *
+   * So the children hang off their container and are rendered INSIDE its card:
+   * one journey, with its meetings listed under it, each keeping its own date,
+   * status and actions because each is a real appointment that can be held,
+   * missed, moved or called off on its own.
+   *
+   * Empty for every ordinary booking, which is almost all of them.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  meetings?: SessionCardData[];
 }
 
 export interface ContactFormData {

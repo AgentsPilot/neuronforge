@@ -76,6 +76,11 @@ const booking = (over: Record<string, unknown> = {}) => ({
   updated_at: daysAgo(10),
   created_at: daysAgo(30),
   cancellation_reason: 'Cancelled by client',
+  // Legacy by default: every cancelled booking on the account this was built
+  // against predates `cancelled_by`, so the fixture's default is the shape
+  // that actually exists in the wild.
+  cancelled_by: null,
+  cancel_reason: null,
   contact_id: 'c1',
   payment_status: null,
   payment_amount: null,
@@ -242,6 +247,63 @@ describe('what it deliberately leaves alone', () => {
     expect(result).not.toBeNull();
     expect((result!.processParameters!.bookings as never[])[0]).toMatchObject({
       cancelled_by_client: false,
+    });
+  });
+
+  it('reads the column, not the prose, when the column is set', async () => {
+    /*
+     * `cancelled_by` (migration 20260928c) is the authority. Its own comment
+     * says it "replaces parsing the CLIENT_CANCELLED_PREFIX", and this row
+     * carries the column with NO prefix anywhere — which is what every
+     * cancellation looks like once that prose stops being written.
+     */
+    const result = await detectorFor({
+      bookings: [booking({ cancelled_by: 'owner', cancellation_reason: null })],
+      transactions: [paid()],
+    }).evaluate(U);
+
+    expect((result!.processParameters!.bookings as never[])[0]).toMatchObject({
+      cancelled_by_client: false,
+    });
+  });
+
+  it('believes the column over a contradicting prefix', async () => {
+    // Both present and disagreeing. The column wins, or the fallback is not a
+    // fallback — it is a second source of truth racing the first.
+    const result = await detectorFor({
+      bookings: [booking({ cancelled_by: 'owner' })],
+      transactions: [paid()],
+    }).evaluate(U);
+
+    expect((result!.processParameters!.bookings as never[])[0]).toMatchObject({
+      cancelled_by_client: false,
+    });
+  });
+
+  it('still reads a legacy row that only has the prefix', async () => {
+    /*
+     * Every cancelled booking on the account this was built against is of this
+     * kind: called off before the column existed, carrying only the English
+     * prose. Dropping them would blind the detector to the entire history.
+     */
+    const result = await detectorFor({
+      bookings: [booking({ cancelled_by: null })],
+      transactions: [paid()],
+    }).evaluate(U);
+
+    expect((result!.processParameters!.bookings as never[])[0]).toMatchObject({
+      cancelled_by_client: true,
+    });
+  });
+
+  it('carries the reason code so the narrator can say why', async () => {
+    const result = await detectorFor({
+      bookings: [booking({ cancelled_by: 'client', cancel_reason: 'client_cost' })],
+      transactions: [paid()],
+    }).evaluate(U);
+
+    expect((result!.processParameters!.bookings as never[])[0]).toMatchObject({
+      cancel_reason: 'client_cost',
     });
   });
 

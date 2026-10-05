@@ -19,6 +19,15 @@ interface ExtendedPricingPlan extends PricingPlan {
   collection?: 'online' | 'invoice' | null;
   /** How this service may be paid over time, injected live alongside them. */
   paymentPlan?: ServicePaymentPlan;
+  /**
+   * Bought outright, or quoted first.
+   *
+   * Absent here, a PROPOSAL service clicked from a pricing card reached the
+   * dialog looking like a direct sale — so it asked for a card on something that
+   * should have ended at a request. The route injects it now; this is the other
+   * half.
+   */
+  sale_mode?: 'direct' | 'proposal' | null;
 }
 
 interface PricingContent {
@@ -240,7 +249,8 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
       is_scheduled: plan.is_scheduled,
       collection: plan.collection,
       // Same reasoning: the payment step needs the split, not just the price.
-      paymentPlan: plan.paymentPlan
+      paymentPlan: plan.paymentPlan,
+      sale_mode: plan.sale_mode ?? undefined
     };
   };
 

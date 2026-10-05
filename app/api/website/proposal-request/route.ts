@@ -27,6 +27,9 @@ import { buildAttributionFromRequest } from '@/lib/utils/attribution';
 import { enrichCaptureAttribution } from '@/lib/business-os/enrichCaptureAttribution';
 import { ConsentInputSchema } from '@/lib/validation/consent';
 import { recordConsent } from '@/lib/consent/recordConsent';
+import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
+import { closedDayVerdict } from '@/lib/scheduling/closedDay';
+import { businessDateKey, businessHhmm, safeTimezone } from '@/lib/scheduling/businessTime';
 
 const logger = createLogger({ module: 'ProposalRequestAPI' });
 
@@ -244,6 +247,52 @@ export async function POST(request: NextRequest) {
       const end = data.end_time
         ? new Date(data.end_time)
         : new Date(start.getTime() + (service.duration_minutes || 60) * 60_000);
+
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * NOT ONTO A DAY THE BUSINESS IS CLOSED.
+       *
+       * A client asking for a quote picks a time for the consultation, and
+       * nothing had stopped that landing on a holiday. No money has moved
+       * here, so the honest answer is to refuse and let them pick again —
+       * answered as `slot_taken`, which is the wording the page already has and
+       * the right instruction. Their contact row, created above, stays; the
+       * request itself is written below and so is not recorded until a time the
+       * business can actually keep has been chosen.
+       *
+       * An unreadable list allows it, the same way every other public surface
+       * decides — see `website/booking/create`.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      const zone = safeTimezone(data.timezone);
+      const dateKey = businessDateKey(start, zone);
+
+      const { data: timeOff, error: timeOffError } = await schedulingTimeOffRepository.list(ownerId, {
+        from: dateKey,
+        to: dateKey,
+      });
+
+      if (timeOffError) {
+        requestLogger.warn({ err: timeOffError, ownerId }, 'Time off unreadable; the time is allowed');
+      }
+
+      const closed = timeOffError
+        ? { closed: false as const }
+        : closedDayVerdict(timeOff ?? [], dateKey, {
+            start: businessHhmm(start, zone),
+            end: businessHhmm(end, zone),
+          });
+
+      if (closed.closed) {
+        requestLogger.info(
+          { ownerId, date: dateKey, kind: closed.kind },
+          'Quote request refused a time on a closed day'
+        );
+        return NextResponse.json(
+          { success: false, code: 'slot_taken', error: 'This time slot is no longer available' },
+          { status: 409 }
+        );
+      }
 
       const { data: booking, error: bookingError } = await supabaseServer
         .from('scheduling_bookings')

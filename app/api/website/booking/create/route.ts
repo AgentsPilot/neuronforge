@@ -43,7 +43,9 @@ import { enrichCaptureAttribution } from '@/lib/business-os/enrichCaptureAttribu
 import { z } from 'zod';
 import { ConsentInputSchema } from '@/lib/validation/consent';
 import { recordConsent } from '@/lib/consent/recordConsent';
-import { safeTimezone } from '@/lib/scheduling/businessTime';
+import { businessDateKey, businessHhmm, safeTimezone } from '@/lib/scheduling/businessTime';
+import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
+import { closedDayVerdict } from '@/lib/scheduling/closedDay';
 
 const logger = createLogger({ module: 'WebsiteBookingCreateAPI' });
 
@@ -293,6 +295,55 @@ export async function POST(request: NextRequest) {
           { success: false, error: 'This time slot is no longer available' },
           { status: 409 }
         );
+      }
+
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * AND IS THE BUSINESS OPEN THAT DAY?
+       *
+       * The slot list this page offers already applies the closed days, so a
+       * client reaching here means a page left open across the owner recording
+       * a holiday — or a POST that never saw the list. Either way the hour is
+       * not for sale, and a client cannot overrule the owner's diary the way
+       * the owner can from their own calendar.
+       *
+       * Answered with the same sentence as a taken slot: it is the same
+       * instruction — that time is not available, choose another — and the
+       * owner's holiday is not a client's business.
+       *
+       * An unreadable list lets the booking through, which is the choice this
+       * page's availability route already makes: a business whose booking page
+       * refuses everyone loses more than one booking on a closed day costs.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      const dateKey = businessDateKey(startTime, bookingTimezone);
+
+      const { data: timeOff, error: timeOffError } = await schedulingTimeOffRepository.list(
+        ownerId,
+        { from: dateKey, to: dateKey }
+      );
+
+      if (timeOffError) {
+        requestLogger.warn(
+          { err: timeOffError, ownerId },
+          'Time off unreadable; the booking is allowed'
+        );
+      } else {
+        const closed = closedDayVerdict(timeOff ?? [], dateKey, {
+          start: businessHhmm(startTime, bookingTimezone),
+          end: businessHhmm(endTime, bookingTimezone),
+        });
+
+        if (closed.closed) {
+          requestLogger.info(
+            { ownerId, date: dateKey, kind: closed.kind },
+            'Public booking refused: the day is closed'
+          );
+          return NextResponse.json(
+            { success: false, error: 'This time slot is no longer available' },
+            { status: 409 }
+          );
+        }
       }
     }
 

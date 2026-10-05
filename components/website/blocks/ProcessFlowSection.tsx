@@ -28,6 +28,7 @@ import { flowHasScheduling, flowHasClientInfo } from './types';
 import { matchServiceByName, flowForService, hasJourneyFacts } from './bookingAction';
 import { IntakeFormStep, type IntakeTemplate } from './IntakeFormStep';
 import { StripePaymentForm } from './StripePaymentForm';
+import { PlanPaymentList } from './PlanPaymentList';
 import { ConsentCheckbox, type ConsentCopy } from '@/components/public/ConsentCheckbox';
 import { useConsentCopy, consentPayload } from '@/hooks/useConsentCopy';
 import { fromBusinessLocalInput } from '@/lib/scheduling/businessTime';
@@ -166,6 +167,7 @@ export const LABELS = {
     free: 'Free',
     priceOnRequest: 'Price on request',
     dueToday: 'Due today',
+    nothingDueToday: 'Nothing due today',
     paidToday: 'Paid today',
     paymentPlan: 'Payment plan',
     planTotal: 'Total',
@@ -241,6 +243,7 @@ export const LABELS = {
     free: 'Gratis',
     priceOnRequest: 'Precio a consultar',
     dueToday: 'A pagar hoy',
+    nothingDueToday: 'Hoy no se paga nada',
     paidToday: 'Pagado hoy',
     paymentPlan: 'Plan de pago',
     planTotal: 'Total',
@@ -316,6 +319,7 @@ export const LABELS = {
     free: 'חינם',
     priceOnRequest: 'מחיר לפי בקשה',
     dueToday: 'לתשלום היום',
+    nothingDueToday: 'אין תשלום היום',
     paidToday: 'שולם היום',
     paymentPlan: 'תוכנית תשלומים',
     planTotal: 'סה״כ',
@@ -557,54 +561,84 @@ export function ServicesStep({ services, loading, primaryColor, onSelect, isRTL,
       >
         {labels.chooseService}
       </h3>
-      <div className="apc-rows">
+      {/*
+        The template's own row vocabulary, given the children it expects.
+
+        ────────────────────────────────────────────────────────────────────────
+        `apc-rows` / `apc-row-item` / `apc-idx` / `apc-price` are deliberate — see
+        the note above: a client following a smart link should meet the same
+        design as the website, and these are what the themes dress.
+
+        What was wrong was the SHAPE, not the classes. The template lays a row
+        out as a grid:
+
+          .apc-row-item { display: grid; grid-template-columns: 42px 1fr 1.3fr auto }
+
+        which expects the three children `ServicesBlock` gives it — the index,
+        the name block, and the end block. This gave it TWO, with the price
+        nested inside a flex wrapper alongside the name. So both columns of
+        content landed in the single `1fr` cell: names wrapped one word per line
+        against a wide blank, and a long price ("הצעת מחיר לפי בקשה") ran across
+        the name beside it.
+
+        Three children now, and the same `sm:grid-cols-[1fr_auto]` fallback
+        `ServicesBlock` carries for themes that do not define the four-column
+        rule — so the two lists cannot lay out differently.
+        ────────────────────────────────────────────────────────────────────────
+      */}
+      <div className="apc-rows space-y-3">
       {services.map((service, index) => (
         <button
           key={service.id}
           onClick={() => onSelect(service)}
-          className="apc-row-item w-full p-4 ap-card border ap-line rounded-xl text-start ap-hover-line hover:shadow-sm transition-all group"
+          className="apc-row-item w-full p-4 ap-card border ap-line rounded-xl text-start ap-hover-line hover:shadow-sm transition-all group grid gap-x-6 gap-y-2 sm:grid-cols-[1fr_auto] sm:items-baseline"
         >
           <span className="apc-idx" aria-hidden="true">
             {String(index + 1).padStart(2, '0')}
           </span>
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1">
-              <h4
-                className="font-medium ap-ink group-hover:opacity-80"
-                style={{ fontFamily: 'var(--ap-font-heading)' }}
+
+          {/* `min-w-0`, or a long unbroken name refuses to wrap and widens the
+              whole column instead. */}
+          <div className="min-w-0">
+            <h4
+              className="font-medium ap-ink group-hover:opacity-80"
+              style={{ fontFamily: 'var(--ap-font-heading)' }}
+            >
+              {service.name}
+            </h4>
+            {service.description && (
+              <p
+                className="text-sm ap-ink-2 mt-1 line-clamp-2"
+                style={{ fontFamily: 'var(--ap-font-body)' }}
               >
-                {service.name}
-              </h4>
-              {service.description && (
-                <p
-                  className="text-sm ap-ink-2 mt-1 line-clamp-2"
-                  style={{ fontFamily: 'var(--ap-font-body)' }}
-                >
-                  {service.description}
-                </p>
-              )}
-              {/* The clock only appears for something that takes time. */}
-              {formatDuration(service.duration_minutes, labels) && (
-                <div className="flex items-center gap-3 mt-2 text-sm ap-ink-3">
-                  <span className="flex items-center gap-1">
-                    <Clock className="w-4 h-4" />
-                    {formatDuration(service.duration_minutes, labels)}
-                  </span>
-                </div>
-              )}
-            </div>
-            <div className="text-end flex-shrink-0">
-              <span className="apc-price font-semibold" style={{ color: primaryColor }}>
-                {formatPrice(service)}
-              </span>
-              <div className="mt-2">
-                {isRTL ? (
-                  <ChevronLeft className="w-5 h-5 ap-ink-3 group-ap-hover-ink" />
-                ) : (
-                  <ChevronRight className="w-5 h-5 ap-ink-3 group-ap-hover-ink" />
-                )}
+                {service.description}
+              </p>
+            )}
+            {/* The clock only appears for something that takes time. */}
+            {formatDuration(service.duration_minutes, labels) && (
+              <div className="flex items-center gap-3 mt-2 text-sm ap-ink-3">
+                <span className="flex items-center gap-1">
+                  <Clock className="w-4 h-4" />
+                  {formatDuration(service.duration_minutes, labels)}
+                </span>
               </div>
-            </div>
+            )}
+          </div>
+
+          <div
+            className={`flex items-baseline gap-4 ${isRTL ? 'sm:justify-start' : 'sm:justify-end'}`}
+          >
+            <span
+              className="apc-price font-semibold whitespace-nowrap"
+              style={{ color: primaryColor }}
+            >
+              {formatPrice(service)}
+            </span>
+            {isRTL ? (
+              <ChevronLeft className="w-5 h-5 ap-ink-3 group-ap-hover-ink flex-shrink-0" />
+            ) : (
+              <ChevronRight className="w-5 h-5 ap-ink-3 group-ap-hover-ink flex-shrink-0" />
+            )}
           </div>
         </button>
       ))}
@@ -885,6 +919,16 @@ export function DetailsStep({
   };
 
   /** Only a real split counts — one instalment is just the price. */
+  /*
+   * Fixed for the life of this mount.
+   *
+   * A plan's dates are relative to now, so reading the clock during render
+   * would let the three places a plan is shown drift apart by whatever time
+   * passed between them — and make a midnight crossing move the dates under a
+   * client mid-booking.
+   */
+  const renderedAt = useMemo(() => new Date(), []);
+
   const detailsPlan = service.paymentPlan && service.paymentPlan.installmentCount > 1
     ? service.paymentPlan
     : undefined;
@@ -935,48 +979,26 @@ export function DetailsStep({
         {service.price !== null && service.price > 0 && (
           <div className="mt-3 pt-3 border-t ap-line">
             {detailsPlan ? (
-              <>
-                {/* The instalments at a glance. Filled segment = today. */}
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="flex items-center gap-1" aria-hidden="true">
-                    {Array.from({ length: Math.min(detailsPlan.installmentCount, 6) }).map((_, i) => (
-                      <span
-                        key={i}
-                        className="block h-1.5 w-5 rounded-full"
-                        style={{ backgroundColor: i === 0 ? primaryColor : `${primaryColor}25` }}
-                      />
-                    ))}
-                  </div>
-                  <span className="text-xs font-medium ap-ink-3">
-                    {labels.paymentPlan}
-                  </span>
-                </div>
-
-                {/* Today, given the weight — the only figure charged now. */}
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-sm ap-ink-2">{labels.dueToday}</span>
-                  <span className="text-xl font-bold whitespace-nowrap" style={{ color: primaryColor }}>
-                    {formatAmount(detailsPlan.installmentAmount, detailsPlan.currency, locale, labels.free)}
-                  </span>
-                </div>
-
-                <div className="flex items-baseline justify-between gap-3 mt-1.5">
-                  <span className="text-sm ap-ink-2">{labels.planThen}</span>
-                  <span className="text-sm ap-ink-2 whitespace-nowrap">
-                    {labels.planThenValue
-                      .replace('{count}', String(detailsPlan.installmentCount - 1))
-                      .replace('{amount}', formatAmount(detailsPlan.installmentAmount, detailsPlan.currency, locale, labels.free))
-                      .replace('{frequency}', labels.frequency[detailsPlan.frequency])}
-                  </span>
-                </div>
-
-                <div className="flex items-baseline justify-between gap-3 mt-1.5 pt-1.5 border-t ap-line">
-                  <span className="text-sm ap-ink-2">{labels.planTotal}</span>
-                  <span className="text-sm font-semibold ap-ink whitespace-nowrap">
-                    {formatAmount(detailsPlan.totalAmount, detailsPlan.currency, locale, labels.free)}
-                  </span>
-                </div>
-              </>
+              /*
+                Four rows at most here: the details card is being scanned, not
+                agreed to. Every date is shown on the payment step, where the
+                client is actually committing.
+              */
+              <PlanPaymentList
+                plan={detailsPlan}
+                labels={{
+                  paymentPlan: labels.paymentPlan,
+                  dueToday: labels.dueToday,
+                  planTotal: labels.planTotal,
+                  nothingDueToday: labels.nothingDueToday,
+                  free: labels.free,
+                }}
+                locale={locale}
+                primaryColor={primaryColor}
+                formatAmount={formatAmount}
+                now={renderedAt}
+                maxRows={4}
+              />
             ) : (
               <div className="flex items-baseline justify-between gap-3">
                 <span className="text-sm ap-ink-2">{labels.planTotal}</span>
@@ -989,8 +1011,20 @@ export function DetailsStep({
         )}
       </div>
 
-      {/* Contact Form */}
-      <form onSubmit={handleSubmit} className="space-y-4 overflow-visible">
+      {/*
+        Contact Form
+
+        `noValidate` because the browser's own validation pre-empts the
+        platform's: it blocks submit before `handleSubmit` runs and renders its
+        message in ITS bubble, in the BROWSER's language rather than the site's,
+        with none of the business's type or colour. The handler below checks the
+        same fields and the message appears in the page, themed.
+
+        The `onInvalid` handlers on the inputs stay: they feed the platform's own
+        wording to any native check that still runs (a `checkValidity()` call,
+        an autofill path), and they cost nothing when none does.
+      */}
+      <form onSubmit={handleSubmit} noValidate className="space-y-4 overflow-visible">
         <div>
           <label className="block text-sm font-medium ap-ink-2 mb-1">
             {labels.name} *
@@ -1107,7 +1141,7 @@ export function DetailsStep({
           />
         )}
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && <p className="ap-danger">{error}</p>}
 
         {/* Submitted from the pinned footer's button, which calls the same
             handler. Kept as a form so Enter still submits. */}
@@ -1144,7 +1178,7 @@ interface PaymentStepProps {
 // Track payment intents created per booking to prevent duplicates across re-renders
 // Using a global object that survives HMR better than Map
 if (typeof window !== 'undefined' && !(window as unknown as Record<string, unknown>).__paymentIntentsCache) {
-  (window as unknown as Record<string, Record<string, { clientSecret: string; publishableKey: string; connectedAccountId?: string }>>).__paymentIntentsCache = {};
+  (window as unknown as Record<string, Record<string, PaymentIntentInfo>>).__paymentIntentsCache = {};
 }
 
 /**
@@ -1165,7 +1199,21 @@ if (typeof window !== 'undefined' && !(window as unknown as Record<string, unkno
  * mount's request rather than abandon it: still one API call per booking, but
  * whichever mount is alive at the end receives the result.
  */
-type PaymentIntentInfo = { clientSecret: string; publishableKey: string; connectedAccountId?: string };
+type PaymentIntentInfo = {
+  clientSecret: string;
+  publishableKey: string;
+  connectedAccountId?: string;
+  /*
+   * Which Stripe call confirms `clientSecret`.
+   *
+   * A plan whose first payment is deferred takes no money today: the route
+   * returns a SetupIntent for the card instead of an invoice's payment secret.
+   * Carried with the secret rather than inferred from its prefix, so the form
+   * cannot pick the wrong confirm call at the last step of a booking.
+   */
+  intentKind?: 'payment' | 'setup';
+  firstChargeAt?: string | null;
+};
 /** `info: null` = the server answered, but this booking needs no payment form. */
 type PaymentIntentOutcome = { info: PaymentIntentInfo | null; error?: string };
 
@@ -1173,9 +1221,9 @@ if (typeof window !== 'undefined' && !(window as unknown as Record<string, unkno
   (window as unknown as Record<string, Map<string, Promise<PaymentIntentOutcome>>>).__paymentIntentRequests = new Map();
 }
 
-function getPaymentIntentCache(): Record<string, { clientSecret: string; publishableKey: string; connectedAccountId?: string }> {
+function getPaymentIntentCache(): Record<string, PaymentIntentInfo> {
   if (typeof window === 'undefined') return {};
-  return (window as unknown as Record<string, Record<string, { clientSecret: string; publishableKey: string; connectedAccountId?: string }>>).__paymentIntentsCache || {};
+  return (window as unknown as Record<string, Record<string, PaymentIntentInfo>>).__paymentIntentsCache || {};
 }
 
 function getInFlightRequests(): Map<string, Promise<PaymentIntentOutcome>> {
@@ -1187,11 +1235,7 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
   const [processing, setProcessing] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [paymentReady, setPaymentReady] = useState(false);
-  const [paymentData, setPaymentData] = useState<{
-    clientSecret: string;
-    publishableKey: string;
-    connectedAccountId?: string;
-  } | null>(() => {
+  const [paymentData, setPaymentData] = useState<PaymentIntentInfo | null>(() => {
     // Initialize from cache if available
     if (bookingId) {
       const cached = getPaymentIntentCache()[bookingId];
@@ -1201,6 +1245,16 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
   });
 
   /** Only a real split counts — one instalment is just the price. */
+  /*
+   * Fixed for the life of this mount.
+   *
+   * A plan's dates are relative to now, so reading the clock during render
+   * would let the three places a plan is shown drift apart by whatever time
+   * passed between them — and make a midnight crossing move the dates under a
+   * client mid-booking.
+   */
+  const renderedAt = useMemo(() => new Date(), []);
+
   const plan = service.paymentPlan && service.paymentPlan.installmentCount > 1
     ? service.paymentPlan
     : undefined;
@@ -1301,7 +1355,9 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
             const paymentInfo: PaymentIntentInfo = {
               clientSecret: data.clientSecret,
               publishableKey: data.publishableKey,
-              connectedAccountId: data.connectedAccountId
+              connectedAccountId: data.connectedAccountId,
+              intentKind: data.intentKind === 'setup' ? 'setup' : 'payment',
+              firstChargeAt: data.firstChargeAt ?? null
             };
 
             // Cached before anyone awaits, so a mount arriving after this
@@ -1377,7 +1433,16 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
           userCode: isPreview ? undefined : (userCode || undefined),
           booking_id: bookingId,
           payment_intent_id: paymentIntentId,
-          payment_status: 'paid'
+          /*
+            A saved card is not a payment.
+
+            This said 'paid' for every outcome. On a deferred plan the client
+            confirms a SetupIntent and NOTHING is charged — the trial runs until
+            the agreed date — so reporting paid marks a booking settled with no
+            money behind it, which is the state that made the refund dialog
+            offer zero on a booking that read as paid.
+          */
+          payment_status: paymentData?.intentKind === 'setup' ? 'pending' : 'paid'
         })
       });
 
@@ -1478,46 +1543,21 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
 
         <div className="mt-3 pt-3 border-t ap-line">
           {plan ? (
-            <>
-              <div className="flex items-center gap-2 mb-3">
-                <div className="flex items-center gap-1" aria-hidden="true">
-                  {Array.from({ length: Math.min(plan.installmentCount, 6) }).map((_, i) => (
-                    <span
-                      key={i}
-                      className="block h-1.5 w-5 rounded-full"
-                      style={{ backgroundColor: i === 0 ? primaryColor : `${primaryColor}25` }}
-                    />
-                  ))}
-                </div>
-                <span className="text-xs font-medium ap-ink-3">
-                  {labels.paymentPlan}
-                </span>
-              </div>
-
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="text-sm ap-ink-2">{labels.dueToday}</span>
-                <span className="text-xl font-bold whitespace-nowrap" style={{ color: primaryColor }}>
-                  {formatAmount(plan.installmentAmount, plan.currency, locale, labels.free)}
-                </span>
-              </div>
-
-              <div className="flex items-baseline justify-between gap-3 mt-1.5">
-                <span className="text-sm ap-ink-2">{labels.planThen}</span>
-                <span className="text-sm ap-ink-2 whitespace-nowrap">
-                  {labels.planThenValue
-                    .replace('{count}', String(plan.installmentCount - 1))
-                    .replace('{amount}', formatAmount(plan.installmentAmount, plan.currency, locale, labels.free))
-                    .replace('{frequency}', labels.frequency[plan.frequency])}
-                </span>
-              </div>
-
-              <div className="flex items-baseline justify-between gap-3 mt-1.5 pt-1.5 border-t ap-line">
-                <span className="text-sm ap-ink-2">{labels.planTotal}</span>
-                <span className="text-sm font-semibold ap-ink whitespace-nowrap">
-                  {formatAmount(plan.totalAmount, plan.currency, locale, labels.free)}
-                </span>
-              </div>
-            </>
+            /* Every date, because this is the screen the client agrees on. */
+            <PlanPaymentList
+              plan={plan}
+              labels={{
+                paymentPlan: labels.paymentPlan,
+                dueToday: labels.dueToday,
+                planTotal: labels.planTotal,
+                nothingDueToday: labels.nothingDueToday,
+                free: labels.free,
+              }}
+              locale={locale}
+              primaryColor={primaryColor}
+              formatAmount={formatAmount}
+              now={renderedAt}
+            />
           ) : (
             <div className="flex items-baseline justify-between gap-3">
               <span className="text-sm ap-ink-2">{labels.planTotal}</span>
@@ -1529,7 +1569,7 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
         </div>
       </div>
 
-      {displayError && <p className="text-sm text-red-600 text-center">{displayError}</p>}
+      {displayError && <p className="ap-danger text-center">{displayError}</p>}
 
       {/* Payment form - show embedded Stripe Elements or fallback button */}
       {!paymentReady ? (
@@ -1554,6 +1594,8 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
           locale={(locale || 'en') as 'en' | 'es' | 'he'}
           isRTL={isRTL}
           borderRadius={theme?.borderRadius || '0.5rem'}
+          intentKind={paymentData.intentKind}
+          firstChargeAt={paymentData.firstChargeAt}
         />
       ) : (
         // Fallback: Free service or Stripe not configured
@@ -1634,8 +1676,24 @@ function IntakeStep({
   labels,
   theme
 }: IntakeStepProps) {
+  /**
+   * What the browser used to refuse, refused in the platform's own voice.
+   *
+   * Suppressing native validation means this is now the only thing standing
+   * between an empty required answer and a submit, so it asks the same question
+   * the `required` attributes do — over the fields actually on screen.
+   */
+  const [missingAnswers, setMissingAnswers] = useState(false);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    const incomplete = fields.some(
+      field => field.required && !(answers[field.name] ?? '').trim()
+    );
+    setMissingAnswers(incomplete);
+    if (incomplete) return;
+
     onSubmit();
   };
 
@@ -1666,7 +1724,10 @@ function IntakeStep({
         <p className="ap-ink-2">{labels.helpUsPrepare}</p>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      {/* `noValidate` for the reason given on the details form above. This step
+          had no `onInvalid` handlers at all, so an empty required answer was
+          refused by the browser in its own words and its own chrome. */}
+      <form onSubmit={handleSubmit} noValidate className="space-y-4">
         {fields.map((field) => (
           <div key={field.name}>
             <label className="block text-sm font-medium ap-ink-2 mb-1">
@@ -1709,7 +1770,9 @@ function IntakeStep({
           </div>
         ))}
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {(missingAnswers || error) && (
+          <p className="ap-danger">{missingAnswers ? labels.errRequiredFields : error}</p>
+        )}
 
         <button
           type="submit"
@@ -1754,6 +1817,16 @@ interface ConfirmationStepProps {
 
 export function ConfirmationStep({ service, slot, clientEmail, primaryColor, onReset, isRTL, labels, theme, locale = 'en', showBookAnother = true }: ConfirmationStepProps) {
   /** Only a real split counts — one instalment is just the price. */
+  /*
+   * Fixed for the life of this mount.
+   *
+   * A plan's dates are relative to now, so reading the clock during render
+   * would let the three places a plan is shown drift apart by whatever time
+   * passed between them — and make a midnight crossing move the dates under a
+   * client mid-booking.
+   */
+  const renderedAt = useMemo(() => new Date(), []);
+
   const confirmedPlan = service.paymentPlan && service.paymentPlan.installmentCount > 1
     ? service.paymentPlan
     : undefined;
@@ -1836,46 +1909,25 @@ export function ConfirmationStep({ service, slot, clientEmail, primaryColor, onR
           {service.price !== null && service.price > 0 && (
             <div className="mt-3 pt-3 border-t ap-line">
               {confirmedPlan ? (
-                <>
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="flex items-center gap-1" aria-hidden="true">
-                      {Array.from({ length: Math.min(confirmedPlan.installmentCount, 6) }).map((_, i) => (
-                        <span
-                          key={i}
-                          className="block h-1.5 w-5 rounded-full"
-                          style={{ backgroundColor: i === 0 ? primaryColor : `${primaryColor}25` }}
-                        />
-                      ))}
-                    </div>
-                    <span className="text-xs font-medium ap-ink-3">
-                      {labels.paymentPlan}
-                    </span>
-                  </div>
-
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="text-sm ap-ink-2">{labels.paidToday}</span>
-                    <span className="text-sm font-semibold whitespace-nowrap" style={{ color: primaryColor }}>
-                      {formatAmount(confirmedPlan.installmentAmount, confirmedPlan.currency, locale, labels.free)}
-                    </span>
-                  </div>
-
-                  <div className="flex items-baseline justify-between gap-3 mt-1.5">
-                    <span className="text-sm ap-ink-2">{labels.planThen}</span>
-                    <span className="text-sm ap-ink-2 whitespace-nowrap">
-                      {labels.planThenValue
-                        .replace('{count}', String(confirmedPlan.installmentCount - 1))
-                        .replace('{amount}', formatAmount(confirmedPlan.installmentAmount, confirmedPlan.currency, locale, labels.free))
-                        .replace('{frequency}', labels.frequency[confirmedPlan.frequency])}
-                    </span>
-                  </div>
-
-                  <div className="flex items-baseline justify-between gap-3 mt-1.5 pt-1.5 border-t ap-line">
-                    <span className="text-sm ap-ink-2">{labels.planTotal}</span>
-                    <span className="text-sm font-semibold ap-ink whitespace-nowrap">
-                      {formatAmount(confirmedPlan.totalAmount, confirmedPlan.currency, locale, labels.free)}
-                    </span>
-                  </div>
-                </>
+                /*
+                  `paidToday` rather than `dueToday`: this is after the fact.
+                  On a deferred plan nothing was paid, so the component shows
+                  "Nothing due today" instead and the past tense never appears.
+                */
+                <PlanPaymentList
+                  plan={confirmedPlan}
+                  labels={{
+                    paymentPlan: labels.paymentPlan,
+                    dueToday: labels.paidToday,
+                    planTotal: labels.planTotal,
+                    nothingDueToday: labels.nothingDueToday,
+                    free: labels.free,
+                  }}
+                  locale={locale}
+                  primaryColor={primaryColor}
+                  formatAmount={formatAmount}
+                  now={renderedAt}
+                />
               ) : (
                 <div className="flex items-baseline justify-between gap-3">
                   <span className="text-sm ap-ink-2">{labels.planTotal}</span>
@@ -2410,9 +2462,29 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
   };
 
   const handleSubmitDetails = async () => {
+    /*
+     * EVERYTHING THE FORM MARKS REQUIRED, CHECKED HERE.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * The browser used to enforce the phone field and the email's shape, via
+     * `required` and `type="email"`, and it did so in its own bubble and its own
+     * language. Now that native validation is off, this is the only check there
+     * is — so it has to cover the same ground, or a field the form stars as
+     * required would silently submit empty and the route would answer 400 with
+     * nothing to show the visitor.
+     *
+     * The email's FORMAT too, for the same reason: `type="email"` was the only
+     * thing testing it, and a malformed address is a 400 from the route rather
+     * than an answer anyone can act on.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
     // For scheduled flows, require slot; for non-scheduled flows, slot is optional
-    if (!selectedService || !clientName || !clientEmail) {
+    if (!selectedService || !clientName?.trim() || !clientEmail?.trim() || !clientPhone?.trim()) {
       setError(labels.errRequiredFields);
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail.trim())) {
+      setError(labels.errEmailInvalid);
       return;
     }
     if (hasScheduling && !selectedSlot) {

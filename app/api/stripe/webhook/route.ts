@@ -965,11 +965,124 @@ async function recordPlanPeriodPaid(
     await paymentPlanSubscriptionRepository.close(plan.data.id, 'completed');
   }
 
+  /*
+   * The booking becomes paid when money actually arrives.
+   *
+   * A plan whose first payment is DEFERRED is confirmed with
+   * `payment_status: 'pending'`, because at that moment nothing has been
+   * charged — the card is merely stored against a trialling subscription. This
+   * is the only place that learns otherwise, so without it such a booking would
+   * read `pending` for ever, through every period, on the orders page and in
+   * the drawer alike.
+   *
+   * Idempotent and safe for the immediate path too, where `finalize` already
+   * wrote `paid`: this writes the same value again.
+   */
+  if (plan.data.booking_id) {
+    const { error: bookingError } = await supabaseAdmin
+      .from('scheduling_bookings')
+      .update({ payment_status: 'paid', updated_at: new Date().toISOString() })
+      .eq('id', plan.data.booking_id)
+      .eq('user_id', plan.data.user_id);
+
+    if (bookingError) {
+      // Not fatal: the money is recorded, which is the part that must not be
+      // lost. A booking reading `pending` beside a recorded payment is visible
+      // and repairable; failing the webhook here would risk the period instead.
+      log.error(
+        { err: bookingError, bookingId: plan.data.booking_id },
+        'Plan period recorded but the booking still reads unpaid'
+      );
+    }
+  }
+
   log.info(
     { subscriptionId, periodsPaid, installmentCount: plan.data.installment_count },
     'Plan period recorded'
   );
   return true;
+}
+
+/**
+ * A client's plan subscription, bounded the moment it exists.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS EXISTS SEPARATELY FROM `invoice.paid`.
+ *
+ * `bindPlanSubscription` was reachable from two events only — `invoice.paid`
+ * and `checkout.session.completed` — and a plan whose FIRST PAYMENT IS DEFERRED
+ * produces neither. Stripe raises no invoice during a trial, and the embedded
+ * card form creates no Checkout Session. So such a subscription sat with no
+ * schedule for the whole trial: unbounded, unmirrored, and invisible to the
+ * owner. An unbounded subscription bills the client forever, which is the one
+ * outcome `bindPlanSubscription` exists to prevent.
+ *
+ * It only bound at the trial's first charge — and that is the same
+ * `invoice.paid` that failed in production on 2026-09-29. A failure there would
+ * have left the plan billing indefinitely.
+ *
+ * ONLY `trialing`, deliberately. The comment inside `handleConnectInvoicePaid`
+ * explains why the immediate path must still wait: a schedule cannot be created
+ * from an `incomplete` subscription, and that is exactly the state an
+ * unpaid-but-immediate plan is in at creation. A trialling subscription owes
+ * nothing yet, so Stripe puts it straight into `trialing` and it can be bounded
+ * now. Every other status is left for the existing path.
+ *
+ * Bound BEFORE the client has entered a card, which is safe in both directions:
+ * the schedule caps the periods either way, and `trial_settings.end_behavior
+ * .missing_payment_method: 'cancel'` (set when the subscription was created)
+ * cancels it at the trial's end if no card ever arrives.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function handleConnectPlanSubscriptionCreated(
+  subscription: Stripe.Subscription,
+  connectAccountId: string,
+  log: Logger
+) {
+  if (subscription.status !== 'trialing') return;
+
+  const planMeta = subscription.metadata ?? {};
+  // Not a plan of ours: a connected account's own subscriptions are its
+  // business, exactly as `customer.subscription.updated` already treats them.
+  if (!planMeta.plan_count || !planMeta.owner_id) return;
+
+  if (!(await accountOwns(connectAccountId, planMeta.owner_id, log))) {
+    log.error(
+      { connectAccountId, subscriptionId: subscription.id },
+      'Trialling plan claims an owner this account does not own - refusing'
+    );
+    return;
+  }
+
+  log.info({ subscriptionId: subscription.id }, 'Bounding a trialling plan subscription before its first charge');
+
+  try {
+    await bindPlanSubscription({
+      stripe: new Stripe(process.env.STRIPE_SECRET_KEY!),
+      connectAccountId,
+      subscriptionId: subscription.id,
+      customerId:
+        typeof subscription.customer === 'string'
+          ? subscription.customer
+          : subscription.customer?.id ?? null,
+      ownerId: planMeta.owner_id,
+      bookingId: planMeta.booking_id || null,
+      serviceId: planMeta.service_id || null,
+      planTotal: Number(planMeta.plan_total ?? 0),
+      planCurrency: planMeta.plan_currency || 'USD',
+      planCount: Number(planMeta.plan_count),
+      planFrequency: (planMeta.plan_frequency || 'monthly') as PlanFrequency,
+      paymentPlanId: planMeta.payment_plan_id || null,
+    });
+  } catch (bindError) {
+    // Rethrown for the same reason as the invoice path: Stripe retries, and a
+    // retry is what protects the client from an unbounded subscription.
+    log.error(
+      { err: bindError, subscriptionId: subscription.id },
+      'Could not bound a trialling plan subscription'
+    );
+    throw bindError;
+  }
 }
 
 /**
@@ -1418,6 +1531,60 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
   } catch (auditError) {
     log.warn({ err: auditError, invoiceId: platformInvoice.id }, 'Audit logging failed');
   }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE RECEIPT.
+   *
+   * Every other way an invoice settles sends one — the owner's "mark as paid",
+   * the invoice send route, the website checkout — because they all go through
+   * `settleInvoicePaid`. This path records the payment itself and so sent
+   * NOTHING: a client who paid a Stripe invoice got the booking confirmation
+   * before the money moved and then silence, with no record of what left their
+   * account. Verified on INV-00018: settled at 18:25:57, zero emails after it.
+   *
+   * Non-blocking and last, so a mail failure cannot fail a webhook Stripe would
+   * then retry into a handler that has already done its work.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  void (async () => {
+    try {
+      const { data: receiptInvoice } = await supabaseAdmin
+        .from('payment_invoices')
+        .select('user_id, client_email, client_name, invoice_number, currency, booking_id')
+        .eq('id', platformInvoice.id)
+        .maybeSingle();
+
+      if (!receiptInvoice?.client_email) {
+        log.info({ invoiceId: platformInvoice.id }, 'No client email on this invoice; no receipt to send');
+        return;
+      }
+
+      const { BookingEmailService } = await import('@/lib/services/BookingEmailService');
+
+      const receipt = await BookingEmailService.sendPaymentReceipt(receiptInvoice.user_id, {
+        customerEmail: receiptInvoice.client_email,
+        customerName: receiptInvoice.client_name || '',
+        // What the client was charged, in the currency they were charged it —
+        // never the balance-transaction figure, which is the account's
+        // settlement currency and a different number.
+        amount: fromMinorUnits(invoice.amount_paid, invoiceCurrency),
+        currency: receiptInvoice.currency || invoiceCurrency,
+        receiptNumber: receiptInvoice.invoice_number,
+        paymentMethod: 'card',
+        bookingId: receiptInvoice.booking_id ?? undefined,
+      });
+
+      if (!receipt.sent) {
+        log.warn({ invoiceId: platformInvoice.id, reason: receipt.error }, 'Receipt not sent');
+      }
+    } catch (receiptError) {
+      log.error(
+        { err: receiptError, invoiceId: platformInvoice.id },
+        'Payment settled but the receipt did not go out'
+      );
+    }
+  })();
 
   log.info(
     { invoiceId: platformInvoice.id, invoiceNumber: platformInvoice.invoice_number },
@@ -1920,7 +2087,14 @@ async function handlePlanSubscriptionEnded(
       .update({ status: 'cancelled', next_retry_at: null, updated_at: new Date().toISOString() })
       .eq('user_id', plan.user_id)
       .eq('subscription_id', subscription.id)
-      .eq('status', 'pending');
+      /*
+       * Everything unsettled, not only `pending`.
+       *
+       * A billed-but-unpaid period kept counting as owed on a subscription
+       * Stripe had already ended — the exact thing the comment above says this
+       * write exists to prevent.
+       */
+      .not('status', 'in', '(paid,cancelled)');
   }
 
   log.info(
@@ -2267,6 +2441,15 @@ export async function POST(request: NextRequest) {
       // plan, credits and status — or cancel it outright.
       //
       // A connected account's own subscriptions are its business, not ours.
+      case 'customer.subscription.created':
+        if (!isConnectEvent) break;
+        await handleConnectPlanSubscriptionCreated(
+          event.data.object as Stripe.Subscription,
+          connectAccountId!,
+          log
+        );
+        break;
+
       case 'customer.subscription.updated':
         if (isConnectEvent) break;
         await handleSubscriptionUpdated(event.data.object as Stripe.Subscription, log);

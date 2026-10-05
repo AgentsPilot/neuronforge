@@ -23,6 +23,7 @@ import { smartLinkRepository } from '@/lib/repositories/SmartLinkRepository';
 import { resolveBusinessCurrency } from '@/lib/business-os/currency';
 import { resolveOnboardingTimezone } from '@/lib/business-os/onboardingTimezone';
 import { paymentPlanRepository } from '@/lib/repositories/PaymentPlanRepository';
+import { serviceGeneratorService } from '@/lib/services/ServiceGeneratorService';
 import { capabilityActivationService } from '@/lib/services/CapabilityActivationService';
 import { capabilityConditionEvaluator } from '@/lib/services/CapabilityConditionEvaluator';
 import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
@@ -30,6 +31,20 @@ import { runAiAction, markGenerationResult } from '@/lib/business-os/llm/aiActio
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'OnboardingBuildAPI' });
+
+/**
+ * What to call a draft service nothing else named.
+ *
+ * The last resort behind the owner's own words and the vertical defaults, so it
+ * is reached only for a count larger than either could fill. In the language the
+ * business is being set up in, because the owner is about to read it in a list
+ * and rename it.
+ */
+function serviceFallbackName(language: 'en' | 'he' | 'es'): string {
+  if (language === 'he') return 'שירות';
+  if (language === 'es') return 'Servicio';
+  return 'Service';
+}
 
 /**
  * A gpt-4o call building a whole website from a ~4k-token prompt routinely takes
@@ -100,6 +115,14 @@ const computedConfigurationSchema = z.object({
     sale_mode: z.enum(['direct', 'proposal']).optional(),
     collection: z.enum(['online', 'invoice']).nullable().optional(),
   })),
+  /**
+   * How many services to create, when the chat asked for a count rather than
+   * a catalogue. Capped at the same 40 the chat route allows for a submitted
+   * services array, so the two limits cannot drift apart.
+   */
+  service_count: z.number().int().min(0).max(40).optional(),
+  /** The business-wide appointments answer, for services it has to invent. */
+  sells_scheduled: z.boolean().optional(),
   online_presence_mode: z.enum(['full_website', 'booking_only', 'website_only', 'none']),
   payment_mode: z.enum(['none', 'upfront', 'invoicing', 'installments']),
   needs_stripe_connect: z.boolean(),
@@ -781,7 +804,186 @@ export async function POST(request: NextRequest) {
     const isNewService = (name: string | null | undefined) =>
       !!name?.trim() && !existingServiceNames.has(name.toLowerCase().trim());
 
-    if (services && services.length > 0) {
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * A COUNT, CREATED AS DRAFTS — what the chat now collects.
+     *
+     * The chat asks how they sell (appointments, and card or invoice or
+     * nothing) and roughly how many things they sell, then leaves the detail to
+     * the services editor. So there is a number here and usually no catalogue,
+     * and this branch turns the number into that many rows.
+     *
+     * DRAFTS, not live services. `createMany` already defaults to
+     * `status: 'draft'`, `is_active: false` and `source: 'ai_generated'`, and
+     * every public surface resolves its catalogue through
+     * `SchedulingRepository.listBookable`, which requires BOTH `is_active` and
+     * `status = 'active'` — so none of these can be booked, shown or paid for
+     * until the owner publishes it. The two branches below create services
+     * LIVE, which is right for them: they are built from service details the
+     * owner actually typed.
+     *
+     * The readiness mechanic needs nothing new. `setup-status` counts services
+     * with `status = 'active'`, so N drafts leave `hasServices` false and the
+     * `services` step — `mandatory: 'always'`, and a prerequisite of `website`
+     * — stays outstanding until they are finished.
+     *
+     * Anything the conversation DID yield is created first and the count tops
+     * it up: a name and price the owner typed is worth more than a generated
+     * one. Ordered before the branches below for that reason — it uses them as
+     * its seed rather than competing with them.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (typeof configuration?.service_count === 'number' && configuration.service_count > 0) {
+      const wanted = configuration.service_count;
+      const seeded = (configuration.services || []).filter(s => isNewService(s.name));
+
+      requestLogger.info(
+        { userId: user.id, wanted, seeded: seeded.length },
+        'Creating draft services from a count'
+      );
+
+      /*
+       * The business-wide answers, applied to every row.
+       *
+       * These are the only two service facts that decide a capability —
+       * `is_scheduled` turns on scheduling, availability, the timezone, calendar
+       * sync and intake; `collection` turns on the payments capability and the
+       * invoice paperwork. A service that differs is changed in the editor,
+       * which is where every other per-service exception already lives.
+       */
+      const scheduled = configuration.sells_scheduled !== false;
+      const collection: 'online' | 'invoice' | null =
+        configuration.collection_method === 'none'
+          ? null
+          : configuration.collection_method === 'card_online' || configuration.collection_method === 'mixed'
+            ? 'online'
+            : 'invoice';
+
+      let generated: Awaited<ReturnType<typeof serviceGeneratorService.generateServices>>['services'] = [];
+      if (seeded.length < wanted) {
+        /*
+         * Named for their trade rather than "Service 1".
+         *
+         * `services: []` ON PURPOSE, and it is not a dropped value.
+         *
+         * `generateServices` branches on it: a non-empty list takes an AI path
+         * that hardcodes `gpt-4o-mini` and calls the provider WITHOUT going
+         * through `runAiAction` — no catalogued call, no attribution, no cost
+         * tracking. That breaks CLAUDE.md rule 5 and the Business OS LLM
+         * standards, and this route is otherwise careful to wrap every model
+         * call (`runAiAction` above). An empty list takes
+         * `generateFromVerticalDefaults`, which is pure table lookup: no model,
+         * no latency added to the build, and names drawn from the owner's
+         * vertical.
+         *
+         * Nothing is lost by it. The seeds are read straight from
+         * `seeded[index]` below, keeping the names, prices and durations the
+         * owner actually typed — the generator was only ever going to
+         * paraphrase them. It fills the rows BEYOND the seeds, where there is
+         * no owner text to preserve and a vertical default is the best guess
+         * available.
+         *
+         * A failure here is not fatal: the rows still get created from the
+         * seeds and the numbered fallback below, and the owner renames them.
+         */
+        try {
+          const result = await serviceGeneratorService.generateServices(
+            {
+              vertical: configuration.vertical || 'generic',
+              sub_vertical: configuration.sub_vertical || undefined,
+              company_name: configuration.company_name || undefined,
+              services: [],
+              clients_per_week: configuration.clients_per_week || undefined,
+              language: lang,
+            },
+            user.id
+          );
+          if (result.success) generated = result.services;
+        } catch (generateError) {
+          requestLogger.error(
+            { err: generateError, userId: user.id },
+            'Could not generate draft service names; falling back to numbered drafts'
+          );
+        }
+      }
+
+      const draftRows: Array<Parameters<typeof schedulingServiceRepository.createMany>[0][number]> = [];
+      const takenNames = new Set(existingServiceNames);
+
+      /** A name nothing else is using, so `isNewService` cannot reject the row. */
+      const claimName = (preferred: string | null | undefined, index: number): string => {
+        const base = preferred?.trim() || `${serviceFallbackName(lang)} ${index + 1}`;
+        let candidate = base;
+        let suffix = 2;
+        while (takenNames.has(candidate.toLowerCase().trim())) {
+          candidate = `${base} ${suffix}`;
+          suffix += 1;
+        }
+        takenNames.add(candidate.toLowerCase().trim());
+        return candidate;
+      };
+
+      for (let index = 0; index < wanted; index += 1) {
+        const seed = seeded[index];
+        const suggestion = !seed ? generated[index - seeded.length] : undefined;
+
+        // A price of null is "on request" and must survive as null — `|| 0`
+        // here would publish paid work as free, the mistake the branch below
+        // records at length.
+        const price = seed ? seed.price ?? null : suggestion?.price ?? null;
+
+        draftRows.push({
+          user_id: user.id,
+          service_name: claimName(seed?.name ?? suggestion?.service_name, index),
+          description: suggestion?.description ?? undefined,
+          duration_minutes: scheduled
+            ? seed?.duration_minutes ?? suggestion?.duration_minutes ?? null
+            : null,
+          buffer_minutes: seed?.buffer_minutes ?? suggestion?.buffer_minutes ?? undefined,
+          price,
+          currency: serviceCurrency(seed?.currency),
+          is_scheduled: scheduled,
+          sale_mode: seed?.sale_mode || 'direct',
+          // Only a priced service is collected at all — the same rule the two
+          // branches below apply.
+          collection: (price || 0) > 0 ? collection : null,
+          ...(seed?.payment_plan && seed.payment_plan.installment_count >= 2
+            ? {
+                payment_type: 'installments' as const,
+                installment_count: seed.payment_plan.installment_count,
+                installment_frequency: seed.payment_plan.installment_frequency,
+              }
+            : {}),
+        });
+      }
+
+      const draftResult = await schedulingServiceRepository.createMany(draftRows);
+
+      if (draftResult.error) {
+        requestLogger.error({ err: draftResult.error, userId: user.id }, 'Failed to create draft services');
+        for (const row of draftRows) {
+          failedServices.push({ name: row.service_name, reason: draftResult.error.message });
+        }
+      } else if (draftResult.data) {
+        createdServices.push(...draftResult.data);
+        requestLogger.info(
+          { userId: user.id, created: draftResult.data.length, scheduled, collection },
+          'Draft services created'
+        );
+      }
+
+      /*
+       * No audit call of its own, deliberately.
+       *
+       * The orphan `POST /api/scheduling/services/generate` logs
+       * `SCHEDULING_SERVICES_GENERATED` because it is a standalone endpoint. This
+       * route emits exactly ONE Layer 3 entry for the whole build, listing every
+       * area it touched (FR-12, OQ-5, WC-4; AC-11) — `route.audit.test.ts` is
+       * named for that guarantee and asserts it. Creating the catalogue is part
+       * of the build, not a second event, and a second entry would break the one
+       * thing that test exists to hold.
+       */
+    } else if (services && services.length > 0) {
       // Legacy format: use services array directly (preferred - has currency)
       requestLogger.info({ userId: user.id, serviceCount: services.length }, 'Creating services from legacy format');
 

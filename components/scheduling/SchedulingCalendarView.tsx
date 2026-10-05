@@ -7,8 +7,13 @@ import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { NoShowConfirmDialog } from '@/components/scheduling/NoShowConfirmDialog';
 import { CancelReasonDialog } from '@/components/scheduling/CancelReasonDialog';
 import { businessClock, businessDateKey, businessInstant, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
+import { windowsForDate, type TimeOffEntry } from '@/lib/scheduling/availabilityWindows';
+import { closedDayVerdict } from '@/lib/scheduling/closedDay';
+import { createLogger } from '@/lib/logger';
 import type { SchedulingBooking, SchedulingService } from '@/lib/repositories/SchedulingRepository';
 import type { WeeklyAvailability } from './AvailabilityEditor';
+
+const logger = createLogger({ module: 'SchedulingCalendarView' });
 
 interface ExternalBusySlot {
   start: string;
@@ -160,12 +165,6 @@ export function SchedulingCalendarView({
 }: SchedulingCalendarViewProps) {
   const { t, language, formatCurrency, timezone, timeZoneOptions } = useLanguage();
 
-  // CRITICAL DEBUG: Check if bookings prop is actually populated
-  console.log('🔍 SchedulingCalendarView RENDER:', {
-    bookingsLength: bookings.length,
-    bookingsSample: bookings.slice(0, 3).map(b => ({ id: b.id.substring(0, 8), start: b.start_time, status: b.status }))
-  });
-
   // Israel/Hebrew uses Sunday-first weeks, most other locales use Monday-first
   const weekStartsOnSunday = language === 'he';
 
@@ -181,6 +180,15 @@ export function SchedulingCalendarView({
 
   // External calendar busy slots
   const [externalBusySlots, setExternalBusySlots] = useState<ExternalBusySlot[]>([]);
+  /*
+   * The days the business is closed, and the days it is open for less than
+   * usual.
+   *
+   * Read here rather than passed in because this is where they are drawn: the
+   * table had been readable since July and no screen showed it, so an owner on
+   * holiday saw an ordinary open week and booked into it.
+   */
+  const [timeOff, setTimeOff] = useState<TimeOffEntry[]>([]);
 
   // Fetch external busy slots for current week - deferred to not block initial render
   useEffect(() => {
@@ -211,6 +219,37 @@ export function SchedulingCalendarView({
 
     return () => clearTimeout(timeoutId);
   }, [currentWeek, externalEventsRefreshTrigger]);
+
+  /*
+   * Everything recorded, not just this week's.
+   *
+   * The screen pages back and forth and the list is a handful of rows, so one
+   * request beats one per week — and the window filter is what makes a
+   * fortnight booked off in December unfindable when the owner scrolls to it.
+   */
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      (async () => {
+        try {
+          const response = await fetch('/api/scheduling/time-off');
+          const data = await response.json();
+          if (data?.success && Array.isArray(data.data)) {
+            setTimeOff(data.data as TimeOffEntry[]);
+          }
+        } catch {
+          /*
+           * Silent, like the external busy slots above: an unreadable list
+           * leaves the calendar showing ordinary hours, which is where it was
+           * before this overlay existed. The booking itself is still checked
+           * on the server, so a closed day cannot be booked unknowingly even
+           * if this never arrives.
+           */
+        }
+      })();
+    }, 150);
+
+    return () => clearTimeout(timeoutId);
+  }, []);
 
   // Quick action handler
   /*
@@ -265,7 +304,7 @@ export function SchedulingCalendarView({
         onBookingUpdated();
       }
     } catch (error) {
-      console.error(`Failed to ${action} booking:`, error);
+      logger.error({ err: error, action, bookingId }, 'Booking action failed');
     } finally {
       setActionInProgress(null);
     }
@@ -319,59 +358,20 @@ export function SchedulingCalendarView({
     ? bookings
     : bookings.filter(booking => booking.status === statusFilter);
 
-  // Debug logging
-  useEffect(() => {
-    console.log('📊 SchedulingCalendarView Debug:', {
-      totalBookings: bookings.length,
-      filteredBookings: filteredBookings.length,
-      statusFilter,
-      currentWeek: currentWeek.toISOString(),
-      currentWeekLocal: currentWeek.toLocaleString(),
-      weekDates: weekDates.map(d => ({
-        iso: d.toISOString(),
-        local: d.toLocaleString(),
-        dateString: d.toDateString()
-      })),
-      bookingsStatuses: bookings.map(b => ({
-        id: b.id.substring(0, 8),
-        status: b.status,
-        start_utc: b.start_time,
-        start_local: new Date(b.start_time).toLocaleString(),
-        client: b.client_first_name
-      }))
-    });
-
-    // Check each day
-    weekDates.forEach((date, i) => {
-      const dayStart = new Date(date);
-      dayStart.setHours(0, 0, 0, 0);
-      const dayEnd = new Date(date);
-      dayEnd.setHours(23, 59, 59, 999);
-
-      const dayBookings = filteredBookings.filter(booking => {
-        const bookingStart = new Date(booking.start_time);
-        const bookingEnd = new Date(booking.end_time);
-        const overlaps = bookingStart < dayEnd && bookingEnd > dayStart;
-
-        if (bookings.length > 0 && i === 4) {  // Thursday (day 4 in Sunday-first week)
-          console.log(`🗓️  Day ${i} (${date.toDateString()}) check:`, {
-            dayStart: dayStart.toISOString(),
-            dayEnd: dayEnd.toISOString(),
-            booking: booking.id.substring(0, 8),
-            bookingStart: bookingStart.toISOString(),
-            bookingEnd: bookingEnd.toISOString(),
-            overlaps
-          });
-        }
-
-        return overlaps;
-      });
-
-      if (dayBookings.length > 0) {
-        console.log(`✅ Day ${i} (${date.toDateString()}) has ${dayBookings.length} bookings`);
-      }
-    });
-  }, [bookings, filteredBookings, statusFilter, currentWeek, weekDates]);
+  /*
+   * The debug effect that used to sit here has been removed.
+   *
+   * It ran on every change to `bookings`, `filteredBookings`, `statusFilter`,
+   * `currentWeek` and `weekDates` — so on effectively every render — and logged
+   * every booking's id, status and both times to the browser console, plus a
+   * per-day overlap trace hardcoded to Thursday. It was written to chase a
+   * bug about which column a booking landed in; that bug was fixed by
+   * `columnDateKey` and `businessDateKey`, which are now asserted by
+   * `crossZone.guard.test.ts`.
+   *
+   * Nothing read it, it printed client data on every interaction, and
+   * `console.*` is not a logging path in this codebase (CLAUDE.md rule 3).
+   */
 
   /**
    * Which calendar day a column stands for, as a date key.
@@ -476,18 +476,53 @@ export function SchedulingCalendarView({
 
   const getServiceDetails = (serviceId: string) => services.find(s => s.id === serviceId);
 
+  /*
+   * THE HOURS A GIVEN DATE IS ACTUALLY OPEN.
+   *
+   * `windowsForDate` is the one answer to that question in the product — the
+   * public booking page, the smart link and the chat all ask it — so the
+   * calendar showing something else is the bug it was written for. It applies,
+   * in order: a closed range closes the date, a short day REPLACES its hours,
+   * otherwise the weekly pattern stands.
+   *
+   * Keyed off the column's own date rather than its weekday, because time off
+   * is recorded against dates.
+   */
+  const windowsForColumn = (date: Date) =>
+    windowsForDate(availability, columnDateKey(date), timeOff);
+
+  /** Why a date is closed, for the header badge. No hour: see `closedDayVerdict`. */
+  const closedFor = (date: Date) => closedDayVerdict(timeOff, columnDateKey(date));
+
   const isHourAvailable = (date: Date, hour: number): boolean => {
     if (!availability) return false;
-    const dayKey = DAY_KEYS[date.getDay()];
-    const slots = availability[dayKey];
-    if (!slots || slots.length === 0) return false;
 
-    for (const slot of slots) {
+    for (const slot of windowsForColumn(date)) {
       const [startHour] = slot.start.split(':').map(Number);
       const [endHour] = slot.end.split(':').map(Number);
       if (hour >= startHour && hour < endHour) return true;
     }
     return false;
+  };
+
+  /**
+   * Whether this cell is outside the hours, because of something the owner said
+   * about THAT DATE — a closed day, or a short one.
+   *
+   * Distinct from `!isHourAvailable`, which is also false for every hour
+   * outside the ordinary weekly pattern. An owner books outside their usual
+   * hours all the time and that must stay unremarkable; a day they closed is a
+   * statement, and worth drawing.
+   */
+  const isHourClosedByTimeOff = (date: Date, hour: number): boolean => {
+    const dateKey = columnDateKey(date);
+    if (closedDayVerdict(timeOff, dateKey).closed) return true;
+
+    const verdict = closedDayVerdict(timeOff, dateKey, {
+      start: `${String(hour).padStart(2, '0')}:00`,
+      end: `${String(hour + 1).padStart(2, '0')}:00`,
+    });
+    return verdict.closed;
   };
 
   // Calculate visible hours based on availability
@@ -533,9 +568,9 @@ export function SchedulingCalendarView({
 
   const isDayAvailable = (date: Date): boolean => {
     if (!availability) return false;
-    const dayKey = DAY_KEYS[date.getDay()];
-    const slots = availability[dayKey];
-    return slots && slots.length > 0;
+    // Through `windowsForColumn`, so a closed date no longer reads as a working
+    // day in the header — which is what the owner saw while on holiday.
+    return windowsForColumn(date).length > 0;
   };
 
   // Get external busy slots for a specific day
@@ -715,6 +750,7 @@ export function SchedulingCalendarView({
                 const isToday = date.toDateString() === new Date().toDateString();
                 const dayBookings = getBookingsForDay(date);
                 const hasAvailability = isDayAvailable(date);
+                const closed = closedFor(date);
                 return (
                   <div
                     key={index}
@@ -743,6 +779,19 @@ export function SchedulingCalendarView({
                         </span>
                       )}
                     </div>
+                    {/*
+                      The reason, when the owner gave one — 'Sukkot' tells them
+                      which closure this is, where 'Closed' sends them to the
+                      settings dialog to find out.
+                    */}
+                    {closed.closed && (
+                      <div
+                        className="mt-1 text-[9px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400 truncate"
+                        title={closed.reason || t('scheduling.closed')}
+                      >
+                        {closed.reason || t('scheduling.closed')}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -766,6 +815,15 @@ export function SchedulingCalendarView({
                     const isToday = date.toDateString() === new Date().toDateString();
                     const isAvailable = isHourAvailable(date, hour);
                     const isBlockedExternal = isHourBlockedByExternal(date, hour);
+                    /*
+                      Drawn like an external busy slot — the hatch already means
+                      "not an open hour" on this grid — but in amber rather than
+                      grey, and STILL CLICKABLE. The two are different kinds of
+                      obstacle: an event in the owner's own calendar blocks the
+                      hour, while a day they closed is their own statement, and
+                      the dialog asks before it books rather than refusing.
+                    */
+                    const isClosedByTimeOff = !isBlockedExternal && isHourClosedByTimeOff(date, hour);
                     return (
                       <div
                         key={dayIndex}
@@ -775,7 +833,7 @@ export function SchedulingCalendarView({
                             ? 'cursor-not-allowed'
                             : 'cursor-pointer'
                         } ${
-                          isBlockedExternal
+                          isBlockedExternal || isClosedByTimeOff
                             ? ''
                             : isAvailable
                               ? 'bg-teal-500/10 hover:bg-teal-500/20'
@@ -785,6 +843,8 @@ export function SchedulingCalendarView({
                         }`}
                         style={isBlockedExternal ? {
                           background: 'repeating-linear-gradient(135deg, rgba(156, 163, 175, 0.15), rgba(156, 163, 175, 0.15) 4px, rgba(156, 163, 175, 0.08) 4px, rgba(156, 163, 175, 0.08) 8px)'
+                        } : isClosedByTimeOff ? {
+                          background: 'repeating-linear-gradient(135deg, rgba(245, 158, 11, 0.16), rgba(245, 158, 11, 0.16) 4px, rgba(245, 158, 11, 0.07) 4px, rgba(245, 158, 11, 0.07) 8px)'
                         } : {}}
                       >
                         {/* External busy indicator */}
@@ -792,6 +852,15 @@ export function SchedulingCalendarView({
                           <div className="absolute inset-0 flex items-center justify-center">
                             <span className="text-[9px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider opacity-60">
                               {t('scheduling.busy')}
+                            </span>
+                          </div>
+                        )}
+                        {/* Closed: the first row of the hatch carries the word, so a
+                            run of closed hours is not a column of repeated labels. */}
+                        {isClosedByTimeOff && hourIndex === 0 && (
+                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                            <span className="text-[9px] font-medium text-amber-600 dark:text-amber-400 uppercase tracking-wider opacity-70">
+                              {t('scheduling.closed')}
                             </span>
                           </div>
                         )}

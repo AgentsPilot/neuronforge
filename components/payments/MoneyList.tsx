@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Download, Receipt, ChevronLeft, ChevronRight, Loader2, AlertTriangle, Wallet, Clock, RotateCcw, TrendingUp } from 'lucide-react';
-import { MetricCard } from '@/components/business-os/reports/MetricCard';
+import { Plus, Download, Receipt, ChevronLeft, ChevronRight, Loader2, AlertTriangle, Wallet, Clock, RotateCcw, TrendingUp, XCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { MoneySummaryStrip } from './MoneySummaryStrip';
 import { REPORTS_COLORS } from '@/lib/business-os/reports/constants';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { createLogger } from '@/lib/logger';
@@ -32,14 +33,39 @@ const logger = createLogger({ module: 'MoneyList' });
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-const PAGE_SIZE = 20;
+/*
+ * Ten rows a page.
+ *
+ * An order row expands in place to show its ledger, so a page of twenty was
+ * long before anyone opened one. Ten keeps the summary strip and the first rows
+ * on screen together, which is the comparison the page is for.
+ *
+ * The route validates `limit` as min(1).max(100), so this is the only place to
+ * change it: the request, the page count and the "X–Y of Z" label all read it.
+ */
+const PAGE_SIZE = 10;
 
-type MoneyFilter = 'all' | 'unpaid' | 'paid' | 'refunded' | 'plans' | 'draft' | 'cancelled';
+/*
+ * The API's filter values, not the UI's.
+ *
+ * There are no chips any more — the summary cells are the filter, and each one
+ * carries a figure as well as a name, which is what made the chip row redundant
+ * beside it. `plans` and `draft` outlived the chips here because the ROUTE
+ * still accepts them and another caller may send them; they simply have no
+ * control on this page.
+ */
+type MoneyFilter =
+  | 'all'
+  | 'unpaid'
+  | 'overdue'
+  | 'paid'
+  | 'refunded'
+  | 'plans'
+  | 'draft'
+  | 'cancelled';
 
 // Draft and cancelled were unreachable: the API had no such filter and the bar
 // had no chip, so an unsent draft could not be found from this list at all.
-const FILTERS: MoneyFilter[] = ['all', 'unpaid', 'paid', 'refunded', 'plans', 'draft', 'cancelled'];
-
 type MoneySort = 'date' | 'amount' | 'client' | 'status';
 
 const SORTS: MoneySort[] = ['date', 'amount', 'client', 'status'];
@@ -94,13 +120,38 @@ export function MoneyList({
     collected: 0,
     outstanding: 0,
     refunded: 0,
+    // Both are required by the type and were missing from this literal, so the
+    // pre-fetch render read `undefined` where a number was expected.
+    cancelled: 0,
+    overdue: 0,
     byCurrency: {},
   });
   const [total, setTotal] = useState(0);
+  /**
+   * How many rows the strip's figures are summing.
+   *
+   * Not `total`: that is the filtered count, which drives the pager. These two
+   * deliberately differ the moment a KPI is clicked — the list narrows, the
+   * summary does not.
+   */
+  const [summaryCount, setSummaryCount] = useState(0);
   const [truncated, setTruncated] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<MoneyFilter>('all');
+  /*
+   * Which row is drilled into. One at a time, so the list never becomes a
+   * column of open ledgers with no rows left to compare them against.
+   */
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  /**
+   * Which kind of row the list is showing.
+   *
+   * A booking CONTAINS its money; an invoice with no booking IS the money. They
+   * were two sections of one list, so a select-all could not mean either one and
+   * reaching the invoices meant scrolling past every order.
+   */
+  const [kindView, setKindView] = useState<'bookings' | 'standalone'>('bookings');
   const [sort, setSort] = useState<MoneySort>('date');
   const [page, setPage] = useState(0);
   /** The entry being refunded. Refunds open a dialog rather than firing. */
@@ -180,6 +231,7 @@ export function MoneyList({
       setItems(result.data.items);
       setTotals(result.data.totals);
       setTotal(result.data.total);
+      setSummaryCount(result.data.summaryCount ?? result.data.total);
       setTruncated(result.data.truncated);
     } catch (err) {
       // Said on screen, not only in the console. A money list that silently
@@ -278,6 +330,11 @@ export function MoneyList({
   // like a booking whose details failed to load.
   const bookingItems = items.filter(item => item.kind === 'booking');
   const otherItems = items.filter(item => item.kind !== 'booking');
+  /** What the switch above is showing, and the only thing select-all can mean. */
+  const visibleItems = kindView === 'bookings' ? bookingItems : otherItems;
+  /** Every row in view is chosen, so the select-all becomes a clear-all. */
+  const allVisibleSelected =
+    visibleItems.length > 0 && visibleItems.every(one => selected.has(one.key));
 
   /**
    * What clicking a row does.
@@ -399,82 +456,62 @@ export function MoneyList({
 
   return (
     <div dir={isRTL ? 'rtl' : 'ltr'}>
-      {/* KPI cards, using the same MetricCard the reports overview uses — a
-          second card style for the same kind of figure would read as a
-          different kind of figure.
+      {/* The summary strip. Every cell is a filter, and the active one clears
+          when clicked again; the strip also renders the explicit way back.
 
           The totals cover the WHOLE filtered set, not the visible page: a
-          number that changed as the reader paged would be worse than none. */}
-      <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {/* The whole book of business: what arrived plus what is still coming.
+          number that changed as the reader paged would be worse than none.
+          Note FILTERED, not entire — `filter` goes to the API, so once one is
+          applied the other figures are 0 by construction. That is why the strip
+          must not read a 0 as "nothing to filter by"; see its own comment. */}
+      <MoneySummaryStrip
+        totals={totals}
+        money={money}
+        activeFilter={filter}
+        onFilter={next => setFilter(next as typeof filter)}
+        orderCount={summaryCount}
+      />
 
-            Refunds are NOT subtracted here, because they are already gone from
-            `collected` — the totals net each entry as `amount - refunded`. Taking
-            the refund off again would remove it twice and understate the figure
-            by exactly the amount returned. */}
-        <MetricCard
-          icon={TrendingUp}
-          iconColor={REPORTS_COLORS.ACCENT}
-          label={t('payments.total_revenue') || 'Total revenue'}
-          value={money(c => c.collected + c.outstanding)}
-          subtitle={t('payments.paid_and_pending') || 'Paid and pending, after refunds'}
-        />
-        <MetricCard
-          icon={Wallet}
-          iconColor={REPORTS_COLORS.PRIMARY}
-          label={t('payments.collected') || 'Collected'}
-          value={money(c => c.collected)}
-          subtitle={`${total} ${total === 1 ? t('payments.item') || 'order' : t('payments.entries') || 'orders'}`}
-        />
-        <MetricCard
-          icon={Clock}
-          iconColor={REPORTS_COLORS.WARNING}
-          label={t('payments.outstanding') || 'Outstanding'}
-          value={money(c => c.outstanding)}
-          subtitle={
-            totals.outstanding > 0
-              ? t('payments.awaiting_collection') || 'Still to collect'
-              : t('payments.all_collected') || 'Nothing outstanding'
-          }
-          onAction={totals.outstanding > 0 ? () => setFilter('unpaid') : undefined}
-          actionLabel={t('payments.filter.unpaid') || 'Unpaid'}
-        />
-        <MetricCard
-          icon={RotateCcw}
-          iconColor={REPORTS_COLORS.UNATTRIBUTED}
-          label={t('payments.refunded') || 'Refunded'}
-          value={money(c => c.refunded)}
-          subtitle={
-            totals.refunded <= 0
-              ? t('payments.no_refunds') || 'No refunds'
-              : refundCount === null
-                ? t('payments.returned_to_clients') || 'Returned to clients'
-                : `${refundCount} ${
-                    refundCount === 1
-                      ? t('payments.refund_singular')
-                      : t('payments.refund_plural')
-                  }`
-          }
-          onAction={totals.refunded > 0 ? () => setFilter('refunded') : undefined}
-          actionLabel={t('payments.filter.refunded') || 'Refunded'}
-        />
-      </div>
-
+      {/*
+        The toolbar: which SET of rows, then which view of them.
+        ───────────────────────────────────────────────────────────────────────
+        Orders and loose invoices were two labelled sections of one list, which
+        meant scrolling past every order to reach the first invoice and a select
+        -all that could not mean either one. They are different things — a
+        booking CONTAINS its money, an invoice with no booking IS the money — so
+        they are now two views, switched here.
+      */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        {FILTERS.map(option => (
-          <button
-            key={option}
-            onClick={() => setFilter(option)}
-            className={`px-2.5 py-1 text-xs transition-colors border ${
-              filter === option
-                ? 'text-[#22C58B] border-[#22C58B] bg-[#22C58B]/10'
-                : 'text-[var(--v2-text-secondary)] border-[var(--v2-border)] hover:text-[var(--v2-text-primary)]'
-            }`}
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-          >
-            {t(`payments.filter.${option}`) || option}
-          </button>
-        ))}
+        <div
+          className="flex gap-0.5 bg-[var(--v2-bg)] p-0.5"
+          role="group"
+          style={{ borderRadius: 'var(--v2-radius-button)' }}
+        >
+          {(['bookings', 'standalone'] as const).map(option => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => {
+                setKindView(option);
+                // A selection made in one view cannot be exported from the
+                // other, and silently carrying it across is how a reader
+                // exports rows they can no longer see.
+                setSelected(new Set());
+              }}
+              aria-pressed={kindView === option}
+              className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+                kindView === option
+                  ? 'bg-[var(--v2-surface)] text-[var(--v2-text-primary)] shadow-sm'
+                  : 'text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]'
+              }`}
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              {option === 'bookings'
+                ? t('payments.view.orders') || 'Orders'
+                : t('payments.view.standalone') || 'Invoices without an order'}
+            </button>
+          ))}
+        </div>
 
         {/* Sorting vanished entirely in the merge. "Biggest first" and "who owes
             me" are how people actually read a money list, and neither was
@@ -513,48 +550,13 @@ export function MoneyList({
         </div>
       )}
 
-      {/* Selection is a MODE, entered deliberately. The alternative — a checkbox
-          on every row, always — puts a column of empty boxes in front of every
-          reader to serve the occasional one who wants a partial export. */}
-      <div className="mb-2 flex items-center gap-2 text-[11.5px]">
-        <button
-          onClick={() => {
-            setSelectMode(!selectMode);
-            setSelected(new Set());
-          }}
-          className={`px-2.5 py-1 border transition-colors ${
-            selectMode
-              ? 'text-[#22C58B] border-[#22C58B] bg-[#22C58B]/10'
-              : 'text-[var(--v2-text-secondary)] border-[var(--v2-border)] hover:text-[var(--v2-text-primary)]'
-          }`}
-          style={{ borderRadius: 'var(--v2-radius-button)' }}
-        >
-          {selectMode
-            ? t('payments.select.done') || 'Done selecting'
-            : t('payments.select.start') || 'Select rows'}
-        </button>
+      {/* Selection is a MODE, entered deliberately — the alternative, a checkbox
+          on every row always, puts a column of empty boxes in front of every
+          reader to serve the occasional one who wants a partial export.
 
-        {selectMode && (
-          <>
-            <span className="text-[var(--v2-text-muted)]">
-              {selected.size > 0
-                ? `${selected.size} ${t('payments.select.chosen') || 'selected'}`
-                : t('payments.select.hint') || 'Click rows to select them'}
-            </span>
-            {selected.size > 0 && (
-              <button
-                onClick={exportCsv}
-                className="ms-auto flex items-center gap-1.5 px-2.5 py-1 border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                <Download className="h-3.5 w-3.5" />
-                {t('payments.select.export') || 'Export selected'}
-              </button>
-            )}
-          </>
-        )}
-      </div>
-
+          The control used to float above the list on its own line, far from the
+          rows it acts on and with nothing to select ALL of. It lives in the
+          list's header now, in the column the checkboxes would occupy. */}
       {refundError && (
         <div
           className="mb-3 flex items-start gap-2 bg-red-500/10 px-3 py-2 text-[11.5px] text-red-600"
@@ -581,54 +583,143 @@ export function MoneyList({
           <p className="text-sm">{t('payments.no_money_yet') || 'Nothing billed yet'}</p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {/* Split, because a booking row and a loose invoice are different
-              kinds of thing and mixing them reads as "invoices floating around
-              unattached". A booking CONTAINS its money; an invoice with no
-              booking IS the money. Saying which is which is the difference
-              between a hierarchy and a jumble. */}
-          {bookingItems.length > 0 && otherItems.length > 0 && (
-            <div className="pt-1 text-[11px] font-medium uppercase tracking-wide text-[var(--v2-text-muted)]">
-              {t('payments.section.bookings') || 'Bookings'}
-            </div>
-          )}
-          {bookingItems.map(item => (
-            <div key={item.key} className={highlightClass(item)}>
-              <MoneyRow
-                item={item}
-                t={t}
-                isRTL={isRTL}
-                formatCurrency={formatCurrency}
-                formatDate={formatDate}
-                onSelect={() => rowClicked(item)}
-                selected={selected.has(item.key)}
-                selectable={selectMode}
-              />
-            </div>
-          ))}
+        /*
+          ONE CARD, NOT A CARD PER ROW.
+          ───────────────────────────────────────────────────────────────────
+          Each row was its own bordered, rounded card with a gap beneath it, so
+          a list of twenty orders was twenty objects. That is the treatment for
+          things considered one at a time; a list is read DOWN, and the gaps
+          broke every column the row works so hard to align.
 
-          {otherItems.length > 0 && (
-            <>
-              {bookingItems.length > 0 && (
-                <div className="pt-3 text-[11px] font-medium uppercase tracking-wide text-[var(--v2-text-muted)]">
-                  {t('payments.section.other') || 'Not linked to a booking'}
-                </div>
-              )}
-              {otherItems.map(item => (
-                <div key={item.key} className={highlightClass(item)}>
-                  <MoneyRow
-                    item={item}
-                    t={t}
-                    isRTL={isRTL}
-                    formatCurrency={formatCurrency}
-                    formatDate={formatDate}
-                    onSelect={() => rowClicked(item)}
-                    selected={selected.has(item.key)}
-                    selectable={selectMode}
-                  />
-                </div>
-              ))}
-            </>
+          One container with hairline-divided rows says what is true: these are
+          entries in a ledger, comparable line by line.
+        */
+        <div
+          className="overflow-hidden border border-[var(--v2-border)] bg-[var(--v2-surface)]"
+          style={{ borderRadius: 'var(--v2-radius-card)' }}
+        >
+          {/*
+            The column headings.
+            ─────────────────────────────────────────────────────────────────
+            The list had none, so every reader worked out what the middle track
+            was from its contents — which is readable on a row with a full bar
+            and guesswork on a row with one segment. Four words remove that.
+
+            Hidden where the columns are, on a narrow screen: a heading over a
+            track that is not rendered is worse than no heading.
+          */}
+          {/*
+            The header carries the selection controls, because the first column
+            is where a checkbox belongs and "select all" has to sit at the top of
+            the thing it selects.
+          */}
+          <div className="flex items-center gap-3 border-b border-[var(--v2-border)] bg-[var(--v2-bg)] px-3 py-1.5 text-[11px]">
+            <button
+              type="button"
+              onClick={() => {
+                setSelectMode(!selectMode);
+                setSelected(new Set());
+              }}
+              className={`px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                selectMode
+                  ? 'bg-[#22C58B]/10 text-[#22C58B]'
+                  : 'text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]'
+              }`}
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              {selectMode
+                ? t('payments.select.done') || 'Done selecting'
+                : t('payments.select.start') || 'Select rows'}
+            </button>
+
+            {selectMode && (
+              <>
+                {/*
+                  A TOGGLE, and it says which way it will go.
+                  ─────────────────────────────────────────────────────────────
+                  A checkbox here was both the wrong control and the wrong
+                  grammar: every other control on this bar is a button, and a
+                  box that is unticked with two of five rows chosen looks like
+                  it is reporting "none selected" rather than offering "select
+                  the rest".
+
+                  Scoped to what the switch above is showing. A select-all that
+                  reached the other view would export rows the reader never saw.
+                */}
+                <button
+                  type="button"
+                  disabled={visibleItems.length === 0}
+                  onClick={() =>
+                    setSelected(
+                      allVisibleSelected ? new Set() : new Set(visibleItems.map(one => one.key))
+                    )
+                  }
+                  aria-pressed={allVisibleSelected}
+                  className={`px-2 py-0.5 text-[11px] font-medium transition-colors disabled:opacity-40 ${
+                    allVisibleSelected
+                      ? 'bg-[#22C58B]/10 text-[#22C58B]'
+                      : 'text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]'
+                  }`}
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  {allVisibleSelected
+                    ? t('payments.select.none') || 'Clear selection'
+                    : t('payments.select.all') || 'Select all'}
+                </button>
+                <span className="text-[var(--v2-text-muted)]">
+                  {selected.size > 0
+                    ? `${selected.size} ${t('payments.select.chosen') || 'selected'}`
+                    : t('payments.select.hint') || 'Click rows to select them'}
+                </span>
+                {selected.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={exportCsv}
+                    className="ms-auto flex items-center gap-1.5 px-2 py-0.5 text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    {t('payments.select.export') || 'Export selected'}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="hidden grid-cols-[1.25rem_minmax(0,1.6fr)_minmax(0,1.1fr)_8.5rem_1.25rem] items-center gap-3 border-b border-[var(--v2-border)] bg-[var(--v2-bg)] px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--v2-text-muted)] sm:grid">
+            <span aria-hidden="true" />
+            <span>{t('payments.col.client_order') || 'Client and order'}</span>
+            <span>{t('payments.col.cashflow') || 'Cashflow'}</span>
+            <span className="text-end">{t('payments.col.amount') || 'Amount'}</span>
+            <span aria-hidden="true" />
+          </div>
+
+          {visibleItems.length === 0 ? (
+            <div className="px-3 py-8 text-center text-[12px] text-[var(--v2-text-muted)]">
+              {kindView === 'bookings'
+                ? t('payments.view.no_orders') || 'No orders in this view'
+                : t('payments.view.no_standalone') || 'No invoices without an order'}
+            </div>
+          ) : (
+            visibleItems.map(item => (
+              <div
+                key={item.key}
+                className={`border-b border-[var(--v2-border)] last:border-b-0 ${highlightClass(item)}`}
+              >
+                <MoneyRow
+                  expanded={expandedKey === item.key}
+                  onToggleExpand={() => setExpandedKey(expandedKey === item.key ? null : item.key)}
+                  item={item}
+                  t={t}
+                  isRTL={isRTL}
+                  formatCurrency={formatCurrency}
+                  formatDate={formatDate}
+                  onSelect={() => rowClicked(item)}
+                  selected={selected.has(item.key)}
+                  selectable={selectMode}
+                />
+              </div>
+            ))
           )}
         </div>
       )}
@@ -674,26 +765,100 @@ export function MoneyList({
         />
       )}
 
+      {/*
+        PAGINATION — the platform's, not this page's own.
+        ───────────────────────────────────────────────────────────────────────
+        This was two bare chevrons and an `xs` line, which is not what the rest
+        of the platform does: `PaymentInvoiceList` and `PaymentTransactionList`
+        both render a surfaced card with the `{from}-{to} of {total}` string,
+        labelled Previous/Next buttons and up to five numbered pages. Same list,
+        same page, two different pagers.
+
+        So this is that pattern, including the five-page window, and it reads
+        `payments.pagination.*` — the keys those two already use — rather than
+        assembling the sentence from `reports.of`.
+
+        ONE DELIBERATE DIFFERENCE: the chevrons flip under RTL. Neither sibling
+        does that, so in Hebrew their "next" arrow points back the way the
+        reader came. This page is read in Hebrew every day, so the bug is not
+        worth copying for symmetry's sake; the siblings should be fixed to
+        match, not this one broken to match them.
+      */}
       {totalPages > 1 && (
-        <div className="mt-3 flex items-center justify-between text-xs text-[var(--v2-text-muted)]">
-          <span>
-            {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} {t('reports.of') || 'of'} {total}
-          </span>
-          <div className="flex gap-1">
-            <button
+        <div
+          className="mt-3 flex items-center justify-between border border-[var(--v2-border)] bg-[var(--v2-surface)] p-4"
+          style={{ borderRadius: 'var(--v2-radius-card)' }}
+        >
+          <div className="text-sm text-[var(--v2-text-muted)]">
+            {t('payments.pagination.showing')
+              ?.replace('{from}', String(page * PAGE_SIZE + 1))
+              .replace('{to}', String(Math.min((page + 1) * PAGE_SIZE, total)))
+              .replace('{total}', String(total)) ||
+              `${page * PAGE_SIZE + 1}-${Math.min((page + 1) * PAGE_SIZE, total)} of ${total}`}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => setPage(p => Math.max(0, p - 1))}
-              disabled={page === 0}
-              className="p-1 disabled:opacity-30"
+              disabled={page === 0 || loading}
+              className="h-8 px-2"
             >
               <ChevronLeft className={`h-4 w-4 ${isRTL ? 'rotate-180' : ''}`} />
-            </button>
-            <button
+              <span className="ms-1 hidden sm:inline">
+                {t('payments.pagination.prev') || 'Previous'}
+              </span>
+            </Button>
+
+            <div className="hidden items-center gap-1 sm:flex">
+              {(() => {
+                /*
+                 * A five-page window that keeps the current page in view:
+                 * clamped to the start near the start, to the end near the end,
+                 * centred in between. Copied from the siblings so the three
+                 * pagers behave identically, not only look alike.
+                 */
+                const currentPage = page + 1;
+                return Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let pageNum: number;
+                  if (totalPages <= 5) pageNum = i + 1;
+                  else if (currentPage <= 3) pageNum = i + 1;
+                  else if (currentPage >= totalPages - 2) pageNum = totalPages - 4 + i;
+                  else pageNum = currentPage - 2 + i;
+
+                  return (
+                    <Button
+                      key={pageNum}
+                      variant={currentPage === pageNum ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setPage(pageNum - 1)}
+                      disabled={loading}
+                      className={`h-8 w-8 p-0 ${
+                        currentPage === pageNum
+                          ? 'bg-[#22C58B] text-white hover:bg-[#1ea677]'
+                          : ''
+                      }`}
+                    >
+                      {pageNum}
+                    </Button>
+                  );
+                });
+              })()}
+            </div>
+
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => setPage(p => (p + 1 < totalPages ? p + 1 : p))}
-              disabled={page + 1 >= totalPages}
-              className="p-1 disabled:opacity-30"
+              disabled={page + 1 >= totalPages || loading}
+              className="h-8 px-2"
             >
+              <span className="me-1 hidden sm:inline">
+                {t('payments.pagination.next') || 'Next'}
+              </span>
               <ChevronRight className={`h-4 w-4 ${isRTL ? 'rotate-180' : ''}`} />
-            </button>
+            </Button>
           </div>
         </div>
       )}

@@ -410,7 +410,16 @@ describe('totals never count the same money twice', () => {
 
   it('survives empty input', () => {
     expect(buildMoneyItems({})).toEqual([]);
-    expect(totalMoney([])).toEqual({ collected: 0, outstanding: 0, refunded: 0, cancelled: 0, byCurrency: {} });
+    expect(totalMoney([])).toEqual({
+      collected: 0,
+      outstanding: 0,
+      refunded: 0,
+      cancelled: 0,
+      // A subset of `outstanding`, reported so the summary can separate money
+      // that waits from money being chased.
+      overdue: 0,
+      byCurrency: {},
+    });
   });
 
   it('keeps currencies apart instead of summing them', () => {
@@ -431,8 +440,15 @@ describe('totals never count the same money twice', () => {
 
     const totals = totalMoney(items);
 
-    expect(totals.byCurrency.ILS).toEqual({ collected: 600, outstanding: 0, refunded: 0, cancelled: 0 });
-    expect(totals.byCurrency.USD).toEqual({ collected: 0, outstanding: 40, refunded: 0, cancelled: 0 });
+    expect(totals.byCurrency.ILS).toEqual({ collected: 600, outstanding: 0, refunded: 0, cancelled: 0, overdue: 0 });
+    /*
+     * Due 1 Sep 2026 and unsettled, so it is outstanding AND late — counted in
+     * both, because `overdue` is a subset of `outstanding` rather than a rival
+     * bucket. It reads as late without anyone having flipped its status: the
+     * overdue sweep is a cron, and a figure that waited for it would report
+     * zero all morning.
+     */
+    expect(totals.byCurrency.USD).toEqual({ collected: 0, outstanding: 40, refunded: 0, cancelled: 0, overdue: 40 });
   });
 });
 

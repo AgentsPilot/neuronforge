@@ -1251,7 +1251,21 @@ export class BusinessProfileRepository {
    */
   async updateContactDetails(
     userId: string,
-    contact: { phone?: string | null; email?: string | null; address?: string | null }
+    contact: {
+      phone?: string | null;
+      email?: string | null;
+      address?: string | null;
+      /**
+       * The display address in parts, with an ISO country code.
+       *
+       * Written ALONGSIDE `address`, never instead of it: three surfaces read
+       * that column as a string — the public pages, the website address block
+       * and the generated privacy policy — and none of them should have to
+       * learn about parts. The caller composes the line from these and sends
+       * both, so the two cannot drift.
+       */
+      address_parts?: Record<string, unknown> | null;
+    }
   ): Promise<BusinessProfileRepositoryResult<true>> {
     try {
       const updateData: Record<string, unknown> = {
@@ -1266,6 +1280,16 @@ export class BusinessProfileRepository {
         if (value !== undefined) {
           updateData[field] = value?.trim() ? value.trim() : null;
         }
+      }
+
+      /*
+       * JSONB, so it is set wholesale rather than trimmed like a string. `{}`
+       * is the empty state the column defaults to — not null, which would make
+       * "never filled in" and "deliberately cleared" indistinguishable to the
+       * readiness check.
+       */
+      if (contact.address_parts !== undefined) {
+        updateData.address_parts = contact.address_parts ?? {};
       }
 
       const { error } = await this.supabase

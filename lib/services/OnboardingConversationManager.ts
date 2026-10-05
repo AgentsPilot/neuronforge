@@ -520,6 +520,15 @@ const FREE_PRICE_WORDS = [
 /** Free only as the entire reply — inside a sentence they hedge ("nothing fixed yet"). */
 const FREE_WHOLE_REPLIES = ['nothing', 'nada'];
 
+/**
+ * The most services onboarding will create from a count.
+ *
+ * Same ceiling as the chat route's request schema puts on a submitted services
+ * array (`StructuredServiceSchema`, `.max(40)`), so the two limits cannot drift
+ * apart and leave one path accepting what the other rejects.
+ */
+export const SERVICE_COUNT_MAX = 40;
+
 /** Currency words stripped before the number is read, bounded like whole words (see `containsWholeWord`). */
 const PRICE_CURRENCY_WORDS =
   /(?<![\p{L}\p{N}])(?:שקלים|שקל|ש"ח|שח|nis|ils|usd|eur|dollars|dollar|euros|euro)(?![\p{L}\p{N}])/gu;
@@ -705,8 +714,30 @@ export class OnboardingConversationManager {
         };
         updatedState.collectedData.businessDescription = businessStory.description;
 
-        updatedState.currentStep = 'client_workflow';
-        logger.info({ newStep: 'client_workflow' }, 'Transitioning to client_workflow step');
+        /*
+         * Straight to how they sell. `client_workflow` is no longer asked.
+         *
+         * It asked whether prices are set or quoted per client, which sets
+         * `pricing_model` and through it each service's `sale_mode`. That is a
+         * real field, but it decides no capability — `sale_mode` appears
+         * nowhere in `businessShape` or `setupGraph`; it only swaps the client
+         * journey's payment step for a quote request. It cost a question and a
+         * whole LLM call (`extractClientWorkflow`) for something the services
+         * editor can set, and it promised a conversation about prices that no
+         * longer follows.
+         *
+         * The draft generator reads `vertical` and `sub_vertical` off the story
+         * extraction above, which is its primary input anyway, so dropping the
+         * step costs it nothing.
+         *
+         * `client_workflow` stays in `ONBOARDING_STEPS` and keeps its handler,
+         * for the same reason `payment_collection` and `client_tracking` do: a
+         * conversation already standing on it must resume rather than be
+         * deleted and restarted in English.
+         */
+        updatedState.currentStep = 'service_details';
+        updatedState.pendingQuestion = 'sell_scheduled';
+        logger.info({ newStep: 'service_details', pendingQuestion: 'sell_scheduled' }, 'Asking how the business sells');
         break;
 
       case 'client_workflow':
@@ -719,31 +750,97 @@ export class OnboardingConversationManager {
 
         updatedState.collectedData.clientWorkflow = clientWorkflow;
 
-        // Check if we need more details (user just said "fixed prices" without specific services)
-        const needsMoreDetails = clientWorkflow.needs_more_details === true ||
-          (!clientWorkflow.services || clientWorkflow.services.length === 0);
-
-        if (needsMoreDetails) {
-          // Ask what they offer — including when every price is quoted per
-          // client. This used to skip the question entirely for custom
-          // pricing, so those businesses finished onboarding with no services
-          // at all and were then told by the dashboard to go and add some:
-          // the very thing they had just said they could not do as a menu.
-          //
-          // A quote-based business still has services. What it does not have
-          // is a price list, so the prompt asks for names and durations and
-          // leaves the money to the conversation with each client.
-          updatedState.currentStep = 'service_details';
-          logger.info({ pricingModel: clientWorkflow.pricing_model }, 'Need more service details');
-          break;
-        }
-
-        // Ask how the money reaches them, if that is still unknown and there
-        // is money at all. Otherwise straight on to how clients find them.
-        updatedState.currentStep = this.nextStepAfterServices(updatedState);
+        /*
+         * On to how they sell, ALWAYS — whether or not the story named any
+         * services.
+         *
+         * This used to branch: a business whose bio happened to mention its
+         * services skipped the step entirely, so it was never asked whether it
+         * books appointments or how it collects money. Those two answers decide
+         * whether working hours and a payment processor are required at all, and
+         * the business that skipped them was the one most likely to publish a
+         * booking page with neither.
+         *
+         * Anything the story did yield is kept on `clientWorkflow.services` and
+         * used first when the drafts are created — the count tops it up rather
+         * than replacing it, so a name and price the owner actually typed is
+         * never traded for a generated one.
+         */
+        updatedState.currentStep = 'service_details';
+        updatedState.pendingQuestion = 'sell_scheduled';
+        logger.info(
+          {
+            pricingModel: clientWorkflow.pricing_model,
+            servicesFromStory: clientWorkflow.services?.length || 0,
+          },
+          'Asking how the business sells'
+        );
         break;
 
       case 'service_details':
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * HOW THEY SELL — three answers, then the catalogue is created as drafts.
+         *
+         * Only two of these decide a capability, and that is why only two are
+         * asked. `is_scheduled` turns on scheduling, availability, the timezone,
+         * calendar sync and intake, and raises both blocking publish gaps.
+         * `collection` turns on the payments capability, the processor step and
+         * the invoice paperwork. Everything else a service carries — price,
+         * duration, instalments, quoting — drives no capability and belongs in
+         * the services editor, which already has a field for each.
+         *
+         * Checked, not assumed: `shape.plans` is read in exactly two places
+         * (`moneyMoves` and `needsInvoicePaperwork`) and both return true from
+         * `collectsOnline`/`invoices` first, so asking about instalments here
+         * would change nothing. `hasPricedServices` is read by no predicate at
+         * all.
+         *
+         * The branches below run BEFORE the legacy free-text loop, which is
+         * left intact underneath: a conversation that was already standing in
+         * `more_services` when this shipped still finishes the way it started.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        if (state.pendingQuestion === 'sell_scheduled') {
+          const scheduled = this.readScheduledAnswer(message, updatedState.language);
+          updatedState.collectedData.clientWorkflow = {
+            ...updatedState.collectedData.clientWorkflow,
+            sells_scheduled: scheduled,
+          };
+          updatedState.pendingQuestion = 'sell_collection';
+          logger.info({ scheduled }, 'Read whether the business books appointments');
+          break;
+        }
+
+        if (state.pendingQuestion === 'sell_collection') {
+          const collection = this.readCollectionMethod(message, updatedState.language);
+          updatedState.collectedData.clientWorkflow = {
+            ...updatedState.collectedData.clientWorkflow,
+            collection_method: collection,
+          };
+          updatedState.pendingQuestion = 'service_count';
+          logger.info({ collection }, 'Read how the business collects money');
+          break;
+        }
+
+        if (state.pendingQuestion === 'service_count') {
+          const count = this.readServiceCount(message);
+          if (count === null) {
+            // Ask again rather than guess. The figure decides how many rows are
+            // written to their catalogue, and a wrong one is cleaned up by hand.
+            logger.info({ messageLength: message.length }, 'No count in the reply; asking again');
+            break;
+          }
+          updatedState.collectedData.clientWorkflow = {
+            ...updatedState.collectedData.clientWorkflow,
+            service_count: count,
+          };
+          updatedState.pendingQuestion = undefined;
+          updatedState.currentStep = this.nextStepAfterServices(updatedState);
+          logger.info({ count }, 'Read how many services the business sells');
+          break;
+        }
+
         // Handle price response when we asked "מה המחיר של X?"
         if (state.pendingQuestion === 'need_price') {
           const priceResponse = this.extractPriceFromMessage(message);
@@ -1338,6 +1435,125 @@ export class OnboardingConversationManager {
    * while never asking for the account number its invoices actually need.
    */
 /**
+   * Does this business book appointments?
+   *
+   * Chips first, then typed words — the same order and for the same reason as
+   * `readCollectionMethod` below: the offered labels spell out their
+   * consequence, so a keyword search finds "appointment" inside the answer that
+   * exists to say there are none.
+   *
+   * Defaults to TRUE when nothing is recognised, and that direction is
+   * deliberate. A scheduled service with no working hours is caught by
+   * `journeyReadiness` and blocks publishing until the owner sets them, so a
+   * wrong `true` is loud and fixable. A wrong `false` silently removes the
+   * datetime step from the client's journey, and the owner discovers it when a
+   * client books nothing at all.
+   */
+  private readScheduledAnswer(message: string, language: Language): boolean {
+    const text = message.trim().toLowerCase();
+
+    const CHIPS: Array<[boolean, string[]]> = [
+      [false, [
+        'אני מוכר בלי תורים — אין צורך בלוח זמנים',
+        'vendo sin turnos — no hace falta agenda',
+        'i sell without appointments — no calendar needed',
+      ]],
+      [true, [
+        'הלקוחות קובעים איתי זמן',
+        'los clientes reservan una hora conmigo',
+        'clients book a time with me',
+      ]],
+    ];
+
+    for (const [scheduled, labels] of CHIPS) {
+      if (labels.some(label => text === label.toLowerCase())) return scheduled;
+    }
+
+    // Typed rather than tapped. An explicit denial settles it however many
+    // times the word "appointment" appears in the sentence.
+    const mentions = (...needles: string[]) => needles.some(needle => text.includes(needle));
+
+    const refusesAppointments = mentions(
+      'no appointment', 'without appointment', 'no booking', 'without booking',
+      'no calendar', 'not scheduled', 'no times', 'בלי תורים', 'ללא תורים',
+      'בלי פגישות', 'ללא פגישות', 'בלי לוח זמנים', 'sin turnos', 'sin citas', 'sin agenda',
+    );
+    if (refusesAppointments) return false;
+
+    if (mentions(
+      'appointment', 'book a time', 'booking', 'schedule', 'calendar', 'slot',
+      'תור', 'תורים', 'פגישה', 'פגישות', 'לוח זמנים', 'turno', 'cita', 'agenda', 'reserva',
+    )) {
+      return true;
+    }
+
+    logger.info(
+      { messageLength: text.length, language },
+      'Could not read an appointments answer; defaulting to scheduled'
+    );
+    return true;
+  }
+
+  /**
+   * How many different things the business sells.
+   *
+   * Returns null when the reply carries no usable number, so the caller asks
+   * again rather than inventing a figure — the count decides how many rows are
+   * written to the owner's catalogue, and a guess there is a guess they have to
+   * clean up by hand.
+   *
+   * Clamped to `SERVICE_COUNT_MAX`, which is the same ceiling the chat request
+   * schema puts on a submitted services array. "I have about 200" is a real
+   * answer from a shop, and writing 200 draft rows would make the services
+   * screen unusable; capping asks them to finish the ones that matter and add
+   * the rest in the editor.
+   */
+  private readServiceCount(message: string): number | null {
+    const text = message.trim().toLowerCase();
+
+    // A written number, for "just one" and "I have three".
+    const WORDS: Array<[number, string[]]> = [
+      [1, ['one', 'a single', 'just one', 'only one', 'אחד', 'אחת', 'רק אחד', 'uno', 'una', 'solo uno']],
+      [2, ['two', 'a couple', 'שתיים', 'שניים', 'dos']],
+      [3, ['three', 'שלוש', 'שלושה', 'tres']],
+      [4, ['four', 'ארבע', 'ארבעה', 'cuatro']],
+      [5, ['five', 'חמש', 'חמישה', 'cinco']],
+      [6, ['six', 'שש', 'שישה', 'seis']],
+      [7, ['seven', 'שבע', 'שבעה', 'siete']],
+      [8, ['eight', 'שמונה', 'ocho']],
+      [9, ['nine', 'תשע', 'תשעה', 'nueve']],
+      [10, ['ten', 'עשר', 'עשרה', 'diez']],
+    ];
+
+    // Digits win over words: "3 or 4" should read as 3, not match 'four'.
+    const digits = text.match(/\d+/);
+    if (digits) {
+      const parsed = parseInt(digits[0], 10);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        const clamped = Math.min(parsed, SERVICE_COUNT_MAX);
+        logger.info({ parsed, clamped }, 'Read a service count from digits');
+        return clamped;
+      }
+      // An explicit zero. They sell nothing yet, which is a real answer and not
+      // a failure to parse — no drafts, and the services step stays outstanding.
+      if (parsed === 0) {
+        logger.info({ parsed: 0 }, 'Business says it sells nothing yet');
+        return 0;
+      }
+    }
+
+    for (const [count, labels] of WORDS) {
+      if (labels.some(label => containsWholeWord(text, label) || text === label)) {
+        logger.info({ count }, 'Read a service count from words');
+        return count;
+      }
+    }
+
+    logger.info({ messageLength: text.length }, 'No service count in the reply');
+    return null;
+  }
+
+  /**
    * Which collection method an answer means.
    *
    * Matches the four offered chips first, then the phrases people type instead
@@ -1367,6 +1583,17 @@ export class OnboardingConversationManager {
       ['invoice', [
         'אני גובה את הכסף בעצמי — חשבונית, העברה, ביט או מזומן', 'Cobro yo mismo — factura, transferencia o efectivo', 'I collect the money myself — invoice, transfer or cash',
       ]],
+      /*
+       * Nothing is charged at all.
+       *
+       * Offered as a chip because the fallback at the bottom of this method is
+       * `invoice`, so a business that charges for nothing used to come out of
+       * here owing invoice paperwork and carrying a payments capability it has
+       * no use for. `moneyMoves` reads this as false and drops both.
+       */
+      ['none', [
+        'אני לא גובה כסף על מה שאני מוכר', 'No cobro por nada de lo que ofrezco', 'Nothing I sell is paid for',
+      ]],
     ];
 
     for (const [method, labels] of CHIPS) {
@@ -1382,6 +1609,20 @@ export class OnboardingConversationManager {
       'no card', 'without card', 'not by card', 'בלי סליקה', 'ללא סליקה', 'בלי אשראי', 'ללא אשראי',
       'sin pasarela', 'sin tarjeta'
     );
+
+    /*
+     * Typed "it's free" rather than tapping the chip.
+     *
+     * Checked before every other keyword, because none of the words below
+     * appears in "I don't charge for any of it" — so without this it reached
+     * the `invoice` fallback at the bottom and a free business was told it owed
+     * bank details. Whole words via `containsWholeWord`, reusing the list the
+     * price reader already uses: `includes` would find "free" in "freelance".
+     */
+    if (FREE_PRICE_WORDS.some(word => containsWholeWord(text, word))
+      || mentions("don't charge", 'do not charge', 'no charge', 'לא גובה', 'לא גובים', 'no cobro', 'no cobramos')) {
+      return 'none';
+    }
 
     if (mentions('cash', 'in person', 'מזומן', 'במקום', 'פנים מול פנים', 'efectivo', 'en persona')) {
       return 'in_person';
@@ -1785,6 +2026,28 @@ export class OnboardingConversationManager {
         };
 
       case 'service_details':
+        // How they sell — the two capability questions, then the count.
+        if (state.pendingQuestion === 'sell_scheduled') {
+          return {
+            response: responses.sell_scheduled_prompt,
+            suggestions: responses.sell_scheduled_options,
+          };
+        }
+
+        if (state.pendingQuestion === 'sell_collection') {
+          return {
+            response: responses.payment_collection_prompt,
+            suggestions: responses.payment_collection_options,
+          };
+        }
+
+        if (state.pendingQuestion === 'service_count') {
+          return {
+            response: responses.service_count_prompt,
+            suggestions: responses.service_count_options,
+          };
+        }
+
         // Check if we need to ask for price specifically
         if (state.pendingQuestion === 'need_price') {
           const servicesMissingPrice =
@@ -2041,11 +2304,22 @@ export class OnboardingConversationManager {
         need_price_prompt: 'מה המחיר של {services}?',
         more_services_prompt: 'נהדר! הוספתי {count} שירות(ים). יש לך עוד שירותים להוסיף?',
         more_services_options: ['יש לי עוד', 'זה הכל'],
-        payment_collection_prompt: 'וכשמישהו מזמין שירות בתשלום — הוא משלם אונליין, או שאתה גובה את הכסף בעצמך?',
+        sell_scheduled_prompt: 'מעולה. איך אתם מוכרים — הלקוחות קובעים איתכם זמן, או שאתם מוכרים בלי תורים?',
+        sell_scheduled_options: [
+          'הלקוחות קובעים איתי זמן',
+          'אני מוכר בלי תורים — אין צורך בלוח זמנים',
+        ],
+        // Reworded from "מזמין שירות בתשלום": the question now covers a
+        // business that charges for nothing, and asking how they collect on a
+        // "paid service" made the third answer read as though it did not apply.
+        payment_collection_prompt: 'וכשמישהו קונה מכם — הוא משלם אונליין, או שאתה גובה את הכסף בעצמך?',
         payment_collection_options: [
           'הלקוח משלם אונליין בכרטיס — צריך חיבור סליקה',
           'אני גובה את הכסף בעצמי — חשבונית, העברה, ביט או מזומן',
+          'אני לא גובה כסף על מה שאני מוכר',
         ],
+        service_count_prompt: 'אחרון — כמה דברים שונים אתם מוכרים בערך? אכין אותם כטיוטות ותוכלו להשלים אותן אחר כך.',
+        service_count_options: ['1', '2', '3', '5'],
         client_acquisition_prompt: 'עכשיו — איך לקוחות ימצאו אותך ויזמינו? סמן כל מה שרלוונטי (או כלום), ואקים את מה שסימנת.',
         client_acquisition_options: [
           'שאבנה לך אתר מקצועי',
@@ -2081,11 +2355,22 @@ export class OnboardingConversationManager {
         need_price_prompt: '¿Cuál es el precio de {services}?',
         more_services_prompt: '¡Genial! Agregué {count} servicio(s). ¿Tienes más servicios para agregar?',
         more_services_options: ['Tengo más', 'Eso es todo'],
-        payment_collection_prompt: 'Y cuando alguien reserva un servicio de pago, ¿paga online o lo cobras tú?',
+        sell_scheduled_prompt: 'Perfecto. ¿Cómo vendes — los clientes reservan una hora contigo, o vendes sin turnos?',
+        sell_scheduled_options: [
+          'Los clientes reservan una hora conmigo',
+          'Vendo sin turnos — no hace falta agenda',
+        ],
+        // Reworded from "reserva un servicio de pago": the question now covers
+        // a business that charges for nothing, and framing it around a paid
+        // service made the third answer read as though it did not apply.
+        payment_collection_prompt: 'Y cuando alguien te compra algo, ¿paga online o lo cobras tú?',
         payment_collection_options: [
           'El cliente paga online con tarjeta — hace falta pasarela',
           'Cobro yo mismo — factura, transferencia o efectivo',
+          'No cobro por nada de lo que ofrezco',
         ],
+        service_count_prompt: 'La última — ¿cuántas cosas distintas vendes más o menos? Las dejaré como borradores para que las completes luego.',
+        service_count_options: ['1', '2', '3', '5'],
         client_acquisition_prompt: 'Ahora — ¿cómo van a encontrarte y reservar tus clientes? Marca lo que corresponda (o nada) y construiré lo que elijas.',
         client_acquisition_options: [
           'Que te construya un sitio web profesional',
@@ -2121,11 +2406,22 @@ export class OnboardingConversationManager {
       need_price_prompt: "What is the price for {services}?",
       more_services_prompt: "Great! I've added {count} service(s). Do you have more services to add?",
       more_services_options: ['I have more', "That's all"],
-      payment_collection_prompt: "And when someone books a paid service — do they pay online, or do you collect the money yourself?",
+      sell_scheduled_prompt: "Great. Now — how do you sell? Do clients book a time with you, or do you sell without appointments?",
+      sell_scheduled_options: [
+        'Clients book a time with me',
+        'I sell without appointments — no calendar needed',
+      ],
+      // Reworded from "books a paid service": the question now covers a
+      // business that charges for nothing, and framing it around a paid
+      // service made the third answer read as though it did not apply.
+      payment_collection_prompt: "And when someone buys from you — do they pay online, or do you collect the money yourself?",
       payment_collection_options: [
         'The client pays online by card — needs a payment gateway',
         'I collect the money myself — invoice, transfer or cash',
+        'Nothing I sell is paid for',
       ],
+      service_count_prompt: "Last one — roughly how many different things do you sell? I'll set them up as drafts for you to finish.",
+      service_count_options: ['1', '2', '3', '5'],
       client_acquisition_prompt: "Now — how will clients find you and book? Tick whatever applies (or nothing), and I will build what you choose.",
       client_acquisition_options: [
         'Build me a professional website',

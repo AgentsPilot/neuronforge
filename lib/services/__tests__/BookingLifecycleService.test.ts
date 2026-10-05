@@ -31,9 +31,17 @@ const mockUpdateInvoice = jest.fn();
 const mockVoidInvoice = jest.fn();
 const mockFindSettled = jest.fn();
 
+const mockFindChildren = jest.fn();
+
 jest.mock('@/lib/repositories/SchedulingRepository', () => ({
   schedulingBookingRepository: {
     cancel: (...args: unknown[]) => mockCancel(...args),
+    /*
+     * A package's meetings, which cancelling the purchase now takes with it.
+     * Empty by default: every other booking in this file is an ordinary one,
+     * and that is what "no children" means.
+     */
+    findChildren: (...args: unknown[]) => mockFindChildren(...args),
   },
 }));
 
@@ -107,6 +115,8 @@ beforeEach(() => {
   jest.clearAllMocks();
 
   mockCancel.mockResolvedValue({ data: booking(), error: null });
+  // An ordinary booking owns no meetings; the package test sets its own.
+  mockFindChildren.mockImplementation(async () => ({ data: [], error: null }));
   mockFindContact.mockResolvedValue({
     data: { first_name: 'Ofir', last_name: 'Omer' },
     error: null,
@@ -142,6 +152,8 @@ describe('cancelBooking', () => {
       periodsRemaining: null,
       // No quote stages either, so none to close.
       stagesClosed: 0,
+      // And no meetings: an ordinary booking is not a package's purchase.
+      meetingsCancelled: 0,
     });
 
     // The three steps that make a cancellation real.
@@ -529,5 +541,196 @@ describe('the email does not contradict the reason', () => {
   it('leaves it undefined when there is no code, so nothing changes for old callers', async () => {
     await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
     expect(rebookingOffered()).toBeUndefined();
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * CANCELLING A PACKAGE.
+ *
+ * Nothing cascades on a status change the way `ON DELETE` does on a delete, and
+ * a per-session package's stages hang off the MEETINGS rather than the
+ * purchase — so cancelling the purchase left six confirmed appointments in the
+ * diary, six live stages, and a client still being reminded about every one of
+ * them.
+ *
+ * Each meeting is now cancelled as a booking in its own right, which is what
+ * voids its invoice, closes its stage, clears its calendar event and tells the
+ * client about its own date.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+describe('cancelBooking on a package', () => {
+  const meetings = [
+    { id: 'm1', status: 'confirmed', occurrence_number: 1 },
+    { id: 'm2', status: 'confirmed', occurrence_number: 2 },
+    { id: 'm3', status: 'completed', occurrence_number: 3 },
+    { id: 'm4', status: 'cancelled', occurrence_number: 4 },
+  ];
+
+  it('cancels every meeting that is still standing', async () => {
+    // Only the CONTAINER owns meetings. Answering the same list for every id is
+    // what sent the first version of this into infinite recursion.
+    mockFindChildren.mockImplementation(async (id: string) => ({
+      data: id === 'container-1' ? meetings : [],
+      error: null,
+    }));
+
+    const result = await cancelBooking({ bookingId: 'container-1', userId: 'user-1' });
+
+    // Two of the four: a meeting already held is a record, and one already
+    // cancelled is done. Rewriting either would erase what happened.
+    expect(result.data?.meetingsCancelled).toBe(2);
+
+    const cancelled = mockCancel.mock.calls.map(call => call[0]);
+    expect(cancelled).toContain('m1');
+    expect(cancelled).toContain('m2');
+    expect(cancelled).not.toContain('m3');
+    expect(cancelled).not.toContain('m4');
+  });
+
+  it('cancels them BEFORE the purchase itself', async () => {
+    mockFindChildren.mockImplementation(async (id: string) => ({
+      data: id === 'container-1' ? meetings : [],
+      error: null,
+    }));
+
+    await cancelBooking({ bookingId: 'container-1', userId: 'user-1' });
+
+    // The other order leaves a cancelled purchase whose appointments are all
+    // still live and still reminding the client.
+    const order = mockCancel.mock.calls.map(call => call[0]);
+    expect(order[order.length - 1]).toBe('container-1');
+  });
+
+  it('leaves the purchase open if a meeting cannot be cancelled', async () => {
+    mockFindChildren.mockImplementation(async (id: string) => ({
+      data: id === 'container-1' ? [meetings[0]] : [],
+      error: null,
+    }));
+    mockCancel.mockResolvedValue({ data: null, error: new Error('db down') });
+
+    const result = await cancelBooking({ bookingId: 'container-1', userId: 'user-1' });
+
+    expect(result.error).toBeTruthy();
+    // One attempt, for the meeting. The purchase was never touched.
+    expect(mockCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells the client ONCE, with every cancelled date', async () => {
+    mockFindChildren.mockImplementation(async (id: string) => ({
+      data:
+        id === 'container-1'
+          ? [
+              { ...meetings[0], start_time: '2026-10-08T13:30:00.000Z' },
+              { ...meetings[1], start_time: '2026-10-22T13:30:00.000Z' },
+              { ...meetings[2], start_time: '2026-11-05T14:30:00.000Z' },
+              { ...meetings[3], start_time: '2026-11-19T14:30:00.000Z' },
+            ]
+          : [],
+      error: null,
+    }));
+
+    await cancelBooking({ bookingId: 'container-1', userId: 'user-1' });
+
+    /*
+     * One email, not four: six separate cancellations arriving together is six
+     * times the alarm for one piece of news, and leaves the client working out
+     * whether anything survived.
+     */
+    expect(mockSendCancellationEmail).toHaveBeenCalledTimes(1);
+
+    const [bookingId, , , options] = mockSendCancellationEmail.mock.calls[0];
+    // Sent from one of the meetings, because the email reads the service and
+    // the client from a booking — and the purchase has no hour of its own.
+    expect(bookingId).toBe('m1');
+    // Only the ones actually cancelled: m3 was held and m4 was already off.
+    expect(options.sessions).toHaveLength(2);
+    expect(options.sessions[0].toISOString()).toBe('2026-10-08T13:30:00.000Z');
+  });
+
+  it('states what TOOK PLACE as well as what is off', async () => {
+    /*
+     * A block of six cancelled after two is not six cancellations. The client
+     * has had two sessions and paid for them, and an email naming only the four
+     * that are off reads as though the whole thing was undone — which is the
+     * version a dispute would be argued from.
+     */
+    mockFindChildren.mockImplementation(async (id: string) => ({
+      data:
+        id === 'container-1'
+          ? [
+              { id: 'm1', status: 'completed', occurrence_number: 1, start_time: '2026-10-08T13:30:00.000Z' },
+              { id: 'm2', status: 'completed', occurrence_number: 2, start_time: '2026-10-22T13:30:00.000Z' },
+              { id: 'm3', status: 'confirmed', occurrence_number: 3, start_time: '2026-11-05T14:30:00.000Z' },
+              { id: 'm4', status: 'confirmed', occurrence_number: 4, start_time: '2026-11-19T14:30:00.000Z' },
+            ]
+          : [],
+      error: null,
+    }));
+
+    await cancelBooking({ bookingId: 'container-1', userId: 'user-1' });
+
+    const [, , , options] = mockSendCancellationEmail.mock.calls[0];
+
+    expect(options.heldSessions).toHaveLength(2);
+    expect(options.heldSessions[0].toISOString()).toBe('2026-10-08T13:30:00.000Z');
+    expect(options.sessions).toHaveLength(2);
+    expect(options.sessions[0].toISOString()).toBe('2026-11-05T14:30:00.000Z');
+  });
+
+  it('counts the money of every meeting, not only the purchase', async () => {
+    /*
+     * On a package billed per session the money sits on each MEETING's invoice.
+     * Read from the purchase alone, the email would tell a client who had paid
+     * for two sessions that nothing was ever collected.
+     */
+    mockFindChildren.mockImplementation(async (id: string) => ({
+      data:
+        id === 'container-1'
+          ? [
+              { id: 'm1', status: 'completed', occurrence_number: 1, start_time: '2026-10-08T13:30:00.000Z' },
+              { id: 'm2', status: 'confirmed', occurrence_number: 2, start_time: '2026-11-05T14:30:00.000Z' },
+            ]
+          : [],
+      error: null,
+    }));
+
+    mockFindInvoices.mockImplementation(async (id: string) => ({
+      data: id === 'm1' ? [{ id: 'inv-1', status: 'paid' }] : [],
+      error: null,
+    }));
+
+    mockFindSettled.mockImplementation(async (id: string) => ({
+      data:
+        id === 'm1'
+          ? [{ id: 'tx-1', amount: 83.33, refunded_amount: 0, status: 'succeeded', currency: 'ILS' }]
+          : [],
+      error: null,
+    }));
+
+    await cancelBooking({ bookingId: 'container-1', userId: 'user-1' });
+
+    const [, , , options] = mockSendCancellationEmail.mock.calls[0];
+    expect(options.paidAmount).toBe(83.33);
+    expect(options.heldCurrency).toBe('ILS');
+  });
+
+  it('carries the reason down to each meeting', async () => {
+    mockFindChildren.mockImplementation(async (id: string) => ({
+      data: id === 'container-1' ? [meetings[0]] : [],
+      error: null,
+    }));
+
+    await cancelBooking({
+      bookingId: 'container-1',
+      userId: 'user-1',
+      reason: 'Client moved away',
+      cancelReason: 'client_not_paying',
+    });
+
+    // The client is told the same thing about each date, and the code is what
+    // a report counts.
+    const [, , reason, codes] = mockCancel.mock.calls[0];
+    expect(reason).toBe('Client moved away');
+    expect(codes).toMatchObject({ code: 'client_not_paying' });
   });
 });

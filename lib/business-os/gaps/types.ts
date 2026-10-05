@@ -68,6 +68,19 @@ export type GapId =
    * while the job continues on new terms. The owner answers, either way.
    */
   | 'booking_refunded'
+  /**
+   * A meeting whose time has passed and which nobody has marked.
+   *
+   * The owner has to say what happened — it was held, they did not turn up, or
+   * it was called off — and until they do, three separate things are stuck: a
+   * quoted job cannot move to its price (the drawer's quote step now ASKS
+   * rather than assuming the consultation happened), the no-show rate is
+   * unknowable, and under per-session billing the session is never invoiced.
+   *
+   * It is the owner's move by definition: nobody else can know. The card is
+   * what carries the question to an owner who has not opened the contact.
+   */
+  | 'meeting_unmarked'
   | 'intake_outstanding'
   | 'invoice_unpaid'
   /**
@@ -102,6 +115,15 @@ export type GapAction =
    * work happened, and a one-click button would be deciding it for them.
    */
   | 'bill_stage'
+  /**
+   * Say what happened to a meeting whose time has passed.
+   *
+   * NAVIGATES, like `bill_stage` and `write_quote`, and for a stronger reason
+   * than either: the answer is one of three — held, no-show, called off — and a
+   * single button cannot offer three answers. It opens the booking where all
+   * three marks already are.
+   */
+  | 'mark_meeting'
   | null;
 
 /** One stuck thing, named the way a person would refer to it. */

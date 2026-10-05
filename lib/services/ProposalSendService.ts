@@ -27,6 +27,7 @@
 
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { safeTimezone } from '@/lib/scheduling/businessTime';
 import { proposalRepository, type Proposal } from '@/lib/repositories/ProposalRepository';
 import { splitTotal } from '@/lib/services/ProposalAcceptanceService';
 import { generateProposalToken } from '@/lib/business-os/proposalToken';
@@ -144,6 +145,13 @@ export async function sendProposal(
   let stages: Array<{ label: string; amount: number }> = [];
   let dueOnAccept: number | null = proposal.total;
 
+  /*
+   * A package billed after each meeting owes NOTHING on approval: the stages
+   * are the meetings, and none of them has happened. The email said
+   * "₪83.33 due on approval" beside terms that promise the opposite.
+   */
+  const perSession = Boolean(proposal.sessions?.bill_per_session);
+
   if (shape.kind === 'milestones') {
     const amounts = splitTotal(proposal.total, shape.stages.map((s) => s.percent));
     stages = shape.stages.map((s, i) => ({ label: s.label, amount: amounts[i] }));
@@ -199,13 +207,32 @@ export async function sendProposal(
     }
   }
 
+  /*
+   * The business's clock, for the meeting times. The email is composed on a
+   * server whose own zone means nothing to the client or the owner — an
+   * Israeli business's 16:30 sessions rendered as 09:30 on a host in New York.
+   */
+  const { data: ownerPrefs } = await supabaseServer
+    .from('user_preferences')
+    .select('timezone')
+    .eq('user_id', proposal.user_id)
+    .maybeSingle();
+
   const { subject, html } = generateProposalEmail({
     title: proposal.title,
     description: proposal.description,
     total: proposal.total,
     currency: proposal.currency,
     stages,
-    dueOnAccept,
+    dueOnAccept: perSession ? null : dueOnAccept,
+    sessions: proposal.sessions?.dates?.length
+      ? {
+          dates: proposal.sessions.dates,
+          durationMinutes: proposal.sessions.duration_minutes,
+          billPerSession: perSession,
+          timezone: safeTimezone(ownerPrefs?.timezone),
+        }
+      : null,
     validUntil: proposal.valid_until,
     viewUrl,
     clientFirstName: contact.first_name,

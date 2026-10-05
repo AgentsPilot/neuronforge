@@ -336,6 +336,21 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
     }
 
     /*
+     * Saying what happened to a meeting is the third that is not a send — and
+     * the clearest case for it: the answer is one of THREE (it was held, they
+     * did not turn up, it was called off), and a single button cannot offer
+     * three answers.
+     *
+     * Same target as the two above, because the three marks already live on the
+     * booking row in the drawer's bookings section. Nothing new to build there;
+     * this is the route to it for an owner who has not opened the contact.
+     */
+    if (action === 'mark_meeting') {
+      router.push(`/business-os/crm?contact=${item.contactId}&section=bookings`);
+      return;
+    }
+
+    /*
      * Refunding opens the dialog rather than posting.
      *
      * ─────────────────────────────────────────────────────────────────────────

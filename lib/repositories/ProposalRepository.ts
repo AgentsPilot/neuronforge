@@ -54,6 +54,49 @@ export type PaymentShape =
   | { kind: 'installments'; count: number; frequency: 'weekly' | 'biweekly' | 'monthly' | 'quarterly' }
   | { kind: 'milestones'; stages: Array<{ label: string; percent: number }> };
 
+/**
+ * A PACKAGE: the meetings this quote sold, as explicit dates.
+ *
+ * Never a cadence rule ("weekly for six weeks"). A rule would have to be
+ * expanded somewhere, and expanding it needs clash detection, time off, a
+ * DST-correct step and a preview screen before the owner can trust what they
+ * are sending — whereas six dates cost six date pickers. The dates are what was
+ * AGREED, which is also what a dispute needs to read.
+ *
+ * `null` on every quote that is not a package, which is every quote written
+ * before this existed.
+ */
+export interface PackageSessions {
+  /** ISO instants, in the order the owner chose. `occurrence_number` follows it. */
+  dates: string[];
+  /** How long each meeting runs. Gives every meeting its end. */
+  duration_minutes: number;
+  /**
+   * BILLED AFTER EACH MEETING, rather than up front.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The two ways a block is sold, and the only two this product offers:
+   *
+   *   absent / false → one invoice for the whole block on acceptance. The
+   *     meetings are `pending` until it is paid, which is what holds the hours
+   *     without telling the client they are confirmed.
+   *
+   *   true → nothing is due on acceptance. The meetings are `confirmed`, and
+   *     each one carries a stage of its own that is billed when the owner marks
+   *     it as held.
+   *
+   * WHY IT LIVES HERE and not in `payment_shape`. The shape stays
+   * `milestones` — N stages, all manual — so every existing reader keeps
+   * working: the email lists stages, the client's page lists them, the Money
+   * page shows them. What this flag says is a fact about the PACKAGE ("the
+   * stages are its meetings"), and it is the only thing that distinguishes two
+   * sessions sold per-session from two sessions sold deposit-and-balance, which
+   * are identical as payment shapes.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  bill_per_session?: boolean;
+}
+
 export interface Proposal {
   id: string;
   user_id: string;
@@ -87,6 +130,16 @@ export interface Proposal {
   status: ProposalStatus;
   valid_until: string | null;
   payment_shape: PaymentShape;
+  /** The meetings sold, for a package. Null for an ordinary quote. */
+  sessions: PackageSessions | null;
+  /**
+   * The container booking this accepted quote created, for a package.
+   *
+   * Points FORWARDS, at what acceptance produced — unlike `booking_id` above,
+   * which points back at the consultation the quote came out of. Null until
+   * accepted, and on every quote that is not a package.
+   */
+  package_booking_id: string | null;
   decline_reason: string | null;
   decline_note: string | null;
   /** Why an accepted job ended early. One of `STOP_REASONS`, or null if unknown. */
@@ -122,6 +175,11 @@ export interface ProposalInsert {
   tax_label?: string | null;
   valid_until?: string | null;
   payment_shape?: PaymentShape;
+  /**
+   * A package's meetings. Requires `service_id`: the meetings are bookings, and
+   * `scheduling_bookings.service_id` is NOT NULL.
+   */
+  sessions?: PackageSessions | null;
   supersedes_id?: string | null;
 }
 
@@ -396,7 +454,7 @@ export class ProposalRepository {
   async recordAcceptance(
     id: string,
     snapshot: Record<string, unknown>,
-    created: { invoiceId?: string | null; planId?: string | null }
+    created: { invoiceId?: string | null; planId?: string | null; packageBookingId?: string | null }
   ): Promise<void> {
     try {
       await this.supabase
@@ -405,6 +463,14 @@ export class ProposalRepository {
           accepted_snapshot: snapshot,
           created_invoice_id: created.invoiceId ?? null,
           created_plan_id: created.planId ?? null,
+          /*
+           * The package this acceptance created, for a quote that sold several
+           * meetings. It is what lets the PAYMENT find them: the up-front
+           * scenario leaves the meetings `pending` until the money lands, and
+           * the chain from a settled invoice runs
+           * `created_invoice_id` → proposal → here → the children.
+           */
+          package_booking_id: created.packageBookingId ?? null,
           updated_at: new Date().toISOString(),
         })
         .eq('id', id);

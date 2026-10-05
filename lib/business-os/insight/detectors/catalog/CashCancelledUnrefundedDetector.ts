@@ -45,9 +45,9 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
 import { createLogger } from '@/lib/logger';
-// The constant the cancel route writes, not a literal copied to here: the two
-// spellings drifted apart within a day of each other once, and a mismatch is
-// silent — the detector would simply call every cancellation the owner's.
+// The legacy prefix, for rows that predate `cancelled_by`. Imported rather
+// than retyped: the two spellings drifted apart within a day of each other
+// once, and a mismatch is silent.
 import { CLIENT_CANCELLED_PREFIX } from '@/lib/services/bookingCancellationReason';
 
 const logger = createLogger({ module: 'CashCancelledUnrefundedDetector' });
@@ -90,6 +90,10 @@ interface BookingRow {
   updated_at: string | null;
   created_at: string | null;
   cancellation_reason: string | null;
+  /** 'client' | 'owner' | 'system'. Null on rows cancelled before 20260928c. */
+  cancelled_by: string | null;
+  /** A code from CLIENT_CANCEL_REASONS / OWNER_CANCEL_REASONS, or null. */
+  cancel_reason: string | null;
   contact_id: string | null;
   service?: { service_name?: string | null } | null;
   contact?: { first_name?: string | null; last_name?: string | null; email?: string | null } | null;
@@ -181,6 +185,7 @@ export class CashCancelledUnrefundedDetector extends BaseDetector {
       .from('scheduling_bookings')
       .select(`
         id, start_time, updated_at, created_at, cancellation_reason, contact_id,
+        cancelled_by, cancel_reason,
         payment_status, payment_amount, payment_currency,
         service:scheduling_services(service_name),
         contact:crm_contacts(first_name, last_name, email)
@@ -338,6 +343,15 @@ export class CashCancelledUnrefundedDetector extends BaseDetector {
            * the same either way.
            */
           cancelled_by_client: isClientCancellation(row),
+          /*
+           * Why it was called off, where it was recorded as a code.
+           *
+           * Free of charge: the column is already selected and already indexed
+           * by `idx_bookings_cancel_reason`. "A client cancelled on cost and
+           * you are still holding their deposit" is a different conversation
+           * from the same sentence with no reason attached.
+           */
+          cancel_reason: row.cancel_reason ?? null,
         })),
       },
     });
@@ -441,11 +455,27 @@ function chunked(ids: string[]): string[][] {
 /**
  * Whether the CLIENT called it off.
  *
- * Matched on the prefix the cancel route writes. An unmatched or absent reason
- * reads as the owner's doing, which is the conservative reading: it is the case
- * where the client is most likely owed and least likely to be asking.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `cancelled_by` is the answer, and this used to parse the English prefix out
+ * of `cancellation_reason` instead. Migration 20260928c added the column for
+ * exactly this purpose, and its own comment says so: "Replaces parsing the
+ * CLIENT_CANCELLED_PREFIX out of cancellation_reason, which is still written
+ * for existing readers." Reading the prose worked only because that prefix is
+ * still written alongside the column, which makes it a dependency on something
+ * the schema has already declared legacy.
+ *
+ * The prefix survives as the fallback, and ONLY as the fallback: rows cancelled
+ * before the column existed carry no `cancelled_by`, and they are the whole
+ * reason this branch is still here. On the account this was built against, all
+ * four cancelled bookings are of that kind.
+ *
+ * An unknown party reads as the owner's doing, which stays the conservative
+ * reading: it is the case where the client is most likely owed and least likely
+ * to be asking.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 function isClientCancellation(row: BookingRow): boolean {
+  if (row.cancelled_by) return row.cancelled_by === 'client';
   return (row.cancellation_reason ?? '').startsWith(CLIENT_CANCELLED_PREFIX);
 }
 

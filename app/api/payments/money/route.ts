@@ -32,7 +32,15 @@ import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
-import { buildMoneyItems, totalMoney, type MoneyItem, type MoneyPlan } from '@/lib/payments/moneyItems';
+import {
+  buildMoneyItems,
+  isLateEntry,
+  isLatePeriod,
+  todayKey,
+  totalMoney,
+  type MoneyItem,
+  type MoneyPlan,
+} from '@/lib/payments/moneyItems';
 
 const logger = createLogger({ module: 'MoneyListAPI' });
 
@@ -54,7 +62,9 @@ const QuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
   offset: z.coerce.number().int().min(0).default(0),
   contact_id: z.string().uuid().optional(),
-  filter: z.enum(['all', 'unpaid', 'paid', 'refunded', 'plans', 'draft', 'cancelled']).default('all'),
+  filter: z
+    .enum(['all', 'unpaid', 'overdue', 'paid', 'refunded', 'plans', 'draft', 'cancelled'])
+    .default('all'),
   search: z.string().max(200).optional(),
   sort: z.enum(['date', 'amount', 'client', 'status']).default('date'),
 });
@@ -64,6 +74,29 @@ function matchesFilter(item: MoneyItem, filter: string): boolean {
   switch (filter) {
     case 'unpaid':
       return ['awaiting_payment', 'overdue', 'failed'].includes(item.status);
+    /*
+     * Late, which is a subset of unpaid rather than a rival to it.
+     *
+     * A row is late when the processor or the overdue sweep said so, OR when a
+     * plan period's own due date has passed — periods never carry that status,
+     * so a plan months behind would otherwise be invisible to this filter while
+     * the overdue FIGURE counted it. The two must agree or clicking the figure
+     * shows an emptier list than the number promised.
+     */
+    case 'overdue': {
+      const today = todayKey();
+      // The same two rules the figure counts with, so clicking it cannot show a
+      // shorter list than the number promised.
+      return (
+        item.entries.some(entry => isLateEntry(entry, today)) ||
+        (item.plan?.periods ?? []).some(
+          period =>
+            period.status !== 'paid' &&
+            period.status !== 'cancelled' &&
+            isLatePeriod(period, today)
+        )
+      );
+    }
     case 'paid':
       return ['paid', 'partially_refunded', 'refunded'].includes(item.status);
     case 'refunded':
@@ -308,24 +341,46 @@ export async function GET(request: NextRequest) {
     });
 
     const needle = search?.trim().toLowerCase();
-    const filtered = allItems
-      .filter(item => matchesFilter(item, filter))
-      .filter(item => {
-        if (!needle) return true;
-        // Client name, email, invoice number and amount — what the old lists
-        // matched. Searching only the title meant an invoice could not be found
-        // by the person it was sent to.
-        const haystack = [
-          item.title,
-          item.contactName,
-          String(item.amount),
-          ...item.entries.flatMap(e => [e.invoiceNumber, e.contactName, e.contactEmail, e.description]),
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase();
-        return haystack.includes(needle);
-      });
+
+    /*
+     * SEARCH FIRST, FILTER SECOND — and they are kept apart on purpose.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * These used to be one chain, so `totals` described whatever the KPI filter
+     * had left. The summary strip reads those totals, and every cell in it is a
+     * filter — so clicking "Collected" sent back a response in which outstanding,
+     * overdue, cancelled and refunded were all 0, and the strip rewrote itself to
+     * four zeroes and one figure. Each click reset the very numbers being
+     * compared, which is the opposite of what a summary is for.
+     *
+     * So the strip gets the whole book and the list gets the filtered slice:
+     *
+     *   `searched`  — the search applied, the KPI filter NOT. The summary.
+     *   `filtered`  — both applied. The rows, the count, the pages.
+     *
+     * The search stays in both because narrowing to one client should narrow
+     * their figures too; it is the reader asking a different question, not the
+     * strip filtering itself.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const searched = allItems.filter(item => {
+      if (!needle) return true;
+      // Client name, email, invoice number and amount — what the old lists
+      // matched. Searching only the title meant an invoice could not be found
+      // by the person it was sent to.
+      const haystack = [
+        item.title,
+        item.contactName,
+        String(item.amount),
+        ...item.entries.flatMap(e => [e.invoiceNumber, e.contactName, e.contactEmail, e.description]),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(needle);
+    });
+
+    const filtered = searched.filter(item => matchesFilter(item, filter));
 
     /**
      * Order, applied before the page window.
@@ -352,17 +407,30 @@ export async function GET(request: NextRequest) {
       }
     });
 
-    // Totals cover the WHOLE filtered set, not the page. A total that only
-    // counted the visible rows would change as the reader paged, which is worse
-    // than no total.
-    const totals = totalMoney(sorted);
+    /*
+     * Totals come from `searched`, NOT from `sorted`.
+     *
+     * Two reasons, and they are different. Not the page, because a total that
+     * counted only the visible rows would change as the reader paged. Not the
+     * filtered set either, because the strip these feed IS the filter — figures
+     * that re-derive from the filter they offer cannot be compared against each
+     * other, which is the one thing a summary exists for.
+     *
+     * Unaffected by this: a caller that sends no `filter` (the CRM drawer via
+     * `fetchContactMoney`) defaults to 'all', where `searched` and `filtered`
+     * are the same set.
+     */
+    const totals = totalMoney(searched);
 
     return NextResponse.json({
       success: true,
       data: {
         items: sorted.slice(offset, offset + limit),
+        /** Rows matching BOTH search and filter — what paginates. */
         total: filtered.length,
         totals,
+        /** Rows behind `totals`, so the strip can count what it is summing. */
+        summaryCount: searched.length,
         truncated,
       },
     });

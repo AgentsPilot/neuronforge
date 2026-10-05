@@ -23,15 +23,32 @@ const dbState: {
   proposal: Record<string, unknown> | null;
   /** Stage rows returned for the billed-invoice sweep. */
   billedStages: Array<{ id: string; invoice_id: string | null }>;
-  /** invoice id -> status, for the liveness check before voiding. */
-  invoices: Record<string, { id: string; status: string }>;
+  /*
+   * invoice id -> the row `cancelQuoteStages` selects.
+   *
+   * This said `{ id, status }` — the liveness check was all it was first used
+   * for. The refund cases below then set `amount`, `refunded_amount` and
+   * `currency` without widening it, and Jest's transform drops types, so six
+   * excess-property errors sat in a suite reporting green. The real
+   * `.select()` at `cancelQuoteStages.ts:253` names all four.
+   */
+  invoices: Record<
+    string,
+    {
+      id: string;
+      status: string;
+      amount?: number | null;
+      refunded_amount?: number | null;
+      currency?: string | null;
+    }
+  >;
   /** Stage rows the update claims to have changed. */
   closedRows: Array<{ id: string }>;
   /** Proposal rows the status update claims to have changed — [] means it was not `accepted`. */
   stoppedRows: Array<{ id: string }>;
   statusError: unknown;
   selects: Array<{ table: string; filters: Record<string, unknown>; nots: string[]; is: Record<string, unknown> }>;
-  updates: Array<{ table: string; row: Record<string, unknown>; filters: Record<string, unknown>; is: Record<string, unknown> }>;
+  updates: Array<{ table: string; row: Record<string, unknown>; filters: Record<string, unknown>; nots: string[]; is: Record<string, unknown> }>;
   closeError: unknown;
   /** Written by the mock itself, so ordering assertions cannot pass by construction. */
   order: string[];
@@ -81,7 +98,7 @@ jest.mock('@/lib/supabaseServer', () => ({
       builder.select = () => {
         if (mode === 'update') {
           // Terminal on an update: returns the rows that changed.
-          dbState.updates.push({ table, row: updateRow, filters: { ...filters }, is: { ...isFilters } });
+          dbState.updates.push({ table, row: updateRow, filters: { ...filters }, nots: [...nots], is: { ...isFilters } });
           dbState.order.push(`close:${table}`);
           if (table === 'proposals') {
             return Promise.resolve({
@@ -291,8 +308,10 @@ describe('saying the job ended — the second half of the one press', () => {
   });
 
   it('records the reason code for counting', async () => {
-    await cancelQuoteStages({ proposalId: 'prop-1', userId: 'user-1', reason: 'not_paying' });
-    expect(statusUpdate()!.row.stop_reason).toBe('not_paying');
+    // 'client_not_paying' — the real code. This read 'not_paying', which is not
+    // in the union, so the test was pinning a value that can never be stored.
+    await cancelQuoteStages({ proposalId: 'prop-1', userId: 'user-1', reason: 'client_not_paying' });
+    expect(statusUpdate()!.row.stop_reason).toBe('client_not_paying');
   });
 
   it('always stores a code, because the caller cannot omit one', async () => {
@@ -373,11 +392,19 @@ describe('every filter on the update is load-bearing', () => {
     expect(stageUpdate()!.filters.proposal_id).toBe('prop-1');
   });
 
-  it('touches only pending stages, never a paid one', async () => {
-    // A paid stage records money that arrived. Rewriting it to `cancelled` would
-    // delete the evidence of a real payment.
+  it('closes everything unsettled, and never a paid one', async () => {
+    /*
+     * A paid stage records money that arrived; rewriting it to `cancelled` would
+     * delete the evidence of a real payment. An already-cancelled one is done.
+     *
+     * This asserted `status === 'pending'`, which was narrower than the rule and
+     * left a BILLED stage open on a stopped job — the invoice voided by this
+     * same call, the stage still reading "billed". The guarantee is unchanged;
+     * only the expression of it is.
+     */
     await run();
-    expect(stageUpdate()!.filters.status).toBe('pending');
+    expect(stageUpdate()!.nots).toContain('status in (paid,cancelled)');
+    expect(stageUpdate()!.filters.status).toBeUndefined();
   });
 
   it('excludes subscription periods, which are money still genuinely arriving', async () => {

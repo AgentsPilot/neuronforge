@@ -29,7 +29,7 @@
  */
 
 import { instantToWallClock } from './wallClock';
-import { DAY_NAMES, windowsForDay, type AvailabilityWindow } from './availabilityWindows';
+import { DAY_NAMES, windowsForDate, type AvailabilityWindow, type TimeOffEntry } from './availabilityWindows';
 
 /** A booking, as stored: instants, in whatever zone they were written. */
 export interface BookedInterval {
@@ -116,11 +116,24 @@ export function computeOpenTime(args: {
   bookings: BookedInterval[];
   /** Length of the appointment being fitted, when the question names a service. */
   durationMinutes?: number;
+  /**
+   * The business's closed days and short days for this date.
+   *
+   * Optional, and an omitted list means "none recorded" rather than "none
+   * exist" — a caller that does not pass it gets the weekly hours, which is
+   * what every caller got before the table was read at all.
+   */
+  timeOff?: TimeOffEntry[];
 }): OpenTimeResult {
-  const { availability, date, timeZone, bookings, durationMinutes } = args;
+  const { availability, date, timeZone, bookings, durationMinutes, timeOff } = args;
 
   const weekday = weekdayFor(date);
-  const windows = windowsForDay(availability, weekday);
+  /*
+   * The DATE's windows, not the weekday's. Asked "am I free on Tuesday", the
+   * chat used to answer from the weekly pattern alone and call a holiday a
+   * working day.
+   */
+  const windows = windowsForDate(availability, date, timeOff ?? []);
 
   if (windows.length === 0) {
     return {

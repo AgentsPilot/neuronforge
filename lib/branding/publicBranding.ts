@@ -26,6 +26,7 @@
  */
 
 import 'server-only';
+import { formatAddressOneLine, type StructuredAddress } from '@/lib/geo/address';
 import { cache } from 'react';
 
 import { createLogger } from '@/lib/logger';
@@ -166,15 +167,21 @@ interface ProfileRow {
 }
 
 /** A postal address as one line, or null when there is nothing in it. */
+/*
+ * Delegates, because the country is stored as a code now.
+ *
+ * This joined every part verbatim, so a picked country would have shown clients
+ * "IL" on the public booking and contact pages. The shared formatter translates
+ * a real code and leaves anything else — every address saved before the picker
+ * — exactly as it was typed.
+ *
+ * English, deliberately: this is the public brand payload, which is built once
+ * and read by surfaces that each pick their own language. Translating it here
+ * would bake one of them in.
+ */
 function formatAddress(address: Record<string, unknown> | null | undefined): string | null {
   if (!address || typeof address !== 'object') return null;
-
-  const parts = ['line1', 'line2', 'city', 'state', 'postal_code', 'country']
-    .map(key => address[key])
-    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-    .map(value => value.trim());
-
-  return parts.length ? parts.join(', ') : null;
+  return formatAddressOneLine(address as StructuredAddress, 'en');
 }
 
 function readHours(availability: unknown): BusinessDayHours[] | null {

@@ -51,6 +51,30 @@ export async function POST(
       );
     }
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * A PACKAGE SESSION BILLS ITSELF WHEN IT IS HELD.
+     *
+     * A block sold "after each meeting" is approved with nothing due: each
+     * meeting carries a stage of its own, waiting. Marking the meeting held is
+     * the event that bills it, and this is the only place that event exists on
+     * the owner's side.
+     *
+     * Finds nothing on an ordinary booking, which is almost all of them. Never
+     * fatal: the meeting IS marked held, and a stage left unbilled is visible
+     * in the drawer and one button away.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const { billSessionOnCompletion } = await import('@/lib/payments/billSessionOnCompletion');
+    const billed = await billSessionOnCompletion(bookingId, user.id);
+
+    if (billed) {
+      requestLogger.info(
+        { userId: user.id, bookingId, stageId: billed.stageId, invoiceId: billed.invoiceId },
+        'Held session billed on completion'
+      );
+    }
+
     // 3. Get contact name for audit log
     let contactName = 'Client';
     if (result.data.contact_id) {

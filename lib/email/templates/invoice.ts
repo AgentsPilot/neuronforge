@@ -128,8 +128,10 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
   const totalLabel = t.total[locale];
   const includesTaxLabel = t.includesTax[locale];
   const payNowLabel = t.payNow[locale];
+
   const securePaymentLabel = t.securePayment[locale];
   const options = data.paymentOptions;
+
   const questionsText = t.questions[locale](data.branding.businessName);
   const serviceLabel = t.service[locale];
 

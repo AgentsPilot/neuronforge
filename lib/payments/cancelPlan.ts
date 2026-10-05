@@ -293,9 +293,17 @@ async function closeLocally(
     .update({ status: 'cancelled', next_retry_at: null, updated_at: new Date().toISOString() })
     .eq('user_id', userId)
     .eq('subscription_id', planId)
-    // Only what has not happened. A paid period is a record of money that
-    // arrived and is never rewritten.
-    .eq('status', 'pending');
+    /*
+     * Everything unsettled, not just `pending`.
+     *
+     * A BILLED period — invoice raised, nobody paid — stayed open on a plan
+     * that had been stopped, so it went on reading as owed. Five paths close
+     * periods and three of them scoped to `pending` alone; they now share one
+     * rule, or stopping the same plan two ways leaves two different states.
+     *
+     * `paid` is never rewritten: it records money that arrived.
+     */
+    .not('status', 'in', '(paid,cancelled)');
 
   if (error) {
     logger.error({ err: error, planId }, 'Plan stopped but its future periods are still on the books');

@@ -753,6 +753,28 @@ export interface MoneyCurrencyTotals {
    * ───────────────────────────────────────────────────────────────────────────
    */
   cancelled: number;
+  /**
+   * The part of `outstanding` that is already late.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A SUBSET, NOT A FOURTH BUCKET.
+   *
+   * `overdue` money is also `outstanding` money — it has been asked for and has
+   * not arrived. Adding the two would double-count every late invoice, so the
+   * summary shows "waiting" as `outstanding - overdue` and the four figures
+   * still reconcile against the total.
+   *
+   * Kept separate because they are different problems: outstanding waits,
+   * overdue needs chasing. One figure for both means the owner cannot see which
+   * of the two they have.
+   *
+   * Counts an ENTRY the processor or the overdue sweep marked `overdue`, and a
+   * plan period whose own due date has passed — a period is never given that
+   * status, so without the second half a plan could be months late and report
+   * nothing.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  overdue: number;
 }
 
 export interface MoneyTotals extends MoneyCurrencyTotals {
@@ -1002,15 +1024,137 @@ export function cancelledPlanMoneyOf(period: {
   return Math.max(0, Number(period.amount ?? 0));
 }
 
+/**
+ * One row's money, split the way the summary splits every row's.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS SHARED AND NOT DERIVED AT THE ROW.
+ *
+ * The list shows a bar per order and a figure per state above it. If the bar
+ * were computed from `item.amount` and the figures from `totalMoney`, the two
+ * would disagree the moment a rule changed — and the disagreement would be
+ * invisible, because each looks reasonable alone.
+ *
+ * So this is `totalMoney` for a single item, and `totalMoney` is this summed.
+ * The same entry rules, the same unpaid-period rule, the same cancelled-period
+ * rule. A number in the bar can always be found in the figure above it.
+ *
+ * `overdue` is a SUBSET of `outstanding` here too, so a bar drawn from these
+ * must take it off before measuring the waiting segment.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+/** Today as a calendar day, `YYYY-MM-DD`, for comparing against date-only values. */
+export function todayKey(): string {
+  return new Date().toLocaleDateString('en-CA');
+}
+
+/**
+ * This money is late.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * NOT JUST `status === 'overdue'`.
+ *
+ * That status is written by a CRON — the overdue sweep — so between an invoice
+ * falling due and the next sweep it is late in fact and `sent` in the column.
+ * A figure that read the status alone would sit at zero all morning and jump
+ * when a job ran, which is a report about the scheduler rather than the money.
+ *
+ * `dateKind === 'due'` means `date` IS the due date, so an unsettled entry past
+ * it is late whatever the status says. Compared as calendar days: a due date
+ * carries no time, and parsing it into an instant reads as yesterday west of
+ * UTC.
+ *
+ * Exported so the summary, the row's bar and the API's filter apply one rule.
+ * When they drifted, clicking a figure showed fewer rows than it promised.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function isLateEntry(
+  entry: Pick<MoneyEntry, 'status' | 'date' | 'dateKind'>,
+  today: string = todayKey()
+): boolean {
+  if (entry.status === 'overdue') return true;
+  if (!OUTSTANDING_STATUSES.includes(entry.status)) return false;
+  return entry.dateKind === 'due' && String(entry.date).slice(0, 10) < today;
+}
+
+/**
+ * A plan period past its own due date. Periods never carry an overdue status.
+ *
+ * Takes only the field it reads, like `isLateEntry` above. Demanding a whole
+ * `MoneyPeriod` made every caller build `paidAt` and `transactionId` that this
+ * never looks at — which is noise at a call site and a lie about what the
+ * function depends on.
+ */
+export function isLatePeriod(
+  period: Pick<MoneyPeriod, 'dueDate'>,
+  today: string = todayKey()
+): boolean {
+  const due = period.dueDate ? String(period.dueDate).slice(0, 10) : null;
+  return due !== null && due < today;
+}
+
+export function itemFlow(item: MoneyItem): MoneyCurrencyTotals {
+  const flow: MoneyCurrencyTotals = {
+    collected: 0,
+    outstanding: 0,
+    refunded: 0,
+    cancelled: 0,
+    overdue: 0,
+  };
+  const today = todayKey();
+
+  for (const entry of item.entries) {
+    flow.refunded += entry.refunded;
+
+    if (COLLECTED_STATUSES.includes(entry.status)) {
+      flow.collected += entry.amount - entry.refunded;
+    } else if (OUTSTANDING_STATUSES.includes(entry.status)) {
+      flow.outstanding += entry.amount;
+      if (isLateEntry(entry, today)) flow.overdue += entry.amount;
+    } else {
+      flow.cancelled += cancelledMoneyOf(entry);
+    }
+  }
+
+  for (const period of unpaidPeriods(item)) {
+    flow.outstanding += period.amount;
+    if (isLatePeriod(period, today)) flow.overdue += period.amount;
+  }
+
+  for (const period of item.plan?.periods ?? []) {
+    flow.cancelled += cancelledPlanMoneyOf(period);
+  }
+
+  return flow;
+}
+
 export function totalMoney(items: MoneyItem[]): MoneyTotals {
   let collected = 0;
   let outstanding = 0;
   let refunded = 0;
   let cancelled = 0;
+  let overdue = 0;
   const byCurrency: Record<string, MoneyCurrencyTotals> = {};
 
   const bucketFor = (currency: string) =>
-    (byCurrency[currency] ??= { collected: 0, outstanding: 0, refunded: 0, cancelled: 0 });
+    (byCurrency[currency] ??= {
+      collected: 0,
+      outstanding: 0,
+      refunded: 0,
+      cancelled: 0,
+      overdue: 0,
+    });
+
+  /*
+   * Today, as a calendar day.
+   *
+   * `due_date` is a SQL DATE with no time and no zone, so it is compared as a
+   * day string rather than parsed into an instant — `new Date('2026-09-30')` is
+   * midnight UTC and reads as yesterday west of it, which would report a plan
+   * period as late on the morning it falls due. `en-CA` renders `YYYY-MM-DD`,
+   * which sorts lexicographically.
+   */
+  const today = todayKey();
 
   for (const entry of items.flatMap(item => item.entries)) {
     const bucket = bucketFor(entry.currency);
@@ -1024,6 +1168,12 @@ export function totalMoney(items: MoneyItem[]): MoneyTotals {
     } else if (OUTSTANDING_STATUSES.includes(entry.status)) {
       outstanding += entry.amount;
       bucket.outstanding += entry.amount;
+
+      // A subset of what was just added, never a second addition to the total.
+      if (isLateEntry(entry, today)) {
+        overdue += entry.amount;
+        bucket.overdue += entry.amount;
+      }
     } else {
       // The shared rule decides, including whether this is cancelled at all.
       const written = cancelledMoneyOf(entry);
@@ -1051,6 +1201,16 @@ export function totalMoney(items: MoneyItem[]): MoneyTotals {
       const currency = period.currency || item.currency;
       outstanding += period.amount;
       bucketFor(currency).outstanding += period.amount;
+
+      /*
+       * A period carries no `overdue` status — nothing sets one — so its own
+       * due date is the only thing that can say it is late. Without this a plan
+       * could be months behind and the overdue figure would read zero.
+       */
+      if (isLatePeriod(period, today)) {
+        overdue += period.amount;
+        bucketFor(currency).overdue += period.amount;
+      }
     }
 
     /*
@@ -1069,5 +1229,5 @@ export function totalMoney(items: MoneyItem[]): MoneyTotals {
     }
   }
 
-  return { collected, outstanding, refunded, cancelled, byCurrency };
+  return { collected, outstanding, refunded, cancelled, overdue, byCurrency };
 }

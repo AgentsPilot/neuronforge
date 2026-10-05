@@ -16,6 +16,8 @@ import type { Locale } from '@/lib/i18n/config';
 import { getDirection } from '@/lib/i18n/config';
 import type { BlockType, BlockStyles, PageTheme, FlowStep, SelectedServiceData, JourneyServiceFacts, BlockRendererProps } from './types';
 import { normalizeClientFlow } from './types';
+import { anchorForBlockType } from '@/lib/website-builder/sectionAnchors';
+import { repairBlockLinks } from '@/lib/website-builder/linkIntegrity';
 
 // Block Components
 import { HeaderBlock } from './HeaderBlock';
@@ -245,8 +247,43 @@ export function WebsiteBlocks({
     return () => document.removeEventListener('click', remember, true);
   }, [isPreview]);
 
+  /*
+   * EVERY BUTTON ON THIS PAGE HAS SOMEWHERE REAL TO GO.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Destinations are written as literal strings by four different generators —
+   * `#services`, `#booking`, `#contact` — and nothing checked them against the
+   * sections the page actually ended up with. A fragment naming no element is
+   * the quietest failure a page can have: the browser does not navigate, does
+   * not scroll and reports nothing, so the visitor presses the button and the
+   * page sits there. It survives any test that renders the page and looks at
+   * it, because the button is present and looks right.
+   *
+   * Checked HERE, over the blocks about to be drawn, because this is the only
+   * place that knows the answer: which sections survived the owner's editing,
+   * which are switched off, which the routes stripped. A link validated at
+   * generation was validated against a page that no longer exists — and this
+   * covers every surface and every page already stored, with no migration.
+   *
+   * Before the sort, so a repaired link is in place for the whole render, and
+   * over ALL blocks so `pageAnchors` can see that a disabled section is not on
+   * the page.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const { blocks: checkedBlocks, repairs } = repairBlockLinks(blocks);
+
+  useEffect(() => {
+    if (repairs.length === 0) return;
+    // Named, not silent: a repaired link means a generator wrote a destination
+    // this page does not have, and that is worth fixing upstream too.
+    console.warn('[WebsiteBlocks] repaired links with no section behind them', repairs);
+  // The repairs are derived from the blocks; re-announcing on every render
+  // would flood the console with the same list.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repairs.length]);
+
   // Sort by position and filter enabled
-  const sortedBlocks = [...blocks]
+  const sortedBlocks = [...checkedBlocks]
     .filter(block => block.enabled !== false)
     .sort((a, b) => a.position - b.position);
 
@@ -319,6 +356,8 @@ export function WebsiteBlocks({
       // The split travels with the service, so a page-level CTA opens the same
       // dialog — same terms — as the button on the pricing card.
       paymentPlan: plan.paymentPlan as SelectedServiceData['paymentPlan'],
+      // And whether it is quoted first, for the same reason.
+      sale_mode: plan.sale_mode as SelectedServiceData['sale_mode'],
     };
   })();
 
@@ -343,27 +382,16 @@ export function WebsiteBlocks({
     setSelectedService(null);
   };
 
-  // Map block types to anchor IDs for navigation
-  const getAnchorId = (blockType: BlockType): string => {
-    const anchorMap: Partial<Record<BlockType, string>> = {
-      hero: 'hero',
-      about: 'about',
-      services: 'services',
-      pricing: 'pricing',
-      testimonials: 'testimonials',
-      faq: 'faq',
-      contact_form: 'contact',
-      booking_widget: 'booking',
-      process: 'process',
-      team: 'team',
-      features: 'features',
-      gallery: 'gallery',
-      cta: 'cta',
-      stats: 'stats',
-      footer: 'footer'
-    };
-    return anchorMap[blockType] || blockType.replace('_', '-');
-  };
+  /*
+   * Map block types to anchor IDs for navigation.
+   *
+   * The table moved to `lib/website-builder/sectionAnchors`, which is where the
+   * link check can also read it. This renderer stamps the ids and the
+   * generators write links AT them; while the only copy lived in here — a
+   * client module — nothing that produced a link could consult it, so every
+   * generator spelled the destinations by hand.
+   */
+  const getAnchorId = (blockType: BlockType): string => anchorForBlockType(blockType);
 
   return (
     <div dir={isRTL ? 'rtl' : 'ltr'}>

@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { serviceShapeValues, collectionToPersist } from '@/lib/business-os/serviceEditValues';
+import { serviceMoneyLine } from '@/lib/business-os/serviceMoneyLine';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Clock, ChevronRight, Pause, Sparkles, Check, Loader2, Pencil, Trash2, AlertCircle, Tag, CreditCard, FileText, X, Plus, Power } from 'lucide-react';
@@ -1247,6 +1248,60 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     const field = 'px-3 py-2 text-sm bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:border-transparent';
     const fieldStyle = { borderRadius: 'var(--v2-radius-button)', ['--tw-ring-color' as string]: CONFIG_COLOR };
 
+    /*
+     * Which of the three shapes this service is.
+     *
+     * `sale_mode` and `collection` were two separate questions, and the second
+     * hid itself inside the price row — so the control that decides whether the
+     * business can be paid at all appeared only once a price had been typed.
+     * They are one question here because they were never independent: a quoted
+     * job has no collection method, which is why the save writes null for it.
+     */
+    const saleShape: 'card' | 'invoice' | 'quote' =
+      values.sale_mode === 'proposal' ? 'quote' : values.collection === 'online' ? 'card' : 'invoice';
+
+    /*
+     * Pressing a shape writes both columns, and a quote leaves `collection`
+     * alone: the save discards it for a proposal anyway, so preserving it means
+     * switching back does not lose the method the owner had chosen.
+     */
+    const pickShape = (next: 'card' | 'invoice' | 'quote') =>
+      setValues(prev => ({
+        ...prev,
+        sale_mode: next === 'quote' ? 'proposal' : 'direct',
+        collection: next === 'card' ? 'online' : next === 'invoice' ? 'invoice' : prev.collection,
+      }));
+
+    /**
+     * The whole arrangement in one sentence — the thing this panel could never
+     * say. Resolved by `serviceMoneyLine`, which has its own tests because one
+     * of its branches is invisible here: a card service on an account with no
+     * processor is INVOICED by every public surface.
+     */
+    const moneyLine = serviceMoneyLine({
+      saleMode: values.sale_mode === 'proposal' ? 'proposal' : 'direct',
+      collection: Number.isFinite(price) && price > 0 ? values.collection : null,
+      price: Number.isFinite(price) ? price : 0,
+      paymentType: values.payment_type === 'installments' ? 'installments' : 'full',
+      installmentCount: values.installment_count,
+      frequency: values.installment_frequency,
+      processorReady,
+    });
+
+    const amount = (value: number | undefined) =>
+      value === undefined
+        ? ''
+        : `${getCurrencySymbol(values.currency)}${Number.isInteger(value) ? value : value.toFixed(2)}`;
+
+    const moneySentence = t(`scheduling.modal.money.${moneyLine.key}`)
+      .split('{amount}').join(amount(moneyLine.amount))
+      .split('{each}').join(amount(moneyLine.each))
+      .split('{count}').join(String(moneyLine.count ?? ''))
+      .split('{rest}').join(String(moneyLine.rest ?? ''))
+      .split('{freq}').join(
+        moneyLine.freqKey ? t(`scheduling.modal.installment_${moneyLine.freqKey}`) : ''
+      );
+
     /**
      * A choice of two, drawn as a segment rather than as two buttons.
      *
@@ -1296,18 +1351,62 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       </div>
     );
 
-    /** The group, with the active option's consequence under it. */
+    /**
+     * The group, with the chosen option's consequence under it — said properly.
+     *
+     * ───────────────────────────────────────────────────────────────────────────
+     * This was one line of 11.5px muted grey under the pills, which is the
+     * weight a form uses for a hint nobody has to read. It is carrying the most
+     * consequential sentence on the panel: which of these an owner picks decides
+     * whether their client is asked for a card, sent an invoice, or given no
+     * price at all.
+     *
+     * So it is now a panel in the accent, naming the option it belongs to, with
+     * a concrete example under it. The name is what ties it to the pill above
+     * — the alternative was a caret pointing at the active pill, which cannot
+     * be aligned reliably across three languages and two writing directions.
+     *
+     * The example is the part that actually teaches. Testers read "By quote" as
+     * a statement about their pricing policy; "a kitchen renovation priced after
+     * a site visit" is unmistakable in a way that no definition of the word
+     * "quote" managed to be.
+     * ───────────────────────────────────────────────────────────────────────────
+     */
     const segmentWithWhy = (
-      options: { value: string; label: string; active: boolean; onClick: () => void; why?: string }[]
+      options: {
+        value: string;
+        label: string;
+        active: boolean;
+        onClick: () => void;
+        why?: string;
+        /** A real case, in the owner's world. Shown under the explanation. */
+        eg?: string;
+      }[]
     ) => {
-      const why = options.find(option => option.active)?.why;
+      const chosen = options.find(option => option.active);
       return (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-2">
           {segment(options)}
-          {why && (
-            <p className="text-[11.5px] leading-snug text-[var(--v2-text-muted)] max-w-[34ch]">
-              {why}
-            </p>
+          {chosen?.why && (
+            <div
+              className="flex flex-col gap-1 px-3 py-2.5 max-w-[52ch]"
+              style={{
+                borderRadius: 'var(--v2-radius-button)',
+                backgroundColor: `${CONFIG_COLOR}0F`,
+                borderInlineStart: `2px solid ${CONFIG_COLOR}`,
+              }}
+            >
+              <p className="text-[12.5px] leading-relaxed text-[var(--v2-text-primary)]">
+                <span className="font-semibold">{chosen.label}</span>
+                <span className="text-[var(--v2-text-secondary)]">{' · '}{chosen.why}</span>
+              </p>
+              {chosen.eg && (
+                <p className="text-[12px] leading-relaxed text-[var(--v2-text-muted)]">
+                  <span className="font-medium">{t('config.services.eg')}</span>{' '}
+                  {chosen.eg}
+                </p>
+              )}
+            </div>
           )}
         </div>
       );
@@ -1449,7 +1548,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
 
           <section>
             <h4 className="text-[13.5px] font-semibold text-[var(--v2-text-primary)]">
-              {t('config.services.q.what')}
+              {t('scheduling.modal.section.service')}
             </h4>
             <p className="text-[12px] text-[var(--v2-text-muted)] mt-0.5 mb-3">
               {t('config.services.q.what_hint')}
@@ -1509,54 +1608,45 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
             </div>
           </section>
 
+          {/* ──────────────────────────────────────────────────────────────────
+              2 · WHAT THE CLIENT GETS
+
+              Its own question now. It shared a section with "how is it sold",
+              under a hint that called them "these two answers" — two decisions
+              of different kinds in one row, one about the calendar and one
+              about money.
+              ────────────────────────────────────────────────────────────────── */}
           <section className="border-t border-[var(--v2-border)] pt-4">
             <h4 className="text-[13.5px] font-semibold text-[var(--v2-text-primary)]">
-              {t('config.services.q.sold')}
+              {t('scheduling.modal.section.client_gets')}
             </h4>
-            <p className="text-[12px] text-[var(--v2-text-muted)] mt-0.5 mb-3">
-              {t('config.services.q.sold_hint')}
-            </p>
-            {/* One line, in order: what kind of sale, then whether it needs a
-                slot, then — only if it does — how long it runs. */}
-            <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
-              <div className="flex flex-col gap-1.5">
-                <span className="text-[12px] text-[var(--v2-text-secondary)]">
-                  {t('config.services.column.sale_mode')}
-                </span>
-                {segmentWithWhy([
-                  {
-                    value: 'direct',
-                    label: t('config.services.sale_mode.direct'),
-                    active: values.sale_mode === 'direct',
-                    onClick: () => setValues(prev => ({ ...prev, sale_mode: 'direct' })),
-                    why: t('config.services.sale_mode.direct.why'),
-                  },
-                  {
-                    value: 'proposal',
-                    label: t('config.services.sale_mode.proposal'),
-                    active: values.sale_mode === 'proposal',
-                    onClick: () => setValues(prev => ({ ...prev, sale_mode: 'proposal' })),
-                    why: t('config.services.sale_mode.proposal.why'),
-                  },
-                ])}
-              </div>
-
+            {/* The hint that was here said what the explanation panel below now
+                says, and said it in grey micro-type above the question rather
+                than under the answer. */}
+            <div className="flex flex-col gap-3 mt-2">
               <div className="flex flex-col gap-1.5">
                 <span className="text-[12px] text-[var(--v2-text-secondary)]">
                   {t('config.services.column.needs_time')}
                 </span>
-                {segment([
+                {/* Explained like the shape below it. This pair had no
+                    explanation at all, and it is the one that decides whether
+                    the client is ever asked for a time. */}
+                {segmentWithWhy([
                   {
                     value: 'yes',
                     label: t('config.services.needs_time.yes'),
                     active: values.is_scheduled === true,
                     onClick: () => setValues(prev => ({ ...prev, is_scheduled: true })),
+                    why: t('config.services.needs_time.yes.why'),
+                    eg: t('config.services.needs_time.yes.eg'),
                   },
                   {
                     value: 'no',
                     label: t('config.services.needs_time.no'),
                     active: values.is_scheduled === false,
                     onClick: () => setValues(prev => ({ ...prev, is_scheduled: false })),
+                    why: t('config.services.needs_time.no.why'),
+                    eg: t('config.services.needs_time.no.eg'),
                   },
                 ])}
               </div>
@@ -1566,12 +1656,15 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                   after it — those are facts about an appointment. Two greyed
                   fields showing "—" put a question on screen that has already
                   been answered, and invited the owner to wonder what they had
-                  done wrong. Answer "לא" and they simply are not asked.
+                  done wrong. Answer "no" and they simply are not asked.
 
                   The values behind them are untouched: turning scheduling back
                   on brings the same numbers back rather than defaults. */}
+              {/* On their own line, because the explanation above is a panel
+                  rather than a line: bottom-aligning two small number fields
+                  against it left them floating beside a block. */}
               {!timeDisabled && (
-                <>
+                <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
                   <label className="flex flex-col gap-1.5">
                     <span className="text-[12px] text-[var(--v2-text-secondary)]">
                       {t('config.services.column.duration')}
@@ -1607,24 +1700,96 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                       </span>
                     </div>
                   </label>
-                </>
+                </div>
               )}
             </div>
           </section>
 
+          {/* ──────────────────────────────────────────────────────────────────
+              3 · HOW IT IS SOLD AND PAID
+
+              One question where there were two. "How it is collected" lived
+              inside the price row and appeared only once a price had been
+              typed, so the control that decides whether this business can be
+              paid at all was reached by typing a number first.
+
+              The three options are the three real shapes. The consequence of
+              the chosen one sits under the group, which is what `segmentWithWhy`
+              is for — testers read "By quote" as a statement about pricing
+              policy and chose it for ordinary priced services.
+              ────────────────────────────────────────────────────────────────── */}
           <section className="border-t border-[var(--v2-border)] pt-4">
             <h4 className="text-[13.5px] font-semibold text-[var(--v2-text-primary)]">
-              {t('config.services.q.paid')}
+              {t('scheduling.modal.section.sold_paid')}
             </h4>
             <p className="text-[12px] text-[var(--v2-text-muted)] mt-0.5 mb-3">
               {t('config.services.q.paid_hint')}
             </p>
 
+            <div className="flex flex-col gap-2.5 mb-3">
+              {segmentWithWhy([
+                {
+                  value: 'card',
+                  label: t('scheduling.modal.shape.card'),
+                  active: saleShape === 'card',
+                  onClick: () => pickShape('card'),
+                  why: t('scheduling.modal.collection.online.why'),
+                  eg: t('config.services.shape.card.eg'),
+                },
+                {
+                  value: 'invoice',
+                  label: t('scheduling.modal.shape.invoice'),
+                  active: saleShape === 'invoice',
+                  onClick: () => pickShape('invoice'),
+                  /*
+                   * Two different promises, decided by the processor.
+                   *
+                   * With Stripe connected, `InvoiceDeliveryService` raises the
+                   * invoice AT Stripe and sends its hosted payment page, so the
+                   * client can pay by card from the email. "No processor
+                   * needed" is true of the other case and understates this one
+                   * — an owner who read it would go looking for a card option
+                   * they already have.
+                   */
+                  why: processorReady
+                    ? t('config.services.shape.invoice.why_link')
+                    : t('scheduling.modal.collection.invoice.why'),
+                  eg: processorReady
+                    ? t('config.services.shape.invoice.eg_link')
+                    : t('config.services.shape.invoice.eg'),
+                },
+                {
+                  value: 'quote',
+                  label: t('scheduling.modal.shape.quote'),
+                  active: saleShape === 'quote',
+                  onClick: () => pickShape('quote'),
+                  why: t('config.services.sale_mode.proposal.why'),
+                  eg: t('config.services.shape.quote.eg'),
+                },
+              ])}
+
+              {/*
+                Said HERE, where the choice is made.
+                Card collection needs a connected processor. Without one the
+                client still reaches a payment step that cannot charge them, and
+                the only signal used to be an unready dot in the journey strip
+                below — downstream of the decision that caused it.
+              */}
+              {saleShape === 'card' && !processorReady && (
+                <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11.5px] leading-snug text-amber-600 dark:text-amber-400 max-w-[46ch]">
+                  <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+                  <span>{t('config.services.collection.no_processor')}</span>
+                </p>
+              )}
+            </div>
+
             {moneyDisabled ? (
               /* Quoted: the amount and how it arrives are settled in the
-                 proposal, per job. Saying so beats three disabled controls. */
-              <p className="text-[12.5px] text-[var(--v2-text-muted)]">
-                {t('config.services.sale_mode.by_proposal')}
+                 proposal, per job. Saying so beats three disabled controls —
+                 and saying WHY beats "Set per quote", which reads as a setting
+                 the owner should go and find. */
+              <p className="text-[12.5px] leading-relaxed text-[var(--v2-text-muted)] max-w-[60ch]">
+                {t('scheduling.modal.quote_note')}
               </p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1693,58 +1858,10 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                       />
                     </div>
 
-                    {/* Nothing to collect when nothing is charged, so the
-                        question simply does not appear. */}
-                    {/* Nothing to collect when nothing is charged, so the
-                        question simply does not appear. */}
-                    {price > 0 && (
-                      <div className="flex flex-col gap-1.5">
-                        <span className="flex items-center gap-2">
-                          <span className="text-[12px] text-[var(--v2-text-secondary)] whitespace-nowrap">
-                            {t('config.services.when_collected')}
-                          </span>
-                          {segment([
-                            {
-                              value: 'online',
-                              label: t('config.services.collection.online'),
-                              active: values.collection === 'online',
-                              onClick: () => setValues(prev => ({ ...prev, collection: 'online' })),
-                            },
-                            {
-                              value: 'invoice',
-                              label: t('config.services.collection.invoice'),
-                              active: values.collection === 'invoice',
-                              onClick: () => setValues(prev => ({ ...prev, collection: 'invoice' })),
-                            },
-                          ])}
-                        </span>
-
-                        {/* What the client actually goes through. The same two
-                            sentences the booking modal shows for these options,
-                            so the two surfaces describe one decision the same
-                            way rather than each in its own words. */}
-                        <p className="text-[11.5px] leading-snug text-[var(--v2-text-muted)] max-w-[40ch]">
-                          {values.collection === 'online'
-                            ? t('scheduling.modal.collection.online.why')
-                            : t('scheduling.modal.collection.invoice.why')}
-                        </p>
-
-                        {/*
-                          Said HERE, where the choice is made.
-                          Card collection needs a connected processor. Without
-                          one the client still reaches a payment step — it just
-                          cannot charge them — and the only existing signal was
-                          an unready dot in the journey strip further down, which
-                          is downstream of the decision that caused it.
-                        */}
-                        {values.collection === 'online' && !processorReady && (
-                          <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11.5px] leading-snug text-amber-600 dark:text-amber-400 max-w-[46ch]">
-                            <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
-                            <span>{t('config.services.collection.no_processor')}</span>
-                          </p>
-                        )}
-                      </div>
-                    )}
+                    {/* "How it is collected" was here, reached only by typing a
+                        price first. It is the shape question above now, asked
+                        once and before the money — along with its consequence
+                        line and the missing-processor warning. */}
                   </div>
                 </label>
 
@@ -1905,21 +2022,42 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
             This was folded behind a chevron, which is how a business discovered
             its booking link led nowhere — from a client's email. Turn off
             "needs a time" above and the date step disappears while you watch. */}
-        <div className="flex-shrink-0 border-t border-[var(--v2-border)] bg-[var(--v2-bg)] px-5 py-3">
-          <span className="block text-[10.5px] font-semibold tracking-wide uppercase text-[var(--v2-text-muted)] mb-2">
-            {t('journey.label')}
-          </span>
-          <ClientJourneyStrip
-            compact
-            intakeEnabled={intakeEnabled}
-            processorReady={processorReady}
-            service={{
-              scheduled: values.is_scheduled !== false,
-              collection: (values.collection as ServiceCollection | null) ?? null,
-              price: moneyDisabled ? null : (Number.isFinite(price) ? price : null),
-              saleMode: (values.sale_mode as ServiceSaleMode | null) ?? 'direct',
-            }}
-          />
+        <div className="flex-shrink-0 border-t border-[var(--v2-border)] bg-[var(--v2-bg)] px-5 py-3 flex flex-col gap-2.5">
+          <div>
+            <span className="block text-[10.5px] font-semibold tracking-wide uppercase text-[var(--v2-text-muted)] mb-2">
+              {t('journey.label')}
+            </span>
+            <ClientJourneyStrip
+              compact
+              intakeEnabled={intakeEnabled}
+              processorReady={processorReady}
+              service={{
+                scheduled: values.is_scheduled !== false,
+                collection: (values.collection as ServiceCollection | null) ?? null,
+                price: moneyDisabled ? null : (Number.isFinite(price) ? price : null),
+                saleMode: (values.sale_mode as ServiceSaleMode | null) ?? 'direct',
+              }}
+            />
+          </div>
+
+          {/*
+            The other half of the consequence, and the half nothing said.
+
+            The strip draws what the CLIENT walks through; this says what
+            happens to the MONEY — the figure, the split, the cadence and who
+            chases it. Five controls decided that between them and the panel
+            never once added them up, so an owner learned the answer from their
+            first client. It sits beside the strip because they are one thought:
+            what the client does, and what you get for it.
+          */}
+          <div className="border-t border-[var(--v2-border)] pt-2.5">
+            <span className="block text-[10.5px] font-semibold tracking-wide uppercase text-[var(--v2-text-muted)] mb-1">
+              {t('scheduling.modal.you_get_paid')}
+            </span>
+            <p className="text-[12.5px] leading-relaxed text-[var(--v2-text-primary)]">
+              {moneySentence}
+            </p>
+          </div>
         </div>
 
         {/* Save and cancel */}

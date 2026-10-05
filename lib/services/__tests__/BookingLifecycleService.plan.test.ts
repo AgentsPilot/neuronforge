@@ -57,6 +57,12 @@ jest.mock('@/lib/supabaseServer', () => ({
                 if (prop === 'eq' || prop === 'is') {
                   stageUpdateFilters.push([String(args[0]), args[1]]);
                 }
+                // `.not(column, op, value)` — recorded because the status scope
+                // moved into it, and a test that cannot see it cannot tell a
+                // narrowed scope from no scope at all.
+                if (prop === 'not') {
+                  stageUpdateFilters.push([`not:${String(args[0])}`, `${args[1]} ${args[2]}`]);
+                }
                 return builder;
               };
             }
@@ -70,7 +76,11 @@ jest.mock('@/lib/supabaseServer', () => ({
 }));
 
 jest.mock('@/lib/repositories/SchedulingRepository', () => ({
-  schedulingBookingRepository: { cancel: (...a: unknown[]) => mockCancel(...a) },
+  schedulingBookingRepository: {
+    cancel: (...a: unknown[]) => mockCancel(...a),
+    // No meetings: these bookings are ordinary jobs, not packages.
+    findChildren: jest.fn(async () => ({ data: [], error: null })),
+  },
 }));
 jest.mock('@/lib/repositories/CRMContactRepository', () => ({
   crmContactRepository: { findById: jest.fn(async () => ({ data: null, error: null })) },
@@ -189,15 +199,56 @@ describe('cancelBooking and a live payment plan', () => {
 
     expect(stageUpdatePayload[0]).toMatchObject({ status: 'cancelled' });
 
-    // Only this booking, only what has not happened, and only stages with no
-    // subscription behind them — a plan's projected periods are real money.
+    /*
+     * Only this booking, and only stages with no subscription behind them — a
+     * plan's projected periods are real money still arriving.
+     *
+     * The status scope asserted `['status', 'pending']`, which was narrower than
+     * the rule: a BILLED stage stayed open on a cancelled booking, disagreeing
+     * with its own invoice, which this function had already cancelled. The
+     * guarantee that matters — a paid stage is never rewritten — is unchanged.
+     */
     expect(stageUpdateFilters).toEqual(
       expect.arrayContaining([
         ['booking_id', BOOKING_ID],
-        ['status', 'pending'],
         ['subscription_id', null],
       ])
     );
+    // The guarantee itself, not merely the absence of the old spelling: without
+    // this a scope removed entirely would pass, and a PAID stage — the record of
+    // money that actually arrived — would be rewritten to cancelled.
+    expect(stageUpdateFilters).toContainEqual(['not:status', 'in (paid,cancelled)']);
+  });
+
+  it('records WHY the periods stopped, the same way every other surface does', async () => {
+    await cancelBooking({
+      bookingId: BOOKING_ID,
+      userId: USER_ID,
+      cancelReason: 'client_not_paying',
+      cancelNote: 'stopped answering',
+      cancelledBy: 'owner',
+    });
+
+    /*
+     * The reason already travelled to the proposal — "one namespace, so the
+     * booking's cancel code is a valid stop code, and a report counting
+     * `client_not_paying` finds both". The periods were the one thing left out,
+     * so a plan stopped by cancelling its booking recorded nothing countable
+     * while the same plan stopped from Manage Payment recorded all three.
+     */
+    expect(stageUpdatePayload[0]).toMatchObject({
+      status: 'cancelled',
+      cancel_reason: 'client_not_paying',
+      cancel_note: 'stopped answering',
+      cancelled_by: 'owner',
+    });
+    expect(stageUpdatePayload[0]).toHaveProperty('cancelled_at');
+  });
+
+  it('defaults the actor to the owner, who is the one who pressed it', async () => {
+    await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
+
+    expect(stageUpdatePayload[0]).toMatchObject({ cancelled_by: 'owner' });
   });
 
   it('still cancels the booking when the plan cannot be read', async () => {

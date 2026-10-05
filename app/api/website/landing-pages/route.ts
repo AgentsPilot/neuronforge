@@ -15,6 +15,7 @@ import { resolveBusinessSubdomain } from '@/lib/business-os/businessSubdomain';
 import { WebsiteBlockRepository, WebsiteBlockInsert } from '@/lib/repositories/WebsiteBlockRepository';
 import { completeTheme } from '@/lib/branding/theme';
 import { imageForSection } from '@/lib/services/StockImageService';
+import { repairBlockLinks } from '@/lib/website-builder/linkIntegrity';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { z } from 'zod';
 
@@ -532,7 +533,35 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    const blocksResult = await blockRepo.bulkCreate(blocksToCreate);
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * EVERY BUTTON POINTS AT A SECTION THIS PAGE ACTUALLY HAS.
+     *
+     * The destinations above are decided from the OFFERING — `needsBooking`
+     * sends the header and hero to `#booking`, otherwise to `#pricing` — while
+     * which sections get installed is decided separately a few lines up, and
+     * the generated content spread into each block can carry destinations of
+     * its own. Two authors, one contract, and nothing checked them against each
+     * other.
+     *
+     * A fragment naming no element is the quietest failure a page can have: the
+     * browser does not navigate, does not scroll and reports nothing, so the
+     * one button a landing page exists for silently does nothing.
+     *
+     * The same pass the renderer and the website generator run, from the same
+     * shared table of section anchors, so what is stored is already right.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const { blocks: checkedBlocks, repairs: linkRepairs } = repairBlockLinks(blocksToCreate);
+
+    if (linkRepairs.length > 0) {
+      requestLogger.warn(
+        { pageId: pageResult.data.id, repairs: linkRepairs },
+        'Landing page buttons named sections the page does not have; destinations resolved'
+      );
+    }
+
+    const blocksResult = await blockRepo.bulkCreate(checkedBlocks);
     if (blocksResult.error) {
       requestLogger.warn({ err: blocksResult.error }, 'Failed to create landing page blocks');
     }

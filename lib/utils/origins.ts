@@ -51,6 +51,76 @@ const PROD_MARKETING_ORIGIN = 'https://agentspilot-marketing.vercel.app';
 
 const isDevelopment = () => process.env.NODE_ENV === 'development';
 
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY A CONFIGURED VALUE IS NOT ALWAYS THE ANSWER
+ *
+ * `NEXT_PUBLIC_APP_URL` is ONE value per environment, and a preview environment
+ * does not have one address. Every preview deployment gets its own host
+ * (`neuronforge-<hash>-<scope>.vercel.app`), so whatever single value is
+ * configured for Preview is wrong for all but one of them. Setting it to the
+ * local address — the obvious thing to do when the variable is copied out of
+ * `.env.local` — makes every deployed build hand out `http://localhost:3000`:
+ * smart links, a business's website address, and landing-page links alike,
+ * because all three come through here.
+ *
+ * `NODE_ENV` cannot catch that. Vercel builds previews with
+ * `NODE_ENV=production`, so the development fallback below never fires there;
+ * the localhost address arrives as configuration, not as a fallback.
+ *
+ * So two rules, in this order:
+ *
+ *   1. A loopback address is refused when the code is running on Vercel. It is
+ *      never a reachable address for anybody who is not the person who built
+ *      it, and treating it as configuration is how this bug reaches a client.
+ *   2. On a preview, the deployment's own host wins. It is the only address
+ *      that is right for THAT deployment, which is the whole point of a
+ *      preview.
+ *
+ * Vercel's system variables carry both. The `NEXT_PUBLIC_` copies are inlined
+ * at build time like every other one, which is correct rather than stale: the
+ * build is per-deployment, so the value baked in is that deployment's own. The
+ * unprefixed `VERCEL_URL` is read as well for server-side callers, in case a
+ * project has system variables exposed to the server but not to the browser.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+/** Vercel's own environment for this deployment, or null when not on Vercel. */
+const vercelEnv = (): 'production' | 'preview' | 'development' | null => {
+  const value = process.env.NEXT_PUBLIC_VERCEL_ENV || process.env.VERCEL_ENV;
+  return value === 'production' || value === 'preview' || value === 'development' ? value : null;
+};
+
+const bareHost = (value: string | undefined): string | null => {
+  const trimmed = (value || '').trim();
+  return trimmed ? trimmed.replace(/^https?:\/\//, '').replace(/\/+$/, '') : null;
+};
+
+/** This deployment's own host, with no scheme, or null. */
+const vercelDeploymentHost = (): string | null =>
+  bareHost(process.env.NEXT_PUBLIC_VERCEL_URL || process.env.VERCEL_URL);
+
+/**
+ * The project's STABLE production host, as opposed to this deployment's.
+ *
+ * Preferred over `PROD_PLATFORM_ORIGIN` when nothing usable is configured,
+ * because the constant is aspirational: the comment on the marketing origin
+ * above records that `agentspilot.ai` is not served yet. Falling back to an
+ * apex that resolves nowhere would replace one unreachable address with
+ * another, which is harder to notice than localhost was.
+ */
+const vercelProjectProductionHost = (): string | null =>
+  bareHost(
+    process.env.NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL ||
+      process.env.VERCEL_PROJECT_PRODUCTION_URL
+  );
+
+const isOnVercel = () => vercelEnv() !== null || Boolean(process.env.VERCEL);
+
+/** An address only the machine that built it can reach. */
+const isLoopbackOrigin = (value: string) =>
+  /^(https?:\/\/)?(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(:\d+)?(\/|$)/i.test(value.trim());
+
 const stripTrailingSlashes = (value: string) => value.replace(/\/+$/, '');
 
 /** A path with exactly one leading slash, or empty. */
@@ -61,11 +131,36 @@ const normalizePath = (path: string) => {
 
 /** This application's own origin, with no trailing slash. */
 export function platformOrigin(): string {
-  const configured =
-    process.env.NEXT_PUBLIC_APP_URL ||
-    (isDevelopment() ? DEV_PLATFORM_ORIGIN : PROD_PLATFORM_ORIGIN);
+  const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  const onVercel = isOnVercel();
 
-  return stripTrailingSlashes(configured);
+  // Rule 1: a loopback address configured on a deployed build is not usable.
+  const usableConfigured = configured && !(onVercel && isLoopbackOrigin(configured))
+    ? configured
+    : null;
+
+  // Rule 2: a preview is addressed by its own deployment host, which no single
+  // configured value can be. This deliberately outranks configuration.
+  if (vercelEnv() === 'preview') {
+    const host = vercelDeploymentHost();
+    if (host) return `https://${host}`;
+  }
+
+  if (usableConfigured) return stripTrailingSlashes(usableConfigured);
+
+  // Nothing usable was configured. On Vercel that means production (preview was
+  // handled above and would only reach here with its host missing), so the real
+  // domain beats a deployment hash a client should never be shown.
+  if (onVercel) {
+    const host =
+      vercelEnv() === 'production'
+        ? vercelProjectProductionHost()
+        : vercelDeploymentHost() || vercelProjectProductionHost();
+    if (host) return `https://${host}`;
+    return PROD_PLATFORM_ORIGIN;
+  }
+
+  return stripTrailingSlashes(isDevelopment() ? DEV_PLATFORM_ORIGIN : PROD_PLATFORM_ORIGIN);
 }
 
 /** An absolute URL on this application. */

@@ -168,6 +168,29 @@ export interface BriefingFacts {
     unanswered: { count: number; people: Array<{ name: string; note?: string }> };
     /** Bookings refunded — money that has gone back out. */
     refunded: { count: number; people: Array<{ name: string; note?: string }>; value?: number; currency?: string };
+    /**
+     * Quotes the client said YES to today.
+     *
+     * The only unambiguously good news a day can contain, and the briefing
+     * never carried it: an owner who won ₪8,500 of work this morning read a
+     * summary about appointments and unpaid invoices.
+     */
+    quotesAccepted: { count: number; people: Array<{ name: string; note?: string }>; value?: number; currency?: string };
+    /**
+     * Quotes turned down today, and the reason given where there was one.
+     *
+     * `topReason` is stated as a fact about one day and never as a trend.
+     * Whether declines form a PATTERN is `ConvDeclineReasonDetector`'s
+     * question, and it has a quarter of evidence behind it; the briefing has
+     * this morning.
+     */
+    quotesDeclined: {
+      count: number;
+      people: Array<{ name: string; note?: string }>;
+      value?: number;
+      currency?: string;
+      topReason?: string;
+    };
     newLeads: {
       count: number;
       people: Array<{ name: string; note?: string }>;
@@ -260,7 +283,7 @@ export async function buildBriefingFacts(
 ): Promise<BriefingFacts> {
   const limit = options.limit ?? 100;
 
-  const [bookingsResult, invoicesResult, paidTodayTxResult, paidTodayInvResult, nextBookingResult, newLeadsResult, gaps, instalmentsResult] =
+  const [bookingsResult, invoicesResult, paidTodayTxResult, paidTodayInvResult, nextBookingResult, newLeadsResult, gaps, instalmentsResult, decidedResult] =
     await Promise.all([
     schedulingBookingRepository.list(userId, {
       startDate: day.startUtc,
@@ -310,7 +333,17 @@ export async function buildBriefingFacts(
      * and awaiting the client, and the dashboard and the insight read the same
      * definitions.
      */
-    findGaps(userId, { now: new Date(day.startUtc) }),
+    /*
+     * `named: BRIEFING_GAP_ITEMS`, not the registry's default of three.
+     *
+     * `findGaps` caps `items` at the few a CARD prints names for, while keeping
+     * `count` honest. The briefing needs every row to total the money over —
+     * see `fromGaps`, which now refuses to publish a figure that covers only
+     * some of what it counted. Asking for more items here is what lets it
+     * publish one at all; the number of NAMES it prints is still three,
+     * capped separately where the people are built.
+     */
+    findGaps(userId, { now: new Date(day.startUtc), named: BRIEFING_GAP_ITEMS }),
     /*
      * Payment-plan instalments: money owed on a SCHEDULE rather than an invoice.
      *
@@ -328,6 +361,26 @@ export async function buildBriefingFacts(
       .eq('user_id', userId)
       .not('status', 'in', '("paid","cancelled","refunded")')
       .lte('due_date', day.date)
+      .limit(limit),
+    /*
+     * Quotes the client ANSWERED today, either way.
+     *
+     * The one thing in a day that can be unambiguously good news, and the
+     * briefing has never carried it. An owner who won ₪8,500 of work this
+     * morning read a summary about appointments and unpaid invoices.
+     *
+     * Not from `findGaps`: a decided quote is waiting on nobody, which is
+     * exactly what disqualifies it from the gap registry and exactly why it
+     * needed its own read. Scoped by `decided_at` to the BUSINESS's day, like
+     * every other figure here.
+     */
+    supabaseServer
+      .from('proposals')
+      .select('id, status, total, currency, decline_reason, contact:crm_contacts(first_name, last_name, email)')
+      .eq('user_id', userId)
+      .in('status', ['accepted', 'declined'])
+      .gte('decided_at', day.startUtc)
+      .lt('decided_at', day.endUtc)
       .limit(limit),
   ]);
 
@@ -362,6 +415,13 @@ export async function buildBriefingFacts(
     );
   }
 
+  if (decidedResult.error) {
+    logger.warn(
+      { err: decidedResult.error, userId },
+      'Briefing could not read decided quotes; an accepted quote will go unmentioned'
+    );
+  }
+
   if (paidTodayTxResult.error || paidTodayInvResult.error) {
     logger.warn(
       { err: paidTodayTxResult.error ?? paidTodayInvResult.error, userId },
@@ -372,6 +432,7 @@ export async function buildBriefingFacts(
     appointments,
     nextBookingResult.data as BookingRow | null,
     (newLeadsResult.data ?? []) as unknown as Array<Record<string, unknown>>,
+    (decidedResult.data ?? []) as unknown as DecidedProposalRow[],
     gaps,
     day
   );
@@ -603,10 +664,71 @@ function summariseAppointments(rows: BookingRow[], day: BusinessDay): BriefingFa
  * New leads are reported whatever kind of day it is: someone arriving is news
  * on a full day as much as on an empty one.
  */
+/** One row of `proposals`, as the briefing reads a decided quote. */
+interface DecidedProposalRow {
+  id: string;
+  status: string | null;
+  total: number | string | null;
+  currency: string | null;
+  decline_reason: string | null;
+  contact?:
+    | { first_name?: string | null; last_name?: string | null; email?: string | null }
+    | Array<{ first_name?: string | null; last_name?: string | null; email?: string | null }>
+    | null;
+}
+
+/**
+ * Quotes answered today, split by the answer.
+ *
+ * Value is summed in ONE currency, the dominant one, for the reason every
+ * other total here is: there is no FX rate anywhere in this platform.
+ */
+function summariseDecided(
+  rows: DecidedProposalRow[],
+  status: 'accepted' | 'declined'
+): { count: number; people: Array<{ name: string }>; value?: number; currency?: string; topReason?: string } {
+  const mine = rows.filter(row => row.status === status);
+  if (mine.length === 0) return { count: 0, people: [] };
+
+  const byCurrency = new Map<string, number>();
+  for (const row of mine) {
+    const amount = Number(row.total) || 0;
+    if (amount <= 0) continue;
+    const code = (row.currency || 'USD').toUpperCase();
+    byCurrency.set(code, (byCurrency.get(code) ?? 0) + amount);
+  }
+  const dominant = [...byCurrency.entries()].sort((a, b) => b[1] - a[1])[0];
+
+  /*
+   * The reason, only when every decline today agrees on it.
+   *
+   * One day is not a sample. "Two were turned down, one on price and one on
+   * timing" is two anecdotes, and picking the first would be arbitrary.
+   * Whether declines form a pattern belongs to `ConvDeclineReasonDetector`,
+   * which has a quarter behind it.
+   */
+  const reasons = new Set(mine.map(row => row.decline_reason).filter(Boolean));
+  const topReason = reasons.size === 1 ? ([...reasons][0] as string) : undefined;
+
+  return {
+    count: mine.length,
+    people: mine
+      .map(row => {
+        const contact = Array.isArray(row.contact) ? row.contact[0] : row.contact;
+        const full = [contact?.first_name, contact?.last_name].filter(Boolean).join(' ').trim();
+        return { name: full || contact?.email?.trim() || '' };
+      })
+      .filter(person => person.name.length > 0),
+    ...(dominant ? { value: dominant[1], currency: dominant[0] } : {}),
+    ...(status === 'declined' && topReason ? { topReason } : {}),
+  };
+}
+
 function summariseOutlook(
   appointments: BriefingFacts['appointments'],
   nextRow: BookingRow | null,
   newLeadRows: Array<Record<string, unknown>>,
+  decidedRows: DecidedProposalRow[],
   gaps: GapResult[],
   day: BusinessDay
 ): BriefingFacts['outlook'] {
@@ -646,6 +768,9 @@ function summariseOutlook(
      * the gap the "reply to enquiries" automation exists to close — the
      * dashboard has counted it all along and the briefing never said it.
      */
+    /* The day's good news, ahead of everything that needs chasing. */
+    quotesAccepted: summariseDecided(decidedRows, 'accepted'),
+    quotesDeclined: summariseDecided(decidedRows, 'declined'),
     unanswered: fromGaps(gaps, ['enquiry_unanswered']),
     /* Money that has gone back out. Also counted by the dashboard, also unsaid. */
     refunded: fromGaps(gaps, ['booking_refunded']),
@@ -689,14 +814,38 @@ function fromGaps(
   }
 
   const dominant = [...byCurrency.entries()].sort((a, b) => b[1] - a[1])[0];
-  const singleCurrency = byCurrency.size === 1 && dominant;
+
+  const count = matching.reduce((sum, gap) => sum + gap.count, 0);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE COUNT AND THE MONEY HAVE TO DESCRIBE THE SAME ROWS.
+   *
+   * `count` is the truth about how many — `findGaps` keeps it uncapped on
+   * purpose. `items` is NOT: it is `stale.slice(0, named)`, capped at the few
+   * the briefing will print names for.
+   *
+   * Summing the money over `items` while taking the count from `gap.count`
+   * reports N things worth the value of a handful. A real briefing on
+   * 2026-10-02 said "6 stages waiting, ₪224.97" about six stages of ₪74.99 —
+   * the count of all six beside the sum of three. Six of them come to ₪449.94,
+   * and neither number was wrong on its own.
+   *
+   * So the total is published only when `items` covers every row the count
+   * includes. Fewer names than rows means no figure rather than a partial one
+   * presented as a total: a count with no money attached is incomplete, while a
+   * count with the WRONG money attached is false, and an owner cannot tell.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const itemsCoverAll = items.length === count;
+  const reportTotal = byCurrency.size === 1 && dominant && itemsCoverAll;
 
   return {
-    count: matching.reduce((sum, gap) => sum + gap.count, 0),
+    count,
     people: items
       .slice(0, NEW_LEAD_NAMES)
       .map(item => ({ name: item.name, note: item.note })),
-    ...(singleCurrency ? { value: Math.round(dominant[1] * 100) / 100, currency: dominant[0] } : {}),
+    ...(reportTotal ? { value: Math.round(dominant[1] * 100) / 100, currency: dominant[0] } : {}),
   };
 }
 
@@ -707,6 +856,16 @@ function fromGaps(
  * Three is a sentence; six is a list nobody reads in a summary card.
  */
 const NEW_LEAD_NAMES = 3;
+
+/**
+ * How many rows per gap the briefing reads, as opposed to names it prints.
+ *
+ * Fifty. The money has to be summed over everything the count includes or the
+ * two disagree, and a business with sixty stages waiting is one whose figure
+ * matters most. Above this the total is withheld rather than understated — see
+ * `fromGaps` — which is the honest direction for a number an owner will act on.
+ */
+const BRIEFING_GAP_ITEMS = 50;
 
 /**
  * One new contact, as the briefing refers to them.

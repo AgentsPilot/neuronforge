@@ -55,9 +55,43 @@ const createSchema = z.object({
     .nullable()
     .optional(),
   payment_shape: paymentShapeSchema.optional(),
+  /**
+   * A PACKAGE: the meetings this quote sells, as explicit instants.
+   *
+   * Validated rather than waved through, because acceptance turns each date
+   * into a real appointment in a client's diary:
+   *
+   *   · a real instant, so nothing lands at the epoch;
+   *   · at most 52, which is a year of weekly sessions — the cap exists so a
+   *     malformed caller cannot create a thousand bookings in one accept;
+   *   · a length, because every meeting needs an end. Capped at a day.
+   *
+   * `service_id` is required alongside it (refined below): the meetings are
+   * bookings and `scheduling_bookings.service_id` is NOT NULL, so a package
+   * without one is a quote acceptance can only refuse.
+   */
+  sessions: z
+    .object({
+      dates: z
+        .array(z.string().refine(value => !Number.isNaN(Date.parse(value)), 'not a real date'))
+        .min(1)
+        .max(52),
+      duration_minutes: z.coerce.number().int().min(5).max(1440),
+      /*
+       * Billed after each meeting rather than up front. See `PackageSessions`:
+       * the payment shape stays `milestones`, and this is what says its stages
+       * are the meetings.
+       */
+      bill_per_session: z.boolean().optional(),
+    })
+    .nullable()
+    .optional(),
   /** Set when this replaces a declined or sent version. */
   supersedes_id: z.string().uuid().nullable().optional(),
-});
+}).refine(
+  data => !data.sessions || Boolean(data.service_id),
+  { path: ['service_id'], message: 'A package needs a service: its meetings are bookings.' }
+);
 
 export async function GET(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
@@ -310,6 +344,11 @@ export async function POST(request: NextRequest) {
       tax_label: profile?.invoice_tax_label ?? null,
       valid_until: validated.valid_until ?? null,
       payment_shape: validated.payment_shape || { kind: 'single' },
+      /*
+       * The meetings sold, for a package. Null for every ordinary quote, which
+       * is what every quote written before this was.
+       */
+      sessions: validated.sessions ?? null,
       supersedes_id: validated.supersedes_id ?? null,
     });
 

@@ -173,19 +173,86 @@ describe('one grouping id per onboarding conversation (AC-3)', () => {
     const manager = new OnboardingConversationManager();
     const owner = { userId: OWNER_ID, groupId: GROUP };
 
-    // Turn 1: the workflow answer names no services, so the flow asks for them.
+    // Turn 1: the workflow answer names no services, so the flow asks how they
+    // sell. `client_workflow` is no longer asked of a new conversation, but its
+    // handler stays for one resumed mid-flight, which is what this drives.
     mockComplete.mockResolvedValueOnce({ content: JSON.stringify({ services: [] }) });
     const turn1 = await manager.processUserMessage(owner, 'Fixed prices', state('client_workflow'));
     expect(turn1.updatedState.currentStep).toBe('service_details');
     expect(turn1.updatedState.attributionGroupId).toBe(GROUP);
 
-    // Turn 2: typed (not form) service details are extracted with the same call.
+    /*
+     * Turn 2: typed (not form) service details, extracted by the same call.
+     *
+     * Reached with `pendingQuestion` cleared, which is the legacy free-text
+     * loop — the state a conversation already standing in `more_services` is
+     * restored into. The new chip questions deliberately make NO llm call, so
+     * driving turn 2 through them would leave this test with one call and
+     * nothing to say about grouping, which is its actual subject.
+     */
     mockComplete.mockResolvedValueOnce({ content: JSON.stringify({ services: [{ name: 'Haircut', price: 50 }] }) });
-    await manager.processUserMessage(owner, 'I do haircuts for 50', turn1.updatedState);
+    await manager.processUserMessage(
+      owner,
+      'I do haircuts for 50',
+      { ...turn1.updatedState, pendingQuestion: undefined }
+    );
 
     const workflowCalls = calls().filter(([, c]) => c?.component === 'client_workflow_extraction');
     expect(workflowCalls).toHaveLength(2);
     for (const [, context] of workflowCalls) expect(context?.sessionId).toBe(GROUP);
+  });
+
+  it('asks how they sell with no llm call at all — three chips, three reads', async () => {
+    const manager = new OnboardingConversationManager();
+    const owner = { userId: OWNER_ID, groupId: GROUP };
+
+    const scheduled = await manager.processUserMessage(
+      owner,
+      'Clients book a time with me',
+      state('service_details', { pendingQuestion: 'sell_scheduled' })
+    );
+    expect(scheduled.updatedState.pendingQuestion).toBe('sell_collection');
+    expect(scheduled.updatedState.collectedData.clientWorkflow?.sells_scheduled).toBe(true);
+
+    const collected = await manager.processUserMessage(
+      owner,
+      'Nothing I sell is paid for',
+      scheduled.updatedState
+    );
+    expect(collected.updatedState.pendingQuestion).toBe('service_count');
+    expect(collected.updatedState.collectedData.clientWorkflow?.collection_method).toBe('none');
+
+    const counted = await manager.processUserMessage(owner, '3', collected.updatedState);
+    expect(counted.updatedState.collectedData.clientWorkflow?.service_count).toBe(3);
+    expect(counted.updatedState.pendingQuestion).toBeUndefined();
+    expect(counted.updatedState.currentStep).toBe('client_acquisition');
+
+    // The point: capability answers cost nothing. Three turns, no model.
+    expect(calls()).toHaveLength(0);
+  });
+
+  it('re-asks the count rather than inventing one, and never reopens the services form', async () => {
+    const manager = new OnboardingConversationManager();
+    const owner = { userId: OWNER_ID, groupId: GROUP };
+
+    const vague = await manager.processUserMessage(
+      owner,
+      'hard to say really',
+      state('service_details', { pendingQuestion: 'service_count' })
+    );
+
+    expect(vague.updatedState.collectedData.clientWorkflow?.service_count).toBeUndefined();
+    expect(vague.updatedState.currentStep).toBe('service_details');
+    /*
+     * Still `service_count`, and that is what keeps the grid shut.
+     *
+     * The page opens the services form on `service_details` with NO pending
+     * question (`page.tsx`'s `askingForDetails`). Any new branch here that
+     * cleared it without moving the step would put the fifteen-column grid
+     * back on screen, which is the thing this whole change removes.
+     */
+    expect(vague.updatedState.pendingQuestion).toBe('service_count');
+    expect(calls()).toHaveLength(0);
   });
 
   it('records the call that detects a restart under the ending group, and returns a fresh one', async () => {

@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Clock, X, Plus } from 'lucide-react';
+// `CalendarOff` is the icon `TimeOffEditor` heads its section with, so the link
+// and the place it leads to are recognisably the same thing.
+import { Clock, X, Plus, CalendarOff } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 
 // Configuration theme color (matches Services tab)
@@ -26,6 +28,25 @@ interface AvailabilityEditorProps {
   availability: WeeklyAvailability;
   onChange: (availability: WeeklyAvailability) => void;
   daysToAdd?: string[]; // Days to auto-add with default time slot (from chat)
+  /**
+   * Take the owner to the time-off section, when there is one below.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The weekly hours answer "which days do you work". Time off answers "except
+   * this Thursday" — and it lives in a SEPARATE component below this one,
+   * because it saves its own rows rather than sharing this tab's Save button.
+   * That separation is right, but it put the feature below the fold: an owner
+   * setting their hours has no reason to scroll past the thing they came for,
+   * so they never learn a closure can be entered at all, and the chat ends up
+   * asked for something the dialog already does.
+   *
+   * A CALLBACK, not an element id looked up from in here. The scroll target
+   * belongs to whoever laid the two components out — this one does not know it
+   * has a sibling, and must not render a link to nothing when it has none.
+   * Omit the prop and no link appears.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  onJumpToTimeOff?: () => void;
 }
 
 const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
@@ -190,7 +211,7 @@ function TimeRangeSlider({ startTime, endTime, onStartChange, onEndChange, isRTL
   );
 }
 
-export function AvailabilityEditor({ availability, onChange, daysToAdd }: AvailabilityEditorProps) {
+export function AvailabilityEditor({ availability, onChange, daysToAdd, onJumpToTimeOff }: AvailabilityEditorProps) {
   const { t, isRTL } = useLanguage();
   const [daysAddedFromChat, setDaysAddedFromChat] = useState(false);
 
@@ -316,6 +337,30 @@ export function AvailabilityEditor({ availability, onChange, daysToAdd }: Availa
             );
           })}
         </div>
+
+        {/*
+          The way to the exceptions, next to the rule they are exceptions to.
+          ───────────────────────────────────────────────────────────────────
+          This row is where an owner decides which days they work, so it is the
+          moment they are thinking "…except the 14th". Time off is the answer and
+          sits below the fold, with nothing up here hinting it exists.
+
+          `ms-auto`, not `ml-auto`: a logical property, so it sits at the far end
+          of the row in Hebrew as well as English. The surrounding row already
+          wraps, so on a narrow dialog this drops to its own line rather than
+          squeezing the chips.
+        */}
+        {onJumpToTimeOff && (
+          <button
+            type="button"
+            onClick={onJumpToTimeOff}
+            className="ms-auto flex items-center gap-1.5 text-[12px] text-[var(--v2-text-muted)] underline decoration-dotted underline-offset-4 transition-colors hover:text-[var(--v2-text-primary)] focus:outline-none focus-visible:ring-1 focus-visible:ring-offset-2"
+            style={{ ['--tw-ring-color' as string]: CONFIG_COLOR }}
+          >
+            <CalendarOff className="h-3.5 w-3.5 flex-shrink-0" />
+            {t('scheduling.availability.jump_to_timeoff')}
+          </button>
+        )}
       </div>
 
       {/* Per-Day Time Sliders */}

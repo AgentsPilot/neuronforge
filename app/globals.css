@@ -232,6 +232,51 @@ html[data-public-surface] .group:hover .ap-group-hover-ink,
 html[data-public-surface] .ap-placeholder::placeholder,
 [data-ap-site] .ap-placeholder::placeholder { color: var(--ap-text-muted); opacity: 0.7; }
 
+/* ===========================================================================
+   WHAT A FORM SAYS WHEN SOMETHING IS WRONG.
+
+   The public forms had no vocabulary for this and used Tailwind's reds —
+   `text-red-600`, `border-red-500` — which belong to the signed-in app's
+   palette, not to the business's. On a dark template the message was barely
+   legible; on a warm one it was a colour from another website.
+
+   Three classes, in the same shape as the seven above: the message's ink, the
+   invalid field's edge, and the faint wash behind a message block. The hue is
+   fixed and its lightness follows the palette — see `--ap-danger` in
+   PublicThemeStyle for why an error must not be the brand colour.
+
+   `--ap-scale-small` and `--ap-font-body` come along so the message is the
+   business's type at the business's small size, like every other line of
+   secondary text on the page.
+   ========================================================================== */
+
+html[data-public-surface] .ap-danger,
+[data-ap-site] .ap-danger {
+  color: var(--ap-danger);
+  font-family: var(--ap-font-body);
+  font-size: var(--ap-scale-small);
+}
+
+html[data-public-surface] .ap-danger-line,
+[data-ap-site] .ap-danger-line { border-color: var(--ap-danger-border); }
+
+html[data-public-surface] .ap-danger-surface,
+[data-ap-site] .ap-danger-surface {
+  background-color: var(--ap-danger-tint);
+  border-color: var(--ap-danger-border);
+  color: var(--ap-danger);
+}
+
+/* The focus ring's COLOUR, leaving Tailwind's `focus:ring-2` to set its width.
+   The contact form rang `focus:ring-blue-200` on every field — a blue halo on a
+   form painted in the business's palette, and the one colour no tenant chose.
+   `--ap-brand-ring` is the brand at 35%, which exists for precisely this. */
+html[data-public-surface] .ap-ring,
+[data-ap-site] .ap-ring { --tw-ring-color: var(--ap-brand-ring); }
+
+html[data-public-surface] .ap-ring-danger,
+[data-ap-site] .ap-ring-danger { --tw-ring-color: var(--ap-danger-border); }
+
 /* A sticky header over scrolling content: the business's own ground, made
    translucent, rather than a white that disappears on a dark template. */
 html[data-public-surface] .ap-bg-blur,

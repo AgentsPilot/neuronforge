@@ -9,12 +9,16 @@ import {
   businessDateKey,
   businessInstant,
   shiftBusinessDateKey,
+  endOfBusinessLocal,
+  formatBusinessTime,
 } from '@/lib/scheduling/businessTime';
+import { windowsForDate, type TimeOffEntry } from '@/lib/scheduling/availabilityWindows';
+import { closedDayVerdict, type ClosedDayVerdict } from '@/lib/scheduling/closedDay';
 import { JourneyGapNotice } from '@/components/business-os/setup/JourneyGapNotice';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Clock, User, Mail, Phone, Calendar, FileText, CheckCircle, XCircle, AlertCircle, Search, UserPlus, X, Plus, Globe, Facebook, MessageCircle, Users as UsersIcon, Check, Trash2, CreditCard, Tag, ClipboardList, Loader2 } from 'lucide-react';
+import { Clock, User, Mail, Phone, Calendar, FileText, CheckCircle, XCircle, AlertCircle, Search, X, Plus, Globe, Facebook, MessageCircle, Users as UsersIcon, Check, Trash2, CreditCard, Tag, ClipboardList, Loader2 } from 'lucide-react';
 import PhoneInput from 'react-phone-number-input';
 import en from 'react-phone-number-input/locale/en';
 import 'react-phone-number-input/style.css';
@@ -26,7 +30,6 @@ import {
   useConfigurationDialogOptional,
   useConfigurationDialogOpen,
 } from '@/components/business-os/ConfigurationDialogProvider';
-import { clientLogger } from '@/lib/logger/client';
 import {
   businessCollectsIntake,
   intakeBlockReason,
@@ -343,7 +346,16 @@ export function getNextAvailableSlots(
   timezone: string,
   maxSlots: number = 6,
   existingBookings: SchedulingBooking[] = [],
-  externalBusySlots: ExternalBusySlot[] = []
+  externalBusySlots: ExternalBusySlot[] = [],
+  /**
+   * The days the business is closed, and the days it is open for less than
+   * usual.
+   *
+   * Last and defaulted, so a caller that has not loaded them yet gets the
+   * weekly pattern rather than nothing — and a suggested time is then checked
+   * again on the server, which is what makes the omission recoverable.
+   */
+  timeOff: TimeOffEntry[] = []
 ): QuickPickSlot[] {
   if (!availability) return [];
 
@@ -351,28 +363,33 @@ export function getNextAvailableSlots(
   const zone = safeTimezone(timezone);
   const now = new Date();
   /*
-   * Which day it is WHERE THE WORK HAPPENS.
+   * WHICH DAY IT IS WHERE THE WORK HAPPENS.
    *
-   * `now.getDay()` answers for the browser, and at 9pm in New York it is
-   * already tomorrow in Tel Aviv — so the builder read Monday's hours while
-   * offering Tuesday's dates. The weekday is taken from the business's own
-   * calendar date for the same reason every other time here is.
+   * At 9pm in New York it is already tomorrow in Tel Aviv, so a browser-local
+   * date had the builder offering one day's hours against another day's date.
+   * Every date below is stepped from this key, on the business's own calendar.
    */
   const todayKey = businessDateKey(now, zone);
-  const today = new Date(`${todayKey}T00:00:00Z`).getUTCDay();
 
   // Look ahead up to 14 days
   for (let dayOffset = 0; dayOffset < 14 && slots.length < maxSlots; dayOffset++) {
-    const dayIndex = (today + dayOffset) % 7;
-    const dayKey = DAY_KEYS[dayIndex];
-    const daySlots = availability[dayKey] || [];
-
-    if (daySlots.length === 0) continue;
-
     // The business's calendar date for this offset, as a key the slot builder
     // below turns into instants. `setDate` on a browser Date would reintroduce
     // the browser's clock.
     const dateKey = shiftBusinessDateKey(todayKey, dayOffset);
+
+    /*
+     * This date's REAL hours, not its weekday's.
+     *
+     * `availability[dayKey]` offered times on days the owner had closed —
+     * a holiday, a fortnight away — because the weekly pattern knows nothing
+     * about dates. `windowsForDate` applies the closures the same way the
+     * public booking page does, so the owner is never offered a slot a client
+     * could not have been offered either.
+     */
+    const daySlots = windowsForDate(availability, dateKey, timeOff);
+
+    if (daySlots.length === 0) continue;
 
     for (const slot of daySlots) {
       if (slots.length >= maxSlots) break;
@@ -497,10 +514,52 @@ export function SchedulingBookingModal({
    * there is.
    */
   const configurationOpen = useConfigurationDialogOpen();
-  // Get browser timezone synchronously as initial default
-  const browserTimezone = typeof window !== 'undefined'
-    ? Intl.DateTimeFormat().resolvedOptions().timeZone
-    : 'UTC';
+
+  /**
+   * Where the owner happens to be sitting. FOR DISPLAY ONLY.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Every time in this dialog is counted on the BUSINESS's zone, wherever in the
+   * world the owner is. This is used for one thing: telling them what their own
+   * clock says, underneath a field they are typing New York hours into. It never
+   * reaches a calculation and never reaches the payload.
+   *
+   * Resolved in an effect rather than inline, because `Intl` answers differently
+   * on the server and in the browser — read during render it is a hydration
+   * mismatch, which is what the `typeof window` guard here used to paper over.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [viewerZone, setViewerZone] = useState<string | null>(null);
+
+  useEffect(() => {
+    setViewerZone(safeTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone));
+  }, []);
+
+  /** Only worth saying when the two clocks actually differ. */
+  const showsViewerTime = zoneReady && !!viewerZone && viewerZone !== zone;
+
+  /**
+   * A field's business wall clock, as the owner's own clock reads it.
+   *
+   * The same instant, said twice. Built from the two helpers the rest of the
+   * dialog uses, so this cannot drift from what gets saved: the typed string is
+   * resolved on the BUSINESS's clock and then only FORMATTED on the viewer's.
+   * Null for a half-typed field, so nothing flickers while they type.
+   */
+  const viewerTimeFor = (local: string): string | null => {
+    if (!showsViewerTime || !local || !viewerZone) return null;
+    const instant = fromBusinessLocalInput(local, zone);
+    if (Number.isNaN(instant.getTime())) return null;
+    return formatBusinessTime(instant, viewerZone, language === 'he' ? 'he-IL' : 'en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      // The day too: seven hours out is often a different date on their clock.
+      day: 'numeric',
+      month: 'short',
+    });
+  };
+
   const [formData, setFormData] = useState({
     service_id: '',
     contact_id: '' as string | null,
@@ -510,7 +569,6 @@ export function SchedulingBookingModal({
     client_phone: '',
     start_time: '',
     end_time: '',
-    timezone: browserTimezone,
     notes: '',
     status: 'confirmed' as BookingStatus
   });
@@ -551,6 +609,52 @@ export function SchedulingBookingModal({
   // External calendar busy slots
   const [externalBusySlots, setExternalBusySlots] = useState<ExternalBusySlot[]>([]);
 
+  /*
+   * The days the business is closed, and the days it is open for less than
+   * usual.
+   *
+   * The owner closed 7 October and this dialog, knowing only the weekly
+   * pattern, offered the day and booked a client into it: a confirmation email
+   * naming a day the business was shut, and a reminder the morning of.
+   */
+  const [timeOff, setTimeOff] = useState<TimeOffEntry[]>([]);
+
+  /**
+   * A closed day the SERVER refused, when this dialog did not know about it.
+   *
+   * The list above is fetched when the dialog opens, so a dialog left open
+   * across the owner recording a holiday — or one whose fetch failed — can
+   * still send a closed-day booking. The 409 carries the same three facts the
+   * local verdict has, so it drives the same warning and the same button, in
+   * the owner's own language rather than the server's English sentence.
+   */
+  const [serverClosedDay, setServerClosedDay] = useState<
+    { kind: 'all_day' | 'short_day'; date: string; reason: string | null; hours: { start: string; end: string } | null } | null
+  >(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch('/api/scheduling/time-off');
+        const data = await response.json();
+        if (!cancelled && data?.success && Array.isArray(data.data)) {
+          setTimeOff(data.data as TimeOffEntry[]);
+        }
+      } catch {
+        /*
+         * An unreadable list leaves the dialog where it was before this
+         * existed. It is not the last line of defence: the server checks the
+         * day too and refuses with `closed_day`, which this dialog turns into
+         * the same question below.
+         */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   /**
    * Does the time currently in the form collide with something already booked?
    *
@@ -558,6 +662,47 @@ export function SchedulingBookingModal({
    * offered slots can never disagree. The booking being edited is excluded —
    * its own slot is not a conflict with itself.
    */
+  /**
+   * Is the time in the form on a day the owner closed?
+   *
+   * Read straight off the input's own text: a `datetime-local` value IS the
+   * business's wall clock here (`formatDateTimeLocal(date, zone)` wrote it), so
+   * `slice` gives the date and the hour with no conversion to get wrong — the
+   * class of bug this file is full of notes about.
+   *
+   * A WARNING, not a block. Seeing one client during a holiday is a real thing
+   * a business does; doing it by accident is not. Confirming sends
+   * `allow_closed_day` and the server then permits exactly this booking.
+   */
+  const closedDay = ((): ClosedDayVerdict => {
+    const start = formData.start_time;
+    const end = formData.end_time;
+
+    /*
+     * The server's refusal wins while it still describes the time in the form.
+     * Once the owner moves to another day it is stale and the local rule
+     * answers again — which is why it is compared against the date rather than
+     * simply cleared on every edit.
+     */
+    if (serverClosedDay && start.slice(0, 10) === serverClosedDay.date) {
+      return serverClosedDay.kind === 'short_day' && serverClosedDay.hours
+        ? { closed: true, kind: 'short_day', reason: serverClosedDay.reason, hours: serverClosedDay.hours }
+        : { closed: true, kind: 'all_day', reason: serverClosedDay.reason };
+    }
+
+    if (!start || start.length < 16) return { closed: false } as const;
+
+    // No end yet: ask only whether the DATE is closed. Passing the start as the
+    // end would be a zero-length slot, which no short day contains — so a short
+    // day would read as closed while the owner was still filling the form.
+    if (!end || end.length < 16) return closedDayVerdict(timeOff, start.slice(0, 10));
+
+    return closedDayVerdict(timeOff, start.slice(0, 10), {
+      start: start.slice(11, 16),
+      end: end.slice(11, 16),
+    });
+  })();
+
   const timeAlreadyBooked = (() => {
     if (!formData.start_time || !formData.end_time) return false;
     const start = parseDateTimeLocal(formData.start_time, zone);
@@ -569,28 +714,22 @@ export function SchedulingBookingModal({
     return isSlotBooked(start, end, existingBookings, booking?.id);
   })();
 
-  // Fetch user's timezone from profile (non-blocking - dialog opens immediately with browser timezone,
-  // then updates to profile timezone when available)
-  useEffect(() => {
-    if (!isOpen) return; // Only fetch when modal is open
-
-    const fetchUserTimezone = async () => {
-      try {
-        const response = await fetch('/api/user/profile');
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success && data.profile?.timezone) {
-            // Update form with user's configured timezone
-            setFormData(prev => ({ ...prev, timezone: data.profile.timezone }));
-          }
-        }
-      } catch (error) {
-        // Silently fail - browser timezone is already set as fallback
-        console.error('Failed to fetch user timezone:', error);
-      }
-    };
-    fetchUserTimezone();
-  }, [isOpen]);
+  /*
+   * The dialog no longer fetches a zone of its own.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * It used to open on the browser's zone and then race a `/api/user/profile`
+   * fetch to correct it — and that route reads `profiles.timezone`, the OTHER of
+   * the platform's two timezone columns, which its own comment records as having
+   * drifted from `user_preferences` on live accounts. So this dialog could be
+   * counting hours on a different clock from the booking routes, the
+   * availability API and every client-facing email.
+   *
+   * The zone arrives as a prop instead, and all three callers take it from
+   * `/api/scheduling/availability`, which reads `user_preferences.timezone` —
+   * the authority. One clock, resolved once, by whoever already knew it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
 
   /*
    * Intake status, as a callable rather than a body inside the effect.
@@ -625,7 +764,7 @@ export function SchedulingBookingModal({
           setIntakeBlock(null);
         }
       } catch (error) {
-        clientLogger.error({ err: error }, 'Failed to fetch intake settings');
+        logger.error({ err: error }, 'Failed to fetch intake settings');
         setIntakeConfigured(false);
       }
   }, []);
@@ -715,7 +854,7 @@ export function SchedulingBookingModal({
          */
         // Nothing computed against the placeholder: see `zoneReady`.
         const [firstFree] = zoneReady
-          ? getNextAvailableSlots(availability, serviceDuration, zone, 1, existingBookings, externalBusySlots)
+          ? getNextAvailableSlots(availability, serviceDuration, zone, 1, existingBookings, externalBusySlots, timeOff)
           : [];
 
         if (firstFree) {
@@ -739,7 +878,6 @@ export function SchedulingBookingModal({
           client_phone: prefilledContact.phone || '',
           start_time: startTime,
           end_time: endTime,
-          timezone: browserTimezone,
           notes: '',
           status: 'confirmed'
         });
@@ -761,7 +899,6 @@ export function SchedulingBookingModal({
           client_phone: '',
           start_time: startTime,
           end_time: endTime,
-          timezone: browserTimezone,
           notes: '',
           status: 'confirmed'
         });
@@ -789,7 +926,7 @@ export function SchedulingBookingModal({
      * Re-running is safe: it only replaces the DEFAULT, and the zone resolves
      * once, immediately after open, well before anyone has typed.
      */
-  }, [booking, services, availability, prefilledDateTime, prefilledContact, browserTimezone, zone, zoneReady]);
+  }, [booking, services, availability, prefilledDateTime, prefilledContact, zone, zoneReady]);
 
   /*
    * Does THIS service's client journey include picking a time?
@@ -858,9 +995,10 @@ export function SchedulingBookingModal({
         if (data.success && data.busy_slots) {
           setExternalBusySlots(data.busy_slots);
         }
-      } catch (error) {
-        // Silently fail - external busy slots are optional
-        console.debug('Failed to fetch external busy slots:', error);
+      } catch (err) {
+        // Optional overlay: the dialog is usable without it, so this is noted
+        // rather than surfaced.
+        logger.debug({ err }, 'External busy slots could not be fetched');
       }
     };
 
@@ -883,8 +1021,8 @@ export function SchedulingBookingModal({
       if (data.success) {
         setClientSearchResults(data.contacts || []);
       }
-    } catch (error) {
-      console.error('Failed to search clients:', error);
+    } catch (err) {
+      logger.error({ err, query }, 'Client search failed');
     } finally {
       setIsSearching(false);
     }
@@ -1098,14 +1236,18 @@ export function SchedulingBookingModal({
 
   const handleServiceChange = (serviceId: string) => {
     const service = services.find(s => s.id === serviceId);
-    if (service && !booking) {
-      const start = parseDateTimeLocal(formData.start_time, zone);
-      const end = new Date(start.getTime() + service.duration_minutes * 60 * 1000);
-      setFormData(prev => ({
-        ...prev,
-        service_id: serviceId,
-        end_time: formatDateTimeLocal(end, zone)
-      }));
+    // `endOfBusinessLocal` answers null for a start that is not a usable wall
+    // clock — an empty one, which a service with no date step leaves behind.
+    // This used to format an Invalid Date, and `Intl` throws on one: choosing a
+    // service could take the whole dialog down.
+    // `|| 60`, the same default the start handler uses: `duration_minutes` is
+    // nullable, and a service with no date step has no duration to read.
+    const end = service && !booking
+      ? endOfBusinessLocal(formData.start_time, service.duration_minutes || 60, zone)
+      : null;
+
+    if (end) {
+      setFormData(prev => ({ ...prev, service_id: serviceId, end_time: end }));
     } else {
       setFormData(prev => ({ ...prev, service_id: serviceId }));
     }
@@ -1123,13 +1265,31 @@ export function SchedulingBookingModal({
     const service = services.find(s => s.id === formData.service_id);
     const serviceDuration = service?.duration_minutes || 60;
 
-    const startDate = new Date(newStartTime);
-    const endDate = new Date(startDate.getTime() + serviceDuration * 60 * 1000);
+    /*
+     * THE BUSINESS'S CLOCK, NOT THE BROWSER'S.
+     *
+     * ───────────────────────────────────────────────────────────────────────────
+     * This was `new Date(newStartTime)`. A `datetime-local` string carries no
+     * offset, so that reads the typed clock where the OWNER is sitting, and the
+     * end was then written back on the business's clock — two clocks in one
+     * subtraction. They cancel out only when the owner is in their own
+     * business's zone, so it was invisible in development and in CI and wrong
+     * for every owner abroad: in Israel with a New York business, typing 10:00
+     * for an hour-long service produced an end of 04:00, seven hours out and
+     * before the start. The validator then refused the booking, correctly, and
+     * the dialog could not be used at all.
+     *
+     * Wherever the owner is, every time here is counted on the business's zone.
+     * Null when the start is not a usable wall clock: keep the typed value and
+     * leave the end alone rather than formatting an Invalid Date, which throws.
+     * ───────────────────────────────────────────────────────────────────────────
+     */
+    const end = endOfBusinessLocal(newStartTime, serviceDuration, zone);
 
     setFormData(prev => ({
       ...prev,
       start_time: newStartTime,
-      end_time: formatDateTimeLocal(endDate, zone)
+      ...(end ? { end_time: end } : {})
     }));
 
     // Clear time-related errors
@@ -1254,7 +1414,39 @@ export function SchedulingBookingModal({
               end_time: parseDateTimeLocal(formData.end_time, zone).toISOString(),
             }
           : {}),
-        timezone: formData.timezone,
+        /*
+         * The BUSINESS's zone, or nothing at all.
+         *
+         * ─────────────────────────────────────────────────────────────────────
+         * This sent the owner's BROWSER zone. It was seeded from
+         * `Intl.DateTimeFormat().resolvedOptions().timeZone`, re-seeded on every
+         * open, and raced by a `/api/user/profile` fetch that read
+         * `profiles.timezone` — the other of the platform's two timezone
+         * columns, which that route's own comment records as having drifted from
+         * `user_preferences` on live accounts. Whichever won was written to
+         * `scheduling_bookings.timezone`, so an owner in Israel stamped
+         * `Asia/Jerusalem` on New York appointments.
+         *
+         * That column is the fallback clock for every client-facing email
+         * (`getBusinessTimezone` prefers `user_preferences.timezone` and falls
+         * back to the row), so it is latent until an account has no preferences
+         * row and then it mails the wrong hour.
+         *
+         * Omitted while the zone is still resolving, because both routes then
+         * resolve it from the owner's preferences — better than any guess this
+         * dialog can make. Create: `validated.timezone || safeTimezone(
+         * ownerPrefs?.timezone)`. Update: an absent field leaves the stored one
+         * alone.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        ...(zoneReady ? { timezone: zone } : {}),
+        /*
+         * Sent only when the owner has actually been shown the warning above —
+         * `closedDay.closed` is the same verdict that drew it. Never a constant
+         * true: that would put the original bug back, with a client confirmed
+         * into a closed day and nobody having decided it.
+         */
+        ...(closedDay.closed ? { allow_closed_day: true } : {}),
         notes: formData.notes || undefined
       };
 
@@ -1297,13 +1489,24 @@ export function SchedulingBookingModal({
 
       if (response.ok) {
         onBookingUpdated();
+      } else if (data.code === 'closed_day' && data.closed) {
+        /*
+         * The server knew about a closure this dialog did not.
+         *
+         * Shown as the same warning a locally-known closure draws, so the
+         * button becomes "Book anyway" and one more press books it. The
+         * alternative — a red server sentence in English under the form — is
+         * both a dead end and the wrong language for most owners.
+         */
+        setServerClosedDay(data.closed);
+        setFormErrors({});
       } else {
         // Handle error response - show user-friendly error message
         const errorMessage = data.message || data.error || t('scheduling.booking.save_failed');
         setFormErrors({ submit: errorMessage });
       }
-    } catch (error) {
-      console.error('Failed to save booking:', error);
+    } catch (err) {
+      logger.error({ err, bookingId: booking?.id }, 'Saving the booking failed');
       setFormErrors({ submit: t('scheduling.booking.save_failed') });
     } finally {
       setLoading(false);
@@ -1347,8 +1550,8 @@ export function SchedulingBookingModal({
       if (response.ok) {
         onBookingUpdated();
       }
-    } catch (error) {
-      console.error(`Failed to ${action} booking:`, error);
+    } catch (err) {
+      logger.error({ err, action, bookingId: booking?.id }, 'Booking action failed');
     } finally {
       setLoading(false);
     }
@@ -1379,6 +1582,24 @@ export function SchedulingBookingModal({
         setDeleteError(
           t('scheduling.booking.delete_blocked_paid')
             || 'This booking has already been paid for and cannot be deleted. Refund the payment first, or cancel the booking instead.'
+        );
+      } else if (data?.code === 'BOOKING_HAS_PAYMENT_PLAN') {
+        /*
+         * A payment plan points at this booking, so the DATABASE refuses the
+         * delete — `payment_plan_subscriptions.booking_id` is ON DELETE RESTRICT.
+         * It used to arrive as a flat 500 "Failed to delete booking", which told
+         * the owner nothing and left them clicking it again.
+         *
+         * Two messages, because the way out differs: a plan still charging can
+         * be stopped, while a finished one is history that deleting would erase,
+         * and cancelling is the only route past it.
+         */
+        setDeleteError(
+          data?.details?.plan_live === false
+            ? t('scheduling.booking.delete_blocked_plan_past')
+              || 'This booking has a payment plan on record, so it cannot be deleted without erasing that history. Cancel the booking instead.'
+            : t('scheduling.booking.delete_blocked_plan')
+              || 'This booking has a payment plan that is still charging the client. Stop the payment plan first, or cancel the booking instead.'
         );
       } else {
         setDeleteError(data?.error || t('scheduling.booking.delete_failed') || 'Failed to delete booking');
@@ -1635,6 +1856,48 @@ export function SchedulingBookingModal({
               {t('scheduling.booking.client_info')}
             </h3>
 
+            {/* ────────────────────────────────────────────────────────────────
+                WHICH KIND OF CLIENT, ASKED OUT LOUD.
+
+                This was an implicit mode with an uneven way back: the search
+                box came first, a full-width "Add new client" button switched to
+                the form, and the only route back was a small underlined link
+                reading "Search existing client" — weaker than the button that
+                got you there, and easy to miss entirely once the form had
+                pushed it up the panel.
+
+                Two pills, always on screen, saying which state you are in and
+                letting you leave it the same way you entered. Nothing is
+                hidden behind the other one: picking a mode swaps what is asked,
+                and the values behind each are left where they were.
+                ──────────────────────────────────────────────────────────────── */}
+            {!booking && !selectedContact && (
+              <div
+                role="group"
+                className="inline-flex p-0.5 border border-[var(--v2-border)] bg-[var(--v2-bg)]"
+                style={{ borderRadius: '999px' }}
+              >
+                {([true, false] as const).map(existing => (
+                  <button
+                    key={String(existing)}
+                    type="button"
+                    onClick={() => setShowClientSearch(existing)}
+                    aria-pressed={showClientSearch === existing}
+                    className={`px-3.5 py-1.5 text-[12.5px] transition-colors ${
+                      showClientSearch === existing
+                        ? 'bg-[var(--v2-surface)] text-[var(--v2-text-primary)] font-medium shadow-sm'
+                        : 'text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]'
+                    }`}
+                    style={{ borderRadius: '999px' }}
+                  >
+                    {existing
+                      ? t('scheduling.booking.client_existing')
+                      : t('scheduling.booking.client_new')}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Selected Contact Display */}
             {selectedContact && !showClientSearch && (
               <div
@@ -1717,39 +1980,22 @@ export function SchedulingBookingModal({
                   </p>
                 )}
 
-                {/* Divider with "or" */}
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 h-px bg-[var(--v2-border)]" />
-                  <span className="text-xs text-[var(--v2-text-muted)]">{t('scheduling.booking.or')}</span>
-                  <div className="flex-1 h-px bg-[var(--v2-border)]" />
-                </div>
-
-                {/* Add New Client Button */}
-                <button
-                  type="button"
-                  onClick={() => setShowClientSearch(false)}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-[#14B8A6] bg-[#14B8A6]/10 border border-[#14B8A6]/30 hover:bg-[#14B8A6]/20 transition-all"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  <UserPlus className="h-4 w-4" />
-                  {t('scheduling.booking.add_new_client')}
-                </button>
+                {/* The "or · Add new client" button was here. It is the second
+                    pill above now, so the two modes are one control rather than
+                    a default and an escape. */}
               </div>
             )}
 
             {/* Manual Client Entry Form (shown when not searching or editing) */}
             {(!showClientSearch || booking) && !selectedContact && (
               <>
-                {/* Back to search button for new bookings */}
+                {/* What saving this form will do, instead of a link back.
+                    The way back is the first pill above, which is where the
+                    reader chose to be here. */}
                 {!booking && (
-                  <button
-                    type="button"
-                    onClick={() => setShowClientSearch(true)}
-                    className="text-sm text-[#14B8A6] hover:underline flex items-center gap-1"
-                  >
-                    <Search className="h-3.5 w-3.5" />
-                    {t('scheduling.booking.search_existing_client')}
-                  </button>
+                  <p className="text-[12px] text-[var(--v2-text-muted)]">
+                    {t('scheduling.booking.client_new_hint')}
+                  </p>
                 )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
@@ -1979,7 +2225,7 @@ export function SchedulingBookingModal({
               // Not offered until the zone is known: a chip labelled from the
               // UTC placeholder names the wrong day. See `zoneReady`.
               const quickSlots = zoneReady
-                ? getNextAvailableSlots(availability, serviceDuration, zone, 6, existingBookings, externalBusySlots)
+                ? getNextAvailableSlots(availability, serviceDuration, zone, 6, existingBookings, externalBusySlots, timeOff)
                 : [];
 
               if (quickSlots.length === 0) return null;
@@ -2086,6 +2332,22 @@ export function SchedulingBookingModal({
             <h3 className="text-xs sm:text-sm font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide flex items-center gap-2">
               <Clock className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               {t('scheduling.booking.time_section')}
+              {/*
+                WHICH CLOCK THESE HOURS ARE ON.
+                Nothing said so, and an owner in Israel running a New York
+                business had no way to know that typing 10:00 meant 10:00 in New
+                York. Shown only when their own clock differs, so the ordinary
+                case gains no furniture.
+              */}
+              {showsViewerTime && (
+                <span
+                  className="text-xs font-normal text-[var(--v2-text-muted)] normal-case"
+                  title={t('scheduling.booking.business_clock_hint')}
+                  dir="ltr"
+                >
+                  ({zone})
+                </span>
+              )}
               {/* Show indicator when time editing is disabled (only for completed/cancelled) */}
               {isSettled && (
                 <span className="text-xs font-normal text-[var(--v2-text-muted)] normal-case">
@@ -2117,6 +2379,29 @@ export function SchedulingBookingModal({
                     <AlertCircle className="h-3 w-3" />
                     {formErrors.start_time}
                   </p>
+                ) : closedDay.closed ? (
+                  /*
+                   * Said BEFORE Save, which is the whole fix: the server now
+                   * refuses this with `closed_day`, but an owner who only
+                   * finds out after filling the form has already decided.
+                   *
+                   * Named, not generic — 'Sukkot' tells them which closure
+                   * this is, where "you are closed" sends them hunting through
+                   * the settings dialog.
+                   */
+                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3 shrink-0" />
+                    <span>
+                      {closedDay.kind === 'all_day'
+                        ? t('scheduling.closed_on', { date: formData.start_time.slice(0, 10) })
+                        : t('scheduling.closed_hours', {
+                            start: closedDay.hours.start,
+                            end: closedDay.hours.end,
+                            date: formData.start_time.slice(0, 10),
+                          })}
+                      {closedDay.reason ? ` · ${closedDay.reason}` : ''}
+                    </span>
+                  </p>
                 ) : timeAlreadyBooked ? (
                   /*
                    * Said before Save, not after.
@@ -2131,6 +2416,14 @@ export function SchedulingBookingModal({
                   <p className="mt-1 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
                     <AlertCircle className="h-3 w-3" />
                     {t('scheduling.booking.time_already_booked')}
+                  </p>
+                ) : viewerTimeFor(formData.start_time) ? (
+                  /* The same instant on the owner's own clock. Display only:
+                     the booking is counted on the business's zone either way. */
+                  <p className="mt-1 text-xs text-[var(--v2-text-muted)]">
+                    {t('scheduling.booking.your_time', {
+                      time: viewerTimeFor(formData.start_time) as string,
+                    })}
                   </p>
                 ) : null}
               </div>
@@ -2154,12 +2447,18 @@ export function SchedulingBookingModal({
                   }`}
                   style={{ borderRadius: 'var(--v2-radius-button)', colorScheme: 'inherit' }}
                 />
-                {formErrors.end_time && (
+                {formErrors.end_time ? (
                   <p className="mt-1 text-xs text-red-500 flex items-center gap-1">
                     <AlertCircle className="h-3 w-3" />
                     {formErrors.end_time}
                   </p>
-                )}
+                ) : viewerTimeFor(formData.end_time) ? (
+                  <p className="mt-1 text-xs text-[var(--v2-text-muted)]">
+                    {t('scheduling.booking.your_time', {
+                      time: viewerTimeFor(formData.end_time) as string,
+                    })}
+                  </p>
+                ) : null}
               </div>
             </div>
           </div>
@@ -2421,9 +2720,20 @@ export function SchedulingBookingModal({
                   >
                     {loading
                       ? t('scheduling.booking.saving')
-                      : booking
-                        ? t('scheduling.booking.save_changes')
-                        : t('scheduling.booking.create_booking')}
+                      : closedDay.closed
+                        /*
+                         * The confirmation IS this label.
+                         *
+                         * The warning by the date field says the day is closed;
+                         * pressing a button that says "Book anyway" is the owner
+                         * answering, and that is what sends `allow_closed_day`.
+                         * A button still reading "Create booking" beside a
+                         * warning is a warning nobody has agreed to.
+                         */
+                        ? t('scheduling.closed_book_anyway')
+                        : booking
+                          ? t('scheduling.booking.save_changes')
+                          : t('scheduling.booking.create_booking')}
                   </button>
                 </div>
               </div>

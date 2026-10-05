@@ -45,6 +45,27 @@ export interface ProposalEmailData {
    * finding that out from the first invoice is finding out too late.
    */
   termsDays?: number | null;
+  /**
+   * A PACKAGE: the meetings being sold, and how they are billed.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The email listed "Meeting 1 … Meeting 6" with six amounts and NO DATES. A
+   * client could see what each session costs and not when any of them is, which
+   * is half an offer: the dates are the part they have to check against their
+   * own diary before they can answer.
+   *
+   * Instants, formatted on the BUSINESS's clock — the hour they turn up at —
+   * with the zone named, because this email is composed on a server whose own
+   * zone means nothing to anybody.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  sessions?: {
+    dates: string[];
+    durationMinutes: number;
+    /** Each meeting invoiced after it happens; nothing due on approval. */
+    billPerSession: boolean;
+    timezone: string;
+  } | null;
   /** Whether the full proposal document is attached to this email. */
   hasDocument?: boolean;
   /** Its filename, so the client knows what they are looking for. */
@@ -106,8 +127,59 @@ export function generateProposalEmail(data: ProposalEmailData): { subject: strin
    * asked to accept is a schedule — how much, and against what — so it is
    * spelled out before they click anything.
    */
+  /*
+   * A package's meetings, with the date on each row.
+   *
+   * Replaces the stage list rather than joining it: for a package billed per
+   * meeting the stages ARE the meetings, so both lists would be the same six
+   * facts in two orders — which is what the client page was fixed for too.
+   */
+  const sessionsBlock = data.sessions?.dates?.length
+    ? `
+    <p style="margin: 22px 0 8px; font-size: 13px; font-weight: 600; color: ${c.ink};">
+      ${t.sessionsTitle[locale]
+        .replace('{count}', String(data.sessions.dates.length))
+        .replace('{minutes}', String(data.sessions.durationMinutes))}
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom: 6px;">
+      ${data.sessions.dates
+        .map((iso, index) => {
+          const when = new Date(iso).toLocaleString(intlLocale, {
+            weekday: 'short',
+            day: 'numeric',
+            month: 'long',
+            hour: '2-digit',
+            minute: '2-digit',
+            timeZone: data.sessions?.timezone,
+          });
+
+          const amount =
+            data.sessions?.billPerSession && data.stages?.[index]
+              ? formatCurrency(data.stages[index].amount, data.currency)
+              : '';
+
+          return `
+        <tr>
+          <td style="padding: 6px 0; font-size: 14px; color: ${c.inkMuted};">${index + 1}. ${escapeHtml(when)}</td>
+          <td style="padding: 6px 0; font-size: 14px; color: ${c.ink}; text-align: ${locale === 'he' ? 'left' : 'right'}; font-weight: 600;">
+            ${amount}
+          </td>
+        </tr>`;
+        })
+        .join('')}
+    </table>
+    <p style="margin: 0 0 6px; font-size: 12px; color: ${c.inkMuted};">
+      ${t.sessionsTimezone[locale].replace('{zone}', escapeHtml(data.sessions.timezone.replace(/_/g, ' ')))}
+    </p>
+    ${
+      data.sessions.billPerSession
+        ? `<p style="margin: 10px 0 0; font-size: 14px; color: ${c.ink};">${t.sessionsBilledAfter[locale]}</p>`
+        : ''
+    }`
+    : '';
+
   const stagesBlock =
-    data.stages && data.stages.length > 1
+    !data.sessions?.dates?.length && data.stages && data.stages.length > 1
       ? `
     <p style="margin: 22px 0 8px; font-size: 13px; font-weight: 600; color: ${c.ink};">
       ${t.stagesTitle[locale]}
@@ -170,6 +242,7 @@ export function generateProposalEmail(data: ProposalEmailData): { subject: strin
     }
 
     ${emailDetailsTable(rows, brandingWithLocale)}
+    ${sessionsBlock}
     ${stagesBlock}
     ${attachmentBlock}
 

@@ -25,6 +25,9 @@ import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRep
 import { getBusinessLocale } from '@/lib/services/BookingEmailService';
 import { isServiceDateInvoice, waitsForItsSession } from '@/lib/payments/invoiceTerms';
 import { isPlanStopped } from '@/lib/payments/planStatus';
+// The two shared rules for "this money has moved". Both read the ledger fields
+// rather than `status`, which is a projection and lags behind a refund.
+import { isSettledInvoice, hasBeenRefunded } from '@/lib/payments/invoiceSettlement';
 import { stripeConnectRepository } from '@/lib/repositories/PaymentRepository';
 
 const logger = createLogger({ service: 'PaymentReminderService' });
@@ -570,10 +573,43 @@ export class PaymentReminderService {
          * a missed webhook, a payment taken by hand, a refund — and this guard
          * holds in all of those.
          */
-        const settled = ['paid', 'cancelled', 'refunded', 'void'].includes(invoice.status);
+        /*
+         * THE MONEY, NOT THE STATUS.
+         *
+         * ─────────────────────────────────────────────────────────────────────
+         * This listed the four settled STATUSES, and status is a projection —
+         * `20260828d_invoice_refund_state.sql` says `refund_status` is the
+         * field to read. An invoice refunded without first being marked paid
+         * keeps `sent`, so it passed this guard and was chased.
+         *
+         * INV-00011 is the case, and it got through twice: `due_today` on
+         * 30 Sep and `overdue` on 1 Oct, both after it was paid on the 29th and
+         * refunded the same evening. ₪300 the client had already paid and been
+         * given back, asked for twice, with a Stripe link reading PAID.
+         *
+         * The comment above already named a refund as the reason this guard has
+         * to exist. It just asked the wrong field.
+         *
+         * `isSettledInvoice` carries the paid half — status OR `paid_at`,
+         * because a webhook can stamp the date before the transition lands —
+         * and `hasBeenRefunded` the refunded half, reading `refund_status` and
+         * `refunded_amount` rather than the projection.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        const settled =
+          isSettledInvoice(invoice) ||
+          hasBeenRefunded(invoice) ||
+          ['cancelled', 'void'].includes(invoice.status);
+
         if (settled) {
           logger.info(
-            { reminderId: reminder.id, invoiceId: invoice.id, status: invoice.status },
+            {
+              reminderId: reminder.id,
+              invoiceId: invoice.id,
+              status: invoice.status,
+              paidAt: invoice.paid_at,
+              refundStatus: invoice.refund_status,
+            },
             'Skipping reminder: the invoice is no longer outstanding'
           );
           return { sent: false, errorMessage: null, skipped: true };
@@ -1068,10 +1104,40 @@ export class PaymentReminderService {
        * It cannot double-send: the `findRecentByInvoice` check below skips any
        * invoice already reminded in the last 24 hours.
        */
+      /*
+       * STATUS IS NOT ENOUGH TO SAY THE MONEY IS STILL OWED.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * `20260828d_invoice_refund_state.sql` says it outright: `refund_status`
+       * is the field to read, and `status` is a projection. An invoice refunded
+       * without having first been marked paid keeps `sent` or `overdue` forever
+       * — and this scan chased it.
+       *
+       * Live on this account, both client-facing:
+       *
+       *   INV-00011  overdue  paid 29 Sep  refunded ₪300 in full
+       *   INV-00012  sent     paid 29 Sep  refunded ₪150 in full
+       *
+       * Both were emailed to the client asking for money they had already paid,
+       * and whose Stripe page shows PAID — so the client clicks the link in the
+       * chase and is told nothing is due. The same two also reached the owner's
+       * daily briefing as receivables.
+       *
+       * `paid_at` is the other half: `isSettledInvoice` treats either it or the
+       * status as settled, "because they can disagree — a processor webhook may
+       * stamp `paid_at` before the status transition lands".
+       *
+       * Filtered in the QUERY rather than after it, so a page of 100 cannot
+       * fill with settled invoices and starve the ones genuinely owed.
+       * ───────────────────────────────────────────────────────────────────────
+       */
       const { data: overdueInvoices } = await this.supabase
         .from('payment_invoices')
         .select('id, user_id, contact_id, due_date, booking_id, payment_terms')
         .in('status', ['sent', 'overdue'])
+        .is('paid_at', null)
+        .is('refunded_at', null)
+        .or('refund_status.is.null,refund_status.eq.none')
         .lt('due_date', scanBound)
         .limit(100);
 

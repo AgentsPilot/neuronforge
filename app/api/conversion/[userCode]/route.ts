@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getBusinessTemplate } from '@/lib/business-os/businessTemplate';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { createLogger } from '@/lib/logger';
+import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { loadServicePaymentPlans } from '@/lib/business-os/servicePaymentPlan';
 import { stripeConnectRepository } from '@/lib/repositories/PaymentRepository';
@@ -49,19 +50,17 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const config = configResult.data;
 
     // Fetch active services for this user
-    const { data: services, error: servicesError } = await supabaseServer
-      .from('scheduling_services')
-      // Both flags, always.
-      //
-      // `is_active` is the Power toggle and `status` is draft/published — two
-      // different questions, and the toggle sets only the first. Filtering on
-      // `status` alone left a deactivated service off the website (which checks
-      // both) while every smart link went on selling it.
-      .select('id, service_name, description, duration_minutes, price, currency, status, is_scheduled, collection, sale_mode')
-      .eq('user_id', config.userId)
-      .eq('status', 'active')
-      .eq('is_active', true)
-      .order('created_at', { ascending: true });
+    /*
+     * What this business publicly sells — the shared base set.
+     *
+     * The `.eq('is_active').eq('status')` pair this repeated is `BOOKABLE`, and
+     * restating it per surface is what let the website and the smart links
+     * disagree about a deactivated service in the first place. Which services
+     * THIS link then offers is still its own business, decided below by
+     * `servicesForLink`.
+     */
+    const { data: services, error: servicesError } =
+      await schedulingServiceRepository.listBookable(config.userId);
 
     if (servicesError) {
       requestLogger.warn({ err: servicesError }, 'Failed to fetch services');

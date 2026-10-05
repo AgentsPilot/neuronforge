@@ -7,6 +7,7 @@ import { verifyBookingToken } from '@/lib/services/BookingEmailService';
 import {
   rescheduleBooking,
   BookingSlotUnavailableError,
+  BookingOnClosedDayError,
 } from '@/lib/services/BookingLifecycleService';
 import { notifyOwnerOfLead } from '@/lib/services/LeadAlertService';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -442,6 +443,27 @@ export async function POST(
       // The slot went while they were choosing. Same code and status this route
       // has always answered with, so the page keeps its own wording for it.
       if (rescheduled.error instanceof BookingSlotUnavailableError) {
+        return NextResponse.json(
+          { success: false, code: 'slot_taken', error: 'The selected time slot is not available' },
+          { status: 409 }
+        );
+      }
+
+      /*
+       * The day is closed, which a client cannot overrule.
+       *
+       * They are only ever offered slots that already exclude the closed days
+       * (`website/scheduling/availability` applies them), so reaching this
+       * means a page left open across the owner recording a holiday. Answered
+       * as `slot_taken` deliberately: the page already has wording for "that
+       * time is gone, choose another", which is exactly the instruction, and
+       * the client has no business being told about the owner's holiday.
+       */
+      if (rescheduled.error instanceof BookingOnClosedDayError) {
+        requestLogger.info(
+          { bookingId, startTime: newStartInstant },
+          'Client picked a time on a day that is now closed'
+        );
         return NextResponse.json(
           { success: false, code: 'slot_taken', error: 'The selected time slot is not available' },
           { status: 409 }

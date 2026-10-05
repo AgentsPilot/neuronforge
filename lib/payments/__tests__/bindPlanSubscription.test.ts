@@ -18,6 +18,9 @@ const mockCreate = jest.fn();
 const mockAttachStripe = jest.fn();
 const mockFindBySubscriptionId = jest.fn();
 const mockInsert = jest.fn();
+/** Table-scoped updates, so the booking's plan link can be asserted. */
+const mockUpdate = jest.fn();
+
 const mockLogError = jest.fn();
 
 // Spied on, so the missing-plan branch can be shown to log rather than throw.
@@ -64,6 +67,12 @@ jest.mock('@/lib/supabaseServer', () => ({
         order: self,
         limit: self,
         insert: (rows: unknown) => mockInsert(rows),
+        // The booking is told which plan it is on, so the drawer never has to
+        // infer a plan from the service's configuration.
+        update: (payload: unknown) => {
+          mockUpdate(table, payload);
+          return chain;
+        },
         maybeSingle: async () => {
           if (table === 'payment_plans') {
             return { data: mockState.planRowId ? { id: mockState.planRowId } : null, error: null };
@@ -308,6 +317,23 @@ describe('bindPlanSubscription', () => {
     expect(projected.every(p => p.payment_plan_id === 'plan_from_meta')).toBe(true);
   });
 
+  it('tells the BOOKING which plan it is on, so the drawer never has to guess', async () => {
+    const { stripe } = fakeStripe();
+
+    await bindPlanSubscription({ stripe: stripe as never, ...INPUT, paymentPlanId: 'plan_from_meta' });
+
+    /*
+     * Without this the contact drawer had only the SERVICE's configuration to
+     * go on, and so showed "1 of 2 × ₪400" for a booking that had been charged
+     * ₪800 in full — the card agreeing with the owner's intention rather than
+     * with the money.
+     */
+    expect(mockUpdate).toHaveBeenCalledWith(
+      'scheduling_bookings',
+      expect.objectContaining({ payment_plan_id: 'plan_from_meta' })
+    );
+  });
+
   it('finishes a plan that was recorded but never projected', async () => {
     mockFindBySubscriptionId.mockResolvedValue({
       data: { id: 'plan_1', stripe_schedule_id: 'sched_1' },
@@ -389,5 +415,71 @@ describe('bindPlanSubscription', () => {
 
     const projected = mockInsert.mock.calls[0][0] as Array<{ amount: number }>;
     expect(projected.reduce((sum, p) => sum + p.amount, 0)).toBeCloseTo(100, 2);
+  });
+});
+
+/**
+ * A sale with no `payment_plans` row behind it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * This branch existed, was reachable, and was never tested. `mockState.planRowId`
+ * has always accepted null; no test ever set it.
+ *
+ * What shipped inside it was a logger call reading a bare `serviceId` that
+ * `projectPeriods` did not declare. TypeScript would have refused it, but
+ * `next.config.js` sets `ignoreBuildErrors`, so it reached production and threw
+ * `ReferenceError: serviceId is not defined`. The throw escaped
+ * `handleConnectInvoicePaid`, the `invoice.paid` event was recorded `failed`,
+ * and the period was never banked: on 2026-09-29 subscription `993e83a1` took a
+ * real payment and still reads `periods_paid: 0` with no `payment_transactions`
+ * row behind it.
+ *
+ * The line written to be loud about a missing plan row was what lost the money
+ * it was warning about. So the assertion that matters here is the plainest one
+ * available — it must not throw — and it is worth more than the log's contents.
+ *
+ * A service configured as instalments through the Services settings has no
+ * `payment_plans` row at all, which is how this branch stopped being
+ * hypothetical.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('bindPlanSubscription with no payment_plans row', () => {
+  beforeEach(() => {
+    mockState.planRowId = null;
+  });
+
+  it('does not throw, so the webhook can still record the period', async () => {
+    const { stripe } = fakeStripe();
+
+    await expect(
+      bindPlanSubscription({ stripe: stripe as never, ...INPUT })
+    ).resolves.toBeDefined();
+  });
+
+  it('still bounds the schedule, because the money must stop on time regardless', async () => {
+    const { stripe, updated } = fakeStripe();
+
+    await bindPlanSubscription({ stripe: stripe as never, ...INPUT });
+
+    // The reporting gap must not become an unbounded subscription.
+    expect(updated[0][1].end_behavior).toBe('cancel');
+  });
+
+  it('still records the plan, so the owner can see it exists', async () => {
+    const { stripe } = fakeStripe();
+
+    await bindPlanSubscription({ stripe: stripe as never, ...INPUT });
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'user_1', paymentPlanId: null })
+    );
+  });
+
+  it('projects no periods, because the column they need is NOT NULL', async () => {
+    const { stripe } = fakeStripe();
+
+    await bindPlanSubscription({ stripe: stripe as never, ...INPUT });
+
+    expect(mockInsert).not.toHaveBeenCalled();
   });
 });
