@@ -100,6 +100,19 @@ const SchemaIntrospectionSchema = z.object({
       on_delete: z.string(),
     })
   ),
+  // Purge slice 3a (T3a-4): the delete-graph check reads triggers to detect an
+  // unreviewed DELETE trigger on a run table or a cascade child. OPTIONAL so a
+  // payload without the key still parses for the reconciler — but the graph
+  // check treats an absent list as `unreadable`, never as "no triggers".
+  triggers: z
+    .array(
+      z.object({
+        table_name: z.string().min(1),
+        trigger_name: z.string().min(1),
+        definition: z.string(),
+      })
+    )
+    .optional(),
 });
 
 export type PurgeSchemaSnapshot = z.infer<typeof SchemaIntrospectionSchema>;

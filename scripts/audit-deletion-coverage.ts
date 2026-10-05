@@ -1,3 +1,4 @@
+// DEPRECATED (purge slice 3a, 2026-10-05, SA OQ-3): depends on lib/business-os/account/accountDeletionPolicy.ts, which is deprecated; scheduled for deletion in AD-3. Do not extend.
 // scripts/audit-deletion-coverage.ts
 //
 // Does account deletion actually cover everything?

@@ -19,6 +19,7 @@
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { BUSINESS_OWNED_TABLES, USER_OWNED_TABLES, isBusinessOwned } from '../businessOwnedTables';
+import { PURGE_DESCRIPTORS } from '../purge/descriptors';
 
 const MIGRATIONS_DIR = join(process.cwd(), 'supabase', 'migrations');
 const OWNERSHIP_MIGRATION = '20260916_business_data_ownership.sql';
@@ -123,6 +124,88 @@ describe('business data ownership', () => {
       .sort();
 
     expect(unclassified).toEqual([]);
+  });
+
+  describe('cross-registry: the ownership list and the purge descriptors agree (purge slice 3a, §0.10 F-SA-3)', () => {
+    /*
+     * BUSINESS_OWNED_TABLES is, by the migration it is pinned to, the list of
+     * tables with a CASCADE FK to business_profiles. Deleting the business row
+     * therefore deletes from every one of them, so each must be classified
+     * `reset` or `purge` in the purge descriptors, or a Purge would remove rows
+     * the classification says survive (the static half of F-SA-3; the runtime
+     * half is the delete-graph check's `unlistedCascadeChildren`).
+     */
+    const byTable = new Map(PURGE_DESCRIPTORS.map(d => [d.table, d] as const));
+
+    /** In the ownership migration, measured ABSENT from the database (requirement §8.9). */
+    const MEASURED_ABSENT: Record<string, string> = {
+      websites: 'requirement §8.9: measured absent; struck from the purge set (#11).',
+      insight_outcomes: 'requirement §8.9: measured absent (FU-17); struck from the purge set (#53).',
+    };
+
+    /**
+     * Deletable descriptors in NEITHER registry, each with the reason. A `via`
+     * child needs no entry: it carries no user_id, so neither registry can name
+     * it, and it is reached through a parent that is asserted instead.
+     */
+    const NOT_IN_OWNERSHIP_REGISTRY: Record<string, string> = {
+      onboarding_prompt_ideas:
+        'Created outside supabase/migrations (no CREATE TABLE there); its live FK is to auth.users, ' +
+        'not business_profiles, so the ownership migration never named it. Reset deletes it by user_id.',
+    };
+
+    it('every business-owned table is classified reset or purge (direction 1)', () => {
+      const owned: readonly string[] = BUSINESS_OWNED_TABLES;
+      const offenders = owned
+        .filter(t => !(t in MEASURED_ABSENT))
+        .filter(t => {
+          const level = byTable.get(t)?.level;
+          return level !== 'reset' && level !== 'purge';
+        })
+        .map(t => `${t}: ${byTable.get(t)?.level ?? 'no descriptor'}`);
+
+      expect(offenders).toEqual([]);
+    });
+
+    it('the measured-absent exceptions are still in the registry and still have no descriptor', () => {
+      // An exception that stops being true must be removed, not left to excuse something else.
+      const owned: readonly string[] = BUSINESS_OWNED_TABLES;
+      for (const t of Object.keys(MEASURED_ABSENT)) {
+        expect(owned).toContain(t);
+        expect(byTable.has(t)).toBe(false);
+      }
+    });
+
+    it('every reset/purge descriptor is in one of the two registries, or is a via child of one that is (direction 2)', () => {
+      const owned: readonly string[] = BUSINESS_OWNED_TABLES;
+      const registered = (t: string) => owned.includes(t) || t in USER_OWNED_TABLES;
+
+      const deletable = PURGE_DESCRIPTORS.filter(d => d.level === 'reset' || d.level === 'purge');
+      // Non-vacuity.
+      expect(deletable.length).toBeGreaterThan(50);
+
+      const offenders = deletable
+        .filter(d => !(d.table in NOT_IN_OWNERSHIP_REGISTRY))
+        .filter(d => (d.scope.kind === 'via' ? !registered(d.scope.parent) : !registered(d.table)))
+        .map(d => d.table);
+
+      expect(offenders).toEqual([]);
+    });
+
+    it('each NOT_IN_OWNERSHIP_REGISTRY exception is still a deletable descriptor and still unregistered', () => {
+      const owned: readonly string[] = BUSINESS_OWNED_TABLES;
+      for (const t of Object.keys(NOT_IN_OWNERSHIP_REGISTRY)) {
+        expect(['reset', 'purge']).toContain(byTable.get(t)?.level);
+        expect(owned.includes(t) || t in USER_OWNED_TABLES).toBe(false);
+      }
+    });
+
+    it('the direction-1 check can fail (negative case)', () => {
+      const probe = (tables: readonly string[]) =>
+        tables.filter(t => !['reset', 'purge'].includes(String(byTable.get(t)?.level)));
+      // `profiles` is `never`: a registry naming it would be caught.
+      expect(probe(['profiles'])).toEqual(['profiles']);
+    });
   });
 
   it('points every constraint at business_profiles with a cascade', () => {
