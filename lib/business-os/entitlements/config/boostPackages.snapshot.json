@@ -1,0 +1,94 @@
+[
+  {
+    "id": "starter",
+    "version": 1,
+    "priceMinor": 1000,
+    "currency": "USD",
+    "taxExclusive": true,
+    "baseCredits": 5000,
+    "bonusCredits": 0,
+    "totalCredits": 5000,
+    "bonusPercent": 0,
+    "active": true,
+    "order": 1,
+    "labels": {
+      "name": {
+        "en": "Starter",
+        "he": "Starter",
+        "es": "Starter"
+      },
+      "description": {
+        "en": "A one-off top-up of credits at the standard rate.",
+        "he": "A one-off top-up of credits at the standard rate.",
+        "es": "A one-off top-up of credits at the standard rate."
+      },
+      "badge": null
+    },
+    "retailVersion": 1,
+    "creditValueVersion": 1
+  },
+  {
+    "id": "plus",
+    "version": 1,
+    "priceMinor": 2500,
+    "currency": "USD",
+    "taxExclusive": true,
+    "baseCredits": 12500,
+    "bonusCredits": 1250,
+    "totalCredits": 13750,
+    "bonusPercent": 10,
+    "active": true,
+    "order": 2,
+    "labels": {
+      "name": {
+        "en": "Plus",
+        "he": "Plus",
+        "es": "Plus"
+      },
+      "description": {
+        "en": "A one-off top-up of credits with a bonus.",
+        "he": "A one-off top-up of credits with a bonus.",
+        "es": "A one-off top-up of credits with a bonus."
+      },
+      "badge": {
+        "en": "Most popular",
+        "he": "Most popular",
+        "es": "Most popular"
+      }
+    },
+    "retailVersion": 1,
+    "creditValueVersion": 1
+  },
+  {
+    "id": "max",
+    "version": 1,
+    "priceMinor": 5000,
+    "currency": "USD",
+    "taxExclusive": true,
+    "baseCredits": 25000,
+    "bonusCredits": 3750,
+    "totalCredits": 28750,
+    "bonusPercent": 15,
+    "active": true,
+    "order": 3,
+    "labels": {
+      "name": {
+        "en": "Max",
+        "he": "Max",
+        "es": "Max"
+      },
+      "description": {
+        "en": "A one-off top-up of credits with the largest bonus.",
+        "he": "A one-off top-up of credits with the largest bonus.",
+        "es": "A one-off top-up of credits with the largest bonus."
+      },
+      "badge": {
+        "en": "Best value",
+        "he": "Best value",
+        "es": "Best value"
+      }
+    },
+    "retailVersion": 1,
+    "creditValueVersion": 1
+  }
+]
