@@ -90,6 +90,9 @@ interface Copy {
   button: string;
   plainLink: string;
   validUntil: (date: string) => string;
+  /** N-1 (N6, FR-42): the inviter will be told when the invitee joins. */
+  inviterWillBeTold: (name: string) => string;
+  inviterWillBeToldFallback: string;
   ignore: string;
 }
 
@@ -110,6 +113,8 @@ const COPY: Record<Locale, Copy> = {
     button: 'Accept your invitation',
     plainLink: 'Or paste this link into your browser:',
     validUntil: (date) => `This invitation is valid until ${date}.`,
+    inviterWillBeTold: (name) => `We'll let ${name} know when you join.`,
+    inviterWillBeToldFallback: "We'll let the person who invited you know when you join.",
     ignore: 'Not expecting this? You can ignore this email; nothing happens unless you sign up.',
   },
   he: {
@@ -128,6 +133,8 @@ const COPY: Record<Locale, Copy> = {
     button: 'קבלת ההזמנה',
     plainLink: 'אפשר גם להעתיק את הקישור הזה לדפדפן:',
     validUntil: (date) => `ההזמנה בתוקף עד ${date}.`,
+    inviterWillBeTold: (name) => `נעדכן את ${name} כשתצטרפו.`,
+    inviterWillBeToldFallback: 'נעדכן את מי שהזמין אתכם כשתצטרפו.',
     ignore: 'לא ציפית להודעה הזו? אפשר פשוט להתעלם ממנה. שום דבר לא יקרה אם לא נרשמים.',
   },
   es: {
@@ -146,6 +153,8 @@ const COPY: Record<Locale, Copy> = {
     button: 'Aceptar tu invitación',
     plainLink: 'O pega este enlace en tu navegador:',
     validUntil: (date) => `Esta invitación es válida hasta el ${date}.`,
+    inviterWillBeTold: (name) => `Avisaremos a ${name} cuando te unas.`,
+    inviterWillBeToldFallback: 'Avisaremos a quien te invitó cuando te unas.',
     ignore: '¿No esperabas este correo? Puedes ignorarlo; no pasará nada a menos que te registres.',
   },
 };
@@ -181,6 +190,7 @@ export function generateInviteInvitationEmail(data: InviteInvitationEmailData): 
 
   const heading = name ? t.heading(name) : t.headingFallback;
   const noteFrom = name ? t.noteFrom(name) : t.noteFromFallback;
+  const willBeTold = name ? t.inviterWillBeTold(name) : t.inviterWillBeToldFallback;
   const link = escapeHtml(data.linkUrl);
 
   const palette = emailPalette(branding);
@@ -213,6 +223,7 @@ export function generateInviteInvitationEmail(data: InviteInvitationEmailData): 
       <div style="border-top: 1px solid ${palette.line}; padding-top: 16px;">
         <p style="margin: 0 0 4px; font-size: 13px; color: ${palette.inkMuted};">${escapeHtml(t.plainLink)}</p>
         <p dir="ltr" style="margin: 0 0 16px; font-size: 13px; text-align: left; word-break: break-all; font-family: monospace; color: ${palette.inkMuted};">${link}</p>
+        <p style="margin: 0 0 8px; font-size: 13px; line-height: 1.6; color: ${palette.inkMuted};">${escapeHtml(willBeTold)}</p>
         <p style="margin: 0; font-size: 13px; line-height: 1.6; color: ${palette.inkFaint};">${escapeHtml(t.ignore)}</p>
       </div>
     </div>
@@ -228,6 +239,8 @@ export function generateInviteInvitationEmail(data: InviteInvitationEmailData): 
     data.linkUrl,
     '',
     t.validUntil(expiry),
+    '',
+    willBeTold,
     '',
     t.ignore,
   ].join('\n');
