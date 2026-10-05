@@ -136,3 +136,85 @@ describe('AdminAccessService caching', () => {
     expect((repo as any).listActive).toHaveBeenCalledTimes(2);
   });
 });
+
+/**
+ * Admin delete AD-1b (SA D-3): the read-only, tri-state check R-2 uses.
+ * Shares isAdmin's resolver; the isAdmin tests above are unmodified, which is
+ * the proof that the extraction changed nothing for requireAdmin.
+ */
+describe('AdminAccessService.checkAdminStatus', () => {
+  it('true for a bound user_id, even with no email', async () => {
+    const repo = fakeRepo({ data: [row({ user_id: 'u1', email: 'a@x.com' })], error: null });
+    const svc = makeService(repo);
+
+    expect(await svc.checkAdminStatus({ id: 'u1', email: null })).toBe(true);
+  });
+
+  it('true on a DB email match, and NEVER self-heals (no bindUserId write)', async () => {
+    const repo = fakeRepo({ data: [row({ user_id: null, email: 'b@x.com' })], error: null });
+    const svc = makeService(repo);
+
+    expect(await svc.checkAdminStatus({ id: 'u2', email: 'B@x.com' })).toBe(true);
+    expect(repo.bindUserId).not.toHaveBeenCalled();
+  });
+
+  it('true via the ADMIN_EMAILS env list', async () => {
+    const repo = fakeRepo({ data: [], error: null });
+    const svc = makeService(repo, 'env@x.com');
+
+    expect(await svc.checkAdminStatus({ id: 'u3', email: 'env@x.com' })).toBe(true);
+  });
+
+  it('false when none of the three sources match', async () => {
+    const repo = fakeRepo({ data: [row({ user_id: 'u1', email: 'a@x.com' })], error: null });
+    const svc = makeService(repo, 'env@x.com');
+
+    expect(await svc.checkAdminStatus({ id: 'nope', email: 'nope@x.com' })).toBe(false);
+    expect(await svc.checkAdminStatus({ id: 'nope', email: null })).toBe(false);
+  });
+
+  it('null (unknown), never false, when the admin set cannot be read', async () => {
+    const repo = fakeRepo({ data: null, error: new Error('db down') });
+    const svc = makeService(repo, 'env@x.com');
+
+    expect(await svc.checkAdminStatus({ id: 'u1', email: 'env@x.com' })).toBeNull();
+  });
+
+  it('null when no id is given', async () => {
+    const repo = fakeRepo({ data: [], error: null });
+    const svc = makeService(repo);
+
+    expect(await svc.checkAdminStatus({ id: '' })).toBeNull();
+  });
+
+  it('never logs the email it was asked about (env path included)', async () => {
+    const logged: unknown[] = [];
+    // Load a fresh copy of the service bound to the recording logger.
+    let Fresh: typeof AdminAccessService | undefined;
+    jest.isolateModules(() => {
+      jest.doMock('@/lib/logger', () => {
+        const rec = (...args: unknown[]) => logged.push(args);
+        const make = (): Record<string, unknown> => {
+          const l: Record<string, unknown> = { info: rec, warn: rec, error: rec, debug: rec };
+          l.child = () => l;
+          return l;
+        };
+        return { createLogger: () => make() };
+      });
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      Fresh = require('@/lib/services/AdminAccessService').AdminAccessService;
+    });
+    const prev = process.env.ADMIN_EMAILS;
+    process.env.ADMIN_EMAILS = 'secret-env@x.com';
+    const okRepo = fakeRepo({ data: [], error: null });
+    const svc = Fresh!.createForTest(okRepo);
+    const failing = Fresh!.createForTest(fakeRepo({ data: null, error: new Error('db down') }));
+    process.env.ADMIN_EMAILS = prev;
+
+    expect(await svc.checkAdminStatus({ id: 'u9', email: 'secret-env@x.com' })).toBe(true);
+    expect(await failing.checkAdminStatus({ id: 'u9', email: 'secret-env@x.com' })).toBeNull();
+    // Control: the recorder works (the failing read logged an error with the id).
+    expect(logged.length).toBeGreaterThan(0);
+    expect(JSON.stringify(logged)).not.toContain('secret-env@x.com');
+  });
+});

@@ -5,7 +5,7 @@
 **Developer:** Dev
 **Requirement:** [ADMIN_DELETE_USER_BUSINESS_REQUIREMENT.md](/docs/requirements/ADMIN_DELETE_USER_BUSINESS_REQUIREMENT.md) §5 (AD-1), §6.1, §6.3, §8 (AC-A1…AC-A5), SA Review Notes (SC-1…SC-12)
 **Date:** 2026-10-04
-**Status:** AD-1a Code Complete (2026-10-04), uncommitted, waiting for SA code review. AD-1b and AD-1c not started.
+**Status:** AD-1a merged (PR #216, `0db9da62`). **AD-1b Code Complete (2026-10-04)**, uncommitted on `feature/admin-delete-ad1b-preview-route` (cut from `origin/main` `0db9da62`), waiting for SA code review. AD-1c not started.
 **Branch (AD-1a):** `feature/admin-delete-ad1a-reconciler`, cut from `origin/main` `1a9944a5` in worktree `neuronforge-admin-delete`. Original proposal for the whole slice: `feature/admin-delete-ad1-preview`. ⚠️ **It does not exist yet.** The working tree is on `main`, and local `main` is behind `origin/main`, which has 3,000+ lines of `app/admin/users` changes: the credits block, the dialog precedent and the source guard. RM must create the branch from **`origin/main`**. This plan was written against `origin/main` (`1a9944a5`), not the stale local tree.
 
 ## Overview
@@ -200,19 +200,37 @@ If SA prefers one PR, the task list below runs in the same order without change.
 Re-run just before merge: `npx tsx --import ./scripts/env-preload.ts scripts/purge-schema-reconcile.ts` from the repo root (expects exit 0).
 
 ### AD-1b: Evaluator + route
-- [ ] **T7** `AdminAccessService.checkAdminStatus` (D-3). Tests: bound id → true, email match → true **with no `bindUserId` call**, env list → true, none → false, cache error → `null`, the email never logged.
-- [ ] **T8** `AuthAccountRepository.findUserIdentity` (D-1). Tests: found, 404 → null, error → error, no email in logs. Update the surface and callers guards.
-- [ ] **T9** `adminDeletionRefusals.ts`: pure, returns **all** refusals (SC-4). `R3_LIVE_STATUSES` is typed against `BusinessOsSubscriptionStatus`. R-4 `not_applicable` with the SA-7 comment. R-7 `deferred` (D-4). When R-1 or R-2 applies, R-3…R-8 are `not_evaluated`.
-- [ ] **T10** `AdminDeletionPreview.ts`: target lookup → `not_found`. R-1 / R-2 short-circuit with **no** `buildPurgePreview` call. Then the preview, the reconciler, billing (both modes), Connect, and local blocking, run sequentially (they are cheap). Group by `area`, derive `keptTables`, build the limitations (`missingNever`, unknown or truncated counts, "Purge commit not built"). The disabled reason. Logs carry ids only.
-- [ ] **T11** Route `app/api/admin/users/[id]/deletion/preview/route.ts`, following the `new-api-route` admin template:
+- [x] ✅ **T7** `AdminAccessService.checkAdminStatus` (D-3). Tests: bound id → true, email match → true **with no `bindUserId` call**, env list → true, none → false, cache error → `null`, the email never logged.
+- [x] ✅ **T8** `AuthAccountRepository.findUserIdentity` (D-1). Tests: found, 404 → null, error → error, no email in logs. Update the surface and callers guards.
+- [x] ✅ **T9** `adminDeletionRefusals.ts`: pure, returns **all** refusals (SC-4). `R3_LIVE_STATUSES` is typed against `BusinessOsSubscriptionStatus`. R-4 `not_applicable` with the SA-7 comment. R-7 `deferred` (D-4). When R-1 or R-2 applies, R-3…R-8 are `not_evaluated`.
+- [x] ✅ **T10** `AdminDeletionPreview.ts`: target lookup → `not_found`. R-1 / R-2 short-circuit with **no** `buildPurgePreview` call. Then the preview, the reconciler, billing (both modes), Connect, and local blocking, run sequentially (they are cheap). Group by `area`, derive `keptTables`, build the limitations (`missingNever`, unknown or truncated counts, "Purge commit not built"). The disabled reason. Logs carry ids only.
+- [x] ✅ **T11** Route `app/api/admin/users/[id]/deletion/preview/route.ts`, following the `new-api-route` admin template:
   - `requireAdmin(requestLogger)` is the first statement.
   - `params.id` is checked with `z.string().uuid()` before any lookup. The id is lower-cased.
   - The body is read as text: empty → `{}`, malformed JSON → 400, then `z.object({}).strict()`.
   - `runtime = 'nodejs'`, `dynamic = 'force-dynamic'`, `maxDuration = 60`.
   - 404 on `not_found`. Errors use the dev-only `details` guard. `correlationId` comes from the `x-correlation-id` header or is a random UUID.
-- [ ] **T12** Route test and the `adminGate.writes` entry (D-6). Extend the B-1 scan in `descriptors.invariant.test.ts` to the new route directory.
-- [ ] **T13** Add the billing repository caller to its `ALLOWED` list (SC-5) and confirm there is no entitlements import. Run `npm run test:bos-entitlements` and `npm run test:authz-guard`.
-- [ ] **T14** Docs: register row 96, re-measure the census from disk (method in As-Built State), Change History.
+- [x] ✅ **T12** Route test and the `adminGate.writes` entry (D-6). Extend the B-1 scan in `descriptors.invariant.test.ts` to the new route directory.
+- [x] ✅ **T13** Add the billing repository caller to its `ALLOWED` list (SC-5) and confirm there is no entitlements import. Run `npm run test:bos-entitlements` and `npm run test:authz-guard`.
+- [x] ✅ **T14** Docs: register row 96, re-measure the census from disk (method in As-Built State), Change History.
+
+**AD-1b implementation notes (Dev, 2026-10-04)**
+
+| Item | As built |
+|---|---|
+| T7 | `AdminAccessService` now has ONE private resolver, `resolveAdminMatch(id, email)` (cache → bound id → DB email → env email; returns the matched source, `null`, or throws). `isAdmin` keeps its self-heal, env-fallback log and fail-closed `false` on top of it; its 6 existing tests pass **unmodified** (no `-` lines in the test diff). `checkAdminStatus` maps match → `true`, none → `false`, throw or no id → `null`; no write, ids-only log; `email: null` is still decided by the bound id. 7 new tests (incl. no `bindUserId` call, and "email never logged" on the env path) |
+| T8 | `AuthAccountRepository.findUserIdentity(id)` → `{ id, email, createdAt }` or `null`. `null` only on a definite 404 / `user_not_found`; any other error, a throw, or a reply with no user and no error is an error. Surface test 4 → 5 methods; callers guard + `AdminDeletionPreview.ts` and its test. 5 new tests |
+| T9 | `adminDeletionRefusals.ts`, pure. Always R-1…R-8, in order; `applies` / `unverified` block. R-2 `null` → `unverified` **and** stops counting (an account that may be an admin is not enumerated). Clear R-1/R-2 with no later facts → R-3/R-5/R-6/R-8 `unverified` (fail closed). R-3: `R3_LIVE_STATUSES` typed against `BusinessOsSubscriptionStatus`; live = status in the list, or a subscription id with `ended_at` null; both modes; an error on either → `unverified`; clearing action = the Stripe dashboard in the mode shown + "In-app cancel arrives with plan payments P-7a". R-4 `not_applicable` with the SA-7 "wire R-4 in the same PR" comment. R-6 takes `decideLocalPrecondition`'s result (no status literal, source-checked). R-7 `deferred`, "Checked at the moment of deletion." R-8: `drift` → applies; `unreadable` / `ambiguous` → unverified |
+| T10 | `AdminDeletionPreview.ts`: identity (`identity_error` / `not_found`) → `checkAdminStatus` → R-1/R-2 short-circuit (no `buildPurgePreview`, no reconciler, no billing read) → `buildPurgePreview` unchanged at `purge` + `{integrations: true, agents: true, activityHistory: false}` → reconciler → billing (test, live) → Connect → local blocking, sequential. Areas grouped by descriptor `area`; `keptTables` = `never` descriptors with a tenant scope; its own limitations (unknown counts, caps, missing `never`, Purge preview-only, delete function not installed). Business name from `BusinessProfileRepository.findByUserId` (`company_name`), display only: an unreadable profile is a limitation, never a refusal. Logs: ids, statuses, counts |
+| T11 | Route as planned. `requireAdmin` is the literal **first statement** (before the correlation id, as the `business-os/credits/accounts/[accountId]` precedent), so the gate's own log lines carry no correlation id |
+| T12 | Route test, 17 cases. `adminGate.writes` 59 → 60 with the "read-only POST (body must be `{}`); listed for the gate oracle" comment. B-1 scan extended to `app/api/admin/users/[id]/deletion/**`, with a non-vacuity check by name |
+| T13 | Billing callers allow-list + `AdminDeletionPreview.ts`, `adminDeletionRefusals.ts` (type import) and their tests. No entitlements import (source-checked). `npm run test:bos-entitlements`: 181 suites / 4,623 green. `npm run test:authz-guard`: 119 green |
+| T14 | Census re-measured with the guard's own `scanHandlers` + `stripComments`: **94 / 88 + 6 + 0 open / 65 files**. The base already held 93: `business-os/ai-activity/drill-down#GET` (B2a, `5457e520`) was gated but unregistered, so it took row **96** (doc only) and this route is row **97**, not 96 |
+| User-added audit row | `BUSINESS_DELETION_PREVIEWED` registered in `lib/audit/events.ts` (`info`, SOC2) and `eventAudience.ts` (`bos`; pin 33 → 34, 178 → 179). Written through `logAndFlush` (bounded, never rejects, plus a `.catch`) on 200, 404 and 500 after a valid request; never on 401 / 403 / 400. Details: `correlationId`, `outcome`, `targetId`, `counted`, refusal `id:status` codes, `deletionAvailable`; no email or name. **Deviation:** written with the admin as `user_id` and `actor_id` (entity `user`, id = the target), the `archive_run` / `bos_queue` precedent, **not** as an `operator`-class row. A true `operator` row needs a new owner-hidden entity type plus an `ALTER POLICY` migration (the `ownerVisibility` guard pins the policy's list to the registry), and this slice may not add a migration without SA approval. The row never lands on the owner's account, so the owner cannot read it. Upgrade path: AD-2's deletion entity type and migration |
+| AD-1a follow-ups | Reconciler `{data: null, error: null}` → `unreadable` test added. Baseline `generated` 2026-09-16 → 2026-10-04 |
+| Not done here | `app/admin/users/types.ts` untouched: the dialog payload types are AD-1c's T16 (a structural copy of `AdminDeletionPreview`) |
+
+**AD-1b test run:** `npx jest lib/business-os/purge lib/repositories/__tests__ lib/services app/api/admin app/admin/users lib/admin/__tests__ lib/audit` → 167 suites / 3,748 tests green. Scoped `tsc` over the 16 touched TS files: 0 errors in them (35 pre-existing errors in transitively loaded files, none touched). ESLint on the touched files: 0 errors (the warnings are pre-existing `any`s in the AdminAccessService test and one in `events.ts`).
 
 ### AD-1c: Dialog
 - [ ] **T16** `types.ts` payload types and `deletionCopy.ts`: area labels, kept categories with reasons, a clearing action per refusal. The R-3 action points to the plan cancel (see Risk 3), R-5 to "Disconnect Stripe (available with AD-4)", R-6 to the C1/C2/C3 items to resolve, R-8 to "platform problem, not this business: contact engineering".
@@ -356,6 +374,29 @@ Pointing R-3 at either one would send the admin to the wrong subscription. **Con
 ### Code Approved for QA: Yes
 Before merge: re-run `scripts/purge-schema-reconcile.ts` against prod and expect exit 0 (AC-A5, Risk 2). Do not commit until the user has seen the diff.
 
+**Code Review by SA, 2026-10-04 (AD-1b)** (uncommitted diff in worktree `neuronforge-admin-delete`, branch `feature/admin-delete-ad1b-preview-route`, base `0db9da62`)
+**Status:** ✅ Code Approved
+
+### Code Review Comments
+1. Deviation 1, the audit row is not operator-class: **accepted for AD-1b.** I checked the owner read paths as built. The latest owner policy (`20261035`, `ALTER POLICY "Users can view their own audit logs"`) is `auth.uid() = user_id AND entity_type NOT IN (...)`. `AuditTrailRepository.listOwnerEntries` and the data-export reader are both `.eq('user_id', …)`. The row's `user_id` is the admin, so the target owner cannot read it on any path. The entity type `entity_type='user'`/`entity_id=target` hides nothing, and it does not need to. This is the same as the `archive_run` / `bos_queue` precedent. The details carry ids, statuses and refusal codes only, with no email or name. **AD-2 does not need a new entity type or migration for this event.** AD-2 must rule separately on where its *destructive* rows land, because the target account is gone after the delete. Caveat: the base `CREATE POLICY` is not in the migrations folder (it was created in the dashboard), so "no other SELECT policy on audit_trail" is assumed, not proven from the repo. Priority: none (accepted)
+2. Deviation 2, register rows 96 and 97: **accepted.** Row 96 (`ai-activity/drill-down#GET`, gated on main but unregistered) is a doc-only correction. The census 94 = 88 + 6 + 0 open across 65 files is consistent in the headline, "What is true", the register heading, the summary line and Change History. The SA re-ran `npm run test:authz-guard`'s suite and it is green. The CI job runs only that suite, so the required check stays green. No cap moved and no exemption was added. `adminGate.writes` went 59 → 60. Priority: none
+3. Deviation 3: when `checkAdminStatus` returns `null`, R-2 is `unverified`. That status is blocking, so `identityRefused` is set and R-3…R-8 are `not_evaluated`, with no purge preview and no reconciler. This is correct fail-closed behaviour under SC-3 (do not enumerate an account that may be an admin). It is tested. Priority: none
+4. Deviation 4, `types.ts` untouched: accepted. AD-1c owns it. Priority: none
+5. `route.ts:60`: `requireAdmin` is the first statement. After it, the order is uuid (400, lower-cased), then the text body (empty → `{}`, malformed → 400), then `z.object({}).strict()`, then the composition. A 401 or 403 comes before any validation, read or audit (route tests plus `adminGate.writes`). Identity read error → 500 `identity_read_failed`, never a 404. Priority: none
+6. `AdminAccessService`: there is one private resolver, `resolveAdminMatch`, behind both `isAdmin` and `checkAdminStatus`. `isAdmin` keeps its self-heal, its env warn and its fail-closed `false`. `checkAdminStatus` never writes and logs ids only. The existing tests have **0 deleted lines** against `0db9da62` (82 lines added only). Priority: none
+7. SC-9: `AdminDeletionPreview.test.ts` spies on every destructive repository method, plus `writeVerifiedSnapshot`, `evaluateResetGuard` and `executeReset`, and asserts that none is reached. It also scans the source for advisory locks. The only RPC is the preview's existing null-id probe (D-2). Condition 3 is tested: with an unreadable reconciler, R-8 is `unverified` and the counts and other refusals still render. Conditions 1 and 2 are met. Priority: none
+8. SC-10 and logging: the route, the composition, the repository and the service log ids, statuses and counts only. Each has a test asserting that no logger argument contains the email or business name. The audit uses bounded `logAndFlush` with a defensive `.catch`, and a test proves an audit failure does not fail the preview. Pino throughout. No `console.*` in any touched file (the grep hits in `adminDeletionRefusals.ts` are the words "admin console." inside strings). Priority: none
+9. Event registration is consistent: `AUDIT_EVENTS`, `EVENT_METADATA` (`info`, SOC2) and `AUDIT_EVENT_AUDIENCE` (`bos`), with the pin moved to 179 / 34 bos. Further condition 6 ("no audit row in AD-1") is superseded by the user-added scope, which is correct. Priority: none
+10. Verified by SA: `npx jest` over the authz guard, the deletion route, `lib/business-os/purge`, `AdminAccessService`, `lib/audit`, `adminGate.writes`, `AuthAccountRepository` and its callers guard gives 25 suites, 818/818. The SA did not re-run tsc or eslint, so Dev's scoped passes stand and the required type-check job is the gate. Priority: Low
+
+### Optimisation Suggestions
+- `AdminDeletionPreview.ts`: `readBusinessName` runs before the R-1/R-2 short-circuit, so it also reads an admin target's profile. It is display only and harmless. Moving it after the check, or keeping it deliberately for the dialog header, are both fine. Add a one-line comment saying which was intended.
+- `route.ts:115`: the `// logAndFlush never rejects…` comment sits inside the argument list. Move it above the `.catch` for readability.
+- For AD-2: when it adds the destructive event, pick its `user_id` placement (admin, like this row, or an operator-hidden entity type plus an `ALTER POLICY` migration) in the workplan, before code is written.
+
+### Code Approved for QA: Yes
+Do not commit until the user has seen the diff.
+
 ## QA Testing Report
 
 **QA — 2026-10-04 (AD-1a only)**
@@ -420,6 +461,77 @@ Hygiene: `.env.local` was copied in for the prod run and deleted straight after 
 - [x] All acceptance criteria pass — ready for commit (AD-1a scope; AC-A5 must still be re-run just before merge, per Risk 2)
 - [ ] Issues found — Dev must address before commit
 
+---
+
+**QA — 2026-10-04 (AD-1b)**
+**Test mode:** full (for the AD-1b scope)
+**Strategy used:** A + B (Jest). The unit suites cover the evaluator, `checkAdminStatus` and `findUserIdentity`. The composition suite runs the real `buildPurgePreview`, reconciler, `decideLocalPrecondition` and evaluator over spied repositories. The route suite and the shared `adminGate.writes` oracle cover the route. QA also read the route, composition, evaluator, service and repository diffs against each check below.
+**Focus:** api, security (gate order, tenant isolation, no destructive call, no PII in logs or audit)
+**Skipped:** the live smoke (Option C/D). An admin-cookie call to the local dev server is not trivially possible from this session, and the brief forbids hitting prod or writing to any DB. AD-1c's UI criteria (rendered AC-A2/A3) are not in this slice
+**Input source:** prompt from TL
+
+### Test Coverage
+| Acceptance Criterion / check | Tested? | Result | Notes |
+|---|---|---|---|
+| AC-A1: 401 when signed out, 403 for a non-admin, before any work | ✅ | Pass | Route test: 401/403 with nothing built and no audit row. 403 even with an invalid id, so the gate answers before validation. `adminGate.writes` (60 cases) proves nothing is touched before the gate. `requireAdmin` is the first statement (`route.ts:62`) |
+| AC-A2 (code half): counts + kept list, deletes nothing | ✅ | Pass (code half) | Composition happy path: `counted: true`, areas grouped with no `unassigned`, an uncounted table shown as unknown (never zero), `keptTables` includes `email_unsubscribes` / `user_preferences`. `executePurge`, `removeStorageUnderUser`, `writeSnapshot`, `readAllRows` and `writeVerifiedSnapshot` are spied to throw, and none is reached. A source scan also covers `evaluateResetGuard`, `executeReset` and advisory locks. The only RPCs on the path are the existing null-id probe (D-2) and `purge_schema_introspect` (read-only). **Live half (a seeded business, row counts identical before and after) is owed** with AD-1c's manual check |
+| AC-A3 (API half): R-1, R-2, R-3, R-5, R-6, R-8 each `applies` with a clearing action; R-4 always `not_applicable` | ✅ | Pass | Evaluator suite: one case per refusal, all returned together in order (SC-4). R-4 has the fixed message and the SA-7 comment. R-7 `deferred` ("Checked at the moment of deletion"). Confirm-input absence is AD-1c |
+| AC-A4: non-UUID id → 400 before any lookup; body with `userId` → 400 | ✅ | Pass | Route test: non-UUID, `{"userId":…}`, malformed JSON and a non-object body all give 400 with no build call and no audit. An empty body and `{}` are accepted. The id is lower-cased |
+| Happy path: non-admin target → 200 with counts, kept list, refusals | ✅ | Pass | Route 200 (built for the lower-cased path id and the gate's admin) + the composition happy path above |
+| Target = self → R-1 | ✅ | Pass | R-1 applies case-insensitively, `counted: false`, no purge preview and no reconciler. Route returns 200 |
+| Target = admin → R-2 | ✅ | Pass | `counted: false`, nothing enumerated |
+| Admin status unknown → R-2 `unverified`, no counting | ✅ | Pass | `checkAdminStatus` returns `null` on a cache read error (unit test). Composition: R-2 `unverified`, R-3…R-8 `not_evaluated`, `buildPurgePreview` not called. With `email: null`, the bound id still decides |
+| Identity read error → 500, never 404 | ✅ | Pass | Repository: only a 404 or `user_not_found` gives `null`. Any other error, a throw, or "no user and no error" is an error. Composition returns `identity_error`, and the route answers 500 `identity_read_failed` |
+| Reconciler unreadable → R-8 `unverified`, preview still returns | ✅ | Pass | Both the unreadable case and the throwing case are tested. Counts and the other refusals still render |
+| Other failed reads fail closed | ✅ | Pass | A billing error in either mode, a Connect throw and a null local count each give `unverified`. A live subscription in either mode gives R-3 `applies` and becomes the disabled reason. An unreadable business profile is a limitation, not a refusal |
+| No destructive method or RPC | ✅ | Pass | See AC-A2. `checkAdminStatus` never calls `bindUserId` (unit test). `isAdmin`'s existing tests pass unmodified |
+| Audit failure doesn't fail the request | ✅ | Pass | A rejected `logAndFlush` still gives 200. One `BUSINESS_DELETION_PREVIEWED` row on 200, 404 and 500, none on 401, 403 or 400. The admin is `user_id` and actor, so the row never lands on the owner's account |
+| No email or name in logs or audit | ✅ | Pass | Planted email and business name are absent from every logger argument (route, composition, repository, service env path) and from the audit details |
+| Tenant isolation: target only from the path | ✅ | Pass | `z.object({}).strict()` body. Billing read for `[TARGET,false]`, `[TARGET,true]` only |
+| `new-api-route` skill minimum (happy + 401 + 400) | ✅ | Pass | Present, plus 403, 404 and 500 |
+| `new-repository` skill (a unit test per new method) | ✅ | Pass | `findUserIdentity`: found, 404, error, throw, no-user, no email in logs |
+| Entitlements registration | n/a | — | The diff imports nothing from `lib/business-os/entitlements/` (the only hit is a comment in `adminDeletionRefusals.ts`), so `test:bos-entitlements` was not required. Dev ran it green |
+| No `console.*` | ✅ | Pass | 0 in every touched source file (the two grep hits are the words "admin console" inside strings) |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+None.
+
+#### Performance Issues (should fix)
+None. The read path is sequential, but each read is cheap and runs only when the dialog opens.
+
+#### Edge Cases (nice to fix)
+1. **R-6 could echo a raw error message to the client** — File: `lib/business-os/purge/AdminDeletionPreview.ts` (`readLocalBlocking`) — Severity: Low. If `countLocalBlockingState` threw, `err.message` would go into the R-6 refusal `message` in the 200 response with no dev-only guard. Today that path cannot be reached: the repository catches per condition and returns `count: null`, and `decideLocalPrecondition`'s reason holds table names only. The surface is also admin-only. A fixed string would make it robust.
+2. **`checkAdminStatus` falls back to a stale cache when the reload fails** (pre-existing `getCache` behaviour). When a stale cache exists, a read error gives `false` and not `null`. This is acceptable for a read-only preview. Workplan Risk 5 already requires AD-2 to use a fresh, uncached read before commit. Severity: Low, already tracked.
+3. SA's optimisation notes still stand (the `readBusinessName` ordering comment and the comment position at `route.ts:117`). Both are cosmetic.
+
+### Test Outputs / Logs
+```text
+npx jest lib/business-os/purge lib/services/__tests__/AdminAccessService lib/repositories/__tests__/AuthAccountRepository
+  lib/repositories/__tests__/authAccountRepository.callers lib/repositories/__tests__/BusinessOsBillingAccountRepository
+  lib/audit app/api/admin/__tests__/adminGate.writes app/api/admin/users
+Test Suites: 29 passed, 29 total
+Tests:       779 passed, 779 total
+
+npm run test:authz-guard
+Test Suites: 1 passed, 1 total
+Tests:       119 passed, 119 total
+
+npm test (full, worktree)
+Test Suites: 11 failed, 8 skipped, 831 passed, 842 of 850 total
+Tests:       122 failed, 65 skipped, 16639 passed, 16826 total
+All 11 failing suites are in .github/ci/jest-quarantine.json (v4-generator, LogicalIRCompiler, v6 validation,
+IRToNaturalLanguageTranslator, IntentClassifier, TokenBudgetManager, ConditionalEvaluator x2, StructuredTransforms x3).
+0 non-quarantined failures.
+```
+
+Hygiene: no DB was written and prod was not called. `git status --porcelain`, the hash of the code diff and the hashes of the untracked files are identical before and after QA, apart from this report section. No stash, no commit.
+
+### Final Status
+- [x] All acceptance criteria pass — ready for commit (AD-1b scope: AC-A1, AC-A2 code half, AC-A3 API half, AC-A4. The live half of AC-A2 and the rendered AC-A3 are owed with AD-1c. The AC-A5 prod re-run is still owed before merge)
+- [ ] Issues found — Dev must address before commit
+
 ## Commit Info
 
 _(RM populates)_
@@ -435,3 +547,6 @@ _(RM populates)_
 | 2026-10-04 | AD-1a implemented (Dev) | T1–T6 and T15 done on `feature/admin-delete-ad1a-reconciler`, uncommitted. Reconciler + `introspectSchema()`, SC-8 pass (9 tables, baseline 144 with review notes), `area` on every deletable descriptor, read-only prod script. Prod reconcile after SC-8: `ok`, 0 unclassified, 0 missing deletable, 3 missing `never` listed |
 | 2026-10-04 | SA code review (AD-1a) | Code approved for QA. Descriptors verified lossless against `1a9944a5` (only the `area` additions plus the 9 SC-8 rows). Deviations 1–4 accepted. B-1/B-2/B-3 hold. Reconciler failure → `unreadable` tested. Script is Pino-only and logs no row data. Baseline 144 with review notes. Prod re-run owed before merge |
 | 2026-10-04 | QA (AD-1a) | Pass. Purge suites 120/120; full npm test 0 non-quarantined failures (11 quarantined red). Prod reconciler exit 0, `ok`, 0 unclassified / 0 missing deletable, fingerprint matches Dev. Drift demonstrated and restored byte-identical. One Low edge case (reconciler null-data branch untested) |
+
+| 2026-10-04 | AD-1b implemented (Dev) | T7–T14 on `feature/admin-delete-ad1b-preview-route` (base `0db9da62`), uncommitted. `checkAdminStatus` on one shared resolver, `findUserIdentity`, the pure evaluator R-1…R-8, the `AdminDeletionPreview` composition, `POST /api/admin/users/[id]/deletion/preview`, gate oracle 59 → 60, register rows 96 (drill-down, doc only) and 97 (this route), census 94 / 88 + 6 / 65. The user-added preview audit row is written admin-scoped (operator class needs a migration, flagged). AD-1a follow-ups closed |
+| 2026-10-04 | QA (AD-1b) | Pass. Affected suites 29 / 779, authz guard 119 / 119, full npm test 0 non-quarantined failures (11 quarantined red). AC-A1, AC-A2 code half, AC-A3 API half and AC-A4 verified, including fail-closed R-2/R-8, identity error → 500, no destructive call, audit non-blocking and no PII. 2 Low edge cases (R-6 raw error echo, unreachable today; stale-cache `false` already tracked as Risk 5). Live smoke skipped |

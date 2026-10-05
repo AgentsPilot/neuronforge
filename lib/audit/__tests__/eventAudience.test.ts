@@ -54,9 +54,10 @@ describe('AUDIT_EVENT_AUDIENCE is exhaustive over the catalogue', () => {
   // +1 Business OS (BOS_CREDIT_LOW_LINE_CROSSED): credit deduction slice 8b.
   // +1 Business OS (BOS_QUEUE_DRAIN_STARTED): ADMIN_BOS_CLEANUP slice 7d, Drain now.
   // +1 Business OS (BOS_QUEUE_ITEM_CANCELLED): ADMIN_BOS_CLEANUP slice 7b, cancel one queue item (2026-10-04).
-  it('pins the split: 33 Business OS, 61 shared, 84 AgentsPilot', () => {
-    expect(registered).toHaveLength(178);
-    expect(eventsTagged('bos')).toHaveLength(33);
+  // +1 Business OS (BUSINESS_DELETION_PREVIEWED): admin delete AD-1b, read-only deletion preview (2026-10-04).
+  it('pins the split: 34 Business OS, 61 shared, 84 AgentsPilot', () => {
+    expect(registered).toHaveLength(179);
+    expect(eventsTagged('bos')).toHaveLength(34);
     expect(eventsTagged('shared')).toHaveLength(61);
     expect(eventsTagged('agentspilot')).toHaveLength(84);
   });

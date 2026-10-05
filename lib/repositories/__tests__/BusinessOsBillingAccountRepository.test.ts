@@ -305,6 +305,13 @@ describe('source guards', () => {
       'app/api/stripe/webhook/__tests__/routerPlacement.guard.test.ts',
       'lib/business-os/billing/__tests__/businessOsStripeCustomer.test.ts',
       'lib/business-os/billing/businessOsStripeCustomer.ts',
+      // Admin delete AD-1b (SC-5): R-3 reads BOTH livemode rows of the target's
+      // plan billing account (findByUser only); the evaluator imports the status
+      // type. Their tests name it to fake it. No entitlements import.
+      'lib/business-os/purge/AdminDeletionPreview.ts',
+      'lib/business-os/purge/__tests__/AdminDeletionPreview.test.ts',
+      'lib/business-os/purge/__tests__/adminDeletionRefusals.test.ts',
+      'lib/business-os/purge/adminDeletionRefusals.ts',
       'lib/repositories/BusinessOsBillingAccountRepository.ts',
       'lib/repositories/__tests__/BusinessOsBillingAccountRepository.test.ts',
       'lib/repositories/index.ts',

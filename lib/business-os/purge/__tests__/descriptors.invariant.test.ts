@@ -43,6 +43,9 @@ import {
 
 const PURGE_DIR = path.join(__dirname, '..');
 const API_DIR = path.join(__dirname, '..', '..', '..', '..', 'app', 'api', 'business-os', 'purge');
+// Admin delete AD-1b (SA further condition 5): the admin deletion routes are
+// held to the same B-1 bound as the purge routes.
+const ADMIN_DELETION_API_DIR = path.join(__dirname, '..', '..', '..', '..', 'app', 'api', 'admin', 'users', '[id]', 'deletion');
 
 /** Every `.ts`/`.tsx` under a directory, recursively. Returns [] if absent. */
 function walk(dir: string): string[] {
@@ -249,7 +252,9 @@ describe('purge descriptors — structural invariants (AC-45)', () => {
   });
 
   describe('B-1 — the single-Supabase-importer bound on the DEV-Q1 exception', () => {
-    const files = [...walk(PURGE_DIR), ...walk(API_DIR)].filter((f) => !f.includes('__tests__'));
+    const files = [...walk(PURGE_DIR), ...walk(API_DIR), ...walk(ADMIN_DELETION_API_DIR)].filter(
+      (f) => !f.includes('__tests__')
+    );
 
     const SUPABASE_TOKENS = [
       '@supabase/supabase-js',
@@ -271,6 +276,9 @@ describe('purge descriptors — structural invariants (AC-45)', () => {
       // that must be present grows naturally and cannot be tuned away.
       const names = files.map((f) => path.basename(f));
       expect(names).toEqual(expect.arrayContaining(['descriptors.ts', 'types.ts', 'purgeAuthz.ts']));
+      // AD-1b: the admin deletion composition and its route are in the scan.
+      expect(names).toEqual(expect.arrayContaining(['AdminDeletionPreview.ts', 'adminDeletionRefusals.ts']));
+      expect(files.some((f) => f.includes(`${path.sep}deletion${path.sep}preview${path.sep}route.ts`))).toBe(true);
     });
 
     it('no file in the purge engine or its routes imports a Supabase client', () => {
