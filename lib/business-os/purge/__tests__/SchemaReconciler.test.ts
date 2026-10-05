@@ -210,4 +210,13 @@ describe('runSchemaReconciler — failure isolation', () => {
     introspectSchema.mockRejectedValue(new Error('socket hang up'));
     await expect(runSchemaReconciler()).resolves.toMatchObject({ status: 'unreadable', error: 'socket hang up' });
   });
+
+  // QA AD-1a edge case 1: no data AND no error is not an empty schema.
+  it('a repository reply with no data and no error becomes unreadable, never ok', async () => {
+    introspectSchema.mockResolvedValue({ data: null, error: null });
+    const r = await runSchemaReconciler();
+    expect(r.status).toBe('unreadable');
+    expect(r.fingerprint).toBeNull();
+    expect(r.error).toBe('schema introspection returned no data');
+  });
 });

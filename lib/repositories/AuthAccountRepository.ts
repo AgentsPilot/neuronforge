@@ -23,6 +23,8 @@
 // `findUserExists` (I-4/I-6: "does a user with this id exist?", yes/no/unknown).
 // Slice 3b adds `createConfirmedUserWithoutPassword`: the same creation for a
 // mailbox proven by a verified Google ID token, with no password.
+// Admin delete AD-1b adds `findUserIdentity` (D-1): id, email and joined date
+// of ONE account, for the admin-gated deletion preview only.
 //
 // No method here deletes a user, now or later (Slice 1 invariant I-1; the
 // repo-wide no-deletion-paths guard). A signup that stops halfway keeps its
@@ -178,6 +180,52 @@ export class AuthAccountRepository {
     } catch (error) {
       const facts = authErrorFacts(error);
       methodLogger.error({ authErrorCode: facts.code, authStatus: facts.status }, 'User lookup threw');
+      return { data: null, error: new Error(facts.message) };
+    }
+  }
+
+  /**
+   * Who is the account with this id? (Admin delete AD-1b, D-1.)
+   *
+   * Read by the admin deletion preview only, for an id taken from an
+   * admin-gated route path: the dialog header shows the email and joined date
+   * (FR-A2), and R-2 checks the email against the admin list.
+   *
+   * `{ data: null }` ONLY on a definite 404 / `user_not_found`. Anything else,
+   * including a reply with no user and no error, is an error: the caller must
+   * answer 500, never "not found" and never "not an admin" (SA D-1). The email
+   * is returned, never logged.
+   */
+  async findUserIdentity(
+    id: string
+  ): Promise<RepositoryResult<{ id: string; email: string | null; createdAt: string | null } | null>> {
+    const methodLogger = this.logger.child({ method: 'findUserIdentity', accountId: id });
+    try {
+      const { data, error } = await this.supabase.auth.admin.getUserById(id);
+      if (error) {
+        const facts = authErrorFacts(error);
+        if (facts.status === 404 || facts.code === 'user_not_found') return { data: null, error: null };
+        methodLogger.error({ authErrorCode: facts.code, authStatus: facts.status }, 'User identity lookup failed');
+        const out = new Error(facts.message) as Error & { code?: string };
+        if (facts.code) out.code = facts.code;
+        return { data: null, error: out };
+      }
+      const user = data?.user;
+      if (!user || typeof user.id !== 'string') {
+        methodLogger.error('User identity lookup returned no user and no error');
+        return { data: null, error: new Error('User identity lookup returned no user') };
+      }
+      return {
+        data: {
+          id: user.id,
+          email: typeof user.email === 'string' && user.email.length > 0 ? user.email : null,
+          createdAt: typeof user.created_at === 'string' ? user.created_at : null,
+        },
+        error: null,
+      };
+    } catch (error) {
+      const facts = authErrorFacts(error);
+      methodLogger.error({ authErrorCode: facts.code, authStatus: facts.status }, 'User identity lookup threw');
       return { data: null, error: new Error(facts.message) };
     }
   }
